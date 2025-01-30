@@ -133,6 +133,8 @@ pub enum Command {
     Import,
     /// Loads an extension library
     LoadExtension,
+    /// Dump the current database as a list of SQL statements
+    Dump,
 }
 
 impl Command {
@@ -145,7 +147,8 @@ impl Command {
             | Self::Opcodes
             | Self::ShowInfo
             | Self::Tables
-            | Self::SetOutput => 0,
+            | Self::SetOutput
+            | Self::Dump => 0,
             Self::Open
             | Self::OutputMode
             | Self::Cwd
@@ -172,6 +175,7 @@ impl Command {
             Self::Echo => ".echo on|off",
             Self::Tables => ".tables",
             Self::LoadExtension => ".load",
+            Self::Dump => ".dump",
             Self::Import => &IMPORT_HELP,
         }
     }
@@ -196,6 +200,7 @@ impl FromStr for Command {
             ".echo" => Ok(Self::Echo),
             ".import" => Ok(Self::Import),
             ".load" => Ok(Self::LoadExtension),
+            ".dump" => Ok(Self::Dump),
             _ => Err("Unknown command".to_string()),
         }
     }
@@ -259,6 +264,31 @@ impl std::fmt::Display for Settings {
             }
         )
     }
+}
+
+macro_rules! query_internal {
+    ($self:expr, $query:expr, $body:expr) => {{
+        let rows = $self.conn.query($query)?;
+        if let Some(mut rows) = rows {
+            loop {
+                match rows.step()? {
+                    StepResult::Row => {
+                        let row = rows.row().unwrap();
+                        $body(row)?;
+                    }
+                    StepResult::IO => {
+                        $self.io.run_once()?;
+                    }
+                    StepResult::Interrupt => break,
+                    StepResult::Done => break,
+                    StepResult::Busy => {
+                        Err(LimboError::InternalError("database is busy".into()))?;
+                    }
+                }
+            }
+        }
+        Ok::<(), LimboError>(())
+    }};
 }
 
 impl Limbo {
@@ -334,6 +364,80 @@ impl Limbo {
         self.conn
             .load_extension(ext_path)
             .map_err(|e| e.to_string())
+    }
+
+    fn dump_table(&mut self, name: &str) -> Result<(), LimboError> {
+        let query = format!("pragma table_info={}", name);
+        let mut cols = vec![];
+        query_internal!(
+            self,
+            query,
+            |row: &limbo_core::Row| -> Result<(), LimboError> {
+                let name: &str = row.get::<&str>(1)?;
+                cols.push(name.to_string());
+                Ok(())
+            }
+        )?;
+        // FIXME: sqlite has logic to check rowid and optionally preserve
+        // it, but it requires pragma index_list, and it seems to be relevant
+        // only for indexes.
+        let cols_str = cols.join(", ");
+        let select = format!("select {} from {}", cols_str, name);
+        query_internal!(
+            self,
+            select,
+            |row: &limbo_core::Row| -> Result<(), LimboError> {
+                let values = row
+                    .get_values()
+                    .into_iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let _ = self.write_fmt(format_args!("INSERT INTO {} VALUES({});", name, values))?;
+                Ok(())
+            }
+        )?;
+        Ok(())
+    }
+
+    fn dump_database(&mut self) -> anyhow::Result<()> {
+        self.writeln("PRAGMA foreign_keys=OFF;")?;
+        self.writeln("BEGIN TRANSACTION;")?;
+        // FIXME: At this point, SQLite executes the following:
+        // sqlite3_exec(p->db, "SAVEPOINT dump; PRAGMA writable_schema=ON", 0, 0, 0);
+        // we don't have those yet, so don't.
+        let query = r#"
+    SELECT name, type, sql
+    FROM sqlite_schema AS o
+    WHERE type == 'table'
+        AND sql NOT NULL
+    ORDER BY tbl_name = 'sqlite_sequence', rowid"#;
+
+        let res = query_internal!(
+            self,
+            query,
+            |row: &limbo_core::Row| -> Result<(), LimboError> {
+                let sql: &str = row.get::<&str>(2)?;
+                let name: &str = row.get::<&str>(0)?;
+                let _ = self.write_fmt(format_args!("{};", sql))?;
+                self.dump_table(name)
+            }
+        );
+
+        match res {
+            Ok(_) => Ok(()),
+            Err(LimboError::Corrupt(x)) => {
+                // FIXME: SQLite at this point retry the query with a different
+                // order by, but for simplicity we are just ignoring for now
+                self.writeln("/****** CORRUPTION ERROR *******/")?;
+                Err(LimboError::Corrupt(x))
+            }
+            Err(x) => Err(x),
+        }?;
+
+        self.conn.close()?;
+        self.writeln("COMMIT;")?;
+        Ok(())
     }
 
     fn display_in_memory(&mut self) -> io::Result<()> {
@@ -597,6 +701,11 @@ impl Limbo {
                     #[cfg(not(target_family = "wasm"))]
                     if let Err(e) = self.handle_load_extension(args[1]) {
                         let _ = self.writeln(&e);
+                    }
+                }
+                Command::Dump => {
+                    if let Err(e) = self.dump_database() {
+                        let _ = self.write_fmt(format_args!("/****** ERROR: {} ******/", e));
                     }
                 }
             }
