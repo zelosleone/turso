@@ -37,7 +37,7 @@ jobs:
           # Get yours from https://nyrkio.com/docs/getting-started
           nyrkio-token: ${{ secrets.STAGING_JWT_TOKEN }}
           nyrkio-api-root: https://staging.nyrkio.com/api/v0
-          nyrkio-org: nyrkio
+          # nyrkio-org: nyrkio
 
           # Old way...
           # Explicitly set this to null. We don't want threshold based alerts today.
