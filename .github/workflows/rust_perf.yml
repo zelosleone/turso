@@ -27,11 +27,11 @@ jobs:
 
       - name: Analyze benchmark result with Nyrkiö
         uses: nyrkio/github-action-benchmark@HEAD
-
         with:
           name: turso
           tool: criterion
           output-file-path: output.txt
+
           # What to do if a change is immediately detected by Nyrkiö.
           # Note that smaller changes are only detected with delay, usually after a change
           # persisted over 2-7 commits. Go to nyrkiö.com to view those or configure alerts.
