@@ -367,10 +367,11 @@ impl<Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> MvStore<Cloc
         assert_eq!(tx.state, TransactionState::Active);
         if let Some(row_versions) = self.rows.get(&id) {
             let row_versions = row_versions.value().read().unwrap();
-            for rv in row_versions
+            if let Some(rv) = row_versions
                 .iter()
                 .rev()
                 .filter(|rv| rv.is_visible_to(&tx, &self.txs))
+                .next()
             {
                 tx.insert_to_read_set(id);
                 return Ok(Some(rv.row.clone()));
