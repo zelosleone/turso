@@ -318,8 +318,9 @@ impl<Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> MvStore<Cloc
                     .ok_or(DatabaseError::NoSuchTransactionID(tx_id))?;
                 let tx = tx.value().read().unwrap();
                 assert_eq!(tx.state, TransactionState::Active);
-                let version_is_visible_to_current_tx = is_version_visible(&self.txs, &tx, rv);
-                if !version_is_visible_to_current_tx {
+                // A transaction cannot delete a version that it cannot see,
+                // nor can it conflict with it.
+                if !is_version_visible(&self.txs, &tx, rv) {
                     continue;
                 }
                 if is_write_write_conflict(&self.txs, &tx, rv) {
