@@ -320,7 +320,7 @@ impl<Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> MvStore<Cloc
                 assert_eq!(tx.state, TransactionState::Active);
                 // A transaction cannot delete a version that it cannot see,
                 // nor can it conflict with it.
-                if !is_version_visible(&self.txs, &tx, rv) {
+                if !rv.is_visible_to(&tx, &self.txs) {
                     continue;
                 }
                 if is_write_write_conflict(&self.txs, &tx, rv) {
@@ -367,11 +367,13 @@ impl<Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> MvStore<Cloc
         assert_eq!(tx.state, TransactionState::Active);
         if let Some(row_versions) = self.rows.get(&id) {
             let row_versions = row_versions.value().read().unwrap();
-            for rv in row_versions.iter().rev() {
-                if is_version_visible(&self.txs, &tx, rv) {
-                    tx.insert_to_read_set(id);
-                    return Ok(Some(rv.row.clone()));
-                }
+            for rv in row_versions
+                .iter()
+                .rev()
+                .filter(|rv| rv.is_visible_to(&tx, &self.txs))
+            {
+                tx.insert_to_read_set(id);
+                return Ok(Some(rv.row.clone()));
             }
         }
         Ok(None)
@@ -764,12 +766,14 @@ pub(crate) fn is_write_write_conflict<T>(
     }
 }
 
-pub(crate) fn is_version_visible<T>(
-    txs: &SkipMap<TxID, RwLock<Transaction>>,
-    tx: &Transaction,
-    rv: &RowVersion<T>,
-) -> bool {
-    is_begin_visible(txs, tx, rv) && is_end_visible(txs, tx, rv)
+impl<T> RowVersion<T> {
+    pub fn is_visible_to(
+        &self,
+        tx: &Transaction,
+        txs: &SkipMap<TxID, RwLock<Transaction>>,
+    ) -> bool {
+        is_begin_visible(txs, tx, self) && is_end_visible(txs, tx, self)
+    }
 }
 
 fn is_begin_visible<T>(
