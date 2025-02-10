@@ -1,9 +1,8 @@
 name: Rust Benchmarks+Nyrkiö
 
-# Pull request support isn't integrated to the github-action-benchmark so run only post-merge
 on:
   push:
-    branches: [ "main", "master", "notmain", "add-nyrkio" ]
+    branches: [ "main", "master", "notmain" ]
   pull_request:
     branches: [ "main", "notmain", "master" ]
 
@@ -41,12 +40,12 @@ jobs:
           output-file-path: output.txt
           # What to do if a change is immediately detected by Nyrkiö.
           # Note that smaller changes are only detected with delay, usually after a change
-          # persisted over 2-7 commits.
+          # persisted over 2-7 commits. Go to nyrkiö.com to view those or configure alerts.
           # Note that Nyrkiö will find all changes, also improvements. This means fail-on-alert
           # on pull events isn't compatible with this workflow being required to pass branch protection.
-          fail-on-alert: true
+          fail-on-alert: false
           comment-on-alert: true
-          comment-always: true
+          comment-always: false
           # Nyrkiö configuration
           nyrkio-enable: true
           # Make results and change points public, so that any oss contributor can see them
@@ -55,11 +54,16 @@ jobs:
           # Get yours from https://nyrkio.com/docs/getting-started
           nyrkio-token: ${{ secrets.STAGING_JWT_TOKEN }}
           nyrkio-api-root: https://staging.nyrkio.com/api/v0
-          # nyrkio-org: nyrkio
+          # Make results and change points public, so that any oss contributor can see them
+          nyrkio-public: true
           nyrkio-settings-pvalue: 0.01%
           nyrkio-settings-threshold: 1%
+          # Team support = results are visible and manageable to everyone in the same Github org
+          # nyrkio-org: tursodatabase
+          # nyrkio-org: nyrkio
 
           # Old way...
           # Explicitly set this to null. We don't want threshold based alerts today.
           external-data-json-path: null
           gh-repository: null
+
