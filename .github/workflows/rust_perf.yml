@@ -33,15 +33,25 @@ jobs:
           name: turso
           tool: criterion
           output-file-path: output.txt
+          # What to do if a change is immediately detected by Nyrkiö.
+          # Note that smaller changes are only detected with delay, usually after a change
+          # persisted over 2-7 commits.
+          # Note that Nyrkiö will find all changes, also improvements. This means fail-on-alert
+          # on pull events isn't compatible with this workflow being required to pass branch protection.
           fail-on-alert: true
+          comment-on-alert: true
+          comment-always: true
           # Nyrkiö configuration
           nyrkio-enable: true
           # Make results and change points public, so that any oss contributor can see them
           nyrkio-public: true
+
           # Get yours from https://nyrkio.com/docs/getting-started
           nyrkio-token: ${{ secrets.STAGING_JWT_TOKEN }}
           nyrkio-api-root: https://staging.nyrkio.com/api/v0
           # nyrkio-org: nyrkio
+          nyrkio-settings-pvalue: 0.01%
+          nyrkio-settings-threshold: 1%
 
           # Old way...
           # Explicitly set this to null. We don't want threshold based alerts today.
