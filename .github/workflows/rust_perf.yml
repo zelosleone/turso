@@ -34,6 +34,7 @@ jobs:
       - name: Analyze benchmark result with Nyrkiö
         uses: henrikingo/github-action-benchmark@HEAD
         # uses: nyrkio/github-action-benchmark@HEAD
+
         with:
           name: turso
           tool: criterion
