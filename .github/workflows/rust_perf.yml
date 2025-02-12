@@ -23,8 +23,13 @@ jobs:
       # - name: Install dependencies
       #   run: npm install && npm run build
 
-      - name: Bench
-        run: cargo bench  2>&1 | tee output.txt
+      # - name: Bench
+      #   run: cargo bench  2>&1 | tee output.txt
+      - name: Bench (fake)
+        run: |
+            pwd
+            ls
+            cp .github/data/limbo-cargo-output.txt output.txt
 
       - name: Analyze benchmark result with Nyrkiö
         uses: henrikingo/github-action-benchmark@HEAD
@@ -49,7 +54,7 @@ jobs:
           # Get yours from https://nyrkio.com/docs/getting-started
           nyrkio-token: ${{ secrets.STAGING_JWT_TOKEN }}
           nyrkio-api-root: https://staging.nyrkio.com/api/v0
-          # nyrkio-org: nyrkio
+          nyrkio-org: nyrkio
           nyrkio-settings-pvalue: 0.01%
           nyrkio-settings-threshold: 1%
 
