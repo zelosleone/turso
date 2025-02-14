@@ -430,6 +430,24 @@ pub enum Insn {
         num_regs: usize,
         target_pc: BranchOffset,
     },
+    
+    // The P4 register values beginning with P3 form an unpacked index key that omits the PRIMARY KEY. Compare this key value against the index that P1 is currently pointing to, ignoring the PRIMARY KEY or ROWID fields at the end.
+    // If the P1 index entry is lesser or equal than the key value then jump to P2. Otherwise fall through to the next instruction.
+    IdxLE {
+        cursor_id: CursorID,
+        start_reg: usize,
+        num_regs: usize,
+        target_pc: BranchOffset,
+    },
+
+    // The P4 register values beginning with P3 form an unpacked index key that omits the PRIMARY KEY. Compare this key value against the index that P1 is currently pointing to, ignoring the PRIMARY KEY or ROWID fields at the end.
+    // If the P1 index entry is lesser than the key value then jump to P2. Otherwise fall through to the next instruction.
+    IdxLT {
+        cursor_id: CursorID,
+        start_reg: usize,
+        num_regs: usize,
+        target_pc: BranchOffset,
+    },
 
     // Decrement the given register and jump to the given PC if the result is zero.
     DecrJumpZero {
