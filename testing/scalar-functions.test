@@ -535,6 +535,21 @@ do_execsql_test substr-2-args {
   SELECT substr('limbo', 3);
 } {mbo}
 
+do_execsql_test substr-cases {
+  SELECT substr('limbo', 0);
+  SELECT substr('limbo', 0, 3);
+  SELECT substr('limbo', -2);
+  SELECT substr('limbo', -2, 1);
+  SELECT substr('limbo', -10, 7);
+  SELECT substr('limbo', 10, -7);
+} {limbo
+li
+bo
+b
+li
+mbo
+}
+
 do_execsql_test substring-3-args {
   SELECT substring('limbo', 1, 3);
 } {lim}

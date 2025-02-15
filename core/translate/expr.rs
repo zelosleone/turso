@@ -1849,15 +1849,24 @@ pub fn translate_expr(
 
                     MathFuncArity::Binary => {
                         let args = expect_arguments_exact!(args, 2, math_func);
-                        let reg1 = program.alloc_register();
-                        let _ =
-                            translate_expr(program, referenced_tables, &args[0], reg1, resolver)?;
-                        let reg2 = program.alloc_register();
-                        let _ =
-                            translate_expr(program, referenced_tables, &args[1], reg2, resolver)?;
+                        let start_reg = program.alloc_registers(2);
+                        let _ = translate_expr(
+                            program,
+                            referenced_tables,
+                            &args[0],
+                            start_reg,
+                            resolver,
+                        )?;
+                        let _ = translate_expr(
+                            program,
+                            referenced_tables,
+                            &args[1],
+                            start_reg + 1,
+                            resolver,
+                        )?;
                         program.emit_insn(Insn::Function {
                             constant_mask: 0,
-                            start_reg: target_register + 1,
+                            start_reg,
                             dest: target_register,
                             func: func_ctx,
                         });
