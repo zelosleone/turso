@@ -461,7 +461,8 @@ Modifiers:
 | IdxDelete      | No     |         |
 | IdxGE          | Yes    |         |
 | IdxInsert      | No     |         |
-| IdxLT          | No     |         |
+| IdxLE          | Yes    |         |
+| IdxLT          | Yes    |         |
 | IdxRowid       | No     |         |
 | If             | Yes    |         |
 | IfNeg          | No     |         |

@@ -1411,6 +1411,30 @@ impl Program {
                         state.pc = target_pc.to_offset_int();
                     };
                 }
+                Insn::IdxLE {
+                    cursor_id,
+                    start_reg,
+                    num_regs,
+                    target_pc,
+                } => {
+                    assert!(target_pc.is_offset());
+                    let mut cursors = state.cursors.borrow_mut();
+                    let cursor = get_cursor_as_index_mut(&mut cursors, *cursor_id);
+                    let record_from_regs: Record =
+                        make_owned_record(&state.registers, start_reg, num_regs);
+                    if let Some(ref idx_record) = *cursor.record()? {
+                        // omit the rowid from the idx_record, which is the last value
+                        if idx_record.get_values()[..idx_record.len() - 1]
+                            <= record_from_regs.get_values()[..]
+                        {
+                            state.pc = target_pc.to_offset_int();
+                        } else {
+                            state.pc += 1;
+                        }
+                    } else {
+                        state.pc = target_pc.to_offset_int();
+                    };
+                }
                 Insn::IdxGT {
                     cursor_id,
                     start_reg,
@@ -1426,6 +1450,30 @@ impl Program {
                         // omit the rowid from the idx_record, which is the last value
                         if idx_record.get_values()[..idx_record.len() - 1]
                             > record_from_regs.get_values()[..]
+                        {
+                            state.pc = target_pc.to_offset_int();
+                        } else {
+                            state.pc += 1;
+                        }
+                    } else {
+                        state.pc = target_pc.to_offset_int();
+                    };
+                }
+                Insn::IdxLT {
+                    cursor_id,
+                    start_reg,
+                    num_regs,
+                    target_pc,
+                } => {
+                    assert!(target_pc.is_offset());
+                    let mut cursors = state.cursors.borrow_mut();
+                    let cursor = get_cursor_as_index_mut(&mut cursors, *cursor_id);
+                    let record_from_regs: Record =
+                        make_owned_record(&state.registers, start_reg, num_regs);
+                    if let Some(ref idx_record) = *cursor.record()? {
+                        // omit the rowid from the idx_record, which is the last value
+                        if idx_record.get_values()[..idx_record.len() - 1]
+                            < record_from_regs.get_values()[..]
                         {
                             state.pc = target_pc.to_offset_int();
                         } else {
