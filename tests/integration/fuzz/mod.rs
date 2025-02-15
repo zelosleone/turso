@@ -179,6 +179,111 @@ mod tests {
     }
 
     #[test]
+    pub fn math_expression_fuzz_run() {
+        let _ = env_logger::try_init();
+        let g = GrammarGenerator::new();
+        let (expr, expr_builder) = g.create_handle();
+        let (bin_op, bin_op_builder) = g.create_handle();
+        let (scalar, scalar_builder) = g.create_handle();
+        let (paren, paren_builder) = g.create_handle();
+
+        paren_builder
+            .concat("")
+            .push_str("(")
+            .push(expr)
+            .push_str(")")
+            .build();
+
+        bin_op_builder
+            .concat(" ")
+            .push(expr)
+            .push(
+                g.create()
+                    .choice()
+                    .options_str(["+", "-", "/", "*"])
+                    .build(),
+            )
+            .push(expr)
+            .build();
+
+        scalar_builder
+            .choice()
+            .option(
+                g.create()
+                    .concat("")
+                    .push(
+                        g.create()
+                            .choice()
+                            .options_str([
+                                "acos", "acosh", "asin", "asinh", "atan", "atanh", "ceil",
+                                "ceiling", "cos", "cosh", "degrees", "exp", "floor", "ln", "log",
+                                "log10", "log2", "radians", "sin", "sinh", "sqrt", "tan", "tanh",
+                                "trunc",
+                            ])
+                            .build(),
+                    )
+                    .push_str("(")
+                    .push(expr)
+                    .push_str(")")
+                    .build(),
+            )
+            .option(
+                g.create()
+                    .concat("")
+                    .push(
+                        g.create()
+                            .choice()
+                            .options_str(["atan2", "log", "mod", "pow", "power"])
+                            .build(),
+                    )
+                    .push_str("(")
+                    .push(g.create().concat("").push(expr).repeat(2..3, ", ").build())
+                    .push_str(")")
+                    .build(),
+            )
+            .build();
+
+        expr_builder
+            .choice()
+            .options_str(["-2.0", "-1.0", "0.0", "0.5", "1.0", "2.0"])
+            .option_w(bin_op, 10.0)
+            .option_w(paren, 10.0)
+            .option_w(scalar, 10.0)
+            .build();
+
+        let sql = g.create().concat(" ").push_str("SELECT").push(expr).build();
+
+        let db = TempDatabase::new_empty();
+        let limbo_conn = db.connect_limbo();
+        let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
+
+        let (mut rng, seed) = rng_from_time();
+        log::info!("seed: {}", seed);
+        for _ in 0..1024 {
+            let query = g.generate(&mut rng, sql, 50);
+            log::info!("query: {}", query);
+            let limbo = limbo_exec_row(&limbo_conn, &query);
+            let sqlite = sqlite_exec_row(&sqlite_conn, &query);
+            match (&limbo[0], &sqlite[0]) {
+                // compare only finite results because some evaluations are not so stable around infinity
+                (rusqlite::types::Value::Real(limbo), rusqlite::types::Value::Real(sqlite))
+                    if limbo.is_finite() && sqlite.is_finite() =>
+                {
+                    assert!(
+                        (limbo - sqlite).abs() < 1e-9
+                            || (limbo - sqlite) / (limbo.abs().max(sqlite.abs())) < 1e-9,
+                        "query: {}, limbo: {:?}, sqlite: {:?}",
+                        query,
+                        limbo,
+                        sqlite
+                    )
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
     pub fn string_expression_fuzz_run() {
         let _ = env_logger::try_init();
         let g = GrammarGenerator::new();

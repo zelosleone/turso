@@ -27,6 +27,8 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: Swatinem/rust-cache@v2
+      with:
+        prefix-key: "v1-rust" # can be updated if we need to reset caches due to non-trivial change in the dependencies (for example, custom env var were set for single workspace project)
     - name: Set up Python 3.10
       uses: actions/setup-python@v5
       with:
