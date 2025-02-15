@@ -1399,8 +1399,8 @@ impl Program {
                     let record_from_regs: Record =
                         make_owned_record(&state.registers, start_reg, num_regs);
                     if let Some(ref idx_record) = *cursor.record()? {
-                        // omit the rowid from the idx_record, which is the last value
-                        if idx_record.get_values()[..idx_record.len() - 1]
+                        // Compare against the same number of values
+                        if idx_record.get_values()[..record_from_regs.len()]
                             >= record_from_regs.get_values()[..]
                         {
                             state.pc = target_pc.to_offset_int();
@@ -1423,8 +1423,8 @@ impl Program {
                     let record_from_regs: Record =
                         make_owned_record(&state.registers, start_reg, num_regs);
                     if let Some(ref idx_record) = *cursor.record()? {
-                        // omit the rowid from the idx_record, which is the last value
-                        if idx_record.get_values()[..idx_record.len() - 1]
+                        // Compare against the same number of values
+                        if idx_record.get_values()[..record_from_regs.len()]
                             <= record_from_regs.get_values()[..]
                         {
                             state.pc = target_pc.to_offset_int();
@@ -1447,8 +1447,8 @@ impl Program {
                     let record_from_regs: Record =
                         make_owned_record(&state.registers, start_reg, num_regs);
                     if let Some(ref idx_record) = *cursor.record()? {
-                        // omit the rowid from the idx_record, which is the last value
-                        if idx_record.get_values()[..idx_record.len() - 1]
+                        // Compare against the same number of values
+                        if idx_record.get_values()[..record_from_regs.len()]
                             > record_from_regs.get_values()[..]
                         {
                             state.pc = target_pc.to_offset_int();
@@ -1471,8 +1471,8 @@ impl Program {
                     let record_from_regs: Record =
                         make_owned_record(&state.registers, start_reg, num_regs);
                     if let Some(ref idx_record) = *cursor.record()? {
-                        // omit the rowid from the idx_record, which is the last value
-                        if idx_record.get_values()[..idx_record.len() - 1]
+                        // Compare against the same number of values
+                        if idx_record.get_values()[..record_from_regs.len()]
                             < record_from_regs.get_values()[..]
                         {
                             state.pc = target_pc.to_offset_int();
