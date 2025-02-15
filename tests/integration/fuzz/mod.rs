@@ -151,7 +151,7 @@ mod tests {
     }
 
     #[test]
-    pub fn logical_expression_fuzz_ex1() {
+    pub fn fuzz_ex() {
         let _ = env_logger::try_init();
         let db = TempDatabase::new_empty();
         let limbo_conn = db.connect_limbo();
@@ -166,6 +166,7 @@ mod tests {
             "SELECT CASE ( NULL < NULL ) WHEN ( 0 ) THEN ( NULL ) ELSE ( 2.0 ) END;",
             "SELECT (COALESCE(0, COALESCE(0, 0)));",
             "SELECT CAST((1 > 0) AS INTEGER);",
+            "SELECT substr('ABC', -1)",
         ] {
             let limbo = limbo_exec_row(&limbo_conn, query);
             let sqlite = sqlite_exec_row(&sqlite_conn, query);
@@ -185,6 +186,20 @@ mod tests {
         let (bin_op, bin_op_builder) = g.create_handle();
         let (scalar, scalar_builder) = g.create_handle();
         let (paren, paren_builder) = g.create_handle();
+        let (number, number_builder) = g.create_handle();
+
+        number_builder
+            .choice()
+            .option_symbol(rand_int(-5..10))
+            .option(
+                g.create()
+                    .concat(" ")
+                    .push(number)
+                    .push(g.create().choice().options_str(["+", "-", "*"]).build())
+                    .push(number)
+                    .build(),
+            )
+            .build();
 
         paren_builder
             .concat("")
@@ -243,6 +258,37 @@ mod tests {
                     )
                     .push_str("(")
                     .push(expr)
+                    .push_str(")")
+                    .build(),
+            )
+            .option(
+                g.create()
+                    .concat("")
+                    .push(g.create().choice().options_str(["replace"]).build())
+                    .push_str("(")
+                    .push(g.create().concat("").push(expr).repeat(3..4, ", ").build())
+                    .push_str(")")
+                    .build(),
+            )
+            .option(
+                g.create()
+                    .concat("")
+                    .push(
+                        g.create()
+                            .choice()
+                            .options_str(["substr", "substring"])
+                            .build(),
+                    )
+                    .push_str("(")
+                    .push(expr)
+                    .push_str(", ")
+                    .push(
+                        g.create()
+                            .concat("")
+                            .push(number)
+                            .repeat(1..3, ", ")
+                            .build(),
+                    )
                     .push_str(")")
                     .build(),
             )
