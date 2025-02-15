@@ -93,3 +93,7 @@ test-sqlite3: limbo-c
 test-json:
 	SQLITE_EXEC=$(SQLITE_EXEC) ./testing/json.test
 .PHONY: test-json
+
+clickbench:
+	./perf/clickbench/benchmark.sh
+.PHONY: clickbench
