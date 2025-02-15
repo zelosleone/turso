@@ -92,3 +92,10 @@ jobs:
       - uses: "./.github/shared/install_sqlite"
       - name: Test
         run: SQLITE_EXEC="sqlite3" make test-compat
+
+  clickbench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Clickbench
+        run: make clickbench
