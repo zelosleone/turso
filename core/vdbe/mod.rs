@@ -2202,7 +2202,11 @@ impl Program {
                             ScalarFunc::Substr | ScalarFunc::Substring => {
                                 let str_value = &state.registers[*start_reg];
                                 let start_value = &state.registers[*start_reg + 1];
-                                let length_value = &state.registers[*start_reg + 2];
+                                let length_value = if func.arg_count == 3 {
+                                    Some(&state.registers[*start_reg + 2])
+                                } else {
+                                    None
+                                };
                                 let result = exec_substring(str_value, start_value, length_value);
                                 state.registers[*dest] = result;
                             }
@@ -3238,39 +3242,31 @@ fn exec_nullif(first_value: &OwnedValue, second_value: &OwnedValue) -> OwnedValu
 fn exec_substring(
     str_value: &OwnedValue,
     start_value: &OwnedValue,
-    length_value: &OwnedValue,
+    length_value: Option<&OwnedValue>,
 ) -> OwnedValue {
-    if let (OwnedValue::Text(str), OwnedValue::Integer(start), OwnedValue::Integer(length)) =
-        (str_value, start_value, length_value)
-    {
-        let start = *start as usize;
-        let str_len = str.as_str().len();
+    if let (OwnedValue::Text(str), OwnedValue::Integer(start)) = (str_value, start_value) {
+        let str_len = str.as_str().len() as i64;
 
-        if start > str_len {
-            return OwnedValue::build_text("");
-        }
-
-        let start_idx = start - 1;
-        let end = if *length != -1 {
-            start_idx + *length as usize
+        // The left-most character of X is number 1.
+        // If Y is negative then the first character of the substring is found by counting from the right rather than the left.
+        let first_position = if *start < 0 {
+            str_len.saturating_sub((*start).abs())
         } else {
-            str_len
+            *start - 1
         };
-        let substring = &str.as_str()[start_idx..end.min(str_len)];
-
-        OwnedValue::build_text(substring)
-    } else if let (OwnedValue::Text(str), OwnedValue::Integer(start)) = (str_value, start_value) {
-        let start = *start as usize;
-        let str_len = str.as_str().len();
-
-        if start > str_len {
-            return OwnedValue::build_text("");
-        }
-
-        let start_idx = start - 1;
-        let substring = &str.as_str()[start_idx..str_len];
-
-        OwnedValue::build_text(substring)
+        // If Z is negative then the abs(Z) characters preceding the Y-th character are returned.
+        let last_position = match length_value {
+            Some(OwnedValue::Integer(length)) => first_position + *length,
+            _ => str_len,
+        };
+        let (start, end) = if first_position <= last_position {
+            (first_position, last_position)
+        } else {
+            (last_position, first_position)
+        };
+        OwnedValue::build_text(
+            &str.as_str()[start.clamp(-0, str_len) as usize..end.clamp(0, str_len) as usize],
+        )
     } else {
         OwnedValue::Null
     }
