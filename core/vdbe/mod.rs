@@ -4341,7 +4341,7 @@ mod tests {
         let length_value = OwnedValue::Integer(3);
         let expected_val = OwnedValue::build_text("lim");
         assert_eq!(
-            exec_substring(&str_value, &start_value, &length_value),
+            exec_substring(&str_value, &start_value, Some(&length_value)),
             expected_val
         );
 
@@ -4350,7 +4350,7 @@ mod tests {
         let length_value = OwnedValue::Integer(10);
         let expected_val = OwnedValue::build_text("limbo");
         assert_eq!(
-            exec_substring(&str_value, &start_value, &length_value),
+            exec_substring(&str_value, &start_value, Some(&length_value)),
             expected_val
         );
 
@@ -4359,7 +4359,7 @@ mod tests {
         let length_value = OwnedValue::Integer(3);
         let expected_val = OwnedValue::build_text("");
         assert_eq!(
-            exec_substring(&str_value, &start_value, &length_value),
+            exec_substring(&str_value, &start_value, Some(&length_value)),
             expected_val
         );
 
@@ -4368,7 +4368,7 @@ mod tests {
         let length_value = OwnedValue::Null;
         let expected_val = OwnedValue::build_text("mbo");
         assert_eq!(
-            exec_substring(&str_value, &start_value, &length_value),
+            exec_substring(&str_value, &start_value, Some(&length_value)),
             expected_val
         );
 
@@ -4377,7 +4377,7 @@ mod tests {
         let length_value = OwnedValue::Null;
         let expected_val = OwnedValue::build_text("");
         assert_eq!(
-            exec_substring(&str_value, &start_value, &length_value),
+            exec_substring(&str_value, &start_value, Some(&length_value)),
             expected_val
         );
     }
