@@ -46,6 +46,7 @@ mod tests {
     }
 
     fn limbo_exec_rows(
+        db: &TempDatabase,
         conn: &Rc<limbo_core::Connection>,
         query: &str,
     ) -> Vec<Vec<rusqlite::types::Value>> {
@@ -59,7 +60,10 @@ mod tests {
                         let row = stmt.row().unwrap();
                         break row;
                     }
-                    limbo_core::StepResult::IO => continue,
+                    limbo_core::StepResult::IO => {
+                        db.io.run_once().unwrap();
+                        continue;
+                    }
                     limbo_core::StepResult::Done => break 'outer,
                     r => panic!("unexpected result {:?}: expecting single row", r),
                 }
@@ -90,7 +94,7 @@ mod tests {
             "SELECT ~1 >> 1536",
             "SELECT ~ + 3 << - ~ (~ (8)) - + -1 - 3 >> 3 + -6 * (-7 * 9 >> - 2)",
         ] {
-            let limbo = limbo_exec_rows(&limbo_conn, query);
+            let limbo = limbo_exec_rows(&db, &limbo_conn, query);
             let sqlite = sqlite_exec_rows(&sqlite_conn, query);
             assert_eq!(
                 limbo, sqlite,
@@ -152,7 +156,7 @@ mod tests {
         log::info!("seed: {}", seed);
         for _ in 0..1024 {
             let query = g.generate(&mut rng, sql, 50);
-            let limbo = limbo_exec_rows(&limbo_conn, &query);
+            let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
             let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
             assert_eq!(
                 limbo, sqlite,
@@ -179,7 +183,7 @@ mod tests {
             "SELECT (COALESCE(0, COALESCE(0, 0)));",
             "SELECT CAST((1 > 0) AS INTEGER);",
         ] {
-            let limbo = limbo_exec_rows(&limbo_conn, query);
+            let limbo = limbo_exec_rows(&db, &limbo_conn, query);
             let sqlite = sqlite_exec_rows(&sqlite_conn, query);
             assert_eq!(
                 limbo, sqlite,
@@ -286,7 +290,7 @@ mod tests {
         for _ in 0..1024 {
             let query = g.generate(&mut rng, sql, 50);
             log::info!("query: {}", query);
-            let limbo = limbo_exec_rows(&limbo_conn, &query);
+            let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
             let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
             assert_eq!(
                 limbo, sqlite,
@@ -463,7 +467,7 @@ mod tests {
         for _ in 0..1024 {
             let query = g.generate(&mut rng, sql, 50);
             log::info!("query: {}", query);
-            let limbo = limbo_exec_rows(&limbo_conn, &query);
+            let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
             let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
             assert_eq!(
                 limbo, sqlite,
@@ -479,14 +483,14 @@ mod tests {
 
         for queries in [[
             "CREATE TABLE t(x)",
-            // "INSERT INTO t VALUES (10)",
-            // "SELECT * FROM t WHERE  x = 1 AND 1 OR 0",
+            "INSERT INTO t VALUES (10)",
+            "SELECT * FROM t WHERE  x = 1 AND 1 OR 0",
         ]] {
             let db = TempDatabase::new_empty();
             let limbo_conn = db.connect_limbo();
             let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
             for query in queries.iter() {
-                let limbo = limbo_exec_rows(&limbo_conn, query);
+                let limbo = limbo_exec_rows(&db, &limbo_conn, query);
                 let sqlite = sqlite_exec_rows(&sqlite_conn, query);
                 assert_eq!(
                     limbo, sqlite,
@@ -497,7 +501,7 @@ mod tests {
         }
     }
 
-    // #[test]
+    #[test]
     pub fn table_logical_expression_fuzz_run() {
         let _ = env_logger::try_init();
         let g = GrammarGenerator::new();
@@ -580,7 +584,7 @@ mod tests {
         let limbo_conn = db.connect_limbo();
         let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
         assert_eq!(
-            limbo_exec_rows(&limbo_conn, "CREATE TABLE t(x, y, z)"),
+            limbo_exec_rows(&db, &limbo_conn, "CREATE TABLE t(x, y, z)"),
             sqlite_exec_rows(&sqlite_conn, "CREATE TABLE t(x, y, z)")
         );
         let (mut rng, seed) = rng_from_time();
@@ -590,7 +594,7 @@ mod tests {
             let (x, y, z) = (rng.next_u32(), rng.next_u32(), rng.next_u32());
             let query = format!("INSERT INTO t VALUES ({}, {}, {})", x, y, z);
             assert_eq!(
-                limbo_exec_rows(&limbo_conn, &query),
+                limbo_exec_rows(&db, &limbo_conn, &query),
                 sqlite_exec_rows(&sqlite_conn, &query)
             );
         }
@@ -605,7 +609,7 @@ mod tests {
         for _ in 0..128 {
             let query = g.generate(&mut rng, sql, 50);
             log::info!("query: {}", query);
-            let limbo = limbo_exec_rows(&limbo_conn, &query);
+            let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
             let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
             assert_eq!(
                 limbo, sqlite,
