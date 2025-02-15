@@ -278,9 +278,9 @@ mod tests {
         for _ in 0..1024 {
             let query = g.generate(&mut rng, sql, 50);
             log::info!("query: {}", query);
-            let limbo = limbo_exec_row(&limbo_conn, &query);
-            let sqlite = sqlite_exec_row(&sqlite_conn, &query);
-            match (&limbo[0], &sqlite[0]) {
+            let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
+            let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
+            match (&limbo[0][0], &sqlite[0][0]) {
                 // compare only finite results because some evaluations are not so stable around infinity
                 (rusqlite::types::Value::Real(limbo), rusqlite::types::Value::Real(sqlite))
                     if limbo.is_finite() && sqlite.is_finite() =>
