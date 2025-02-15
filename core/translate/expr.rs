@@ -197,6 +197,7 @@ pub fn translate_condition_expr(
                 referenced_tables,
                 lhs,
                 ConditionMetadata {
+                    jump_if_condition_is_true: false,
                     jump_target_when_true,
                     ..condition_metadata
                 },
