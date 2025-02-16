@@ -1430,6 +1430,12 @@ mod tests {
     #[case(&[], SerialType::ConstInt1, OwnedValue::Integer(1))]
     #[case(&[1, 2, 3], SerialType::Blob(3), OwnedValue::Blob(vec![1, 2, 3].into()))]
     #[case(&[65, 66, 67], SerialType::String(3), OwnedValue::build_text("ABC"))]
+    #[case(&[0x80], SerialType::Int8, OwnedValue::Integer(-128))]
+    #[case(&[0x80, 0], SerialType::BEInt16, OwnedValue::Integer(-32768))]
+    #[case(&[0x80, 0, 0], SerialType::BEInt24, OwnedValue::Integer(-8388608))]
+    #[case(&[0x80, 0, 0, 0], SerialType::BEInt32, OwnedValue::Integer(-2147483648))]
+    #[case(&[0x80, 0, 0, 0, 0, 0], SerialType::BEInt48, OwnedValue::Integer(-140737488355328))]
+    #[case(&[0x80, 0, 0, 0, 0, 0, 0, 0], SerialType::BEInt64, OwnedValue::Integer(-9223372036854775808))]
     fn test_read_value(
         #[case] buf: &[u8],
         #[case] serial_type: SerialType,
