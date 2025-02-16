@@ -1071,6 +1071,7 @@ impl BTreeCursor {
                         .borrow_mut()
                         .push(cell_buf.to_vec());
                     log::trace!(
+                    tracing::trace!(
                         "dropping divider cell from parent cell_idx={} count={}",
                         cell_idx,
                         parent_contents.cell_count()
@@ -1468,73 +1469,64 @@ impl BTreeCursor {
         };
 
         let offset = if is_page_1 { DATABASE_HEADER_SIZE } else { 0 };
-        let new_root_page = self.allocate_page(PageType::TableInterior, offset);
-        {
-            let current_root = self.stack.top();
-            let current_root_contents = current_root.get().contents.as_ref().unwrap();
 
-            let new_root_page_contents = new_root_page.get().contents.as_mut().unwrap();
-            if is_page_1 {
-                // Copy header
-                let current_root_buf = current_root_contents.as_ptr();
-                let new_root_buf = new_root_page_contents.as_ptr();
-                new_root_buf[0..DATABASE_HEADER_SIZE]
-                    .copy_from_slice(&current_root_buf[0..DATABASE_HEADER_SIZE]);
-            }
-            // point new root right child to previous root
-            new_root_page_contents.write_u32(
-                PAGE_HEADER_OFFSET_RIGHTMOST_PTR,
-                current_root.get().id as u32,
-            );
-            new_root_page_contents.write_u16(PAGE_HEADER_OFFSET_CELL_COUNT, 0);
-        }
+        let root = self.stack.top();
+        let root_contents = root.get_contents();
+        let child = self.allocate_page(root_contents.page_type(), 0);
 
-        /* swap split page buffer with new root buffer so we don't have to update page idx */
-        {
-            let (root_id, child_id, child) = {
-                let page_ref = self.stack.top();
-                let child = page_ref.clone();
+        tracing::debug!(
+            "Balancing root. root={}, rightmost={}",
+            root.get().id,
+            child.get().id
+        );
 
-                // Swap the entire Page structs
-                std::mem::swap(&mut child.get().id, &mut new_root_page.get().id);
-                // TODO:: shift bytes by offset to left on child because now child has offset 100
-                // and header bytes
-                // Also change the offset of page
-                //
-                if is_page_1 {
-                    // Remove header from child and set offset to 0
-                    let contents = child.get().contents.as_mut().unwrap();
-                    let (cell_pointer_offset, _) = contents.cell_pointer_array_offset_and_size();
-                    // change cell pointers
-                    for cell_idx in 0..contents.cell_count() {
-                        let cell_pointer_offset = cell_pointer_offset + (2 * cell_idx);
-                        let pc = contents.read_u16_no_offset(cell_pointer_offset);
-                        contents.write_u16_no_offset(cell_pointer_offset, pc as u16);
-                    }
+        self.pager.add_dirty(root.get().id);
+        self.pager.add_dirty(child.get().id);
 
-                    contents.offset = 0;
-                    let buf = contents.as_ptr();
-                    buf.copy_within(DATABASE_HEADER_SIZE.., 0);
-                }
+        let root_buf = root_contents.as_ptr();
+        let child_contents = child.get_contents();
+        let child_buf = child_contents.as_ptr();
+        let (root_pointer_start, root_pointer_len) =
+            root_contents.cell_pointer_array_offset_and_size();
+        let (child_pointer_start, _) = child.get_contents().cell_pointer_array_offset_and_size();
 
-                self.pager.add_dirty(new_root_page.get().id);
-                self.pager.add_dirty(child.get().id);
-                (new_root_page.get().id, child.get().id, child)
-            };
+        let top = root_contents.cell_content_area() as usize;
 
-            debug!("Balancing root. root={}, rightmost={}", root_id, child_id);
-            let root = new_root_page.clone();
+        // 1. Modify child
+        // Copy pointers
+        child_buf[child_pointer_start..child_pointer_start + root_pointer_len]
+            .copy_from_slice(&root_buf[root_pointer_start..root_pointer_start + root_pointer_len]);
+        // Copy cell contents
+        child_buf[top..].copy_from_slice(&root_buf[top..]);
+        // Copy header
+        child_buf[0..root_contents.header_size()]
+            .copy_from_slice(&root_buf[offset..offset + root_contents.header_size()]);
+        // Copy overflow cells
+        child_contents.overflow_cells = root_contents.overflow_cells.clone();
 
-            self.root_page = root_id;
-            self.stack.clear();
-            self.stack.push(root.clone());
-            // advance in order to maintain semantics
-            self.stack.advance();
-            self.stack.push(child.clone());
+        // 2. Modify root
+        let new_root_page_type = match root_contents.page_type() {
+            PageType::IndexLeaf => PageType::IndexInterior,
+            PageType::TableLeaf => PageType::TableInterior,
+            _ => unreachable!("invalid root non leaf page type"),
+        } as u8;
+        // set new page type
+        root_contents.write_u8(PAGE_HEADER_OFFSET_PAGE_TYPE, new_root_page_type);
+        root_contents.write_u32(PAGE_HEADER_OFFSET_RIGHTMOST_PTR, child.get().id as u32);
+        root_contents.write_u16(
+            PAGE_HEADER_OFFSET_CELL_CONTENT_AREA,
+            self.usable_space() as u16,
+        );
+        root_contents.write_u16(PAGE_HEADER_OFFSET_CELL_COUNT, 0);
+        root_contents.write_u16(PAGE_HEADER_OFFSET_FIRST_FREEBLOCK, 0);
 
-            self.pager.put_loaded_page(root_id, root);
-            self.pager.put_loaded_page(child_id, child);
-        }
+        root_contents.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, 0);
+        root_contents.overflow_cells.clear();
+        self.root_page = root.get().id;
+        self.stack.clear();
+        self.stack.push(root.clone());
+        self.stack.advance();
+        self.stack.push(child.clone());
     }
 
     /// Allocate a new page to the btree via the pager.
