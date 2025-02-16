@@ -1124,7 +1124,7 @@ impl BTreeCursor {
                         cell_array.cells.push(to_static_buf(cell_buf));
                     }
                     // Insert overflow cells into correct place
-                    let mut offset = total_cells_inserted;
+                    let offset = total_cells_inserted;
                     assert!(
                         old_page_contents.overflow_cells.len() <= 1,
                         "todo: check this works for more than one overflow cell"
@@ -1399,8 +1399,8 @@ impl BTreeCursor {
                 }
                 // TODO: update pages
                 let mut done = vec![false; sibling_count_new];
-                for i in (1 as i64 - sibling_count_new as i64)..sibling_count_new as i64 {
-                    let page_idx = i.abs() as usize;
+                for i in (1 - sibling_count_new as i64)..sibling_count_new as i64 {
+                    let page_idx = i.unsigned_abs() as usize;
                     if done[page_idx] {
                         continue;
                     }
@@ -2001,15 +2001,6 @@ impl PageStack {
         page
     }
 
-    /// Get the parent page of the current page.
-    fn parent(&self) -> PageRef {
-        let current = *self.current_page.borrow();
-        self.stack.borrow()[current as usize - 1]
-            .as_ref()
-            .unwrap()
-            .clone()
-    }
-
     /// Current page pointer being used
     fn current(&self) -> usize {
         *self.current_page.borrow() as usize
@@ -2254,7 +2245,7 @@ fn page_free_array(
     }
     Ok(number_of_cells_removed)
 }
-pub fn page_insert_array(
+fn page_insert_array(
     page: &mut PageContent,
     first: usize,
     count: usize,
