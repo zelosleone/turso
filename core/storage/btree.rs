@@ -1822,7 +1822,6 @@ impl BTreeCursor {
         };
         return_if_io!(self.move_to(SeekKey::TableRowId(*int_key as u64), SeekOp::EQ));
         let page = self.stack.top();
-        dbg!(page.get().id);
         // TODO(pere): request load
         return_if_locked!(page);
 
