@@ -2098,16 +2098,16 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> R
                     page_ref.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, frag);
                 }
                 pc += new_size as usize;
-                return Ok(pc);
             }
+            return Ok(pc);
         }
         prev_pc = pc;
+        pc = next as usize;
         if pc <= prev_pc && pc != 0 {
             return Err(LimboError::Corrupt(
                 "Free list not in ascending order".into(),
             ));
         }
-        pc = next as usize;
     }
     if pc > maxpc + amount - 4 {
         return Err(LimboError::Corrupt(
