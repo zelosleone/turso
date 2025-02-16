@@ -3553,7 +3553,6 @@ mod tests {
         let mut total_size = 0;
         let mut cells = Vec::new();
         let usable_space = 4096;
-        let total_cells = 10;
         let mut i = 1000;
         let seed = thread_rng().gen();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
@@ -3633,12 +3632,12 @@ mod tests {
 
         let record = Record::new(
             [
-                OwnedValue::Integer(0 as i64),
+                OwnedValue::Integer(0),
                 OwnedValue::Text(Text::new("aaaaaaaa")),
             ]
             .to_vec(),
         );
-        let payload = add_record(0, 0, page, record, &db);
+        let _ = add_record(0, 0, page, record, &db);
 
         assert_eq!(page.cell_count(), 1);
         drop_cell(page, 0, usable_space).unwrap();
@@ -3668,19 +3667,19 @@ mod tests {
 
         let record = Record::new(
             [
-                OwnedValue::Integer(0 as i64),
+                OwnedValue::Integer(0),
                 OwnedValue::Text(Text::new("aaaaaaaa")),
             ]
             .to_vec(),
         );
-        let payload = add_record(0, 0, page, record, &db);
+        let _ = add_record(0, 0, page, record, &db);
 
-        for i in 0..100 {
+        for _ in 0..100 {
             assert_eq!(page.cell_count(), 1);
             drop_cell(page, 0, usable_space).unwrap();
             assert_eq!(page.cell_count(), 0);
 
-            let record = Record::new([OwnedValue::Integer(0 as i64)].to_vec());
+            let record = Record::new([OwnedValue::Integer(0)].to_vec());
             let payload = add_record(0, 0, page, record, &db);
             assert_eq!(page.cell_count(), 1);
 
@@ -3703,11 +3702,11 @@ mod tests {
         let page = page.get_contents();
         let usable_space = 4096;
 
-        let record = Record::new([OwnedValue::Integer(0 as i64)].to_vec());
+        let record = Record::new([OwnedValue::Integer(0)].to_vec());
         let payload = add_record(0, 0, page, record, &db);
-        let record = Record::new([OwnedValue::Integer(1 as i64)].to_vec());
+        let record = Record::new([OwnedValue::Integer(1)].to_vec());
         let _ = add_record(1, 1, page, record, &db);
-        let record = Record::new([OwnedValue::Integer(2 as i64)].to_vec());
+        let record = Record::new([OwnedValue::Integer(2)].to_vec());
         let _ = add_record(2, 2, page, record, &db);
 
         drop_cell(page, 1, usable_space).unwrap();
@@ -3724,21 +3723,21 @@ mod tests {
         let page = page.get_contents();
         let usable_space = 4096;
 
-        let record = Record::new([OwnedValue::Integer(0 as i64)].to_vec());
+        let record = Record::new([OwnedValue::Integer(0)].to_vec());
         let _ = add_record(0, 0, page, record, &db);
 
-        let record = Record::new([OwnedValue::Integer(0 as i64)].to_vec());
+        let record = Record::new([OwnedValue::Integer(0)].to_vec());
         let _ = add_record(0, 0, page, record, &db);
         drop_cell(page, 0, usable_space).unwrap();
 
         defragment_page(page, usable_space);
 
-        let record = Record::new([OwnedValue::Integer(0 as i64)].to_vec());
+        let record = Record::new([OwnedValue::Integer(0)].to_vec());
         let _ = add_record(0, 1, page, record, &db);
 
         drop_cell(page, 0, usable_space).unwrap();
 
-        let record = Record::new([OwnedValue::Integer(0 as i64)].to_vec());
+        let record = Record::new([OwnedValue::Integer(0)].to_vec());
         let _ = add_record(0, 1, page, record, &db);
     }
 
