@@ -995,8 +995,11 @@ pub fn read_value(buf: &[u8], serial_type: &SerialType) -> Result<(OwnedValue, u
             if buf.len() < 3 {
                 crate::bail_corrupt_error!("Invalid BEInt24 value");
             }
+            let sign_extension = if buf[0] < 127 { 0 } else { 255 };
             Ok((
-                OwnedValue::Integer(i32::from_be_bytes([0, buf[0], buf[1], buf[2]]) as i64),
+                OwnedValue::Integer(
+                    i32::from_be_bytes([sign_extension, buf[0], buf[1], buf[2]]) as i64
+                ),
                 3,
             ))
         }
@@ -1013,9 +1016,17 @@ pub fn read_value(buf: &[u8], serial_type: &SerialType) -> Result<(OwnedValue, u
             if buf.len() < 6 {
                 crate::bail_corrupt_error!("Invalid BEInt48 value");
             }
+            let sign_extension = if buf[0] < 127 { 0 } else { 255 };
             Ok((
                 OwnedValue::Integer(i64::from_be_bytes([
-                    0, 0, buf[0], buf[1], buf[2], buf[3], buf[4], buf[5],
+                    sign_extension,
+                    sign_extension,
+                    buf[0],
+                    buf[1],
+                    buf[2],
+                    buf[3],
+                    buf[4],
+                    buf[5],
                 ])),
                 6,
             ))
