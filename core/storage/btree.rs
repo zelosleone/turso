@@ -1435,7 +1435,7 @@ impl BTreeCursor {
                             number_new_cells,
                             &cell_array,
                             self.usable_space() as u16,
-                        );
+                        )?;
                         tracing::trace!(
                             "edit_page page={} cells={}",
                             pages_to_balance_new[page_idx].get().id,
@@ -2312,7 +2312,7 @@ fn free_cell_range(
             if end > pc {
                 return Err(LimboError::Corrupt("Invalid block overlap".into()));
             }
-            end = pc + page.read_u16_no_offset(pc as usize);
+            end = pc + page.read_u16_no_offset(pc as usize + 2);
             if end > usable_space {
                 return Err(LimboError::Corrupt(
                     "Coalesced block extends beyond page".into(),
@@ -2345,7 +2345,7 @@ fn free_cell_range(
         if offset < page.cell_content_area() {
             return Err(LimboError::Corrupt("Free block before content area".into()));
         }
-        if offset != PAGE_HEADER_OFFSET_FIRST_FREEBLOCK as u16 {
+        if pointer_to_pc != page.offset as u16 + PAGE_HEADER_OFFSET_FIRST_FREEBLOCK as u16 {
             return Err(LimboError::Corrupt("Invalid content area merge".into()));
         }
         page.write_u16(PAGE_HEADER_OFFSET_FIRST_FREEBLOCK, pc);
@@ -2896,7 +2896,6 @@ mod tests {
 
     #[test]
     fn test_drop_1() {
-        set_breakpoint_panic();
         let db = get_database();
 
         let page = get_page(2);
@@ -3205,8 +3204,7 @@ mod tests {
         }
     }
     #[test]
-    fn test_drop_odd() {
-        set_breakpoint_panic();
+    pub fn test_drop_odd() {
         let db = get_database();
 
         let page = get_page(2);
@@ -3334,7 +3332,7 @@ mod tests {
     }
 
     #[test]
-    fn test_clear_overflow_pages() -> Result<()> {
+    pub fn test_clear_overflow_pages() -> Result<()> {
         let (pager, db_header) = setup_test_env(5);
         let cursor = BTreeCursor::new(pager.clone(), 1);
 
@@ -3431,7 +3429,7 @@ mod tests {
     }
 
     #[test]
-    fn test_clear_overflow_pages_no_overflow() -> Result<()> {
+    pub fn test_clear_overflow_pages_no_overflow() -> Result<()> {
         let (pager, db_header) = setup_test_env(5);
         let cursor = BTreeCursor::new(pager.clone(), 1);
 
@@ -3472,8 +3470,7 @@ mod tests {
         Ok(())
     }
     #[test]
-    fn test_defragment() {
-        set_breakpoint_panic();
+    pub fn test_defragment() {
         let db = get_database();
 
         let page = get_page(2);
@@ -3511,8 +3508,7 @@ mod tests {
     }
 
     #[test]
-    fn test_drop_odd_with_defragment() {
-        set_breakpoint_panic();
+    pub fn test_drop_odd_with_defragment() {
         let db = get_database();
 
         let page = get_page(2);
@@ -3556,8 +3552,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fuzz_drop_defragment_insert() {
-        set_breakpoint_panic();
+    pub fn test_fuzz_drop_defragment_insert() {
         let db = get_database();
 
         let page = get_page(2);
@@ -3614,7 +3609,7 @@ mod tests {
     }
 
     #[test]
-    fn test_defragment_1() {
+    pub fn test_defragment_1() {
         let db = get_database();
 
         let page = get_page(2);
@@ -3638,7 +3633,7 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_drop_insert() {
+    pub fn test_insert_drop_insert() {
         let db = get_database();
 
         let page = get_page(2);
@@ -3673,7 +3668,7 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_drop_insert_multiple() {
+    pub fn test_insert_drop_insert_multiple() {
         let db = get_database();
 
         let page = get_page(2);
@@ -3710,7 +3705,7 @@ mod tests {
     }
 
     #[test]
-    fn test_drop_a_few_insert() {
+    pub fn test_drop_a_few_insert() {
         let db = get_database();
 
         let page = get_page(2);
@@ -3731,8 +3726,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fuzz_victim_1() {
-        set_breakpoint_panic();
+    pub fn test_fuzz_victim_1() {
         let db = get_database();
 
         let page = get_page(2);
@@ -3758,7 +3752,7 @@ mod tests {
     }
 
     #[test]
-    fn btree_insert_sequential() {
+    pub fn btree_insert_sequential() {
         let (pager, root_page) = empty_btree();
         let mut keys = Vec::new();
         for i in 0..10000 {
@@ -3806,17 +3800,5 @@ mod tests {
                 }
             }
         }
-    }
-
-    fn set_breakpoint_panic() {
-        // Set custom panic hook at start of program
-        panic::set_hook(Box::new(|panic_info| {
-            unsafe {
-                std::arch::asm!("brk #0");
-            }
-
-            // Optionally print the panic info
-            eprintln!("Panic occurred: {:?}", panic_info);
-        }));
     }
 }
