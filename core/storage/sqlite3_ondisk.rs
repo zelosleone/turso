@@ -462,7 +462,7 @@ impl PageContent {
     }
 
     pub fn write_u16_no_offset(&self, pos: usize, value: u16) {
-        log::debug!("write_u16(pos={}, value={})", pos, value);
+        tracing::debug!("write_u16(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[pos..pos + 2].copy_from_slice(&value.to_be_bytes());
     }
