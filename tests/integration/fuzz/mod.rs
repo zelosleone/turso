@@ -4,7 +4,7 @@ pub mod grammar_generator;
 mod tests {
     use std::rc::Rc;
 
-    use rand::{RngCore, SeedableRng};
+    use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
     use rusqlite::params;
 
@@ -632,11 +632,18 @@ mod tests {
     pub fn table_logical_expression_fuzz_ex1() {
         let _ = env_logger::try_init();
 
-        for queries in [[
-            "CREATE TABLE t(x)",
-            "INSERT INTO t VALUES (10)",
-            "SELECT * FROM t WHERE  x = 1 AND 1 OR 0",
-        ]] {
+        for queries in [
+            [
+                "CREATE TABLE t(x)",
+                "INSERT INTO t VALUES (10)",
+                "SELECT * FROM t WHERE  x = 1 AND 1 OR 0",
+            ],
+            [
+                "CREATE TABLE t(x)",
+                "INSERT INTO t VALUES (-3258184727)",
+                "SELECT * FROM t",
+            ],
+        ] {
             let db = TempDatabase::new_empty();
             let limbo_conn = db.connect_limbo();
             let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
@@ -663,6 +670,15 @@ mod tests {
         let (in_op, in_op_builder) = g.create_handle();
         let (paren, paren_builder) = g.create_handle();
 
+        let number = g
+            .create()
+            .choice()
+            .option_symbol(rand_int(-0xff..0x100))
+            .option_symbol(rand_int(-0xffff..0x10000))
+            .option_symbol(rand_int(-0xffffff..0x1000000))
+            .option_symbol(rand_int(-0xffffffff..0x100000000))
+            .option_symbol(rand_int(-0xffffffffffff..0x1000000000000))
+            .build();
         value_builder
             .choice()
             .option(
@@ -673,7 +689,7 @@ mod tests {
                     .push_str(")")
                     .build(),
             )
-            .option_symbol(rand_int(0..i32::MAX))
+            .option(number)
             .options_str(["x", "y", "z"])
             .option(
                 g.create()
@@ -742,8 +758,13 @@ mod tests {
         log::info!("seed: {}", seed);
 
         for _ in 0..100 {
-            let (x, y, z) = (rng.next_u32(), rng.next_u32(), rng.next_u32());
+            let (x, y, z) = (
+                g.generate(&mut rng, number, 1),
+                g.generate(&mut rng, number, 1),
+                g.generate(&mut rng, number, 1),
+            );
             let query = format!("INSERT INTO t VALUES ({}, {}, {})", x, y, z);
+            log::info!("insert: {}", query);
             assert_eq!(
                 limbo_exec_rows(&db, &limbo_conn, &query),
                 sqlite_exec_rows(&sqlite_conn, &query)
