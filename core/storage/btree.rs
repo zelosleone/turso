@@ -1360,12 +1360,11 @@ impl BTreeCursor {
                         .write_u32(PAGE_HEADER_OFFSET_RIGHTMOST_PTR, right_pointer);
                 }
                 // TODO: pointer map update (vacuum support)
-                // TODO: insert divider cells in parent
                 for i in 0..sibling_count_new - 1
                 /* do not take last page */
                 {
                     let divider_cell_idx = cell_array.cell_count(i);
-                    let divider_cell = &mut cell_array.cells[divider_cell_idx];
+                    let mut divider_cell = &mut cell_array.cells[divider_cell_idx];
                     let page = &pages_to_balance_new[i];
                     // FIXME: dont use auxiliary space, could be done without allocations
                     let mut new_divider_cell = Vec::new();
@@ -1379,6 +1378,7 @@ impl BTreeCursor {
                         // FIXME: not needed conversion
                         // FIXME: need to update cell size in order to free correctly?
                         // insert into cell with correct range should be enough
+                        divider_cell = &mut cell_array.cells[divider_cell_idx - 1];
                         let (_, n_bytes_payload) = read_varint(divider_cell)?;
                         let (rowid, _) = read_varint(&divider_cell[n_bytes_payload..])?;
                         new_divider_cell.extend_from_slice(&(page.get().id as u32).to_be_bytes());
