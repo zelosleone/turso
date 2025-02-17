@@ -690,7 +690,6 @@ mod tests {
             .option_w(cast_expr, 1.0)
             .option_w(case_expr, 1.0)
             .option_w(cmp_op, 1.0)
-            // .option_w(in_op, 1.0)
             .options_str(["1", "0", "NULL", "2.0", "1.5", "-0.5", "-2.0", "(1 / 0)"])
             .build();
 
