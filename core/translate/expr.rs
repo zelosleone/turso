@@ -2144,6 +2144,10 @@ pub fn translate_expr(
     }
 }
 
+/// The base logic for translating LIKE and GLOB expressions.
+/// The logic for handling "NOT LIKE" is different depending on whether the expression
+/// is a conditional jump or not. This is why the caller handles the "NOT LIKE" behavior;
+/// see [translate_condition_expr] and [translate_expr] for implementations.
 fn translate_like_base(
     program: &mut ProgramBuilder,
     referenced_tables: Option<&[TableReference]>,
