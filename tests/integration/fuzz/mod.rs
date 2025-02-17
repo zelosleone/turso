@@ -871,16 +871,10 @@ mod tests {
         let limbo_conn = db.connect_limbo();
         let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
         for table in tables.iter() {
+            let query = format!("CREATE TABLE {} ({})", table.name, table.columns.join(", "));
             assert_eq!(
-                limbo_exec_rows(
-                    &db,
-                    &limbo_conn,
-                    &format!("CREATE TABLE {} ({})", table.name, table.columns.join(", "))
-                ),
-                sqlite_exec_rows(
-                    &sqlite_conn,
-                    &format!("CREATE TABLE {} ({})", table.name, table.columns.join(", "))
-                )
+                limbo_exec_rows(&db, &limbo_conn, &query),
+                sqlite_exec_rows(&sqlite_conn, &query)
             );
         }
 
