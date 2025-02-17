@@ -643,7 +643,15 @@ mod tests {
                     .concat(" ")
                     .push_str("(")
                     .push(column)
-                    .push(g.create().choice().options_str(["+", "-"]).build())
+                    .push(
+                        g.create()
+                            .choice()
+                            .options_str([
+                                "+", "-", "*", "/", "||", "=", "<>", ">", "<", ">=", "<=", "IS",
+                                "IS NOT",
+                            ])
+                            .build(),
+                    )
                     .push(column)
                     .push_str(")")
                     .build(),
