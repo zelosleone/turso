@@ -2775,6 +2775,7 @@ mod tests {
     use crate::types::Text;
     use crate::{BufferPool, DatabaseStorage, WalFile, WalFileShared, WriteCompletion};
     use std::cell::RefCell;
+    use std::ops::Deref;
     use std::panic;
     use std::rc::Rc;
     use std::sync::Arc;
@@ -3170,9 +3171,18 @@ mod tests {
                     size,
                     insert_id
                 );
+                run_until_done(
+                    || {
+                        let key = SeekKey::TableRowId(key as u64);
+                        cursor.move_to(key, SeekOp::EQ)
+                    },
+                    pager.deref(),
+                )
+                .unwrap();
+
                 let key = OwnedValue::Integer(key);
                 let value = Record::new(vec![OwnedValue::Blob(Rc::new(vec![0; size]))]);
-                cursor.insert(&key, &value, false).unwrap();
+                run_until_done(|| cursor.insert(&key, &value, true), pager.deref()).unwrap();
             }
             tracing::info!(
                 "=========== btree ===========\n{}\n\n",
@@ -3751,23 +3761,15 @@ mod tests {
             let key = OwnedValue::Integer(i);
             let value = Record::new(vec![OwnedValue::Integer(i)]);
             tracing::trace!("before insert {}", i);
-            loop {
-                let key = SeekKey::TableRowId(i as u64);
-                match cursor.move_to(key, SeekOp::EQ).unwrap() {
-                    CursorResult::Ok(_) => break,
-                    CursorResult::IO => {
-                        pager.io.run_once().unwrap();
-                    }
-                }
-            }
-            loop {
-                match cursor.insert(&key, &value, true).unwrap() {
-                    CursorResult::Ok(_) => break,
-                    CursorResult::IO => {
-                        pager.io.run_once().unwrap();
-                    }
-                }
-            }
+            run_until_done(
+                || {
+                    let key = SeekKey::TableRowId(i as u64);
+                    cursor.move_to(key, SeekOp::EQ)
+                },
+                pager.deref(),
+            )
+            .unwrap();
+            run_until_done(|| cursor.insert(&key, &value, true), pager.deref()).unwrap();
             keys.push(i);
         }
         if matches!(validate_btree(pager.clone(), root_page), (_, false)) {
@@ -3780,14 +3782,21 @@ mod tests {
         for key in keys.iter() {
             let mut cursor = BTreeCursor::new(pager.clone(), root_page);
             let key = OwnedValue::Integer(*key);
-            loop {
-                match cursor.exists(&key).unwrap() {
-                    CursorResult::Ok(exists) => {
-                        assert!(exists, "key {} is not found", key);
-                        break;
-                    }
-                    CursorResult::IO => pager.io.run_once().unwrap(),
+            let exists = run_until_done(|| cursor.exists(&key), pager.deref()).unwrap();
+            assert!(exists, "key not found {}", key);
+        }
+    }
+
+    fn run_until_done<T>(
+        mut action: impl FnMut() -> Result<CursorResult<T>>,
+        pager: &Pager,
+    ) -> Result<T> {
+        loop {
+            match action()? {
+                CursorResult::Ok(res) => {
+                    return Ok(res);
                 }
+                CursorResult::IO => pager.io.run_once().unwrap(),
             }
         }
     }
