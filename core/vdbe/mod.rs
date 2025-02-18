@@ -403,6 +403,28 @@ macro_rules! must_be_btree_cursor {
     }};
 }
 
+/// Reference:
+/// https://github.com/sqlite/sqlite/blob/master/src/util.c#L798
+enum CastTextToIntResultCode {
+    NotInt = -1,
+    Success = 0,
+    ExcessSpace = 1,
+    #[allow(dead_code)]
+    TooLargeOrMalformed = 2,
+    #[allow(dead_code)]
+    SpecialCase = 3,
+}
+
+/// Reference
+/// https://github.com/sqlite/sqlite/blob/master/src/util.c#L529
+enum CastTextToRealResultCode {
+    PureInt = 1,
+    HasDecimal = 2,
+    NotValid = 0,
+    #[allow(dead_code)]
+    NotValidButPrefix = -1,
+}
+
 #[derive(Debug)]
 pub struct Program {
     pub max_registers: usize,
@@ -3544,9 +3566,9 @@ fn exec_cast(value: &OwnedValue, datatype: &str) -> OwnedValue {
             OwnedValue::Blob(b) => {
                 // Convert BLOB to TEXT first
                 let text = String::from_utf8_lossy(b);
-                cast_text_to_real(&text)
+                cast_text_to_real(&text).0
             }
-            OwnedValue::Text(t) => cast_text_to_real(t.as_str()),
+            OwnedValue::Text(t) => cast_text_to_real(t.as_str()).0,
             OwnedValue::Integer(i) => OwnedValue::Float(*i as f64),
             OwnedValue::Float(f) => OwnedValue::Float(*f),
             _ => OwnedValue::Float(0.0),
@@ -3555,9 +3577,9 @@ fn exec_cast(value: &OwnedValue, datatype: &str) -> OwnedValue {
             OwnedValue::Blob(b) => {
                 // Convert BLOB to TEXT first
                 let text = String::from_utf8_lossy(b);
-                cast_text_to_integer(&text)
+                cast_text_to_integer(&text).0
             }
-            OwnedValue::Text(t) => cast_text_to_integer(t.as_str()),
+            OwnedValue::Text(t) => cast_text_to_integer(t.as_str()).0,
             OwnedValue::Integer(i) => OwnedValue::Integer(*i),
             // A cast of a REAL value into an INTEGER results in the integer between the REAL value and zero
             // that is closest to the REAL value. If a REAL is greater than the greatest possible signed integer (+9223372036854775807)
@@ -3629,48 +3651,68 @@ fn exec_replace(source: &OwnedValue, pattern: &OwnedValue, replacement: &OwnedVa
 /// When casting to INTEGER, if the text looks like a floating point value with an exponent, the exponent will be ignored
 /// because it is no part of the integer prefix. For example, "CAST('123e+5' AS INTEGER)" results in 123, not in 12300000.
 /// The CAST operator understands decimal integers only — conversion of hexadecimal integers stops at the "x" in the "0x" prefix of the hexadecimal integer string and thus result of the CAST is always zero.
-fn cast_text_to_integer(text: &str) -> OwnedValue {
+fn cast_text_to_integer(text: &str) -> (OwnedValue, CastTextToIntResultCode) {
     let text = text.trim();
     if text.is_empty() {
-        return OwnedValue::Integer(0);
+        return (OwnedValue::Integer(0), CastTextToIntResultCode::NotInt);
     }
     if let Ok(i) = text.parse::<i64>() {
-        return OwnedValue::Integer(i);
+        // Compare if the text value has more characters that the number of digits + the sign in the parsed int
+        if i.to_string().len() < text.len() {
+            // Means it was probably casted from a real or some malformed number.
+            return (OwnedValue::Integer(i), CastTextToIntResultCode::ExcessSpace);
+        }
+
+        return (OwnedValue::Integer(i), CastTextToIntResultCode::Success);
     }
     // Try to find longest valid prefix that parses as an integer
     // TODO: inefficient
     let mut end_index = text.len().saturating_sub(1) as isize;
     while end_index >= 0 {
         if let Ok(i) = text[..=end_index as usize].parse::<i64>() {
-            return OwnedValue::Integer(i);
+            // Compare if the text value has more characters that the number of digits + the sign in the parsed int
+            if i.to_string().len() < text.len() {
+                // Means it was probably casted from a real or some malformed number.
+                return (OwnedValue::Integer(i), CastTextToIntResultCode::ExcessSpace);
+            }
+
+            return (OwnedValue::Integer(i), CastTextToIntResultCode::Success);
         }
         end_index -= 1;
     }
-    OwnedValue::Integer(0)
+    return (OwnedValue::Integer(0), CastTextToIntResultCode::NotInt);
 }
 
 /// When casting a TEXT value to REAL, the longest possible prefix of the value that can be interpreted
 /// as a real number is extracted from the TEXT value and the remainder ignored. Any leading spaces in
 /// the TEXT value are ignored when converging from TEXT to REAL.
 /// If there is no prefix that can be interpreted as a real number, the result of the conversion is 0.0.
-fn cast_text_to_real(text: &str) -> OwnedValue {
+fn cast_text_to_real(text: &str) -> (OwnedValue, CastTextToRealResultCode) {
     let trimmed = text.trim_start();
     if trimmed.is_empty() {
-        return OwnedValue::Float(0.0);
+        return (OwnedValue::Float(0.0), CastTextToRealResultCode::NotValid);
     }
     if let Ok(num) = trimmed.parse::<f64>() {
-        return OwnedValue::Float(num);
+        if num.fract() == 0.0 {
+            return (OwnedValue::Float(num), CastTextToRealResultCode::PureInt);
+        }
+
+        return (OwnedValue::Float(num), CastTextToRealResultCode::HasDecimal);
     }
     // Try to find longest valid prefix that parses as a float
     // TODO: inefficient
     let mut end_index = trimmed.len().saturating_sub(1) as isize;
     while end_index >= 0 {
         if let Ok(num) = trimmed[..=end_index as usize].parse::<f64>() {
-            return OwnedValue::Float(num);
+            if num.fract() == 0.0 {
+                return (OwnedValue::Float(num), CastTextToRealResultCode::PureInt);
+            }
+
+            return (OwnedValue::Float(num), CastTextToRealResultCode::HasDecimal);
         }
         end_index -= 1;
     }
-    OwnedValue::Float(0.0)
+    return (OwnedValue::Float(0.0), CastTextToRealResultCode::NotValid);
 }
 
 /// NUMERIC Casting a TEXT or BLOB value into NUMERIC yields either an INTEGER or a REAL result.
@@ -3700,9 +3742,27 @@ fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValue, (
     Err(())
 }
 
-// try casting to numeric if not possible return integer 0
+/// Reference for function definition
+/// https://github.com/sqlite/sqlite/blob/eb3a069fc82e53a40ea63076d66ab113a3b2b0c6/src/vdbe.c#L465
 fn cast_text_to_numeric(text: &str) -> OwnedValue {
-    checked_cast_text_to_numeric(text).unwrap_or(OwnedValue::Integer(0))
+    let (real_cast, rc_real) = cast_text_to_real(text);
+    let (int_cast, rc_int) = cast_text_to_integer(text);
+    match (rc_real, rc_int) {
+        (
+            CastTextToRealResultCode::NotValid,
+            CastTextToIntResultCode::ExcessSpace
+            | CastTextToIntResultCode::Success
+            | CastTextToIntResultCode::NotInt,
+        ) => int_cast,
+        (CastTextToRealResultCode::NotValidButPrefix, _) => real_cast,
+        (
+            CastTextToRealResultCode::NotValid,
+            CastTextToIntResultCode::TooLargeOrMalformed | CastTextToIntResultCode::SpecialCase,
+        ) => real_cast,
+        (CastTextToRealResultCode::PureInt, CastTextToIntResultCode::Success) => int_cast,
+        // CastTextToRealResultCode::NotValid => (),
+        _ => real_cast,
+    }
 }
 
 // Check if float can be losslessly converted to 51-bit integer
