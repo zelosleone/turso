@@ -19,7 +19,7 @@ pub struct KVStoreVTab;
 /// The cursor holds a snapshot of (rowid, key, value) in memory.
 pub struct KVStoreCursor {
     rows: Vec<(i64, String, String)>,
-    index: usize,
+    index: Option<usize>,
 }
 
 /// Implementing the VTabModule trait for KVStoreVTab
@@ -36,7 +36,7 @@ impl VTabModule for KVStoreVTab {
     fn open(&self) -> Result<Self::VCursor, Self::Error> {
         Ok(KVStoreCursor {
             rows: Vec::new(),
-            index: 0,
+            index: None,
         })
     }
 
@@ -44,10 +44,16 @@ impl VTabModule for KVStoreVTab {
         let store = GLOBAL_STORE.lock().unwrap();
         cursor.rows = store
             .iter()
-            .map(|(&rowid, (ref key, ref val))| (rowid, key.clone(), val.clone()))
+            .map(|(&rowid, (k, v))| (rowid, k.clone(), v.clone()))
             .collect();
         cursor.rows.sort_by_key(|(rowid, _, _)| *rowid);
-        cursor.index = 0;
+
+        if cursor.rows.is_empty() {
+            cursor.index = None;
+            return ResultCode::EOF;
+        } else {
+            cursor.index = Some(0);
+        }
         ResultCode::OK
     }
 
@@ -85,22 +91,22 @@ impl VTabModule for KVStoreVTab {
         Ok(())
     }
     fn eof(cursor: &Self::VCursor) -> bool {
-        cursor.index >= cursor.rows.len()
+        cursor.index.is_some_and(|s| s >= cursor.rows.len()) || cursor.index.is_none()
     }
 
     fn next(cursor: &mut Self::VCursor) -> ResultCode {
-        cursor.index += 1;
-        if cursor.index >= cursor.rows.len() {
+        cursor.index = Some(cursor.index.unwrap_or(0) + 1);
+        if cursor.index.is_some_and(|c| c >= cursor.rows.len()) {
             return ResultCode::EOF;
         }
         ResultCode::OK
     }
 
     fn column(cursor: &Self::VCursor, idx: u32) -> Result<Value, Self::Error> {
-        if cursor.index >= cursor.rows.len() {
+        if cursor.index.is_some_and(|c| c >= cursor.rows.len()) {
             return Err("cursor out of range".into());
         }
-        let (_, ref key, ref val) = cursor.rows[cursor.index];
+        let (_, ref key, ref val) = cursor.rows[cursor.index.unwrap_or(0)];
         match idx {
             0 => Ok(Value::from_text(key.clone())), // key
             1 => Ok(Value::from_text(val.clone())), // value
@@ -120,8 +126,8 @@ impl VTabCursor for KVStoreCursor {
     type Error = String;
 
     fn rowid(&self) -> i64 {
-        if self.index < self.rows.len() {
-            self.rows[self.index].0
+        if self.index.is_some_and(|c| c < self.rows.len()) {
+            self.rows[self.index.unwrap_or(0)].0
         } else {
             println!("rowid: -1");
             -1

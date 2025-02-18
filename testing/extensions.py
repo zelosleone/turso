@@ -507,6 +507,30 @@ def test_kv(pipe):
         lambda res: "" == res,
         "proper data is deleted",
     )
+    run_test(
+        pipe,
+        "select * from t;",
+        lambda res: "other|value" == res,
+        "can select after deletion",
+    )
+    run_test(
+        pipe,
+        "delete from t where key = 'other';",
+        returns_null,
+        "can delete from kv_store",
+    )
+    run_test(
+        pipe,
+        "select * from t;",
+        lambda res: "" == res,
+        "can select empty table without error",
+    )
+    run_test(
+        pipe,
+        "delete from t;",
+        returns_null,
+        "can delete from empty table without error",
+    )
 
 
 def main():
