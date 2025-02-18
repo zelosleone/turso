@@ -273,12 +273,15 @@ impl<'a> Limbo<'a> {
     fn dump_table(&mut self, name: &str) -> Result<(), LimboError> {
         let query = format!("pragma table_info={}", name);
         let mut cols = vec![];
+        let mut value_types = vec![];
         query_internal!(
             self,
             query,
             |row: &limbo_core::Row| -> Result<(), LimboError> {
                 let name: &str = row.get::<&str>(1)?;
                 cols.push(name.to_string());
+                let value_type: &str = row.get::<&str>(2)?;
+                value_types.push(value_type.to_string());
                 Ok(())
             }
         )?;
@@ -294,7 +297,20 @@ impl<'a> Limbo<'a> {
                 let values = row
                     .get_values()
                     .into_iter()
-                    .map(|x| x.to_string())
+                    .zip(value_types.iter())
+                    .map(|(value, value_type)| {
+                        // If the type affinity is TEXT, replace each single
+                        // quotation mark with two single quotation marks, and
+                        // wrap it with single quotation marks.
+                        if value_type.contains("CHAR")
+                            || value_type.contains("CLOB")
+                            || value_type.contains("TEXT")
+                        {
+                            format!("'{}'", value.to_string().replace("'", "''"))
+                        } else {
+                            value.to_string()
+                        }
+                    })
                     .collect::<Vec<_>>()
                     .join(",");
                 let _ = self.write_fmt(format_args!("INSERT INTO {} VALUES({});", name, values))?;
