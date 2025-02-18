@@ -739,6 +739,7 @@ do_execsql_test zeroblob-blob {
 } {1}
 
 # CAST tests - INTEGER affinity
+
 do_execsql_test cast-text-to-integer {
   SELECT CAST('123' AS INTEGER);
 } {123}
@@ -746,6 +747,10 @@ do_execsql_test cast-text-to-integer {
 do_execsql_test cast-text-with-spaces-to-integer {
   SELECT CAST('  123  ' AS INTEGER);
 } {123}
+
+do_execsql_test cast-text-with-trailing-junk-to-integer {
+  SELECT CAST('1abc' AS INTEGER);
+} {1}
 
 do_execsql_test cast-invalid-text-to-integer {
   SELECT CAST('abc' AS INTEGER);
