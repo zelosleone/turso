@@ -25,11 +25,11 @@ jobs:
 
       # - name: Bench
       #   run: cargo bench  2>&1 | tee output.txt
-        - name: Bench (fake)
-          run: |
-             pwd
-             ls
-             cp .github/data/limbo-cargo-output.txt output.txt
+      - name: Bench (fake)
+        run: |
+            pwd
+            ls
+            cp .github/data/limbo-cargo-output.txt output.txt
 
       - name: Analyze benchmark result with Nyrkiö
         uses: henrikingo/github-action-benchmark@HEAD
