@@ -531,6 +531,15 @@ def test_kv(pipe):
         returns_null,
         "can delete from empty table without error",
     )
+    for i in range(100):
+        write_to_pipe(pipe, f"insert into t values ('key{i}', 'val{i}');")
+    run_test(
+        pipe, "select count(*) from t;", lambda res: "100" == res, "can insert 100 rows"
+    )
+    run_test(pipe, "delete from t limit 96;", returns_null, "can delete 96 rows")
+    run_test(
+        pipe, "select count(*) from t;", lambda res: "4" == res, "four rows remain"
+    )
 
 
 def main():

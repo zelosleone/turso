@@ -16,13 +16,12 @@ register_extension! {
 #[derive(VTabModuleDerive, Default)]
 pub struct KVStoreVTab;
 
-/// The cursor holds a snapshot of (rowid, key, value) in memory.
+/// the cursor holds a snapshot of (rowid, key, value) in memory.
 pub struct KVStoreCursor {
     rows: Vec<(i64, String, String)>,
     index: Option<usize>,
 }
 
-/// Implementing the VTabModule trait for KVStoreVTab
 impl VTabModule for KVStoreVTab {
     type VCursor = KVStoreCursor;
     const VTAB_KIND: VTabKind = VTabKind::VirtualTable;
