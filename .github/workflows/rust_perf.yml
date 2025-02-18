@@ -56,11 +56,8 @@ jobs:
           # Make results and change points public, so that any oss contributor can see them
           nyrkio-public: true
 
-          # Get yours from https://nyrkio.com/docs/getting-started
-          nyrkio-token: ${{ secrets.STAGING_JWT_TOKEN }}
           nyrkio-api-root: https://staging.nyrkio.com/api/v0
           # Make results and change points public, so that any oss contributor can see them
-          nyrkio-public: true
           nyrkio-settings-pvalue: 0.01%
           nyrkio-settings-threshold: 1%
           # Team support = results are visible and manageable to everyone in the same Github org
