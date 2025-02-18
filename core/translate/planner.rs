@@ -376,9 +376,12 @@ fn parse_from_clause_table<'a>(
                 .push(TableReference::new_subquery(identifier, subplan, None));
             Ok(())
         }
-        ast::SelectTable::TableCall(qualified_name, ref maybe_args, maybe_alias) => {
+        ast::SelectTable::TableCall(qualified_name, maybe_args, maybe_alias) => {
             let normalized_name = &normalize_ident(qualified_name.name.0.as_str());
-            let args = vtable_args(maybe_args.as_ref().unwrap_or(&vec![]).as_slice());
+            let args = match maybe_args {
+                Some(ref args) => vtable_args(args),
+                None => vec![],
+            };
             let vtab = crate::VirtualTable::from_args(
                 None,
                 normalized_name,

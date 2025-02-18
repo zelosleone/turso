@@ -532,7 +532,7 @@ impl VirtualTable {
         args: Vec<limbo_ext::Value>,
         syms: &SymbolTable,
         kind: VTabKind,
-        exprs: &Option<Vec<ast::Expr>>,
+        exprs: Option<Vec<ast::Expr>>,
     ) -> Result<Rc<Self>> {
         let module = syms
             .vtab_modules
@@ -559,7 +559,7 @@ impl VirtualTable {
                 name: tbl_name.unwrap_or(module_name).to_owned(),
                 implementation: module.implementation.clone(),
                 columns,
-                args: exprs.clone(),
+                args: exprs,
             });
             return Ok(vtab);
         }

@@ -906,7 +906,7 @@ impl Program {
                         args,
                         &conn.db.syms.borrow(),
                         limbo_ext::VTabKind::VirtualTable,
-                        &None,
+                        None,
                     )?;
                     {
                         conn.db
