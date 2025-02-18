@@ -33,6 +33,7 @@ use crate::functions::printf::exec_printf;
 use crate::info;
 use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
+use crate::schema::{affinity, Affinity};
 use crate::storage::sqlite3_ondisk::DatabaseHeader;
 use crate::storage::wal::CheckpointResult;
 use crate::storage::{btree::BTreeCursor, pager::Pager};
@@ -3618,47 +3619,6 @@ fn exec_replace(source: &OwnedValue, pattern: &OwnedValue, replacement: &OwnedVa
         }
         _ => unreachable!("text cast should never fail"),
     }
-}
-
-enum Affinity {
-    Integer,
-    Text,
-    Blob,
-    Real,
-    Numeric,
-}
-
-/// For tables not declared as STRICT, the affinity of a column is determined by the declared type of the column, according to the following rules in the order shown:
-/// If the declared type contains the string "INT" then it is assigned INTEGER affinity.
-/// If the declared type of the column contains any of the strings "CHAR", "CLOB", or "TEXT" then that column has TEXT affinity. Notice that the type VARCHAR contains the string "CHAR" and is thus assigned TEXT affinity.
-/// If the declared type for a column contains the string "BLOB" or if no type is specified then the column has affinity BLOB.
-/// If the declared type for a column contains any of the strings "REAL", "FLOA", or "DOUB" then the column has REAL affinity.
-/// Otherwise, the affinity is NUMERIC.
-/// Note that the order of the rules for determining column affinity is important. A column whose declared type is "CHARINT" will match both rules 1 and 2 but the first rule takes precedence and so the column affinity will be INTEGER.
-fn affinity(datatype: &str) -> Affinity {
-    // Note: callers of this function must ensure that the datatype is uppercase.
-    // Rule 1: INT -> INTEGER affinity
-    if datatype.contains("INT") {
-        return Affinity::Integer;
-    }
-
-    // Rule 2: CHAR/CLOB/TEXT -> TEXT affinity
-    if datatype.contains("CHAR") || datatype.contains("CLOB") || datatype.contains("TEXT") {
-        return Affinity::Text;
-    }
-
-    // Rule 3: BLOB or empty -> BLOB affinity (historically called NONE)
-    if datatype.contains("BLOB") || datatype.is_empty() {
-        return Affinity::Blob;
-    }
-
-    // Rule 4: REAL/FLOA/DOUB -> REAL affinity
-    if datatype.contains("REAL") || datatype.contains("FLOA") || datatype.contains("DOUB") {
-        return Affinity::Real;
-    }
-
-    // Rule 5: Otherwise -> NUMERIC affinity
-    Affinity::Numeric
 }
 
 /// When casting a TEXT value to INTEGER, the longest possible prefix of the value that can be interpreted as an integer number
