@@ -3760,7 +3760,6 @@ fn cast_text_to_numeric(text: &str) -> OwnedValue {
             CastTextToIntResultCode::TooLargeOrMalformed | CastTextToIntResultCode::SpecialCase,
         ) => real_cast,
         (CastTextToRealResultCode::PureInt, CastTextToIntResultCode::Success) => int_cast,
-        // CastTextToRealResultCode::NotValid => (),
         _ => real_cast,
     }
 }
