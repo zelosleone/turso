@@ -26,7 +26,7 @@ import tech.turso.annotations.Nullable;
 import tech.turso.annotations.SkipNullableCheck;
 import tech.turso.core.LimboResultSet;
 
-public final class JDBC4ResultSet implements ResultSet, ResultSetMetaData{
+public final class JDBC4ResultSet implements ResultSet, ResultSetMetaData {
 
   private final LimboResultSet resultSet;
 
@@ -310,10 +310,8 @@ public final class JDBC4ResultSet implements ResultSet, ResultSetMetaData{
   }
 
   @Override
-  @SkipNullableCheck
   public ResultSetMetaData getMetaData() throws SQLException {
-    // TODO
-    return null;
+    return this;
   }
 
   @Override
@@ -1183,8 +1181,7 @@ public final class JDBC4ResultSet implements ResultSet, ResultSetMetaData{
 
   @Override
   public int getColumnCount() throws SQLException {
-    // TODO
-    return 0;
+    return this.resultSet.getColumnNames().length;
   }
 
   @Override
