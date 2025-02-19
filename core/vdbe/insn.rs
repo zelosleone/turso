@@ -688,10 +688,6 @@ pub enum Cookie {
     UserVersion = 6,
 }
 
-// fn cast_text_to_numeric(value: &str) -> OwnedValue {
-//     cast_text_to_numeric(value)
-// }
-
 pub fn exec_add(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
     if let OwnedValue::Agg(agg) = lhs {
         lhs = agg.final_value();
