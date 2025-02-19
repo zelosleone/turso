@@ -26,7 +26,7 @@ import tech.turso.annotations.Nullable;
 import tech.turso.annotations.SkipNullableCheck;
 import tech.turso.core.LimboResultSet;
 
-public class JDBC4ResultSet implements ResultSet {
+public final class JDBC4ResultSet implements ResultSet {
 
   private final LimboResultSet resultSet;
 
