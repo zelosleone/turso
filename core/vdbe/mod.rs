@@ -3676,7 +3676,7 @@ fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValue, (
 fn cast_text_to_numeric(text: &str) -> OwnedValue {
     let (real_cast, rc_real) = cast_text_to_real(text);
     let (int_cast, rc_int) = cast_text_to_integer(text);
-
+    dbg!(&real_cast, &rc_real, &int_cast, &rc_int);
     match (rc_real, rc_int) {
         (
             CastTextToRealResultCode::NotValid,
@@ -3684,12 +3684,13 @@ fn cast_text_to_numeric(text: &str) -> OwnedValue {
             | CastTextToIntResultCode::Success
             | CastTextToIntResultCode::NotInt,
         ) => int_cast,
-        (CastTextToRealResultCode::NotValidButPrefix, _) => real_cast,
         (
             CastTextToRealResultCode::NotValid,
             CastTextToIntResultCode::TooLargeOrMalformed | CastTextToIntResultCode::SpecialCase,
         ) => real_cast,
+        (CastTextToRealResultCode::NotValidButPrefix, _) => real_cast,
         (CastTextToRealResultCode::PureInt, CastTextToIntResultCode::Success) => int_cast,
+        (CastTextToRealResultCode::HasDecimal, _) => real_cast,
         _ => real_cast,
     }
 }

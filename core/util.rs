@@ -468,15 +468,16 @@ pub fn text_to_real(text: &str) -> (OwnedValue, CastTextToRealResultCode) {
     let mut has_decimal_digit = false;
     let mut excess_space = false;
 
-    let chars = text.chars();
+    let mut chars = text.chars();
 
-    for c in chars {
+    'outer: while let Some(c) = chars.next() {
         match c {
             '0'..='9' if !has_decimal_separator => {
                 has_digit = true;
                 accum.push(c);
             }
             '0'..='9' => {
+                // This pattern is used for both decimal and exponent digits
                 has_decimal_digit = true;
                 accum.push(c);
             }
@@ -484,17 +485,53 @@ pub fn text_to_real(text: &str) -> (OwnedValue, CastTextToRealResultCode) {
                 sign = true;
                 accum.push(c);
             }
-            '+' | '-' if has_exponent && !exp_sign => {
-                exp_sign = true;
-                accum.push(c);
-            }
             '.' if !has_decimal_separator => {
-                has_decimal_separator = true;
-                accum.push(c);
+                // Check if next char is a number
+                if let Some(ch) = chars.next() {
+                    match ch {
+                        '0'..='9' => {
+                            has_decimal_separator = true;
+                            accum.push(c);
+                            accum.push(ch);
+                        }
+                        _ => {
+                            excess_space = true;
+                            break;
+                        }
+                    }
+                } else {
+                    excess_space = true;
+                }
             }
-            'E' | 'e' if !has_decimal_separator || has_decimal_digit => {
-                has_exponent = true;
-                accum.push(c);
+            'E' | 'e' if !has_exponent && (!has_decimal_separator || has_decimal_digit) => {
+                // Lookahead if next char is a number or sign
+                let mut curr_sign = None;
+                loop {
+                    if let Some(ch) = chars.next() {
+                        match ch {
+                            '0'..='9' => {
+                                has_exponent = true;
+                                accum.push(c);
+                                if let Some(sign) = curr_sign {
+                                    exp_sign = true;
+                                    accum.push(sign);
+                                }
+                                accum.push(ch);
+                                break;
+                            }
+                            '+' | '-' => {
+                                curr_sign = Some(ch);
+                            }
+                            _ => {
+                                excess_space = true;
+                                break 'outer;
+                            }
+                        }
+                    } else {
+                        excess_space = true;
+                        break 'outer;
+                    }
+                }
             }
             _ => {
                 excess_space = true;
@@ -503,8 +540,18 @@ pub fn text_to_real(text: &str) -> (OwnedValue, CastTextToRealResultCode) {
         }
     }
 
+    dbg!(
+        &has_decimal_separator,
+        &sign,
+        &exp_sign,
+        &has_exponent,
+        &has_digit,
+        &has_decimal_digit,
+        &excess_space
+    );
+
     if let Ok(num) = accum.parse::<f64>() {
-        if !has_decimal_separator && !exp_sign && !has_exponent {
+        if !has_decimal_separator && !exp_sign && !has_exponent && !excess_space {
             return (OwnedValue::Float(num), CastTextToRealResultCode::PureInt);
         }
 
@@ -781,193 +828,261 @@ pub mod tests {
 
     #[test]
     fn test_text_to_integer() {
-        let pairs = vec![
+        assert_eq!(
+            text_to_integer("1"),
+            (OwnedValue::Integer(1), CastTextToIntResultCode::Success),
+        );
+        assert_eq!(
+            text_to_integer("-1"),
+            (OwnedValue::Integer(-1), CastTextToIntResultCode::Success),
+        );
+        assert_eq!(
+            text_to_integer("10000000"),
             (
-                text_to_integer("1"),
-                (OwnedValue::Integer(1), CastTextToIntResultCode::Success),
+                OwnedValue::Integer(10000000),
+                CastTextToIntResultCode::Success,
             ),
+        );
+        assert_eq!(
+            text_to_integer("-10000000"),
             (
-                text_to_integer("-1"),
-                (OwnedValue::Integer(-1), CastTextToIntResultCode::Success),
+                OwnedValue::Integer(-10000000),
+                CastTextToIntResultCode::Success,
             ),
+        );
+        assert_eq!(
+            text_to_integer("xxx"),
+            (OwnedValue::Integer(0), CastTextToIntResultCode::NotInt),
+        );
+        assert_eq!(
+            text_to_integer("123xxx"),
             (
-                text_to_integer("10000000"),
-                (
-                    OwnedValue::Integer(10000000),
-                    CastTextToIntResultCode::Success,
-                ),
+                OwnedValue::Integer(123),
+                CastTextToIntResultCode::ExcessSpace,
             ),
+        );
+        assert_eq!(
+            text_to_integer("9223372036854775807"),
             (
-                text_to_integer("-10000000"),
-                (
-                    OwnedValue::Integer(-10000000),
-                    CastTextToIntResultCode::Success,
-                ),
+                OwnedValue::Integer(i64::MAX),
+                CastTextToIntResultCode::Success,
             ),
+        );
+        assert_eq!(
+            text_to_integer("9223372036854775808"),
             (
-                text_to_integer("xxx"),
-                (OwnedValue::Integer(0), CastTextToIntResultCode::NotInt),
+                OwnedValue::Integer(0),
+                CastTextToIntResultCode::TooLargeOrMalformed,
             ),
+        );
+        assert_eq!(
+            text_to_integer("-9223372036854775808"),
             (
-                text_to_integer("123xxx"),
-                (
-                    OwnedValue::Integer(123),
-                    CastTextToIntResultCode::ExcessSpace,
-                ),
+                OwnedValue::Integer(i64::MIN),
+                CastTextToIntResultCode::Success,
             ),
+        );
+        assert_eq!(
+            text_to_integer("-9223372036854775809"),
             (
-                text_to_integer("9223372036854775807"),
-                (
-                    OwnedValue::Integer(i64::MAX),
-                    CastTextToIntResultCode::Success,
-                ),
+                OwnedValue::Integer(0),
+                CastTextToIntResultCode::TooLargeOrMalformed,
             ),
-            (
-                text_to_integer("9223372036854775808"),
-                (
-                    OwnedValue::Integer(0),
-                    CastTextToIntResultCode::TooLargeOrMalformed,
-                ),
-            ),
-            (
-                text_to_integer("-9223372036854775808"),
-                (
-                    OwnedValue::Integer(i64::MIN),
-                    CastTextToIntResultCode::Success,
-                ),
-            ),
-            (
-                text_to_integer("-9223372036854775809"),
-                (
-                    OwnedValue::Integer(0),
-                    CastTextToIntResultCode::TooLargeOrMalformed,
-                ),
-            ),
-        ];
-
-        for (left, right) in pairs {
-            assert_eq!(left, right);
-        }
+        );
+        assert_eq!(
+            text_to_integer("-"),
+            (OwnedValue::Integer(0), CastTextToIntResultCode::NotInt,),
+        );
     }
 
     #[test]
     fn test_text_to_real() {
-        let pairs = vec![
+        assert_eq!(
+            text_to_real("1"),
+            (OwnedValue::Float(1.0), CastTextToRealResultCode::PureInt),
+        );
+        assert_eq!(
+            text_to_real("-1"),
+            (OwnedValue::Float(-1.0), CastTextToRealResultCode::PureInt),
+        );
+        assert_eq!(
+            text_to_real("1.0"),
+            (OwnedValue::Float(1.0), CastTextToRealResultCode::HasDecimal),
+        );
+        assert_eq!(
+            text_to_real("-1.0"),
             (
-                text_to_real("1"),
-                (OwnedValue::Float(1.0), CastTextToRealResultCode::PureInt),
+                OwnedValue::Float(-1.0),
+                CastTextToRealResultCode::HasDecimal,
             ),
+        );
+        assert_eq!(
+            text_to_real("1e10"),
             (
-                text_to_real("-1"),
-                (OwnedValue::Float(-1.0), CastTextToRealResultCode::PureInt),
+                OwnedValue::Float(1e10),
+                CastTextToRealResultCode::HasDecimal,
             ),
+        );
+        assert_eq!(
+            text_to_real("-1e10"),
             (
-                text_to_real("1.0"),
-                (OwnedValue::Float(1.0), CastTextToRealResultCode::HasDecimal),
+                OwnedValue::Float(-1e10),
+                CastTextToRealResultCode::HasDecimal,
             ),
+        );
+        assert_eq!(
+            text_to_real("1e-10"),
             (
-                text_to_real("-1.0"),
-                (
-                    OwnedValue::Float(-1.0),
-                    CastTextToRealResultCode::HasDecimal,
-                ),
+                OwnedValue::Float(1e-10),
+                CastTextToRealResultCode::HasDecimal,
             ),
+        );
+        assert_eq!(
+            text_to_real("-1e-10"),
             (
-                text_to_real("1e10"),
-                (
-                    OwnedValue::Float(1e10),
-                    CastTextToRealResultCode::HasDecimal,
-                ),
+                OwnedValue::Float(-1e-10),
+                CastTextToRealResultCode::HasDecimal,
             ),
+        );
+        assert_eq!(
+            text_to_real("1.123e10"),
             (
-                text_to_real("-1e10"),
-                (
-                    OwnedValue::Float(-1e10),
-                    CastTextToRealResultCode::HasDecimal,
-                ),
+                OwnedValue::Float(1.123e10),
+                CastTextToRealResultCode::HasDecimal,
             ),
+        );
+        assert_eq!(
+            text_to_real("-1.123e10"),
             (
-                text_to_real("1e-10"),
-                (
-                    OwnedValue::Float(1e-10),
-                    CastTextToRealResultCode::HasDecimal,
-                ),
+                OwnedValue::Float(-1.123e10),
+                CastTextToRealResultCode::HasDecimal,
             ),
+        );
+        assert_eq!(
+            text_to_real("1.123e-10"),
             (
-                text_to_real("-1e-10"),
-                (
-                    OwnedValue::Float(-1e-10),
-                    CastTextToRealResultCode::HasDecimal,
-                ),
+                OwnedValue::Float(1.123e-10),
+                CastTextToRealResultCode::HasDecimal,
             ),
+        );
+        assert_eq!(
+            text_to_real("-1.123e-10"),
             (
-                text_to_real("1.123e10"),
-                (
-                    OwnedValue::Float(1.123e10),
-                    CastTextToRealResultCode::HasDecimal,
-                ),
+                OwnedValue::Float(-1.123e-10),
+                CastTextToRealResultCode::HasDecimal,
             ),
+        );
+        assert_eq!(
+            text_to_real("1-282584294928"),
             (
-                text_to_real("-1.123e10"),
-                (
-                    OwnedValue::Float(-1.123e10),
-                    CastTextToRealResultCode::HasDecimal,
-                ),
+                OwnedValue::Float(1.0),
+                CastTextToRealResultCode::NotValidButPrefix
             ),
+        );
+        assert_eq!(
+            text_to_real("xxx"),
+            (OwnedValue::Float(0.0), CastTextToRealResultCode::NotValid),
+        );
+        assert_eq!(
+            text_to_real("1.7976931348623157e308"),
             (
-                text_to_real("1.123e-10"),
-                (
-                    OwnedValue::Float(1.123e-10),
-                    CastTextToRealResultCode::HasDecimal,
-                ),
+                OwnedValue::Float(f64::MAX),
+                CastTextToRealResultCode::HasDecimal,
             ),
+        );
+        assert_eq!(
+            text_to_real("1.7976931348623157e309"),
             (
-                text_to_real("-1.123e-10"),
-                (
-                    OwnedValue::Float(-1.123e-10),
-                    CastTextToRealResultCode::HasDecimal,
-                ),
+                OwnedValue::Float(f64::INFINITY),
+                CastTextToRealResultCode::HasDecimal,
             ),
+        );
+        assert_eq!(
+            text_to_real("-1.7976931348623157e308"),
             (
-                text_to_real("1-282584294928"),
-                (OwnedValue::Float(1.0), CastTextToRealResultCode::PureInt),
+                OwnedValue::Float(f64::MIN),
+                CastTextToRealResultCode::HasDecimal,
             ),
+        );
+        assert_eq!(
+            text_to_real("-1.7976931348623157e309"),
             (
-                text_to_real("xxx"),
-                (OwnedValue::Float(0.0), CastTextToRealResultCode::NotValid),
+                OwnedValue::Float(f64::NEG_INFINITY),
+                CastTextToRealResultCode::HasDecimal,
             ),
+        );
+        assert_eq!(
+            text_to_real("1E"),
             (
-                text_to_real("1.7976931348623157e308"),
-                (
-                    OwnedValue::Float(f64::MAX),
-                    CastTextToRealResultCode::HasDecimal,
-                ),
+                OwnedValue::Float(1.0),
+                CastTextToRealResultCode::NotValidButPrefix,
             ),
+        );
+        assert_eq!(
+            text_to_real("1EE"),
             (
-                text_to_real("1.7976931348623157e309"),
-                (
-                    OwnedValue::Float(f64::INFINITY),
-                    CastTextToRealResultCode::HasDecimal,
-                ),
+                OwnedValue::Float(1.0),
+                CastTextToRealResultCode::NotValidButPrefix,
             ),
+        );
+        assert_eq!(
+            text_to_real("-1E"),
             (
-                text_to_real("-1.7976931348623157e308"),
-                (
-                    OwnedValue::Float(f64::MIN),
-                    CastTextToRealResultCode::HasDecimal,
-                ),
+                OwnedValue::Float(-1.0),
+                CastTextToRealResultCode::NotValidButPrefix,
             ),
+        );
+        assert_eq!(
+            text_to_real("1."),
             (
-                text_to_real("-1.7976931348623157e309"),
-                (
-                    OwnedValue::Float(f64::NEG_INFINITY),
-                    CastTextToRealResultCode::HasDecimal,
-                ),
+                OwnedValue::Float(1.0),
+                CastTextToRealResultCode::NotValidButPrefix,
             ),
-        ];
-
-        for (left, right) in pairs {
-            assert_eq!(left, right);
-        }
+        );
+        assert_eq!(
+            text_to_real("-1."),
+            (
+                OwnedValue::Float(-1.0),
+                CastTextToRealResultCode::NotValidButPrefix,
+            ),
+        );
+        assert_eq!(
+            text_to_real("1.23E"),
+            (
+                OwnedValue::Float(1.23),
+                CastTextToRealResultCode::NotValidButPrefix,
+            ),
+        );
+        assert_eq!(
+            text_to_real("1.23E-"),
+            (
+                OwnedValue::Float(1.23),
+                CastTextToRealResultCode::NotValidButPrefix,
+            ),
+        );
+        assert_eq!(
+            text_to_real("0"),
+            (OwnedValue::Float(0.0), CastTextToRealResultCode::PureInt,),
+        );
+        assert_eq!(
+            text_to_real("-0"),
+            (OwnedValue::Float(-0.0), CastTextToRealResultCode::PureInt,),
+        );
+        assert_eq!(
+            text_to_real("-0"),
+            (OwnedValue::Float(0.0), CastTextToRealResultCode::PureInt,),
+        );
+        assert_eq!(
+            text_to_real("-0.0"),
+            (OwnedValue::Float(0.0), CastTextToRealResultCode::HasDecimal,),
+        );
+        assert_eq!(
+            text_to_real("0.0"),
+            (OwnedValue::Float(0.0), CastTextToRealResultCode::HasDecimal,),
+        );
+        assert_eq!(
+            text_to_real("-"),
+            (OwnedValue::Float(0.0), CastTextToRealResultCode::NotValid,),
+        );
     }
 }
