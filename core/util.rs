@@ -540,16 +540,6 @@ pub fn text_to_real(text: &str) -> (OwnedValue, CastTextToRealResultCode) {
         }
     }
 
-    dbg!(
-        &has_decimal_separator,
-        &sign,
-        &exp_sign,
-        &has_exponent,
-        &has_digit,
-        &has_decimal_digit,
-        &excess_space
-    );
-
     if let Ok(num) = accum.parse::<f64>() {
         if !has_decimal_separator && !exp_sign && !has_exponent && !excess_space {
             return (OwnedValue::Float(num), CastTextToRealResultCode::PureInt);
