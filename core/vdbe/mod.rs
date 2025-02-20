@@ -41,7 +41,10 @@ use crate::translate::plan::{ResultSetColumn, TableReference};
 use crate::types::{
     AggContext, Cursor, CursorResult, ExternalAggState, OwnedValue, Record, SeekKey, SeekOp,
 };
-use crate::util::parse_schema_rows;
+use crate::util::{
+    parse_schema_rows, text_to_integer, text_to_real, CastTextToIntResultCode,
+    CastTextToRealResultCode,
+};
 use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::Insn;
 use crate::vector::{vector32, vector64, vector_distance_cos, vector_extract};
@@ -401,28 +404,6 @@ macro_rules! must_be_btree_cursor {
         };
         cursor
     }};
-}
-
-/// Reference:
-/// https://github.com/sqlite/sqlite/blob/master/src/util.c#L798
-enum CastTextToIntResultCode {
-    NotInt = -1,
-    Success = 0,
-    ExcessSpace = 1,
-    #[allow(dead_code)]
-    TooLargeOrMalformed = 2,
-    #[allow(dead_code)]
-    SpecialCase = 3,
-}
-
-/// Reference
-/// https://github.com/sqlite/sqlite/blob/master/src/util.c#L529
-enum CastTextToRealResultCode {
-    PureInt = 1,
-    HasDecimal = 2,
-    NotValid = 0,
-    #[allow(dead_code)]
-    NotValidButPrefix = -1,
 }
 
 #[derive(Debug)]
@@ -3652,35 +3633,7 @@ fn exec_replace(source: &OwnedValue, pattern: &OwnedValue, replacement: &OwnedVa
 /// because it is no part of the integer prefix. For example, "CAST('123e+5' AS INTEGER)" results in 123, not in 12300000.
 /// The CAST operator understands decimal integers only — conversion of hexadecimal integers stops at the "x" in the "0x" prefix of the hexadecimal integer string and thus result of the CAST is always zero.
 fn cast_text_to_integer(text: &str) -> (OwnedValue, CastTextToIntResultCode) {
-    let text = text.trim();
-    if text.is_empty() {
-        return (OwnedValue::Integer(0), CastTextToIntResultCode::NotInt);
-    }
-    if let Ok(i) = text.parse::<i64>() {
-        // Compare if the text value has more characters that the number of digits + the sign in the parsed int
-        if i.to_string().len() < text.len() {
-            // Means it was probably casted from a real or some malformed number.
-            return (OwnedValue::Integer(i), CastTextToIntResultCode::ExcessSpace);
-        }
-
-        return (OwnedValue::Integer(i), CastTextToIntResultCode::Success);
-    }
-    // Try to find longest valid prefix that parses as an integer
-    // TODO: inefficient
-    let mut end_index = text.len().saturating_sub(1) as isize;
-    while end_index >= 0 {
-        if let Ok(i) = text[..=end_index as usize].parse::<i64>() {
-            // Compare if the text value has more characters that the number of digits + the sign in the parsed int
-            if i.to_string().len() < text.len() {
-                // Means it was probably casted from a real or some malformed number.
-                return (OwnedValue::Integer(i), CastTextToIntResultCode::ExcessSpace);
-            }
-
-            return (OwnedValue::Integer(i), CastTextToIntResultCode::Success);
-        }
-        end_index -= 1;
-    }
-    return (OwnedValue::Integer(0), CastTextToIntResultCode::NotInt);
+    text_to_integer(text)
 }
 
 /// When casting a TEXT value to REAL, the longest possible prefix of the value that can be interpreted
@@ -3688,31 +3641,7 @@ fn cast_text_to_integer(text: &str) -> (OwnedValue, CastTextToIntResultCode) {
 /// the TEXT value are ignored when converging from TEXT to REAL.
 /// If there is no prefix that can be interpreted as a real number, the result of the conversion is 0.0.
 fn cast_text_to_real(text: &str) -> (OwnedValue, CastTextToRealResultCode) {
-    let trimmed = text.trim_start();
-    if trimmed.is_empty() {
-        return (OwnedValue::Float(0.0), CastTextToRealResultCode::NotValid);
-    }
-    if let Ok(num) = trimmed.parse::<f64>() {
-        if num.fract() == 0.0 {
-            return (OwnedValue::Float(num), CastTextToRealResultCode::PureInt);
-        }
-
-        return (OwnedValue::Float(num), CastTextToRealResultCode::HasDecimal);
-    }
-    // Try to find longest valid prefix that parses as a float
-    // TODO: inefficient
-    let mut end_index = trimmed.len().saturating_sub(1) as isize;
-    while end_index >= 0 {
-        if let Ok(num) = trimmed[..=end_index as usize].parse::<f64>() {
-            if num.fract() == 0.0 {
-                return (OwnedValue::Float(num), CastTextToRealResultCode::PureInt);
-            }
-
-            return (OwnedValue::Float(num), CastTextToRealResultCode::HasDecimal);
-        }
-        end_index -= 1;
-    }
-    return (OwnedValue::Float(0.0), CastTextToRealResultCode::NotValid);
+    text_to_real(text)
 }
 
 /// NUMERIC Casting a TEXT or BLOB value into NUMERIC yields either an INTEGER or a REAL result.
@@ -3747,6 +3676,7 @@ fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValue, (
 fn cast_text_to_numeric(text: &str) -> OwnedValue {
     let (real_cast, rc_real) = cast_text_to_real(text);
     let (int_cast, rc_int) = cast_text_to_integer(text);
+
     match (rc_real, rc_int) {
         (
             CastTextToRealResultCode::NotValid,
