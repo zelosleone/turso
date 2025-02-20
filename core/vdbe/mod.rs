@@ -2104,7 +2104,7 @@ impl Program {
                             }
                             ScalarFunc::Like => {
                                 let pattern = &state.registers[*start_reg];
-                                let text = &state.registers[*start_reg + 1];
+                                let text = exec_cast(&state.registers[*start_reg + 1], "TEXT");
 
                                 let result = match (pattern, text) {
                                     (OwnedValue::Text(pattern), OwnedValue::Text(text))
@@ -2134,19 +2134,6 @@ impl Program {
                                             cache,
                                             &pattern.as_str(),
                                             &text.as_str(),
-                                        )
-                                            as i64)
-                                    }
-                                    (OwnedValue::Text(pattern), OwnedValue::Integer(text)) => {
-                                        let cache = if *constant_mask > 0 {
-                                            Some(&mut state.regex_cache.like)
-                                        } else {
-                                            None
-                                        };
-                                        OwnedValue::Integer(exec_like(
-                                            cache,
-                                            &pattern.as_str(),
-                                            &text.to_string(),
                                         )
                                             as i64)
                                     }
