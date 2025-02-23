@@ -2302,41 +2302,52 @@ impl BTreeCursor {
                     assert!(page.is_loaded()); //  page should be loaded at this time
 
                     let contents = page.get().contents.as_ref().unwrap();
-
                     let cell_idx = self.stack.current_cell_index();
-                    if cell_idx > contents.cell_count() as i32 {
-                        //  If all the cells in this page have been processed, move state machine to freeing current page
-                        let destroy_info = self
-                            .state
-                            .mut_destroy_info()
-                            .expect("unable to get a mut reference to destroy state in cursor");
-                        destroy_info.state = DestroyState::FreePage;
-                        continue;
-                    } else if cell_idx == contents.cell_count() as i32 {
-                        //  At the last cell index
-                        //  If interior page, free right page
-                        if !contents.is_leaf() {
-                            if let Some(rightmost) = contents.rightmost_pointer() {
-                                let rightmost_page = self.pager.read_page(rightmost as usize)?;
-                                self.stack.advance();
-                                self.stack.push(rightmost_page);
+
+                    //  If we've processed all cells in this page, figure out what to do with this page
+                    if cell_idx >= contents.cell_count() as i32 {
+                        match (contents.is_leaf(), cell_idx) {
+                            //  Leaf pages with all cells processed
+                            (true, n) if n >= contents.cell_count() as i32 => {
                                 let destroy_info = self.state.mut_destroy_info().expect(
                                     "unable to get a mut reference to destroy state in cursor",
                                 );
-                                destroy_info.state = DestroyState::LoadPage;
+                                destroy_info.state = DestroyState::FreePage;
                                 continue;
                             }
+                            //  Non-leaf page which has processed all children but not it's potential right child
+                            (false, n) if n == contents.cell_count() as i32 => {
+                                if let Some(rightmost) = contents.rightmost_pointer() {
+                                    let rightmost_page =
+                                        self.pager.read_page(rightmost as usize)?;
+                                    self.stack.advance();
+                                    self.stack.push(rightmost_page);
+                                    let destroy_info = self.state.mut_destroy_info().expect(
+                                        "unable to get a mut reference to destroy state in cursor",
+                                    );
+                                    destroy_info.state = DestroyState::LoadPage;
+                                } else {
+                                    let destroy_info = self.state.mut_destroy_info().expect(
+                                        "unable to get a mut reference to destroy state in cursor",
+                                    );
+                                    destroy_info.state = DestroyState::FreePage;
+                                }
+                                continue;
+                            }
+                            //  Non-leaf page which has processed all children and it's right child
+                            (false, n) if n > contents.cell_count() as i32 => {
+                                let destroy_info = self.state.mut_destroy_info().expect(
+                                    "unable to get a mut reference to destroy state in cursor",
+                                );
+                                destroy_info.state = DestroyState::FreePage;
+                                continue;
+                            }
+                            _ => unreachable!("Invalid cell idx state"),
                         }
-                        //  If leaf page, free current page
-                        let destroy_info = self
-                            .state
-                            .mut_destroy_info()
-                            .expect("unable to get a mut reference to destroy state in cursor");
-                        destroy_info.state = DestroyState::FreePage;
-                        continue;
                     }
 
-                    //  There are still cells left to process in this page
+                    //  We have not yet processed all cells in this page
+                    //  Get the current cell
                     let cell = contents.cell_get(
                         cell_idx as usize,
                         Rc::clone(&self.pager),
@@ -2344,48 +2355,72 @@ impl BTreeCursor {
                         self.payload_overflow_threshold_min(contents.page_type()),
                         self.usable_space(),
                     )?;
-                    if !contents.is_leaf() {
-                        //  Load the left child of this interior cell
-                        let child_page_id = match &cell {
-                            BTreeCell::TableInteriorCell(cell) => cell._left_child_page,
-                            BTreeCell::IndexInteriorCell(cell) => cell.left_child_page,
-                            _ => panic!("expected interior cell"),
-                        };
-                        let child_page = self.pager.read_page(child_page_id as usize)?;
-                        self.stack.advance();
-                        self.stack.push(child_page);
-                        let destroy_info = self
-                            .state
-                            .mut_destroy_info()
-                            .expect("unable to get a mut reference to destroy state in cursor");
-                        destroy_info.state = DestroyState::LoadPage;
-                        continue;
-                    } else {
-                        //  Clear the overflow pages for this leaf cell
-                        let cell = contents.cell_get(
-                            cell_idx as usize,
-                            Rc::clone(&self.pager),
-                            self.payload_overflow_threshold_max(contents.page_type()),
-                            self.payload_overflow_threshold_min(contents.page_type()),
-                            self.usable_space(),
-                        )?;
-                        let destroy_info = self
-                            .state
-                            .mut_destroy_info()
-                            .expect("unable to get a mut reference to destroy state in cursor");
-                        destroy_info.state = DestroyState::ClearOverflowPages { cell };
-                    }
-                }
-                DestroyState::ClearOverflowPages { cell } => {
-                    match self.clear_overflow_pages(&cell)? {
-                        CursorResult::Ok(_) => {
+
+                    match contents.is_leaf() {
+                        //  For a leaf cell, clear the overflow pages associated with this cell
+                        true => {
                             let destroy_info = self
                                 .state
                                 .mut_destroy_info()
                                 .expect("unable to get a mut reference to destroy state in cursor");
-                            destroy_info.state = DestroyState::ProcessPage;
-                            self.stack.advance();
+                            destroy_info.state = DestroyState::ClearOverflowPages { cell };
+                            continue;
                         }
+                        //  For interior cells, check the type of cell to determine what to do
+                        false => match &cell {
+                            //  For index interior cells, remove the overflow pages
+                            BTreeCell::IndexInteriorCell(_) => {
+                                let destroy_info = self.state.mut_destroy_info().expect(
+                                    "unable to get a mut reference to destroy state in cursor",
+                                );
+                                destroy_info.state = DestroyState::ClearOverflowPages { cell };
+                                continue;
+                            }
+                            //  For all other interior cells, load the left child page
+                            _ => {
+                                let child_page_id = match &cell {
+                                    BTreeCell::TableInteriorCell(cell) => cell._left_child_page,
+                                    BTreeCell::IndexInteriorCell(cell) => cell.left_child_page,
+                                    _ => panic!("expected interior cell"),
+                                };
+                                let child_page = self.pager.read_page(child_page_id as usize)?;
+                                self.stack.advance();
+                                self.stack.push(child_page);
+                                let destroy_info = self.state.mut_destroy_info().expect(
+                                    "unable to get a mut reference to destroy state in cursor",
+                                );
+                                destroy_info.state = DestroyState::LoadPage;
+                                continue;
+                            }
+                        },
+                    }
+                }
+                DestroyState::ClearOverflowPages { cell } => {
+                    match self.clear_overflow_pages(&cell)? {
+                        CursorResult::Ok(_) => match cell {
+                            //  For an index interior cell, clear the left child page now that overflow pages have been cleared
+                            BTreeCell::IndexInteriorCell(index_int_cell) => {
+                                let child_page = self
+                                    .pager
+                                    .read_page(index_int_cell.left_child_page as usize)?;
+                                self.stack.advance();
+                                self.stack.push(child_page);
+                                let destroy_info = self.state.mut_destroy_info().expect(
+                                    "unable to get a mut reference to destroy state in cursor",
+                                );
+                                destroy_info.state = DestroyState::LoadPage;
+                                continue;
+                            }
+                            //  For any leaf cell, advance the index now that overflow pages have been cleared
+                            BTreeCell::TableLeafCell(_) | BTreeCell::IndexLeafCell(_) => {
+                                self.stack.advance();
+                                let destroy_info = self.state.mut_destroy_info().expect(
+                                    "unable to get a mut reference to destroy state in cursor",
+                                );
+                                destroy_info.state = DestroyState::LoadPage;
+                            }
+                            _ => panic!("unexpected cell type"),
+                        },
                         CursorResult::IO => return Ok(CursorResult::IO),
                     }
                 }
