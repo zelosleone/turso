@@ -3648,8 +3648,24 @@ fn exec_replace(source: &OwnedValue, pattern: &OwnedValue, replacement: &OwnedVa
 /// When casting to INTEGER, if the text looks like a floating point value with an exponent, the exponent will be ignored
 /// because it is no part of the integer prefix. For example, "CAST('123e+5' AS INTEGER)" results in 123, not in 12300000.
 /// The CAST operator understands decimal integers only — conversion of hexadecimal integers stops at the "x" in the "0x" prefix of the hexadecimal integer string and thus result of the CAST is always zero.
-fn cast_text_to_integer(text: &str) -> (OwnedValue, CastTextToIntResultCode) {
-    text_to_integer(text)
+fn cast_text_to_integer(text: &str) -> OwnedValue {
+    let text = text.trim();
+    if text.is_empty() {
+        return OwnedValue::Integer(0);
+    }
+    if let Ok(i) = text.parse::<i64>() {
+        return OwnedValue::Integer(i);
+    }
+    let idx = text
+        .chars()
+        .enumerate()
+        .find_map(|(i, c)| match i {
+            i if i == 0 && c == '-' => None,
+            i if i > 0 && !c.is_ascii_digit() => Some(i),
+            _ => None,
+        })
+        .unwrap_or(0);
+    OwnedValue::Integer(text[0..idx].parse::<i64>().unwrap_or(0))
 }
 
 /// When casting a TEXT value to REAL, the longest possible prefix of the value that can be interpreted
