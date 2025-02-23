@@ -81,7 +81,7 @@ enum DestroyState {
     Start,
     LoadPage,
     ProcessPage,
-    ClearOverflowPages { cell_idx: i32 },
+    ClearOverflowPages { cell: BTreeCell },
     FreePage,
 }
 
@@ -2362,26 +2362,21 @@ impl BTreeCursor {
                         continue;
                     } else {
                         //  Clear the overflow pages for this leaf cell
+                        let cell = contents.cell_get(
+                            cell_idx as usize,
+                            Rc::clone(&self.pager),
+                            self.payload_overflow_threshold_max(contents.page_type()),
+                            self.payload_overflow_threshold_min(contents.page_type()),
+                            self.usable_space(),
+                        )?;
                         let destroy_info = self
                             .state
                             .mut_destroy_info()
                             .expect("unable to get a mut reference to destroy state in cursor");
-                        destroy_info.state = DestroyState::ClearOverflowPages {
-                            cell_idx: self.stack.current_cell_index(),
-                        };
+                        destroy_info.state = DestroyState::ClearOverflowPages { cell };
                     }
                 }
-                DestroyState::ClearOverflowPages { cell_idx } => {
-                    let page = self.stack.top();
-                    let contents = page.get().contents.as_ref().unwrap();
-                    let cell = contents.cell_get(
-                        cell_idx as usize,
-                        Rc::clone(&self.pager),
-                        self.payload_overflow_threshold_max(contents.page_type()),
-                        self.payload_overflow_threshold_min(contents.page_type()),
-                        self.usable_space(),
-                    )?;
-
+                DestroyState::ClearOverflowPages { cell } => {
                     match self.clear_overflow_pages(&cell)? {
                         CursorResult::Ok(_) => {
                             let destroy_info = self
