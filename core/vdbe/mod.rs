@@ -2107,12 +2107,22 @@ impl Program {
                             }
                             ScalarFunc::Like => {
                                 let pattern = &state.registers[*start_reg];
-                                let text = &state.registers[*start_reg + 1];
+                                let match_expression = &state.registers[*start_reg + 1];
 
-                                let result = match (pattern, text) {
-                                    (OwnedValue::Text(pattern), OwnedValue::Text(text))
-                                        if arg_count == 3 =>
-                                    {
+                                let pattern = match pattern {
+                                    OwnedValue::Text(_) => pattern.clone(),
+                                    _ => exec_cast(pattern, "TEXT"),
+                                };
+                                let match_expression = match match_expression {
+                                    OwnedValue::Text(_) => match_expression.clone(),
+                                    _ => exec_cast(match_expression, "TEXT"),
+                                };
+
+                                let result = match (pattern, match_expression) {
+                                    (
+                                        OwnedValue::Text(pattern),
+                                        OwnedValue::Text(match_expression),
+                                    ) if arg_count == 3 => {
                                         let escape = match construct_like_escape_arg(
                                             &state.registers[*start_reg + 2],
                                         ) {
@@ -2122,12 +2132,15 @@ impl Program {
 
                                         OwnedValue::Integer(exec_like_with_escape(
                                             &pattern.as_str(),
-                                            &text.as_str(),
+                                            &match_expression.as_str(),
                                             escape,
                                         )
                                             as i64)
                                     }
-                                    (OwnedValue::Text(pattern), OwnedValue::Text(text)) => {
+                                    (
+                                        OwnedValue::Text(pattern),
+                                        OwnedValue::Text(match_expression),
+                                    ) => {
                                         let cache = if *constant_mask > 0 {
                                             Some(&mut state.regex_cache.like)
                                         } else {
@@ -2136,12 +2149,15 @@ impl Program {
                                         OwnedValue::Integer(exec_like(
                                             cache,
                                             &pattern.as_str(),
-                                            &text.as_str(),
+                                            &match_expression.as_str(),
                                         )
                                             as i64)
                                     }
+                                    (OwnedValue::Null, OwnedValue::Null)
+                                    | (OwnedValue::Null, _)
+                                    | (_, OwnedValue::Null) => OwnedValue::Null,
                                     _ => {
-                                        unreachable!("Like on non-text registers");
+                                        unreachable!("Like failed");
                                     }
                                 };
 
