@@ -4,8 +4,8 @@ use std::{rc::Rc, sync::Arc};
 
 use crate::{
     schema::{self, Column, Schema, Type},
-    LimboError, OpenFlags, Result, Statement, StepResult, IO,
     types::OwnedValue,
+    LimboError, OpenFlags, Result, Statement, StepResult, IO,
 };
 
 // https://sqlite.org/lang_keywords.html
