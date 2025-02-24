@@ -3,6 +3,7 @@ use std::num::NonZero;
 use super::{cast_text_to_numeric, AggFunc, BranchOffset, CursorID, FuncCtx, PageIdx};
 use crate::storage::wal::CheckpointMode;
 use crate::types::{OwnedValue, Record};
+use crate::util::RoundToPrecision;
 use limbo_macros::Description;
 
 macro_rules! final_agg_values {
@@ -712,7 +713,7 @@ pub fn exec_add(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
             }
         }
         (OwnedValue::Float(lhs), OwnedValue::Float(rhs)) => {
-            OwnedValue::Float((lhs + rhs).round_to_precision(6))
+            OwnedValue::Float((lhs + rhs).round_to_precision(6.0))
         }
         (OwnedValue::Float(f), OwnedValue::Integer(i))
         | (OwnedValue::Integer(i), OwnedValue::Float(f)) => OwnedValue::Float(*f + *i as f64),
@@ -768,7 +769,7 @@ pub fn exec_multiply(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
             }
         }
         (OwnedValue::Float(lhs), OwnedValue::Float(rhs)) => {
-            OwnedValue::Float((lhs * rhs).round_to_precision(6))
+            OwnedValue::Float((lhs * rhs).round_to_precision(6.0))
         }
         (OwnedValue::Integer(i), OwnedValue::Float(f))
         | (OwnedValue::Float(f), OwnedValue::Integer(i)) => OwnedValue::Float(*i as f64 * { *f }),
@@ -1080,17 +1081,6 @@ pub fn exec_or(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
             exec_or(&cast_text_to_numeric(text.as_str()), other)
         }
         _ => OwnedValue::Integer(1),
-    }
-}
-
-trait RoundToPrecision {
-    fn round_to_precision(self, precision: i32) -> f64;
-}
-
-impl RoundToPrecision for f64 {
-    fn round_to_precision(self, precision: i32) -> f64 {
-        let factor = 10f64.powi(precision);
-        (self * factor).round() / factor
     }
 }
 
