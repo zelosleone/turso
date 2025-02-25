@@ -1,12 +1,22 @@
-use core::num::IntErrorKind;
 use limbo_sqlite3_parser::ast::{self, CreateTableBody, Expr, FunctionTail, Literal};
 use std::{rc::Rc, sync::Arc};
 
 use crate::{
     schema::{self, Column, Schema, Type},
-    types::OwnedValue,
+    types::{OwnedValue, OwnedValueType},
     LimboError, OpenFlags, Result, Statement, StepResult, SymbolTable, IO,
 };
+
+pub trait RoundToPrecision {
+    fn round_to_precision(self, precision: i32) -> f64;
+}
+
+impl RoundToPrecision for f64 {
+    fn round_to_precision(self, precision: i32) -> f64 {
+        let factor = 10f64.powi(precision);
+        (self * factor).round() / factor
+    }
+}
 
 // https://sqlite.org/lang_keywords.html
 const QUOTE_PAIRS: &[(char, char)] = &[('"', '"'), ('[', ']'), ('`', '`')];
@@ -613,182 +623,154 @@ pub fn decode_percent(uri: &str) -> String {
     String::from_utf8_lossy(&decoded).to_string()
 }
 
-#[derive(Debug, PartialEq)]
-/// Reference:
-/// https://github.com/sqlite/sqlite/blob/master/src/util.c#L798
-pub enum CastTextToIntResultCode {
-    NotInt = -1,
-    Success = 0,
-    ExcessSpace = 1,
-    TooLargeOrMalformed = 2,
-    #[allow(dead_code)]
-    SpecialCase = 3,
-}
-
-pub fn text_to_integer(text: &str) -> (OwnedValue, CastTextToIntResultCode) {
+/// When casting a TEXT value to INTEGER, the longest possible prefix of the value that can be interpreted as an integer number
+/// is extracted from the TEXT value and the remainder ignored. Any leading spaces in the TEXT value when converting from TEXT to INTEGER are ignored.
+/// If there is no prefix that can be interpreted as an integer number, the result of the conversion is 0.
+/// If the prefix integer is greater than +9223372036854775807 then the result of the cast is exactly +9223372036854775807.
+/// Similarly, if the prefix integer is less than -9223372036854775808 then the result of the cast is exactly -9223372036854775808.
+/// When casting to INTEGER, if the text looks like a floating point value with an exponent, the exponent will be ignored
+/// because it is no part of the integer prefix. For example, "CAST('123e+5' AS INTEGER)" results in 123, not in 12300000.
+/// The CAST operator understands decimal integers only — conversion of hexadecimal integers stops at the "x" in the "0x" prefix of the hexadecimal integer string and thus result of the CAST is always zero.
+pub fn cast_text_to_integer(text: &str) -> OwnedValue {
     let text = text.trim();
     if text.is_empty() {
-        return (OwnedValue::Integer(0), CastTextToIntResultCode::NotInt);
+        return OwnedValue::Integer(0);
     }
-    let mut accum = String::new();
-    let mut sign = false;
-    let mut has_digit = false;
-    let mut excess_space = false;
-
-    let chars = text.chars();
-
-    for c in chars {
-        match c {
-            '0'..='9' => {
-                has_digit = true;
-                accum.push(c);
-            }
-            '+' | '-' if !has_digit && !sign => {
-                sign = true;
-                accum.push(c);
-            }
-            _ => {
-                excess_space = true;
-                break;
-            }
-        }
+    if let Ok(i) = text.parse::<i64>() {
+        return OwnedValue::Integer(i);
     }
-
-    match accum.parse::<i64>() {
-        Ok(num) => {
-            if excess_space {
-                return (
-                    OwnedValue::Integer(num),
-                    CastTextToIntResultCode::ExcessSpace,
-                );
-            }
-
-            return (OwnedValue::Integer(num), CastTextToIntResultCode::Success);
-        }
-        Err(e) => match e.kind() {
-            IntErrorKind::NegOverflow | IntErrorKind::PosOverflow => (
-                OwnedValue::Integer(0),
-                CastTextToIntResultCode::TooLargeOrMalformed,
-            ),
-            _ => (OwnedValue::Integer(0), CastTextToIntResultCode::NotInt),
-        },
+    let bytes = text.as_bytes();
+    let mut end = 0;
+    if bytes[0] == b'-' {
+        end = 1;
     }
+    while end < bytes.len() && bytes[end].is_ascii_digit() {
+        end += 1;
+    }
+    text[..end]
+        .parse::<i64>()
+        .map_or(OwnedValue::Integer(0), OwnedValue::Integer)
 }
 
-#[derive(Debug, PartialEq)]
-/// Reference
-/// https://github.com/sqlite/sqlite/blob/master/src/util.c#L529
-pub enum CastTextToRealResultCode {
-    PureInt = 1,
-    HasDecimal = 2,
-    NotValid = 0,
-    NotValidButPrefix = -1,
+/// When casting a TEXT value to REAL, the longest possible prefix of the value that can be interpreted
+/// as a real number is extracted from the TEXT value and the remainder ignored. Any leading spaces in
+/// the TEXT value are ignored when converging from TEXT to REAL.
+/// If there is no prefix that can be interpreted as a real number, the result of the conversion is 0.0.
+pub fn cast_text_to_real(text: &str) -> OwnedValue {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return OwnedValue::Float(0.0);
+    }
+    let Ok((_, text)) = parse_numeric_str(trimmed) else {
+        return OwnedValue::Float(0.0);
+    };
+    text.parse::<f64>()
+        .map_or(OwnedValue::Float(0.0), OwnedValue::Float)
 }
 
-pub fn text_to_real(text: &str) -> (OwnedValue, CastTextToRealResultCode) {
-    let text = text.trim();
-    if text.is_empty() {
-        return (OwnedValue::Float(0.0), CastTextToRealResultCode::NotValid);
-    }
-    let mut accum = String::new();
-    let mut has_decimal_separator = false;
-    let mut sign = false;
-    let mut exp_sign = false;
-    let mut has_exponent = false;
-    let mut has_digit = false;
-    let mut has_decimal_digit = false;
-    let mut excess_space = false;
-
-    let mut chars = text.chars();
-
-    'outer: while let Some(c) = chars.next() {
-        match c {
-            '0'..='9' if !has_decimal_separator => {
-                has_digit = true;
-                accum.push(c);
-            }
-            '0'..='9' => {
-                // This pattern is used for both decimal and exponent digits
-                has_decimal_digit = true;
-                accum.push(c);
-            }
-            '+' | '-' if !has_digit && !sign => {
-                sign = true;
-                accum.push(c);
-            }
-            '.' if !has_decimal_separator => {
-                // Check if next char is a number
-                if let Some(ch) = chars.next() {
-                    match ch {
-                        '0'..='9' => {
-                            has_decimal_separator = true;
-                            accum.push(c);
-                            accum.push(ch);
-                        }
-                        _ => {
-                            excess_space = true;
-                            break;
-                        }
-                    }
-                } else {
-                    excess_space = true;
-                }
-            }
-            'E' | 'e' if !has_exponent && (!has_decimal_separator || has_decimal_digit) => {
-                // Lookahead if next char is a number or sign
-                let mut curr_sign = None;
-                loop {
-                    if let Some(ch) = chars.next() {
-                        match ch {
-                            '0'..='9' => {
-                                has_exponent = true;
-                                accum.push(c);
-                                if let Some(sign) = curr_sign {
-                                    exp_sign = true;
-                                    accum.push(sign);
-                                }
-                                accum.push(ch);
-                                break;
-                            }
-                            '+' | '-' => {
-                                curr_sign = Some(ch);
-                            }
-                            _ => {
-                                excess_space = true;
-                                break 'outer;
-                            }
-                        }
+/// NUMERIC Casting a TEXT or BLOB value into NUMERIC yields either an INTEGER or a REAL result.
+/// If the input text looks like an integer (there is no decimal point nor exponent) and the value
+/// is small enough to fit in a 64-bit signed integer, then the result will be INTEGER.
+/// Input text that looks like floating point (there is a decimal point and/or an exponent)
+/// and the text describes a value that can be losslessly converted back and forth between IEEE 754
+/// 64-bit float and a 51-bit signed integer, then the result is INTEGER. (In the previous sentence,
+/// a 51-bit integer is specified since that is one bit less than the length of the mantissa of an
+/// IEEE 754 64-bit float and thus provides a 1-bit of margin for the text-to-float conversion operation.)
+/// Any text input that describes a value outside the range of a 64-bit signed integer yields a REAL result.
+/// Casting a REAL or INTEGER value to NUMERIC is a no-op, even if a real value could be losslessly converted to an integer.
+pub fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValue, ()> {
+    // sqlite will parse the first N digits of a string to numeric value, then determine
+    // whether _that_ value is more likely a real or integer value. e.g.
+    // '-100234-2344.23e14' evaluates to -100234 instead of -100234.0
+    let (kind, text) = parse_numeric_str(text)?;
+    match kind {
+        OwnedValueType::Integer => {
+            match text.parse::<i64>() {
+                Ok(i) => Ok(OwnedValue::Integer(i)),
+                Err(e) => {
+                    if matches!(
+                        e.kind(),
+                        std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow
+                    ) {
+                        // if overflow, we return the representation as a real:
+                        // we have to match sqlite exactly here, so we match sqlite3AtoF
+                        let value = text.parse::<f64>().unwrap_or_default();
+                        let factor = 10f64.powi(15 - value.abs().log10().ceil() as i32);
+                        Ok(OwnedValue::Float((value * factor).round() / factor))
                     } else {
-                        excess_space = true;
-                        break 'outer;
+                        Err(())
                     }
                 }
             }
-            _ => {
-                excess_space = true;
-                break;
+        }
+        OwnedValueType::Float => Ok(text
+            .parse::<f64>()
+            .map_or(OwnedValue::Float(0.0), OwnedValue::Float)),
+        _ => unreachable!(),
+    }
+}
+
+fn parse_numeric_str(text: &str) -> Result<(OwnedValueType, &str), ()> {
+    let bytes = text.trim_start().as_bytes();
+    if bytes.is_empty() {
+        return Err(());
+    }
+    let mut end = 0;
+    let mut has_decimal = false;
+    let mut has_exponent = false;
+    if bytes[0] == b'-' {
+        end = 1;
+    }
+    while end < bytes.len() {
+        match bytes[end] {
+            b'0'..=b'9' => end += 1,
+            b'.' if !has_decimal && !has_exponent => {
+                has_decimal = true;
+                end += 1;
             }
+            b'e' | b'E' if !has_exponent => {
+                has_exponent = true;
+                end += 1;
+                // allow exponent sign
+                if end < bytes.len() && (bytes[end] == b'+' || bytes[end] == b'-') {
+                    end += 1;
+                }
+            }
+            _ => break,
         }
     }
-
-    if let Ok(num) = accum.parse::<f64>() {
-        if !has_decimal_separator && !exp_sign && !has_exponent && !excess_space {
-            return (OwnedValue::Float(num), CastTextToRealResultCode::PureInt);
-        }
-
-        if excess_space {
-            // TODO see if this branch satisfies: not a valid number, but has a valid prefix which
-            // includes a decimal point and/or an eNNN clause
-            return (
-                OwnedValue::Float(num),
-                CastTextToRealResultCode::NotValidButPrefix,
-            );
-        }
-
-        return (OwnedValue::Float(num), CastTextToRealResultCode::HasDecimal);
+    if end == 0 || (end == 1 && bytes[0] == b'-') {
+        return Err(());
     }
+    // edge case: if it ends with exponent, strip and cast valid digits as float
+    let last = bytes[end - 1];
+    if last.eq_ignore_ascii_case(&b'e') {
+        return Ok((OwnedValueType::Float, &text[0..end - 1]));
+    // edge case: ends with extponent / sign
+    } else if has_exponent && (last == b'-' || last == b'+') {
+        return Ok((OwnedValueType::Float, &text[0..end - 2]));
+    }
+    Ok((
+        if !has_decimal && !has_exponent {
+            OwnedValueType::Integer
+        } else {
+            OwnedValueType::Float
+        },
+        &text[..end],
+    ))
+}
 
-    return (OwnedValue::Float(0.0), CastTextToRealResultCode::NotValid);
+pub fn cast_text_to_numeric(txt: &str) -> OwnedValue {
+    checked_cast_text_to_numeric(txt).unwrap_or(OwnedValue::Integer(0))
+}
+
+// Check if float can be losslessly converted to 51-bit integer
+pub fn cast_real_to_integer(float: f64) -> std::result::Result<i64, ()> {
+    let i = float as i64;
+    if float == i as f64 && i.abs() < (1i64 << 51) {
+        return Ok(i);
+    }
+    Err(())
 }
 
 // for TVF's we need these at planning time so we cannot emit translate_expr
@@ -1373,261 +1355,160 @@ pub mod tests {
 
     #[test]
     fn test_text_to_integer() {
+        assert_eq!(cast_text_to_integer("1"), OwnedValue::Integer(1),);
+        assert_eq!(cast_text_to_integer("-1"), OwnedValue::Integer(-1),);
         assert_eq!(
-            text_to_integer("1"),
-            (OwnedValue::Integer(1), CastTextToIntResultCode::Success),
+            cast_text_to_integer("1823400-00000"),
+            OwnedValue::Integer(1823400),
         );
         assert_eq!(
-            text_to_integer("-1"),
-            (OwnedValue::Integer(-1), CastTextToIntResultCode::Success),
+            cast_text_to_integer("-10000000"),
+            OwnedValue::Integer(-10000000),
+        );
+        assert_eq!(cast_text_to_integer("123xxx"), OwnedValue::Integer(123),);
+        assert_eq!(
+            cast_text_to_integer("9223372036854775807"),
+            OwnedValue::Integer(i64::MAX),
         );
         assert_eq!(
-            text_to_integer("10000000"),
-            (
-                OwnedValue::Integer(10000000),
-                CastTextToIntResultCode::Success,
-            ),
+            cast_text_to_integer("9223372036854775808"),
+            OwnedValue::Integer(0),
         );
         assert_eq!(
-            text_to_integer("-10000000"),
-            (
-                OwnedValue::Integer(-10000000),
-                CastTextToIntResultCode::Success,
-            ),
+            cast_text_to_integer("-9223372036854775808"),
+            OwnedValue::Integer(i64::MIN),
         );
         assert_eq!(
-            text_to_integer("xxx"),
-            (OwnedValue::Integer(0), CastTextToIntResultCode::NotInt),
+            cast_text_to_integer("-9223372036854775809"),
+            OwnedValue::Integer(0),
         );
-        assert_eq!(
-            text_to_integer("123xxx"),
-            (
-                OwnedValue::Integer(123),
-                CastTextToIntResultCode::ExcessSpace,
-            ),
-        );
-        assert_eq!(
-            text_to_integer("9223372036854775807"),
-            (
-                OwnedValue::Integer(i64::MAX),
-                CastTextToIntResultCode::Success,
-            ),
-        );
-        assert_eq!(
-            text_to_integer("9223372036854775808"),
-            (
-                OwnedValue::Integer(0),
-                CastTextToIntResultCode::TooLargeOrMalformed,
-            ),
-        );
-        assert_eq!(
-            text_to_integer("-9223372036854775808"),
-            (
-                OwnedValue::Integer(i64::MIN),
-                CastTextToIntResultCode::Success,
-            ),
-        );
-        assert_eq!(
-            text_to_integer("-9223372036854775809"),
-            (
-                OwnedValue::Integer(0),
-                CastTextToIntResultCode::TooLargeOrMalformed,
-            ),
-        );
-        assert_eq!(
-            text_to_integer("-"),
-            (OwnedValue::Integer(0), CastTextToIntResultCode::NotInt,),
-        );
+        assert_eq!(cast_text_to_integer("-"), OwnedValue::Integer(0),);
     }
 
     #[test]
     fn test_text_to_real() {
+        assert_eq!(cast_text_to_real("1"), OwnedValue::Float(1.0));
+        assert_eq!(cast_text_to_real("-1"), OwnedValue::Float(-1.0));
+        assert_eq!(cast_text_to_real("1.0"), OwnedValue::Float(1.0));
+        assert_eq!(cast_text_to_real("-1.0"), OwnedValue::Float(-1.0));
+        assert_eq!(cast_text_to_real("1e10"), OwnedValue::Float(1e10));
+        assert_eq!(cast_text_to_real("-1e10"), OwnedValue::Float(-1e10));
+        assert_eq!(cast_text_to_real("1e-10"), OwnedValue::Float(1e-10));
+        assert_eq!(cast_text_to_real("-1e-10"), OwnedValue::Float(-1e-10));
+        assert_eq!(cast_text_to_real("1.123e10"), OwnedValue::Float(1.123e10));
+        assert_eq!(cast_text_to_real("-1.123e10"), OwnedValue::Float(-1.123e10));
+        assert_eq!(cast_text_to_real("1.123e-10"), OwnedValue::Float(1.123e-10));
+        assert_eq!(cast_text_to_real("-1.123-e-10"), OwnedValue::Float(-1.123));
+        assert_eq!(cast_text_to_real("1-282584294928"), OwnedValue::Float(1.0));
         assert_eq!(
-            text_to_real("1"),
-            (OwnedValue::Float(1.0), CastTextToRealResultCode::PureInt),
+            cast_text_to_real("1.7976931348623157e309"),
+            OwnedValue::Float(f64::INFINITY),
         );
         assert_eq!(
-            text_to_real("-1"),
-            (OwnedValue::Float(-1.0), CastTextToRealResultCode::PureInt),
+            cast_text_to_real("-1.7976931348623157e308"),
+            OwnedValue::Float(f64::MIN),
         );
         assert_eq!(
-            text_to_real("1.0"),
-            (OwnedValue::Float(1.0), CastTextToRealResultCode::HasDecimal),
+            cast_text_to_real("-1.7976931348623157e309"),
+            OwnedValue::Float(f64::NEG_INFINITY),
+        );
+        assert_eq!(cast_text_to_real("1E"), OwnedValue::Float(1.0));
+        assert_eq!(cast_text_to_real("1EE"), OwnedValue::Float(1.0));
+        assert_eq!(cast_text_to_real("-1E"), OwnedValue::Float(-1.0));
+        assert_eq!(cast_text_to_real("1."), OwnedValue::Float(1.0));
+        assert_eq!(cast_text_to_real("-1."), OwnedValue::Float(-1.0));
+        assert_eq!(cast_text_to_real("1.23E"), OwnedValue::Float(1.23));
+        assert_eq!(cast_text_to_real(".1.23E-"), OwnedValue::Float(0.1));
+        assert_eq!(cast_text_to_real("0"), OwnedValue::Float(0.0));
+        assert_eq!(cast_text_to_real("-0"), OwnedValue::Float(0.0));
+        assert_eq!(cast_text_to_real("-0"), OwnedValue::Float(0.0));
+        assert_eq!(cast_text_to_real("-0.0"), OwnedValue::Float(0.0));
+        assert_eq!(cast_text_to_real("0.0"), OwnedValue::Float(0.0));
+        assert_eq!(cast_text_to_real("-"), OwnedValue::Float(0.0));
+    }
+
+    #[test]
+    fn test_text_to_numeric() {
+        assert_eq!(cast_text_to_numeric("1"), OwnedValue::Integer(1));
+        assert_eq!(cast_text_to_numeric("-1"), OwnedValue::Integer(-1));
+        assert_eq!(
+            cast_text_to_numeric("1823400-00000"),
+            OwnedValue::Integer(1823400)
         );
         assert_eq!(
-            text_to_real("-1.0"),
-            (
-                OwnedValue::Float(-1.0),
-                CastTextToRealResultCode::HasDecimal,
-            ),
+            cast_text_to_numeric("-10000000"),
+            OwnedValue::Integer(-10000000)
+        );
+        assert_eq!(cast_text_to_numeric("123xxx"), OwnedValue::Integer(123));
+        assert_eq!(
+            cast_text_to_numeric("9223372036854775807"),
+            OwnedValue::Integer(i64::MAX)
         );
         assert_eq!(
-            text_to_real("1e10"),
-            (
-                OwnedValue::Float(1e10),
-                CastTextToRealResultCode::HasDecimal,
-            ),
+            cast_text_to_numeric("9223372036854775808"),
+            OwnedValue::Float(9.22337203685478e18)
+        ); // Exceeds i64, becomes float
+        assert_eq!(
+            cast_text_to_numeric("-9223372036854775808"),
+            OwnedValue::Integer(i64::MIN)
         );
         assert_eq!(
-            text_to_real("-1e10"),
-            (
-                OwnedValue::Float(-1e10),
-                CastTextToRealResultCode::HasDecimal,
-            ),
+            cast_text_to_numeric("-9223372036854775809"),
+            OwnedValue::Float(-9.22337203685478e18)
+        ); // Exceeds i64, becomes float
+
+        assert_eq!(cast_text_to_numeric("1.0"), OwnedValue::Float(1.0));
+        assert_eq!(cast_text_to_numeric("-1.0"), OwnedValue::Float(-1.0));
+        assert_eq!(cast_text_to_numeric("1e10"), OwnedValue::Float(1e10));
+        assert_eq!(cast_text_to_numeric("-1e10"), OwnedValue::Float(-1e10));
+        assert_eq!(cast_text_to_numeric("1e-10"), OwnedValue::Float(1e-10));
+        assert_eq!(cast_text_to_numeric("-1e-10"), OwnedValue::Float(-1e-10));
+        assert_eq!(
+            cast_text_to_numeric("1.123e10"),
+            OwnedValue::Float(1.123e10)
         );
         assert_eq!(
-            text_to_real("1e-10"),
-            (
-                OwnedValue::Float(1e-10),
-                CastTextToRealResultCode::HasDecimal,
-            ),
+            cast_text_to_numeric("-1.123e10"),
+            OwnedValue::Float(-1.123e10)
         );
         assert_eq!(
-            text_to_real("-1e-10"),
-            (
-                OwnedValue::Float(-1e-10),
-                CastTextToRealResultCode::HasDecimal,
-            ),
+            cast_text_to_numeric("1.123e-10"),
+            OwnedValue::Float(1.123e-10)
         );
         assert_eq!(
-            text_to_real("1.123e10"),
-            (
-                OwnedValue::Float(1.123e10),
-                CastTextToRealResultCode::HasDecimal,
-            ),
+            cast_text_to_numeric("-1.123-e-10"),
+            OwnedValue::Float(-1.123)
         );
         assert_eq!(
-            text_to_real("-1.123e10"),
-            (
-                OwnedValue::Float(-1.123e10),
-                CastTextToRealResultCode::HasDecimal,
-            ),
+            cast_text_to_numeric("1-282584294928"),
+            OwnedValue::Integer(1)
+        );
+        assert_eq!(cast_text_to_numeric("xxx"), OwnedValue::Integer(0));
+        assert_eq!(
+            cast_text_to_numeric("1.7976931348623157e309"),
+            OwnedValue::Float(f64::INFINITY)
         );
         assert_eq!(
-            text_to_real("1.123e-10"),
-            (
-                OwnedValue::Float(1.123e-10),
-                CastTextToRealResultCode::HasDecimal,
-            ),
+            cast_text_to_numeric("-1.7976931348623157e308"),
+            OwnedValue::Float(f64::MIN)
         );
         assert_eq!(
-            text_to_real("-1.123e-10"),
-            (
-                OwnedValue::Float(-1.123e-10),
-                CastTextToRealResultCode::HasDecimal,
-            ),
+            cast_text_to_numeric("-1.7976931348623157e309"),
+            OwnedValue::Float(f64::NEG_INFINITY)
         );
-        assert_eq!(
-            text_to_real("1-282584294928"),
-            (
-                OwnedValue::Float(1.0),
-                CastTextToRealResultCode::NotValidButPrefix
-            ),
-        );
-        assert_eq!(
-            text_to_real("xxx"),
-            (OwnedValue::Float(0.0), CastTextToRealResultCode::NotValid),
-        );
-        assert_eq!(
-            text_to_real("1.7976931348623157e308"),
-            (
-                OwnedValue::Float(f64::MAX),
-                CastTextToRealResultCode::HasDecimal,
-            ),
-        );
-        assert_eq!(
-            text_to_real("1.7976931348623157e309"),
-            (
-                OwnedValue::Float(f64::INFINITY),
-                CastTextToRealResultCode::HasDecimal,
-            ),
-        );
-        assert_eq!(
-            text_to_real("-1.7976931348623157e308"),
-            (
-                OwnedValue::Float(f64::MIN),
-                CastTextToRealResultCode::HasDecimal,
-            ),
-        );
-        assert_eq!(
-            text_to_real("-1.7976931348623157e309"),
-            (
-                OwnedValue::Float(f64::NEG_INFINITY),
-                CastTextToRealResultCode::HasDecimal,
-            ),
-        );
-        assert_eq!(
-            text_to_real("1E"),
-            (
-                OwnedValue::Float(1.0),
-                CastTextToRealResultCode::NotValidButPrefix,
-            ),
-        );
-        assert_eq!(
-            text_to_real("1EE"),
-            (
-                OwnedValue::Float(1.0),
-                CastTextToRealResultCode::NotValidButPrefix,
-            ),
-        );
-        assert_eq!(
-            text_to_real("-1E"),
-            (
-                OwnedValue::Float(-1.0),
-                CastTextToRealResultCode::NotValidButPrefix,
-            ),
-        );
-        assert_eq!(
-            text_to_real("1."),
-            (
-                OwnedValue::Float(1.0),
-                CastTextToRealResultCode::NotValidButPrefix,
-            ),
-        );
-        assert_eq!(
-            text_to_real("-1."),
-            (
-                OwnedValue::Float(-1.0),
-                CastTextToRealResultCode::NotValidButPrefix,
-            ),
-        );
-        assert_eq!(
-            text_to_real("1.23E"),
-            (
-                OwnedValue::Float(1.23),
-                CastTextToRealResultCode::NotValidButPrefix,
-            ),
-        );
-        assert_eq!(
-            text_to_real("1.23E-"),
-            (
-                OwnedValue::Float(1.23),
-                CastTextToRealResultCode::NotValidButPrefix,
-            ),
-        );
-        assert_eq!(
-            text_to_real("0"),
-            (OwnedValue::Float(0.0), CastTextToRealResultCode::PureInt,),
-        );
-        assert_eq!(
-            text_to_real("-0"),
-            (OwnedValue::Float(-0.0), CastTextToRealResultCode::PureInt,),
-        );
-        assert_eq!(
-            text_to_real("-0"),
-            (OwnedValue::Float(0.0), CastTextToRealResultCode::PureInt,),
-        );
-        assert_eq!(
-            text_to_real("-0.0"),
-            (OwnedValue::Float(0.0), CastTextToRealResultCode::HasDecimal,),
-        );
-        assert_eq!(
-            text_to_real("0.0"),
-            (OwnedValue::Float(0.0), CastTextToRealResultCode::HasDecimal,),
-        );
-        assert_eq!(
-            text_to_real("-"),
-            (OwnedValue::Float(0.0), CastTextToRealResultCode::NotValid,),
-        );
+
+        assert_eq!(cast_text_to_numeric("1E"), OwnedValue::Float(1.0));
+        assert_eq!(cast_text_to_numeric("1EE"), OwnedValue::Float(1.0));
+        assert_eq!(cast_text_to_numeric("-1E"), OwnedValue::Float(-1.0));
+        assert_eq!(cast_text_to_numeric("1."), OwnedValue::Float(1.0));
+        assert_eq!(cast_text_to_numeric("-1."), OwnedValue::Float(-1.0));
+        assert_eq!(cast_text_to_numeric("1.23E"), OwnedValue::Float(1.23));
+        assert_eq!(cast_text_to_numeric("1.23E-"), OwnedValue::Float(1.23));
+
+        assert_eq!(cast_text_to_numeric("0"), OwnedValue::Integer(0));
+        assert_eq!(cast_text_to_numeric("-0"), OwnedValue::Integer(0));
+        assert_eq!(cast_text_to_numeric("-0.0"), OwnedValue::Float(0.0));
+        assert_eq!(cast_text_to_numeric("0.0"), OwnedValue::Float(0.0));
+        assert_eq!(cast_text_to_numeric("-"), OwnedValue::Integer(0));
     }
 }

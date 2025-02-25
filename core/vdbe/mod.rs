@@ -42,8 +42,8 @@ use crate::types::{
     AggContext, Cursor, CursorResult, ExternalAggState, OwnedValue, Record, SeekKey, SeekOp,
 };
 use crate::util::{
-    parse_schema_rows, text_to_integer, text_to_real, CastTextToIntResultCode,
-    CastTextToRealResultCode,
+    cast_real_to_integer, cast_text_to_integer, cast_text_to_numeric, cast_text_to_real,
+    checked_cast_text_to_numeric, parse_schema_rows, RoundToPrecision,
 };
 use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::Insn;
@@ -1277,20 +1277,18 @@ impl Program {
                         } else {
                             conn.auto_commit.replace(*auto_commit);
                         }
+                    } else if !*auto_commit {
+                        return Err(LimboError::TxError(
+                            "cannot start a transaction within a transaction".to_string(),
+                        ));
+                    } else if *rollback {
+                        return Err(LimboError::TxError(
+                            "cannot rollback - no transaction is active".to_string(),
+                        ));
                     } else {
-                        if !*auto_commit {
-                            return Err(LimboError::TxError(
-                                "cannot start a transaction within a transaction".to_string(),
-                            ));
-                        } else if *rollback {
-                            return Err(LimboError::TxError(
-                                "cannot rollback - no transaction is active".to_string(),
-                            ));
-                        } else {
-                            return Err(LimboError::TxError(
-                                "cannot commit - no transaction is active".to_string(),
-                            ));
-                        }
+                        return Err(LimboError::TxError(
+                            "cannot commit - no transaction is active".to_string(),
+                        ));
                     }
                     return self.halt(pager);
                 }
@@ -2160,7 +2158,7 @@ impl Program {
                                     unreachable!("Cast with non-text type");
                                 };
                                 let result =
-                                    exec_cast(&reg_value_argument, &reg_value_type.as_str());
+                                    exec_cast(&reg_value_argument, reg_value_type.as_str());
                                 state.registers[*dest] = result;
                             }
                             ScalarFunc::Changes => {
@@ -2198,8 +2196,8 @@ impl Program {
                                         };
                                         OwnedValue::Integer(exec_glob(
                                             cache,
-                                            &pattern.as_str(),
-                                            &text.as_str(),
+                                            pattern.as_str(),
+                                            text.as_str(),
                                         )
                                             as i64)
                                     }
@@ -2230,12 +2228,12 @@ impl Program {
                                 let match_expression = &state.registers[*start_reg + 1];
 
                                 let pattern = match pattern {
-                                    OwnedValue::Text(_) => pattern.clone(),
-                                    _ => exec_cast(pattern, "TEXT"),
+                                    OwnedValue::Text(_) => pattern,
+                                    _ => &exec_cast(pattern, "TEXT"),
                                 };
                                 let match_expression = match match_expression {
-                                    OwnedValue::Text(_) => match_expression.clone(),
-                                    _ => exec_cast(match_expression, "TEXT"),
+                                    OwnedValue::Text(_) => match_expression,
+                                    _ => &exec_cast(match_expression, "TEXT"),
                                 };
 
                                 let result = match (pattern, match_expression) {
@@ -2251,8 +2249,8 @@ impl Program {
                                         };
 
                                         OwnedValue::Integer(exec_like_with_escape(
-                                            &pattern.as_str(),
-                                            &match_expression.as_str(),
+                                            pattern.as_str(),
+                                            match_expression.as_str(),
                                             escape,
                                         )
                                             as i64)
@@ -2268,14 +2266,14 @@ impl Program {
                                         };
                                         OwnedValue::Integer(exec_like(
                                             cache,
-                                            &pattern.as_str(),
-                                            &match_expression.as_str(),
+                                            pattern.as_str(),
+                                            match_expression.as_str(),
                                         )
                                             as i64)
                                     }
-                                    (OwnedValue::Null, OwnedValue::Null)
-                                    | (OwnedValue::Null, _)
-                                    | (_, OwnedValue::Null) => OwnedValue::Null,
+                                    (OwnedValue::Null, _) | (_, OwnedValue::Null) => {
+                                        OwnedValue::Null
+                                    }
                                     _ => {
                                         unreachable!("Like failed");
                                     }
@@ -2712,9 +2710,12 @@ impl Program {
                             ),
                         },
                         OwnedValue::Text(text) => {
-                            match checked_cast_text_to_numeric(&text.as_str()) {
+                            match checked_cast_text_to_numeric(text.as_str()) {
                                 Ok(OwnedValue::Integer(i)) => {
                                     state.registers[*reg] = OwnedValue::Integer(i)
+                                }
+                                Ok(OwnedValue::Float(f)) => {
+                                    state.registers[*reg] = OwnedValue::Integer(f as i64)
                                 }
                                 _ => crate::bail_parse_error!(
                                     "MustBeInt: the value in register cannot be cast to integer"
@@ -2947,7 +2948,7 @@ impl Program {
             .expect("only weak ref to connection?");
         let auto_commit = *connection.auto_commit.borrow();
         tracing::trace!("Halt auto_commit {}", auto_commit);
-        return if auto_commit {
+        if auto_commit {
             let current_state = connection.transaction_state.borrow().clone();
             if current_state == TransactionState::Read {
                 pager.end_read_tx()?;
@@ -2971,8 +2972,8 @@ impl Program {
                     conn.set_changes(self.n_change.get());
                 }
             }
-            return Ok(StepResult::Done);
-        };
+            Ok(StepResult::Done)
+        }
     }
 }
 
@@ -3573,30 +3574,35 @@ fn exec_unicode(reg: &OwnedValue) -> OwnedValue {
 
 fn _to_float(reg: &OwnedValue) -> f64 {
     match reg {
-        OwnedValue::Text(x) => x.as_str().parse().unwrap_or(0.0),
+        OwnedValue::Text(x) => match cast_text_to_numeric(x.as_str()) {
+            OwnedValue::Integer(i) => i as f64,
+            OwnedValue::Float(f) => f,
+            _ => unreachable!(),
+        },
         OwnedValue::Integer(x) => *x as f64,
         OwnedValue::Float(x) => *x,
+        OwnedValue::Agg(ctx) => _to_float(ctx.final_value()),
         _ => 0.0,
     }
 }
 
 fn exec_round(reg: &OwnedValue, precision: Option<OwnedValue>) -> OwnedValue {
-    let precision = match precision {
-        Some(OwnedValue::Text(x)) => x.as_str().parse().unwrap_or(0.0),
-        Some(OwnedValue::Integer(x)) => x as f64,
-        Some(OwnedValue::Float(x)) => x,
-        Some(OwnedValue::Null) => return OwnedValue::Null,
-        _ => 0.0,
+    let reg = _to_float(reg);
+    let round = |reg: f64, f: f64| {
+        let precision = if f < 1.0 { 0.0 } else { f };
+        OwnedValue::Float(reg.round_to_precision(precision as i32))
     };
-
-    let reg = match reg {
-        OwnedValue::Agg(ctx) => _to_float(ctx.final_value()),
-        _ => _to_float(reg),
-    };
-
-    let precision = if precision < 1.0 { 0.0 } else { precision };
-    let multiplier = 10f64.powi(precision as i32);
-    OwnedValue::Float(((reg * multiplier).round()) / multiplier)
+    match precision {
+        Some(OwnedValue::Text(x)) => match cast_text_to_numeric(x.as_str()) {
+            OwnedValue::Integer(i) => round(reg, i as f64),
+            OwnedValue::Float(f) => round(reg, f),
+            _ => unreachable!(),
+        },
+        Some(OwnedValue::Integer(i)) => round(reg, i as f64),
+        Some(OwnedValue::Float(f)) => round(reg, f),
+        None => round(reg, 0.0),
+        _ => OwnedValue::Null,
+    }
 }
 
 // Implements TRIM pattern matching.
@@ -3688,9 +3694,9 @@ fn exec_cast(value: &OwnedValue, datatype: &str) -> OwnedValue {
             OwnedValue::Blob(b) => {
                 // Convert BLOB to TEXT first
                 let text = String::from_utf8_lossy(b);
-                cast_text_to_real(&text).0
+                cast_text_to_real(&text)
             }
-            OwnedValue::Text(t) => cast_text_to_real(t.as_str()).0,
+            OwnedValue::Text(t) => cast_text_to_real(t.as_str()),
             OwnedValue::Integer(i) => OwnedValue::Float(*i as f64),
             OwnedValue::Float(f) => OwnedValue::Float(*f),
             _ => OwnedValue::Float(0.0),
@@ -3699,9 +3705,9 @@ fn exec_cast(value: &OwnedValue, datatype: &str) -> OwnedValue {
             OwnedValue::Blob(b) => {
                 // Convert BLOB to TEXT first
                 let text = String::from_utf8_lossy(b);
-                cast_text_to_integer(&text).0
+                cast_text_to_integer(&text)
             }
-            OwnedValue::Text(t) => cast_text_to_integer(t.as_str()).0,
+            OwnedValue::Text(t) => cast_text_to_integer(t.as_str()),
             OwnedValue::Integer(i) => OwnedValue::Integer(*i),
             // A cast of a REAL value into an INTEGER results in the integer between the REAL value and zero
             // that is closest to the REAL value. If a REAL is greater than the greatest possible signed integer (+9223372036854775807)
@@ -3763,85 +3769,6 @@ fn exec_replace(source: &OwnedValue, pattern: &OwnedValue, replacement: &OwnedVa
         }
         _ => unreachable!("text cast should never fail"),
     }
-}
-
-/// When casting a TEXT value to INTEGER, the longest possible prefix of the value that can be interpreted as an integer number
-/// is extracted from the TEXT value and the remainder ignored. Any leading spaces in the TEXT value when converting from TEXT to INTEGER are ignored.
-/// If there is no prefix that can be interpreted as an integer number, the result of the conversion is 0.
-/// If the prefix integer is greater than +9223372036854775807 then the result of the cast is exactly +9223372036854775807.
-/// Similarly, if the prefix integer is less than -9223372036854775808 then the result of the cast is exactly -9223372036854775808.
-/// When casting to INTEGER, if the text looks like a floating point value with an exponent, the exponent will be ignored
-/// because it is no part of the integer prefix. For example, "CAST('123e+5' AS INTEGER)" results in 123, not in 12300000.
-/// The CAST operator understands decimal integers only — conversion of hexadecimal integers stops at the "x" in the "0x" prefix of the hexadecimal integer string and thus result of the CAST is always zero.
-fn cast_text_to_integer(text: &str) -> (OwnedValue, CastTextToIntResultCode) {
-    text_to_integer(text)
-}
-
-/// When casting a TEXT value to REAL, the longest possible prefix of the value that can be interpreted
-/// as a real number is extracted from the TEXT value and the remainder ignored. Any leading spaces in
-/// the TEXT value are ignored when converging from TEXT to REAL.
-/// If there is no prefix that can be interpreted as a real number, the result of the conversion is 0.0.
-fn cast_text_to_real(text: &str) -> (OwnedValue, CastTextToRealResultCode) {
-    text_to_real(text)
-}
-
-/// NUMERIC Casting a TEXT or BLOB value into NUMERIC yields either an INTEGER or a REAL result.
-/// If the input text looks like an integer (there is no decimal point nor exponent) and the value
-/// is small enough to fit in a 64-bit signed integer, then the result will be INTEGER.
-/// Input text that looks like floating point (there is a decimal point and/or an exponent)
-/// and the text describes a value that can be losslessly converted back and forth between IEEE 754
-/// 64-bit float and a 51-bit signed integer, then the result is INTEGER. (In the previous sentence,
-/// a 51-bit integer is specified since that is one bit less than the length of the mantissa of an
-/// IEEE 754 64-bit float and thus provides a 1-bit of margin for the text-to-float conversion operation.)
-/// Any text input that describes a value outside the range of a 64-bit signed integer yields a REAL result.
-/// Casting a REAL or INTEGER value to NUMERIC is a no-op, even if a real value could be losslessly converted to an integer.
-fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValue, ()> {
-    if !text.contains('.') && !text.contains('e') && !text.contains('E') {
-        // Looks like an integer
-        if let Ok(i) = text.parse::<i64>() {
-            return Ok(OwnedValue::Integer(i));
-        }
-    }
-    // Try as float
-    if let Ok(f) = text.parse::<f64>() {
-        return match cast_real_to_integer(f) {
-            Ok(i) => Ok(OwnedValue::Integer(i)),
-            Err(_) => Ok(OwnedValue::Float(f)),
-        };
-    }
-    Err(())
-}
-
-/// Reference for function definition
-/// https://github.com/sqlite/sqlite/blob/eb3a069fc82e53a40ea63076d66ab113a3b2b0c6/src/vdbe.c#L465
-fn cast_text_to_numeric(text: &str) -> OwnedValue {
-    let (real_cast, rc_real) = cast_text_to_real(text);
-    let (int_cast, rc_int) = cast_text_to_integer(text);
-    match (rc_real, rc_int) {
-        (
-            CastTextToRealResultCode::NotValid,
-            CastTextToIntResultCode::ExcessSpace
-            | CastTextToIntResultCode::Success
-            | CastTextToIntResultCode::NotInt,
-        ) => int_cast,
-        (
-            CastTextToRealResultCode::NotValid,
-            CastTextToIntResultCode::TooLargeOrMalformed | CastTextToIntResultCode::SpecialCase,
-        ) => real_cast,
-        (CastTextToRealResultCode::NotValidButPrefix, _) => real_cast,
-        (CastTextToRealResultCode::PureInt, CastTextToIntResultCode::Success) => int_cast,
-        (CastTextToRealResultCode::HasDecimal, _) => real_cast,
-        _ => real_cast,
-    }
-}
-
-// Check if float can be losslessly converted to 51-bit integer
-fn cast_real_to_integer(float: f64) -> std::result::Result<i64, ()> {
-    let i = float as i64;
-    if float == i as f64 && i.abs() < (1i64 << 51) {
-        return Ok(i);
-    }
-    Err(())
 }
 
 fn execute_sqlite_version(version_integer: i64) -> String {
