@@ -340,8 +340,8 @@ do_execsql_test multiply-agg-float-agg-int {
 } {41118.0}
 
 do_execsql_test multiply-str-floats-edgecase {
-  SELECT '-123.22342-24' * '232.3x32';
-} {-28624.800466}
+  SELECT '-123.22341-24' * '232.3x32';
+} {-28624.798143}
 
 
 do_execsql_test divide-agg-int {

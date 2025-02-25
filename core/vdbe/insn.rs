@@ -3,7 +3,6 @@ use std::num::NonZero;
 use super::{cast_text_to_numeric, AggFunc, BranchOffset, CursorID, FuncCtx, PageIdx};
 use crate::storage::wal::CheckpointMode;
 use crate::types::{OwnedValue, Record};
-use crate::util::RoundToPrecision;
 use limbo_macros::Description;
 
 macro_rules! final_agg_values {
@@ -712,9 +711,7 @@ pub fn exec_add(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
                 OwnedValue::Integer(result.0)
             }
         }
-        (OwnedValue::Float(lhs), OwnedValue::Float(rhs)) => {
-            OwnedValue::Float((lhs + rhs).round_to_precision(6.0))
-        }
+        (OwnedValue::Float(lhs), OwnedValue::Float(rhs)) => OwnedValue::Float(lhs + rhs),
         (OwnedValue::Float(f), OwnedValue::Integer(i))
         | (OwnedValue::Integer(i), OwnedValue::Float(f)) => OwnedValue::Float(*f + *i as f64),
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
@@ -757,6 +754,7 @@ pub fn exec_subtract(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
         _ => todo!(),
     }
 }
+
 pub fn exec_multiply(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
     final_agg_values!(lhs, rhs);
     match (lhs, rhs) {
@@ -768,9 +766,7 @@ pub fn exec_multiply(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
                 OwnedValue::Integer(result.0)
             }
         }
-        (OwnedValue::Float(lhs), OwnedValue::Float(rhs)) => {
-            OwnedValue::Float((lhs * rhs).round_to_precision(6.0))
-        }
+        (OwnedValue::Float(lhs), OwnedValue::Float(rhs)) => OwnedValue::Float(lhs * rhs),
         (OwnedValue::Integer(i), OwnedValue::Float(f))
         | (OwnedValue::Float(f), OwnedValue::Integer(i)) => OwnedValue::Float(*i as f64 * { *f }),
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
@@ -1160,7 +1156,7 @@ mod tests {
             ),
             (OwnedValue::Integer(0), OwnedValue::Text(Text::from_str(""))),
         ];
-        let outpus = [
+        let outputs = [
             OwnedValue::Null,
             OwnedValue::Integer(1),
             OwnedValue::Null,
@@ -1174,13 +1170,13 @@ mod tests {
 
         assert_eq!(
             inputs.len(),
-            outpus.len(),
+            outputs.len(),
             "Inputs and Outputs should have same size"
         );
         for (i, (lhs, rhs)) in inputs.iter().enumerate() {
             assert_eq!(
                 exec_or(lhs, rhs),
-                outpus[i],
+                outputs[i],
                 "Wrong OR for lhs: {}, rhs: {}",
                 lhs,
                 rhs
