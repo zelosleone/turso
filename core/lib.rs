@@ -48,8 +48,7 @@ use storage::sqlite3_ondisk::{DatabaseHeader, DATABASE_HEADER_SIZE};
 pub use storage::wal::CheckpointMode;
 pub use storage::wal::WalFile;
 pub use storage::wal::WalFileShared;
-use types::OwnedValue;
-pub use types::Value;
+pub use types::OwnedValue;
 use util::{columns_from_create_table_body, parse_schema_rows};
 use vdbe::builder::QueryMode;
 use vdbe::VTabOpaqueCursor;
@@ -497,7 +496,7 @@ impl Statement {
         self.program.parameters.count()
     }
 
-    pub fn bind_at(&mut self, index: NonZero<usize>, value: Value) {
+    pub fn bind_at(&mut self, index: NonZero<usize>, value: OwnedValue) {
         self.state.bind_at(index, value.into());
     }
 

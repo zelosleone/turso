@@ -1875,14 +1875,58 @@ impl Program {
                                     unreachable!();
                                 };
                                 *acc /= count.clone();
+                                state.registers[*register] = acc.clone();
                             }
-                            AggFunc::Sum | AggFunc::Total => {}
-                            AggFunc::Count | AggFunc::Count0 => {}
-                            AggFunc::Max => {}
-                            AggFunc::Min => {}
-                            AggFunc::GroupConcat | AggFunc::StringAgg => {}
+                            AggFunc::Sum | AggFunc::Total => {
+                                let AggContext::Sum(acc) = agg.borrow_mut() else {
+                                    unreachable!();
+                                };
+                                let value = match acc {
+                                    OwnedValue::Integer(i) => OwnedValue::Integer(*i),
+                                    OwnedValue::Float(f) => OwnedValue::Float(*f),
+                                    _ => OwnedValue::Float(0.0),
+                                };
+                                state.registers[*register] = value;
+                            }
+                            AggFunc::Count | AggFunc::Count0 => {
+                                let AggContext::Count(count) = agg.borrow_mut() else {
+                                    unreachable!();
+                                };
+                                state.registers[*register] = count.clone();
+                            }
+                            AggFunc::Max => {
+                                let AggContext::Max(acc) = agg.borrow_mut() else {
+                                    unreachable!();
+                                };
+                                match acc {
+                                    Some(value) => state.registers[*register] = value.clone(),
+                                    None => state.registers[*register] = OwnedValue::Null,
+                                }
+                            }
+                            AggFunc::Min => {
+                                let AggContext::Min(acc) = agg.borrow_mut() else {
+                                    unreachable!();
+                                };
+                                match acc {
+                                    Some(value) => state.registers[*register] = value.clone(),
+                                    None => state.registers[*register] = OwnedValue::Null,
+                                }
+                            }
+                            AggFunc::GroupConcat | AggFunc::StringAgg => {
+                                let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
+                                    unreachable!();
+                                };
+                                state.registers[*register] = acc.clone();
+                            }
                             AggFunc::External(_) => {
                                 agg.compute_external()?;
+                                let AggContext::External(agg_state) = agg.borrow_mut() else {
+                                    unreachable!();
+                                };
+                                match &agg_state.finalized_value {
+                                    Some(value) => state.registers[*register] = value.clone(),
+                                    None => state.registers[*register] = OwnedValue::Null,
+                                }
                             }
                         },
                         OwnedValue::Null => {
