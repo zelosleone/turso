@@ -6,12 +6,14 @@ pub use params::params_from_iter;
 use crate::params::*;
 use crate::value::*;
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("SQL conversion failure: `{0}`")]
     ToSqlConversionFailure(BoxError),
+    #[error("Mutex lock error: {0}")]
+    MutexError(String),
 }
 
 impl From<limbo_core::LimboError> for Error {
@@ -51,16 +53,32 @@ pub struct Database {
     inner: Arc<limbo_core::Database>,
 }
 
+unsafe impl Send for Database {}
+unsafe impl Sync for Database {}
+
 impl Database {
     pub fn connect(&self) -> Result<Connection> {
         let conn = self.inner.connect();
-        Ok(Connection { inner: conn })
+        Ok(Connection {
+            inner: Arc::new(Mutex::new(conn)),
+        })
     }
 }
 
 pub struct Connection {
-    inner: Rc<limbo_core::Connection>,
+    inner: Arc<Mutex<Rc<limbo_core::Connection>>>,
 }
+
+impl Clone for Connection {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
+unsafe impl Send for Connection {}
+unsafe impl Sync for Connection {}
 
 impl Connection {
     pub async fn query(&self, sql: &str, params: impl IntoParams) -> Result<Rows> {
@@ -74,16 +92,25 @@ impl Connection {
     }
 
     pub async fn prepare(&self, sql: &str) -> Result<Statement> {
-        let stmt = self.inner.prepare(sql)?;
+        let conn = self
+            .inner
+            .lock()
+            .map_err(|e| Error::MutexError(e.to_string()))?;
+
+        let stmt = conn.prepare(sql)?;
+
         Ok(Statement {
-            _inner: Rc::new(stmt),
+            inner: Arc::new(Mutex::new(Rc::new(stmt))),
         })
     }
 }
 
 pub struct Statement {
-    _inner: Rc<limbo_core::Statement>,
+    inner: Arc<Mutex<Rc<limbo_core::Statement>>>,
 }
+
+unsafe impl Send for Statement {}
+unsafe impl Sync for Statement {}
 
 impl Statement {
     pub async fn query(&mut self, params: impl IntoParams) -> Result<Rows> {
@@ -110,8 +137,11 @@ pub enum Params {
 pub struct Transaction {}
 
 pub struct Rows {
-    _inner: Rc<limbo_core::Statement>,
+    inner: Arc<Mutex<Rc<limbo_core::Statement>>>,
 }
+
+unsafe impl Send for Rows {}
+unsafe impl Sync for Rows {}
 
 impl Rows {
     pub async fn next(&mut self) -> Result<Option<Row>> {
@@ -120,6 +150,9 @@ impl Rows {
 }
 
 pub struct Row {}
+
+unsafe impl Send for Row {}
+unsafe impl Sync for Row {}
 
 impl Row {
     pub fn get_value(&self, _index: usize) -> Result<Value> {
