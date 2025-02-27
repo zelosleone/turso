@@ -22,13 +22,13 @@ jobs:
       # - name: Install dependencies
       #   run: npm install && npm run build
 
-      # - name: Bench
-      #   run: cargo bench  2>&1 | tee output.txt
-      - name: Bench (fake)
-        run: |
-            pwd
-            ls
-            cp .github/data/limbo-cargo-output.txt output.txt
+      - name: Bench
+        run: cargo bench  2>&1 | tee output.txt
+      # - name: Bench (fake)
+      #   run: |
+      #       pwd
+      #       ls
+      #       cp .github/data/limbo-cargo-output.txt output.txt
 
       - name: Analyze benchmark result with Nyrkiö
         uses: nyrkio/github-action-benchmark@HEAD
