@@ -52,7 +52,7 @@ pub struct Database {
 }
 
 impl Database {
-    pub fn connect(self) -> Result<Connection> {
+    pub fn connect(&self) -> Result<Connection> {
         let conn = self.inner.connect();
         Ok(Connection { inner: conn })
     }
