@@ -60,9 +60,11 @@ unsafe impl Sync for Database {}
 impl Database {
     pub fn connect(&self) -> Result<Connection> {
         let conn = self.inner.connect();
-        Ok(Connection {
+        #[allow(clippy::arc_with_non_send_sync)]
+        let connection = Connection {
             inner: Arc::new(Mutex::new(conn)),
-        })
+        };
+        Ok(connection)
     }
 }
 
@@ -100,9 +102,11 @@ impl Connection {
 
         let stmt = conn.prepare(sql)?;
 
-        Ok(Statement {
+        #[allow(clippy::arc_with_non_send_sync)]
+        let statement = Statement {
             inner: Arc::new(Mutex::new(stmt)),
-        })
+        };
+        Ok(statement)
     }
 }
 
@@ -120,9 +124,11 @@ impl Statement {
             crate::params::Params::None => {}
             _ => todo!(),
         }
-        Ok(Rows {
+        #[allow(clippy::arc_with_non_send_sync)]
+        let rows = Rows {
             inner: Arc::clone(&self.inner),
-        })
+        };
+        Ok(rows)
     }
 
     pub async fn execute(&mut self, params: impl IntoParams) -> Result<u64> {
