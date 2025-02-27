@@ -1,10 +1,11 @@
 pub mod params;
-mod value;
+pub mod value;
+
+pub use value::Value;
 
 pub use params::params_from_iter;
 
 use crate::params::*;
-use crate::value::*;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -100,13 +101,13 @@ impl Connection {
         let stmt = conn.prepare(sql)?;
 
         Ok(Statement {
-            inner: Arc::new(Mutex::new(Rc::new(stmt))),
+            inner: Arc::new(Mutex::new(stmt)),
         })
     }
 }
 
 pub struct Statement {
-    inner: Arc<Mutex<Rc<limbo_core::Statement>>>,
+    inner: Arc<Mutex<limbo_core::Statement>>,
 }
 
 unsafe impl Send for Statement {}
@@ -114,8 +115,14 @@ unsafe impl Sync for Statement {}
 
 impl Statement {
     pub async fn query(&mut self, params: impl IntoParams) -> Result<Rows> {
-        let _params = params.into_params()?;
-        todo!();
+        let params = params.into_params()?;
+        match params {
+            crate::params::Params::None => {}
+            _ => todo!(),
+        }
+        Ok(Rows {
+            inner: Arc::clone(&self.inner),
+        })
     }
 
     pub async fn execute(&mut self, params: impl IntoParams) -> Result<u64> {
@@ -137,7 +144,7 @@ pub enum Params {
 pub struct Transaction {}
 
 pub struct Rows {
-    inner: Arc<Mutex<Rc<limbo_core::Statement>>>,
+    inner: Arc<Mutex<limbo_core::Statement>>,
 }
 
 unsafe impl Send for Rows {}
@@ -145,17 +152,36 @@ unsafe impl Sync for Rows {}
 
 impl Rows {
     pub async fn next(&mut self) -> Result<Option<Row>> {
-        todo!();
+        let mut stmt = self
+            .inner
+            .lock()
+            .map_err(|e| Error::MutexError(e.to_string()))?;
+
+        match stmt.step() {
+            Ok(limbo_core::StepResult::Row) => {
+                let row = stmt.row().unwrap();
+                Ok(Some(Row {
+                    values: row.get_values().to_vec(),
+                }))
+            }
+            _ => Ok(None),
+        }
     }
 }
 
-pub struct Row {}
+pub struct Row {
+    values: Vec<limbo_core::OwnedValue>,
+}
 
 unsafe impl Send for Row {}
 unsafe impl Sync for Row {}
 
 impl Row {
-    pub fn get_value(&self, _index: usize) -> Result<Value> {
-        todo!();
+    pub fn get_value(&self, index: usize) -> Result<Value> {
+        let value = &self.values[index];
+        match value {
+            limbo_core::OwnedValue::Integer(i) => Ok(Value::Integer(*i)),
+            _ => todo!(),
+        }
     }
 }
