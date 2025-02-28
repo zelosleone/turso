@@ -390,12 +390,7 @@ impl Value {
         }
     }
 
-    /// Extension authors should __not__ use this function.
-    /// Extensions should _not_ use this method directly. When used properly,
-    /// core will own all Value types and they should not need to be manually free'd
-    /// in any extension code. However, if you are arbitrarily creating `Value` types
-    /// that do not follow the intended control flow/API of the exposed traits, and are
-    /// not returned to `core`, your extension _will_ leak the underlying memory.
+    /// Extension authors should __not__ use this function, or enable the 'core_only' feature
     ///
     /// # Safety
     /// consumes the value while freeing the underlying memory with null check.
