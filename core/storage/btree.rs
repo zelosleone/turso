@@ -2810,6 +2810,7 @@ mod tests {
 
     use super::{btree_init_page, defragment_page, drop_cell, insert_into_cell};
 
+    #[allow(clippy::arc_with_non_send_sync)]
     fn get_page(id: usize) -> PageRef {
         let page = Arc::new(Page::new(id));
 
@@ -2828,6 +2829,7 @@ mod tests {
         page
     }
 
+    #[allow(clippy::arc_with_non_send_sync)]
     fn get_database() -> Arc<Database> {
         let mut path = TempDir::new().unwrap().into_path();
         path.push("test.db");
