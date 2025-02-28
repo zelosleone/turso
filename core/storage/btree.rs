@@ -3134,10 +3134,18 @@ mod tests {
             let (pager, root_page) = empty_btree();
             let mut cursor = BTreeCursor::new(pager.clone(), root_page);
             for (key, size) in sequence.iter() {
+                run_until_done(
+                    || {
+                        let key = SeekKey::TableRowId(*key as u64);
+                        cursor.move_to(key, SeekOp::EQ)
+                    },
+                    pager.deref(),
+                )
+                .unwrap();
                 let key = OwnedValue::Integer(*key);
                 let value = Record::new(vec![OwnedValue::Blob(Rc::new(vec![0; *size]))]);
                 tracing::info!("insert key:{}", key);
-                cursor.insert(&key, &value, false).unwrap();
+                run_until_done(|| cursor.insert(&key, &value, true), pager.deref()).unwrap();
                 tracing::info!(
                     "=========== btree ===========\n{}\n\n",
                     format_btree(pager.clone(), root_page, 0)
