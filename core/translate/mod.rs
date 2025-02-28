@@ -557,8 +557,8 @@ fn translate_drop_table(
     let init_label = program.emit_init();
     let start_offset = program.offset();
 
-    let r1 = program.alloc_register(); //  r1
-    program.emit_null(r1, None);
+    let null_reg = program.alloc_register(); //  r1
+    program.emit_null(null_reg, None);
     let tbl_name_reg = program.alloc_register(); //  r2
     let table_reg = program.emit_string8_new_reg(tbl_name.name.0.clone()); //  r3
     program.mark_last_insn_constant();
