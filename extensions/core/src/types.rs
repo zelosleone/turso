@@ -27,11 +27,15 @@ pub enum ResultCode {
 
 impl ResultCode {
     pub fn is_ok(&self) -> bool {
-        matches!(self, ResultCode::OK)
+        matches!(self, Self::OK)
+    }
+
+    pub fn is_error(&self) -> bool {
+        !matches!(self, Self::OK | Self::RowID | Self::EOF)
     }
 
     pub fn has_error_set(&self) -> bool {
-        matches!(self, ResultCode::CustomError)
+        matches!(self, Self::CustomError)
     }
 }
 
@@ -86,6 +90,13 @@ union ValueData {
     error: *const ErrValue,
 }
 
+#[repr(C)]
+#[derive(PartialEq, Clone, Copy, Debug)]
+enum TextSubtype {
+    Text,
+    Json,
+}
+
 impl std::fmt::Debug for Value {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.value_type {
@@ -108,7 +119,8 @@ impl std::fmt::Debug for Value {
 }
 
 #[repr(C)]
-struct TextValue {
+pub struct TextValue {
+    _type: TextSubtype,
     text: *const u8,
     len: u32,
 }
@@ -126,6 +138,7 @@ impl std::fmt::Debug for TextValue {
 impl Default for TextValue {
     fn default() -> Self {
         Self {
+            _type: TextSubtype::Text,
             text: std::ptr::null(),
             len: 0,
         }
@@ -133,22 +146,37 @@ impl Default for TextValue {
 }
 
 impl TextValue {
-    pub(crate) fn new(text: *const u8, len: usize) -> Self {
+    fn new(text: *const u8, len: usize) -> Self {
         Self {
+            _type: TextSubtype::Text,
             text,
             len: len as u32,
         }
     }
 
-    pub(crate) fn new_boxed(s: String) -> Box<Self> {
+    fn new_json(text: *const u8, len: usize) -> Self {
+        Self {
+            _type: TextSubtype::Json,
+            text,
+            len: len as u32,
+        }
+    }
+
+    fn new_boxed(s: String) -> Box<Self> {
+        let len = s.len();
         let buffer = s.into_boxed_str();
-        let ptr = buffer.as_ptr();
-        let len = buffer.len();
-        std::mem::forget(buffer);
+        let strbox = Box::into_raw(buffer);
         Box::new(Self {
-            text: ptr,
+            _type: TextSubtype::Text,
+            text: strbox as *const u8,
             len: len as u32,
         })
+    }
+
+    fn free(self) {
+        if !self.text.is_null() {
+            let _ = unsafe { Box::from_raw(self.text as *mut u8) };
+        }
     }
 
     fn as_str(&self) -> &str {
@@ -211,6 +239,12 @@ impl Blob {
         }
         unsafe { std::slice::from_raw_parts(self.data, self.size as usize) }
     }
+
+    fn free(self) {
+        if !self.data.is_null() {
+            let _ = unsafe { Box::from_raw(self.data as *mut u8) };
+        }
+    }
 }
 
 impl Value {
@@ -252,20 +286,36 @@ impl Value {
         }
     }
 
-    /// Returns the blob value if the Value is the proper type
-    pub fn to_blob(&self) -> Option<Vec<u8>> {
-        if self.value_type != ValueType::Blob {
-            return None;
+    pub fn is_json(&self) -> bool {
+        unsafe {
+            if self.value_type == ValueType::Text && !self.value.text.is_null() {
+                let txt = &*self.value.text;
+                return txt._type == TextSubtype::Json;
+            }
         }
-        if unsafe { self.value.blob.is_null() } {
-            return None;
-        }
-        let blob = unsafe { &*(self.value.blob) };
-        let slice = unsafe { std::slice::from_raw_parts(blob.data, blob.size as usize) };
-        Some(slice.to_vec())
+        false
     }
 
-    /// Returns the integer value if the Value is the proper type
+    /// Returns the blob value if the ValueType is Blob
+    pub fn to_blob(&self) -> Option<Vec<u8>> {
+        match self.value_type {
+            ValueType::Blob => {
+                if unsafe { self.value.blob.is_null() } {
+                    return None;
+                }
+                let blob = unsafe { &*(self.value.blob) };
+                let slice = unsafe { std::slice::from_raw_parts(blob.data, blob.size as usize) };
+                Some(slice.to_vec())
+            }
+            ValueType::Text => {
+                let txt = self.to_text().unwrap_or_default();
+                Some(txt.as_bytes().to_vec())
+            }
+            _ => None,
+        }
+    }
+
+    /// Returns the value as an integer (casts or converts if possible)
     pub fn to_integer(&self) -> Option<i64> {
         match self.value_type() {
             ValueType::Integer => Some(unsafe { self.value.int }),
@@ -309,7 +359,6 @@ impl Value {
     // Return ValueData as raw bytes
     pub fn as_bytes(&self) -> Vec<u8> {
         let mut bytes = vec![];
-
         unsafe {
             match self.value_type {
                 ValueType::Integer => bytes.extend_from_slice(&self.value.int.to_le_bytes()),
@@ -380,12 +429,14 @@ impl Value {
 
     /// Creates a new blob Value from a Vec<u8>
     pub fn from_blob(value: Vec<u8>) -> Self {
-        let boxed = Box::new(Blob::new(value.as_ptr(), value.len() as u64));
-        std::mem::forget(value);
+        let len = value.len();
+        let boxed_data = value.into_boxed_slice();
+        let ptr = Box::into_raw(boxed_data) as *const u8;
+        let boxed_blob = Box::new(Blob::new(ptr, len as u64));
         Self {
             value_type: ValueType::Blob,
             value: ValueData {
-                blob: Box::into_raw(boxed) as *const Blob,
+                blob: Box::into_raw(boxed_blob) as *const Blob,
             },
         }
     }
@@ -400,10 +451,12 @@ impl Value {
     pub unsafe fn __free_internal_type(self) {
         match self.value_type {
             ValueType::Text => {
-                let _ = Box::from_raw(self.value.text as *mut TextValue);
+                let txt = Box::from_raw(self.value.text as *mut TextValue);
+                txt.free();
             }
             ValueType::Blob => {
-                let _ = Box::from_raw(self.value.blob as *mut Blob);
+                let blob = Box::from_raw(self.value.blob as *mut Blob);
+                blob.free();
             }
             ValueType::Error => {
                 let err_val = Box::from_raw(self.value.error as *mut ErrValue);
