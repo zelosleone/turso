@@ -154,20 +154,12 @@ impl TextValue {
         }
     }
 
-    fn new_json(text: *const u8, len: usize) -> Self {
-        Self {
-            _type: TextSubtype::Json,
-            text,
-            len: len as u32,
-        }
-    }
-
-    fn new_boxed(s: String) -> Box<Self> {
+    fn new_boxed(s: String, sub: TextSubtype) -> Box<Self> {
         let len = s.len();
         let buffer = s.into_boxed_str();
         let strbox = Box::into_raw(buffer);
         Box::new(Self {
-            _type: TextSubtype::Text,
+            _type: sub,
             text: strbox as *const u8,
             len: len as u32,
         })
@@ -396,7 +388,16 @@ impl Value {
 
     /// Creates a new text Value from a String
     pub fn from_text(s: String) -> Self {
-        let txt_value = TextValue::new_boxed(s);
+        let txt_value = TextValue::new_boxed(s, TextSubtype::Text);
+        let ptr = Box::into_raw(txt_value);
+        Self {
+            value_type: ValueType::Text,
+            value: ValueData { text: ptr },
+        }
+    }
+
+    pub fn from_json(s: String) -> Self {
+        let txt_value = TextValue::new_boxed(s, TextSubtype::Json);
         let ptr = Box::into_raw(txt_value);
         Self {
             value_type: ValueType::Text,
