@@ -307,6 +307,11 @@ impl<'a> Limbo<'a> {
                             || value_type.contains("TEXT")
                         {
                             format!("'{}'", value.to_string().replace("'", "''"))
+                        } else if value_type.contains("BLOB") {
+                            let blob = value.to_blob().unwrap_or(&[]);
+                            let hex_string: String =
+                                blob.iter().map(|b| format!("{:02x}", b)).collect();
+                            format!("X'{}'", hex_string)
                         } else {
                             value.to_string()
                         }
