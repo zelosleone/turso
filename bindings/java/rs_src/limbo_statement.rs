@@ -280,7 +280,7 @@ pub extern "system" fn Java_tech_turso_core_LimboStatement_totalChanges<'local>(
         Ok(stmt) => stmt,
         Err(e) => {
             set_err_msg_and_throw_exception(&mut env, obj, SQLITE_ERROR, e.to_string());
-            return -1
+            return -1;
         }
     };
 
