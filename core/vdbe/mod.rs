@@ -321,17 +321,6 @@ impl ProgramState {
         unsafe { std::mem::transmute(cursor) }
     }
 
-    pub fn get_sorter<'a>(&'a self, cursor_id: CursorID) -> &'a mut Sorter {
-        let mut cursors = self.cursors.borrow_mut();
-        let cursor = cursors
-            .get_mut(cursor_id)
-            .expect("cursor id out of bounds")
-            .as_mut()
-            .expect("cursor not allocated")
-            .as_sorter_mut();
-        unsafe { std::mem::transmute(cursor) }
-    }
-
     pub fn get_cursor<'a>(&'a self, cursor_id: CursorID) -> std::cell::RefMut<'a, Cursor> {
         let cursors = self.cursors.borrow_mut();
         std::cell::RefMut::map(cursors, |c| {
@@ -1079,8 +1068,12 @@ impl Program {
                             state.registers[*dest] = value;
                         }
                         CursorType::Sorter => {
-                            let cursor = state.get_sorter(*cursor_id);
-                            if let Some(record) = cursor.record() {
+                            let record = {
+                                let mut cursor = state.get_cursor(*cursor_id);
+                                let cursor = cursor.as_sorter_mut();
+                                cursor.record().map(|r| r.clone())
+                            };
+                            if let Some(record) = record {
                                 state.registers[*dest] = record.get_value(*column).clone();
                             } else {
                                 state.registers[*dest] = OwnedValue::Null;
@@ -1930,9 +1923,13 @@ impl Program {
                     dest_reg,
                     pseudo_cursor,
                 } => {
-                    let sorter_cursor = state.get_sorter(*cursor_id);
-                    let record = match sorter_cursor.record() {
-                        Some(record) => record.clone(),
+                    let record = {
+                        let mut cursor = state.get_cursor(*cursor_id);
+                        let cursor = cursor.as_sorter_mut();
+                        cursor.record().map(|r| r.clone())
+                    };
+                    let record = match record {
+                        Some(record) => record,
                         None => {
                             state.pc += 1;
                             continue;
@@ -1947,23 +1944,33 @@ impl Program {
                     cursor_id,
                     record_reg,
                 } => {
-                    let cursor = state.get_sorter(*cursor_id);
-                    let record = match &state.registers[*record_reg] {
-                        OwnedValue::Record(record) => record,
-                        _ => unreachable!("SorterInsert on non-record register"),
-                    };
-                    cursor.insert(record);
+                    {
+                        let mut cursor = state.get_cursor(*cursor_id);
+                        let cursor = cursor.as_sorter_mut();
+                        let record = match &state.registers[*record_reg] {
+                            OwnedValue::Record(record) => record,
+                            _ => unreachable!("SorterInsert on non-record register"),
+                        };
+                        cursor.insert(record);
+                    }
                     state.pc += 1;
                 }
                 Insn::SorterSort {
                     cursor_id,
                     pc_if_empty,
                 } => {
-                    let cursor = state.get_sorter(*cursor_id);
-                    if cursor.is_empty() {
+                    let is_empty = {
+                        let mut cursor = state.get_cursor(*cursor_id);
+                        let cursor = cursor.as_sorter_mut();
+                        let is_empty = cursor.is_empty();
+                        if !is_empty {
+                            cursor.sort();
+                        }
+                        is_empty
+                    };
+                    if is_empty {
                         state.pc = pc_if_empty.to_offset_int();
                     } else {
-                        cursor.sort();
                         state.pc += 1;
                     }
                 }
@@ -1972,9 +1979,13 @@ impl Program {
                     pc_if_next,
                 } => {
                     assert!(pc_if_next.is_offset());
-                    let cursor = state.get_sorter(*cursor_id);
-                    cursor.next();
-                    if cursor.has_more() {
+                    let has_more = {
+                        let mut cursor = state.get_cursor(*cursor_id);
+                        let cursor = cursor.as_sorter_mut();
+                        cursor.next();
+                        cursor.has_more()
+                    };
+                    if has_more {
                         state.pc = pc_if_next.to_offset_int();
                     } else {
                         state.pc += 1;
