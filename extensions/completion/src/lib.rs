@@ -55,7 +55,7 @@ impl Into<i64> for CompletionPhase {
     }
 }
 
-/// A virtual table that generates a sequence of integers
+/// A virtual table that generates candidate completions
 #[derive(Debug, Default, VTabModuleDerive)]
 struct CompletionVTab {}
 
@@ -126,7 +126,7 @@ impl VTabModule for CompletionVTab {
     }
 }
 
-/// The cursor for iterating over the generated sequence
+/// The cursor for iterating over the completions
 #[derive(Debug, Default)]
 struct CompletionCursor {
     line: String,
