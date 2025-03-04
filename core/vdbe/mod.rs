@@ -310,17 +310,6 @@ impl ProgramState {
         unsafe { std::mem::transmute(cursor) }
     }
 
-    pub fn get_pseudo_cursor<'a>(&'a self, cursor_id: CursorID) -> &'a mut PseudoCursor {
-        let mut cursors = self.cursors.borrow_mut();
-        let cursor = cursors
-            .get_mut(cursor_id)
-            .expect("cursor id out of bounds")
-            .as_mut()
-            .expect("cursor not allocated")
-            .as_pseudo_mut();
-        unsafe { std::mem::transmute(cursor) }
-    }
-
     pub fn get_cursor<'a>(&'a self, cursor_id: CursorID) -> std::cell::RefMut<'a, Cursor> {
         let cursors = self.cursors.borrow_mut();
         std::cell::RefMut::map(cursors, |c| {
@@ -1080,12 +1069,16 @@ impl Program {
                             }
                         }
                         CursorType::Pseudo(_) => {
-                            let cursor = state.get_pseudo_cursor(*cursor_id);
-                            if let Some(record) = cursor.record() {
-                                state.registers[*dest] = record.get_value(*column).clone();
-                            } else {
-                                state.registers[*dest] = OwnedValue::Null;
-                            }
+                            let value = {
+                                let mut cursor = state.get_cursor(*cursor_id);
+                                let cursor = cursor.as_pseudo_mut();
+                                if let Some(record) = cursor.record() {
+                                    record.get_value(*column).clone()
+                                } else {
+                                    OwnedValue::Null
+                                }
+                            };
+                            state.registers[*dest] = value;
                         }
                         CursorType::VirtualTable(_) => {
                             panic!(
@@ -1936,8 +1929,10 @@ impl Program {
                         }
                     };
                     state.registers[*dest_reg] = OwnedValue::Record(record.clone());
-                    let pseudo_cursor = state.get_pseudo_cursor(*pseudo_cursor);
-                    pseudo_cursor.insert(record);
+                    {
+                        let mut pseudo_cursor = state.get_cursor(*pseudo_cursor);
+                        pseudo_cursor.as_pseudo_mut().insert(record);
+                    }
                     state.pc += 1;
                 }
                 Insn::SorterInsert {
