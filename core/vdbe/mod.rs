@@ -203,19 +203,6 @@ fn get_cursor_as_index_mut<'long, 'short>(
     cursor
 }
 
-fn get_cursor_as_pseudo_mut<'long, 'short>(
-    cursors: &'short mut RefMut<'long, Vec<Option<Cursor>>>,
-    cursor_id: CursorID,
-) -> &'short mut PseudoCursor {
-    let cursor = cursors
-        .get_mut(cursor_id)
-        .expect("cursor id out of bounds")
-        .as_mut()
-        .expect("cursor not allocated")
-        .as_pseudo_mut();
-    cursor
-}
-
 struct Bitfield<const N: usize>([u64; N]);
 
 impl<const N: usize> Bitfield<N> {
@@ -325,6 +312,17 @@ impl ProgramState {
         self.regex_cache.like.clear();
         self.interrupted = false;
         self.parameters.clear();
+    }
+
+    pub fn get_pseudo_cursor<'a>(&'a self, cursor_id: CursorID) -> &'a mut PseudoCursor {
+        let mut cursors = self.cursors.borrow_mut();
+        let cursor = cursors
+            .get_mut(cursor_id)
+            .expect("cursor id out of bounds")
+            .as_mut()
+            .expect("cursor not allocated")
+            .as_pseudo_mut();
+        unsafe { std::mem::transmute(cursor) }
     }
 
     pub fn get_sorter<'a>(&'a self, cursor_id: CursorID) -> &'a mut Sorter {
@@ -1087,7 +1085,7 @@ impl Program {
                             }
                         }
                         CursorType::Pseudo(_) => {
-                            let cursor = get_cursor_as_pseudo_mut(&mut cursors, *cursor_id);
+                            let cursor = state.get_pseudo_cursor(*cursor_id);
                             if let Some(record) = cursor.record() {
                                 state.registers[*dest] = record.get_value(*column).clone();
                             } else {
@@ -1939,8 +1937,7 @@ impl Program {
                         }
                     };
                     state.registers[*dest_reg] = OwnedValue::Record(record.clone());
-                    let mut cursors = state.cursors.borrow_mut();
-                    let pseudo_cursor = get_cursor_as_pseudo_mut(&mut cursors, *pseudo_cursor);
+                    let pseudo_cursor = state.get_pseudo_cursor(*pseudo_cursor);
                     pseudo_cursor.insert(record);
                     state.pc += 1;
                 }
