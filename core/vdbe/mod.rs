@@ -163,45 +163,6 @@ macro_rules! return_if_io {
     };
 }
 
-macro_rules! call_external_function {
-    (
-        $func_ptr:expr,
-        $dest_register:expr,
-        $state:expr,
-        $arg_count:expr,
-        $start_reg:expr
-    ) => {{
-        if $arg_count == 0 {
-            let result_c_value: ExtValue = unsafe { ($func_ptr)(0, std::ptr::null()) };
-            match OwnedValue::from_ffi(result_c_value) {
-                Ok(result_ov) => {
-                    $state.registers[$dest_register] = result_ov;
-                }
-                Err(e) => {
-                    return Err(e);
-                }
-            }
-        } else {
-            let register_slice = &$state.registers[$start_reg..$start_reg + $arg_count];
-            let mut ext_values: Vec<ExtValue> = Vec::with_capacity($arg_count);
-            for ov in register_slice.iter() {
-                let val = ov.to_ffi();
-                ext_values.push(val);
-            }
-            let argv_ptr = ext_values.as_ptr();
-            let result_c_value: ExtValue = unsafe { ($func_ptr)($arg_count as i32, argv_ptr) };
-            match OwnedValue::from_ffi(result_c_value) {
-                Ok(result_ov) => {
-                    $state.registers[$dest_register] = result_ov;
-                }
-                Err(e) => {
-                    return Err(e);
-                }
-            }
-        }
-    }};
-}
-
 struct RegexCache {
     like: HashMap<String, Regex>,
     glob: HashMap<String, Regex>,
@@ -2579,7 +2540,38 @@ impl Program {
                         },
                         crate::function::Func::External(f) => match f.func {
                             ExtFunc::Scalar(f) => {
-                                call_external_function! {f, *dest, state, arg_count, *start_reg };
+                                if arg_count == 0 {
+                                    let result_c_value: ExtValue =
+                                        unsafe { (f)(0, std::ptr::null()) };
+                                    match OwnedValue::from_ffi(result_c_value) {
+                                        Ok(result_ov) => {
+                                            state.registers[*dest] = result_ov;
+                                        }
+                                        Err(e) => {
+                                            return Err(e);
+                                        }
+                                    }
+                                } else {
+                                    let register_slice =
+                                        &state.registers[*start_reg..*start_reg + arg_count];
+                                    let mut ext_values: Vec<ExtValue> =
+                                        Vec::with_capacity(arg_count);
+                                    for ov in register_slice.iter() {
+                                        let val = ov.to_ffi();
+                                        ext_values.push(val);
+                                    }
+                                    let argv_ptr = ext_values.as_ptr();
+                                    let result_c_value: ExtValue =
+                                        unsafe { (f)(arg_count as i32, argv_ptr) };
+                                    match OwnedValue::from_ffi(result_c_value) {
+                                        Ok(result_ov) => {
+                                            state.registers[*dest] = result_ov;
+                                        }
+                                        Err(e) => {
+                                            return Err(e);
+                                        }
+                                    }
+                                }
                             }
                             _ => unreachable!("aggregate called in scalar context"),
                         },
