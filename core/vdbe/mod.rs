@@ -295,7 +295,7 @@ impl ProgramState {
             .expect("cursor id out of bounds")
             .as_mut()
             .expect("cursor not allocated")
-            .as_table_mut();
+            .as_btree_mut();
         unsafe { std::mem::transmute(cursor) }
     }
 
@@ -306,7 +306,7 @@ impl ProgramState {
             .expect("cursor id out of bounds")
             .as_mut()
             .expect("cursor not allocated")
-            .as_index_mut();
+            .as_btree_mut();
         unsafe { std::mem::transmute(cursor) }
     }
 
@@ -770,13 +770,13 @@ impl Program {
                             cursors
                                 .get_mut(*cursor_id)
                                 .unwrap()
-                                .replace(Cursor::new_table(cursor));
+                                .replace(Cursor::new_btree(cursor));
                         }
                         CursorType::BTreeIndex(_) => {
                             cursors
                                 .get_mut(*cursor_id)
                                 .unwrap()
-                                .replace(Cursor::new_index(cursor));
+                                .replace(Cursor::new_btree(cursor));
                         }
                         CursorType::Pseudo(_) => {
                             panic!("OpenReadAsync on pseudo cursor");
@@ -1285,7 +1285,7 @@ impl Program {
                         }
                     }
                     let mut cursors = state.cursors.borrow_mut();
-                    if let Some(Cursor::Table(btree_cursor)) = cursors.get_mut(*cursor_id).unwrap()
+                    if let Some(Cursor::BTree(btree_cursor)) = cursors.get_mut(*cursor_id).unwrap()
                     {
                         if let Some(ref rowid) = btree_cursor.rowid()? {
                             state.registers[*dest] = OwnedValue::Integer(*rowid as i64);
@@ -2826,12 +2826,12 @@ impl Program {
                         cursors
                             .get_mut(*cursor_id)
                             .unwrap()
-                            .replace(Cursor::new_index(cursor));
+                            .replace(Cursor::new_btree(cursor));
                     } else {
                         cursors
                             .get_mut(*cursor_id)
                             .unwrap()
-                            .replace(Cursor::new_table(cursor));
+                            .replace(Cursor::new_btree(cursor));
                     }
                     state.pc += 1;
                 }
