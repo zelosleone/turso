@@ -1317,7 +1317,7 @@ impl BTreeCursor {
                         balance_info.pages_to_balance[i].set_dirty();
                         pages_to_balance_new.push(balance_info.pages_to_balance[i].clone());
                     } else {
-                        let page = self.allocate_page(page_type, 0);
+                        let page = self.pager.do_allocate_page(page_type, 0);
                         pages_to_balance_new.push(page);
                         // Since this page didn't exist before, we can set it to cells length as it
                         // marks them as empty since it is a prefix sum of cells.
@@ -1476,7 +1476,7 @@ impl BTreeCursor {
 
         let root = self.stack.top();
         let root_contents = root.get_contents();
-        let child = self.allocate_page(root_contents.page_type(), 0);
+        let child = self.pager.do_allocate_page(root_contents.page_type(), 0);
 
         tracing::debug!(
             "Balancing root. root={}, rightmost={}",
@@ -1533,21 +1533,8 @@ impl BTreeCursor {
         self.stack.push(child.clone());
     }
 
-    /// Allocate a new page to the btree via the pager.
-    /// This marks the page as dirty and writes the page header.
-    fn allocate_page(&self, page_type: PageType, offset: usize) -> PageRef {
-        let page = self.pager.allocate_page().unwrap();
-        btree_init_page(&page, page_type, offset, self.usable_space() as u16);
-        page
-    }
-
-    /// The "usable size" of a database page is the page size specified by the 2-byte integer at offset 16
-    /// in the header, minus the "reserved" space size recorded in the 1-byte integer at offset 20 in the header.
-    /// The usable size of a page might be an odd number. However, the usable size is not allowed to be less than 480.
-    /// In other words, if the page size is 512, then the reserved space size cannot exceed 32.
     fn usable_space(&self) -> usize {
-        let db_header = self.pager.db_header.borrow();
-        (db_header.page_size - db_header.reserved_space as u16) as usize
+        self.pager.usable_space()
     }
 
     /// Find the index of the cell in the page that contains the given rowid.
@@ -1853,20 +1840,6 @@ impl BTreeCursor {
             };
             Ok(CursorResult::Ok(equals))
         }
-    }
-
-    pub fn btree_create(&mut self, flags: usize) -> u32 {
-        let page_type = match flags {
-            1 => PageType::TableLeaf,
-            2 => PageType::IndexLeaf,
-            _ => unreachable!(
-                "wrong create table flags, should be 1 for table and 2 for index, got {}",
-                flags,
-            ),
-        };
-        let page = self.allocate_page(page_type, 0);
-        let id = page.get().id;
-        id as u32
     }
 
     fn clear_overflow_pages(&self, cell: &BTreeCell) -> Result<CursorResult<()>> {
