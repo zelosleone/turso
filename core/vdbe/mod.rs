@@ -2959,9 +2959,7 @@ impl Program {
                         // TODO: implement temp databases
                         todo!("temp databases not implemented yet");
                     }
-                    let mut cursor = Box::new(BTreeCursor::new(pager.clone(), 0));
-
-                    let root_page = cursor.btree_create(*flags);
+                    let root_page = pager.btree_create(*flags);
                     state.registers[*root] = OwnedValue::Integer(root_page as i64);
                     state.pc += 1;
                 }
