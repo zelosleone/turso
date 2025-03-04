@@ -229,19 +229,6 @@ fn get_cursor_as_sorter_mut<'long, 'short>(
     cursor
 }
 
-fn get_cursor_as_virtual_mut<'long, 'short>(
-    cursors: &'short mut RefMut<'long, Vec<Option<Cursor>>>,
-    cursor_id: CursorID,
-) -> &'short mut VTabOpaqueCursor {
-    let cursor = cursors
-        .get_mut(cursor_id)
-        .expect("cursor id out of bounds")
-        .as_mut()
-        .expect("cursor not allocated")
-        .as_virtual_mut();
-    cursor
-}
-
 struct Bitfield<const N: usize>([u64; N]);
 
 impl<const N: usize> Bitfield<N> {
@@ -351,6 +338,17 @@ impl ProgramState {
         self.regex_cache.like.clear();
         self.interrupted = false;
         self.parameters.clear();
+    }
+
+    pub fn get_vtab_cursor<'a>(&'a self, cursor_id: CursorID) -> &'a mut VTabOpaqueCursor {
+        let mut cursors = self.cursors.borrow_mut();
+        let cursor = cursors
+            .get_mut(cursor_id)
+            .expect("cursor id out of bounds")
+            .as_mut()
+            .expect("cursor not allocated")
+            .as_virtual_mut();
+        unsafe { std::mem::transmute(cursor) }
     }
 }
 
@@ -893,8 +891,7 @@ impl Program {
                     let CursorType::VirtualTable(virtual_table) = cursor_type else {
                         panic!("VFilter on non-virtual table cursor");
                     };
-                    let mut cursors = state.cursors.borrow_mut();
-                    let cursor = get_cursor_as_virtual_mut(&mut cursors, *cursor_id);
+                    let cursor = state.get_vtab_cursor(*cursor_id);
                     let mut args = Vec::new();
                     for i in 0..*arg_count {
                         args.push(state.registers[args_reg + i].clone());
@@ -915,8 +912,7 @@ impl Program {
                     let CursorType::VirtualTable(virtual_table) = cursor_type else {
                         panic!("VColumn on non-virtual table cursor");
                     };
-                    let mut cursors = state.cursors.borrow_mut();
-                    let cursor = get_cursor_as_virtual_mut(&mut cursors, *cursor_id);
+                    let cursor = state.get_vtab_cursor(*cursor_id);
                     state.registers[*dest] = virtual_table.column(cursor, *column)?;
                     state.pc += 1;
                 }
@@ -981,8 +977,7 @@ impl Program {
                     let CursorType::VirtualTable(virtual_table) = cursor_type else {
                         panic!("VNextAsync on non-virtual table cursor");
                     };
-                    let mut cursors = state.cursors.borrow_mut();
-                    let cursor = get_cursor_as_virtual_mut(&mut cursors, *cursor_id);
+                    let cursor = state.get_vtab_cursor(*cursor_id);
                     let has_more = virtual_table.next(cursor)?;
                     if has_more {
                         state.pc = pc_if_next.to_offset_int();
