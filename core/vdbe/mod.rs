@@ -342,6 +342,16 @@ impl ProgramState {
             .as_virtual_mut();
         unsafe { std::mem::transmute(cursor) }
     }
+
+    pub fn get_cursor<'a>(&'a self, cursor_id: CursorID) -> std::cell::RefMut<'a, Cursor> {
+        let cursors = self.cursors.borrow_mut();
+        std::cell::RefMut::map(cursors, |c| {
+            c.get_mut(cursor_id)
+                .expect("cursor id out of bounds")
+                .as_mut()
+                .expect("cursor not allocated")
+        })
+    }
 }
 
 macro_rules! must_be_btree_cursor {
