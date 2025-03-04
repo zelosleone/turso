@@ -216,19 +216,6 @@ fn get_cursor_as_pseudo_mut<'long, 'short>(
     cursor
 }
 
-fn get_cursor_as_sorter_mut<'long, 'short>(
-    cursors: &'short mut RefMut<'long, Vec<Option<Cursor>>>,
-    cursor_id: CursorID,
-) -> &'short mut Sorter {
-    let cursor = cursors
-        .get_mut(cursor_id)
-        .expect("cursor id out of bounds")
-        .as_mut()
-        .expect("cursor not allocated")
-        .as_sorter_mut();
-    cursor
-}
-
 struct Bitfield<const N: usize>([u64; N]);
 
 impl<const N: usize> Bitfield<N> {
@@ -338,6 +325,17 @@ impl ProgramState {
         self.regex_cache.like.clear();
         self.interrupted = false;
         self.parameters.clear();
+    }
+
+    pub fn get_sorter<'a>(&'a self, cursor_id: CursorID) -> &'a mut Sorter {
+        let mut cursors = self.cursors.borrow_mut();
+        let cursor = cursors
+            .get_mut(cursor_id)
+            .expect("cursor id out of bounds")
+            .as_mut()
+            .expect("cursor not allocated")
+            .as_sorter_mut();
+        unsafe { std::mem::transmute(cursor) }
     }
 
     pub fn get_vtab_cursor<'a>(&'a self, cursor_id: CursorID) -> &'a mut VTabOpaqueCursor {
@@ -1081,7 +1079,7 @@ impl Program {
                             }
                         }
                         CursorType::Sorter => {
-                            let cursor = get_cursor_as_sorter_mut(&mut cursors, *cursor_id);
+                            let cursor = state.get_sorter(*cursor_id);
                             if let Some(record) = cursor.record() {
                                 state.registers[*dest] = record.get_value(*column).clone();
                             } else {
@@ -1932,8 +1930,7 @@ impl Program {
                     dest_reg,
                     pseudo_cursor,
                 } => {
-                    let mut cursors = state.cursors.borrow_mut();
-                    let sorter_cursor = get_cursor_as_sorter_mut(&mut cursors, *cursor_id);
+                    let sorter_cursor = state.get_sorter(*cursor_id);
                     let record = match sorter_cursor.record() {
                         Some(record) => record.clone(),
                         None => {
@@ -1942,6 +1939,7 @@ impl Program {
                         }
                     };
                     state.registers[*dest_reg] = OwnedValue::Record(record.clone());
+                    let mut cursors = state.cursors.borrow_mut();
                     let pseudo_cursor = get_cursor_as_pseudo_mut(&mut cursors, *pseudo_cursor);
                     pseudo_cursor.insert(record);
                     state.pc += 1;
@@ -1950,8 +1948,7 @@ impl Program {
                     cursor_id,
                     record_reg,
                 } => {
-                    let mut cursors = state.cursors.borrow_mut();
-                    let cursor = get_cursor_as_sorter_mut(&mut cursors, *cursor_id);
+                    let cursor = state.get_sorter(*cursor_id);
                     let record = match &state.registers[*record_reg] {
                         OwnedValue::Record(record) => record,
                         _ => unreachable!("SorterInsert on non-record register"),
@@ -1963,8 +1960,7 @@ impl Program {
                     cursor_id,
                     pc_if_empty,
                 } => {
-                    let mut cursors = state.cursors.borrow_mut();
-                    let cursor = get_cursor_as_sorter_mut(&mut cursors, *cursor_id);
+                    let cursor = state.get_sorter(*cursor_id);
                     if cursor.is_empty() {
                         state.pc = pc_if_empty.to_offset_int();
                     } else {
@@ -1977,8 +1973,7 @@ impl Program {
                     pc_if_next,
                 } => {
                     assert!(pc_if_next.is_offset());
-                    let mut cursors = state.cursors.borrow_mut();
-                    let cursor = get_cursor_as_sorter_mut(&mut cursors, *cursor_id);
+                    let cursor = state.get_sorter(*cursor_id);
                     cursor.next();
                     if cursor.has_more() {
                         state.pc = pc_if_next.to_offset_int();
