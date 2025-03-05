@@ -48,6 +48,9 @@ pub struct GenericFile {
     file: RefCell<std::fs::File>,
 }
 
+unsafe impl Send for GenericFile {}
+unsafe impl Sync for GenericFile {}
+
 impl File for GenericFile {
     // Since we let the OS handle the locking, file locking is not supported on the generic IO implementation
     // No-op implementation allows compilation but provides no actual file locking.
