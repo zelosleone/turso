@@ -68,7 +68,7 @@ mod tests {
                     };
                     let row = Row {
                         id,
-                        data: "Hello".to_string(),
+                        data: "Hello".to_string().into_bytes(),
                     };
                     db.insert(tx, row.clone()).unwrap();
                     db.commit_tx(tx).unwrap();
@@ -90,7 +90,7 @@ mod tests {
                     };
                     let row = Row {
                         id,
-                        data: "World".to_string(),
+                        data: "World".to_string().into_bytes(),
                     };
                     db.insert(tx, row.clone()).unwrap();
                     db.commit_tx(tx).unwrap();
@@ -134,7 +134,7 @@ mod tests {
                     };
                     let row = Row {
                         id,
-                        data: format!("{prefix} @{tx}"),
+                        data: format!("{prefix} @{tx}").into_bytes(),
                     };
                     if let Err(e) = db.upsert(tx, row.clone()) {
                         tracing::trace!("upsert failed: {e}");

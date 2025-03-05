@@ -19,29 +19,29 @@ pub struct RowID {
 
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 
-pub struct Row<T> {
+pub struct Row {
     pub id: RowID,
-    pub data: T,
+    pub data: Vec<u8>,
 }
 
 /// A row version.
 #[derive(Clone, Debug, PartialEq)]
-pub struct RowVersion<T> {
+pub struct RowVersion {
     begin: TxTimestampOrID,
     end: Option<TxTimestampOrID>,
-    row: Row<T>,
+    row: Row,
 }
 
 pub type TxID = u64;
 
 /// A log record contains all the versions inserted and deleted by a transaction.
 #[derive(Clone, Debug)]
-pub struct LogRecord<T> {
+pub struct LogRecord {
     pub(crate) tx_timestamp: TxID,
-    row_versions: Vec<RowVersion<T>>,
+    row_versions: Vec<RowVersion>,
 }
 
-impl<T> LogRecord<T> {
+impl LogRecord {
     fn new(tx_timestamp: TxID) -> Self {
         Self {
             tx_timestamp,
@@ -211,15 +211,15 @@ impl AtomicTransactionState {
 
 /// A multi-version concurrency control database.
 #[derive(Debug)]
-pub struct MvStore<Clock: LogicalClock, T: Sync + Send + Clone + Debug> {
-    rows: SkipMap<RowID, RwLock<Vec<RowVersion<T>>>>,
+pub struct MvStore<Clock: LogicalClock> {
+    rows: SkipMap<RowID, RwLock<Vec<RowVersion>>>,
     txs: SkipMap<TxID, RwLock<Transaction>>,
     tx_ids: AtomicU64,
     clock: Clock,
     storage: Storage,
 }
 
-impl<Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> MvStore<Clock, T> {
+impl<Clock: LogicalClock> MvStore<Clock> {
     /// Creates a new database.
     pub fn new(clock: Clock, storage: Storage) -> Self {
         Self {
@@ -241,7 +241,7 @@ impl<Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> MvStore<Cloc
     /// * `tx_id` - the ID of the transaction in which to insert the new row.
     /// * `row` - the row object containing the values to be inserted.
     ///
-    pub fn insert(&self, tx_id: TxID, row: Row<T>) -> Result<()> {
+    pub fn insert(&self, tx_id: TxID, row: Row) -> Result<()> {
         let tx = self
             .txs
             .get(&tx_id)
@@ -278,7 +278,7 @@ impl<Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> MvStore<Cloc
     /// # Returns
     ///
     /// Returns `true` if the row was successfully updated, and `false` otherwise.
-    pub fn update(&self, tx_id: TxID, row: Row<T>) -> Result<bool> {
+    pub fn update(&self, tx_id: TxID, row: Row) -> Result<bool> {
         if !self.delete(tx_id, row.id)? {
             return Ok(false);
         }
@@ -288,7 +288,7 @@ impl<Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> MvStore<Cloc
 
     /// Inserts a row in the database with new values, previously deleting
     /// any old data if it existed. Bails on a delete error, e.g. write-write conflict.
-    pub fn upsert(&self, tx_id: TxID, row: Row<T>) -> Result<()> {
+    pub fn upsert(&self, tx_id: TxID, row: Row) -> Result<()> {
         self.delete(tx_id, row.id)?;
         self.insert(tx_id, row)
     }
@@ -361,7 +361,7 @@ impl<Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> MvStore<Cloc
     ///
     /// Returns `Some(row)` with the row data if the row with the given `id` exists,
     /// and `None` otherwise.
-    pub fn read(&self, tx_id: TxID, id: RowID) -> Result<Option<Row<T>>> {
+    pub fn read(&self, tx_id: TxID, id: RowID) -> Result<Option<Row>> {
         let tx = self.txs.get(&tx_id).unwrap();
         let tx = tx.value().read().unwrap();
         assert_eq!(tx.state, TransactionState::Active);
@@ -520,7 +520,7 @@ impl<Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> MvStore<Cloc
         drop(tx);
         // Postprocessing: inserting row versions and logging the transaction to persistent storage.
         // TODO: we should probably save to persistent storage first, and only then update the in-memory structures.
-        let mut log_record: LogRecord<T> = LogRecord::new(end_ts);
+        let mut log_record = LogRecord::new(end_ts);
         for ref id in write_set {
             if let Some(row_versions) = self.rows.get(id) {
                 let mut row_versions = row_versions.value().write().unwrap();
@@ -700,7 +700,7 @@ impl<Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> MvStore<Cloc
 
     /// Inserts a new row version into the database, while making sure that
     /// the row version is inserted in the correct order.
-    fn insert_version(&self, id: RowID, row_version: RowVersion<T>) {
+    fn insert_version(&self, id: RowID, row_version: RowVersion) {
         let versions = self.rows.get_or_insert_with(id, || RwLock::new(Vec::new()));
         let mut versions = versions.value().write().unwrap();
         self.insert_version_raw(&mut versions, row_version)
@@ -708,7 +708,7 @@ impl<Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> MvStore<Cloc
 
     /// Inserts a new row version into the internal data structure for versions,
     /// while making sure that the row version is inserted in the correct order.
-    fn insert_version_raw(&self, versions: &mut Vec<RowVersion<T>>, row_version: RowVersion<T>) {
+    fn insert_version_raw(&self, versions: &mut Vec<RowVersion>, row_version: RowVersion) {
         // NOTICE: this is an insert a'la insertion sort, with pessimistic linear complexity.
         // However, we expect the number of versions to be nearly sorted, so we deem it worthy
         // to search linearly for the insertion point instead of paying the price of using
@@ -744,10 +744,10 @@ impl<Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> MvStore<Cloc
 /// TE’s state is Aborted"
 /// Ref: https://www.cs.cmu.edu/~15721-f24/papers/Hekaton.pdf , page 301,
 /// 2.6. Updating a Version.
-pub(crate) fn is_write_write_conflict<T>(
+pub(crate) fn is_write_write_conflict(
     txs: &SkipMap<TxID, RwLock<Transaction>>,
     tx: &Transaction,
-    rv: &RowVersion<T>,
+    rv: &RowVersion,
 ) -> bool {
     match rv.end {
         Some(TxTimestampOrID::TxID(rv_end)) => {
@@ -767,7 +767,7 @@ pub(crate) fn is_write_write_conflict<T>(
     }
 }
 
-impl<T> RowVersion<T> {
+impl RowVersion {
     pub fn is_visible_to(
         &self,
         tx: &Transaction,
@@ -777,10 +777,10 @@ impl<T> RowVersion<T> {
     }
 }
 
-fn is_begin_visible<T>(
+fn is_begin_visible(
     txs: &SkipMap<TxID, RwLock<Transaction>>,
     tx: &Transaction,
-    rv: &RowVersion<T>,
+    rv: &RowVersion,
 ) -> bool {
     match rv.begin {
         TxTimestampOrID::Timestamp(rv_begin_ts) => tx.begin_ts >= rv_begin_ts,
@@ -807,10 +807,10 @@ fn is_begin_visible<T>(
     }
 }
 
-fn is_end_visible<T>(
+fn is_end_visible(
     txs: &SkipMap<TxID, RwLock<Transaction>>,
     tx: &Transaction,
-    rv: &RowVersion<T>,
+    rv: &RowVersion,
 ) -> bool {
     match rv.end {
         Some(TxTimestampOrID::Timestamp(rv_end_ts)) => tx.begin_ts < rv_end_ts,

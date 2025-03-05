@@ -4,7 +4,7 @@ use limbo_core::mvcc::clock::LocalClock;
 use limbo_core::mvcc::database::{MvStore, Row, RowID};
 use pprof::criterion::{Output, PProfProfiler};
 
-fn bench_db() -> MvStore<LocalClock, String> {
+fn bench_db() -> MvStore<LocalClock> {
     let clock = LocalClock::default();
     let storage = limbo_core::mvcc::persistent_storage::Storage::new_noop();
     MvStore::new(clock, storage)
@@ -57,7 +57,7 @@ fn bench(c: &mut Criterion) {
                         table_id: 1,
                         row_id: 1,
                     },
-                    data: "World".to_string(),
+                    data: "World".to_string().into_bytes(),
                 },
             )
             .unwrap();
@@ -74,7 +74,7 @@ fn bench(c: &mut Criterion) {
                 table_id: 1,
                 row_id: 1,
             },
-            data: "Hello".to_string(),
+            data: "Hello".to_string().into_bytes(),
         },
     )
     .unwrap();
@@ -100,7 +100,7 @@ fn bench(c: &mut Criterion) {
                 table_id: 1,
                 row_id: 1,
             },
-            data: "Hello".to_string(),
+            data: "Hello".to_string().into_bytes(),
         },
     )
     .unwrap();
@@ -113,7 +113,7 @@ fn bench(c: &mut Criterion) {
                         table_id: 1,
                         row_id: 1,
                     },
-                    data: "World".to_string(),
+                    data: "World".to_string().into_bytes(),
                 },
             )
             .unwrap();

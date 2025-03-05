@@ -1,7 +1,7 @@
 use super::*;
 use crate::mvcc::clock::LocalClock;
 
-fn test_db() -> MvStore<LocalClock, String> {
+fn test_db() -> MvStore<LocalClock> {
     let clock = LocalClock::new();
     let storage = crate::mvcc::persistent_storage::Storage::new_noop();
     MvStore::new(clock, storage)
@@ -17,7 +17,7 @@ fn test_insert_read() {
             table_id: 1,
             row_id: 1,
         },
-        data: "Hello".to_string(),
+        data: "Hello".to_string().into_bytes(),
     };
     db.insert(tx1, tx1_row.clone()).unwrap();
     let row = db
@@ -71,7 +71,7 @@ fn test_delete() {
             table_id: 1,
             row_id: 1,
         },
-        data: "Hello".to_string(),
+        data: "Hello".to_string().into_bytes(),
     };
     db.insert(tx1, tx1_row.clone()).unwrap();
     let row = db
@@ -142,7 +142,7 @@ fn test_commit() {
             table_id: 1,
             row_id: 1,
         },
-        data: "Hello".to_string(),
+        data: "Hello".to_string().into_bytes(),
     };
     db.insert(tx1, tx1_row.clone()).unwrap();
     let row = db
@@ -161,7 +161,7 @@ fn test_commit() {
             table_id: 1,
             row_id: 1,
         },
-        data: "World".to_string(),
+        data: "World".to_string().into_bytes(),
     };
     db.update(tx1, tx1_updated_row.clone()).unwrap();
     let row = db
@@ -202,7 +202,7 @@ fn test_rollback() {
             table_id: 1,
             row_id: 1,
         },
-        data: "Hello".to_string(),
+        data: "Hello".to_string().into_bytes(),
     };
     db.insert(tx1, row1.clone()).unwrap();
     let row2 = db
@@ -221,7 +221,7 @@ fn test_rollback() {
             table_id: 1,
             row_id: 1,
         },
-        data: "World".to_string(),
+        data: "World".to_string().into_bytes(),
     };
     db.update(tx1, row3.clone()).unwrap();
     let row4 = db
@@ -260,7 +260,7 @@ fn test_dirty_write() {
             table_id: 1,
             row_id: 1,
         },
-        data: "Hello".to_string(),
+        data: "Hello".to_string().into_bytes(),
     };
     db.insert(tx1, tx1_row.clone()).unwrap();
     let row = db
@@ -282,7 +282,7 @@ fn test_dirty_write() {
             table_id: 1,
             row_id: 1,
         },
-        data: "World".to_string(),
+        data: "World".to_string().into_bytes(),
     };
     assert!(!db.update(tx2, tx2_row).unwrap());
 
@@ -310,7 +310,7 @@ fn test_dirty_read() {
             table_id: 1,
             row_id: 1,
         },
-        data: "Hello".to_string(),
+        data: "Hello".to_string().into_bytes(),
     };
     db.insert(tx1, row1).unwrap();
 
@@ -339,7 +339,7 @@ fn test_dirty_read_deleted() {
             table_id: 1,
             row_id: 1,
         },
-        data: "Hello".to_string(),
+        data: "Hello".to_string().into_bytes(),
     };
     db.insert(tx1, tx1_row.clone()).unwrap();
     db.commit_tx(tx1).unwrap();
@@ -382,7 +382,7 @@ fn test_fuzzy_read() {
             table_id: 1,
             row_id: 1,
         },
-        data: "First".to_string(),
+        data: "First".to_string().into_bytes(),
     };
     db.insert(tx1, tx1_row.clone()).unwrap();
     let row = db
@@ -419,7 +419,7 @@ fn test_fuzzy_read() {
             table_id: 1,
             row_id: 1,
         },
-        data: "Second".to_string(),
+        data: "Second".to_string().into_bytes(),
     };
     db.update(tx3, tx3_row).unwrap();
     db.commit_tx(tx3).unwrap();
@@ -444,7 +444,7 @@ fn test_fuzzy_read() {
             table_id: 1,
             row_id: 1,
         },
-        data: "Third".to_string(),
+        data: "Third".to_string().into_bytes(),
     };
     let update_result = db.update(tx2, tx2_newrow);
     assert_eq!(Err(DatabaseError::WriteWriteConflict), update_result);
@@ -461,7 +461,7 @@ fn test_lost_update() {
             table_id: 1,
             row_id: 1,
         },
-        data: "Hello".to_string(),
+        data: "Hello".to_string().into_bytes(),
     };
     db.insert(tx1, tx1_row.clone()).unwrap();
     let row = db
@@ -484,7 +484,7 @@ fn test_lost_update() {
             table_id: 1,
             row_id: 1,
         },
-        data: "World".to_string(),
+        data: "World".to_string().into_bytes(),
     };
     assert!(db.update(tx2, tx2_row.clone()).unwrap());
 
@@ -495,7 +495,7 @@ fn test_lost_update() {
             table_id: 1,
             row_id: 1,
         },
-        data: "Hello, world!".to_string(),
+        data: "Hello, world!".to_string().into_bytes(),
     };
     assert_eq!(
         Err(DatabaseError::WriteWriteConflict),
@@ -532,7 +532,7 @@ fn test_committed_visibility() {
             table_id: 1,
             row_id: 1,
         },
-        data: "10".to_string(),
+        data: "10".to_string().into_bytes(),
     };
     db.insert(tx1, tx1_row.clone()).unwrap();
     db.commit_tx(tx1).unwrap();
@@ -544,7 +544,7 @@ fn test_committed_visibility() {
             table_id: 1,
             row_id: 1,
         },
-        data: "20".to_string(),
+        data: "20".to_string().into_bytes(),
     };
     assert!(db.update(tx2, tx2_row.clone()).unwrap());
     let row = db
@@ -587,7 +587,7 @@ fn test_future_row() {
             table_id: 1,
             row_id: 1,
         },
-        data: "10".to_string(),
+        data: "10".to_string().into_bytes(),
     };
     db.insert(tx2, tx2_row).unwrap();
 
@@ -695,7 +695,7 @@ fn test_snapshot_isolation_tx_visible1() {
                     table_id: 1,
                     row_id: 1,
                 },
-                data: "testme".to_string(),
+                data: "testme".to_string().into_bytes(),
             },
         };
         tracing::debug!("Testing visibility of {row_version:?}");

@@ -15,14 +15,14 @@ impl Storage {
 }
 
 impl Storage {
-    pub fn log_tx<T>(&self, _m: LogRecord<T>) -> Result<()> {
+    pub fn log_tx(&self, _m: LogRecord) -> Result<()> {
         match self {
             Self::Noop => (),
         }
         Ok(())
     }
 
-    pub fn read_tx_log<T>(&self) -> Result<Vec<LogRecord<T>>> {
+    pub fn read_tx_log(&self) -> Result<Vec<LogRecord>> {
         match self {
             Self::Noop => Err(DatabaseError::Io(
                 "cannot read from Noop storage".to_string(),
