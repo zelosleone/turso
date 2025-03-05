@@ -45,7 +45,11 @@ impl Builder {
                 let db = limbo_core::Database::open_file(io, self.path.as_str())?;
                 Ok(Database { inner: db })
             }
-            _ => todo!(),
+            path => {
+                let io: Arc<dyn limbo_core::IO> = Arc::new(limbo_core::PlatformIO::new()?);
+                let db = limbo_core::Database::open_file(io, path)?;
+                Ok(Database { inner: db })
+            }
         }
     }
 }
