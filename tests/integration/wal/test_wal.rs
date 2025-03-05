@@ -1,9 +1,7 @@
 use crate::common::{do_flush, TempDatabase};
 use limbo_core::{Connection, LimboError, Result, StepResult};
 use std::cell::RefCell;
-use std::ops::{Add, Deref};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
