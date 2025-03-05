@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.0.16 - 2025-03-05
+
+### Added
+
+* Virtual table support (Preston Thorpe)
+* Improvements to Java bindings (Kim Seon Woo)
+* Improvements to Rust bindings (Pekka Enberg)
+* Add sqlean ipaddr extension (EmNudge)
+* Add "dump" and "load" to the help menu (EmNudge)
+* Initial Antithesis testing tool (Pekka Enberg)
+
+### Fixed
+
+* SQLite B-Tree balancing algorithm (Pere Diaz Bou)
+* B-Tree improves and fixes (Pere Diaz Bou and Perston Thorpe)
+* Display blobs as blob literals in `.dump` (from Mohamed Hossam)
+* Fix wrong count() result if the column specified contains a NULL (lgualtieri75)
+* Fix casting text to integer to match SQLite' (Preston Thorpe)
+* Improve `SELECT 1` performance to be on par with SQLite (Pekka Enberg)
+* Fix offset_sec normalization in extensions/time (meteorgan)
+* Handle parsing URI according to SQLite specification (Preston Thorpe)
+* Escape character is ignored in LIKE function (lgualtieri75)
+* Fix cast_text_to_number compatibility (Pedro Muniz)
+* Modify the LIKE function to work with all types (Mohamed Hossam)
+
 ## 0.0.15 - 2025-02-18
 
 ### Added
