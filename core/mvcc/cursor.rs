@@ -3,19 +3,15 @@ use crate::mvcc::database::{MvStore, Result, Row, RowID};
 use std::fmt::Debug;
 
 #[derive(Debug)]
-pub struct ScanCursor<'a, Clock: LogicalClock, T: Sync + Send + Clone + Debug> {
-    pub db: &'a MvStore<Clock, T>,
+pub struct ScanCursor<'a, Clock: LogicalClock> {
+    pub db: &'a MvStore<Clock>,
     pub row_ids: Vec<RowID>,
     pub index: usize,
     tx_id: u64,
 }
 
-impl<'a, Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> ScanCursor<'a, Clock, T> {
-    pub fn new(
-        db: &'a MvStore<Clock, T>,
-        tx_id: u64,
-        table_id: u64,
-    ) -> Result<ScanCursor<'a, Clock, T>> {
+impl<'a, Clock: LogicalClock> ScanCursor<'a, Clock> {
+    pub fn new(db: &'a MvStore<Clock>, tx_id: u64, table_id: u64) -> Result<ScanCursor<'a, Clock>> {
         let row_ids = db.scan_row_ids_for_table(table_id)?;
         Ok(Self {
             db,
@@ -32,7 +28,7 @@ impl<'a, Clock: LogicalClock, T: Sync + Send + Clone + Debug + 'static> ScanCurs
         Some(self.row_ids[self.index])
     }
 
-    pub fn current_row(&self) -> Result<Option<Row<T>>> {
+    pub fn current_row(&self) -> Result<Option<Row>> {
         if self.index >= self.row_ids.len() {
             return Ok(None);
         }
