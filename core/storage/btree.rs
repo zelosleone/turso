@@ -2744,6 +2744,7 @@ mod tests {
     use rand_chacha::rand_core::RngCore;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha8Rng;
+    use test_log::test;
 
     use super::*;
     use crate::io::{Buffer, Completion, MemoryIO, OpenFlags, IO};
@@ -3242,7 +3243,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     pub fn btree_insert_fuzz_run_equal_size() {
         for size in 1..8 {
             tracing::info!("======= size:{} =======", size);
@@ -3251,25 +3251,21 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     pub fn btree_insert_fuzz_run_random() {
         btree_insert_fuzz_run(128, 16, |rng| (rng.next_u32() % 4096) as usize);
     }
 
     #[test]
-    #[ignore]
     pub fn btree_insert_fuzz_run_small() {
         btree_insert_fuzz_run(1, 1024, |rng| (rng.next_u32() % 128) as usize);
     }
 
     #[test]
-    #[ignore]
     pub fn btree_insert_fuzz_run_big() {
         btree_insert_fuzz_run(64, 32, |rng| 3 * 1024 + (rng.next_u32() % 1024) as usize);
     }
 
     #[test]
-    #[ignore]
     pub fn btree_insert_fuzz_run_overflow() {
         btree_insert_fuzz_run(64, 32, |rng| (rng.next_u32() % 32 * 1024) as usize);
     }
@@ -3570,6 +3566,7 @@ mod tests {
         let usable_space = 4096;
         let mut i = 1000;
         let seed = thread_rng().gen();
+        tracing::info!("seed {}", seed);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         while i > 0 {
             i -= 1;
