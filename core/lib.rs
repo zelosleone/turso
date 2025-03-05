@@ -258,12 +258,15 @@ impl Connection {
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next()?;
         let syms = self.syms.borrow();
-        let schema = self.schema.try_read().ok_or(LimboError::SchemaLocked)?;
         if let Some(cmd) = cmd {
             match cmd {
                 Cmd::Stmt(stmt) => {
                     let program = Rc::new(translate::translate(
-                        &schema,
+                        &self
+                            .schema
+                            .try_read()
+                            .ok_or(LimboError::SchemaLocked)?
+                            .deref(),
                         stmt,
                         self.header.clone(),
                         self.pager.clone(),
@@ -293,12 +296,15 @@ impl Connection {
     }
 
     pub(crate) fn run_cmd(self: &Rc<Connection>, cmd: Cmd) -> Result<Option<Statement>> {
-        let schema = self.schema.try_read().ok_or(LimboError::SchemaLocked)?;
         let syms = self.syms.borrow();
         match cmd {
             Cmd::Stmt(stmt) => {
                 let program = Rc::new(translate::translate(
-                    schema.deref(),
+                    &self
+                        .schema
+                        .try_read()
+                        .ok_or(LimboError::SchemaLocked)?
+                        .deref(),
                     stmt,
                     self.header.clone(),
                     self.pager.clone(),
@@ -311,7 +317,11 @@ impl Connection {
             }
             Cmd::Explain(stmt) => {
                 let program = translate::translate(
-                    schema.deref(),
+                    &self
+                        .schema
+                        .try_read()
+                        .ok_or(LimboError::SchemaLocked)?
+                        .deref(),
                     stmt,
                     self.header.clone(),
                     self.pager.clone(),
@@ -325,8 +335,24 @@ impl Connection {
             Cmd::ExplainQueryPlan(stmt) => {
                 match stmt {
                     ast::Stmt::Select(select) => {
-                        let mut plan = prepare_select_plan(schema.deref(), *select, &syms, None)?;
-                        optimize_plan(&mut plan, schema.deref())?;
+                        let mut plan = prepare_select_plan(
+                            &self
+                                .schema
+                                .try_read()
+                                .ok_or(LimboError::SchemaLocked)?
+                                .deref(),
+                            *select,
+                            &syms,
+                            None,
+                        )?;
+                        optimize_plan(
+                            &mut plan,
+                            &self
+                                .schema
+                                .try_read()
+                                .ok_or(LimboError::SchemaLocked)?
+                                .deref(),
+                        )?;
                         println!("{}", plan);
                     }
                     _ => todo!(),
@@ -345,12 +371,15 @@ impl Connection {
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next()?;
         let syms = self.syms.borrow();
-        let schema = self.schema.try_read().ok_or(LimboError::SchemaLocked)?;
         if let Some(cmd) = cmd {
             match cmd {
                 Cmd::Explain(stmt) => {
                     let program = translate::translate(
-                        &schema,
+                        &self
+                            .schema
+                            .try_read()
+                            .ok_or(LimboError::SchemaLocked)?
+                            .deref(),
                         stmt,
                         self.header.clone(),
                         self.pager.clone(),
@@ -363,7 +392,11 @@ impl Connection {
                 Cmd::ExplainQueryPlan(_stmt) => todo!(),
                 Cmd::Stmt(stmt) => {
                     let program = translate::translate(
-                        &schema,
+                        &self
+                            .schema
+                            .try_read()
+                            .ok_or(LimboError::SchemaLocked)?
+                            .deref(),
                         stmt,
                         self.header.clone(),
                         self.pager.clone(),
