@@ -24,7 +24,9 @@ pub struct FileStorage {
     file: Arc<dyn crate::io::File>,
 }
 
+#[cfg(feature = "fs")]
 unsafe impl Send for FileStorage {}
+#[cfg(feature = "fs")]
 unsafe impl Sync for FileStorage {}
 
 #[cfg(feature = "fs")]
