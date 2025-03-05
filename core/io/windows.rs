@@ -48,6 +48,9 @@ pub struct WindowsFile {
     file: RefCell<std::fs::File>,
 }
 
+unsafe impl Send for WindowsFile {}
+unsafe impl Sync for WindowsFile {}
+
 impl File for WindowsFile {
     fn lock_file(&self, exclusive: bool) -> Result<()> {
         unimplemented!()
