@@ -1,7 +1,7 @@
 use crate::{Completion, File, LimboError, OpenFlags, Result, IO};
 use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
-use std::rc::Rc;
+use std::sync::Arc;
 use tracing::{debug, trace};
 
 pub struct WindowsIO {}
@@ -13,15 +13,18 @@ impl WindowsIO {
     }
 }
 
+unsafe impl Send for WindowsIO {}
+unsafe impl Sync for WindowsIO {}
+
 impl IO for WindowsIO {
-    fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Rc<dyn File>> {
+    fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>> {
         trace!("open_file(path = {})", path);
         let file = std::fs::File::options()
             .read(true)
             .write(true)
             .create(matches!(flags, OpenFlags::Create))
             .open(path)?;
-        Ok(Rc::new(WindowsFile {
+        Ok(Arc::new(WindowsFile {
             file: RefCell::new(file),
         }))
     }

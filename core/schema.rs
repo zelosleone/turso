@@ -22,6 +22,7 @@ impl Schema {
     pub fn new() -> Self {
         let mut tables: HashMap<String, Arc<Table>> = HashMap::new();
         let indexes: HashMap<String, Vec<Arc<Index>>> = HashMap::new();
+        #[allow(clippy::arc_with_non_send_sync)]
         tables.insert(
             "sqlite_schema".to_string(),
             Arc::new(Table::BTree(sqlite_schema_table().into())),

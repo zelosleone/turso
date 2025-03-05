@@ -3348,6 +3348,7 @@ mod tests {
         let mut current_page = 2u32;
         while current_page <= 4 {
             let drop_fn = Rc::new(|_buf| {});
+            #[allow(clippy::arc_with_non_send_sync)]
             let buf = Arc::new(RefCell::new(Buffer::allocate(
                 db_header.lock().unwrap().page_size as usize,
                 drop_fn,

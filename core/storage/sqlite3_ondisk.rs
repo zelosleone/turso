@@ -246,6 +246,7 @@ pub fn begin_read_database_header(
     page_io: Arc<dyn DatabaseStorage>,
 ) -> Result<Arc<Mutex<DatabaseHeader>>> {
     let drop_fn = Rc::new(|_buf| {});
+    #[allow(clippy::arc_with_non_send_sync)]
     let buf = Arc::new(RefCell::new(Buffer::allocate(512, drop_fn)));
     let result = Arc::new(Mutex::new(DatabaseHeader::default()));
     let header = result.clone();
@@ -299,6 +300,7 @@ pub fn begin_write_database_header(header: &DatabaseHeader, pager: &Pager) -> Re
     let page_source = pager.page_io.clone();
 
     let drop_fn = Rc::new(|_buf| {});
+    #[allow(clippy::arc_with_non_send_sync)]
     let buffer_to_copy = Arc::new(RefCell::new(Buffer::allocate(512, drop_fn)));
     let buffer_to_copy_in_cb = buffer_to_copy.clone();
 
@@ -312,6 +314,7 @@ pub fn begin_write_database_header(header: &DatabaseHeader, pager: &Pager) -> Re
     });
 
     let drop_fn = Rc::new(|_buf| {});
+    #[allow(clippy::arc_with_non_send_sync)]
     let buf = Arc::new(RefCell::new(Buffer::allocate(512, drop_fn)));
     let c = Completion::Read(ReadCompletion::new(buf, read_complete));
     page_source.read_page(1, c)?;
@@ -399,6 +402,7 @@ pub struct PageContent {
 
 impl Clone for PageContent {
     fn clone(&self) -> Self {
+        #[allow(clippy::arc_with_non_send_sync)]
         Self {
             offset: self.offset,
             buffer: Arc::new(RefCell::new((*self.buffer.borrow()).clone())),
@@ -684,6 +688,7 @@ pub fn begin_read_page(
         let buffer_pool = buffer_pool.clone();
         buffer_pool.put(buf);
     });
+    #[allow(clippy::arc_with_non_send_sync)]
     let buf = Arc::new(RefCell::new(Buffer::new(buf, drop_fn)));
     let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
         let page = page.clone();
@@ -1254,6 +1259,7 @@ pub fn write_varint_to_vec(value: u64, payload: &mut Vec<u8>) {
 
 pub fn begin_read_wal_header(io: &Arc<dyn File>) -> Result<Arc<RwLock<WalHeader>>> {
     let drop_fn = Rc::new(|_buf| {});
+    #[allow(clippy::arc_with_non_send_sync)]
     let buf = Arc::new(RefCell::new(Buffer::allocate(512, drop_fn)));
     let result = Arc::new(RwLock::new(WalHeader::default()));
     let header = result.clone();
@@ -1297,6 +1303,7 @@ pub fn begin_read_wal_frame(
         let buffer_pool = buffer_pool.clone();
         buffer_pool.put(buf);
     });
+    #[allow(clippy::arc_with_non_send_sync)]
     let buf = Arc::new(RefCell::new(Buffer::new(buf, drop_fn)));
     let frame = page.clone();
     let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
@@ -1361,6 +1368,7 @@ pub fn begin_write_wal_frame(
         buf[20..24].copy_from_slice(&header.checksum_2.to_be_bytes());
         buf[WAL_FRAME_HEADER_SIZE..].copy_from_slice(contents.as_ptr());
 
+        #[allow(clippy::arc_with_non_send_sync)]
         (Arc::new(RefCell::new(buffer)), checksums)
     };
 
@@ -1399,6 +1407,7 @@ pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<
         buf[24..28].copy_from_slice(&header.checksum_1.to_be_bytes());
         buf[28..32].copy_from_slice(&header.checksum_2.to_be_bytes());
 
+        #[allow(clippy::arc_with_non_send_sync)]
         Arc::new(RefCell::new(buffer))
     };
 
