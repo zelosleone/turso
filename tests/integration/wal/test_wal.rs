@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 #[allow(clippy::arc_with_non_send_sync)]
-#[test]
+#[test_log::test]
 fn test_wal_checkpoint_result() -> Result<()> {
     let tmp_db = TempDatabase::new("test_wal.db");
     let conn = tmp_db.connect_limbo();
