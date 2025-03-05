@@ -30,7 +30,6 @@ use crate::functions::datetime::{
     exec_date, exec_datetime_full, exec_julianday, exec_strftime, exec_time, exec_unixepoch,
 };
 use crate::functions::printf::exec_printf;
-use crate::info;
 use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
 use crate::schema::{affinity, Affinity};
@@ -55,6 +54,7 @@ use crate::{
     json::json_error_position, json::json_extract, json::json_object, json::json_patch,
     json::json_quote, json::json_remove, json::json_set, json::json_type,
 };
+use crate::{info, CheckpointStatus};
 use crate::{resolve_ext_path, Connection, Result, TransactionState, DATABASE_VERSION};
 use insn::{
     exec_add, exec_and, exec_bit_and, exec_bit_not, exec_bit_or, exec_boolean_not, exec_concat,
@@ -1212,7 +1212,6 @@ impl Program {
 
                     if updated && matches!(current_state, TransactionState::None) {
                         if let LimboResult::Busy = pager.begin_read_tx()? {
-                            tracing::trace!("begin_read_tx busy");
                             return Ok(StepResult::Busy);
                         }
                     }
@@ -3086,22 +3085,26 @@ impl Program {
         tracing::trace!("Halt auto_commit {}", auto_commit);
         if auto_commit {
             let current_state = connection.transaction_state.borrow().clone();
-            if current_state == TransactionState::Read {
+            if matches!(
+                current_state,
+                TransactionState::Read | TransactionState::Write
+            ) {
                 pager.end_read_tx()?;
-                return Ok(StepResult::Done);
-            }
-            match pager.end_tx() {
-                Ok(crate::storage::wal::CheckpointStatus::IO) => Ok(StepResult::IO),
-                Ok(crate::storage::wal::CheckpointStatus::Done(_)) => {
+                if current_state == TransactionState::Write {
+                    let checkpoint_status = pager.end_tx()?;
+                    match checkpoint_status {
+                        CheckpointStatus::Done(_) => {}
+                        CheckpointStatus::IO => return Ok(StepResult::IO),
+                    }
                     if self.change_cnt_on {
                         if let Some(conn) = self.connection.upgrade() {
                             conn.set_changes(self.n_change.get());
                         }
                     }
-                    Ok(StepResult::Done)
                 }
-                Err(e) => Err(e),
             }
+            connection.transaction_state.replace(TransactionState::None);
+            Ok(StepResult::Done)
         } else {
             if self.change_cnt_on {
                 if let Some(conn) = self.connection.upgrade() {
