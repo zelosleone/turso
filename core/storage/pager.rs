@@ -247,6 +247,7 @@ impl Pager {
         match checkpoint_status {
             CheckpointStatus::IO => Ok(checkpoint_status),
             CheckpointStatus::Done(_) => {
+                self.wal.borrow().end_write_tx()?;
                 self.wal.borrow().end_read_tx()?;
                 Ok(checkpoint_status)
             }

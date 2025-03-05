@@ -3200,6 +3200,7 @@ impl Program {
                             connection.deref(),
                         ),
                         TransactionState::Read => {
+                            connection.transaction_state.replace(TransactionState::None);
                             pager.end_read_tx()?;
                             Ok(StepResult::Done)
                         }

@@ -454,25 +454,25 @@ impl PageContent {
     }
 
     pub fn write_u8(&self, pos: usize, value: u8) {
-        tracing::debug!("write_u8(pos={}, value={})", pos, value);
+        tracing::trace!("write_u8(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[self.offset + pos] = value;
     }
 
     pub fn write_u16(&self, pos: usize, value: u16) {
-        tracing::debug!("write_u16(pos={}, value={})", pos, value);
+        tracing::trace!("write_u16(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[self.offset + pos..self.offset + pos + 2].copy_from_slice(&value.to_be_bytes());
     }
 
     pub fn write_u16_no_offset(&self, pos: usize, value: u16) {
-        tracing::debug!("write_u16(pos={}, value={})", pos, value);
+        tracing::trace!("write_u16(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[pos..pos + 2].copy_from_slice(&value.to_be_bytes());
     }
 
     pub fn write_u32(&self, pos: usize, value: u32) {
-        tracing::debug!("write_u32(pos={}, value={})", pos, value);
+        tracing::trace!("write_u32(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[self.offset + pos..self.offset + pos + 4].copy_from_slice(&value.to_be_bytes());
     }
@@ -562,7 +562,7 @@ impl PageContent {
         payload_overflow_threshold_min: usize,
         usable_size: usize,
     ) -> Result<BTreeCell> {
-        tracing::debug!("cell_get(idx={})", idx);
+        tracing::trace!("cell_get(idx={})", idx);
         let buf = self.as_ptr();
 
         let ncells = self.cell_count();

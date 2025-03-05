@@ -284,7 +284,7 @@ impl BTreeCursor {
             }
 
             let cell_idx = cell_idx as usize;
-            debug!(
+            tracing::trace!(
                 "get_prev_record current id={} cell={}",
                 page.get().id,
                 cell_idx
@@ -359,7 +359,7 @@ impl BTreeCursor {
             let mem_page_rc = self.stack.top();
             let cell_idx = self.stack.current_cell_index() as usize;
 
-            debug!("current id={} cell={}", mem_page_rc.get().id, cell_idx);
+            tracing::trace!("current id={} cell={}", mem_page_rc.get().id, cell_idx);
             return_if_locked!(mem_page_rc);
             if !mem_page_rc.is_loaded() {
                 self.pager.load_page(mem_page_rc.clone())?;
