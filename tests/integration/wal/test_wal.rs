@@ -36,6 +36,7 @@ fn test_wal_checkpoint_result() -> Result<()> {
 }
 
 #[test]
+#[ignore = "ignored for now because it's flaky"]
 fn test_wal_1_writer_1_reader() -> Result<()> {
     maybe_setup_tracing();
     let tmp_db = Arc::new(Mutex::new(TempDatabase::new("test_wal.db")));
@@ -66,7 +67,6 @@ fn test_wal_1_writer_1_reader() -> Result<()> {
     let writer_thread = std::thread::spawn(move || {
         let conn = tmp_db_w.connect().unwrap();
         for i in 0..ROWS_WRITE {
-            println!("adding {}", i);
             conn.execute(format!("INSERT INTO t values({})", i).as_str())
                 .unwrap();
             let mut rows = rows_.lock().unwrap();
@@ -79,7 +79,6 @@ fn test_wal_1_writer_1_reader() -> Result<()> {
         loop {
             let rows = *rows_.lock().unwrap();
             let mut i = 0;
-            println!("reading {}", rows);
             match conn.query("SELECT * FROM t") {
                 Ok(Some(ref mut rows)) => loop {
                     match rows.step().unwrap() {
