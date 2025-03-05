@@ -497,6 +497,8 @@ dependencies = [
  "rusqlite",
  "tempfile",
  "test-log",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

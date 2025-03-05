@@ -7,7 +7,7 @@ mod opcodes_dictionary;
 
 use rustyline::{error::ReadlineError, Config, Editor};
 use std::sync::atomic::Ordering;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 fn rustyline_config() -> Config {
     Config::builder()
@@ -18,7 +18,11 @@ fn rustyline_config() -> Config {
 fn main() -> anyhow::Result<()> {
     let mut rl = Editor::with_config(rustyline_config())?;
     tracing_subscriber::registry()
-        .with(fmt::layer())
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_line_number(true)
+                .with_thread_ids(true),
+        )
         .with(EnvFilter::from_default_env())
         .init();
     let mut app = app::Limbo::new(&mut rl)?;

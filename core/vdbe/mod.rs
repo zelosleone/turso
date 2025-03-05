@@ -73,6 +73,7 @@ use std::ffi::c_void;
 use std::num::NonZero;
 use std::rc::{Rc, Weak};
 use std::sync::{Arc, Mutex};
+use tracing::instrument;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Represents a target for a jump instruction.
@@ -348,6 +349,7 @@ impl Program {
         }
     }
 
+    #[instrument(skip_all)]
     pub fn step(&self, state: &mut ProgramState, pager: Rc<Pager>) -> Result<StepResult> {
         loop {
             if state.is_interrupted() {
