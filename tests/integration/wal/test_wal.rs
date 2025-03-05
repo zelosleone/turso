@@ -11,7 +11,7 @@ use tracing_subscriber::EnvFilter;
 #[allow(clippy::arc_with_non_send_sync)]
 #[test]
 fn test_wal_checkpoint_result() -> Result<()> {
-    setup_tracing();
+    maybe_setup_tracing();
     let tmp_db = TempDatabase::new("test_wal.db");
     let conn = tmp_db.connect_limbo();
     conn.execute("CREATE TABLE t1 (id text);")?;
@@ -33,6 +33,17 @@ fn test_wal_checkpoint_result() -> Result<()> {
     assert!(res[2] > 0); // num pages checkpointed successfully
 
     Ok(())
+}
+
+fn maybe_setup_tracing() {
+    let _ = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_line_number(true)
+                .with_thread_ids(true),
+        )
+        .with(EnvFilter::from_default_env())
+        .try_init();
 }
 
 /// Execute a statement and get strings result
