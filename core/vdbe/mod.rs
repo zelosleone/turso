@@ -3096,22 +3096,21 @@ impl Program {
                 || (matches!(program_state.halt_state.unwrap(), HaltState::Checkpointing))
         );
         if program_state.halt_state.is_some() {
-            self.step_end_write_txn(&pager, &mut program_state.halt_state, connection.deref())?;
+            self.step_end_write_txn(&pager, &mut program_state.halt_state, connection.deref())
         } else {
             if auto_commit {
                 let current_state = connection.transaction_state.borrow().clone();
                 match current_state {
-                    TransactionState::Write => {
-                        self.step_end_write_txn(
-                            &pager,
-                            &mut program_state.halt_state,
-                            connection.deref(),
-                        )?;
-                    }
+                    TransactionState::Write => self.step_end_write_txn(
+                        &pager,
+                        &mut program_state.halt_state,
+                        connection.deref(),
+                    ),
                     TransactionState::Read => {
                         pager.end_read_tx()?;
+                        Ok(StepResult::Done)
                     }
-                    TransactionState::None => {}
+                    TransactionState::None => Ok(StepResult::Done),
                 }
             } else {
                 if self.change_cnt_on {
@@ -3119,9 +3118,9 @@ impl Program {
                         conn.set_changes(self.n_change.get());
                     }
                 }
+                Ok(StepResult::Done)
             }
         }
-        Ok(StepResult::Done)
     }
 
     fn step_end_write_txn(
@@ -3134,6 +3133,7 @@ impl Program {
         match checkpoint_status {
             CheckpointStatus::Done(_) => {
                 connection.transaction_state.replace(TransactionState::None);
+                let _ = halt_state.take();
             }
             CheckpointStatus::IO => {
                 *halt_state = Some(HaltState::Checkpointing);
