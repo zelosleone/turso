@@ -1,7 +1,7 @@
 use crate::{Completion, File, LimboError, OpenFlags, Result, IO};
 use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
-use std::rc::Rc;
+use std::sync::Arc;
 use tracing::{debug, trace};
 
 pub struct WindowsIO {}
@@ -13,15 +13,18 @@ impl WindowsIO {
     }
 }
 
+unsafe impl Send for WindowsIO {}
+unsafe impl Sync for WindowsIO {}
+
 impl IO for WindowsIO {
-    fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Rc<dyn File>> {
+    fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>> {
         trace!("open_file(path = {})", path);
         let file = std::fs::File::options()
             .read(true)
             .write(true)
             .create(matches!(flags, OpenFlags::Create))
             .open(path)?;
-        Ok(Rc::new(WindowsFile {
+        Ok(Arc::new(WindowsFile {
             file: RefCell::new(file),
         }))
     }
@@ -45,6 +48,9 @@ pub struct WindowsFile {
     file: RefCell<std::fs::File>,
 }
 
+unsafe impl Send for WindowsFile {}
+unsafe impl Sync for WindowsFile {}
+
 impl File for WindowsFile {
     fn lock_file(&self, exclusive: bool) -> Result<()> {
         unimplemented!()
@@ -67,7 +73,7 @@ impl File for WindowsFile {
         Ok(())
     }
 
-    fn pwrite(&self, pos: usize, buffer: Rc<RefCell<crate::Buffer>>, c: Completion) -> Result<()> {
+    fn pwrite(&self, pos: usize, buffer: Arc<RefCell<crate::Buffer>>, c: Completion) -> Result<()> {
         let mut file = self.file.borrow_mut();
         file.seek(std::io::SeekFrom::Start(pos as u64))?;
         let buf = buffer.borrow();

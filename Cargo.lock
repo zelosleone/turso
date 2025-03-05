@@ -1617,7 +1617,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_completion"
-version = "0.0.15"
+version = "0.0.16"
 dependencies = [
  "limbo_ext",
  "mimalloc",

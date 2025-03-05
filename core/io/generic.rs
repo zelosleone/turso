@@ -1,7 +1,7 @@
 use crate::{Completion, File, LimboError, OpenFlags, Result, IO};
 use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
-use std::rc::Rc;
+use std::sync::Arc;
 use tracing::{debug, trace};
 
 pub struct GenericIO {}
@@ -13,15 +13,18 @@ impl GenericIO {
     }
 }
 
+unsafe impl Send for GenericIO {}
+unsafe impl Sync for GenericIO {}
+
 impl IO for GenericIO {
-    fn open_file(&self, path: &str, flags: OpenFlags, _direct: bool) -> Result<Rc<dyn File>> {
+    fn open_file(&self, path: &str, flags: OpenFlags, _direct: bool) -> Result<Arc<dyn File>> {
         trace!("open_file(path = {})", path);
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(matches!(flags, OpenFlags::Create))
             .open(path)?;
-        Ok(Rc::new(GenericFile {
+        Ok(Arc::new(GenericFile {
             file: RefCell::new(file),
         }))
     }
@@ -44,6 +47,9 @@ impl IO for GenericIO {
 pub struct GenericFile {
     file: RefCell<std::fs::File>,
 }
+
+unsafe impl Send for GenericFile {}
+unsafe impl Sync for GenericFile {}
 
 impl File for GenericFile {
     // Since we let the OS handle the locking, file locking is not supported on the generic IO implementation
@@ -72,7 +78,7 @@ impl File for GenericFile {
         Ok(())
     }
 
-    fn pwrite(&self, pos: usize, buffer: Rc<RefCell<crate::Buffer>>, c: Completion) -> Result<()> {
+    fn pwrite(&self, pos: usize, buffer: Arc<RefCell<crate::Buffer>>, c: Completion) -> Result<()> {
         let mut file = self.file.borrow_mut();
         file.seek(std::io::SeekFrom::Start(pos as u64))?;
         let buf = buffer.borrow();
