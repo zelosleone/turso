@@ -3748,9 +3748,9 @@ mod tests {
     fn test_btree_destroy() -> Result<()> {
         let initial_size = 3;
         let (pager, db_header) = setup_test_env(initial_size);
-        let mut cursor = BTreeCursor::new(pager.clone(), 2);
+        let mut cursor = BTreeCursor::new(None, pager.clone(), 2);
         assert_eq!(
-            db_header.borrow().database_size,
+            db_header.lock().unwrap().database_size,
             initial_size,
             "Database should initially have 3 pages"
         );
@@ -3810,18 +3810,18 @@ mod tests {
 
         // Verify structure before destruction
         assert_eq!(
-            db_header.borrow().database_size,
+            db_header.lock().unwrap().database_size,
             5, // We should have pages 0-4
             "Database should have 4 pages total"
         );
 
         // Track freelist state before destruction
-        let initial_free_pages = db_header.borrow().freelist_pages;
+        let initial_free_pages = db_header.lock().unwrap().freelist_pages;
         assert_eq!(initial_free_pages, 0, "should start with no free pages");
 
         run_until_done(|| cursor.btree_destroy(), pager.deref())?;
 
-        let pages_freed = db_header.borrow().freelist_pages - initial_free_pages;
+        let pages_freed = db_header.lock().unwrap().freelist_pages - initial_free_pages;
         assert_eq!(pages_freed, 3, "should free 3 pages (root + 2 leaves)");
 
         Ok(())
