@@ -162,7 +162,7 @@ impl Database {
                 .try_write()
                 .expect("lock on schema should succeed first try");
             let syms = conn.syms.borrow();
-            parse_schema_rows(rows, &mut schema, io, syms.deref())?;
+            parse_schema_rows(rows, &mut schema, io, syms.deref(), None)?;
         }
         Ok(db)
     }
@@ -525,6 +525,10 @@ impl Statement {
             mv_store,
             pager,
         }
+    }
+
+    pub fn set_mv_tx_id(&mut self, mv_tx_id: Option<u64>) {
+        self.state.mv_tx_id = mv_tx_id;
     }
 
     pub fn interrupt(&mut self) {

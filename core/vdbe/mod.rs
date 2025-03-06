@@ -235,7 +235,7 @@ pub struct ProgramState {
     deferred_seek: Option<(CursorID, CursorID)>,
     ended_coroutine: Bitfield<4>, // flag to indicate that a coroutine has ended (key is the yield register. currently we assume that the yield register is always between 0-255, YOLO)
     regex_cache: RegexCache,
-    mv_tx_id: Option<crate::mvcc::database::TxID>,
+    pub(crate) mv_tx_id: Option<crate::mvcc::database::TxID>,
     interrupted: bool,
     parameters: HashMap<NonZero<usize>, OwnedValue>,
     halt_state: Option<HaltState>,
@@ -3034,6 +3034,7 @@ impl Program {
                         &mut schema,
                         conn.pager.io.clone(),
                         &conn.syms.borrow(),
+                        state.mv_tx_id,
                     )?;
                     state.pc += 1;
                 }
