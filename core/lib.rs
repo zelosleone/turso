@@ -83,7 +83,10 @@ enum TransactionState {
     None,
 }
 
+pub(crate) type MvStore = crate::mvcc::MvStore<crate::mvcc::LocalClock>;
+
 pub struct Database {
+    mv_store: Option<Rc<MvStore>>,
     schema: Arc<RwLock<Schema>>,
     // TODO: make header work without lock
     header: Arc<Mutex<DatabaseHeader>>,
@@ -128,11 +131,20 @@ impl Database {
             let version = db_header.lock().unwrap().version_number;
             version.to_string()
         });
+        let mv_store = if enable_mvcc {
+            Some(Rc::new(MvStore::new(
+                crate::mvcc::LocalClock::new(),
+                crate::mvcc::persistent_storage::Storage::new_noop(),
+            )))
+        } else {
+            None
+        };
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
         let page_size = db_header.lock().unwrap().page_size;
         let header = db_header;
         let schema = Arc::new(RwLock::new(Schema::new()));
         let db = Database {
+            mv_store,
             schema: schema.clone(),
             header: header.clone(),
             shared_page_cache: shared_page_cache.clone(),
