@@ -191,6 +191,7 @@ impl Database {
             header: self.header.clone(),
             last_insert_rowid: Cell::new(0),
             auto_commit: RefCell::new(true),
+            mv_transactions: RefCell::new(Vec::new()),
             transaction_state: RefCell::new(TransactionState::None),
             last_change: Cell::new(0),
             syms: RefCell::new(SymbolTable::new()),
@@ -257,6 +258,7 @@ pub struct Connection {
     schema: Arc<RwLock<Schema>>,
     header: Arc<Mutex<DatabaseHeader>>,
     auto_commit: RefCell<bool>,
+    mv_transactions: RefCell<Vec<crate::mvcc::database::TxID>>,
     transaction_state: RefCell<TransactionState>,
     last_insert_rowid: Cell<u64>,
     last_change: Cell<i64>,
@@ -287,7 +289,11 @@ impl Connection {
                         &syms,
                         QueryMode::Normal,
                     )?);
-                    Ok(Statement::new(program, self.pager.clone()))
+                    Ok(Statement::new(
+                        program,
+                        self._db.mv_store.clone(),
+                        self.pager.clone(),
+                    ))
                 }
                 Cmd::Explain(_stmt) => todo!(),
                 Cmd::ExplainQueryPlan(_stmt) => todo!(),
@@ -325,7 +331,7 @@ impl Connection {
                     &syms,
                     QueryMode::Normal,
                 )?);
-                let stmt = Statement::new(program, self.pager.clone());
+                let stmt = Statement::new(program, self._db.mv_store.clone(), self.pager.clone());
                 Ok(Some(stmt))
             }
             Cmd::Explain(stmt) => {
@@ -420,7 +426,7 @@ impl Connection {
 
                     let mut state =
                         vdbe::ProgramState::new(program.max_registers, program.cursor_ref.len());
-                    program.step(&mut state, self.pager.clone())?;
+                    program.step(&mut state, self._db.mv_store.clone(), self.pager.clone())?;
                 }
             }
         }
@@ -502,15 +508,21 @@ impl Connection {
 pub struct Statement {
     program: Rc<vdbe::Program>,
     state: vdbe::ProgramState,
+    mv_store: Option<Rc<MvStore>>,
     pager: Rc<Pager>,
 }
 
 impl Statement {
-    pub fn new(program: Rc<vdbe::Program>, pager: Rc<Pager>) -> Self {
+    pub fn new(
+        program: Rc<vdbe::Program>,
+        mv_store: Option<Rc<MvStore>>,
+        pager: Rc<Pager>,
+    ) -> Self {
         let state = vdbe::ProgramState::new(program.max_registers, program.cursor_ref.len());
         Self {
             program,
             state,
+            mv_store,
             pager,
         }
     }
@@ -520,7 +532,8 @@ impl Statement {
     }
 
     pub fn step(&mut self) -> Result<StepResult> {
-        self.program.step(&mut self.state, self.pager.clone())
+        self.program
+            .step(&mut self.state, self.mv_store.clone(), self.pager.clone())
     }
 
     pub fn num_columns(&self) -> usize {
