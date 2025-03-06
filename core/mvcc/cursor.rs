@@ -22,6 +22,10 @@ impl<Clock: LogicalClock> ScanCursor<Clock> {
         })
     }
 
+    pub fn insert(&self, row: Row) -> Result<()> {
+        self.db.insert(self.tx_id, row)
+    }
+
     pub fn current_row_id(&self) -> Option<RowID> {
         if self.index >= self.row_ids.len() {
             return None;
