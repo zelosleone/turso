@@ -85,6 +85,8 @@ enum TransactionState {
 
 pub(crate) type MvStore = crate::mvcc::MvStore<crate::mvcc::LocalClock>;
 
+pub(crate) type MvCursor = crate::mvcc::cursor::ScanCursor<crate::mvcc::LocalClock>;
+
 pub struct Database {
     mv_store: Option<Rc<MvStore>>,
     schema: Arc<RwLock<Schema>>,

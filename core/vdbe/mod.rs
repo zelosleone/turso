@@ -55,7 +55,9 @@ use crate::{
     json::json_quote, json::json_remove, json::json_set, json::json_type,
 };
 use crate::{info, CheckpointStatus};
-use crate::{resolve_ext_path, Connection, MvStore, Result, TransactionState, DATABASE_VERSION};
+use crate::{
+    resolve_ext_path, Connection, MvCursor, MvStore, Result, TransactionState, DATABASE_VERSION,
+};
 use insn::{
     exec_add, exec_and, exec_bit_and, exec_bit_not, exec_bit_or, exec_boolean_not, exec_concat,
     exec_divide, exec_multiply, exec_or, exec_remainder, exec_shift_left, exec_shift_right,
@@ -762,7 +764,18 @@ impl Program {
                     root_page,
                 } => {
                     let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
-                    let cursor = BTreeCursor::new(pager.clone(), *root_page);
+                    let mv_cursor = match state.mv_tx_id {
+                        Some(tx_id) => {
+                            let table_id = *root_page as u64;
+                            let mv_store = mv_store.as_ref().unwrap().clone();
+                            let mv_cursor = Rc::new(RefCell::new(
+                                MvCursor::new(mv_store, tx_id, table_id).unwrap(),
+                            ));
+                            Some(mv_cursor)
+                        }
+                        None => None,
+                    };
+                    let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
                     let mut cursors = state.cursors.borrow_mut();
                     match cursor_type {
                         CursorType::BTreeTable(_) => {
@@ -2955,7 +2968,18 @@ impl Program {
                     let (_, cursor_type) = self.cursor_ref.get(*cursor_id).unwrap();
                     let mut cursors = state.cursors.borrow_mut();
                     let is_index = cursor_type.is_index();
-                    let cursor = BTreeCursor::new(pager.clone(), *root_page);
+                    let mv_cursor = match state.mv_tx_id {
+                        Some(tx_id) => {
+                            let table_id = *root_page as u64;
+                            let mv_store = mv_store.as_ref().unwrap().clone();
+                            let mv_cursor = Rc::new(RefCell::new(
+                                MvCursor::new(mv_store, tx_id, table_id).unwrap(),
+                            ));
+                            Some(mv_cursor)
+                        }
+                        None => None,
+                    };
+                    let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
                     if is_index {
                         cursors
                             .get_mut(*cursor_id)
