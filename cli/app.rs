@@ -764,7 +764,7 @@ impl<'a> Limbo<'a> {
                                     row.add_cell(
                                         Cell::new(content)
                                             .set_alignment(alignment)
-                                            .fg(COLORS[idx & COLORS.len()]),
+                                            .fg(COLORS[idx % COLORS.len()]),
                                     );
                                 }
                                 table.add_row(row);
