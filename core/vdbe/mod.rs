@@ -3137,11 +3137,14 @@ impl Program {
     ) -> Result<StepResult> {
         if let Some(mv_store) = mv_store {
             let conn = self.connection.upgrade().unwrap();
-            let mut mv_transactions = conn.mv_transactions.borrow_mut();
-            for tx_id in mv_transactions.iter() {
-                mv_store.commit_tx(*tx_id).unwrap();
+            let auto_commit = *conn.auto_commit.borrow();
+            if auto_commit {
+                let mut mv_transactions = conn.mv_transactions.borrow_mut();
+                for tx_id in mv_transactions.iter() {
+                    mv_store.commit_tx(*tx_id).unwrap();
+                }
+                mv_transactions.clear();
             }
-            mv_transactions.clear();
             return Ok(StepResult::Done);
         } else {
             let connection = self
