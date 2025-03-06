@@ -80,7 +80,7 @@ impl Highlighter for LimboHelper {
     }
 
     fn highlight_hint<'h>(&self, hint: &'h str) -> std::borrow::Cow<'h, str> {
-        std::borrow::Cow::Owned(format!("\x1b[1;2;4;246m{hint}\x1b[0m"))
+        std::borrow::Cow::Owned(format!("\x1b[1;2;4;38;5;246m{hint}\x1b[0m")) // Bold dim grey underline
     }
 
     fn highlight_candidate<'c>(
@@ -89,7 +89,7 @@ impl Highlighter for LimboHelper {
         completion: rustyline::CompletionType,
     ) -> std::borrow::Cow<'c, str> {
         let _ = completion;
-        std::borrow::Cow::Borrowed(candidate)
+        std::borrow::Cow::Owned(format!("\x1b[38;5;69m{candidate}\x1b[0m"))
     }
 
     fn highlight_char(&self, line: &str, pos: usize, kind: rustyline::highlight::CmdKind) -> bool {

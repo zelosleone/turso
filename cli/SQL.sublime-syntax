@@ -15,7 +15,6 @@ variables:
     | left | on | order | outer | right | select | set | truncate | union
     | update | where )
   additional_toplevel_reserved: (?!)
-
   # TODO: not all are supported by all dialects!
   ddl_target: |-
     (?xi: {{ddl_target_other}}
@@ -78,14 +77,14 @@ contexts:
     - include: revoke-statements
     - include: other-statements
 
-###[ COMMENTS ]################################################################
+  ###[ COMMENTS ]################################################################
 
   comments:
     - include: double-dash-comments
     - include: block-comments
 
   double-dash-comments:
-    - match: '--'
+    - match: "--"
       scope: punctuation.definition.comment.sql
       push: inside-double-dash-comment
 
@@ -120,7 +119,7 @@ contexts:
       scope: punctuation.definition.comment.end.sql
       pop: 1
 
-###[ DDL CREATE STATEMENTS ]###################################################
+  ###[ DDL CREATE STATEMENTS ]###################################################
 
   create-statements:
     - match: \b(?i:create)\b
@@ -223,7 +222,7 @@ contexts:
     - include: expressions
     - include: pop-on-top-level-reserved-word
 
-###[ DDL DROP STATEMENTS ]#####################################################
+  ###[ DDL DROP STATEMENTS ]#####################################################
 
   drop-statements:
     - match: \b(?i:drop)\b
@@ -316,7 +315,7 @@ contexts:
   drop-other-args:
     - include: maybe-on-table-name
 
-###[ DDL ALTER STATEMENTS ]####################################################
+  ###[ DDL ALTER STATEMENTS ]####################################################
 
   alter-statements:
     - match: \b(?i:alter)\b
@@ -337,7 +336,7 @@ contexts:
     - include: alter-other
     - include: else-pop
 
-###[ DDL ALTER FUNCTION STATEMENTS ]###########################################
+  ###[ DDL ALTER FUNCTION STATEMENTS ]###########################################
 
   alter-function:
     - match: \b(?:({{ddl_target_function_modifier}})\s+)?({{ddl_target_function}})\b
@@ -354,7 +353,7 @@ contexts:
     - meta_include_prototype: false
     - include: maybe-condition
 
-###[ DDL ALTER INDEX STATEMENTS ]##############################################
+  ###[ DDL ALTER INDEX STATEMENTS ]##############################################
 
   alter-index:
     - match: \b(?i:(?:({{ddl_target_index_modifier}})\s+)?(index))\b
@@ -375,7 +374,7 @@ contexts:
     - include: pop-on-top-level-reserved-word
     - include: expressions-or-column-names
 
-###[ DDL ALTER TABLE STATEMENTS ]##############################################
+  ###[ DDL ALTER TABLE STATEMENTS ]##############################################
 
   alter-table:
     - match: \b(?i:(?:({{ddl_target_table_modifier}})\s+)?(table))\b
@@ -444,7 +443,7 @@ contexts:
         2: keyword.other.ddl.sql
         3: keyword.other.ddl.sql
 
-###[ DDL STATEMENT PROTOTYPES ]################################################
+  ###[ DDL STATEMENT PROTOTYPES ]################################################
 
   maybe-on-table-name:
     - include: on-table-names
@@ -455,7 +454,7 @@ contexts:
       scope: keyword.other.sql
       push: expect-table-name
 
-###[ DML STATEMENTS ]##########################################################
+  ###[ DML STATEMENTS ]##########################################################
 
   dml-statements:
     - match: \b(?i:select)\b
@@ -516,7 +515,7 @@ contexts:
     - include: expressions
     - include: expect-column-names
 
-###[ DML SET STATEMENTS ]######################################################
+  ###[ DML SET STATEMENTS ]######################################################
 
   set-statements:
     - match: \b(?i:set)\b(?!\s*\()
@@ -533,7 +532,7 @@ contexts:
   set-target:
     - include: else-pop
 
-###[ GRANT STATEMENTS ]########################################################
+  ###[ GRANT STATEMENTS ]########################################################
 
   grant-statements:
     - match: \b(?i:grant(?:\s+with\s+grant\s+option)?)\b
@@ -547,7 +546,7 @@ contexts:
     - meta_scope: meta.statement.grant.sql
     - include: immediately-pop
 
-###[ REVOKE STATEMENTS ]#######################################################
+  ###[ REVOKE STATEMENTS ]#######################################################
 
   revoke-statements:
     - match: \b(?i:revoke)\b
@@ -561,11 +560,11 @@ contexts:
     - meta_scope: meta.statement.revoke.sql
     - include: immediately-pop
 
-###[ OTHER STATEMENTS ]########################################################
+  ###[ OTHER STATEMENTS ]########################################################
 
   other-statements: []
 
-###[ EXPRESSIONS ]#############################################################
+  ###[ EXPRESSIONS ]#############################################################
 
   expressions-or-column-names:
     - include: wildcard-identifiers
@@ -625,7 +624,7 @@ contexts:
       push: inside-collate-expression
 
   inside-collate-expression:
-    - match: '{{simple_identifier}}'
+    - match: "{{simple_identifier}}"
       scope: support.constant.sql
       pop: 1
     - include: else-pop
@@ -653,7 +652,7 @@ contexts:
       pop: 1
     - include: else-pop
 
-###[ FUNCTION EXPRESSIONS ]####################################################
+  ###[ FUNCTION EXPRESSIONS ]####################################################
 
   function-calls:
     - include: built-in-aggregate-function-calls
@@ -701,12 +700,12 @@ contexts:
     - match: \)
       scope: meta.function-call.sql meta.group.sql punctuation.section.arguments.end.sql
       pop: 1
-    - match: ','
+    - match: ","
       scope: punctuation.separator.arguments.sql
     - include: distinct
     - include: expressions-or-column-names
 
-###[ GROUPS EXPRESSIONS ]######################################################
+  ###[ GROUPS EXPRESSIONS ]######################################################
 
   maybe-group:
     - include: group
@@ -729,7 +728,7 @@ contexts:
       pop: 1
     - include: sql
 
-###[ COLUMN EXPRESSIONS ]######################################################
+  ###[ COLUMN EXPRESSIONS ]######################################################
 
   expect-column-declaration:
     - include: column-declaration-list
@@ -818,7 +817,7 @@ contexts:
       pop: 1
     - include: expressions-or-column-names
 
-###[ FUNCTION EXPRESSIONS ]####################################################
+  ###[ FUNCTION EXPRESSIONS ]####################################################
 
   expect-function-parameters:
     - match: \(
@@ -840,7 +839,7 @@ contexts:
         - maybe-parameter-modifier
 
   expect-parameter-name:
-    - match: '{{simple_identifier}}'
+    - match: "{{simple_identifier}}"
       scope: variable.parameter.sql
       pop: 1
     - include: else-pop
@@ -865,12 +864,12 @@ contexts:
     - include: create-common-args
 
   expect-function-language-name:
-    - match: '{{simple_identifier}}'
+    - match: "{{simple_identifier}}"
       scope: constant.other.language.sql
       pop: 1
     - include: else-pop
 
-###[ USER MANAGEMENT EXPRESSIONS ]#############################################
+  ###[ USER MANAGEMENT EXPRESSIONS ]#############################################
 
   grant:
     - match: \b(?i:to)\b
@@ -889,7 +888,7 @@ contexts:
     - match: \b(?i:select|insert|update|delete|truncate|execute)\b
       scope: constant.language.sql
 
-###[ TABLE NAMES OR SUBQUERIES ]###############################################
+  ###[ TABLE NAMES OR SUBQUERIES ]###############################################
 
   table-name-or-subquery:
     - meta_include_prototype: false
@@ -912,7 +911,7 @@ contexts:
 
   table-name-not-function-call:
     - meta_include_prototype: false
-    - match: ''
+    - match: ""
       set:
         - maybe-table-alias
         - table-name-fail-if-function-call
@@ -928,7 +927,7 @@ contexts:
 
   table-valued-function-call:
     - meta_include_prototype: false
-    - match: ''
+    - match: ""
       set:
         - maybe-table-alias
         - function-call-arguments
@@ -972,7 +971,7 @@ contexts:
     - include: expressions
     - include: immediately-pop
 
-###[ TYPES ]###################################################################
+  ###[ TYPES ]###################################################################
 
   expect-type:
     - meta_include_prototype: false
@@ -1029,7 +1028,7 @@ contexts:
   inside-user-type:
     # note: may contain foreign variable interpolation
     - meta_scope: support.type.sql
-    - match: '{{simple_identifier_break}}'
+    - match: "{{simple_identifier_break}}"
       pop: 1
 
   after-type:
@@ -1039,7 +1038,7 @@ contexts:
     - include: assignment-operators
     - include: else-pop
 
-###[ IDENTIFIERS ]#############################################################
+  ###[ IDENTIFIERS ]#############################################################
 
   expect-table-alias-name:
     # prevent prototypes from inheriting syntaxes
@@ -1327,7 +1326,7 @@ contexts:
   single-identifier:
     - meta_include_prototype: false
     - include: pop-on-top-level-reserved-word
-    - match: ''
+    - match: ""
       set:
         - maybe-identifier-accessor
         - identifier-part
@@ -1391,14 +1390,14 @@ contexts:
 
   inside-simple-identifier-part:
     # note: may contain foreign variable interpolation
-    - match: '{{simple_identifier_break}}'
+    - match: "{{simple_identifier_break}}"
       pop: 1
 
   wildcard-identifiers:
     - match: \*
       scope: constant.other.wildcard.asterisk.sql
 
-###[ LITERALS ]################################################################
+  ###[ LITERALS ]################################################################
 
   literals-and-variables:
     - include: built-in-types
@@ -1440,10 +1439,10 @@ contexts:
     - include: string-escapes
 
   string-escapes:
-    - match: '{{string_escape}}'
+    - match: "{{string_escape}}"
       scope: constant.character.escape.sql
 
-###[ LIKE EXPRESSIONS ]########################################################
+  ###[ LIKE EXPRESSIONS ]########################################################
 
   like-expressions:
     - match: \b(?i:like)\b
@@ -1522,7 +1521,7 @@ contexts:
   inside-like-single-quoted-string-hash-escape:
     - meta_include_prototype: false
     - meta_scope: meta.string.like.sql string.quoted.single.sql
-    - match: '#.'
+    - match: "#."
       scope: constant.character.escape.sql
     - include: inside-like-single-quoted-string
 
@@ -1532,9 +1531,9 @@ contexts:
     - match: \'
       scope: punctuation.definition.string.end.sql
       pop: 1
-    - match: '%'
+    - match: "%"
       scope: constant.other.wildcard.percent.sql
-    - match: '_'
+    - match: "_"
       scope: constant.other.wildcard.underscore.sql
 
   like-else-fail:
@@ -1596,7 +1595,7 @@ contexts:
       pop: 1
     - include: like-else-fail
 
-###[ OPERATORS ]###############################################################
+  ###[ OPERATORS ]###############################################################
 
   maybe-condition:
     - meta_include_prototype: false
@@ -1610,10 +1609,10 @@ contexts:
 
   maybe-operator:
     - meta_include_prototype: false
-    - match: '<=>|[!<>]?=|<>|<|>'
+    - match: "<=>|[!<>]?=|<>|<|>"
       scope: keyword.operator.comparison.sql
       pop: 1
-    - match: '[-+/*]'
+    - match: "[-+/*]"
       scope: keyword.operator.arithmetic.sql
       pop: 1
     - match: \b(?i:and|or|having|exists|between|in|not|is)\b
@@ -1623,14 +1622,14 @@ contexts:
     - include: else-pop
 
   operators:
-    - match: '<=>|[!<>]?=|<>|<|>'
+    - match: "<=>|[!<>]?=|<>|<|>"
       scope: keyword.operator.comparison.sql
-    - match: '[-+/*]'
+    - match: "[-+/*]"
       scope: keyword.operator.arithmetic.sql
     - include: logical-operators
 
   assignment-operators:
-    - match: '='
+    - match: "="
       scope: keyword.operator.assignment.sql
 
   logical-operators:
@@ -1638,14 +1637,14 @@ contexts:
       scope: keyword.operator.logical.sql
 
   comma-separators:
-    - match: ','
+    - match: ","
       scope: punctuation.separator.sequence.sql
 
   statement-terminators:
-    - match: ';'
+    - match: ";"
       scope: punctuation.terminator.statement.sql
 
-###[ ILLEGALS ]################################################################
+  ###[ ILLEGALS ]################################################################
 
   illegal-stray-brackets:
     - match: \]
@@ -1655,14 +1654,14 @@ contexts:
     - match: \)
       scope: invalid.illegal.stray.sql
 
-###[ PROTOTYPES ]##############################################################
+  ###[ PROTOTYPES ]##############################################################
 
   else-pop:
     - match: (?=\S)
       pop: 1
 
   immediately-pop:
-    - match: ''
+    - match: ""
       pop: 1
 
   pop-on-top-level-reserved-word:
