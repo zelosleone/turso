@@ -45,6 +45,11 @@ impl Schema {
         self.tables.get(&name).cloned()
     }
 
+    pub fn remove_table(&mut self, table_name: &str) {
+        let name = normalize_ident(table_name);
+        self.tables.remove(&name);
+    }
+
     pub fn get_btree_table(&self, name: &str) -> Option<Rc<BTreeTable>> {
         let name = normalize_ident(name);
         if let Some(table) = self.tables.get(&name) {
@@ -60,6 +65,18 @@ impl Schema {
             .entry(table_name)
             .or_default()
             .push(index.clone())
+    }
+
+    pub fn get_indices(&self, table_name: &str) -> &[Arc<Index>] {
+        let name = normalize_ident(table_name);
+        self.indexes
+            .get(&name)
+            .map_or_else(|| &[] as &[Arc<Index>], |v| v.as_slice())
+    }
+
+    pub fn remove_indices_for_table(&mut self, table_name: &str) {
+        let name = normalize_ident(table_name);
+        self.indexes.remove(&name);
     }
 }
 

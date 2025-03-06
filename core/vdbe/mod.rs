@@ -3015,6 +3015,37 @@ impl Program {
                     state.registers[*root] = OwnedValue::Integer(root_page as i64);
                     state.pc += 1;
                 }
+                Insn::Destroy {
+                    root,
+                    former_root_reg: _,
+                    is_temp,
+                } => {
+                    if *is_temp == 1 {
+                        todo!("temp databases not implemented yet.");
+                    }
+                    {
+                        let mut cursor = state.get_cursor(*root);
+                        let cursor = cursor.as_btree_mut();
+                        cursor.btree_destroy()?;
+                    }
+                    state.pc += 1;
+                }
+                Insn::DropTable {
+                    db,
+                    _p2,
+                    _p3,
+                    table_name,
+                } => {
+                    if *db > 0 {
+                        todo!("temp databases not implemented yet");
+                    }
+                    if let Some(conn) = self.connection.upgrade() {
+                        let mut schema = conn.schema.write();
+                        schema.remove_indices_for_table(table_name);
+                        schema.remove_table(table_name);
+                    }
+                    state.pc += 1;
+                }
                 Insn::Close { cursor_id } => {
                     let mut cursors = state.cursors.borrow_mut();
                     cursors.get_mut(*cursor_id).unwrap().take();
