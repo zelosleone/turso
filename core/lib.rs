@@ -101,7 +101,7 @@ unsafe impl Sync for Database {}
 
 impl Database {
     #[cfg(feature = "fs")]
-    pub fn open_file(io: Arc<dyn IO>, path: &str) -> Result<Arc<Database>> {
+    pub fn open_file(io: Arc<dyn IO>, path: &str, enable_mvcc: bool) -> Result<Arc<Database>> {
         use storage::wal::WalFileShared;
 
         let file = io.open_file(path, OpenFlags::Create, true)?;
@@ -112,7 +112,7 @@ impl Database {
         io.run_once()?;
         let page_size = db_header.lock().unwrap().page_size;
         let wal_shared = WalFileShared::open_shared(&io, wal_path.as_str(), page_size)?;
-        Self::open(io, page_io, wal_shared)
+        Self::open(io, page_io, wal_shared, enable_mvcc)
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
@@ -120,6 +120,7 @@ impl Database {
         io: Arc<dyn IO>,
         page_io: Arc<dyn DatabaseStorage>,
         shared_wal: Arc<RwLock<WalFileShared>>,
+        enable_mvcc: bool,
     ) -> Result<Arc<Database>> {
         let db_header = Pager::begin_open(page_io.clone())?;
         io.run_once()?;

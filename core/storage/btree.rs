@@ -2811,7 +2811,7 @@ mod tests {
                 .unwrap();
         }
         let io: Arc<dyn IO> = Arc::new(PlatformIO::new().unwrap());
-        let db = Database::open_file(io.clone(), path.to_str().unwrap()).unwrap();
+        let db = Database::open_file(io.clone(), path.to_str().unwrap(), false).unwrap();
 
         db
     }
