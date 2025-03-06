@@ -46,7 +46,7 @@ You can install the latest `limbo` release with:
 
 ```shell 
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/tursodatabase/limbo/releases/latest/download/limbo-installer.sh | sh
+  https://github.com/tursodatabase/limbo/releases/latest/download/limbo_cli-installer.sh | sh
 ```
 
 Then launch the shell to execute SQL statements:
