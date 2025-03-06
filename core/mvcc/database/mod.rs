@@ -17,11 +17,23 @@ pub struct RowID {
     pub row_id: u64,
 }
 
+impl RowID {
+    pub fn new(table_id: u64, row_id: u64) -> Self {
+        Self { table_id, row_id }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, PartialOrd)]
 
 pub struct Row {
     pub id: RowID,
     pub data: Vec<u8>,
+}
+
+impl Row {
+    pub fn new(id: RowID, data: Vec<u8>) -> Self {
+        Self { id, data }
+    }
 }
 
 /// A row version.
