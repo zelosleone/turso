@@ -1089,7 +1089,7 @@ mod tests {
         unsafe {
             let result = sqlite3_initialize();
             assert_eq!(result, SQLITE_OK);
-            
+
             // Test multiple initializations
             let second_result = sqlite3_initialize();
             assert_eq!(second_result, SQLITE_OK);
@@ -1101,7 +1101,7 @@ mod tests {
         unsafe {
             let mut db: *mut sqlite3 = std::ptr::null_mut();
             let filename = CString::new(":memory:").unwrap();
-            
+
             let result = sqlite3_open(filename.as_ptr(), &mut db);
             assert_eq!(result, SQLITE_OK);
             assert!(!db.is_null());
@@ -1117,7 +1117,7 @@ mod tests {
         unsafe {
             let mut db: *mut sqlite3 = std::ptr::null_mut();
             let filename = CString::new(":memory:").unwrap();
-            
+
             // Open database
             let result = sqlite3_open(filename.as_ptr(), &mut db);
             assert_eq!(result, SQLITE_OK);
@@ -1141,7 +1141,7 @@ mod tests {
         unsafe {
             let mut db: *mut sqlite3 = std::ptr::null_mut();
             let filename = CString::new(":memory:").unwrap();
-            
+
             // Open database
             let result = sqlite3_open(filename.as_ptr(), &mut db);
             assert_eq!(result, SQLITE_OK);
@@ -1149,13 +1149,8 @@ mod tests {
             // Prepare a simple statement
             let sql = CString::new("CREATE TABLE test (id INTEGER PRIMARY KEY)").unwrap();
             let mut stmt: *mut sqlite3_stmt = std::ptr::null_mut();
-            let prepare_result = sqlite3_prepare_v2(
-                db,
-                sql.as_ptr(),
-                -1,
-                &mut stmt,
-                std::ptr::null_mut(),
-            );
+            let prepare_result =
+                sqlite3_prepare_v2(db, sql.as_ptr(), -1, &mut stmt, std::ptr::null_mut());
             assert_eq!(prepare_result, SQLITE_OK);
 
             // Step through the statement
@@ -1173,7 +1168,7 @@ mod tests {
         unsafe {
             let version = sqlite3_libversion();
             assert!(!version.is_null());
-            
+
             let version_num = sqlite3_libversion_number();
             assert!(version_num > 0);
         }
