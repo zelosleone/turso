@@ -1079,3 +1079,103 @@ pub unsafe extern "C" fn sqlite3_wal_checkpoint_v2(
     }
     SQLITE_OK
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sqlite3_initialization() {
+        unsafe {
+            let result = sqlite3_initialize();
+            assert_eq!(result, SQLITE_OK);
+            
+            // Test multiple initializations
+            let second_result = sqlite3_initialize();
+            assert_eq!(second_result, SQLITE_OK);
+        }
+    }
+
+    #[test]
+    fn test_sqlite3_open_memory() {
+        unsafe {
+            let mut db: *mut sqlite3 = std::ptr::null_mut();
+            let filename = CString::new(":memory:").unwrap();
+            
+            let result = sqlite3_open(filename.as_ptr(), &mut db);
+            assert_eq!(result, SQLITE_OK);
+            assert!(!db.is_null());
+
+            // Clean up
+            let close_result = sqlite3_close(db);
+            assert_eq!(close_result, SQLITE_OK);
+        }
+    }
+
+    #[test]
+    fn test_sqlite3_error_codes() {
+        unsafe {
+            let mut db: *mut sqlite3 = std::ptr::null_mut();
+            let filename = CString::new(":memory:").unwrap();
+            
+            // Open database
+            let result = sqlite3_open(filename.as_ptr(), &mut db);
+            assert_eq!(result, SQLITE_OK);
+
+            // Test error codes
+            let db_ref = &mut *db;
+            db_ref.err_code = SQLITE_ERROR;
+            assert_eq!(sqlite3_errcode(db), SQLITE_ERROR);
+
+            // Test error messages
+            let error_msg = sqlite3_errmsg(db);
+            assert!(!error_msg.is_null());
+
+            // Clean up
+            sqlite3_close(db);
+        }
+    }
+
+    #[test]
+    fn test_sqlite3_prepare_and_step() {
+        unsafe {
+            let mut db: *mut sqlite3 = std::ptr::null_mut();
+            let filename = CString::new(":memory:").unwrap();
+            
+            // Open database
+            let result = sqlite3_open(filename.as_ptr(), &mut db);
+            assert_eq!(result, SQLITE_OK);
+
+            // Prepare a simple statement
+            let sql = CString::new("CREATE TABLE test (id INTEGER PRIMARY KEY)").unwrap();
+            let mut stmt: *mut sqlite3_stmt = std::ptr::null_mut();
+            let prepare_result = sqlite3_prepare_v2(
+                db,
+                sql.as_ptr(),
+                -1,
+                &mut stmt,
+                std::ptr::null_mut(),
+            );
+            assert_eq!(prepare_result, SQLITE_OK);
+
+            // Step through the statement
+            let step_result = sqlite3_step(stmt);
+            assert_eq!(step_result, SQLITE_DONE);
+
+            // Clean up
+            sqlite3_finalize(stmt);
+            sqlite3_close(db);
+        }
+    }
+
+    #[test]
+    fn test_sqlite3_version() {
+        unsafe {
+            let version = sqlite3_libversion();
+            assert!(!version.is_null());
+            
+            let version_num = sqlite3_libversion_number();
+            assert!(version_num > 0);
+        }
+    }
+}
