@@ -2,13 +2,14 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use limbo_core::{Connection, StepResult};
+use nu_ansi_term::{Color, Style};
 use rustyline::completion::{extract_word, Completer, Pair};
 use rustyline::highlight::Highlighter;
 use rustyline::hint::HistoryHinter;
 use rustyline::{Completer, Helper, Hinter, Validator};
 use syntect::dumps::from_uncompressed_data;
 use syntect::easy::HighlightLines;
-use syntect::highlighting::{Style, ThemeSet};
+use syntect::highlighting::ThemeSet;
 use syntect::parsing::{Scope, SyntaxSet};
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 
@@ -58,13 +59,17 @@ impl Highlighter for LimboHelper {
             .find_syntax_by_scope(Scope::new("source.sql").unwrap())
             .unwrap();
         let mut h = HighlightLines::new(syntax, &self.theme_set.themes["base16-ocean.dark"]);
-        let mut ret_line = String::new();
-        for new_line in LinesWithEndings::from(line) {
-            let ranges: Vec<(Style, &str)> = h.highlight_line(new_line, &self.syntax_set).unwrap();
-            let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
-            ret_line.push_str(&escaped);
-        }
-        // Push this escape sequence to reset
+        let ranges = {
+            let mut ret_ranges = Vec::new();
+            for new_line in LinesWithEndings::from(line) {
+                let ranges: Vec<(syntect::highlighting::Style, &str)> =
+                    h.highlight_line(new_line, &self.syntax_set).unwrap();
+                ret_ranges.extend(ranges);
+            }
+            ret_ranges
+        };
+        let mut ret_line = as_24_bit_terminal_escaped(&ranges[..], false);
+        // Push this escape sequence to reset color modes at the end of the string
         ret_line.push_str("\x1b[0m");
         std::borrow::Cow::Owned(ret_line)
     }
@@ -76,11 +81,19 @@ impl Highlighter for LimboHelper {
     ) -> std::borrow::Cow<'b, str> {
         let _ = default;
         // Make prompt bold
-        std::borrow::Cow::Owned(format!("\x1b[1;32m{}\x1b[0m", prompt))
+        let style = Style::new().bold().fg(Color::Green);
+        let styled_str = style.paint(prompt);
+        std::borrow::Cow::Owned(styled_str.to_string())
     }
 
     fn highlight_hint<'h>(&self, hint: &'h str) -> std::borrow::Cow<'h, str> {
-        std::borrow::Cow::Owned(format!("\x1b[1;2;4;38;5;246m{hint}\x1b[0m")) // Bold dim grey underline
+        let style = Style::new()
+            .bold()
+            .dimmed()
+            .underline()
+            .fg(Color::Fixed(246));
+        let styled_str = style.paint(hint);
+        std::borrow::Cow::Owned(styled_str.to_string()) // Bold dim grey underline
     }
 
     fn highlight_candidate<'c>(
@@ -89,7 +102,9 @@ impl Highlighter for LimboHelper {
         completion: rustyline::CompletionType,
     ) -> std::borrow::Cow<'c, str> {
         let _ = completion;
-        std::borrow::Cow::Owned(format!("\x1b[38;5;69m{candidate}\x1b[0m"))
+        let style = Style::new().fg(Color::Fixed(69));
+        let styled_str = style.paint(candidate);
+        std::borrow::Cow::Owned(styled_str.to_string())
     }
 
     fn highlight_char(&self, line: &str, pos: usize, kind: rustyline::highlight::CmdKind) -> bool {
