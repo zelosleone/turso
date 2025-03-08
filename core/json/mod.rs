@@ -2,17 +2,18 @@ mod de;
 mod error;
 mod json_operations;
 mod json_path;
+mod jsonb;
 mod ser;
 
 pub use crate::json::de::from_str;
-use crate::json::de::ordered_object;
 use crate::json::error::Error as JsonError;
 pub use crate::json::json_operations::{json_patch, json_remove};
 use crate::json::json_path::{json_path, JsonPath, PathElement};
 pub use crate::json::ser::to_string;
 use crate::types::{OwnedValue, Text, TextSubtype};
+use crate::{bail_parse_error, json::de::ordered_object};
 use indexmap::IndexMap;
-use jsonb::Error as JsonbError;
+use jsonb::Jsonb;
 use ser::to_string_pretty;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -39,7 +40,8 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
             if t.subtype == TextSubtype::Json {
                 return Ok(json_value.to_owned());
             }
-
+            let jsonbin = Jsonb::from_str(json_value.to_text().unwrap())?;
+            jsonbin.debug_read();
             let json_val = get_json_value(json_value)?;
             let json = match indent {
                 Some(indent) => to_string_pretty(&json_val, indent)?,
@@ -51,11 +53,7 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
         OwnedValue::Blob(b) => {
             // TODO: use get_json_value after we implement a single Struct
             //   to represent both JSON and JSONB
-            if let Ok(json) = jsonb::from_slice(b) {
-                Ok(OwnedValue::Text(Text::json(&json.to_string())))
-            } else {
-                crate::bail_parse_error!("malformed JSON");
-            }
+            bail_parse_error!("Unsupported")
         }
         OwnedValue::Null => Ok(OwnedValue::Null),
         _ => {
@@ -79,11 +77,7 @@ fn get_json_value(json_value: &OwnedValue) -> crate::Result<Val> {
             }
         },
         OwnedValue::Blob(b) => {
-            if let Ok(_json) = jsonb::from_slice(b) {
-                todo!("jsonb to json conversion");
-            } else {
-                crate::bail_parse_error!("malformed JSON");
-            }
+            crate::bail_parse_error!("malformed JSON");
         }
         OwnedValue::Null => Ok(Val::Null),
         OwnedValue::Float(f) => Ok(Val::Float(*f)),
@@ -625,13 +619,9 @@ pub fn json_error_position(json: &OwnedValue) -> crate::Result<OwnedValue> {
                 }
             }
         },
-        OwnedValue::Blob(b) => match jsonb::from_slice(b) {
-            Ok(_) => Ok(OwnedValue::Integer(0)),
-            Err(JsonbError::Syntax(_, pos)) => Ok(OwnedValue::Integer(pos as i64)),
-            _ => Err(crate::error::LimboError::InternalError(
-                "failed to determine json error position".into(),
-            )),
-        },
+        OwnedValue::Blob(b) => {
+            bail_parse_error!("Unsupported")
+        }
         OwnedValue::Null => Ok(OwnedValue::Null),
         _ => Ok(OwnedValue::Integer(0)),
     }
@@ -667,10 +657,9 @@ pub fn is_json_valid(json_value: &OwnedValue) -> crate::Result<OwnedValue> {
             Ok(_) => Ok(OwnedValue::Integer(1)),
             Err(_) => Ok(OwnedValue::Integer(0)),
         },
-        OwnedValue::Blob(b) => match jsonb::from_slice(b) {
-            Ok(_) => Ok(OwnedValue::Integer(1)),
-            Err(_) => Ok(OwnedValue::Integer(0)),
-        },
+        OwnedValue::Blob(b) => {
+            bail_parse_error!("Unsuported!")
+        }
         OwnedValue::Null => Ok(OwnedValue::Null),
         _ => Ok(OwnedValue::Integer(1)),
     }
