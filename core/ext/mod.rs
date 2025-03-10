@@ -280,7 +280,8 @@ impl Connection {
         if unsafe { !limbo_completion::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register completion extension".to_string());
         }
-        if cfg!(feature = "fs") {
+        #[cfg(feature = "fs")]
+        {
             let vfslist = add_builtin_vfs_extensions(Some(ext_api)).map_err(|e| e.to_string())?;
             for (name, vfs) in vfslist {
                 add_vfs_module(name, vfs);
