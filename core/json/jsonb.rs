@@ -1,6 +1,7 @@
 use crate::{bail_parse_error, LimboError, Result};
 use std::{
     iter::Peekable,
+    slice::Iter,
     str::{from_utf8, Chars},
 };
 
@@ -191,38 +192,152 @@ impl Jsonb {
     }
 
     pub fn to_string(&self) -> String {
-        from_utf8(&self.data).unwrap().to_owned()
+        let mut result = String::with_capacity(self.data.len() * 2);
+        self.write_to_string(&mut result);
+
+        result
     }
 
-    fn deserialize_value(
-        &mut self,
-        input: &mut Peekable<Chars<'_>>,
-        depth: usize,
+    fn write_to_string(&self, string: &mut String) -> Result<()> {
+        let cursor = 0;
+        let _ = self.serialize_value(string, cursor);
+        Ok(())
+    }
+
+    fn serialize_value(&self, string: &mut String, cursor: usize) -> Result<usize> {
+        let (header, skip_header) = self.read_header(cursor)?;
+        let cursor = cursor + skip_header;
+
+        let current_cursor = match header {
+            JsonbHeader(ElementType::OBJECT, len) => self.serialize_object(string, cursor, len)?,
+            JsonbHeader(ElementType::ARRAY, len) => self.serialize_array(string, cursor, len)?,
+            JsonbHeader(ElementType::TEXT, len)
+            | JsonbHeader(ElementType::TEXTRAW, len)
+            | JsonbHeader(ElementType::TEXTJ, len)
+            | JsonbHeader(ElementType::TEXT5, len) => {
+                self.serialize_string(string, cursor, len, &header.0)?
+            }
+            JsonbHeader(ElementType::INT, len)
+            | JsonbHeader(ElementType::INT5, len)
+            | JsonbHeader(ElementType::FLOAT, len)
+            | JsonbHeader(ElementType::FLOAT5, len) => {
+                self.serialize_number(string, cursor, len, &header.0)?
+            }
+
+            JsonbHeader(ElementType::TRUE, _) | JsonbHeader(ElementType::FALSE, _) => {
+                self.serialize_boolean(string, cursor)?
+            }
+            JsonbHeader(ElementType::NULL, _) => self.serialize_null(string, cursor)?,
+            JsonbHeader(_, _) => {
+                unreachable!();
+            }
+        };
+        Ok(current_cursor)
+    }
+
+    fn serialize_object(&self, string: &mut String, cursor: usize, len: usize) -> Result<usize> {
+        let end_cursor = cursor + len;
+        let mut current_cursor = cursor;
+        string.push('{');
+        while current_cursor < end_cursor {
+            let (key_header, key_header_offset) = self.read_header(current_cursor)?;
+            current_cursor += key_header_offset;
+            let JsonbHeader(element_type, len) = key_header;
+            string.push('"');
+            match element_type {
+                ElementType::TEXT
+                | ElementType::TEXTRAW
+                | ElementType::TEXTJ
+                | ElementType::TEXT5 => {
+                    current_cursor =
+                        self.serialize_string(string, current_cursor, len, &element_type)?;
+                }
+                _ => bail_parse_error!("Malformed json!"),
+            }
+            string.push('"');
+            string.push(':');
+            current_cursor = self.serialize_value(string, current_cursor)?;
+            if current_cursor < end_cursor {
+                string.push(',');
+            }
+        }
+        string.push('}');
+        Ok(current_cursor)
+    }
+
+    fn serialize_array(&self, string: &mut String, cursor: usize, len: usize) -> Result<usize> {
+        let end_cursor = cursor + len;
+        let mut current_cursor = cursor;
+
+        string.push('[');
+
+        while end_cursor > current_cursor {
+            current_cursor = self.serialize_value(string, cursor)?;
+            if end_cursor > current_cursor {
+                string.push(',');
+            }
+        }
+
+        string.push(']');
+        Ok(current_cursor)
+    }
+
+    fn serialize_string(
+        &self,
+        string: &mut String,
+        cursor: usize,
+        len: usize,
+        kind: &ElementType,
     ) -> Result<usize> {
+        todo!()
+    }
+
+    fn serialize_number(
+        &self,
+        string: &mut String,
+        cursor: usize,
+        len: usize,
+        kind: &ElementType,
+    ) -> Result<usize> {
+        todo!()
+    }
+
+    fn serialize_boolean(&self, string: &mut String, cursor: usize) -> Result<usize> {
+        todo!()
+    }
+
+    fn serialize_null(&self, string: &mut String, cursor: usize) -> Result<usize> {
+        todo!()
+    }
+
+    fn deserialize_value<'a, I>(&mut self, input: &mut Peekable<I>, depth: usize) -> Result<usize>
+    where
+        I: Iterator<Item = &'a u8>,
+    {
         if depth > MAX_JSON_DEPTH {
             bail_parse_error!("Too deep")
         };
         let current_depth = depth + 1;
         skip_whitespace(input);
         match input.peek() {
-            Some('{') => {
+            Some(b'{') => {
                 input.next(); // consume '{'
                 self.deserialize_obj(input, current_depth)
             }
-            Some('[') => {
+            Some(b'[') => {
                 input.next(); // consume '['
                 self.deserialize_array(input, current_depth)
             }
-            Some('t') => self.deserialize_true(input),
-            Some('f') => self.deserialize_false(input),
-            Some('n') => self.deserialize_null(input),
-            Some('"') => self.deserialize_string(input),
-            Some(c)
+            Some(b't') => self.deserialize_true(input),
+            Some(b'f') => self.deserialize_false(input),
+            Some(b'n') => self.deserialize_null(input),
+            Some(b'"') => self.deserialize_string(input),
+            Some(&&c)
                 if c.is_ascii_digit()
-                    || *c == '-'
-                    || *c == '+'
-                    || *c == '.'
-                    || c.to_ascii_lowercase() == 'i' =>
+                    || c == b'-'
+                    || c == b'+'
+                    || c == b'.'
+                    || c.to_ascii_lowercase() == b'i' =>
             {
                 self.deserialize_number(input)
             }
@@ -231,11 +346,10 @@ impl Jsonb {
         }
     }
 
-    pub fn deserialize_obj(
-        &mut self,
-        input: &mut Peekable<Chars<'_>>,
-        depth: usize,
-    ) -> Result<usize> {
+    pub fn deserialize_obj<'a, I>(&mut self, input: &mut Peekable<I>, depth: usize) -> Result<usize>
+    where
+        I: Iterator<Item = &'a u8>,
+    {
         if depth > MAX_JSON_DEPTH {
             bail_parse_error!("Too deep!")
         }
@@ -248,7 +362,7 @@ impl Jsonb {
             skip_whitespace(input);
 
             match input.peek() {
-                Some('}') => {
+                Some(&&b'}') => {
                     input.next(); // consume '}'
                     if first {
                         return Ok(1); // empty header
@@ -258,13 +372,13 @@ impl Jsonb {
                         return Ok(obj_size + 2);
                     }
                 }
-                Some(',') if !first => {
+                Some(&&b',') if !first => {
                     input.next(); // consume ','
                     skip_whitespace(input);
                 }
                 Some(_) => {
                     // Parse key (must be string)
-                    if input.peek() != Some(&'"') {
+                    if input.peek() != Some(&&b'"') {
                         bail_parse_error!("Object key must be a string");
                     }
                     self.deserialize_string(input)?;
@@ -272,7 +386,7 @@ impl Jsonb {
                     skip_whitespace(input);
 
                     // Expect and consume ':'
-                    if input.next() != Some(':') {
+                    if input.next() != Some(&&b':') {
                         bail_parse_error!("Expected ':' after object key");
                     }
 
@@ -290,11 +404,14 @@ impl Jsonb {
         }
     }
 
-    pub fn deserialize_array(
+    pub fn deserialize_array<'a, I>(
         &mut self,
-        input: &mut Peekable<Chars<'_>>,
+        input: &mut Peekable<I>,
         depth: usize,
-    ) -> Result<usize> {
+    ) -> Result<usize>
+    where
+        I: Iterator<Item = &'a u8>,
+    {
         if depth > MAX_JSON_DEPTH {
             bail_parse_error!("Too deep");
         }
@@ -307,7 +424,7 @@ impl Jsonb {
             skip_whitespace(input);
 
             match input.peek() {
-                Some(']') => {
+                Some(&&b']') => {
                     input.next();
                     if first {
                         return Ok(1);
@@ -318,7 +435,7 @@ impl Jsonb {
                         return Ok(arr_len + header_size);
                     }
                 }
-                Some(',') if !first => {
+                Some(&&b',') if !first => {
                     input.next(); // consume ','
                     skip_whitespace(input);
                 }
@@ -335,159 +452,192 @@ impl Jsonb {
         }
     }
 
-    pub fn deserialize_string(&mut self, input: &mut Peekable<Chars<'_>>) -> Result<usize> {
+    fn deserialize_string<'a, I>(&mut self, input: &mut Peekable<I>) -> Result<usize>
+    where
+        I: Iterator<Item = &'a u8>,
+    {
         let string_start = self.len();
         let quote = input.next().unwrap(); // "
+        let mut len = 0;
+        self.write_element_header(string_start, ElementType::TEXT, 0)?;
+        let payload_start = self.len();
 
         if input.peek().is_none() {
             bail_parse_error!("Unexpected end of input");
         };
         // Determine if this will be TEXT, TEXTJ, or TEXT5
         let mut element_type = ElementType::TEXT;
-        let mut content = String::new();
 
         while let Some(c) = input.next() {
             if c == quote {
                 break;
-            } else if c == '\\' {
+            } else if c == &b'\\' {
                 // Handle escapes
-                if let Some(esc) = input.next() {
+                if let Some(&esc) = input.next() {
                     match esc {
-                        'b' => {
-                            content.push('\u{0008}');
+                        b'b' => {
+                            self.data.push('\u{0008}' as u8);
+                            len += 1;
                             element_type = ElementType::TEXTJ;
                         }
-                        'f' => {
-                            content.push('\u{000C}');
+                        b'f' => {
+                            self.data.push('\u{000C}' as u8);
+                            len += 1;
                             element_type = ElementType::TEXTJ;
                         }
-                        'n' => {
-                            content.push('\n');
+                        b'n' => {
+                            self.data.push('\n' as u8);
+                            len += 1;
                             element_type = ElementType::TEXTJ;
                         }
-                        'r' => {
-                            content.push('\r');
+                        b'r' => {
+                            self.data.push('\r' as u8);
+                            len += 1;
                             element_type = ElementType::TEXTJ;
                         }
-                        't' => {
-                            content.push('\t');
+                        b't' => {
+                            self.data.push('\t' as u8);
+                            len += 1;
                             element_type = ElementType::TEXTJ;
                         }
-                        '\\' | '"' | '/' => {
-                            content.push(esc);
+                        b'\\' | b'"' | b'/' => {
+                            self.data.push(esc);
+                            len += 1;
                             element_type = ElementType::TEXTJ;
                         }
-                        'u' => {
+                        b'u' => {
                             // Unicode escape
                             element_type = ElementType::TEXTJ;
-                            let mut code = 0u32;
+                            self.data.push(b'\\');
+                            self.data.push(b'u');
+                            len += 2;
                             for _ in 0..4 {
-                                if let Some(h) = input.next() {
-                                    let h = h.to_digit(16);
-                                    match h {
-                                        Some(digit) => {
-                                            code = code * 16 + digit;
-                                        }
-                                        None => bail_parse_error!("Failed to parse u16"),
+                                if let Some(&h) = input.next() {
+                                    if is_hex_digit(h) {
+                                        self.data.push(h);
+                                        len += 1;
+                                    } else {
+                                        bail_parse_error!("Incomplete Unicode escape");
                                     }
                                 } else {
                                     bail_parse_error!("Incomplete Unicode escape");
                                 }
                             }
-                            match char::from_u32(code) {
-                                Some(ch) => content.push(ch),
-                                None => bail_parse_error!("Invalid unicode escape!"),
-                            };
                         }
                         // JSON5 extensions
-                        '\n' => {
+                        b'\n' => {
                             element_type = ElementType::TEXT5;
-                            content.push('\n');
+                            self.data.push(b'\n');
+                            len += 1;
                         }
-                        '\'' | '0' | 'v' | 'x' => {
+                        b'\'' => {
                             element_type = ElementType::TEXT5;
-                            // Appropriate handling for each case
+                            self.data.push(b'\\');
+                            self.data.push(b'\'');
+                            len += 2;
                         }
-                        _ => bail_parse_error!("Invalid escape sequence: \\{}", esc),
+                        b'0' => {
+                            element_type = ElementType::TEXT5;
+                            self.data.push(b'\\');
+                            self.data.push(b'0');
+                            len += 2;
+                        }
+                        b'v' => {
+                            element_type = ElementType::TEXT5;
+                            self.data.push(b'\\');
+                            self.data.push(b'v');
+                            len += 2;
+                        }
+                        b'x' => {
+                            element_type = ElementType::TEXT5;
+                            self.data.push(b'\\');
+                            self.data.push(b'x');
+                            len += 2;
+                        }
+                        _ => {
+                            bail_parse_error!("Invalid escape sequence")
+                        }
                     }
                 } else {
                     bail_parse_error!("Unexpected end of input in escape sequence");
                 }
-            } else if c <= '\u{001F}' {
+            } else if c <= &('\u{001F}' as u8) {
                 // Control characters need escaping in standard JSON
                 element_type = ElementType::TEXT5;
-                content.push(c);
+                self.data.push(*c);
+                len += 1;
             } else {
-                content.push(c);
+                self.data.push(*c);
+                len += 1;
             }
         }
 
         // Write header and payload
-        self.write_element_header(self.len(), element_type, content.len())?;
-        for byte in content.bytes() {
-            self.data.push(byte);
-        }
+        self.write_element_header(string_start, element_type, len)?;
 
-        Ok(self.len() - string_start)
+        Ok(self.len() - payload_start)
     }
 
-    pub fn deserialize_number(&mut self, input: &mut Peekable<Chars<'_>>) -> Result<usize> {
+    pub fn deserialize_number<'a, I>(&mut self, input: &mut Peekable<I>) -> Result<usize>
+    where
+        I: Iterator<Item = &'a u8>,
+    {
         let num_start = self.len();
-        let mut num_str = String::new();
+        let mut len = 0;
         let mut is_float = false;
         let mut is_json5 = false;
+        self.write_element_header(num_start, ElementType::INT, 0)?;
 
         // Handle sign
-        if input.peek() == Some(&'-') || input.peek() == Some(&'+') {
-            if input.peek() == Some(&'+') {
+        if input.peek() == Some(&&b'-') || input.peek() == Some(&&b'+') {
+            if input.peek() == Some(&&b'+') {
                 is_json5 = true; // JSON5 extension
             }
-            num_str.push(input.next().unwrap());
+            self.data.push(*input.next().unwrap());
+            len += 1;
         }
 
         // Handle json5 float number
-        if input.peek() == Some(&'.') {
+        if input.peek() == Some(&&b'.') {
             is_json5 = true;
         };
 
         // Check for hex (JSON5)
-        if input.peek() == Some(&'0') {
-            num_str.push(input.next().unwrap());
-            if input.peek() == Some(&'x') || input.peek() == Some(&'X') {
-                num_str.push(input.next().unwrap());
-                while let Some(&ch) = input.peek() {
-                    if ch.is_digit(16) {
-                        num_str.push(input.next().unwrap());
+        if input.peek() == Some(&&b'0') {
+            self.data.push(*input.next().unwrap());
+            len += 1;
+            if input.peek() == Some(&&b'x') || input.peek() == Some(&&b'X') {
+                self.data.push(*input.next().unwrap());
+                len += 1;
+                while let Some(&&byte) = input.peek() {
+                    if is_hex_digit(byte) {
+                        self.data.push(*input.next().unwrap());
+                        len += 1;
                     } else {
                         break;
                     }
                 }
 
                 // Write INT5 header and payload
-                self.write_element_header(self.len(), ElementType::INT5, num_str.len())?;
-                for byte in num_str.bytes() {
-                    self.data.push(byte);
-                }
+                self.write_element_header(num_start, ElementType::INT5, len)?;
+
                 return Ok(self.len() - num_start);
             }
         }
 
         // Check for Infinity
-        if input.peek().map(|x| x.to_ascii_lowercase()) == Some('i') {
-            for expected in &['i', 'n', 'f', 'i', 'n', 'i', 't', 'y'] {
+        if input.peek().map(|x| x.to_ascii_lowercase()) == Some(b'i') {
+            for expected in &[b'i', b'n', b'f', b'i', b'n', b'i', b't', b'y'] {
                 if input.next().map(|x| x.to_ascii_lowercase()) != Some(*expected) {
                     bail_parse_error!("Failed to parse number");
                 }
             }
             self.write_element_header(
-                self.len(),
+                num_start,
                 ElementType::INT5,
-                num_str.len() + INFINITY_CHAR_COUNT as usize,
+                len + INFINITY_CHAR_COUNT as usize,
             )?;
-            for byte in num_str
-                .bytes()
-                .chain([b'9', b'e', b'9', b'9', b'9'].into_iter())
-            {
+            for byte in [b'9', b'e', b'9', b'9', b'9'].into_iter() {
                 self.data.push(byte)
             }
 
@@ -495,20 +645,24 @@ impl Jsonb {
         };
 
         // Regular number parsing
-        while let Some(&ch) = input.peek() {
+        while let Some(&&ch) = input.peek() {
             match ch {
-                '0'..='9' => {
-                    num_str.push(input.next().unwrap());
+                b'0'..=b'9' => {
+                    self.data.push(*input.next().unwrap());
+                    len += 1;
                 }
-                '.' => {
+                b'.' => {
                     is_float = true;
-                    num_str.push(input.next().unwrap());
+                    self.data.push(*input.next().unwrap());
+                    len += 1;
                 }
-                'e' | 'E' => {
+                b'e' | b'E' => {
                     is_float = true;
-                    num_str.push(input.next().unwrap());
-                    if input.peek() == Some(&'+') || input.peek() == Some(&'-') {
-                        num_str.push(input.next().unwrap());
+                    self.data.push(*input.next().unwrap());
+                    len += 1;
+                    if input.peek() == Some(&&b'+') || input.peek() == Some(&&b'-') {
+                        self.data.push(*input.next().unwrap());
+                        len += 1;
                     }
                 }
                 _ => break,
@@ -530,19 +684,19 @@ impl Jsonb {
             }
         };
 
-        self.write_element_header(self.len(), element_type, num_str.len())?;
-        for byte in num_str.bytes() {
-            self.data.push(byte);
-        }
+        self.write_element_header(num_start, element_type, len)?;
 
         Ok(self.len() - num_start)
     }
 
-    pub fn deserialize_null(&mut self, input: &mut Peekable<Chars<'_>>) -> Result<usize> {
+    pub fn deserialize_null<'a, I>(&mut self, input: &mut Peekable<I>) -> Result<usize>
+    where
+        I: Iterator<Item = &'a u8>,
+    {
         let start = self.len();
         // Expect "null"
-        for expected in &['n', 'u', 'l', 'l'] {
-            if input.next() != Some(*expected) {
+        for expected in &[b'n', b'u', b'l', b'l'] {
+            if input.next() != Some(expected) {
                 bail_parse_error!("Expected 'null'");
             }
         }
@@ -550,11 +704,14 @@ impl Jsonb {
         Ok(self.len() - start)
     }
 
-    pub fn deserialize_true(&mut self, input: &mut Peekable<Chars<'_>>) -> Result<usize> {
+    pub fn deserialize_true<'a, I>(&mut self, input: &mut Peekable<I>) -> Result<usize>
+    where
+        I: Iterator<Item = &'a u8>,
+    {
         let start = self.len();
         // Expect "true"
-        for expected in &['t', 'r', 'u', 'e'] {
-            if input.next() != Some(*expected) {
+        for expected in &[b't', b'r', b'u', b'e'] {
+            if input.next() != Some(expected) {
                 bail_parse_error!("Expected 'true'");
             }
         }
@@ -562,11 +719,14 @@ impl Jsonb {
         Ok(self.len() - start)
     }
 
-    fn deserialize_false(&mut self, input: &mut Peekable<Chars<'_>>) -> Result<usize> {
+    fn deserialize_false<'a, I>(&mut self, input: &mut Peekable<I>) -> Result<usize>
+    where
+        I: Iterator<Item = &'a u8>,
+    {
         let start = self.len();
         // Expect "false"
-        for expected in &['f', 'a', 'l', 's', 'e'] {
-            if input.next() != Some(*expected) {
+        for expected in &[b'f', b'a', b'l', b's', b'e'] {
+            if input.next() != Some(expected) {
                 bail_parse_error!("Expected 'false'");
             }
         }
@@ -599,8 +759,16 @@ impl Jsonb {
 
     pub fn from_str(input: &str) -> Result<Self> {
         let mut result = Self::new(input.len());
-        let mut input_iter = input.chars().peekable();
+        let mut input_iter = input.as_bytes().iter().peekable();
 
+        result.deserialize_value(&mut input_iter, 0)?;
+
+        Ok(result)
+    }
+
+    pub fn from_bytes(input: &[u8]) -> Result<Self> {
+        let mut result = Self::new(input.len());
+        let mut input_iter = input.iter().peekable();
         result.deserialize_value(&mut input_iter, 0)?;
 
         Ok(result)
@@ -615,30 +783,33 @@ impl std::str::FromStr for Jsonb {
     }
 }
 
-pub fn skip_whitespace(input: &mut Peekable<Chars<'_>>) {
+pub fn skip_whitespace<'a, I>(input: &mut Peekable<I>)
+where
+    I: Iterator<Item = &'a u8>,
+{
     while let Some(&ch) = input.peek() {
         match ch {
-            ' ' | '\t' | '\n' | '\r' => {
+            b' ' | b'\t' | b'\n' | b'\r' => {
                 input.next();
             }
-            '/' => {
+            b'/' => {
                 // Handle JSON5 comments
                 input.next();
-                if let Some(next_ch) = input.peek() {
-                    if *next_ch == '/' {
+                if let Some(&&next_ch) = input.peek() {
+                    if next_ch == b'/' {
                         // Line comment - skip until newline
                         input.next();
-                        while let Some(c) = input.next() {
-                            if c == '\n' {
+                        while let Some(&c) = input.next() {
+                            if c == b'\n' {
                                 break;
                             }
                         }
-                    } else if *next_ch == '*' {
+                    } else if next_ch == b'*' {
                         // Block comment - skip until "*/"
                         input.next();
-                        let mut prev = '\0';
-                        while let Some(c) = input.next() {
-                            if prev == '*' && c == '/' {
+                        let mut prev = b'\0';
+                        while let Some(&c) = input.next() {
+                            if prev == b'*' && c == b'/' {
                                 break;
                             }
                             prev = c;
@@ -653,5 +824,12 @@ pub fn skip_whitespace(input: &mut Peekable<Chars<'_>>) {
             }
             _ => break,
         }
+    }
+}
+
+fn is_hex_digit(b: u8) -> bool {
+    match b {
+        b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' => true,
+        _ => false,
     }
 }
