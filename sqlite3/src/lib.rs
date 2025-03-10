@@ -1147,13 +1147,19 @@ mod tests {
                 sqlite3_open(b"../../testing/testing.db\0".as_ptr() as *const i8, &mut db),
                 SQLITE_OK
             );
-            
+
             let mut stmt = ptr::null_mut();
             assert_eq!(
-                sqlite3_prepare_v2(db, b"SELECT 1\0".as_ptr() as *const i8, -1, &mut stmt, ptr::null_mut()),
+                sqlite3_prepare_v2(
+                    db,
+                    b"SELECT 1\0".as_ptr() as *const i8,
+                    -1,
+                    &mut stmt,
+                    ptr::null_mut()
+                ),
                 SQLITE_OK
             );
-            
+
             assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
             assert_eq!(sqlite3_close(db), SQLITE_OK);
         }
@@ -1163,7 +1169,10 @@ mod tests {
     fn test_wal_checkpoint() {
         unsafe {
             // Test with NULL db handle
-            assert_eq!(sqlite3_wal_checkpoint(ptr::null_mut(), ptr::null()), SQLITE_MISUSE);
+            assert_eq!(
+                sqlite3_wal_checkpoint(ptr::null_mut(), ptr::null()),
+                SQLITE_MISUSE
+            );
 
             // Test with valid db
             let mut db = ptr::null_mut();
