@@ -18,6 +18,7 @@ use ser::to_string_pretty;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::rc::Rc;
+use std::str::FromStr;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(untagged)]
@@ -644,7 +645,7 @@ pub fn json_error_position(json: &OwnedValue) -> crate::Result<OwnedValue> {
                 }
             }
         },
-        OwnedValue::Blob(b) => {
+        OwnedValue::Blob(_) => {
             bail_parse_error!("Unsupported")
         }
         OwnedValue::Null => Ok(OwnedValue::Null),
@@ -682,7 +683,7 @@ pub fn is_json_valid(json_value: &OwnedValue) -> crate::Result<OwnedValue> {
             Ok(_) => Ok(OwnedValue::Integer(1)),
             Err(_) => Ok(OwnedValue::Integer(0)),
         },
-        OwnedValue::Blob(b) => {
+        OwnedValue::Blob(_) => {
             bail_parse_error!("Unsuported!")
         }
         OwnedValue::Null => Ok(OwnedValue::Null),

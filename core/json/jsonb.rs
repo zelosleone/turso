@@ -1084,18 +1084,10 @@ impl Jsonb {
         Ok(header.iter().filter(|&&x| x != 0).count())
     }
 
-    pub fn from_str(input: &str) -> Result<Self> {
+    fn from_str(input: &str) -> Result<Self> {
         let mut result = Self::new(input.len(), None);
         let mut input_iter = input.as_bytes().iter().peekable();
 
-        result.deserialize_value(&mut input_iter, 0)?;
-
-        Ok(result)
-    }
-
-    pub fn from_bytes(input: &[u8]) -> Result<Self> {
-        let mut result = Self::new(input.len(), None);
-        let mut input_iter = input.iter().peekable();
         result.deserialize_value(&mut input_iter, 0)?;
 
         Ok(result)
@@ -1163,70 +1155,4 @@ fn is_hex_digit(b: u8) -> bool {
         b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' => true,
         _ => false,
     }
-}
-
-fn unescape_to_char<'a, I>(input: &mut Peekable<I>) -> Result<char>
-where
-    I: Iterator<Item = &'a u8>,
-{
-    let code = parse_hex_code_point(input, 4)?;
-
-    // Check if this is a high surrogate (U+D800 to U+DBFF)
-    if (0xD800..=0xDBFF).contains(&code) {
-        // This is a high surrogate, expect a low surrogate next
-        if !matches!(input.next(), Some(&b'\\')) || !matches!(input.next(), Some(&b'u')) {
-            bail_parse_error!("Expected low surrogate after high surrogate");
-        }
-
-        // Parse the low surrogate
-        let low_surrogate = parse_hex_code_point(input, 4)?;
-
-        if !(0xDC00..=0xDFFF).contains(&low_surrogate) {
-            bail_parse_error!("Invalid low surrogate value");
-        }
-
-        // Combine the surrogate pair to get the actual code point
-        // Formula: (high - 0xD800) * 0x400 + (low - 0xDC00) + 0x10000
-        let combined = 0x10000 + ((code - 0xD800) << 10) + (low_surrogate - 0xDC00);
-
-        // Convert to char
-        if let Some(ch) = char::from_u32(combined) {
-            Ok(ch)
-        } else {
-            bail_parse_error!("Invalid Unicode code point from surrogate pair")
-        }
-    } else {
-        // Regular code point, just convert directly
-        if let Some(ch) = char::from_u32(code) {
-            Ok(ch)
-        } else {
-            bail_parse_error!("Invalid Unicode code point from surrogate pair")
-        }
-    }
-}
-
-// Helper function to parse a hex code point
-fn parse_hex_code_point<'a, I>(input: &mut Peekable<I>, digits: usize) -> Result<u32>
-where
-    I: Iterator<Item = &'a u8>,
-{
-    let mut code = 0u32;
-    for _ in 0..digits {
-        if let Some(&h) = input.next() {
-            if is_hex_digit(h) {
-                let digit_value = match h {
-                    b'0'..=b'9' => h - b'0',
-                    b'a'..=b'f' => h - b'a' + 10,
-                    b'A'..=b'F' => h - b'A' + 10,
-                    _ => bail_parse_error!("Not a hex digit"),
-                };
-                code = code * 16 + (digit_value as u32);
-            } else {
-                bail_parse_error!("Failed to parse unicode escape")
-            }
-        } else {
-            bail_parse_error!("Incomplete Unicode escape");
-        }
-    }
-    Ok(code)
 }
