@@ -40,8 +40,7 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
             if t.subtype == TextSubtype::Json {
                 return Ok(json_value.to_owned());
             }
-            let jsonbin = Jsonb::from_str(json_value.to_text().unwrap())?;
-            jsonbin.debug_read();
+
             let json_val = get_json_value(json_value)?;
             let json = match indent {
                 Some(indent) => to_string_pretty(&json_val, indent)?,

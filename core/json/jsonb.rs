@@ -1,9 +1,5 @@
 use crate::{bail_parse_error, LimboError, Result};
-use std::{
-    iter::Peekable,
-    slice::Iter,
-    str::{from_utf8, Chars},
-};
+use std::{fmt::Write, iter::Peekable, str::from_utf8};
 
 const PAYLOAD_SIZE8: u8 = 12;
 const PAYLOAD_SIZE16: u8 = 13;
@@ -79,7 +75,7 @@ impl JsonbHeader {
                 let element_type = header_byte & 15;
                 // Get the last 4 bits for header_size
                 let header_size = header_byte >> 4;
-                let mut offset = 0;
+                let offset: usize;
                 let total_size = match header_size {
                     size if size <= 11 => {
                         offset = 1;
@@ -159,7 +155,12 @@ impl JsonbHeader {
 }
 
 impl Jsonb {
-    pub fn new(capacity: usize) -> Self {
+    pub fn new(capacity: usize, data: Option<&[u8]>) -> Self {
+        if let Some(data) = data {
+            return Self {
+                data: data.to_vec(),
+            };
+        }
         Self {
             data: Vec::with_capacity(capacity),
         }
@@ -175,6 +176,15 @@ impl Jsonb {
         Ok((header, offset))
     }
 
+    pub fn is_valid(&self) -> Result<()> {
+        match self.read_header(0) {
+            Ok(_) => Ok(()),
+            Err(_) => bail_parse_error!("Malformed json"),
+        }
+    }
+
+    #[allow(dead_code)]
+    // Needed for debug. I am open to remove it
     pub fn debug_read(&self) {
         let mut cursor = 0usize;
         while cursor < self.len() {
@@ -191,11 +201,11 @@ impl Jsonb {
         }
     }
 
-    pub fn to_string(&self) -> String {
+    pub fn to_string(&self) -> Result<String> {
         let mut result = String::with_capacity(self.data.len() * 2);
-        self.write_to_string(&mut result);
+        self.write_to_string(&mut result)?;
 
-        result
+        Ok(result)
     }
 
     fn write_to_string(&self, string: &mut String) -> Result<()> {
@@ -224,10 +234,9 @@ impl Jsonb {
                 self.serialize_number(string, cursor, len, &header.0)?
             }
 
-            JsonbHeader(ElementType::TRUE, _) | JsonbHeader(ElementType::FALSE, _) => {
-                self.serialize_boolean(string, cursor)?
-            }
-            JsonbHeader(ElementType::NULL, _) => self.serialize_null(string, cursor)?,
+            JsonbHeader(ElementType::TRUE, _) => self.serialize_boolean(string, cursor, true),
+            JsonbHeader(ElementType::FALSE, _) => self.serialize_boolean(string, cursor, false),
+            JsonbHeader(ElementType::NULL, _) => self.serialize_null(string, cursor),
             JsonbHeader(_, _) => {
                 unreachable!();
             }
@@ -243,7 +252,7 @@ impl Jsonb {
             let (key_header, key_header_offset) = self.read_header(current_cursor)?;
             current_cursor += key_header_offset;
             let JsonbHeader(element_type, len) = key_header;
-            string.push('"');
+
             match element_type {
                 ElementType::TEXT
                 | ElementType::TEXTRAW
@@ -254,7 +263,7 @@ impl Jsonb {
                 }
                 _ => bail_parse_error!("Malformed json!"),
             }
-            string.push('"');
+
             string.push(':');
             current_cursor = self.serialize_value(string, current_cursor)?;
             if current_cursor < end_cursor {
@@ -271,9 +280,9 @@ impl Jsonb {
 
         string.push('[');
 
-        while end_cursor > current_cursor {
-            current_cursor = self.serialize_value(string, cursor)?;
-            if end_cursor > current_cursor {
+        while current_cursor < end_cursor {
+            current_cursor = self.serialize_value(string, current_cursor)?;
+            if current_cursor < end_cursor {
                 string.push(',');
             }
         }
@@ -289,7 +298,169 @@ impl Jsonb {
         len: usize,
         kind: &ElementType,
     ) -> Result<usize> {
-        todo!()
+        let word_slice = &self.data[cursor..cursor + len];
+        string.push('"');
+        match kind {
+            // Can be serialized as is. Do not need escaping
+            &ElementType::TEXT => {
+                let word = from_utf8(word_slice).map_err(|_| {
+                    LimboError::ParseError("Failed to serialize string!".to_string())
+                })?;
+                string.push_str(word);
+            }
+
+            // Contain standard json escapes
+            &ElementType::TEXTJ => {
+                let word = from_utf8(word_slice).map_err(|_| {
+                    LimboError::ParseError("Failed to serialize string!".to_string())
+                })?;
+                string.push_str(word);
+            }
+
+            // We have to escape some JSON5 escape sequences
+            &ElementType::TEXT5 => {
+                let mut i = 0;
+                while i < word_slice.len() {
+                    let ch = word_slice[i];
+
+                    // Handle normal characters that don't need escaping
+                    if self.is_json_ok(ch) || ch == b'\'' {
+                        string.push(ch as char);
+                        i += 1;
+                        continue;
+                    }
+
+                    // Handle special cases
+                    match ch {
+                        // Double quotes need escaping
+                        b'"' => {
+                            string.push_str("\\\"");
+                            i += 1;
+                        }
+
+                        // Control characters (0x00-0x1F)
+                        ch if ch <= 0x1F => {
+                            match ch {
+                                // \b
+                                0x08 => string.push_str("\\b"),
+                                b'\t' => string.push_str("\\t"),
+                                b'\n' => string.push_str("\\n"),
+                                // \f
+                                0x0C => string.push_str("\\f"),
+                                b'\r' => string.push_str("\\r"),
+                                _ => {
+                                    // Format as \u00XX
+                                    let hex = format!("\\u{:04x}", ch);
+                                    string.push_str(&hex);
+                                }
+                            }
+                            i += 1;
+                        }
+
+                        // Handle escape sequences
+                        b'\\' if i + 1 < word_slice.len() => {
+                            let next_ch = word_slice[i + 1];
+                            match next_ch {
+                                // Single quote
+                                b'\'' => {
+                                    string.push('\'');
+                                    i += 2;
+                                }
+
+                                // Vertical tab
+                                b'v' => {
+                                    string.push_str("\\u0009");
+                                    i += 2;
+                                }
+
+                                // Hex escapes like \x27
+                                b'x' if i + 3 < word_slice.len() => {
+                                    string.push_str("\\u00");
+                                    string.push(word_slice[i + 2] as char);
+                                    string.push(word_slice[i + 3] as char);
+                                    i += 4;
+                                }
+
+                                // Null character
+                                b'0' => {
+                                    string.push_str("\\u0000");
+                                    i += 2;
+                                }
+
+                                // CR line continuation
+                                b'\r' => {
+                                    if i + 2 < word_slice.len() && word_slice[i + 2] == b'\n' {
+                                        i += 3; // Skip CRLF
+                                    } else {
+                                        i += 2; // Skip CR
+                                    }
+                                }
+
+                                // LF line continuation
+                                b'\n' => {
+                                    i += 2;
+                                }
+
+                                // Unicode line separators (U+2028 and U+2029)
+                                0xe2 if i + 3 < word_slice.len()
+                                    && word_slice[i + 2] == 0x80
+                                    && (word_slice[i + 3] == 0xa8 || word_slice[i + 3] == 0xa9) =>
+                                {
+                                    i += 4;
+                                }
+
+                                // All other escapes pass through
+                                _ => {
+                                    string.push('\\');
+                                    string.push(next_ch as char);
+                                    i += 2;
+                                }
+                            }
+                        }
+
+                        // Default case - just push the character
+                        _ => {
+                            string.push(ch as char);
+                            i += 1;
+                        }
+                    }
+                }
+            }
+
+            &ElementType::TEXTRAW => {
+                // Handle TEXTRAW if needed
+                let word = from_utf8(word_slice).map_err(|_| {
+                    LimboError::ParseError("Failed to serialize string!".to_string())
+                })?;
+
+                // For TEXTRAW, we need to escape special characters for JSON
+                for ch in word.chars() {
+                    match ch {
+                        '"' => string.push_str("\\\""),
+                        '\\' => string.push_str("\\\\"),
+                        '\x08' => string.push_str("\\b"),
+                        '\x0C' => string.push_str("\\f"),
+                        '\n' => string.push_str("\\n"),
+                        '\r' => string.push_str("\\r"),
+                        '\t' => string.push_str("\\t"),
+                        c if c <= '\u{001F}' => {
+                            string.push_str(&format!("\\u{:04x}", c as u32));
+                        }
+                        _ => string.push(ch),
+                    }
+                }
+            }
+
+            _ => {
+                unreachable!()
+            }
+        }
+        string.push('"');
+        Ok(cursor + len)
+    }
+
+    fn is_json_ok(&self, ch: u8) -> bool {
+        ch >= 0x20 && ch <= 0x7E && ch != b'"' && ch != b'\\'
     }
 
     fn serialize_number(
@@ -299,15 +470,110 @@ impl Jsonb {
         len: usize,
         kind: &ElementType,
     ) -> Result<usize> {
-        todo!()
+        let current_cursor = cursor + len;
+        let num_slice = from_utf8(&self.data[cursor..current_cursor])
+            .map_err(|_| LimboError::ParseError("Failed to parse integer".to_string()))?;
+
+        match kind {
+            ElementType::INT | ElementType::FLOAT => {
+                string.push_str(num_slice);
+            }
+            ElementType::INT5 => {
+                self.serialize_int5(string, num_slice)?;
+            }
+            ElementType::FLOAT5 => {
+                self.serialize_float5(string, num_slice)?;
+            }
+            _ => unreachable!(),
+        }
+        Ok(current_cursor)
     }
 
-    fn serialize_boolean(&self, string: &mut String, cursor: usize) -> Result<usize> {
-        todo!()
+    fn serialize_int5(&self, string: &mut String, hex_str: &str) -> Result<()> {
+        // Check if number is hex
+        if hex_str.len() > 2
+            && (hex_str[..2].eq_ignore_ascii_case("0x")
+                || (hex_str.starts_with("-") || hex_str.starts_with("+"))
+                    && hex_str[1..3].eq_ignore_ascii_case("0x"))
+        {
+            let (sign, hex_part) = if hex_str.starts_with("-0x") || hex_str.starts_with("-0X") {
+                ("-", &hex_str[3..])
+            } else if hex_str.starts_with("+0x") || hex_str.starts_with("+0X") {
+                ("", &hex_str[3..])
+            } else {
+                ("", &hex_str[2..])
+            };
+
+            // Add sign
+            string.push_str(sign);
+
+            let mut value = 0u64;
+
+            for ch in hex_part.chars() {
+                if !ch.is_ascii_hexdigit() {
+                    bail_parse_error!("Failed to parse hex digit: {}", hex_part);
+                }
+
+                if (value >> 60) != 0 {
+                    string.push_str("9.0e999");
+                    return Ok(());
+                }
+
+                value = value * 16 + ch.to_digit(16).unwrap_or(0) as u64;
+            }
+            write!(string, "{}", value)
+                .map_err(|_| LimboError::ParseError("Error writing string to json!".to_string()))?;
+        } else {
+            string.push_str(hex_str);
+        }
+
+        Ok(())
     }
 
-    fn serialize_null(&self, string: &mut String, cursor: usize) -> Result<usize> {
-        todo!()
+    fn serialize_float5(&self, string: &mut String, float_str: &str) -> Result<()> {
+        if float_str.len() < 2 {
+            bail_parse_error!("Integer is less then 2 chars: {}", float_str);
+        }
+        match float_str {
+            val if val.starts_with("-.") => {
+                string.push_str("-0.");
+                string.push_str(&val[2..]);
+            }
+            val if val.starts_with("+.") => {
+                string.push_str("0.");
+                string.push_str(&val[2..]);
+            }
+            val if val.starts_with(".") => {
+                string.push_str("0.");
+                string.push_str(&val[1..]);
+            }
+            val if val
+                .chars()
+                .next()
+                .map_or(false, |c| c.is_ascii_alphanumeric() || c == '+' || c == '-') =>
+            {
+                string.push_str(val);
+                string.push('0');
+            }
+            _ => bail_parse_error!("Unable to serialize float5: {}", float_str),
+        }
+
+        Ok(())
+    }
+
+    fn serialize_boolean(&self, string: &mut String, cursor: usize, val: bool) -> usize {
+        if val {
+            string.push_str("true");
+        } else {
+            string.push_str("false");
+        }
+
+        cursor
+    }
+
+    fn serialize_null(&self, string: &mut String, cursor: usize) -> usize {
+        string.push_str("null");
+        cursor
     }
 
     fn deserialize_value<'a, I>(&mut self, input: &mut Peekable<I>, depth: usize) -> Result<usize>
@@ -330,8 +596,9 @@ impl Jsonb {
             }
             Some(b't') => self.deserialize_true(input),
             Some(b'f') => self.deserialize_false(input),
-            Some(b'n') => self.deserialize_null(input),
+            Some(b'n') => self.deserialize_null_or_nan(input),
             Some(b'"') => self.deserialize_string(input),
+            Some(b'\'') => self.deserialize_string(input),
             Some(&&c)
                 if c.is_ascii_digit()
                     || c == b'-'
@@ -378,9 +645,6 @@ impl Jsonb {
                 }
                 Some(_) => {
                     // Parse key (must be string)
-                    if input.peek() != Some(&&b'"') {
-                        bail_parse_error!("Object key must be a string");
-                    }
                     self.deserialize_string(input)?;
 
                     skip_whitespace(input);
@@ -458,6 +722,7 @@ impl Jsonb {
     {
         let string_start = self.len();
         let quote = input.next().unwrap(); // "
+        let quoted = quote == &b'"' || quote == &b'\'';
         let mut len = 0;
         self.write_element_header(string_start, ElementType::TEXT, 0)?;
         let payload_start = self.len();
@@ -465,44 +730,63 @@ impl Jsonb {
         if input.peek().is_none() {
             bail_parse_error!("Unexpected end of input");
         };
-        // Determine if this will be TEXT, TEXTJ, or TEXT5
+
         let mut element_type = ElementType::TEXT;
+        // This needed to support 1 char unquoted JSON5 keys
+        if !quoted {
+            self.data.push(*quote);
+            len += 1;
+            if let Some(&&c) = input.peek() {
+                if c == b':' {
+                    self.write_element_header(string_start, element_type, len)?;
+
+                    return Ok(self.len() - payload_start);
+                }
+            }
+        };
 
         while let Some(c) = input.next() {
-            if c == quote {
+            if c == quote && quoted {
                 break;
             } else if c == &b'\\' {
                 // Handle escapes
                 if let Some(&esc) = input.next() {
                     match esc {
                         b'b' => {
-                            self.data.push('\u{0008}' as u8);
-                            len += 1;
+                            self.data.push(b'\\');
+                            self.data.push(b'b');
+                            len += 2;
                             element_type = ElementType::TEXTJ;
                         }
                         b'f' => {
-                            self.data.push('\u{000C}' as u8);
-                            len += 1;
+                            self.data.push(b'\\');
+                            self.data.push(b'f');
+                            len += 2;
                             element_type = ElementType::TEXTJ;
                         }
                         b'n' => {
-                            self.data.push('\n' as u8);
-                            len += 1;
+                            self.data.push(b'\\');
+                            self.data.push(b'n');
+                            len += 2;
                             element_type = ElementType::TEXTJ;
                         }
                         b'r' => {
                             self.data.push('\r' as u8);
-                            len += 1;
+                            self.data.push(b'\\');
+                            self.data.push(b'r');
+                            len += 2;
                             element_type = ElementType::TEXTJ;
                         }
                         b't' => {
-                            self.data.push('\t' as u8);
-                            len += 1;
+                            self.data.push(b'\\');
+                            self.data.push(b't');
+                            len += 2;
                             element_type = ElementType::TEXTJ;
                         }
                         b'\\' | b'"' | b'/' => {
+                            self.data.push(b'\\');
                             self.data.push(esc);
-                            len += 1;
+                            len += 2;
                             element_type = ElementType::TEXTJ;
                         }
                         b'u' => {
@@ -527,8 +811,9 @@ impl Jsonb {
                         // JSON5 extensions
                         b'\n' => {
                             element_type = ElementType::TEXT5;
-                            self.data.push(b'\n');
-                            len += 1;
+                            self.data.push(b'\\');
+                            self.data.push(b'n');
+                            len += 2;
                         }
                         b'\'' => {
                             element_type = ElementType::TEXT5;
@@ -553,6 +838,18 @@ impl Jsonb {
                             self.data.push(b'\\');
                             self.data.push(b'x');
                             len += 2;
+                            for _ in 0..2 {
+                                if let Some(&h) = input.next() {
+                                    if is_hex_digit(h) {
+                                        self.data.push(h);
+                                        len += 1;
+                                    } else {
+                                        bail_parse_error!("Invalid hex escape sequence");
+                                    }
+                                } else {
+                                    bail_parse_error!("Incomplete hex escape sequence");
+                                }
+                            }
                         }
                         _ => {
                             bail_parse_error!("Invalid escape sequence")
@@ -562,13 +859,17 @@ impl Jsonb {
                     bail_parse_error!("Unexpected end of input in escape sequence");
                 }
             } else if c <= &('\u{001F}' as u8) {
-                // Control characters need escaping in standard JSON
                 element_type = ElementType::TEXT5;
                 self.data.push(*c);
                 len += 1;
             } else {
                 self.data.push(*c);
                 len += 1;
+            }
+            if let Some(&&c) = input.peek() {
+                if (c == b':' || c.is_ascii_whitespace()) && !quoted {
+                    break;
+                }
             }
         }
 
@@ -586,15 +887,19 @@ impl Jsonb {
         let mut len = 0;
         let mut is_float = false;
         let mut is_json5 = false;
+
+        // Dummy header
         self.write_element_header(num_start, ElementType::INT, 0)?;
 
         // Handle sign
         if input.peek() == Some(&&b'-') || input.peek() == Some(&&b'+') {
             if input.peek() == Some(&&b'+') {
-                is_json5 = true; // JSON5 extension
+                is_json5 = true;
+                input.next();
+            } else {
+                self.data.push(*input.next().unwrap());
+                len += 1;
             }
-            self.data.push(*input.next().unwrap());
-            len += 1;
         }
 
         // Handle json5 float number
@@ -618,7 +923,6 @@ impl Jsonb {
                     }
                 }
 
-                // Write INT5 header and payload
                 self.write_element_header(num_start, ElementType::INT5, len)?;
 
                 return Ok(self.len() - num_start);
@@ -654,6 +958,11 @@ impl Jsonb {
                 b'.' => {
                     is_float = true;
                     self.data.push(*input.next().unwrap());
+                    if let Some(ch) = input.peek() {
+                        if !ch.is_ascii_alphanumeric() {
+                            is_json5 = true;
+                        }
+                    };
                     len += 1;
                 }
                 b'e' | b'E' => {
@@ -689,19 +998,39 @@ impl Jsonb {
         Ok(self.len() - num_start)
     }
 
-    pub fn deserialize_null<'a, I>(&mut self, input: &mut Peekable<I>) -> Result<usize>
+    pub fn deserialize_null_or_nan<'a, I>(&mut self, input: &mut Peekable<I>) -> Result<usize>
     where
         I: Iterator<Item = &'a u8>,
     {
         let start = self.len();
-        // Expect "null"
-        for expected in &[b'n', b'u', b'l', b'l'] {
-            if input.next() != Some(expected) {
-                bail_parse_error!("Expected 'null'");
+        let nul = &[b'n', b'u', b'l', b'l'];
+        let nan = &[b'n', b'a', b'n'];
+        let mut nan_score = 0;
+        let mut nul_score = 0;
+        for i in 0..4 {
+            if nan_score == 3 {
+                self.data.push(ElementType::NULL as u8);
+                return Ok(self.len() - start);
+            };
+            let nul_ch = nul.get(i);
+            let nan_ch = nan.get(i);
+            let ch = input.next();
+            if nan_ch != ch && nul_ch != ch {
+                bail_parse_error!("expected null or nan");
+            }
+            if nan_ch == ch {
+                nan_score += 1;
+            }
+            if nul_ch == ch {
+                nul_score += 1;
             }
         }
-        self.data.push(ElementType::NULL as u8);
-        Ok(self.len() - start)
+        if nul_score == 4 {
+            self.data.push(ElementType::NULL as u8);
+            return Ok(self.len() - start);
+        } else {
+            bail_parse_error!("expected null or nan");
+        }
     }
 
     pub fn deserialize_true<'a, I>(&mut self, input: &mut Peekable<I>) -> Result<usize>
@@ -709,7 +1038,6 @@ impl Jsonb {
         I: Iterator<Item = &'a u8>,
     {
         let start = self.len();
-        // Expect "true"
         for expected in &[b't', b'r', b'u', b'e'] {
             if input.next() != Some(expected) {
                 bail_parse_error!("Expected 'true'");
@@ -724,7 +1052,6 @@ impl Jsonb {
         I: Iterator<Item = &'a u8>,
     {
         let start = self.len();
-        // Expect "false"
         for expected in &[b'f', b'a', b'l', b's', b'e'] {
             if input.next() != Some(expected) {
                 bail_parse_error!("Expected 'false'");
@@ -758,7 +1085,7 @@ impl Jsonb {
     }
 
     pub fn from_str(input: &str) -> Result<Self> {
-        let mut result = Self::new(input.len());
+        let mut result = Self::new(input.len(), None);
         let mut input_iter = input.as_bytes().iter().peekable();
 
         result.deserialize_value(&mut input_iter, 0)?;
@@ -767,11 +1094,15 @@ impl Jsonb {
     }
 
     pub fn from_bytes(input: &[u8]) -> Result<Self> {
-        let mut result = Self::new(input.len());
+        let mut result = Self::new(input.len(), None);
         let mut input_iter = input.iter().peekable();
         result.deserialize_value(&mut input_iter, 0)?;
 
         Ok(result)
+    }
+
+    pub fn data(self) -> Vec<u8> {
+        self.data
     }
 }
 
@@ -832,4 +1163,70 @@ fn is_hex_digit(b: u8) -> bool {
         b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' => true,
         _ => false,
     }
+}
+
+fn unescape_to_char<'a, I>(input: &mut Peekable<I>) -> Result<char>
+where
+    I: Iterator<Item = &'a u8>,
+{
+    let code = parse_hex_code_point(input, 4)?;
+
+    // Check if this is a high surrogate (U+D800 to U+DBFF)
+    if (0xD800..=0xDBFF).contains(&code) {
+        // This is a high surrogate, expect a low surrogate next
+        if !matches!(input.next(), Some(&b'\\')) || !matches!(input.next(), Some(&b'u')) {
+            bail_parse_error!("Expected low surrogate after high surrogate");
+        }
+
+        // Parse the low surrogate
+        let low_surrogate = parse_hex_code_point(input, 4)?;
+
+        if !(0xDC00..=0xDFFF).contains(&low_surrogate) {
+            bail_parse_error!("Invalid low surrogate value");
+        }
+
+        // Combine the surrogate pair to get the actual code point
+        // Formula: (high - 0xD800) * 0x400 + (low - 0xDC00) + 0x10000
+        let combined = 0x10000 + ((code - 0xD800) << 10) + (low_surrogate - 0xDC00);
+
+        // Convert to char
+        if let Some(ch) = char::from_u32(combined) {
+            Ok(ch)
+        } else {
+            bail_parse_error!("Invalid Unicode code point from surrogate pair")
+        }
+    } else {
+        // Regular code point, just convert directly
+        if let Some(ch) = char::from_u32(code) {
+            Ok(ch)
+        } else {
+            bail_parse_error!("Invalid Unicode code point from surrogate pair")
+        }
+    }
+}
+
+// Helper function to parse a hex code point
+fn parse_hex_code_point<'a, I>(input: &mut Peekable<I>, digits: usize) -> Result<u32>
+where
+    I: Iterator<Item = &'a u8>,
+{
+    let mut code = 0u32;
+    for _ in 0..digits {
+        if let Some(&h) = input.next() {
+            if is_hex_digit(h) {
+                let digit_value = match h {
+                    b'0'..=b'9' => h - b'0',
+                    b'a'..=b'f' => h - b'a' + 10,
+                    b'A'..=b'F' => h - b'A' + 10,
+                    _ => bail_parse_error!("Not a hex digit"),
+                };
+                code = code * 16 + (digit_value as u32);
+            } else {
+                bail_parse_error!("Failed to parse unicode escape")
+            }
+        } else {
+            bail_parse_error!("Incomplete Unicode escape");
+        }
+    }
+    Ok(code)
 }
