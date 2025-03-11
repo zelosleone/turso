@@ -2316,7 +2316,6 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> R
     // unuse_space is reserved bytes at the end of page, therefore we must substract from maxpc
     let mut prev_pc = page_ref.offset + PAGE_HEADER_OFFSET_FIRST_FREEBLOCK;
     let mut pc = page_ref.first_freeblock() as usize;
-    let buf = page_ref.as_ptr();
     let maxpc = usable_space as usize - amount;
 
     while pc <= maxpc {
@@ -2324,23 +2323,29 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> R
             return_corrupt!("Free block header extends beyond page");
         }
 
-        let next = u16::from_be_bytes(buf[pc..pc + 2].try_into().unwrap());
-        let size = u16::from_be_bytes(buf[pc + 2..pc + 4].try_into().unwrap());
+        let next = page_ref.read_u16_no_offset(pc);
+        let size = page_ref.read_u16_no_offset(pc + 2);
 
         if amount <= size as usize {
             let new_size = size as usize - amount;
             if new_size < 4 {
+                // The code is checking if using a free slot that would leave behind a very small fragment (x < 4 bytes) 
+                // would cause the total fragmentation to exceed the limit of 60 bytes
+                // check sqlite docs https://www.sqlite.org/fileformat.html#:~:text=A%20freeblock%20requires,not%20exceed%2060
                 if page_ref.num_frag_free_bytes() > 57 {
                     return Ok(0);
                 }
-                buf[prev_pc..prev_pc + 2].copy_from_slice(&next.to_be_bytes());
+                // Delete the slot from freelist and update the page's fragment count.
+                page_ref.write_u16(prev_pc, next);
                 let frag = page_ref.num_frag_free_bytes() + new_size as u8;
                 page_ref.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, frag);
                 return Ok(pc);
             } else if new_size + pc > maxpc {
                 return_corrupt!("Free block extends beyond page end");
             } else {
-                buf[pc + 2..pc + 4].copy_from_slice(&(new_size as u16).to_be_bytes());
+                // Requested amount fits inside the current free slot so we reduce its size
+                // to account for newly allocated space.
+                page_ref.write_u16(pc + 2, new_size as u16);
                 return Ok(pc + new_size);
             }
         }
