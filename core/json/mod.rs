@@ -17,6 +17,7 @@ use jsonb::Jsonb;
 use ser::to_string_pretty;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::rc::Rc;
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(untagged)]
@@ -50,9 +51,12 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
             Ok(OwnedValue::Text(Text::json(&json)))
         }
         OwnedValue::Blob(b) => {
-            // TODO: use get_json_value after we implement a single Struct
-            //   to represent both JSON and JSONB
-            bail_parse_error!("Unsupported")
+            let jsonbin = Jsonb::new(b.len(), Some(b));
+            jsonbin.is_valid()?;
+            Ok(OwnedValue::Text(Text {
+                value: Rc::new(jsonbin.to_string()?.into_bytes()),
+                subtype: TextSubtype::Json,
+            }))
         }
         OwnedValue::Null => Ok(OwnedValue::Null),
         _ => {
@@ -67,6 +71,28 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
     }
 }
 
+pub fn jsonb(json_value: &OwnedValue) -> crate::Result<OwnedValue> {
+    let jsonbin = match json_value {
+        OwnedValue::Null | OwnedValue::Integer(_) | OwnedValue::Float(_) | OwnedValue::Text(_) => {
+            Jsonb::from_str(&json_value.to_string())
+        }
+        OwnedValue::Blob(blob) => {
+            let blob = Jsonb::new(blob.len(), Some(&blob));
+            blob.is_valid()?;
+            Ok(blob)
+        }
+        _ => {
+            unimplemented!()
+        }
+    };
+    match jsonbin {
+        Ok(jsonbin) => Ok(OwnedValue::Blob(Rc::new(jsonbin.data()))),
+        Err(_) => {
+            bail_parse_error!("Malformed json")
+        }
+    }
+}
+
 fn get_json_value(json_value: &OwnedValue) -> crate::Result<Val> {
     match json_value {
         OwnedValue::Text(ref t) => match from_str::<Val>(t.as_str()) {
@@ -75,7 +101,7 @@ fn get_json_value(json_value: &OwnedValue) -> crate::Result<Val> {
                 crate::bail_parse_error!("malformed JSON")
             }
         },
-        OwnedValue::Blob(b) => {
+        OwnedValue::Blob(_) => {
             crate::bail_parse_error!("malformed JSON");
         }
         OwnedValue::Null => Ok(Val::Null),
