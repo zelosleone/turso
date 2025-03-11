@@ -115,7 +115,7 @@ impl JsonbHeader {
         }
     }
 
-    fn into_bytes(&self) -> [u8; 5] {
+    fn into_bytes(self) -> [u8; 5] {
         let mut bytes = [0; 5];
         let element_type = self.0;
         let payload_size = self.1;
@@ -189,14 +189,12 @@ impl Jsonb {
         let mut cursor = 0usize;
         while cursor < self.len() {
             let (header, offset) = self.read_header(cursor).unwrap();
-            cursor = cursor + offset;
+            cursor += offset;
             println!("{:?}: HEADER", header);
-            if header.0 == ElementType::OBJECT || header.0 == ElementType::ARRAY {
-                cursor = cursor;
-            } else {
+            if header.0 != ElementType::OBJECT || header.0 != ElementType::ARRAY {
                 let value = from_utf8(&self.data[cursor..cursor + header.1]).unwrap();
                 println!("{:?}: VALUE", value);
-                cursor = cursor + header.1
+                cursor += header.1
             }
         }
     }
@@ -302,7 +300,7 @@ impl Jsonb {
         string.push('"');
         match kind {
             // Can be serialized as is. Do not need escaping
-            &ElementType::TEXT => {
+            ElementType::TEXT => {
                 let word = from_utf8(word_slice).map_err(|_| {
                     LimboError::ParseError("Failed to serialize string!".to_string())
                 })?;
@@ -310,7 +308,7 @@ impl Jsonb {
             }
 
             // Contain standard json escapes
-            &ElementType::TEXTJ => {
+            ElementType::TEXTJ => {
                 let word = from_utf8(word_slice).map_err(|_| {
                     LimboError::ParseError("Failed to serialize string!".to_string())
                 })?;
@@ -318,7 +316,7 @@ impl Jsonb {
             }
 
             // We have to escape some JSON5 escape sequences
-            &ElementType::TEXT5 => {
+            ElementType::TEXT5 => {
                 let mut i = 0;
                 while i < word_slice.len() {
                     let ch = word_slice[i];
@@ -427,13 +425,11 @@ impl Jsonb {
                 }
             }
 
-            &ElementType::TEXTRAW => {
-                // Handle TEXTRAW if needed
+            ElementType::TEXTRAW => {
                 let word = from_utf8(word_slice).map_err(|_| {
                     LimboError::ParseError("Failed to serialize string!".to_string())
                 })?;
 
-                // For TEXTRAW, we need to escape special characters for JSON
                 for ch in word.chars() {
                     match ch {
                         '"' => string.push_str("\\\""),
@@ -460,7 +456,7 @@ impl Jsonb {
     }
 
     fn is_json_ok(&self, ch: u8) -> bool {
-        ch >= 0x20 && ch <= 0x7E && ch != b'"' && ch != b'\\'
+        (0x20..=0x7E).contains(&ch) && ch != b'"' && ch != b'\\'
     }
 
     fn serialize_number(
@@ -650,7 +646,7 @@ impl Jsonb {
                     skip_whitespace(input);
 
                     // Expect and consume ':'
-                    if input.next() != Some(&&b':') {
+                    if input.next() != Some(&b':') {
                         bail_parse_error!("Expected ':' after object key");
                     }
 
@@ -771,7 +767,6 @@ impl Jsonb {
                             element_type = ElementType::TEXTJ;
                         }
                         b'r' => {
-                            self.data.push('\r' as u8);
                             self.data.push(b'\\');
                             self.data.push(b'r');
                             len += 2;
@@ -858,7 +853,7 @@ impl Jsonb {
                 } else {
                     bail_parse_error!("Unexpected end of input in escape sequence");
                 }
-            } else if c <= &('\u{001F}' as u8) {
+            } else if c <= &0x1F {
                 element_type = ElementType::TEXT5;
                 self.data.push(*c);
                 len += 1;
@@ -931,7 +926,7 @@ impl Jsonb {
 
         // Check for Infinity
         if input.peek().map(|x| x.to_ascii_lowercase()) == Some(b'i') {
-            for expected in &[b'i', b'n', b'f', b'i', b'n', b'i', b't', b'y'] {
+            for expected in b"infinity" {
                 if input.next().map(|x| x.to_ascii_lowercase()) != Some(*expected) {
                     bail_parse_error!("Failed to parse number");
                 }
@@ -941,8 +936,8 @@ impl Jsonb {
                 ElementType::INT5,
                 len + INFINITY_CHAR_COUNT as usize,
             )?;
-            for byte in [b'9', b'e', b'9', b'9', b'9'].into_iter() {
-                self.data.push(byte)
+            for byte in b"9e999" {
+                self.data.push(*byte)
             }
 
             return Ok(self.len() - num_start);
@@ -1003,8 +998,8 @@ impl Jsonb {
         I: Iterator<Item = &'a u8>,
     {
         let start = self.len();
-        let nul = &[b'n', b'u', b'l', b'l'];
-        let nan = &[b'n', b'a', b'n'];
+        let nul = b"null";
+        let nan = b"nan";
         let mut nan_score = 0;
         let mut nul_score = 0;
         for i in 0..4 {
@@ -1027,7 +1022,7 @@ impl Jsonb {
         }
         if nul_score == 4 {
             self.data.push(ElementType::NULL as u8);
-            return Ok(self.len() - start);
+            Ok(self.len() - start)
         } else {
             bail_parse_error!("expected null or nan");
         }
@@ -1038,7 +1033,7 @@ impl Jsonb {
         I: Iterator<Item = &'a u8>,
     {
         let start = self.len();
-        for expected in &[b't', b'r', b'u', b'e'] {
+        for expected in b"true" {
             if input.next() != Some(expected) {
                 bail_parse_error!("Expected 'true'");
             }
@@ -1052,7 +1047,7 @@ impl Jsonb {
         I: Iterator<Item = &'a u8>,
     {
         let start = self.len();
-        for expected in &[b'f', b'a', b'l', b's', b'e'] {
+        for expected in b"false" {
             if input.next() != Some(expected) {
                 bail_parse_error!("Expected 'false'");
             }
@@ -1151,8 +1146,5 @@ where
 }
 
 fn is_hex_digit(b: u8) -> bool {
-    match b {
-        b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F' => true,
-        _ => false,
-    }
+    matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')
 }
