@@ -122,7 +122,10 @@ pub unsafe extern "C" fn sqlite3_open(
             *db_out = Box::leak(Box::new(sqlite3::new(db, conn)));
             SQLITE_OK
         }
-        Err(_e) => SQLITE_CANTOPEN,
+        Err(e) => {
+            log::error!("error opening database {:?}", e);
+            SQLITE_CANTOPEN
+        }
     }
 }
 
@@ -1125,7 +1128,7 @@ mod tests {
         unsafe {
             let mut db = ptr::null_mut();
             assert_eq!(
-                sqlite3_open(b"../../testing/testing.db\0".as_ptr() as *const i8, &mut db),
+                sqlite3_open(b"../testing/testing.db\0".as_ptr() as *const i8, &mut db),
                 SQLITE_OK
             );
             assert_eq!(sqlite3_close(db), SQLITE_OK);
@@ -1144,7 +1147,7 @@ mod tests {
         unsafe {
             let mut db = ptr::null_mut();
             assert_eq!(
-                sqlite3_open(b"../../testing/testing.db\0".as_ptr() as *const i8, &mut db),
+                sqlite3_open(b"../testing/testing.db\0".as_ptr() as *const i8, &mut db),
                 SQLITE_OK
             );
 
@@ -1177,7 +1180,7 @@ mod tests {
             // Test with valid db
             let mut db = ptr::null_mut();
             assert_eq!(
-                sqlite3_open(b"../../testing/testing.db\0".as_ptr() as *const i8, &mut db),
+                sqlite3_open(b"../testing/testing.db\0".as_ptr() as *const i8, &mut db),
                 SQLITE_OK
             );
             assert_eq!(sqlite3_wal_checkpoint(db, ptr::null()), SQLITE_OK);
@@ -1203,7 +1206,7 @@ mod tests {
             // Test with valid db
             let mut db = ptr::null_mut();
             assert_eq!(
-                sqlite3_open(b"../../testing/testing.db\0".as_ptr() as *const i8, &mut db),
+                sqlite3_open(b"../testing/testing.db\0".as_ptr() as *const i8, &mut db),
                 SQLITE_OK
             );
 

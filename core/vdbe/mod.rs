@@ -3200,6 +3200,7 @@ impl Program {
                             connection.deref(),
                         ),
                         TransactionState::Read => {
+                            connection.transaction_state.replace(TransactionState::None);
                             pager.end_read_tx()?;
                             Ok(StepResult::Done)
                         }
@@ -3226,17 +3227,18 @@ impl Program {
         let checkpoint_status = pager.end_tx()?;
         match checkpoint_status {
             CheckpointStatus::Done(_) => {
+                if self.change_cnt_on {
+                    if let Some(conn) = self.connection.upgrade() {
+                        conn.set_changes(self.n_change.get());
+                    }
+                }
                 connection.transaction_state.replace(TransactionState::None);
                 let _ = halt_state.take();
             }
             CheckpointStatus::IO => {
+                tracing::trace!("Checkpointing IO");
                 *halt_state = Some(HaltState::Checkpointing);
                 return Ok(StepResult::IO);
-            }
-        }
-        if self.change_cnt_on {
-            if let Some(conn) = self.connection.upgrade() {
-                conn.set_changes(self.n_change.get());
             }
         }
         Ok(StepResult::Done)
