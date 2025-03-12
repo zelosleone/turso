@@ -542,6 +542,10 @@ impl Statement {
             .step(&mut self.state, self.mv_store.clone(), self.pager.clone())
     }
 
+    pub fn run_once(&self) -> Result<()> {
+        self.pager.io.run_once()
+    }
+
     pub fn num_columns(&self) -> usize {
         self.program.result_columns.len()
     }
