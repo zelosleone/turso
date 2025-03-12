@@ -2328,7 +2328,7 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> R
         if amount <= size as usize {
             let new_size = size as usize - amount;
             if new_size < 4 {
-                // The code is checking if using a free slot that would leave behind a very small fragment (x < 4 bytes) 
+                // The code is checking if using a free slot that would leave behind a very small fragment (x < 4 bytes)
                 // would cause the total fragmentation to exceed the limit of 60 bytes
                 // check sqlite docs https://www.sqlite.org/fileformat.html#:~:text=A%20freeblock%20requires,not%20exceed%2060
                 if page_ref.num_frag_free_bytes() > 57 {
