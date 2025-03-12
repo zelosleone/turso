@@ -192,23 +192,6 @@ impl Jsonb {
         }
     }
 
-    #[allow(dead_code)]
-    // Needed for debug. I am open to remove it
-    pub fn debug_read(&self) {
-        let mut cursor = 0usize;
-        while cursor < self.len() {
-            let (header, offset) = self.read_header(cursor).unwrap();
-            println!("{}, {}", cursor, offset);
-            cursor += offset;
-            println!("{:?}: HEADER", header);
-            if header.0 != ElementType::OBJECT || header.0 != ElementType::ARRAY {
-                let value = from_utf8(&self.data[cursor..cursor + header.1]).unwrap();
-                println!("{:?}: VALUE", value);
-                cursor += header.1
-            }
-        }
-    }
-
     pub fn to_string(&self) -> Result<String> {
         let mut result = String::with_capacity(self.data.len() * 2);
         self.write_to_string(&mut result)?;
@@ -973,7 +956,6 @@ impl Jsonb {
                     let next_ch = input.peek();
                     match next_ch {
                         Some(ch) => {
-                            println!("{}", **ch as char);
                             if !ch.is_ascii_alphanumeric() {
                                 is_json5 = true;
                             }
