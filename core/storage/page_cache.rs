@@ -259,8 +259,8 @@ mod tests {
                 }
                 1 => {
                     // remove
-                    let random = rng.next_u64() % 1 == 0;
-                    let key = if random {
+                    let random = rng.next_u64() % 2 == 0;
+                    let key = if random || lru.is_empty() {
                         let id_page = rng.next_u64() % max_pages;
                         let id_frame = rng.next_u64() % max_pages;
                         let key = PageCacheKey::new(id_page as usize, Some(id_frame));
@@ -275,8 +275,6 @@ mod tests {
                     cache.delete(key);
                 }
                 2 => {
-                    // cache.print();
-                    // println!("lru={:?}", lru);
                     // test contents
                     for (key, page) in &lru {
                         // println!("getting page {:?}", key);
@@ -339,7 +337,7 @@ mod tests {
         let mut cache = DumbLruPageCache::new(2);
         for i in 0..10000 {
             let key = insert_page(&mut cache, i);
-            // assert_eq!(cache.peek(&key, false).unwrap().get().id, i);
+            assert_eq!(cache.peek(&key, false).unwrap().get().id, i);
         }
     }
 }
