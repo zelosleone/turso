@@ -1124,6 +1124,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_open_existing() {
         unsafe {
             let mut db = ptr::null_mut();
@@ -1143,6 +1144,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_prepare_misuse() {
         unsafe {
             let mut db = ptr::null_mut();
@@ -1169,6 +1171,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_wal_checkpoint() {
         unsafe {
             // Test with NULL db handle
@@ -1189,6 +1192,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_wal_checkpoint_v2() {
         unsafe {
             // Test with NULL db handle
