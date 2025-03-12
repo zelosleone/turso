@@ -1517,19 +1517,14 @@ world""#,
     #[test]
     fn test_header_decoding() {
         // Create sample data with various headers
-        let mut data = Vec::new();
-
-        // Small payload
-        data.push((5 << 4) | (ElementType::TEXT as u8));
-
-        // Medium payload (8-bit)
-        data.push((PAYLOAD_SIZE8 << 4) | (ElementType::ARRAY as u8));
-        data.push(150); // Payload size
-
-        // Large payload (16-bit)
-        data.push((PAYLOAD_SIZE16 << 4) | (ElementType::OBJECT as u8));
-        data.push(0x98); // High byte of 39000
-        data.push(0x68); // Low byte of 39000
+        let data = vec![
+            (5 << 4) | (ElementType::TEXT as u8),
+            (PAYLOAD_SIZE8 << 4) | (ElementType::ARRAY as u8),
+            150,
+            (PAYLOAD_SIZE16 << 4) | (ElementType::OBJECT as u8),
+            0x98,
+            0x68,
+        ];
 
         // Parse and verify each header
         let (header1, offset1) = JsonbHeader::from_slice(0, &data).unwrap();
