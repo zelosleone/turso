@@ -251,6 +251,7 @@ mod tests {
                     let id_page = rng.next_u64() % max_pages;
                     let id_frame = rng.next_u64() % max_pages;
                     let key = PageCacheKey::new(id_page as usize, Some(id_frame));
+                    #[allow(clippy::arc_with_non_send_sync)]
                     let page = Arc::new(Page::new(id_page as usize));
                     // println!("inserting page {:?}", key);
                     cache.insert(key.clone(), page.clone());
@@ -327,6 +328,7 @@ mod tests {
 
     fn insert_page(cache: &mut DumbLruPageCache, id: usize) -> PageCacheKey {
         let key = PageCacheKey::new(id, None);
+        #[allow(clippy::arc_with_non_send_sync)]
         let page = Arc::new(Page::new(id));
         cache.insert(key.clone(), page.clone());
         key
