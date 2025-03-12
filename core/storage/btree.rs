@@ -846,8 +846,7 @@ impl BTreeCursor {
                             cell_payload.as_slice(),
                             cell_idx,
                             self.usable_space() as u16,
-                        )
-                        .unwrap();
+                        )?;
                         contents.overflow_cells.len()
                     };
                     let write_info = self
