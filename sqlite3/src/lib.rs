@@ -1128,7 +1128,7 @@ mod tests {
         unsafe {
             let mut db = ptr::null_mut();
             assert_eq!(
-                sqlite3_open(b"../../testing/testing.db\0".as_ptr() as *const i8, &mut db),
+                sqlite3_open(b"../testing/testing.db\0".as_ptr() as *const i8, &mut db),
                 SQLITE_OK
             );
             assert_eq!(sqlite3_close(db), SQLITE_OK);
