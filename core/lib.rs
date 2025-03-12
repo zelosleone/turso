@@ -387,6 +387,8 @@ impl Connection {
         QueryRunner::new(self, sql)
     }
 
+    /// Execute will run a query from start to finish taking ownership of I/O because it will run pending I/Os if it didn't finish.
+    /// TODO: make this api async
     pub fn execute(self: &Rc<Connection>, sql: impl AsRef<str>) -> Result<()> {
         let sql = sql.as_ref();
         let mut parser = Parser::new(sql.as_bytes());
@@ -428,7 +430,17 @@ impl Connection {
 
                     let mut state =
                         vdbe::ProgramState::new(program.max_registers, program.cursor_ref.len());
-                    program.step(&mut state, self._db.mv_store.clone(), self.pager.clone())?;
+                    loop {
+                        let res = program.step(
+                            &mut state,
+                            self._db.mv_store.clone(),
+                            self.pager.clone(),
+                        )?;
+                        if matches!(res, StepResult::Done) {
+                            break;
+                        }
+                        self._db.io.run_once()?;
+                    }
                 }
             }
         }
