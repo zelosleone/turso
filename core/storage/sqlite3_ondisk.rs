@@ -1308,7 +1308,7 @@ pub fn begin_read_wal_frame(
     let frame = page.clone();
     let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
         let frame = frame.clone();
-        finish_read_page(2, buf, frame).unwrap();
+        finish_read_page(page.get().id, buf, frame).unwrap();
     });
     let c = Completion::Read(ReadCompletion::new(buf, complete));
     io.pread(offset, c)?;
