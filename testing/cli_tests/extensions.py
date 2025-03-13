@@ -337,7 +337,7 @@ def test_series():
 
 
 def test_kv():
-    ext_path = "target/debug/liblimbo_testextension"
+    ext_path = "target/debug/liblimbo_ext_tests"
     limbo = TestLimboShell()
     limbo.run_test_fn(
         "create virtual table t using kv_store;",
@@ -472,7 +472,7 @@ def test_ipaddr():
 
 def test_vfs():
     limbo = TestLimboShell()
-    ext_path = "target/debug/liblimbo_testextension"
+    ext_path = "target/debug/liblimbo_ext_tests"
     limbo.run_test_fn(".vfslist", lambda x: "testvfs" not in x, "testvfs not loaded")
     limbo.execute_dot(f".load {ext_path}")
     limbo.run_test_fn(
@@ -496,7 +496,7 @@ def test_vfs():
     )
     print("Tested large write to testfs")
     # open regular db file to ensure we don't segfault when vfs file is dropped
-    limbo.execute_dot(".open testing/vfs2.db")
+    limbo.execute_dot(".open testing/vfs.db")
     limbo.execute_dot("create table test (id integer primary key, value float);")
     limbo.execute_dot("insert into test (value) values (1.0);")
     limbo.quit()
