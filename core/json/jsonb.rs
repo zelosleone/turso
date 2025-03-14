@@ -1,11 +1,169 @@
 use crate::{bail_parse_error, LimboError, Result};
-use std::{fmt::Write, iter::Peekable, str::from_utf8};
+use std::{fmt::Write, str::from_utf8};
 
-const PAYLOAD_SIZE8: u8 = 12;
-const PAYLOAD_SIZE16: u8 = 13;
-const PAYLOAD_SIZE32: u8 = 14;
+const SIZE_MARKER_8BIT: u8 = 12;
+const SIZE_MARKER_16BIT: u8 = 13;
+const SIZE_MARKER_32BIT: u8 = 14;
 const MAX_JSON_DEPTH: usize = 1000;
 const INFINITY_CHAR_COUNT: u8 = 5;
+
+const fn make_whitespace_table() -> [u8; 256] {
+    let mut table = [0u8; 256];
+
+    // Mark whitespace characters
+    table[0x09] = 1; // Tab
+    table[0x0A] = 1; // Line feed
+    table[0x0D] = 1; // Carriage return
+    table[0x20] = 1; // Space
+
+    table
+}
+
+static WS_TABLE: [u8; 256] = make_whitespace_table();
+
+const fn make_character_type_table() -> [u8; 256] {
+    let mut table = [0u8; 256];
+
+    // Mark whitespace characters
+    table[0x09] = 1; // Tab
+    table[0x0A] = 1; // Line feed
+    table[0x0D] = 1; // Carriage return
+    table[0x20] = 1; // Space
+
+    // Mark numeric digits
+    table[0x30] = 2; // 0
+    table[0x31] = 2; // 1
+    table[0x32] = 2; // 2
+    table[0x33] = 2; // 3
+    table[0x34] = 2; // 4
+    table[0x35] = 2; // 5
+    table[0x36] = 2; // 6
+    table[0x37] = 2; // 7
+    table[0x38] = 2; // 8
+    table[0x39] = 2; // 9
+
+    // Mark hex digits (a-f, A-F)
+    table[0x41] = 3; // A
+    table[0x42] = 3; // B
+    table[0x43] = 3; // C
+    table[0x44] = 3; // D
+    table[0x45] = 3; // E
+    table[0x46] = 3; // F
+    table[0x61] = 3; // a
+    table[0x62] = 3; // b
+    table[0x63] = 3; // c
+    table[0x64] = 3; // d
+    table[0x65] = 3; // e
+    table[0x66] = 3; // f
+
+    table
+}
+
+static CHARACTER_TYPE: [u8; 256] = make_character_type_table();
+
+const fn make_character_type_ok_table() -> [u8; 256] {
+    let mut table = [0u8; 256];
+
+    table[0x20] |= 4; // Space
+    table[0x21] |= 4; // !
+                      // Skipping 0x22 (") as it needs escaping
+    table[0x23] |= 4; // #
+    table[0x24] |= 4; // $
+    table[0x25] |= 4; // %
+    table[0x26] |= 4; // &
+    table[0x27] |= 4; // '
+    table[0x28] |= 4; // (
+    table[0x29] |= 4; // )
+    table[0x2A] |= 4; // *
+    table[0x2B] |= 4; // +
+    table[0x2C] |= 4; // ,
+    table[0x2D] |= 4; // -
+    table[0x2E] |= 4; // .
+    table[0x2F] |= 4; // /
+    table[0x30] |= 4; // 0
+    table[0x31] |= 4; // 1
+    table[0x32] |= 4; // 2
+    table[0x33] |= 4; // 3
+    table[0x34] |= 4; // 4
+    table[0x35] |= 4; // 5
+    table[0x36] |= 4; // 6
+    table[0x37] |= 4; // 7
+    table[0x38] |= 4; // 8
+    table[0x39] |= 4; // 9
+    table[0x3A] |= 4; // :
+    table[0x3B] |= 4; // ;
+    table[0x3C] |= 4; //
+    table[0x3D] |= 4; // =
+    table[0x3E] |= 4; // >
+    table[0x3F] |= 4; // ?
+    table[0x40] |= 4; // @
+    table[0x41] |= 4; // A
+    table[0x42] |= 4; // B
+    table[0x43] |= 4; // C
+    table[0x44] |= 4; // D
+    table[0x45] |= 4; // E
+    table[0x46] |= 4; // F
+    table[0x47] |= 4; // G
+    table[0x48] |= 4; // H
+    table[0x49] |= 4; // I
+    table[0x4A] |= 4; // J
+    table[0x4B] |= 4; // K
+    table[0x4C] |= 4; // L
+    table[0x4D] |= 4; // M
+    table[0x4E] |= 4; // N
+    table[0x4F] |= 4; // O
+    table[0x50] |= 4; // P
+    table[0x51] |= 4; // Q
+    table[0x52] |= 4; // R
+    table[0x53] |= 4; // S
+    table[0x54] |= 4; // T
+    table[0x55] |= 4; // U
+    table[0x56] |= 4; // V
+    table[0x57] |= 4; // W
+    table[0x58] |= 4; // X
+    table[0x59] |= 4; // Y
+    table[0x5A] |= 4; // Z
+    table[0x5B] |= 4; // [
+                      // Skipping 0x5C (\) as it needs escaping
+    table[0x5D] |= 4; // ]
+    table[0x5E] |= 4; // ^
+    table[0x5F] |= 4; // _
+    table[0x60] |= 4; // `
+    table[0x61] |= 4; // a
+    table[0x62] |= 4; // b
+    table[0x63] |= 4; // c
+    table[0x64] |= 4; // d
+    table[0x65] |= 4; // e
+    table[0x66] |= 4; // f
+    table[0x67] |= 4; // g
+    table[0x68] |= 4; // h
+    table[0x69] |= 4; // i
+    table[0x6A] |= 4; // j
+    table[0x6B] |= 4; // k
+    table[0x6C] |= 4; // l
+    table[0x6D] |= 4; // m
+    table[0x6E] |= 4; // n
+    table[0x6F] |= 4; // o
+    table[0x70] |= 4; // p
+    table[0x71] |= 4; // q
+    table[0x72] |= 4; // r
+    table[0x73] |= 4; // s
+    table[0x74] |= 4; // t
+    table[0x75] |= 4; // u
+    table[0x76] |= 4; // v
+    table[0x77] |= 4; // w
+    table[0x78] |= 4; // x
+    table[0x79] |= 4; // y
+    table[0x7A] |= 4; // z
+    table[0x7B] |= 4; // {
+    table[0x7C] |= 4; // |
+    table[0x7D] |= 4; // }
+    table[0x7E] |= 4; // ~
+
+    table
+}
+
+static CHARACTER_TYPE_OK: [u8; 256] = make_character_type_ok_table();
 
 #[derive(Debug, Clone)]
 pub struct Jsonb {
@@ -63,6 +221,24 @@ type PayloadSize = usize;
 #[derive(Debug, Clone)]
 pub struct JsonbHeader(ElementType, PayloadSize);
 
+enum HeaderFormat {
+    Inline([u8; 1]),    // Small payloads embedded directly in the header
+    OneByte([u8; 2]),   // Medium payloads with 1-byte size field
+    TwoBytes([u8; 3]),  // Large payloads with 2-byte size field
+    FourBytes([u8; 5]), // Extra large payloads with 4-byte size field
+}
+
+impl HeaderFormat {
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            Self::Inline(bytes) => bytes,
+            Self::OneByte(bytes) => bytes,
+            Self::TwoBytes(bytes) => bytes,
+            Self::FourBytes(bytes) => bytes,
+        }
+    }
+}
+
 impl JsonbHeader {
     fn new(element_type: ElementType, payload_size: PayloadSize) -> Self {
         Self(element_type, payload_size)
@@ -118,35 +294,45 @@ impl JsonbHeader {
         }
     }
 
-    fn into_bytes(self) -> [u8; 5] {
-        let mut bytes = [0; 5];
-        let element_type = self.0;
-        let payload_size = self.1;
-        if payload_size <= 11 {
-            bytes[0] = (element_type as u8) | ((payload_size as u8) << 4);
-        } else if payload_size <= 0xFF {
-            bytes[0] = (element_type as u8) | (PAYLOAD_SIZE8 << 4);
-            bytes[1] = payload_size as u8;
-        } else if payload_size <= 0xFFFF {
-            bytes[0] = (element_type as u8) | (PAYLOAD_SIZE16 << 4);
+    fn into_bytes(self) -> HeaderFormat {
+        let (element_type, payload_size) = (self.0, self.1);
 
-            let size_bytes = (payload_size as u16).to_be_bytes();
-            bytes[1] = size_bytes[0];
-            bytes[2] = size_bytes[1];
-        } else if payload_size <= 0xFFFFFFFF {
-            bytes[0] = (element_type as u8) | (PAYLOAD_SIZE32 << 4);
+        match payload_size {
+            // Small payload (fits in 4 bits)
+            size if size <= 11 => {
+                HeaderFormat::Inline([(element_type as u8) | ((size as u8) << 4)])
+            }
 
-            let size_bytes = (payload_size as u32).to_be_bytes();
+            // Medium payload (fits in 1 byte)
+            size if size <= 0xFF => {
+                HeaderFormat::OneByte([(element_type as u8) | (SIZE_MARKER_8BIT << 4), size as u8])
+            }
 
-            bytes[1] = size_bytes[0];
-            bytes[2] = size_bytes[1];
-            bytes[3] = size_bytes[2];
-            bytes[4] = size_bytes[3];
-        } else {
-            panic!("Payload size too large for encoding");
+            // Large payload (fits in 2 bytes)
+            size if size <= 0xFFFF => {
+                let size_bytes = (size as u16).to_be_bytes();
+                HeaderFormat::TwoBytes([
+                    (element_type as u8) | (SIZE_MARKER_16BIT << 4),
+                    size_bytes[0],
+                    size_bytes[1],
+                ])
+            }
+
+            // Extra large payload (fits in 4 bytes)
+            size if size <= 0xFFFFFFFF => {
+                let size_bytes = (size as u32).to_be_bytes();
+                HeaderFormat::FourBytes([
+                    (element_type as u8) | (SIZE_MARKER_32BIT << 4),
+                    size_bytes[0],
+                    size_bytes[1],
+                    size_bytes[2],
+                    size_bytes[3],
+                ])
+            }
+
+            // Payload too large
+            _ => panic!("Payload size too large for encoding"),
         }
-
-        bytes
     }
 
     fn get_size_bytes(slice: &[u8], start: usize, count: usize) -> Result<&[u8]> {
@@ -315,7 +501,7 @@ impl Jsonb {
                     let ch = word_slice[i];
 
                     // Handle normal characters that don't need escaping
-                    if self.is_json_ok(ch) || ch == b'\'' {
+                    if is_json_ok(ch) || ch == b'\'' {
                         string.push(ch as char);
                         i += 1;
                         continue;
@@ -448,10 +634,6 @@ impl Jsonb {
         Ok(cursor + len)
     }
 
-    fn is_json_ok(&self, ch: u8) -> bool {
-        (0x20..=0x7E).contains(&ch) && ch != b'"' && ch != b'\\'
-    }
-
     fn serialize_number(
         &self,
         string: &mut String,
@@ -568,410 +750,445 @@ impl Jsonb {
         cursor
     }
 
-    fn deserialize_value<'a, I>(&mut self, input: &mut Peekable<I>, depth: usize) -> Result<usize>
-    where
-        I: Iterator<Item = &'a u8>,
-    {
+    fn deserialize_value(&mut self, input: &[u8], mut pos: usize, depth: usize) -> Result<usize> {
         if depth > MAX_JSON_DEPTH {
-            bail_parse_error!("Too deep")
-        };
-        let current_depth = depth + 1;
-        skip_whitespace(input);
-        match input.peek() {
-            Some(b'{') => {
-                input.next(); // consume '{'
-                self.deserialize_obj(input, current_depth)
-            }
-            Some(b'[') => {
-                input.next(); // consume '['
-                self.deserialize_array(input, current_depth)
-            }
-            Some(b't') => self.deserialize_true(input),
-            Some(b'f') => self.deserialize_false(input),
-            Some(b'n') => self.deserialize_null_or_nan(input),
-            Some(b'"') => self.deserialize_string(input),
-            Some(b'\'') => self.deserialize_string(input),
-            Some(&&c)
-                if c.is_ascii_digit()
-                    || c == b'-'
-                    || c == b'+'
-                    || c == b'.'
-                    || c.to_ascii_lowercase() == b'i' =>
-            {
-                self.deserialize_number(input)
-            }
-            Some(ch) => bail_parse_error!("Unexpected character: {}", ch),
-            None => Ok(0),
+            bail_parse_error!("Too deep");
         }
+
+        pos = skip_whitespace(input, pos);
+        if pos >= input.len() {
+            bail_parse_error!("Unexpected end of input")
+        }
+
+        match input[pos] {
+            b'{' => {
+                pos += 1; // consume '{'
+                pos = self.deserialize_obj(input, pos, depth + 1)?;
+            }
+            b'[' => {
+                pos += 1; // consume '['
+                pos = self.deserialize_array(input, pos, depth + 1)?;
+            }
+            b't' => {
+                pos = self.deserialize_true(input, pos)?;
+            }
+            b'f' => {
+                pos = self.deserialize_false(input, pos)?;
+            }
+            b'n' => {
+                pos = self.deserialize_null_or_nan(input, pos)?;
+            }
+            b'"' | b'\'' => {
+                pos = self.deserialize_string(input, pos)?;
+            }
+            c if (c >= b'0' && c <= b'9')
+                || c == b'-'
+                || c == b'+'
+                || c == b'.'
+                || c.to_ascii_lowercase() == b'i' =>
+            {
+                pos = self.deserialize_number(input, pos)?;
+            }
+            _ => {
+                bail_parse_error!("Unexpected character: {}", input[pos] as char);
+            }
+        }
+
+        Ok(pos)
     }
 
-    pub fn deserialize_obj<'a, I>(&mut self, input: &mut Peekable<I>, depth: usize) -> Result<usize>
-    where
-        I: Iterator<Item = &'a u8>,
-    {
+    fn deserialize_obj(&mut self, input: &[u8], mut pos: usize, depth: usize) -> Result<usize> {
         if depth > MAX_JSON_DEPTH {
-            bail_parse_error!("Too deep!")
+            bail_parse_error!("Too deep!");
         }
+        if self.data.capacity() - self.data.len() < 50 {
+            self.data.reserve(self.data.capacity());
+        }
+        if pos >= input.len() {
+            bail_parse_error!("Unexpected end of input");
+        }
+
         let header_pos = self.len();
         self.write_element_header(header_pos, ElementType::OBJECT, 0)?;
         let obj_start = self.len();
         let mut first = true;
-        let current_depth = depth + 1;
-        loop {
-            skip_whitespace(input);
 
-            match input.peek() {
-                Some(&&b'}') => {
-                    input.next(); // consume '}'
+        loop {
+            pos = skip_whitespace(input, pos);
+            if pos >= input.len() {
+                bail_parse_error!("Unexpected end of input");
+            }
+
+            match input[pos] {
+                b'}' => {
+                    pos += 1; // consume '}'
                     if first {
-                        return Ok(1); // empty header
+                        return Ok(pos);
                     } else {
                         let obj_size = self.len() - obj_start;
                         self.write_element_header(header_pos, ElementType::OBJECT, obj_size)?;
-                        return Ok(obj_size + 2);
+                        return Ok(pos);
                     }
                 }
-                Some(&&b',') if !first => {
-                    input.next(); // consume ','
-                    skip_whitespace(input);
+                b',' if !first => {
+                    pos += 1; // consume ','
+                    pos = skip_whitespace(input, pos);
                 }
-                Some(_) => {
+                _ => {
                     // Parse key (must be string)
-                    self.deserialize_string(input)?;
+                    pos = self.deserialize_string(input, pos)?;
 
-                    skip_whitespace(input);
-
-                    // Expect and consume ':'
-                    if input.next() != Some(&b':') {
+                    pos = skip_whitespace(input, pos);
+                    if pos >= input.len() || input[pos] != b':' {
                         bail_parse_error!("Expected ':' after object key");
                     }
+                    pos += 1; // consume ':'
 
-                    skip_whitespace(input);
+                    pos = skip_whitespace(input, pos);
 
                     // Parse value - can be any JSON value including another object
-                    self.deserialize_value(input, current_depth)?;
+                    pos = self.deserialize_value(input, pos, depth)?;
 
                     first = false;
-                }
-                None => {
-                    bail_parse_error!("Unexpected end of input!")
                 }
             }
         }
     }
 
-    pub fn deserialize_array<'a, I>(
-        &mut self,
-        input: &mut Peekable<I>,
-        depth: usize,
-    ) -> Result<usize>
-    where
-        I: Iterator<Item = &'a u8>,
-    {
+    fn deserialize_array(&mut self, input: &[u8], mut pos: usize, depth: usize) -> Result<usize> {
         if depth > MAX_JSON_DEPTH {
             bail_parse_error!("Too deep");
         }
+
         let header_pos = self.len();
         self.write_element_header(header_pos, ElementType::ARRAY, 0)?;
         let arr_start = self.len();
         let mut first = true;
-        let current_depth = depth + 1;
-        loop {
-            skip_whitespace(input);
 
-            match input.peek() {
-                Some(&&b']') => {
-                    input.next();
+        loop {
+            pos = skip_whitespace(input, pos);
+            if pos >= input.len() {
+                bail_parse_error!("Unexpected end of input");
+            }
+
+            match input[pos] {
+                b']' => {
+                    pos += 1; // consume ']'
                     if first {
-                        return Ok(1);
+                        return Ok(pos);
                     } else {
                         let arr_len = self.len() - arr_start;
-                        let header_size =
-                            self.write_element_header(header_pos, ElementType::ARRAY, arr_len)?;
-                        return Ok(arr_len + header_size);
+                        self.write_element_header(header_pos, ElementType::ARRAY, arr_len)?;
+                        return Ok(pos);
                     }
                 }
-                Some(&&b',') if !first => {
-                    input.next(); // consume ','
-                    skip_whitespace(input);
+                b',' if !first => {
+                    pos += 1; // consume ','
+                    pos = skip_whitespace(input, pos);
                 }
-                Some(_) => {
-                    skip_whitespace(input);
-                    self.deserialize_value(input, current_depth)?;
+                _ => {
+                    pos = skip_whitespace(input, pos);
+
+                    // Parse array element
+                    pos = self.deserialize_value(input, pos, depth + 1)?;
 
                     first = false;
                 }
-                None => {
-                    bail_parse_error!("Unexpected end of input!")
-                }
             }
         }
     }
 
-    fn deserialize_string<'a, I>(&mut self, input: &mut Peekable<I>) -> Result<usize>
-    where
-        I: Iterator<Item = &'a u8>,
-    {
-        let string_start = self.len();
-        let quote = input.next().unwrap(); // "
-        let quoted = quote == &b'"' || quote == &b'\'';
-        let mut len = 0;
-        self.write_element_header(string_start, ElementType::TEXT, 0)?;
-        let payload_start = self.len();
+    fn deserialize_string(&mut self, input: &[u8], mut pos: usize) -> Result<usize> {
+        if pos >= input.len() {
+            bail_parse_error!("Unexpected end of input");
+        }
 
-        if input.peek().is_none() {
-            bail_parse_error!("Unexpected end of input in string handling");
-        };
+        let string_start = self.len();
+        let quote = input[pos];
+        pos += 1; // consume quote
+
+        let quoted = quote == b'"' || quote == b'\'';
+        let mut len = 0;
+
+        // Write placeholder header to be updated later
+        self.write_element_header(string_start, ElementType::TEXT, 0)?;
+
+        if pos >= input.len() {
+            bail_parse_error!("Unexpected end of input in string");
+        }
 
         let mut element_type = ElementType::TEXT;
-        // This needed to support 1 char unquoted JSON5 keys
+
+        // Special case for unquoted JSON5 keys (identifiers)
         if !quoted {
-            self.data.push(*quote);
+            self.data.push(quote);
             len += 1;
-            if let Some(&&c) = input.peek() {
-                if c == b':' {
-                    self.write_element_header(string_start, element_type, len)?;
 
-                    return Ok(self.len() - payload_start);
-                }
-            }
-        };
-
-        while let Some(c) = input.next() {
-            if c == quote && quoted {
-                break;
-            } else if c == &b'\\' {
-                // Handle escapes
-                if let Some(&esc) = input.next() {
-                    match esc {
-                        b'b' => {
-                            self.data.push(b'\\');
-                            self.data.push(b'b');
-                            len += 2;
-                            element_type = ElementType::TEXTJ;
-                        }
-                        b'f' => {
-                            self.data.push(b'\\');
-                            self.data.push(b'f');
-                            len += 2;
-                            element_type = ElementType::TEXTJ;
-                        }
-                        b'n' => {
-                            self.data.push(b'\\');
-                            self.data.push(b'n');
-                            len += 2;
-                            element_type = ElementType::TEXTJ;
-                        }
-                        b'r' => {
-                            self.data.push(b'\\');
-                            self.data.push(b'r');
-                            len += 2;
-                            element_type = ElementType::TEXTJ;
-                        }
-                        b't' => {
-                            self.data.push(b'\\');
-                            self.data.push(b't');
-                            len += 2;
-                            element_type = ElementType::TEXTJ;
-                        }
-                        b'\\' | b'"' | b'/' => {
-                            self.data.push(b'\\');
-                            self.data.push(esc);
-                            len += 2;
-                            element_type = ElementType::TEXTJ;
-                        }
-                        b'u' => {
-                            // Unicode escape
-                            element_type = ElementType::TEXTJ;
-                            self.data.push(b'\\');
-                            self.data.push(b'u');
-                            len += 2;
-                            for _ in 0..4 {
-                                if let Some(&h) = input.next() {
-                                    if is_hex_digit(h) {
-                                        self.data.push(h);
-                                        len += 1;
-                                    } else {
-                                        bail_parse_error!("Incomplete Unicode escape");
-                                    }
-                                } else {
-                                    bail_parse_error!("Incomplete Unicode escape");
-                                }
-                            }
-                        }
-                        // JSON5 extensions
-                        b'\n' => {
-                            element_type = ElementType::TEXT5;
-                            self.data.push(b'\\');
-                            self.data.push(b'\n');
-                            len += 2;
-                        }
-                        b'\'' => {
-                            element_type = ElementType::TEXT5;
-                            self.data.push(b'\\');
-                            self.data.push(b'\'');
-                            len += 2;
-                        }
-                        b'0' => {
-                            element_type = ElementType::TEXT5;
-                            self.data.push(b'\\');
-                            self.data.push(b'0');
-                            len += 2;
-                        }
-                        b'v' => {
-                            element_type = ElementType::TEXT5;
-                            self.data.push(b'\\');
-                            self.data.push(b'v');
-                            len += 2;
-                        }
-                        b'x' => {
-                            element_type = ElementType::TEXT5;
-                            self.data.push(b'\\');
-                            self.data.push(b'x');
-                            len += 2;
-                            for _ in 0..2 {
-                                if let Some(&h) = input.next() {
-                                    if is_hex_digit(h) {
-                                        self.data.push(h);
-                                        len += 1;
-                                    } else {
-                                        bail_parse_error!("Invalid hex escape sequence");
-                                    }
-                                } else {
-                                    bail_parse_error!("Incomplete hex escape sequence");
-                                }
-                            }
-                        }
-                        _ => {
-                            bail_parse_error!("Invalid escape sequence")
-                        }
-                    }
-                } else {
-                    bail_parse_error!("Unexpected end of input in escape sequence");
-                }
-            } else if c <= &0x1F {
-                element_type = ElementType::TEXT5;
-                self.data.push(*c);
-                len += 1;
-            } else {
-                self.data.push(*c);
-                len += 1;
-            }
-            if let Some(&&c) = input.peek() {
-                if (c == b':' || c.is_ascii_whitespace()) && !quoted {
-                    break;
-                }
+            if pos < input.len() && input[pos] == b':' {
+                self.write_element_header(string_start, element_type, len)?;
+                return Ok(pos);
             }
         }
 
-        // Write header and payload
+        let mut escape_buffer = [0u8; 6]; // Buffer for escape sequences
+
+        while pos < input.len() {
+            let c = input[pos];
+            pos += 1;
+
+            if quoted && c == quote {
+                break; // End of string
+            } else if c == b'\\' {
+                // Handle escape sequences
+                if pos >= input.len() {
+                    bail_parse_error!("Unexpected end of input in escape sequence");
+                }
+
+                let esc = input[pos];
+                pos += 1;
+
+                match esc {
+                    b'b' => {
+                        self.data.extend_from_slice(b"\\b");
+                        len += 2;
+                        element_type = ElementType::TEXTJ;
+                    }
+                    b'f' => {
+                        self.data.extend_from_slice(b"\\f");
+                        len += 2;
+                        element_type = ElementType::TEXTJ;
+                    }
+                    b'n' => {
+                        self.data.extend_from_slice(b"\\n");
+                        len += 2;
+                        element_type = ElementType::TEXTJ;
+                    }
+                    b'r' => {
+                        self.data.extend_from_slice(b"\\r");
+                        len += 2;
+                        element_type = ElementType::TEXTJ;
+                    }
+                    b't' => {
+                        self.data.extend_from_slice(b"\\t");
+                        len += 2;
+                        element_type = ElementType::TEXTJ;
+                    }
+                    b'\\' | b'"' | b'/' => {
+                        self.data.push(b'\\');
+                        self.data.push(esc);
+                        len += 2;
+                        element_type = ElementType::TEXTJ;
+                    }
+                    b'u' => {
+                        // Unicode escape sequence
+                        if pos + 4 > input.len() {
+                            bail_parse_error!("Incomplete Unicode escape sequence");
+                        }
+
+                        escape_buffer[0] = b'\\';
+                        escape_buffer[1] = b'u';
+
+                        for i in 0..4 {
+                            let h = input[pos + i];
+                            if !is_hex_digit(h) {
+                                bail_parse_error!("Invalid Unicode escape sequence");
+                            }
+                            escape_buffer[2 + i] = h;
+                        }
+
+                        self.data.extend_from_slice(&escape_buffer[0..6]);
+                        len += 6;
+                        pos += 4;
+                        element_type = ElementType::TEXTJ;
+                    }
+                    // JSON5 extensions
+                    b'\n' => {
+                        self.data.extend_from_slice(b"\\\n");
+                        len += 2;
+                        element_type = ElementType::TEXT5;
+                    }
+                    b'\'' => {
+                        self.data.extend_from_slice(b"\\\'");
+                        len += 2;
+                        element_type = ElementType::TEXT5;
+                    }
+                    b'0' => {
+                        self.data.extend_from_slice(b"\\0");
+                        len += 2;
+                        element_type = ElementType::TEXT5;
+                    }
+                    b'v' => {
+                        self.data.extend_from_slice(b"\\v");
+                        len += 2;
+                        element_type = ElementType::TEXT5;
+                    }
+                    b'x' => {
+                        // Hex escape sequence (JSON5)
+                        if pos + 2 > input.len() {
+                            bail_parse_error!("Incomplete hex escape sequence");
+                        }
+
+                        escape_buffer[0] = b'\\';
+                        escape_buffer[1] = b'x';
+
+                        for i in 0..2 {
+                            let h = input[pos + i];
+                            if !is_hex_digit(h) {
+                                bail_parse_error!("Invalid hex escape sequence");
+                            }
+                            escape_buffer[2 + i] = h;
+                        }
+
+                        self.data.extend_from_slice(&escape_buffer[0..4]);
+                        len += 4;
+                        pos += 2;
+                        element_type = ElementType::TEXT5;
+                    }
+                    _ => {
+                        bail_parse_error!("Invalid escape sequence: \\{}", esc as char);
+                    }
+                }
+            } else if !quoted && (c == b':' || c.is_ascii_whitespace()) {
+                // End of unquoted identifier
+                pos -= 1; // Put back the terminating character
+                break;
+            } else if c <= 0x1F {
+                // Control character
+                element_type = ElementType::TEXT5;
+                self.data.push(c);
+                len += 1;
+            } else {
+                // Normal character
+                self.data.push(c);
+                len += 1;
+            }
+        }
+
+        // Write final header with correct type and size
         self.write_element_header(string_start, element_type, len)?;
 
-        Ok(self.len() - payload_start)
+        Ok(pos)
     }
 
-    pub fn deserialize_number<'a, I>(&mut self, input: &mut Peekable<I>) -> Result<usize>
-    where
-        I: Iterator<Item = &'a u8>,
-    {
+    fn deserialize_number(&mut self, input: &[u8], mut pos: usize) -> Result<usize> {
         let num_start = self.len();
+        let start_pos = pos;
         let mut len = 0;
         let mut is_float = false;
         let mut is_json5 = false;
 
-        // Dummy header
+        // Write placeholder header
         self.write_element_header(num_start, ElementType::INT, 0)?;
 
         // Handle sign
-        if input.peek() == Some(&&b'-') || input.peek() == Some(&&b'+') {
-            if input.peek() == Some(&&b'+') {
+        if pos < input.len() && (input[pos] == b'-' || input[pos] == b'+') {
+            if input[pos] == b'+' {
                 is_json5 = true;
-                input.next();
+                pos += 1;
             } else {
-                self.data.push(*input.next().unwrap());
+                self.data.push(input[pos]);
+                pos += 1;
                 len += 1;
             }
         }
 
-        // Handle json5 float number
-        if input.peek() == Some(&&b'.') {
+        // Handle JSON5 float starting with dot
+        if pos < input.len() && input[pos] == b'.' {
             is_json5 = true;
-        };
+            is_float = true;
+        }
 
         // Check for hex (JSON5)
-        if input.peek() == Some(&&b'0') {
-            self.data.push(*input.next().unwrap());
+        if pos < input.len() && input[pos] == b'0' && pos + 1 < input.len() {
+            self.data.push(input[pos]);
+            pos += 1;
             len += 1;
-            let next_ch = input.peek();
-            if let Some(&&ch) = next_ch {
-                if ch == b'x' || ch == b'X' {
-                    self.data.push(*input.next().unwrap());
+
+            if pos < input.len() && (input[pos] == b'x' || input[pos] == b'X') {
+                // Hexadecimal number
+                self.data.push(input[pos]);
+                pos += 1;
+                len += 1;
+
+                let mut has_digit = false;
+                while pos < input.len() && is_hex_digit(input[pos]) {
+                    self.data.push(input[pos]);
+                    pos += 1;
                     len += 1;
-                    while let Some(&&byte) = input.peek() {
-                        if is_hex_digit(byte) {
-                            self.data.push(*input.next().unwrap());
-                            len += 1;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    self.write_element_header(num_start, ElementType::INT5, len)?;
-
-                    return Ok(self.len() - num_start);
-                } else if ch.is_ascii_alphanumeric() {
-                    bail_parse_error!("Leading zero is not allowed")
+                    has_digit = true;
                 }
+
+                if !has_digit {
+                    bail_parse_error!("Invalid hex number: no digits after 0x");
+                }
+
+                self.write_element_header(num_start, ElementType::INT5, len)?;
+                return Ok(pos);
+            } else if pos < input.len() && input[pos].is_ascii_digit() {
+                // Leading zero followed by digit is not allowed in standard JSON
+                bail_parse_error!("Leading zero is not allowed in number");
             }
         }
 
         // Check for Infinity
-        if input.peek().map(|x| x.to_ascii_lowercase()) == Some(b'i') {
-            for expected in b"infinity" {
-                if input.next().map(|x| x.to_ascii_lowercase()) != Some(*expected) {
-                    bail_parse_error!("Failed to parse number");
+        if pos < input.len() && (input[pos] == b'I' || input[pos] == b'i') {
+            // Try to match "Infinity"
+            let infinity = b"infinity";
+            let mut i = 0;
+
+            while i < infinity.len() && pos + i < input.len() {
+                if input[pos + i].to_ascii_lowercase() != infinity[i] {
+                    bail_parse_error!("Invalid number: expected Infinity");
                 }
+                i += 1;
             }
+
+            if i < infinity.len() {
+                bail_parse_error!("Invalid number: incomplete Infinity");
+            }
+
+            pos += infinity.len();
+
+            // Write Infinity as 9e999
+            self.data.extend_from_slice(b"9e999");
             self.write_element_header(
                 num_start,
                 ElementType::FLOAT5,
                 len + INFINITY_CHAR_COUNT as usize,
             )?;
 
-            self.data.extend_from_slice(b"9e999");
-
-            return Ok(self.len() - num_start);
-        };
+            return Ok(pos);
+        }
 
         // Regular number parsing
-        while let Some(&&ch) = input.peek() {
-            match ch {
+        while pos < input.len() {
+            match input[pos] {
                 b'0'..=b'9' => {
-                    self.data.push(*input.next().unwrap());
+                    self.data.push(input[pos]);
+                    pos += 1;
                     len += 1;
                 }
                 b'.' => {
                     is_float = true;
-                    self.data.push(*input.next().unwrap());
-                    let next_ch = input.peek();
-                    match next_ch {
-                        Some(ch) => {
-                            if !ch.is_ascii_alphanumeric() {
-                                is_json5 = true;
-                            }
-                        }
-                        None => {
-                            is_json5 = true;
-                        }
-                    };
+                    self.data.push(input[pos]);
+                    pos += 1;
                     len += 1;
+
+                    // Check for trailing dot
+                    if pos >= input.len() || !input[pos].is_ascii_digit() {
+                        is_json5 = true;
+                    }
                 }
                 b'e' | b'E' => {
                     is_float = true;
-                    self.data.push(*input.next().unwrap());
+                    self.data.push(input[pos]);
+                    pos += 1;
                     len += 1;
-                    if input.peek() == Some(&&b'+') || input.peek() == Some(&&b'-') {
-                        self.data.push(*input.next().unwrap());
+
+                    // Optional sign after exponent
+                    if pos < input.len() && (input[pos] == b'+' || input[pos] == b'-') {
+                        self.data.push(input[pos]);
+                        pos += 1;
                         len += 1;
                     }
                 }
@@ -979,7 +1196,12 @@ impl Jsonb {
             }
         }
 
-        // Write appropriate header and payload
+        // No digits found
+        if len == 0 && (!is_json5 || !is_float) {
+            bail_parse_error!("Invalid number at position {}", start_pos);
+        }
+
+        // Determine the appropriate element type
         let element_type = if is_float {
             if is_json5 {
                 ElementType::FLOAT5
@@ -996,70 +1218,68 @@ impl Jsonb {
 
         self.write_element_header(num_start, element_type, len)?;
 
-        Ok(self.len() - num_start)
+        Ok(pos)
     }
 
-    pub fn deserialize_null_or_nan<'a, I>(&mut self, input: &mut Peekable<I>) -> Result<usize>
-    where
-        I: Iterator<Item = &'a u8>,
-    {
-        let start = self.len();
-        let nul = b"null";
-        let nan = b"nan";
-        let mut nan_score = 0;
-        let mut nul_score = 0;
-        for i in 0..4 {
-            if nan_score == 3 {
-                self.data.push(ElementType::NULL as u8);
-                return Ok(self.len() - start);
-            };
-            let nul_ch = nul.get(i);
-            let nan_ch = nan.get(i);
-            let ch = input.next();
-            if nan_ch != ch && nul_ch != ch {
-                bail_parse_error!("expected null or nan");
-            }
-            if nan_ch == ch {
-                nan_score += 1;
-            }
-            if nul_ch == ch {
-                nul_score += 1;
-            }
-        }
-        if nul_score == 4 {
-            self.data.push(ElementType::NULL as u8);
-            Ok(self.len() - start)
-        } else {
-            bail_parse_error!("expected null or nan");
-        }
-    }
-
-    pub fn deserialize_true<'a, I>(&mut self, input: &mut Peekable<I>) -> Result<usize>
-    where
-        I: Iterator<Item = &'a u8>,
-    {
-        let start = self.len();
-        for expected in b"true" {
-            if input.next() != Some(expected) {
+    fn deserialize_true(&mut self, input: &[u8], mut pos: usize) -> Result<usize> {
+        let true_lit = b"true";
+        for i in 0..true_lit.len() {
+            if pos + i >= input.len() || input[pos + i] != true_lit[i] {
                 bail_parse_error!("Expected 'true'");
             }
         }
+
+        pos += true_lit.len();
         self.data.push(ElementType::TRUE as u8);
-        Ok(self.len() - start)
+
+        Ok(pos)
     }
 
-    fn deserialize_false<'a, I>(&mut self, input: &mut Peekable<I>) -> Result<usize>
-    where
-        I: Iterator<Item = &'a u8>,
-    {
-        let start = self.len();
-        for expected in b"false" {
-            if input.next() != Some(expected) {
+    fn deserialize_false(&mut self, input: &[u8], mut pos: usize) -> Result<usize> {
+        let false_lit = b"false";
+        for i in 0..false_lit.len() {
+            if pos + i >= input.len() || input[pos + i] != false_lit[i] {
                 bail_parse_error!("Expected 'false'");
             }
         }
+
+        pos += false_lit.len();
         self.data.push(ElementType::FALSE as u8);
-        Ok(self.len() - start)
+
+        Ok(pos)
+    }
+
+    pub fn deserialize_null_or_nan(&mut self, input: &[u8], mut pos: usize) -> Result<usize> {
+        // First check if we have enough bytes remaining
+        if pos + 3 >= input.len() {
+            bail_parse_error!("Unexpected end of input, expected 'null' or 'nan'");
+        }
+
+        // Fast path for "null"
+        if pos + 4 <= input.len()
+            && input[pos] == b'n'
+            && input[pos + 1] == b'u'
+            && input[pos + 2] == b'l'
+            && input[pos + 3] == b'l'
+        {
+            pos += 4;
+            self.data.push(ElementType::NULL as u8);
+            return Ok(pos);
+        }
+
+        // Fast path for "nan"
+        if pos + 3 <= input.len()
+            && (input[pos] == b'n' || input[pos] == b'N')
+            && (input[pos + 1] == b'a' || input[pos + 1] == b'A')
+            && (input[pos + 2] == b'n' || input[pos + 2] == b'N')
+        {
+            pos += 3;
+            self.data.push(ElementType::NULL as u8);
+            return Ok(pos);
+        }
+
+        // If we get here, we didn't match either pattern
+        bail_parse_error!("Expected 'null' or 'nan'");
     }
 
     fn write_element_header(
@@ -1068,28 +1288,80 @@ impl Jsonb {
         element_type: ElementType,
         payload_size: usize,
     ) -> Result<usize> {
+        if payload_size <= 11 {
+            let header_byte = (element_type as u8) | ((payload_size as u8) << 4);
+            if cursor == self.len() {
+                self.data.push(header_byte);
+            } else {
+                self.data[cursor] = header_byte;
+            }
+            return Ok(1);
+        }
+
         let header = JsonbHeader::new(element_type, payload_size).into_bytes();
+
+        let header_bytes = header.as_bytes();
+        let header_len = header_bytes.len();
         if cursor == self.len() {
-            for byte in header {
-                if byte != 0 {
-                    self.data.push(byte);
+            self.data.extend_from_slice(header_bytes);
+        } else {
+            // Calculate difference in length
+            let old_len = 1; // We're replacing 1 byte
+            let new_len = header_bytes.len();
+            let diff = new_len as isize - old_len as isize;
+
+            // Resize the Vec if needed
+            if diff > 0 {
+                // Need to make room
+                self.data.resize(self.data.len() + diff as usize, 0);
+
+                // Shift data after cursor to the right
+                unsafe {
+                    let ptr = self.data.as_mut_ptr();
+                    std::ptr::copy(
+                        ptr.add(cursor + old_len),
+                        ptr.add(cursor + new_len),
+                        self.data.len() - cursor - new_len,
+                    );
+                }
+            } else if diff < 0 {
+                // Need to shrink
+                unsafe {
+                    let ptr = self.data.as_mut_ptr();
+                    std::ptr::copy(
+                        ptr.add(cursor + old_len),
+                        ptr.add(cursor + new_len),
+                        self.data.len() - cursor - old_len,
+                    );
                 }
             }
-        } else {
-            self.data[cursor] = header[0];
-            self.data.splice(
-                cursor + 1..cursor + 1,
-                header[1..].iter().filter(|&&x| x != 0).cloned(),
-            );
+
+            // Copy the header bytes
+            for (i, &byte) in header_bytes.iter().enumerate() {
+                self.data[cursor + i] = byte;
+            }
         }
-        Ok(header.iter().filter(|&&x| x != 0).count())
+        Ok(header_len)
     }
 
     fn from_str(input: &str) -> Result<Self> {
         let mut result = Self::new(input.len(), None);
-        let mut input_iter = input.as_bytes().iter().peekable();
-        while input_iter.peek().is_some() {
-            result.deserialize_value(&mut input_iter, 0)?;
+        let input = input.as_bytes();
+
+        if input.is_empty() {
+            bail_parse_error!("Empty input");
+        }
+
+        // Parse the first complete JSON value
+        let mut pos = 0;
+        pos = result.deserialize_value(input, pos, 0)?;
+
+        // Skip any trailing whitespace
+        pos = skip_whitespace(input, pos);
+
+        // Check for any non-whitespace characters after the JSON value
+        if pos < input.len() {
+            bail_parse_error!("Unexpected trailing content after JSON value");
         }
 
         Ok(result)
@@ -1108,52 +1380,70 @@ impl std::str::FromStr for Jsonb {
     }
 }
 
-pub fn skip_whitespace<'a, I>(input: &mut Peekable<I>)
-where
-    I: Iterator<Item = &'a u8>,
-{
-    while let Some(&ch) = input.peek() {
-        match ch {
-            b' ' | b'\t' | b'\n' | b'\r' => {
-                input.next();
-            }
-            b'/' => {
-                // Handle JSON5 comments
-                input.next();
-                if let Some(&&next_ch) = input.peek() {
-                    if next_ch == b'/' {
-                        // Line comment - skip until newline
-                        input.next();
-                        while let Some(&c) = input.next() {
-                            if c == b'\n' {
-                                break;
-                            }
-                        }
-                    } else if next_ch == b'*' {
-                        // Block comment - skip until "*/"
-                        input.next();
-                        let mut prev = b'\0';
-                        while let Some(&c) = input.next() {
-                            if prev == b'*' && c == b'/' {
-                                break;
-                            }
-                            prev = c;
-                        }
-                    } else {
-                        // Not a comment, put the '/' back
-                        break;
+#[inline]
+pub fn skip_whitespace(input: &[u8], mut pos: usize) -> usize {
+    let len = input.len();
+    if pos >= len {
+        return pos;
+    }
+
+    // Fast path for non-whitespace, non-comment
+    if (WS_TABLE[input[pos] as usize] & 1) == 0 && input[pos] != b'/' {
+        return pos;
+    }
+
+    // Process whitespace and comments
+    while pos < len {
+        let ch = input[pos];
+        if (WS_TABLE[ch as usize] & 1) != 0 {
+            // Skip whitespace
+            pos += 1;
+        } else if ch == b'/' && pos + 1 < len {
+            // Handle JSON5 comments
+            match input[pos + 1] {
+                b'/' => {
+                    // Line comment - skip until newline
+                    pos += 2;
+                    while pos < len && input[pos] != b'\n' {
+                        pos += 1;
                     }
-                } else {
+                    if pos < len {
+                        pos += 1; // Skip the newline
+                    }
+                }
+                b'*' => {
+                    // Block comment - skip until "*/"
+                    pos += 2;
+                    while pos + 1 < len {
+                        if input[pos] == b'*' && input[pos + 1] == b'/' {
+                            pos += 2;
+                            break;
+                        }
+                        pos += 1;
+                    }
+                }
+                _ => {
+                    // Not a comment
                     break;
                 }
             }
-            _ => break,
+        } else {
+            // Not whitespace or comment
+            break;
         }
     }
+
+    pos
 }
 
-fn is_hex_digit(b: u8) -> bool {
-    matches!(b, b'0'..=b'9' | b'a'..=b'f' | b'A'..=b'F')
+#[inline]
+fn is_hex_digit(ch: u8) -> bool {
+    (CHARACTER_TYPE[ch as usize] & 3) == 2 || (CHARACTER_TYPE[ch as usize] & 3) == 3
+}
+
+#[inline]
+fn is_json_ok(ch: u8) -> bool {
+    (CHARACTER_TYPE_OK[ch as usize] & 4) != 0
 }
 
 #[cfg(test)]
@@ -1488,26 +1778,35 @@ world""#,
     fn test_header_encoding() {
         // Small payload (fits in 4 bits)
         let header = JsonbHeader::new(ElementType::TEXT, 5);
-        let bytes = header.into_bytes();
+        let bytes = header.into_bytes().as_bytes().to_vec();
         assert_eq!(bytes[0], (5 << 4) | (ElementType::TEXT as u8));
 
         // Medium payload (8-bit)
         let header = JsonbHeader::new(ElementType::TEXT, 200);
-        let bytes = header.into_bytes();
-        assert_eq!(bytes[0], (PAYLOAD_SIZE8 << 4) | (ElementType::TEXT as u8));
+        let bytes = header.into_bytes().as_bytes().to_vec();
+        assert_eq!(
+            bytes[0],
+            (SIZE_MARKER_8BIT << 4) | (ElementType::TEXT as u8)
+        );
         assert_eq!(bytes[1], 200);
 
         // Large payload (16-bit)
         let header = JsonbHeader::new(ElementType::TEXT, 40000);
-        let bytes = header.into_bytes();
-        assert_eq!(bytes[0], (PAYLOAD_SIZE16 << 4) | (ElementType::TEXT as u8));
+        let bytes = header.into_bytes().as_bytes().to_vec();
+        assert_eq!(
+            bytes[0],
+            (SIZE_MARKER_16BIT << 4) | (ElementType::TEXT as u8)
+        );
         assert_eq!(bytes[1], (40000 >> 8) as u8);
         assert_eq!(bytes[2], (40000 & 0xFF) as u8);
 
         // Extra large payload (32-bit)
         let header = JsonbHeader::new(ElementType::TEXT, 70000);
-        let bytes = header.into_bytes();
-        assert_eq!(bytes[0], (PAYLOAD_SIZE32 << 4) | (ElementType::TEXT as u8));
+        let bytes = header.into_bytes().as_bytes().to_vec();
+        assert_eq!(
+            bytes[0],
+            (SIZE_MARKER_32BIT << 4) | (ElementType::TEXT as u8)
+        );
         assert_eq!(bytes[1], (70000 >> 24) as u8);
         assert_eq!(bytes[2], ((70000 >> 16) & 0xFF) as u8);
         assert_eq!(bytes[3], ((70000 >> 8) & 0xFF) as u8);
@@ -1519,9 +1818,9 @@ world""#,
         // Create sample data with various headers
         let data = vec![
             (5 << 4) | (ElementType::TEXT as u8),
-            (PAYLOAD_SIZE8 << 4) | (ElementType::ARRAY as u8),
+            (SIZE_MARKER_8BIT << 4) | (ElementType::ARRAY as u8),
             150,
-            (PAYLOAD_SIZE16 << 4) | (ElementType::OBJECT as u8),
+            (SIZE_MARKER_16BIT << 4) | (ElementType::OBJECT as u8),
             0x98,
             0x68,
         ];
