@@ -1,4 +1,4 @@
-use crate::{ExtResult, ResultCode, Value};
+use crate::{ResultCode, Value};
 use std::ffi::{c_char, c_void};
 
 pub type RegisterModuleFn = unsafe extern "C" fn(
@@ -25,7 +25,7 @@ pub struct VTabModuleImpl {
 
 #[cfg(feature = "core_only")]
 impl VTabModuleImpl {
-    pub fn init_schema(&self, args: Vec<Value>) -> ExtResult<String> {
+    pub fn init_schema(&self, args: Vec<Value>) -> crate::ExtResult<String> {
         let schema = unsafe { (self.create_schema)(args.as_ptr(), args.len() as i32) };
         if schema.is_null() {
             return Err(ResultCode::InvalidArgs);
