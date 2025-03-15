@@ -328,7 +328,9 @@ fn finalize_path<'a>(
         PPState::InKey => {
             if key_start < path.len() {
                 let key = &path[key_start..];
-                if key.starts_with('"') & !key.ends_with('"') {
+                if key.starts_with('"') && !key.ends_with('"') && key.len() > 1
+                    || (key.starts_with('"') && key.ends_with('"') && key.len() == 1)
+                {
                     bail_parse_error!("Bad json path: {}", path)
                 }
                 path_components.push(PathElement::Key(Cow::Borrowed(key), false));
