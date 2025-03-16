@@ -656,18 +656,16 @@ pub fn json_object(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
     Ok(OwnedValue::Text(Text::json(result)))
 }
 
-pub fn is_json_valid(json_value: &OwnedValue) -> crate::Result<OwnedValue> {
-    match json_value {
-        OwnedValue::Text(ref t) => match from_str::<Val>(t.as_str()) {
-            Ok(_) => Ok(OwnedValue::Integer(1)),
-            Err(_) => Ok(OwnedValue::Integer(0)),
-        },
-        OwnedValue::Blob(_) => {
-            bail_parse_error!("Unsuported!")
-        }
-        OwnedValue::Null => Ok(OwnedValue::Null),
-        _ => Ok(OwnedValue::Integer(1)),
+pub fn is_json_valid(json_value: &OwnedValue) -> OwnedValue {
+    if matches!(json_value, OwnedValue::Null) {
+        return OwnedValue::Null;
     }
+    let json_is_ok = convert_dbtype_to_jsonb(json_value)
+        .and_then(|_| {
+            return Ok(OwnedValue::Integer(1));
+        })
+        .unwrap_or(OwnedValue::Integer(0));
+    json_is_ok
 }
 
 pub fn json_quote(value: &OwnedValue) -> crate::Result<OwnedValue> {

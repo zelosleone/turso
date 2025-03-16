@@ -2216,7 +2216,7 @@ impl Program {
                             }
                             JsonFunc::JsonValid => {
                                 let json_value = &state.registers[*start_reg];
-                                state.registers[*dest] = is_json_valid(json_value)?;
+                                state.registers[*dest] = is_json_valid(json_value);
                             }
                             JsonFunc::JsonPatch => {
                                 assert_eq!(arg_count, 2);
