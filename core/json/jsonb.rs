@@ -884,6 +884,9 @@ impl Jsonb {
                 b',' if !first => {
                     pos += 1; // consume ','
                     pos = skip_whitespace(input, pos);
+                    if input[pos] == b',' {
+                        bail_parse_error!("2 commas in a row are not allowed")
+                    }
                 }
                 _ => {
                     // Parse key (must be string)
@@ -898,8 +901,11 @@ impl Jsonb {
                     pos = skip_whitespace(input, pos);
 
                     // Parse value - can be any JSON value including another object
-                    pos = self.deserialize_value(input, pos, depth)?;
-
+                    pos = self.deserialize_value(input, pos, depth + 1)?;
+                    pos = skip_whitespace(input, pos);
+                    if pos < input.len() && !matches!(input[pos], b',' | b'}') {
+                        bail_parse_error!("Should be , or }}")
+                    }
                     first = false;
                 }
             }
@@ -989,6 +995,8 @@ impl Jsonb {
 
             if quoted && c == quote {
                 break; // End of string
+            } else if !quoted && (c == b'"' || c == b'\'') {
+                bail_parse_error!("Something gone wrong")
             } else if c == b'\\' {
                 // Handle escape sequences
                 if pos >= input.len() {
@@ -1095,6 +1103,7 @@ impl Jsonb {
                         pos += 2;
                         element_type = ElementType::TEXT5;
                     }
+
                     _ => {
                         bail_parse_error!("Invalid escape sequence: \\{}", esc as char);
                     }
@@ -2067,6 +2076,10 @@ world""#,
         assert!(Jsonb::from_str("[").is_err());
         assert!(Jsonb::from_str("}").is_err());
         assert!(Jsonb::from_str("]").is_err());
+
+        assert!(Jsonb::from_str(r#"{"a":"55,"b":72}"#).is_err());
+
+        assert!(Jsonb::from_str(r#"{"a":"55",,"b":72}"#).is_err());
 
         // Unclosed string
         assert!(Jsonb::from_str(r#"{"key":"value"#).is_err());
