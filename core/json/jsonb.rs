@@ -192,22 +192,21 @@ pub enum ElementType {
     RESERVED3 = 15,
 }
 
-impl Into<String> for ElementType {
-    fn into(self) -> String {
-        let result = match self {
-            ElementType::ARRAY => "array",
-            ElementType::OBJECT => "object",
-            ElementType::NULL => "null",
-            ElementType::TRUE => "true",
-            ElementType::FALSE => "false",
-            ElementType::FLOAT | ElementType::FLOAT5 => "real",
-            ElementType::INT | ElementType::INT5 => "integer",
+impl From<ElementType> for String {
+    fn from(element_type: ElementType) -> String {
+        match element_type {
+            ElementType::ARRAY => "array".to_string(),
+            ElementType::OBJECT => "object".to_string(),
+            ElementType::NULL => "null".to_string(),
+            ElementType::TRUE => "true".to_string(),
+            ElementType::FALSE => "false".to_string(),
+            ElementType::FLOAT | ElementType::FLOAT5 => "real".to_string(),
+            ElementType::INT | ElementType::INT5 => "integer".to_string(),
             ElementType::TEXT | ElementType::TEXT5 | ElementType::TEXTJ | ElementType::TEXTRAW => {
-                "text"
+                "text".to_string()
             }
             _ => unreachable!(),
-        };
-        result.into()
+        }
     }
 }
 
@@ -412,7 +411,7 @@ impl Jsonb {
     pub fn is_valid(&self) -> Result<ElementType> {
         match self.read_header(0) {
             Ok((header, offset)) => {
-                if let Some(_) = self.data.get(offset..offset + header.1) {
+                if self.data.get(offset..offset + header.1).is_some() {
                     Ok(header.0)
                 } else {
                     bail_parse_error!("malformed JSON")
@@ -1602,7 +1601,7 @@ fn compare(key: (&str, ElementType), path_key: (&str, bool)) -> bool {
         _ => {}
     };
 
-    return false;
+    false
 }
 
 #[inline]

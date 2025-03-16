@@ -87,7 +87,7 @@ fn convert_dbtype_to_jsonb(val: &OwnedValue) -> crate::Result<Jsonb> {
     match val {
         OwnedValue::Text(text) => Jsonb::from_str(text.as_str()),
         OwnedValue::Blob(blob) => {
-            let json = Jsonb::from_raw_data(&blob);
+            let json = Jsonb::from_raw_data(blob);
             json.is_valid()?;
             Ok(json)
         }
@@ -446,12 +446,12 @@ pub fn json_type(value: &OwnedValue, path: Option<&OwnedValue>) -> crate::Result
         let json = convert_dbtype_to_jsonb(value)?;
 
         if let Ok((_, element_type)) = json.get_by_path(&path) {
-            return Ok(OwnedValue::Text(Text::json(element_type.into())));
+            Ok(OwnedValue::Text(Text::json(element_type.into())))
         } else {
-            return Ok(OwnedValue::Null);
+            Ok(OwnedValue::Null)
         }
     } else {
-        return Ok(OwnedValue::Null);
+        Ok(OwnedValue::Null)
     }
 }
 
@@ -692,12 +692,9 @@ pub fn is_json_valid(json_value: &OwnedValue) -> OwnedValue {
     if matches!(json_value, OwnedValue::Null) {
         return OwnedValue::Null;
     }
-    let json_is_ok = convert_dbtype_to_jsonb(json_value)
-        .and_then(|_| {
-            return Ok(OwnedValue::Integer(1));
-        })
-        .unwrap_or(OwnedValue::Integer(0));
-    json_is_ok
+    convert_dbtype_to_jsonb(json_value)
+        .map(|_| OwnedValue::Integer(1))
+        .unwrap_or(OwnedValue::Integer(0))
 }
 
 pub fn json_quote(value: &OwnedValue) -> crate::Result<OwnedValue> {
