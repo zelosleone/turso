@@ -192,6 +192,25 @@ pub enum ElementType {
     RESERVED3 = 15,
 }
 
+impl Into<String> for ElementType {
+    fn into(self) -> String {
+        let result = match self {
+            ElementType::ARRAY => "array",
+            ElementType::OBJECT => "object",
+            ElementType::NULL => "null",
+            ElementType::TRUE => "true",
+            ElementType::FALSE => "false",
+            ElementType::FLOAT | ElementType::FLOAT5 => "real",
+            ElementType::INT | ElementType::INT5 => "integer",
+            ElementType::TEXT | ElementType::TEXT5 | ElementType::TEXTJ | ElementType::TEXTRAW => {
+                "text"
+            }
+            _ => unreachable!(),
+        };
+        result.into()
+    }
+}
+
 impl TryFrom<u8> for ElementType {
     type Error = LimboError;
 
@@ -223,7 +242,7 @@ type PayloadSize = usize;
 #[derive(Debug, Clone, Copy)]
 pub struct JsonbHeader(ElementType, PayloadSize);
 
-enum HeaderFormat {
+pub(crate) enum HeaderFormat {
     Inline([u8; 1]),    // Small payloads embedded directly in the header
     OneByte([u8; 2]),   // Medium payloads with 1-byte size field
     TwoBytes([u8; 3]),  // Large payloads with 2-byte size field
@@ -231,7 +250,7 @@ enum HeaderFormat {
 }
 
 impl HeaderFormat {
-    fn as_bytes(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &[u8] {
         match self {
             Self::Inline(bytes) => bytes,
             Self::OneByte(bytes) => bytes,
@@ -244,6 +263,10 @@ impl HeaderFormat {
 impl JsonbHeader {
     fn new(element_type: ElementType, payload_size: PayloadSize) -> Self {
         Self(element_type, payload_size)
+    }
+
+    pub fn make_null() -> Self {
+        Self(ElementType::NULL, 0)
     }
 
     fn from_slice(cursor: usize, slice: &[u8]) -> Result<(Self, usize)> {
@@ -296,7 +319,7 @@ impl JsonbHeader {
         }
     }
 
-    fn into_bytes(self) -> HeaderFormat {
+    pub fn into_bytes(self) -> HeaderFormat {
         let (element_type, payload_size) = (self.0, self.1);
 
         match payload_size {
@@ -361,17 +384,36 @@ impl Jsonb {
         self.data.len()
     }
 
+    pub fn make_empty_array(size: usize) -> Self {
+        let mut jsonb = Self {
+            data: Vec::with_capacity(size),
+        };
+        jsonb
+            .write_element_header(0, ElementType::ARRAY, 0)
+            .unwrap();
+        jsonb
+    }
+
+    pub fn append_to_array_unsafe(&mut self, data: &[u8]) {
+        self.data.extend_from_slice(data);
+    }
+
+    pub fn finalize_array_unsafe(&mut self) -> Result<()> {
+        self.write_element_header(0, ElementType::ARRAY, self.len() - 1)?;
+        Ok(())
+    }
+
     fn read_header(&self, cursor: usize) -> Result<(JsonbHeader, usize)> {
         let (header, offset) = JsonbHeader::from_slice(cursor, &self.data)?;
 
         Ok((header, offset))
     }
 
-    pub fn is_valid(&self) -> Result<()> {
+    pub fn is_valid(&self) -> Result<ElementType> {
         match self.read_header(0) {
             Ok((header, offset)) => {
                 if let Some(_) = self.data.get(offset..offset + header.1) {
-                    Ok(())
+                    Ok(header.0)
                 } else {
                     bail_parse_error!("malformed JSON")
                 }
@@ -1395,6 +1437,33 @@ impl Jsonb {
         Ok((Jsonb::from_raw_data(&self.data[pos..end]), header.0))
     }
 
+    pub fn get_by_path_raw(&self, path: &JsonPath) -> Result<&[u8]> {
+        let mut pos = 0;
+        let mut string_buffer = String::with_capacity(1024);
+        for segment in path.elements.iter() {
+            pos = self.navigate_to_segment(segment, pos, &mut string_buffer)?;
+        }
+        let (header, skip_header) = self.read_header(pos)?;
+        let end = pos + skip_header + header.1;
+        Ok(&self.data[pos..end])
+    }
+
+    pub fn array_len(&self) -> Result<usize> {
+        let (header, header_skip) = self.read_header(0)?;
+        if header.0 != ElementType::ARRAY {
+            return Ok(0);
+        }
+
+        let mut count = 0;
+        let mut pos = header_skip;
+        while pos < header_skip + header.1 {
+            pos = self.skip_element(pos)?;
+            count += 1;
+        }
+
+        Ok(count)
+    }
+
     fn navigate_to_segment(
         &self,
         segment: &PathElement,
@@ -1448,7 +1517,8 @@ impl Jsonb {
                 };
                 if let Some(id) = idx {
                     let id = id.to_owned();
-                    if id > 0 {
+
+                    if id >= 0 {
                         for _ in 0..id as usize {
                             if current_pos < pos + parent_size {
                                 current_pos = self.skip_element(current_pos)?;
@@ -1530,6 +1600,7 @@ fn compare(key: (&str, ElementType), path_key: (&str, bool)) -> bool {
 pub fn unescape_string(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
+    let mut code_point = String::with_capacity(5);
 
     while let Some(c) = chars.next() {
         if c == '\\' {
@@ -1542,10 +1613,24 @@ pub fn unescape_string(input: &str) -> String {
                 Some('"') => result.push('"'),
                 Some('b') => result.push('\u{0008}'),
                 Some('f') => result.push('\u{000C}'),
-
+                Some('x') => {
+                    code_point.clear();
+                    for _ in 0..2 {
+                        if let Some(hex_char) = chars.next() {
+                            code_point.push(hex_char);
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Ok(code) = u16::from_str_radix(&code_point, 16) {
+                        if let Some(ch) = char::from_u32(code as u32) {
+                            result.push(ch)
+                        }
+                    }
+                }
                 // Handle \uXXXX format (JSON style)
                 Some('u') => {
-                    let mut code_point = String::new();
+                    code_point.clear();
                     for _ in 0..4 {
                         if let Some(hex_char) = chars.next() {
                             code_point.push(hex_char);
@@ -1556,18 +1641,18 @@ pub fn unescape_string(input: &str) -> String {
 
                     if let Ok(code) = u16::from_str_radix(&code_point, 16) {
                         // Check if this is a high surrogate
-                        if (0xD800..=0xDBFF).contains(&code) {
+                        if matches!(code, 0xD800..=0xDBFF) {
                             if chars.next() == Some('\\') && chars.next() == Some('u') {
-                                let mut low_surrogate = String::new();
+                                code_point.clear();
                                 for _ in 0..4 {
                                     if let Some(hex_char) = chars.next() {
-                                        low_surrogate.push(hex_char);
+                                        code_point.push(hex_char);
                                     } else {
                                         break;
                                     }
                                 }
 
-                                if let Ok(low_code) = u16::from_str_radix(&low_surrogate, 16) {
+                                if let Ok(low_code) = u16::from_str_radix(&code_point, 16) {
                                     if (0xDC00..=0xDFFF).contains(&low_code) {
                                         let high_ten_bits = (code - 0xD800) as u32;
                                         let low_ten_bits = (low_code - 0xDC00) as u32;

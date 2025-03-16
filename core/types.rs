@@ -45,9 +45,9 @@ impl Text {
         }
     }
 
-    pub fn json(value: &str) -> Self {
+    pub fn json(value: String) -> Self {
         Self {
-            value: Rc::new(value.as_bytes().to_vec()),
+            value: Rc::new(value.into_bytes()),
             subtype: TextSubtype::Json,
         }
     }
@@ -186,7 +186,7 @@ impl OwnedValue {
                     return Ok(OwnedValue::Null);
                 };
                 if v.is_json() {
-                    Ok(OwnedValue::Text(Text::json(text)))
+                    Ok(OwnedValue::Text(Text::json(text.to_string())))
                 } else {
                     Ok(OwnedValue::build_text(text))
                 }
