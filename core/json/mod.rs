@@ -259,7 +259,7 @@ pub fn json_arrow_shift_extract(
         let json = convert_dbtype_to_jsonb(value)?;
         let extracted = json.get_by_path(&path);
         if let Ok((json, element_type)) = extracted {
-            Ok(json_string_to_db_type(json.to_string()?, element_type))
+            Ok(json_string_to_db_type(json, element_type, false)?)
         } else {
             Ok(OwnedValue::Null)
         }
@@ -278,17 +278,44 @@ pub fn json_extract(value: &OwnedValue, paths: &[OwnedValue]) -> crate::Result<O
 
     if paths.is_empty() {
         return Ok(OwnedValue::Null);
-    } else if paths.len() == 1 {
+    }
+
+    let (json, element_type) = jsonb_extract_internal(value, paths)?;
+    let result = json_string_to_db_type(json, element_type, false)?;
+
+    Ok(result)
+}
+
+pub fn jsonb_extract(value: &OwnedValue, paths: &[OwnedValue]) -> crate::Result<OwnedValue> {
+    if let OwnedValue::Null = value {
+        return Ok(OwnedValue::Null);
+    }
+
+    if paths.is_empty() {
+        return Ok(OwnedValue::Null);
+    }
+
+    let (json, element_type) = jsonb_extract_internal(value, paths)?;
+    let result = json_string_to_db_type(json, element_type, true)?;
+
+    Ok(result)
+}
+
+fn jsonb_extract_internal(
+    value: &OwnedValue,
+    paths: &[OwnedValue],
+) -> crate::Result<(Jsonb, ElementType)> {
+    let null = Jsonb::from_raw_data(JsonbHeader::make_null().into_bytes().as_bytes());
+    if paths.len() == 1 {
         if let Some(path) = json_path_from_owned_value(&paths[0], true)? {
             let json = convert_dbtype_to_jsonb(value)?;
-            let (expected_value, value_type) = json.get_by_path(&path)?;
-
-            return Ok(json_string_to_db_type(
-                expected_value.to_string()?,
-                value_type,
-            ));
+            if let Ok((json, value_type)) = json.get_by_path(&path) {
+                return Ok((json, value_type));
+            } else {
+                return Ok((null, ElementType::NULL));
+            }
         } else {
-            return Ok(OwnedValue::Null);
+            return Ok((null, ElementType::NULL));
         }
     }
 
@@ -307,36 +334,41 @@ pub fn json_extract(value: &OwnedValue, paths: &[OwnedValue]) -> crate::Result<O
                 result.append_to_array_unsafe(JsonbHeader::make_null().into_bytes().as_bytes());
             }
         } else {
-            return Ok(OwnedValue::Null);
+            return Ok((null, ElementType::NULL));
         }
     }
     result.finalize_array_unsafe()?;
-    Ok(json_string_to_db_type(
-        result.to_string()?,
-        ElementType::ARRAY,
-    ))
+    Ok((result, ElementType::ARRAY))
 }
 
-fn json_string_to_db_type(mut json: String, element_type: ElementType) -> OwnedValue {
+fn json_string_to_db_type(
+    json: Jsonb,
+    element_type: ElementType,
+    raw_flag: bool,
+) -> crate::Result<OwnedValue> {
+    let mut json_string = json.to_string()?;
+    if raw_flag && matches!(element_type, ElementType::ARRAY | ElementType::OBJECT) {
+        return Ok(OwnedValue::Blob(Rc::new(json.data())));
+    }
     match element_type {
-        ElementType::ARRAY | ElementType::OBJECT => OwnedValue::Text(Text::json(json)),
+        ElementType::ARRAY | ElementType::OBJECT => Ok(OwnedValue::Text(Text::json(json_string))),
         ElementType::TEXT | ElementType::TEXT5 | ElementType::TEXTJ | ElementType::TEXTRAW => {
-            json.remove(json.len() - 1);
-            json.remove(0);
-            OwnedValue::Text(Text {
-                value: Rc::new(json.into_bytes()),
+            json_string.remove(json_string.len() - 1);
+            json_string.remove(0);
+            Ok(OwnedValue::Text(Text {
+                value: Rc::new(json_string.into_bytes()),
                 subtype: TextSubtype::Text,
-            })
+            }))
         }
-        ElementType::FLOAT5 | ElementType::FLOAT => {
-            OwnedValue::Float(json.parse().expect("Should be valid f64"))
-        }
-        ElementType::INT | ElementType::INT5 => {
-            OwnedValue::Integer(json.parse().expect("Should be valid i64"))
-        }
-        ElementType::TRUE => OwnedValue::Integer(1),
-        ElementType::FALSE => OwnedValue::Integer(0),
-        ElementType::NULL => OwnedValue::Null,
+        ElementType::FLOAT5 | ElementType::FLOAT => Ok(OwnedValue::Float(
+            json_string.parse().expect("Should be valid f64"),
+        )),
+        ElementType::INT | ElementType::INT5 => Ok(OwnedValue::Integer(
+            json_string.parse().expect("Should be valid i64"),
+        )),
+        ElementType::TRUE => Ok(OwnedValue::Integer(1)),
+        ElementType::FALSE => Ok(OwnedValue::Integer(0)),
+        ElementType::NULL => Ok(OwnedValue::Null),
         _ => unreachable!(),
     }
 }

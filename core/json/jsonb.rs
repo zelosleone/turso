@@ -1563,7 +1563,7 @@ impl Jsonb {
             }
         }
 
-        bail_parse_error!("Did not find anything")
+        bail_parse_error!("Not found")
     }
 
     fn skip_element(&self, mut pos: usize) -> Result<usize> {
