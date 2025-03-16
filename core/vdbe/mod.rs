@@ -1275,6 +1275,10 @@ impl Program {
                     rollback,
                 } => {
                     let conn = self.connection.upgrade().unwrap();
+                    if matches!(state.halt_state, Some(HaltState::Checkpointing)) {
+                        return self.halt(pager, state, mv_store);
+                    }
+
                     if *auto_commit != *conn.auto_commit.borrow() {
                         if *rollback {
                             todo!("Rollback is not implemented");
