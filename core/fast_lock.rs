@@ -47,7 +47,7 @@ impl<T> SpinLock<T> {
 
     pub fn lock(&self) -> SpinLockGuard<T> {
         while self.lock.swap(true, Ordering::Acquire) {
-            std::thread::yield_now();
+            std::hint::spin_loop();
         }
         SpinLockGuard { lock: self }
     }
