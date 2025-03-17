@@ -1,4 +1,4 @@
-use crate::fast_lock::FastLock;
+use crate::fast_lock::SpinLock;
 use crate::result::LimboResult;
 use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
@@ -10,7 +10,7 @@ use std::cell::{RefCell, UnsafeCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tracing::trace;
 
 use super::page_cache::{DumbLruPageCache, PageCacheKey};
@@ -163,7 +163,7 @@ pub struct Pager {
     /// I/O interface for input/output operations.
     pub io: Arc<dyn crate::io::IO>,
     dirty_pages: Rc<RefCell<HashSet<usize>>>,
-    pub db_header: Arc<FastLock<DatabaseHeader>>,
+    pub db_header: Arc<SpinLock<DatabaseHeader>>,
 
     flush_info: RefCell<FlushInfo>,
     checkpoint_state: RefCell<CheckpointState>,
@@ -173,13 +173,13 @@ pub struct Pager {
 
 impl Pager {
     /// Begins opening a database by reading the database header.
-    pub fn begin_open(page_io: Arc<dyn DatabaseStorage>) -> Result<Arc<FastLock<DatabaseHeader>>> {
+    pub fn begin_open(page_io: Arc<dyn DatabaseStorage>) -> Result<Arc<SpinLock<DatabaseHeader>>> {
         sqlite3_ondisk::begin_read_database_header(page_io)
     }
 
     /// Completes opening a database by initializing the Pager with the database header.
     pub fn finish_open(
-        db_header_ref: Arc<FastLock<DatabaseHeader>>,
+        db_header_ref: Arc<SpinLock<DatabaseHeader>>,
         page_io: Arc<dyn DatabaseStorage>,
         wal: Rc<RefCell<dyn Wal>>,
         io: Arc<dyn crate::io::IO>,
@@ -232,7 +232,7 @@ impl Pager {
     /// In other words, if the page size is 512, then the reserved space size cannot exceed 32.
     pub fn usable_space(&self) -> usize {
         let db_header = self.db_header.lock();
-        (db_header.get_mut().page_size - db_header.get_mut().reserved_space as u16) as usize
+        (db_header.page_size - db_header.reserved_space as u16) as usize
     }
 
     pub fn begin_read_tx(&self) -> Result<LimboResult> {
@@ -352,7 +352,7 @@ impl Pager {
             trace!("cacheflush {:?}", state);
             match state {
                 FlushState::Start => {
-                    let db_size = self.db_header.lock().get_mut().database_size;
+                    let db_size = self.db_header.lock().database_size;
                     for page_id in self.dirty_pages.borrow().iter() {
                         let mut cache = self.page_cache.write();
                         let page_key =
@@ -503,7 +503,7 @@ impl Pager {
         const TRUNK_PAGE_NEXT_PAGE_OFFSET: usize = 0; // Offset to next trunk page pointer
         const TRUNK_PAGE_LEAF_COUNT_OFFSET: usize = 4; // Offset to leaf count
 
-        if page_id < 2 || page_id > self.db_header.lock().get_mut().database_size as usize {
+        if page_id < 2 || page_id > self.db_header.lock().database_size as usize {
             return Err(LimboError::Corrupt(format!(
                 "Invalid page number {} for free operation",
                 page_id
@@ -518,9 +518,9 @@ impl Pager {
             None => self.read_page(page_id)?,
         };
 
-        self.db_header.lock().get_mut().freelist_pages += 1;
+        self.db_header.lock().freelist_pages += 1;
 
-        let trunk_page_id = self.db_header.lock().get_mut().freelist_trunk_page;
+        let trunk_page_id = self.db_header.lock().freelist_trunk_page;
 
         if trunk_page_id != 0 {
             // Add as leaf to current trunk
@@ -558,7 +558,7 @@ impl Pager {
         // Zero leaf count
         contents.write_u32(TRUNK_PAGE_LEAF_COUNT_OFFSET, 0);
         // Update page 1 to point to new trunk
-        self.db_header.lock().get_mut().freelist_trunk_page = page_id as u32;
+        self.db_header.lock().freelist_trunk_page = page_id as u32;
         // Clear flags
         page.clear_uptodate();
         page.clear_loaded();
@@ -572,8 +572,8 @@ impl Pager {
     #[allow(clippy::readonly_write_lock)]
     pub fn allocate_page(&self) -> Result<PageRef> {
         let header = &self.db_header;
-        let header = header.lock();
-        header.get_mut().database_size += 1;
+        let mut header = header.lock();
+        header.database_size += 1;
         {
             // update database size
             // read sync for now
@@ -587,16 +587,12 @@ impl Pager {
                 self.add_dirty(1);
 
                 let contents = first_page_ref.get().contents.as_ref().unwrap();
-                contents.write_database_header(&header.get_mut());
+                contents.write_database_header(&header);
                 break;
             }
         }
 
-        let page = allocate_page(
-            header.get_mut().database_size as usize,
-            &self.buffer_pool,
-            0,
-        );
+        let page = allocate_page(header.database_size as usize, &self.buffer_pool, 0);
         {
             // setup page and add to cache
             page.set_dirty();
@@ -619,7 +615,7 @@ impl Pager {
 
     pub fn usable_size(&self) -> usize {
         let db_header = self.db_header.lock();
-        (db_header.get_mut().page_size - db_header.get_mut().reserved_space as u16) as usize
+        (db_header.page_size - db_header.reserved_space as u16) as usize
     }
 }
 

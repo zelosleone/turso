@@ -42,7 +42,7 @@
 //! https://www.sqlite.org/fileformat.html
 
 use crate::error::LimboError;
-use crate::fast_lock::FastLock;
+use crate::fast_lock::SpinLock;
 use crate::io::{Buffer, Completion, ReadCompletion, SyncCompletion, WriteCompletion};
 use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
@@ -53,7 +53,7 @@ use parking_lot::RwLock;
 use std::cell::RefCell;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tracing::trace;
 
 use super::pager::PageRef;
@@ -245,11 +245,11 @@ impl Default for DatabaseHeader {
 
 pub fn begin_read_database_header(
     page_io: Arc<dyn DatabaseStorage>,
-) -> Result<Arc<FastLock<DatabaseHeader>>> {
+) -> Result<Arc<SpinLock<DatabaseHeader>>> {
     let drop_fn = Rc::new(|_buf| {});
     #[allow(clippy::arc_with_non_send_sync)]
     let buf = Arc::new(RefCell::new(Buffer::allocate(512, drop_fn)));
-    let result = Arc::new(FastLock::new(DatabaseHeader::default()));
+    let result = Arc::new(SpinLock::new(DatabaseHeader::default()));
     let header = result.clone();
     let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
         let header = header.clone();
@@ -262,12 +262,11 @@ pub fn begin_read_database_header(
 
 fn finish_read_database_header(
     buf: Arc<RefCell<Buffer>>,
-    header: Arc<FastLock<DatabaseHeader>>,
+    header: Arc<SpinLock<DatabaseHeader>>,
 ) -> Result<()> {
     let buf = buf.borrow();
     let buf = buf.as_slice();
-    let header = header.lock();
-    let header = header.get_mut();
+    let mut header = header.lock();
     header.magic.copy_from_slice(&buf[0..16]);
     header.page_size = u16::from_be_bytes([buf[16], buf[17]]);
     header.write_version = buf[18];

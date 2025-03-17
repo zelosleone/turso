@@ -2,11 +2,11 @@ use std::{
     cell::Cell,
     collections::HashMap,
     rc::{Rc, Weak},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use crate::{
-    fast_lock::FastLock,
+    fast_lock::SpinLock,
     parameters::Parameters,
     schema::{BTreeTable, Index, PseudoTable},
     storage::sqlite3_ondisk::DatabaseHeader,
@@ -436,7 +436,7 @@ impl ProgramBuilder {
 
     pub fn build(
         mut self,
-        database_header: Arc<FastLock<DatabaseHeader>>,
+        database_header: Arc<SpinLock<DatabaseHeader>>,
         connection: Weak<Connection>,
         change_cnt_on: bool,
     ) -> Program {

@@ -1,34 +1,43 @@
 use std::{
     cell::UnsafeCell,
+    ops::{Deref, DerefMut},
     sync::atomic::{AtomicBool, Ordering},
 };
 
 #[derive(Debug)]
-pub struct FastLock<T> {
+pub struct SpinLock<T> {
     lock: AtomicBool,
     value: UnsafeCell<T>,
 }
 
-pub struct FastLockGuard<'a, T> {
-    lock: &'a FastLock<T>,
+pub struct SpinLockGuard<'a, T> {
+    lock: &'a SpinLock<T>,
 }
 
-impl<'a, T> FastLockGuard<'a, T> {
-    pub fn get_mut(&self) -> &mut T {
-        self.lock.get_mut()
-    }
-}
-
-impl<'a, T> Drop for FastLockGuard<'a, T> {
+impl<'a, T> Drop for SpinLockGuard<'a, T> {
     fn drop(&mut self) {
         self.lock.unlock();
     }
 }
 
-unsafe impl<T: Send> Send for FastLock<T> {}
-unsafe impl<T> Sync for FastLock<T> {}
+impl<T> Deref for SpinLockGuard<'_, T> {
+    type Target = T;
 
-impl<T> FastLock<T> {
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.lock.value.get() }
+    }
+}
+
+impl<T> DerefMut for SpinLockGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        unsafe { &mut *self.lock.value.get() }
+    }
+}
+
+unsafe impl<T: Send> Send for SpinLock<T> {}
+unsafe impl<T> Sync for SpinLock<T> {}
+
+impl<T> SpinLock<T> {
     pub fn new(value: T) -> Self {
         Self {
             lock: AtomicBool::new(false),
@@ -36,26 +45,15 @@ impl<T> FastLock<T> {
         }
     }
 
-    pub fn lock(&self) -> FastLockGuard<T> {
-        while self
-            .lock
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Acquire)
-            .is_err()
-        {
+    pub fn lock(&self) -> SpinLockGuard<T> {
+        while self.lock.swap(true, Ordering::Acquire) {
             std::thread::yield_now();
         }
-        FastLockGuard { lock: self }
+        SpinLockGuard { lock: self }
     }
 
     pub fn unlock(&self) {
-        assert!(self
-            .lock
-            .compare_exchange(true, false, Ordering::Acquire, Ordering::Acquire)
-            .is_ok());
-    }
-
-    pub fn get_mut(&self) -> &mut T {
-        unsafe { self.value.get().as_mut().unwrap() }
+        self.lock.store(false, Ordering::Release);
     }
 }
 
@@ -63,24 +61,23 @@ impl<T> FastLock<T> {
 mod tests {
     use std::sync::Arc;
 
-    use super::FastLock;
+    use super::SpinLock;
 
     #[test]
     fn test_fast_lock_multiple_thread_sum() {
-        let lock = Arc::new(FastLock::new(0));
+        let lock = Arc::new(SpinLock::new(0));
         let mut threads = vec![];
         const NTHREADS: usize = 1000;
         for _ in 0..NTHREADS {
             let lock = lock.clone();
             threads.push(std::thread::spawn(move || {
-                lock.lock();
-                let value = lock.get_mut();
-                *value += 1;
+                let mut guard = lock.lock();
+                *guard += 1;
             }));
         }
         for thread in threads {
             thread.join().unwrap();
         }
-        assert_eq!(*lock.get_mut(), NTHREADS);
+        assert_eq!(*lock.lock(), NTHREADS);
     }
 }
