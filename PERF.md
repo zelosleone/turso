@@ -19,7 +19,7 @@ cd shell && make
 4. Run Mobibench:
 
 ```console
-./mobibench -p <benchmark-directory> -n 1000 -d 0
+./mobibench -p <benchmark-directory> -n 1000 -d 0 -j 4
 ```
 
 ## Clickbench
