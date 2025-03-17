@@ -273,6 +273,7 @@ pub unsafe extern "C" fn sqlite3_exec(
         Ok(s) => s,
         Err(_) => return SQLITE_MISUSE,
     };
+    trace!("sqlite3_exec(sql={})", sql);
     match db.conn.execute(sql) {
         Ok(_) => SQLITE_OK,
         Err(_) => SQLITE_ERROR,
