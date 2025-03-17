@@ -75,7 +75,7 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
 pub fn jsonb(json_value: &OwnedValue) -> crate::Result<OwnedValue> {
     let jsonbin = match json_value {
         OwnedValue::Null | OwnedValue::Integer(_) | OwnedValue::Float(_) | OwnedValue::Text(_) => {
-            Jsonb::from_str(&json_value.to_string())
+            Jsonb::from_str(&json_value.to_text().unwrap())
         }
         OwnedValue::Blob(blob) => {
             let blob = Jsonb::new(blob.len(), Some(&blob));
