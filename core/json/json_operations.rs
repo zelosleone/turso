@@ -197,7 +197,7 @@ mod tests {
     }
 
     fn create_json(s: &str) -> OwnedValue {
-        OwnedValue::Text(Text::json(s))
+        OwnedValue::Text(Text::json(s.to_string()))
     }
 
     #[test]

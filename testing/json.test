@@ -291,16 +291,15 @@ do_execsql_test json_extract_object_3 {
     SELECT json_extract('{"a": [1,2,3]}', '$.a', '$.a[0]', '$.a[1]', null, '$.a[3]')
 } {{}}
 
-# TODO: fix me - this passes on SQLite and needs to be fixed in Limbo.
-#       \x61 is the ASCII code for 'a'
-# do_execsql_test json_extract_with_escaping {
-#     SELECT json_extract('{"\x61": 1}', '$.a')
-# } {{1}}
 
-# TODO: fix me - this passes on SQLite and needs to be fixed in Limbo.
-#do_execsql_test json_extract_with_escaping_2 {
-#    SELECT json_extract('{"\x61": 1}', '$.\x61')
-#} {{1}}
+#       \x61 is the ASCII code for 'a'
+do_execsql_test json_extract_with_escaping {
+     SELECT json_extract('{"\x61": 1}', '$.a')
+} {{1}}
+
+do_execsql_test json_extract_with_escaping_2 {
+    SELECT json_extract('{"\x61": 1}', '$."\x61"')
+} {{1}}
 
 do_execsql_test json_extract_null_path {
     SELECT json_extract(1, null)
@@ -406,10 +405,10 @@ do_execsql_test json_arrow_shift_implicit_root_path {
   SELECT '{"a":1}' ->> 'a';
 } {{1}}
 
-# TODO: fix me after rebasing on top of https://github.com/tursodatabase/limbo/pull/631 - use the Option value in json_extract_single
-#do_execsql_test json_arrow_implicit_root_path_undefined_key {
-#  SELECT '{"a":1}' -> 'x';
-#} {{}}
+
+do_execsql_test json_arrow_implicit_root_path_undefined_key {
+  SELECT '{"a":1}' -> 'x';
+} {{}}
 
 do_execsql_test json_arrow_shift_implicit_root_path_undefined_key {
   SELECT '{"a":1}' ->> 'x';
@@ -476,10 +475,9 @@ do_execsql_test json_arrow_shift_array {
   SELECT '[1,2,3]' ->> '$'
 } {{[1,2,3]}}
 
-# TODO: fix me - this passes on SQLite and needs to be fixed in Limbo.
-#do_execsql_test json_extract_quote {
-#  SELECT json_extract('{"\"":1 }', '$.\"')
-#} {{1}}
+do_execsql_test json_extract_quote {
+  SELECT json_extract('{"\"":1 }', '$."\""')
+} {{1}}
 
 # Overflows 2**32 is equivalent to 0
 do_execsql_test json_extract_overflow_int32_1 {

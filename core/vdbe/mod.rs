@@ -53,6 +53,7 @@ use crate::{
     json::json_array_length, json::json_arrow_extract, json::json_arrow_shift_extract,
     json::json_error_position, json::json_extract, json::json_object, json::json_patch,
     json::json_quote, json::json_remove, json::json_set, json::json_type, json::jsonb,
+    json::jsonb_extract,
 };
 use crate::{info, CheckpointStatus};
 use crate::{
@@ -2174,6 +2175,23 @@ impl Program {
                                     Err(e) => return Err(e),
                                 }
                             }
+                            JsonFunc::JsonbExtract => {
+                                let result = match arg_count {
+                                    0 => jsonb_extract(&OwnedValue::Null, &[]),
+                                    _ => {
+                                        let val = &state.registers[*start_reg];
+                                        let reg_values = &state.registers
+                                            [*start_reg + 1..*start_reg + arg_count];
+
+                                        jsonb_extract(val, reg_values)
+                                    }
+                                };
+
+                                match result {
+                                    Ok(json) => state.registers[*dest] = json,
+                                    Err(e) => return Err(e),
+                                }
+                            }
                             JsonFunc::JsonArrowExtract | JsonFunc::JsonArrowShiftExtract => {
                                 assert_eq!(arg_count, 2);
                                 let json = &state.registers[*start_reg];
@@ -2218,7 +2236,7 @@ impl Program {
                             }
                             JsonFunc::JsonValid => {
                                 let json_value = &state.registers[*start_reg];
-                                state.registers[*dest] = is_json_valid(json_value)?;
+                                state.registers[*dest] = is_json_valid(json_value);
                             }
                             JsonFunc::JsonPatch => {
                                 assert_eq!(arg_count, 2);

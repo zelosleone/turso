@@ -1,6 +1,8 @@
 use crate::{bail_parse_error, LimboError, Result};
 use std::{fmt::Write, str::from_utf8};
 
+use super::json_path::{JsonPath, PathElement};
+
 const SIZE_MARKER_8BIT: u8 = 12;
 const SIZE_MARKER_16BIT: u8 = 13;
 const SIZE_MARKER_32BIT: u8 = 14;
@@ -190,6 +192,24 @@ pub enum ElementType {
     RESERVED3 = 15,
 }
 
+impl From<ElementType> for String {
+    fn from(element_type: ElementType) -> String {
+        match element_type {
+            ElementType::ARRAY => "array".to_string(),
+            ElementType::OBJECT => "object".to_string(),
+            ElementType::NULL => "null".to_string(),
+            ElementType::TRUE => "true".to_string(),
+            ElementType::FALSE => "false".to_string(),
+            ElementType::FLOAT | ElementType::FLOAT5 => "real".to_string(),
+            ElementType::INT | ElementType::INT5 => "integer".to_string(),
+            ElementType::TEXT | ElementType::TEXT5 | ElementType::TEXTJ | ElementType::TEXTRAW => {
+                "text".to_string()
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
 impl TryFrom<u8> for ElementType {
     type Error = LimboError;
 
@@ -218,10 +238,10 @@ impl TryFrom<u8> for ElementType {
 
 type PayloadSize = usize;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct JsonbHeader(ElementType, PayloadSize);
 
-enum HeaderFormat {
+pub(crate) enum HeaderFormat {
     Inline([u8; 1]),    // Small payloads embedded directly in the header
     OneByte([u8; 2]),   // Medium payloads with 1-byte size field
     TwoBytes([u8; 3]),  // Large payloads with 2-byte size field
@@ -229,7 +249,7 @@ enum HeaderFormat {
 }
 
 impl HeaderFormat {
-    fn as_bytes(&self) -> &[u8] {
+    pub fn as_bytes(&self) -> &[u8] {
         match self {
             Self::Inline(bytes) => bytes,
             Self::OneByte(bytes) => bytes,
@@ -242,6 +262,10 @@ impl HeaderFormat {
 impl JsonbHeader {
     fn new(element_type: ElementType, payload_size: PayloadSize) -> Self {
         Self(element_type, payload_size)
+    }
+
+    pub fn make_null() -> Self {
+        Self(ElementType::NULL, 0)
     }
 
     fn from_slice(cursor: usize, slice: &[u8]) -> Result<(Self, usize)> {
@@ -294,7 +318,7 @@ impl JsonbHeader {
         }
     }
 
-    fn into_bytes(self) -> HeaderFormat {
+    pub fn into_bytes(self) -> HeaderFormat {
         let (element_type, payload_size) = (self.0, self.1);
 
         match payload_size {
@@ -359,17 +383,36 @@ impl Jsonb {
         self.data.len()
     }
 
+    pub fn make_empty_array(size: usize) -> Self {
+        let mut jsonb = Self {
+            data: Vec::with_capacity(size),
+        };
+        jsonb
+            .write_element_header(0, ElementType::ARRAY, 0)
+            .unwrap();
+        jsonb
+    }
+
+    pub fn append_to_array_unsafe(&mut self, data: &[u8]) {
+        self.data.extend_from_slice(data);
+    }
+
+    pub fn finalize_array_unsafe(&mut self) -> Result<()> {
+        self.write_element_header(0, ElementType::ARRAY, self.len() - 1)?;
+        Ok(())
+    }
+
     fn read_header(&self, cursor: usize) -> Result<(JsonbHeader, usize)> {
         let (header, offset) = JsonbHeader::from_slice(cursor, &self.data)?;
 
         Ok((header, offset))
     }
 
-    pub fn is_valid(&self) -> Result<()> {
+    pub fn is_valid(&self) -> Result<ElementType> {
         match self.read_header(0) {
             Ok((header, offset)) => {
-                if let Some(_) = self.data.get(offset..offset + header.1) {
-                    Ok(())
+                if self.data.get(offset..offset + header.1).is_some() {
+                    Ok(header.0)
                 } else {
                     bail_parse_error!("malformed JSON")
                 }
@@ -402,7 +445,7 @@ impl Jsonb {
             | JsonbHeader(ElementType::TEXTRAW, len)
             | JsonbHeader(ElementType::TEXTJ, len)
             | JsonbHeader(ElementType::TEXT5, len) => {
-                self.serialize_string(string, cursor, len, &header.0)?
+                self.serialize_string(string, cursor, len, &header.0, true)?
             }
             JsonbHeader(ElementType::INT, len)
             | JsonbHeader(ElementType::INT5, len)
@@ -436,7 +479,7 @@ impl Jsonb {
                 | ElementType::TEXTJ
                 | ElementType::TEXT5 => {
                     current_cursor =
-                        self.serialize_string(string, current_cursor, len, &element_type)?;
+                        self.serialize_string(string, current_cursor, len, &element_type, true)?;
                 }
                 _ => bail_parse_error!("malformed JSON"),
             }
@@ -474,9 +517,13 @@ impl Jsonb {
         cursor: usize,
         len: usize,
         kind: &ElementType,
+        quote: bool,
     ) -> Result<usize> {
         let word_slice = &self.data[cursor..cursor + len];
-        string.push('"');
+        if quote {
+            string.push('"');
+        }
+
         match kind {
             // Can be serialized as is. Do not need escaping
             ElementType::TEXT => {
@@ -630,7 +677,10 @@ impl Jsonb {
                 unreachable!()
             }
         }
-        string.push('"');
+        if quote {
+            string.push('"');
+        }
+
         Ok(cursor + len)
     }
 
@@ -833,6 +883,9 @@ impl Jsonb {
                 b',' if !first => {
                     pos += 1; // consume ','
                     pos = skip_whitespace(input, pos);
+                    if input[pos] == b',' {
+                        bail_parse_error!("2 commas in a row are not allowed")
+                    }
                 }
                 _ => {
                     // Parse key (must be string)
@@ -847,8 +900,11 @@ impl Jsonb {
                     pos = skip_whitespace(input, pos);
 
                     // Parse value - can be any JSON value including another object
-                    pos = self.deserialize_value(input, pos, depth)?;
-
+                    pos = self.deserialize_value(input, pos, depth + 1)?;
+                    pos = skip_whitespace(input, pos);
+                    if pos < input.len() && !matches!(input[pos], b',' | b'}') {
+                        bail_parse_error!("Should be , or }}")
+                    }
                     first = false;
                 }
             }
@@ -938,6 +994,8 @@ impl Jsonb {
 
             if quoted && c == quote {
                 break; // End of string
+            } else if !quoted && (c == b'"' || c == b'\'') {
+                bail_parse_error!("Something gone wrong")
             } else if c == b'\\' {
                 // Handle escape sequences
                 if pos >= input.len() {
@@ -1044,6 +1102,7 @@ impl Jsonb {
                         pos += 2;
                         element_type = ElementType::TEXT5;
                     }
+
                     _ => {
                         bail_parse_error!("Invalid escape sequence: \\{}", esc as char);
                     }
@@ -1367,8 +1426,149 @@ impl Jsonb {
         Ok(result)
     }
 
+    pub fn from_raw_data(data: &[u8]) -> Self {
+        Self::new(data.len(), Some(data))
+    }
+
     pub fn data(self) -> Vec<u8> {
         self.data
+    }
+
+    pub fn get_by_path(&self, path: &JsonPath) -> Result<(Jsonb, ElementType)> {
+        let mut pos = 0;
+        let mut string_buffer = String::with_capacity(1024);
+        for segment in path.elements.iter() {
+            pos = self.navigate_to_segment(segment, pos, &mut string_buffer)?;
+        }
+        let (header, skip_header) = self.read_header(pos)?;
+        let end = pos + skip_header + header.1;
+        Ok((Jsonb::from_raw_data(&self.data[pos..end]), header.0))
+    }
+
+    pub fn get_by_path_raw(&self, path: &JsonPath) -> Result<&[u8]> {
+        let mut pos = 0;
+        let mut string_buffer = String::with_capacity(1024);
+        for segment in path.elements.iter() {
+            pos = self.navigate_to_segment(segment, pos, &mut string_buffer)?;
+        }
+        let (header, skip_header) = self.read_header(pos)?;
+        let end = pos + skip_header + header.1;
+        Ok(&self.data[pos..end])
+    }
+
+    pub fn array_len(&self) -> Result<usize> {
+        let (header, header_skip) = self.read_header(0)?;
+        if header.0 != ElementType::ARRAY {
+            return Ok(0);
+        }
+
+        let mut count = 0;
+        let mut pos = header_skip;
+        while pos < header_skip + header.1 {
+            pos = self.skip_element(pos)?;
+            count += 1;
+        }
+
+        Ok(count)
+    }
+
+    fn navigate_to_segment(
+        &self,
+        segment: &PathElement,
+        pos: usize,
+        string_buffer: &mut String,
+    ) -> Result<usize> {
+        let (header, skip_header) = self.read_header(pos)?;
+        let (parent_type, parent_size) = (header.0, header.1);
+        let mut current_pos = pos + skip_header;
+
+        match segment {
+            PathElement::Root() => return Ok(0),
+            PathElement::Key(path_key, is_raw) => {
+                if parent_type != ElementType::OBJECT {
+                    bail_parse_error!("parent is not object")
+                };
+                while current_pos < pos + parent_size {
+                    let (key_header, skip_header) = self.read_header(current_pos)?;
+                    let (key_type, key_size) = (key_header.0, key_header.1);
+                    current_pos += skip_header;
+
+                    if matches!(
+                        key_header.0,
+                        ElementType::TEXT
+                            | ElementType::TEXT5
+                            | ElementType::TEXTJ
+                            | ElementType::TEXTRAW
+                    ) {
+                        string_buffer.clear();
+                        current_pos = self.serialize_string(
+                            string_buffer,
+                            current_pos,
+                            key_size,
+                            &key_type,
+                            false,
+                        )?;
+
+                        if compare((&string_buffer, key_type), (path_key, *is_raw)) {
+                            return Ok(current_pos);
+                        } else {
+                            current_pos = self.skip_element(current_pos)?;
+                        }
+                    } else {
+                        bail_parse_error!("Key is not text!")
+                    };
+                }
+            }
+            PathElement::ArrayLocator(idx) => {
+                if parent_type != ElementType::ARRAY {
+                    bail_parse_error!("parent is not array");
+                };
+                if let Some(id) = idx {
+                    let id = id.to_owned();
+
+                    if id >= 0 {
+                        for _ in 0..id as usize {
+                            if current_pos < pos + parent_size {
+                                current_pos = self.skip_element(current_pos)?;
+                            } else {
+                                bail_parse_error!("Index is bigger then array size");
+                            }
+                        }
+                        return Ok(current_pos);
+                        // fix this after we remove serialized json
+                    } else {
+                        let mut temp_pos = current_pos;
+                        let mut count_elements = 0;
+                        while temp_pos < pos + parent_size {
+                            temp_pos = self.skip_element(temp_pos)?;
+                            count_elements += 1;
+                        }
+                        let corrected_idx = count_elements + id;
+                        if corrected_idx < 0 {
+                            bail_parse_error!("Index is bigger then array size")
+                        }
+                        for _ in 0..corrected_idx as usize {
+                            if current_pos < pos + parent_size {
+                                current_pos = self.skip_element(current_pos)?;
+                            } else {
+                                bail_parse_error!("Index is bigger then array size");
+                            }
+                        }
+                        return Ok(current_pos);
+                    }
+                } else {
+                    return Ok(pos);
+                }
+            }
+        }
+
+        bail_parse_error!("Not found")
+    }
+
+    fn skip_element(&self, mut pos: usize) -> Result<usize> {
+        let (header, skip_header) = self.read_header(pos)?;
+        pos += skip_header + header.1;
+        Ok(pos)
     }
 }
 
@@ -1378,6 +1578,140 @@ impl std::str::FromStr for Jsonb {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         Self::from_str(s)
     }
+}
+
+#[inline]
+fn compare(key: (&str, ElementType), path_key: (&str, bool)) -> bool {
+    let (key, element_type) = key;
+    let (path_key, is_raw) = path_key;
+    if !is_raw && element_type == ElementType::TEXT {
+        if key.len() == path_key.len() {
+            return key == path_key;
+        } else {
+            return false;
+        }
+    }
+    if !is_raw {
+        return unescape_string(key) == path_key;
+    }
+    match element_type {
+        ElementType::TEXTJ | ElementType::TEXT5 | ElementType::TEXTRAW | ElementType::TEXT => {
+            return unescape_string(key) == unescape_string(path_key);
+        }
+        _ => {}
+    };
+
+    false
+}
+
+#[inline]
+pub fn unescape_string(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    let mut code_point = String::with_capacity(5);
+
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('n') => result.push('\n'),
+                Some('r') => result.push('\r'),
+                Some('t') => result.push('\t'),
+                Some('\\') => result.push('\\'),
+                Some('/') => result.push('/'),
+                Some('"') => result.push('"'),
+                Some('b') => result.push('\u{0008}'),
+                Some('f') => result.push('\u{000C}'),
+                Some('x') => {
+                    code_point.clear();
+                    for _ in 0..2 {
+                        if let Some(hex_char) = chars.next() {
+                            code_point.push(hex_char);
+                        } else {
+                            break;
+                        }
+                    }
+                    if let Ok(code) = u16::from_str_radix(&code_point, 16) {
+                        if let Some(ch) = char::from_u32(code as u32) {
+                            result.push(ch)
+                        }
+                    }
+                }
+                // Handle \uXXXX format (JSON style)
+                Some('u') => {
+                    code_point.clear();
+                    for _ in 0..4 {
+                        if let Some(hex_char) = chars.next() {
+                            code_point.push(hex_char);
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if let Ok(code) = u16::from_str_radix(&code_point, 16) {
+                        // Check if this is a high surrogate
+                        if matches!(code, 0xD800..=0xDBFF) {
+                            if chars.next() == Some('\\') && chars.next() == Some('u') {
+                                code_point.clear();
+                                for _ in 0..4 {
+                                    if let Some(hex_char) = chars.next() {
+                                        code_point.push(hex_char);
+                                    } else {
+                                        break;
+                                    }
+                                }
+
+                                if let Ok(low_code) = u16::from_str_radix(&code_point, 16) {
+                                    if (0xDC00..=0xDFFF).contains(&low_code) {
+                                        let high_ten_bits = (code - 0xD800) as u32;
+                                        let low_ten_bits = (low_code - 0xDC00) as u32;
+                                        let code_point = (high_ten_bits << 10) | low_ten_bits;
+                                        let unicode_value = code_point + 0x10000;
+
+                                        if let Some(unicode_char) = char::from_u32(unicode_value) {
+                                            result.push(unicode_char);
+                                        }
+                                    } else {
+                                        // If low surrogate is invalid, just push both as separate chars
+                                        if let Some(c1) = char::from_u32(code as u32) {
+                                            result.push(c1);
+                                        }
+                                        if let Some(c2) = char::from_u32(low_code as u32) {
+                                            result.push(c2);
+                                        }
+                                    }
+                                }
+                            } else {
+                                // No low surrogate, just push the high surrogate as is
+                                if let Some(unicode_char) = char::from_u32(code as u32) {
+                                    result.push(unicode_char);
+                                }
+                            }
+                        } else {
+                            // Not a surrogate pair, just a regular Unicode character
+                            if let Some(unicode_char) = char::from_u32(code as u32) {
+                                result.push(unicode_char);
+                            }
+                        }
+                    }
+                }
+
+                Some(c) => {
+                    // For any other escape sequence we don't recognize,
+                    // just output the backslash and the character
+                    result.push('\\');
+                    result.push(c);
+                }
+                None => {
+                    // Handle trailing backslash
+                    result.push('\\');
+                }
+            }
+        } else {
+            result.push(c);
+        }
+    }
+
+    result
 }
 
 #[inline]
@@ -1741,6 +2075,10 @@ world""#,
         assert!(Jsonb::from_str("[").is_err());
         assert!(Jsonb::from_str("}").is_err());
         assert!(Jsonb::from_str("]").is_err());
+
+        assert!(Jsonb::from_str(r#"{"a":"55,"b":72}"#).is_err());
+
+        assert!(Jsonb::from_str(r#"{"a":"55",,"b":72}"#).is_err());
 
         // Unclosed string
         assert!(Jsonb::from_str(r#"{"key":"value"#).is_err());

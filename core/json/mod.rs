@@ -5,6 +5,7 @@ mod json_path;
 mod jsonb;
 mod ser;
 
+use crate::bail_constraint_error;
 pub use crate::json::de::from_str;
 use crate::json::error::Error as JsonError;
 pub use crate::json::json_operations::{json_patch, json_remove};
@@ -13,7 +14,7 @@ pub use crate::json::ser::to_string;
 use crate::types::{OwnedValue, Text, TextSubtype};
 use crate::{bail_parse_error, json::de::ordered_object};
 use indexmap::IndexMap;
-use jsonb::Jsonb;
+use jsonb::{ElementType, Jsonb, JsonbHeader};
 use ser::to_string_pretty;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -49,7 +50,7 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
                 None => to_string(&json_val)?,
             };
 
-            Ok(OwnedValue::Text(Text::json(&json)))
+            Ok(OwnedValue::Text(Text::json(json)))
         }
         OwnedValue::Blob(b) => {
             let jsonbin = Jsonb::new(b.len(), Some(b));
@@ -67,30 +68,38 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
                 None => to_string(&json_val)?,
             };
 
-            Ok(OwnedValue::Text(Text::json(&json)))
+            Ok(OwnedValue::Text(Text::json(json)))
         }
     }
 }
 
 pub fn jsonb(json_value: &OwnedValue) -> crate::Result<OwnedValue> {
-    let jsonbin = match json_value {
-        OwnedValue::Null | OwnedValue::Integer(_) | OwnedValue::Float(_) | OwnedValue::Text(_) => {
-            Jsonb::from_str(&json_value.to_text().unwrap())
-        }
-        OwnedValue::Blob(blob) => {
-            let blob = Jsonb::new(blob.len(), Some(&blob));
-            blob.is_valid()?;
-            Ok(blob)
-        }
-        _ => {
-            unimplemented!()
-        }
-    };
+    let jsonbin = convert_dbtype_to_jsonb(json_value);
     match jsonbin {
         Ok(jsonbin) => Ok(OwnedValue::Blob(Rc::new(jsonbin.data()))),
         Err(_) => {
             bail_parse_error!("malformed JSON")
         }
+    }
+}
+
+fn convert_dbtype_to_jsonb(val: &OwnedValue) -> crate::Result<Jsonb> {
+    match val {
+        OwnedValue::Text(text) => Jsonb::from_str(text.as_str()),
+        OwnedValue::Blob(blob) => {
+            let json = Jsonb::from_raw_data(blob);
+            json.is_valid()?;
+            Ok(json)
+        }
+        OwnedValue::Record(_) | OwnedValue::Agg(_) => {
+            bail_constraint_error!("Wront number of arguments");
+        }
+        OwnedValue::Null => Jsonb::from_str("null"),
+        OwnedValue::Float(float) => {
+            let mut buff = ryu::Buffer::new();
+            Jsonb::from_str(buff.format(*float))
+        }
+        OwnedValue::Integer(int) => Jsonb::from_str(&int.to_string()),
     }
 }
 
@@ -149,29 +158,31 @@ pub fn json_array(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
     }
 
     s.push(']');
-    Ok(OwnedValue::Text(Text::json(&s)))
+    Ok(OwnedValue::Text(Text::json(s)))
 }
 
 pub fn json_array_length(
     json_value: &OwnedValue,
     json_path: Option<&OwnedValue>,
 ) -> crate::Result<OwnedValue> {
-    let json = get_json_value(json_value)?;
+    let json = convert_dbtype_to_jsonb(json_value)?;
 
-    let arr_val = if let Some(path) = json_path {
-        match json_extract_single(&json, path, true)? {
-            Some(val) => val,
-            None => return Ok(OwnedValue::Null),
-        }
-    } else {
-        &json
-    };
-
-    match arr_val {
-        Val::Array(val) => Ok(OwnedValue::Integer(val.len() as i64)),
-        Val::Null => Ok(OwnedValue::Null),
-        _ => Ok(OwnedValue::Integer(0)),
+    if json_path.is_none() {
+        let result = json.array_len()?;
+        return Ok(OwnedValue::Integer(result as i64));
     }
+
+    let path = json_path_from_owned_value(json_path.expect("We already checked none"), true)?;
+
+    if let Some(path) = path {
+        if let Ok(len) = json
+            .get_by_path(&path)
+            .and_then(|(json, _)| json.array_len())
+        {
+            return Ok(OwnedValue::Integer(len as i64));
+        }
+    }
+    Ok(OwnedValue::Null)
 }
 
 pub fn json_set(json: &OwnedValue, values: &[OwnedValue]) -> crate::Result<OwnedValue> {
@@ -222,13 +233,14 @@ pub fn json_arrow_extract(value: &OwnedValue, path: &OwnedValue) -> crate::Resul
         return Ok(OwnedValue::Null);
     }
 
-    let json = get_json_value(value)?;
-    let extracted = json_extract_single(&json, path, false)?;
-
-    if let Some(val) = extracted {
-        let json = to_string(val)?;
-
-        Ok(OwnedValue::Text(Text::json(&json)))
+    if let Some(path) = json_path_from_owned_value(path, false)? {
+        let json = convert_dbtype_to_jsonb(value)?;
+        let extracted = json.get_by_path(&path);
+        if let Ok((json, _)) = extracted {
+            Ok(OwnedValue::Text(Text::json(json.to_string()?)))
+        } else {
+            Ok(OwnedValue::Null)
+        }
     } else {
         Ok(OwnedValue::Null)
     }
@@ -243,11 +255,17 @@ pub fn json_arrow_shift_extract(
     if let OwnedValue::Null = value {
         return Ok(OwnedValue::Null);
     }
-
-    let json = get_json_value(value)?;
-    let extracted = json_extract_single(&json, path, false)?.unwrap_or(&Val::Null);
-
-    convert_json_to_db_type(extracted, true)
+    if let Some(path) = json_path_from_owned_value(path, false)? {
+        let json = convert_dbtype_to_jsonb(value)?;
+        let extracted = json.get_by_path(&path);
+        if let Ok((json, element_type)) = extracted {
+            Ok(json_string_to_db_type(json, element_type, false)?)
+        } else {
+            Ok(OwnedValue::Null)
+        }
+    } else {
+        Ok(OwnedValue::Null)
+    }
 }
 
 /// Extracts a JSON value from a JSON object or array.
@@ -260,38 +278,99 @@ pub fn json_extract(value: &OwnedValue, paths: &[OwnedValue]) -> crate::Result<O
 
     if paths.is_empty() {
         return Ok(OwnedValue::Null);
-    } else if paths.len() == 1 {
-        let json = get_json_value(value)?;
-        let extracted = json_extract_single(&json, &paths[0], true)?.unwrap_or(&Val::Null);
-
-        return convert_json_to_db_type(extracted, false);
     }
 
-    let json = get_json_value(value)?;
-    let mut result = "[".to_string();
+    let (json, element_type) = jsonb_extract_internal(value, paths)?;
+    let result = json_string_to_db_type(json, element_type, false)?;
 
-    for path in paths {
-        match path {
-            OwnedValue::Null => {
-                return Ok(OwnedValue::Null);
+    Ok(result)
+}
+
+pub fn jsonb_extract(value: &OwnedValue, paths: &[OwnedValue]) -> crate::Result<OwnedValue> {
+    if let OwnedValue::Null = value {
+        return Ok(OwnedValue::Null);
+    }
+
+    if paths.is_empty() {
+        return Ok(OwnedValue::Null);
+    }
+
+    let (json, element_type) = jsonb_extract_internal(value, paths)?;
+    let result = json_string_to_db_type(json, element_type, true)?;
+
+    Ok(result)
+}
+
+fn jsonb_extract_internal(
+    value: &OwnedValue,
+    paths: &[OwnedValue],
+) -> crate::Result<(Jsonb, ElementType)> {
+    let null = Jsonb::from_raw_data(JsonbHeader::make_null().into_bytes().as_bytes());
+    if paths.len() == 1 {
+        if let Some(path) = json_path_from_owned_value(&paths[0], true)? {
+            let json = convert_dbtype_to_jsonb(value)?;
+            if let Ok((json, value_type)) = json.get_by_path(&path) {
+                return Ok((json, value_type));
+            } else {
+                return Ok((null, ElementType::NULL));
             }
-            _ => {
-                let extracted = json_extract_single(&json, path, true)?.unwrap_or(&Val::Null);
-
-                if paths.len() == 1 && extracted == &Val::Null {
-                    return Ok(OwnedValue::Null);
-                }
-
-                result.push_str(&to_string(&extracted)?);
-                result.push(',');
-            }
+        } else {
+            return Ok((null, ElementType::NULL));
         }
     }
 
-    result.pop(); // remove the final comma
-    result.push(']');
+    let json = convert_dbtype_to_jsonb(value)?;
+    let mut result = Jsonb::make_empty_array(json.len());
 
-    Ok(OwnedValue::Text(Text::json(&result)))
+    let paths = paths
+        .into_iter()
+        .map(|p| json_path_from_owned_value(p, true));
+    for path in paths {
+        if let Some(path) = path? {
+            let fragment = json.get_by_path_raw(&path);
+            if let Ok(data) = fragment {
+                result.append_to_array_unsafe(data);
+            } else {
+                result.append_to_array_unsafe(JsonbHeader::make_null().into_bytes().as_bytes());
+            }
+        } else {
+            return Ok((null, ElementType::NULL));
+        }
+    }
+    result.finalize_array_unsafe()?;
+    Ok((result, ElementType::ARRAY))
+}
+
+fn json_string_to_db_type(
+    json: Jsonb,
+    element_type: ElementType,
+    raw_flag: bool,
+) -> crate::Result<OwnedValue> {
+    let mut json_string = json.to_string()?;
+    if raw_flag && matches!(element_type, ElementType::ARRAY | ElementType::OBJECT) {
+        return Ok(OwnedValue::Blob(Rc::new(json.data())));
+    }
+    match element_type {
+        ElementType::ARRAY | ElementType::OBJECT => Ok(OwnedValue::Text(Text::json(json_string))),
+        ElementType::TEXT | ElementType::TEXT5 | ElementType::TEXTJ | ElementType::TEXTRAW => {
+            json_string.remove(json_string.len() - 1);
+            json_string.remove(0);
+            Ok(OwnedValue::Text(Text {
+                value: Rc::new(json_string.into_bytes()),
+                subtype: TextSubtype::Text,
+            }))
+        }
+        ElementType::FLOAT5 | ElementType::FLOAT => Ok(OwnedValue::Float(
+            json_string.parse().expect("Should be valid f64"),
+        )),
+        ElementType::INT | ElementType::INT5 => Ok(OwnedValue::Integer(
+            json_string.parse().expect("Should be valid i64"),
+        )),
+        ElementType::TRUE => Ok(OwnedValue::Integer(1)),
+        ElementType::FALSE => Ok(OwnedValue::Integer(0)),
+        ElementType::NULL => Ok(OwnedValue::Null),
+        _ => unreachable!(),
+    }
 }
 
 /// Returns a value with type defined by SQLite documentation:
@@ -324,7 +403,7 @@ fn convert_json_to_db_type(extracted: &Val, all_as_db: bool) -> crate::Result<Ow
             if all_as_db {
                 Ok(OwnedValue::build_text(&json))
             } else {
-                Ok(OwnedValue::Text(Text::json(&json)))
+                Ok(OwnedValue::Text(Text::json(json)))
             }
         }
     }
@@ -357,91 +436,23 @@ pub fn json_type(value: &OwnedValue, path: Option<&OwnedValue>) -> crate::Result
     if let OwnedValue::Null = value {
         return Ok(OwnedValue::Null);
     }
+    if path.is_none() {
+        let json = convert_dbtype_to_jsonb(value)?;
+        let element_type = json.is_valid()?;
 
-    let json = get_json_value(value)?;
+        return Ok(OwnedValue::Text(Text::json(element_type.into())));
+    }
+    if let Some(path) = json_path_from_owned_value(path.unwrap(), true)? {
+        let json = convert_dbtype_to_jsonb(value)?;
 
-    let json = if let Some(path) = path {
-        match json_extract_single(&json, path, true)? {
-            Some(val) => val,
-            None => return Ok(OwnedValue::Null),
+        if let Ok((_, element_type)) = json.get_by_path(&path) {
+            Ok(OwnedValue::Text(Text::json(element_type.into())))
+        } else {
+            Ok(OwnedValue::Null)
         }
     } else {
-        &json
-    };
-
-    let val = match json {
-        Val::Null => "null",
-        Val::Bool(v) => {
-            if *v {
-                "true"
-            } else {
-                "false"
-            }
-        }
-        Val::Integer(_) => "integer",
-        Val::Float(_) => "real",
-        Val::String(_) => "text",
-        Val::Array(_) => "array",
-        Val::Object(_) => "object",
-        Val::Removed => unreachable!(),
-    };
-
-    Ok(OwnedValue::Text(Text::json(val)))
-}
-
-/// Returns the value at the given JSON path. If the path does not exist, it returns None.
-/// If the path is an invalid path, returns an error.
-///
-/// *strict* - if false, we will try to resolve the path even if it does not start with "$"
-///   in a way that's compatible with the `->` and `->>` operators. See examples in the docs:
-///   https://sqlite.org/json1.html#the_and_operators
-fn json_extract_single<'a>(
-    json: &'a Val,
-    path: &OwnedValue,
-    strict: bool,
-) -> crate::Result<Option<&'a Val>> {
-    let json_path = match json_path_from_owned_value(path, strict)? {
-        Some(path) => path,
-        None => return Ok(None),
-    };
-
-    let mut current_element = &Val::Null;
-
-    for element in json_path.elements.iter() {
-        match element {
-            PathElement::Root() => {
-                current_element = json;
-            }
-            PathElement::Key(key, _) => match current_element {
-                Val::Object(map) => {
-                    if let Some((_, value)) = map.iter().find(|(k, _)| k == key) {
-                        current_element = value;
-                    } else {
-                        return Ok(None);
-                    }
-                }
-                _ => return Ok(None),
-            },
-            PathElement::ArrayLocator(idx) => match current_element {
-                Val::Array(array) => {
-                    if let Some(mut idx) = *idx {
-                        if idx < 0 {
-                            idx += array.len() as i32;
-                        }
-
-                        if idx < array.len() as i32 {
-                            current_element = &array[idx as usize];
-                        } else {
-                            return Ok(None);
-                        }
-                    }
-                }
-                _ => return Ok(None),
-            },
-        }
+        Ok(OwnedValue::Null)
     }
-
-    Ok(Some(current_element))
 }
 
 fn json_path_from_owned_value(path: &OwnedValue, strict: bool) -> crate::Result<Option<JsonPath>> {
@@ -674,21 +685,16 @@ pub fn json_object(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
         .collect::<Result<IndexMap<String, Val>, _>>()?;
 
     let result = crate::json::to_string(&value_map)?;
-    Ok(OwnedValue::Text(Text::json(&result)))
+    Ok(OwnedValue::Text(Text::json(result)))
 }
 
-pub fn is_json_valid(json_value: &OwnedValue) -> crate::Result<OwnedValue> {
-    match json_value {
-        OwnedValue::Text(ref t) => match from_str::<Val>(t.as_str()) {
-            Ok(_) => Ok(OwnedValue::Integer(1)),
-            Err(_) => Ok(OwnedValue::Integer(0)),
-        },
-        OwnedValue::Blob(_) => {
-            bail_parse_error!("Unsuported!")
-        }
-        OwnedValue::Null => Ok(OwnedValue::Null),
-        _ => Ok(OwnedValue::Integer(1)),
+pub fn is_json_valid(json_value: &OwnedValue) -> OwnedValue {
+    if matches!(json_value, OwnedValue::Null) {
+        return OwnedValue::Null;
     }
+    convert_dbtype_to_jsonb(json_value)
+        .map(|_| OwnedValue::Integer(1))
+        .unwrap_or(OwnedValue::Integer(0))
 }
 
 pub fn json_quote(value: &OwnedValue) -> crate::Result<OwnedValue> {
@@ -866,7 +872,7 @@ mod tests {
     #[test]
     fn test_json_array_simple() {
         let text = OwnedValue::build_text("value1");
-        let json = OwnedValue::Text(Text::json("\"value2\""));
+        let json = OwnedValue::Text(Text::json("\"value2\"".to_string()));
         let input = vec![text, json, OwnedValue::Integer(1), OwnedValue::Float(1.1)];
 
         let result = json_array(&input).unwrap();
@@ -1104,7 +1110,7 @@ mod tests {
         let text_key = OwnedValue::build_text("text_key");
         let text_value = OwnedValue::build_text("text_value");
         let json_key = OwnedValue::build_text("json_key");
-        let json_value = OwnedValue::Text(Text::json(r#"{"json":"value","number":1}"#));
+        let json_value = OwnedValue::Text(Text::json(r#"{"json":"value","number":1}"#.to_string()));
         let integer_key = OwnedValue::build_text("integer_key");
         let integer_value = OwnedValue::Integer(1);
         let float_key = OwnedValue::build_text("float_key");
@@ -1138,7 +1144,7 @@ mod tests {
     #[test]
     fn test_json_object_json_value_is_rendered_as_json() {
         let key = OwnedValue::build_text("key");
-        let value = OwnedValue::Text(Text::json(r#"{"json":"value"}"#));
+        let value = OwnedValue::Text(Text::json(r#"{"json":"value"}"#.to_string()));
         let input = vec![key, value];
 
         let result = json_object(&input).unwrap();
