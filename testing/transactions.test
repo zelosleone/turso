@@ -10,3 +10,7 @@ do_execsql_test basic-tx-1 {
 do_execsql_test basic-tx-2 {
   BEGIN EXCLUSIVE; END
 } {}
+
+do_execsql_test basic-tx-3 {
+  BEGIN DEFERRED; END
+  } {}

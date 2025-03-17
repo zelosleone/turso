@@ -1,6 +1,6 @@
 use crate::translate::{ProgramBuilder, ProgramBuilderOpts};
 use crate::vdbe::insn::Insn;
-use crate::{bail_parse_error, QueryMode, Result};
+use crate::{QueryMode, Result};
 use limbo_sqlite3_parser::ast::{Name, TransactionType};
 
 pub fn translate_tx_begin(
@@ -18,7 +18,10 @@ pub fn translate_tx_begin(
     let tx_type = tx_type.unwrap_or(TransactionType::Deferred);
     match tx_type {
         TransactionType::Deferred => {
-            bail_parse_error!("BEGIN DEFERRED not supported yet");
+            program.emit_insn(Insn::AutoCommit {
+                auto_commit: false,
+                rollback: false,
+            });
         }
         TransactionType::Immediate | TransactionType::Exclusive => {
             program.emit_insn(Insn::Transaction { write: true });
