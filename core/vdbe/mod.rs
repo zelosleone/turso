@@ -1263,9 +1263,7 @@ impl Program {
                             }
                         }
                         if updated {
-                            connection
-                                .transaction_state
-                                .replace(new_transaction_state.clone());
+                            connection.transaction_state.replace(new_transaction_state);
                         }
                     }
                     state.pc += 1;
