@@ -599,7 +599,7 @@ pub fn insn_to_str(
                 0,
                 OwnedValue::build_text(""),
                 0,
-                "".to_string(),
+                format!("write={}", write),
             ),
             Insn::Goto { target_pc } => (
                 "Goto",
