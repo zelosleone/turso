@@ -1,8 +1,7 @@
 use anyhow::Result;
 use errors::*;
 use pyo3::prelude::*;
-use pyo3::types::PyList;
-use pyo3::types::PyTuple;
+use pyo3::types::{PyBytes, PyList, PyTuple};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -28,25 +27,7 @@ struct Description {
     null_ok: Option<String>,
 }
 
-impl IntoPy<Py<PyTuple>> for Description {
-    fn into_py(self, py: Python<'_>) -> Py<PyTuple> {
-        PyTuple::new_bound(
-            py,
-            vec![
-                self.name.into_py(py),
-                self.type_code.into_py(py),
-                self.display_size.into_py(py),
-                self.internal_size.into_py(py),
-                self.precision.into_py(py),
-                self.scale.into_py(py),
-                self.null_ok.into_py(py),
-            ],
-        )
-        .into()
-    }
-}
-
-#[pyclass]
+#[pyclass(unsendable)]
 pub struct Cursor {
     /// This read/write attribute specifies the number of rows to fetch at a time with `.fetchmany()`.
     /// It defaults to `1`, meaning it fetches a single row at a time.
@@ -81,8 +62,12 @@ pub struct Cursor {
     smt: Option<Rc<RefCell<limbo_core::Statement>>>,
 }
 
-// SAFETY: The limbo_core crate guarantees that `Cursor` is thread-safe.
-unsafe impl Send for Cursor {}
+#[pyclass(unsendable)]
+#[derive(Clone)]
+pub struct Connection {
+    conn: Rc<limbo_core::Connection>,
+    io: Arc<dyn limbo_core::IO>,
+}
 
 #[allow(unused_variables, clippy::arc_with_non_send_sync)]
 #[pymethods]
@@ -135,7 +120,7 @@ impl Cursor {
                 })? {
                     limbo_core::StepResult::Row => {
                         let row = stmt.row().unwrap();
-                        let py_row = row_to_py(py, &row);
+                        let py_row = row_to_py(py, &row)?;
                         return Ok(Some(py_row));
                     }
                     limbo_core::StepResult::IO => {
@@ -171,7 +156,7 @@ impl Cursor {
                 })? {
                     limbo_core::StepResult::Row => {
                         let row = stmt.row().unwrap();
-                        let py_row = row_to_py(py, &row);
+                        let py_row = row_to_py(py, &row)?;
                         results.push(py_row);
                     }
                     limbo_core::StepResult::IO => {
@@ -229,16 +214,6 @@ fn stmt_is_ddl(sql: &str) -> bool {
     let sql = sql.to_uppercase();
     sql.starts_with("CREATE") || sql.starts_with("ALTER") || sql.starts_with("DROP")
 }
-
-#[pyclass]
-#[derive(Clone)]
-pub struct Connection {
-    conn: Rc<limbo_core::Connection>,
-    io: Arc<dyn limbo_core::IO>,
-}
-
-// SAFETY: The limbo_core crate guarantees that `Connection` is thread-safe.
-unsafe impl Send for Connection {}
 
 #[pymethods]
 impl Connection {
@@ -298,21 +273,24 @@ pub fn connect(path: &str) -> Result<Connection> {
     }
 }
 
-fn row_to_py(py: Python, row: &limbo_core::Row) -> PyObject {
-    let py_values: Vec<PyObject> = row
-        .get_values()
-        .iter()
-        .map(|value| match value {
-            limbo_core::OwnedValue::Null => py.None(),
-            limbo_core::OwnedValue::Integer(i) => i.to_object(py),
-            limbo_core::OwnedValue::Float(f) => f.to_object(py),
-            limbo_core::OwnedValue::Text(s) => s.as_str().to_object(py),
-            limbo_core::OwnedValue::Blob(b) => b.to_object(py),
+fn row_to_py(py: Python, row: &limbo_core::Row) -> Result<PyObject> {
+    let mut py_values = Vec::new();
+    for value in row.get_values() {
+        match value {
+            limbo_core::OwnedValue::Null => py_values.push(py.None()),
+            limbo_core::OwnedValue::Integer(i) => py_values.push(i.into_pyobject(py)?.into()),
+            limbo_core::OwnedValue::Float(f) => py_values.push(f.into_pyobject(py)?.into()),
+            limbo_core::OwnedValue::Text(s) => py_values.push(s.as_str().into_pyobject(py)?.into()),
+            limbo_core::OwnedValue::Blob(b) => {
+                py_values.push(PyBytes::new(py, b.as_slice()).into())
+            }
             _ => unreachable!(),
-        })
-        .collect();
-
-    PyTuple::new_bound(py, &py_values).to_object(py)
+        }
+    }
+    Ok(PyTuple::new(py, &py_values)
+        .unwrap()
+        .into_pyobject(py)?
+        .into())
 }
 
 #[pymodule]
@@ -321,24 +299,15 @@ fn _limbo(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_class::<Connection>()?;
     m.add_class::<Cursor>()?;
     m.add_function(wrap_pyfunction!(connect, m)?)?;
-    m.add("Warning", m.py().get_type_bound::<Warning>())?;
-    m.add("Error", m.py().get_type_bound::<Error>())?;
-    m.add("InterfaceError", m.py().get_type_bound::<InterfaceError>())?;
-    m.add("DatabaseError", m.py().get_type_bound::<DatabaseError>())?;
-    m.add("DataError", m.py().get_type_bound::<DataError>())?;
-    m.add(
-        "OperationalError",
-        m.py().get_type_bound::<OperationalError>(),
-    )?;
-    m.add("IntegrityError", m.py().get_type_bound::<IntegrityError>())?;
-    m.add("InternalError", m.py().get_type_bound::<InternalError>())?;
-    m.add(
-        "ProgrammingError",
-        m.py().get_type_bound::<ProgrammingError>(),
-    )?;
-    m.add(
-        "NotSupportedError",
-        m.py().get_type_bound::<NotSupportedError>(),
-    )?;
+    m.add("Warning", m.py().get_type::<Warning>())?;
+    m.add("Error", m.py().get_type::<Error>())?;
+    m.add("InterfaceError", m.py().get_type::<InterfaceError>())?;
+    m.add("DatabaseError", m.py().get_type::<DatabaseError>())?;
+    m.add("DataError", m.py().get_type::<DataError>())?;
+    m.add("OperationalError", m.py().get_type::<OperationalError>())?;
+    m.add("IntegrityError", m.py().get_type::<IntegrityError>())?;
+    m.add("InternalError", m.py().get_type::<InternalError>())?;
+    m.add("ProgrammingError", m.py().get_type::<ProgrammingError>())?;
+    m.add("NotSupportedError", m.py().get_type::<NotSupportedError>())?;
     Ok(())
 }
