@@ -24,6 +24,7 @@ pub(crate) mod select;
 pub(crate) mod subquery;
 pub(crate) mod transaction;
 
+use crate::fast_lock::SpinLock;
 use crate::schema::Schema;
 use crate::storage::pager::Pager;
 use crate::storage::sqlite3_ondisk::DatabaseHeader;
@@ -38,14 +39,14 @@ use limbo_sqlite3_parser::ast::{self, fmt::ToTokens, CreateVirtualTable, Delete,
 use select::translate_select;
 use std::fmt::Display;
 use std::rc::{Rc, Weak};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use transaction::{translate_tx_begin, translate_tx_commit};
 
 /// Translate SQL statement into bytecode program.
 pub fn translate(
     schema: &Schema,
     stmt: ast::Stmt,
-    database_header: Arc<Mutex<DatabaseHeader>>,
+    database_header: Arc<SpinLock<DatabaseHeader>>,
     pager: Rc<Pager>,
     connection: Weak<Connection>,
     syms: &SymbolTable,

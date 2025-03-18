@@ -4,8 +4,9 @@
 use limbo_sqlite3_parser::ast;
 use limbo_sqlite3_parser::ast::PragmaName;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use crate::fast_lock::SpinLock;
 use crate::schema::Schema;
 use crate::storage::sqlite3_ondisk::{DatabaseHeader, MIN_PAGE_CACHE_SIZE};
 use crate::storage::wal::CheckpointMode;
@@ -38,7 +39,7 @@ pub fn translate_pragma(
     schema: &Schema,
     name: &ast::QualifiedName,
     body: Option<ast::PragmaBody>,
-    database_header: Arc<Mutex<DatabaseHeader>>,
+    database_header: Arc<SpinLock<DatabaseHeader>>,
     pager: Rc<Pager>,
 ) -> crate::Result<ProgramBuilder> {
     let mut program = ProgramBuilder::new(ProgramBuilderOpts {
@@ -115,7 +116,7 @@ fn update_pragma(
     pragma: PragmaName,
     schema: &Schema,
     value: ast::Expr,
-    header: Arc<Mutex<DatabaseHeader>>,
+    header: Arc<SpinLock<DatabaseHeader>>,
     pager: Rc<Pager>,
     program: &mut ProgramBuilder,
 ) -> crate::Result<()> {
@@ -166,18 +167,14 @@ fn query_pragma(
     pragma: PragmaName,
     schema: &Schema,
     value: Option<ast::Expr>,
-    database_header: Arc<Mutex<DatabaseHeader>>,
+    database_header: Arc<SpinLock<DatabaseHeader>>,
     program: &mut ProgramBuilder,
 ) -> crate::Result<()> {
     let register = program.alloc_register();
     match pragma {
         PragmaName::CacheSize => {
             program.emit_int(
-                database_header
-                    .lock()
-                    .unwrap()
-                    .default_page_cache_size
-                    .into(),
+                database_header.lock().default_page_cache_size.into(),
                 register,
             );
             program.emit_result_row(register, 1);
@@ -265,7 +262,7 @@ fn query_pragma(
     Ok(())
 }
 
-fn update_cache_size(value: i64, header: Arc<Mutex<DatabaseHeader>>, pager: Rc<Pager>) {
+fn update_cache_size(value: i64, header: Arc<SpinLock<DatabaseHeader>>, pager: Rc<Pager>) {
     let mut cache_size_unformatted: i64 = value;
     let mut cache_size = if cache_size_unformatted < 0 {
         let kb = cache_size_unformatted.abs() * 1024;
@@ -281,12 +278,12 @@ fn update_cache_size(value: i64, header: Arc<Mutex<DatabaseHeader>>, pager: Rc<P
     }
 
     // update in-memory header
-    header.lock().unwrap().default_page_cache_size = cache_size_unformatted
+    header.lock().default_page_cache_size = cache_size_unformatted
         .try_into()
         .unwrap_or_else(|_| panic!("invalid value, too big for a i32 {}", value));
 
     // update in disk
-    let header_copy = header.lock().unwrap().clone();
+    let header_copy = header.lock().clone();
     pager.write_database_header(&header_copy);
 
     // update cache size

@@ -1960,8 +1960,7 @@ impl BTreeCursor {
                 }
                 OverflowState::ProcessPage { next_page } => {
                     if next_page < 2
-                        || next_page as usize
-                            > self.pager.db_header.lock().unwrap().database_size as usize
+                        || next_page as usize > self.pager.db_header.lock().database_size as usize
                     {
                         self.overflow_state = None;
                         return Err(LimboError::Corrupt("Invalid overflow page number".into()));
@@ -3037,6 +3036,7 @@ mod tests {
     use test_log::test;
 
     use super::*;
+    use crate::fast_lock::SpinLock;
     use crate::io::{Buffer, Completion, MemoryIO, OpenFlags, IO};
     use crate::storage::database::FileStorage;
     use crate::storage::page_cache::DumbLruPageCache;
@@ -3050,7 +3050,6 @@ mod tests {
     use std::panic;
     use std::rc::Rc;
     use std::sync::Arc;
-    use std::sync::Mutex;
 
     use tempfile::TempDir;
 
@@ -3332,7 +3331,7 @@ mod tests {
 
         let page_cache = Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(10)));
         let pager = {
-            let db_header = Arc::new(Mutex::new(db_header.clone()));
+            let db_header = Arc::new(SpinLock::new(db_header.clone()));
             Pager::finish_open(db_header, page_io, wal, io, page_cache, buffer_pool).unwrap()
         };
         let pager = Rc::new(pager);
@@ -3564,12 +3563,12 @@ mod tests {
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
-    fn setup_test_env(database_size: u32) -> (Rc<Pager>, Arc<Mutex<DatabaseHeader>>) {
+    fn setup_test_env(database_size: u32) -> (Rc<Pager>, Arc<SpinLock<DatabaseHeader>>) {
         let page_size = 512;
         let mut db_header = DatabaseHeader::default();
         db_header.page_size = page_size;
         db_header.database_size = database_size;
-        let db_header = Arc::new(Mutex::new(db_header));
+        let db_header = Arc::new(SpinLock::new(db_header));
 
         let buffer_pool = Rc::new(BufferPool::new(10));
 
@@ -3589,7 +3588,7 @@ mod tests {
         {
             let mut buf_mut = buf.borrow_mut();
             let buf_slice = buf_mut.as_mut_slice();
-            sqlite3_ondisk::write_header_to_buf(buf_slice, &db_header.lock().unwrap());
+            sqlite3_ondisk::write_header_to_buf(buf_slice, &db_header.lock());
         }
 
         let write_complete = Box::new(|_| {});
@@ -3639,7 +3638,7 @@ mod tests {
             let drop_fn = Rc::new(|_buf| {});
             #[allow(clippy::arc_with_non_send_sync)]
             let buf = Arc::new(RefCell::new(Buffer::allocate(
-                db_header.lock().unwrap().page_size as usize,
+                db_header.lock().page_size as usize,
                 drop_fn,
             )));
             let write_complete = Box::new(|_| {});
@@ -3679,20 +3678,20 @@ mod tests {
             first_overflow_page: Some(2), // Point to first overflow page
         });
 
-        let initial_freelist_pages = db_header.lock().unwrap().freelist_pages;
+        let initial_freelist_pages = db_header.lock().freelist_pages;
         // Clear overflow pages
         let clear_result = cursor.clear_overflow_pages(&leaf_cell)?;
         match clear_result {
             CursorResult::Ok(_) => {
                 // Verify proper number of pages were added to freelist
                 assert_eq!(
-                    db_header.lock().unwrap().freelist_pages,
+                    db_header.lock().freelist_pages,
                     initial_freelist_pages + 3,
                     "Expected 3 pages to be added to freelist"
                 );
 
                 // If this is first trunk page
-                let trunk_page_id = db_header.lock().unwrap().freelist_trunk_page;
+                let trunk_page_id = db_header.lock().freelist_trunk_page;
                 if trunk_page_id > 0 {
                     // Verify trunk page structure
                     let trunk_page = cursor.pager.read_page(trunk_page_id as usize)?;
@@ -3734,7 +3733,7 @@ mod tests {
             first_overflow_page: None,
         });
 
-        let initial_freelist_pages = db_header.lock().unwrap().freelist_pages;
+        let initial_freelist_pages = db_header.lock().freelist_pages;
 
         // Try to clear non-existent overflow pages
         let clear_result = cursor.clear_overflow_pages(&leaf_cell)?;
@@ -3742,14 +3741,14 @@ mod tests {
             CursorResult::Ok(_) => {
                 // Verify freelist was not modified
                 assert_eq!(
-                    db_header.lock().unwrap().freelist_pages,
+                    db_header.lock().freelist_pages,
                     initial_freelist_pages,
                     "Freelist should not change when no overflow pages exist"
                 );
 
                 // Verify trunk page wasn't created
                 assert_eq!(
-                    db_header.lock().unwrap().freelist_trunk_page,
+                    db_header.lock().freelist_trunk_page,
                     0,
                     "No trunk page should be created when no overflow pages exist"
                 );
@@ -3768,7 +3767,7 @@ mod tests {
         let (pager, db_header) = setup_test_env(initial_size);
         let mut cursor = BTreeCursor::new(None, pager.clone(), 2);
         assert_eq!(
-            db_header.lock().unwrap().database_size,
+            db_header.lock().database_size,
             initial_size,
             "Database should initially have 3 pages"
         );
@@ -3828,18 +3827,18 @@ mod tests {
 
         // Verify structure before destruction
         assert_eq!(
-            db_header.lock().unwrap().database_size,
+            db_header.lock().database_size,
             5, // We should have pages 0-4
             "Database should have 4 pages total"
         );
 
         // Track freelist state before destruction
-        let initial_free_pages = db_header.lock().unwrap().freelist_pages;
+        let initial_free_pages = db_header.lock().freelist_pages;
         assert_eq!(initial_free_pages, 0, "should start with no free pages");
 
         run_until_done(|| cursor.btree_destroy(), pager.deref())?;
 
-        let pages_freed = db_header.lock().unwrap().freelist_pages - initial_free_pages;
+        let pages_freed = db_header.lock().freelist_pages - initial_free_pages;
         assert_eq!(pages_freed, 3, "should free 3 pages (root + 2 leaves)");
 
         Ok(())

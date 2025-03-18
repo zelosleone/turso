@@ -1,5 +1,6 @@
 mod error;
 mod ext;
+mod fast_lock;
 mod function;
 mod functions;
 mod info;
@@ -25,6 +26,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use ext::list_vfs_modules;
 use fallible_iterator::FallibleIterator;
+use fast_lock::SpinLock;
 use limbo_ext::{ResultCode, VTabKind, VTabModuleImpl};
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
@@ -34,7 +36,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::num::NonZero;
 use std::ops::Deref;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::{cell::RefCell, rc::Rc};
 use storage::btree::btree_init_page;
 #[cfg(feature = "fs")]
@@ -88,7 +90,7 @@ pub struct Database {
     mv_store: Option<Rc<MvStore>>,
     schema: Arc<RwLock<Schema>>,
     // TODO: make header work without lock
-    header: Arc<Mutex<DatabaseHeader>>,
+    header: Arc<SpinLock<DatabaseHeader>>,
     page_io: Arc<dyn DatabaseStorage>,
     io: Arc<dyn IO>,
     page_size: u16,
@@ -112,7 +114,7 @@ impl Database {
         let wal_path = format!("{}-wal", path);
         let db_header = Pager::begin_open(page_io.clone())?;
         io.run_once()?;
-        let page_size = db_header.lock().unwrap().page_size;
+        let page_size = db_header.lock().page_size;
         let wal_shared = WalFileShared::open_shared(&io, wal_path.as_str(), page_size)?;
         Self::open(io, page_io, wal_shared, enable_mvcc)
     }
@@ -127,7 +129,7 @@ impl Database {
         let db_header = Pager::begin_open(page_io.clone())?;
         io.run_once()?;
         DATABASE_VERSION.get_or_init(|| {
-            let version = db_header.lock().unwrap().version_number;
+            let version = db_header.lock().version_number;
             version.to_string()
         });
         let mv_store = if enable_mvcc {
@@ -139,7 +141,7 @@ impl Database {
             None
         };
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
-        let page_size = db_header.lock().unwrap().page_size;
+        let page_size = db_header.lock().page_size;
         let header = db_header;
         let schema = Arc::new(RwLock::new(Schema::new()));
         let db = Database {
@@ -280,7 +282,7 @@ pub struct Connection {
     _db: Arc<Database>,
     pager: Rc<Pager>,
     schema: Arc<RwLock<Schema>>,
-    header: Arc<Mutex<DatabaseHeader>>,
+    header: Arc<SpinLock<DatabaseHeader>>,
     auto_commit: RefCell<bool>,
     mv_transactions: RefCell<Vec<crate::mvcc::database::TxID>>,
     transaction_state: RefCell<TransactionState>,
