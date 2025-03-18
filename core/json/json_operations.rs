@@ -1,11 +1,11 @@
-use std::collections::VecDeque;
+use std::{collections::VecDeque, rc::Rc};
 
-use crate::{
-    json::{mutate_json_by_path, Target},
-    types::OwnedValue,
+use crate::types::OwnedValue;
+
+use super::{
+    convert_dbtype_to_jsonb, convert_json_to_db_type, get_json_value, json_path_from_owned_value,
+    json_string_to_db_type, Val,
 };
-
-use super::{convert_json_to_db_type, get_json_value, json_path::json_path, Val};
 
 /// Represents a single patch operation in the merge queue.
 ///
@@ -155,33 +155,72 @@ pub fn json_remove(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
         return Ok(OwnedValue::Null);
     }
 
-    let mut parsed_target = get_json_value(&args[0])?;
-    if args.len() == 1 {
-        return Ok(args[0].clone());
+    let mut json = convert_dbtype_to_jsonb(&args[0])?;
+    for arg in &args[1..] {
+        if let Some(path) = json_path_from_owned_value(arg, true)? {
+            json.remove_by_path(&path)?;
+        }
     }
 
-    let paths: Result<Vec<_>, _> = args[1..]
-        .iter()
-        .map(|path| {
-            if let OwnedValue::Text(path) = path {
-                json_path(path.as_str())
-            } else {
-                crate::bail_constraint_error!("bad JSON path: {:?}", path.to_string())
-            }
-        })
-        .collect();
-    let paths = paths?;
+    let el_type = json.is_valid()?;
 
-    for path in paths {
-        mutate_json_by_path(&mut parsed_target, path, |val| match val {
-            Target::Array(arr, index) => {
-                arr.remove(index);
-            }
-            Target::Value(val) => *val = Val::Removed,
-        });
+    Ok(json_string_to_db_type(json, el_type, false)?)
+}
+
+pub fn jsonb_remove(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
+    if args.is_empty() {
+        return Ok(OwnedValue::Null);
     }
 
-    convert_json_to_db_type(&parsed_target, false)
+    let mut json = convert_dbtype_to_jsonb(&args[0])?;
+    for arg in &args[1..] {
+        if let Some(path) = json_path_from_owned_value(arg, true)? {
+            json.remove_by_path(&path)?;
+        }
+    }
+
+    Ok(OwnedValue::Blob(Rc::new(json.data())))
+}
+
+pub fn json_replace(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
+    if args.is_empty() {
+        return Ok(OwnedValue::Null);
+    }
+
+    let mut json = convert_dbtype_to_jsonb(&args[0])?;
+    let other = args[1..].chunks_exact(2);
+    for chunk in other {
+        println!("{:?}", chunk);
+        let path = json_path_from_owned_value(&chunk[0], true)?;
+        let value = convert_dbtype_to_jsonb(&chunk[1])?;
+        if let Some(path) = path {
+            json.replace_by_path(&path, value)?;
+        }
+    }
+
+    let el_type = json.is_valid()?;
+
+    Ok(json_string_to_db_type(json, el_type, false)?)
+}
+
+pub fn jsonb_replace(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
+    if args.is_empty() {
+        return Ok(OwnedValue::Null);
+    }
+
+    let mut json = convert_dbtype_to_jsonb(&args[0])?;
+    let other = args[1..].chunks_exact(2);
+    for chunk in other {
+        let path = json_path_from_owned_value(&chunk[0], true)?;
+        let value = convert_dbtype_to_jsonb(&chunk[1])?;
+        if let Some(path) = path {
+            let _ = json.replace_by_path(&path, value);
+        }
+    }
+
+    let el_type = json.is_valid()?;
+
+    Ok(json_string_to_db_type(json, el_type, false)?)
 }
 
 #[cfg(test)]
