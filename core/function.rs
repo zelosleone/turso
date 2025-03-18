@@ -84,6 +84,9 @@ pub enum JsonFunc {
     JsonValid,
     JsonPatch,
     JsonRemove,
+    JsonbRemove,
+    JsonReplace,
+    JsonbReplace,
     JsonPretty,
     JsonSet,
     JsonQuote,
@@ -110,6 +113,9 @@ impl Display for JsonFunc {
                 Self::JsonValid => "json_valid".to_string(),
                 Self::JsonPatch => "json_patch".to_string(),
                 Self::JsonRemove => "json_remove".to_string(),
+                Self::JsonbRemove => "jsonb_remove".to_string(),
+                Self::JsonReplace => "json_replace".to_string(),
+                Self::JsonbReplace => "jsonb_replace".to_string(),
                 Self::JsonPretty => "json_pretty".to_string(),
                 Self::JsonSet => "json_set".to_string(),
                 Self::JsonQuote => "json_quote".to_string(),
@@ -574,6 +580,12 @@ impl Func {
             "json_patch" => Ok(Self::Json(JsonFunc::JsonPatch)),
             #[cfg(feature = "json")]
             "json_remove" => Ok(Self::Json(JsonFunc::JsonRemove)),
+            #[cfg(feature = "json")]
+            "jsonb_remove" => Ok(Self::Json(JsonFunc::JsonbRemove)),
+            #[cfg(feature = "json")]
+            "json_replace" => Ok(Self::Json(JsonFunc::JsonReplace)),
+            #[cfg(feature = "json")]
+            "jsonb_replace" => Ok(Self::Json(JsonFunc::JsonReplace)),
             #[cfg(feature = "json")]
             "json_pretty" => Ok(Self::Json(JsonFunc::JsonPretty)),
             #[cfg(feature = "json")]

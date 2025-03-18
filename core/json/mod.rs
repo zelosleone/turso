@@ -8,7 +8,9 @@ mod ser;
 use crate::bail_constraint_error;
 pub use crate::json::de::from_str;
 use crate::json::error::Error as JsonError;
-pub use crate::json::json_operations::{json_patch, json_remove};
+pub use crate::json::json_operations::{
+    json_patch, json_remove, json_replace, jsonb_remove, jsonb_replace,
+};
 use crate::json::json_path::{json_path, JsonPath, PathElement};
 pub use crate::json::ser::to_string;
 use crate::types::{OwnedValue, Text, TextSubtype};
@@ -499,60 +501,6 @@ fn json_path_from_owned_value(path: &OwnedValue, strict: bool) -> crate::Result<
 enum Target<'a> {
     Array(&'a mut Vec<Val>, usize),
     Value(&'a mut Val),
-}
-
-fn mutate_json_by_path<F, R>(json: &mut Val, path: JsonPath, closure: F) -> Option<R>
-where
-    F: FnMut(Target) -> R,
-{
-    find_target(json, &path).map(closure)
-}
-
-fn find_target<'a>(json: &'a mut Val, path: &JsonPath) -> Option<Target<'a>> {
-    let mut current = json;
-    for (i, key) in path.elements.iter().enumerate() {
-        let is_last = i == path.elements.len() - 1;
-        match key {
-            PathElement::Root() => continue,
-            PathElement::ArrayLocator(index) => match current {
-                Val::Array(arr) => {
-                    if let Some(index) = match index {
-                        Some(i) if *i < 0 => arr.len().checked_sub(i.unsigned_abs() as usize),
-                        Some(i) => ((*i as usize) < arr.len()).then_some(*i as usize),
-                        None => Some(arr.len()),
-                    } {
-                        if is_last {
-                            return Some(Target::Array(arr, index));
-                        } else {
-                            current = &mut arr[index];
-                        }
-                    } else {
-                        return None;
-                    }
-                }
-                _ => {
-                    return None;
-                }
-            },
-            PathElement::Key(key, _) => match current {
-                Val::Object(obj) => {
-                    if let Some(pos) = &obj
-                        .iter()
-                        .position(|(k, v)| k == key && !matches!(v, Val::Removed))
-                    {
-                        let val = &mut obj[*pos].1;
-                        current = val;
-                    } else {
-                        return None;
-                    }
-                }
-                _ => {
-                    return None;
-                }
-            },
-        }
-    }
-    Some(Target::Value(current))
 }
 
 fn create_and_mutate_json_by_path<F, R>(json: &mut Val, path: JsonPath, closure: F) -> Option<R>
@@ -1233,100 +1181,6 @@ mod tests {
                 .to_string()
                 .contains("json_object requires an even number of values")),
         }
-    }
-
-    #[test]
-    fn test_find_target_array() {
-        let mut val = Val::Array(vec![
-            Val::String("first".to_string()),
-            Val::String("second".to_string()),
-        ]);
-        let path = JsonPath {
-            elements: vec![PathElement::ArrayLocator(Some(0))],
-        };
-
-        match find_target(&mut val, &path) {
-            Some(Target::Array(_, idx)) => assert_eq!(idx, 0),
-            _ => panic!("Expected Array target"),
-        }
-    }
-
-    #[test]
-    fn test_find_target_negative_index() {
-        let mut val = Val::Array(vec![
-            Val::String("first".to_string()),
-            Val::String("second".to_string()),
-        ]);
-        let path = JsonPath {
-            elements: vec![PathElement::ArrayLocator(Some(-1))],
-        };
-
-        match find_target(&mut val, &path) {
-            Some(Target::Array(_, idx)) => assert_eq!(idx, 1),
-            _ => panic!("Expected Array target"),
-        }
-    }
-
-    #[test]
-    fn test_find_target_object() {
-        let mut val = Val::Object(vec![("key".to_string(), Val::String("value".to_string()))]);
-        let path = JsonPath {
-            elements: vec![PathElement::Key(Cow::Borrowed("key"), false)],
-        };
-
-        match find_target(&mut val, &path) {
-            Some(Target::Value(_)) => {}
-            _ => panic!("Expected Value target"),
-        }
-    }
-
-    #[test]
-    fn test_find_target_removed() {
-        let mut val = Val::Object(vec![
-            ("key".to_string(), Val::Removed),
-            ("key".to_string(), Val::String("value".to_string())),
-        ]);
-        let path = JsonPath {
-            elements: vec![PathElement::Key(Cow::Borrowed("key"), false)],
-        };
-
-        match find_target(&mut val, &path) {
-            Some(Target::Value(val)) => assert!(matches!(val, Val::String(_))),
-            _ => panic!("Expected second value, not removed"),
-        }
-    }
-
-    #[test]
-    fn test_mutate_json() {
-        let mut val = Val::Array(vec![Val::String("test".to_string())]);
-        let path = JsonPath {
-            elements: vec![PathElement::ArrayLocator(Some(0))],
-        };
-
-        let result = mutate_json_by_path(&mut val, path, |target| match target {
-            Target::Array(arr, idx) => {
-                arr.remove(idx);
-                "removed"
-            }
-            _ => panic!("Expected Array target"),
-        });
-
-        assert_eq!(result, Some("removed"));
-        assert!(matches!(val, Val::Array(arr) if arr.is_empty()));
-    }
-
-    #[test]
-    fn test_mutate_json_none() {
-        let mut val = Val::Array(vec![]);
-        let path = JsonPath {
-            elements: vec![PathElement::ArrayLocator(Some(0))],
-        };
-
-        let result: Option<()> = mutate_json_by_path(&mut val, path, |_| {
-            panic!("Should not be called");
-        });
-
-        assert_eq!(result, None);
     }
 
     #[test]
