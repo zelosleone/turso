@@ -449,6 +449,11 @@ impl PageContent {
         u16::from_be_bytes([buf[pos], buf[pos + 1]])
     }
 
+    pub fn read_u32_no_offset(&self, pos: usize) -> u32 {
+        let buf = self.as_ptr();
+        u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]])
+    }
+
     pub fn read_u32(&self, pos: usize) -> u32 {
         let buf = self.as_ptr();
         read_u32(buf, self.offset + pos)
@@ -815,7 +820,10 @@ pub struct TableInteriorCell {
 #[derive(Debug, Clone)]
 pub struct TableLeafCell {
     pub _rowid: u64,
+    /// Payload of cell, if it overflows it won't include overflowed payload.
     pub _payload: &'static [u8],
+    /// This is the complete payload size including overflow pages.
+    pub payload_size: u64,
     pub first_overflow_page: Option<u32>,
 }
 
@@ -823,6 +831,8 @@ pub struct TableLeafCell {
 pub struct IndexInteriorCell {
     pub left_child_page: u32,
     pub payload: &'static [u8],
+    /// This is the complete payload size including overflow pages.
+    pub payload_size: u64,
     pub first_overflow_page: Option<u32>,
 }
 
@@ -830,6 +840,8 @@ pub struct IndexInteriorCell {
 pub struct IndexLeafCell {
     pub payload: &'static [u8],
     pub first_overflow_page: Option<u32>,
+    /// This is the complete payload size including overflow pages.
+    pub payload_size: u64,
 }
 
 /// read_btree_cell contructs a BTreeCell which is basically a wrapper around pointer to the payload of a cell.
@@ -861,6 +873,7 @@ pub fn read_btree_cell(
                 left_child_page,
                 payload,
                 first_overflow_page,
+                payload_size,
             }))
         }
         PageType::TableInterior => {
@@ -888,6 +901,7 @@ pub fn read_btree_cell(
             Ok(BTreeCell::IndexLeafCell(IndexLeafCell {
                 payload,
                 first_overflow_page,
+                payload_size,
             }))
         }
         PageType::TableLeaf => {
@@ -907,6 +921,7 @@ pub fn read_btree_cell(
                 _rowid: rowid,
                 _payload: payload,
                 first_overflow_page,
+                payload_size,
             }))
         }
     }
