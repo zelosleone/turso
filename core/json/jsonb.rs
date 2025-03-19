@@ -1,5 +1,5 @@
 use crate::{bail_parse_error, LimboError, Result};
-use std::{fmt::Write, str::from_utf8};
+use std::{cmp::Ordering, fmt::Write, str::from_utf8};
 
 use super::json_path::{JsonPath, PathElement};
 
@@ -838,7 +838,7 @@ impl Jsonb {
             b'"' | b'\'' => {
                 pos = self.deserialize_string(input, pos)?;
             }
-            c if (c >= b'0' && c <= b'9')
+            c if (b'0'..=b'9').contains(&c)
                 || c == b'-'
                 || c == b'+'
                 || c == b'.'
@@ -1313,12 +1313,10 @@ impl Jsonb {
             } else {
                 ElementType::FLOAT
             }
+        } else if is_json5 {
+            ElementType::INT5
         } else {
-            if is_json5 {
-                ElementType::INT5
-            } else {
-                ElementType::INT
-            }
+            ElementType::INT
         };
 
         self.write_element_header(num_start, element_type, len, false)?;
@@ -1410,7 +1408,7 @@ impl Jsonb {
         let header_len = header_bytes.len();
         if cursor == self.len() {
             self.data.extend_from_slice(header_bytes);
-            return Ok(header_len);
+            Ok(header_len)
         } else {
             // Calculate difference in length
             let old_len = if size_might_change {
@@ -1423,36 +1421,41 @@ impl Jsonb {
             let diff = new_len as isize - old_len as isize;
 
             // Resize the Vec if needed
-            if diff > 0 {
-                // Need to make room
-                self.data.resize(self.data.len() + diff as usize, 0);
+            match diff.cmp(&0isize) {
+                Ordering::Greater => {
+                    // Need to make room
+                    self.data.resize(self.data.len() + diff as usize, 0);
 
-                // Shift data after cursor to the right
-                unsafe {
-                    let ptr = self.data.as_mut_ptr();
-                    std::ptr::copy(
-                        ptr.add(cursor + old_len),
-                        ptr.add(cursor + new_len),
-                        self.data.len() - cursor - new_len,
-                    );
+                    // Shift data after cursor to the right
+                    unsafe {
+                        let ptr = self.data.as_mut_ptr();
+                        std::ptr::copy(
+                            ptr.add(cursor + old_len),
+                            ptr.add(cursor + new_len),
+                            self.data.len() - cursor - new_len,
+                        );
+                    }
                 }
-            } else if diff < 0 {
-                // Need to shrink
-                unsafe {
-                    let ptr = self.data.as_mut_ptr();
-                    std::ptr::copy(
-                        ptr.add(cursor + old_len),
-                        ptr.add(cursor + new_len),
-                        self.data.len() - cursor - old_len,
-                    );
+                Ordering::Less => {
+                    // Need to shrink
+                    unsafe {
+                        let ptr = self.data.as_mut_ptr();
+                        std::ptr::copy(
+                            ptr.add(cursor + old_len),
+                            ptr.add(cursor + new_len),
+                            self.data.len() - cursor - old_len,
+                        );
+                    }
                 }
-            }
+                Ordering::Equal => (),
+            };
 
             // Copy the header bytes
             for (i, &byte) in header_bytes.iter().enumerate() {
                 self.data[cursor + i] = byte;
             }
-            return Ok(new_len);
+
+            Ok(new_len)
         }
     }
 
@@ -1620,16 +1623,12 @@ impl Jsonb {
         Ok(())
     }
 
-    fn recalculate_headers(
-        &mut self,
-        stack: Vec<TraverseResult>,
-        delta: isize, // Signed delta
-    ) -> Result<()> {
+    fn recalculate_headers(&mut self, stack: Vec<TraverseResult>, delta: isize) -> Result<()> {
         let mut delta = delta;
-        let mut stack = stack.into_iter().rev();
+        let stack = stack.into_iter().rev();
 
         // Going backwards parent by parent and recalculating headers
-        while let Some(parent) = stack.next() {
+        for parent in stack {
             let pos = match parent {
                 TraverseResult::Value(v) => v,
                 TraverseResult::ObjectValue(v, _) => v,
@@ -1637,7 +1636,7 @@ impl Jsonb {
             let (JsonbHeader(value_type, value_size), header_size) = self.read_header(pos)?;
 
             let new_size = if delta < 0 {
-                value_size.saturating_add(delta.abs() as usize)
+                value_size.saturating_add(delta.unsigned_abs())
             } else {
                 value_size.saturating_sub(delta as usize)
             };

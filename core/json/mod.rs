@@ -344,9 +344,7 @@ fn jsonb_extract_internal(
     let json = convert_dbtype_to_jsonb(value, true)?;
     let mut result = Jsonb::make_empty_array(json.len());
 
-    let paths = paths
-        .into_iter()
-        .map(|p| json_path_from_owned_value(p, true));
+    let paths = paths.iter().map(|p| json_path_from_owned_value(p, true));
     for path in paths {
         if let Some(path) = path? {
             let fragment = json.get_by_path_raw(&path);

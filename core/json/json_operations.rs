@@ -164,7 +164,7 @@ pub fn json_remove(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
 
     let el_type = json.is_valid()?;
 
-    Ok(json_string_to_db_type(json, el_type, false, true)?)
+    json_string_to_db_type(json, el_type, false, true)
 }
 
 pub fn jsonb_remove(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
@@ -200,7 +200,7 @@ pub fn json_replace(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
 
     let el_type = json.is_valid()?;
 
-    Ok(json_string_to_db_type(json, el_type, false, false)?)
+    json_string_to_db_type(json, el_type, false, false)
 }
 
 pub fn jsonb_replace(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
@@ -220,7 +220,7 @@ pub fn jsonb_replace(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
 
     let el_type = json.is_valid()?;
 
-    Ok(json_string_to_db_type(json, el_type, false, true)?)
+    json_string_to_db_type(json, el_type, false, true)
 }
 
 #[cfg(test)]
