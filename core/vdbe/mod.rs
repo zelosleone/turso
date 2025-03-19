@@ -80,7 +80,6 @@ use std::num::NonZero;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
-use tracing::instrument;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Represents a target for a jump instruction.
