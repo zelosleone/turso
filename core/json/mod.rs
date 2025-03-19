@@ -391,9 +391,18 @@ fn json_string_to_db_type(
         ElementType::FLOAT5 | ElementType::FLOAT => Ok(OwnedValue::Float(
             json_string.parse().expect("Should be valid f64"),
         )),
-        ElementType::INT | ElementType::INT5 => Ok(OwnedValue::Integer(
-            json_string.parse().expect("Should be valid i64"),
-        )),
+        ElementType::INT | ElementType::INT5 => {
+            let result = i64::from_str(&json_string);
+            if let Ok(int) = result {
+                Ok(OwnedValue::Integer(int))
+            } else {
+                let res = f64::from_str(&json_string);
+                match res {
+                    Ok(num) => Ok(OwnedValue::Float(num)),
+                    Err(_) => Ok(OwnedValue::Null),
+                }
+            }
+        }
         ElementType::TRUE => Ok(OwnedValue::Integer(1)),
         ElementType::FALSE => Ok(OwnedValue::Integer(0)),
         ElementType::NULL => Ok(OwnedValue::Null),
