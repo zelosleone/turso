@@ -1603,14 +1603,6 @@ impl Jsonb {
 
         match target {
             TraverseResult::Value(target_pos) | TraverseResult::ObjectValue(target_pos, _) => {
-                // fast path
-                if target_pos == 0 {
-                    let null = JsonbHeader::make_null().into_bytes();
-                    self.data.clear();
-                    self.data.push(null.as_bytes()[0]);
-                    return Ok(());
-                };
-
                 let (JsonbHeader(_, target_size), target_header_size) =
                     self.read_header(target_pos)?;
                 let target_delta = target_header_size + target_size;
@@ -2496,5 +2488,286 @@ world""#,
         assert!(result.contains(r#""backslashes":"C:\\Windows\\System32""#));
         assert!(result.contains(r#""control_chars":"\b\f\n\r\t""#));
         assert!(result.contains(r#""unicode":"\u00A9 2023""#));
+    }
+}
+
+#[cfg(test)]
+mod path_mutation_tests {
+    use super::*;
+    use crate::json::json_path;
+
+    #[test]
+    fn test_remove_by_path_simple_object() {
+        // Test removing a simple key from an object
+        let mut jsonb = Jsonb::from_str(r#"{"a": 1, "b": 2, "c": 3}"#).unwrap();
+        let path = json_path("$.b").unwrap();
+
+        jsonb.remove_by_path(&path).unwrap();
+        assert_eq!(jsonb.to_string().unwrap(), r#"{"a":1,"c":3}"#);
+    }
+
+    #[test]
+    fn test_remove_by_path_array_element() {
+        // Test removing an element from an array
+        let mut jsonb = Jsonb::from_str(r#"[10, 20, 30, 40]"#).unwrap();
+        let path = json_path("$[1]").unwrap();
+
+        jsonb.remove_by_path(&path).unwrap();
+        assert_eq!(jsonb.to_string().unwrap(), r#"[10,30,40]"#);
+    }
+
+    #[test]
+    fn test_remove_by_path_nested_object() {
+        // Test removing a nested property
+        let mut jsonb = Jsonb::from_str(
+            r#"{"user": {"name": "Alice", "age": 30, "email": "alice@example.com"}}"#,
+        )
+        .unwrap();
+        let path = json_path("$.user.email").unwrap();
+
+        jsonb.remove_by_path(&path).unwrap();
+        assert_eq!(
+            jsonb.to_string().unwrap(),
+            r#"{"user":{"name":"Alice","age":30}}"#
+        );
+    }
+
+    #[test]
+    fn test_remove_by_path_nested_array() {
+        // Test removing an element from a nested array
+        let mut jsonb = Jsonb::from_str(r#"{"data": {"values": [1, 2, 3, 4, 5]}}"#).unwrap();
+        let path = json_path("$.data.values[2]").unwrap();
+
+        jsonb.remove_by_path(&path).unwrap();
+        assert_eq!(
+            jsonb.to_string().unwrap(),
+            r#"{"data":{"values":[1,2,4,5]}}"#
+        );
+    }
+
+    #[test]
+    fn test_remove_by_path_quoted_key() {
+        // Test removing an element with a key that contains special characters
+        let mut jsonb =
+            Jsonb::from_str(r#"{"normal": 1, "key.with.dots": 2, "key[0]": 3}"#).unwrap();
+        let path = json_path(r#"$."key.with.dots""#).unwrap();
+
+        jsonb.remove_by_path(&path).unwrap();
+        assert_eq!(jsonb.to_string().unwrap(), r#"{"normal":1,"key[0]":3}"#);
+    }
+
+    #[test]
+    fn test_remove_by_path_entire_object() {
+        // Test removing the entire object
+        let mut jsonb = Jsonb::from_str(r#"{"a": 1, "b": 2}"#).unwrap();
+        let path = json_path("$").unwrap();
+
+        jsonb.remove_by_path(&path).unwrap();
+        assert_eq!(jsonb.to_string().unwrap(), "null");
+    }
+
+    #[test]
+    fn test_remove_by_path_nonexistent() {
+        // Test behavior when the path doesn't exist
+        let mut jsonb = Jsonb::from_str(r#"{"a": 1, "b": 2}"#).unwrap();
+        let path = json_path("$.c").unwrap();
+
+        // This should return an error
+        let result = jsonb.remove_by_path(&path);
+        assert!(result.is_err());
+
+        // Original JSON should remain unchanged
+        assert_eq!(jsonb.to_string().unwrap(), r#"{"a":1,"b":2}"#);
+    }
+
+    #[test]
+    fn test_remove_by_path_complex_nested() {
+        // Test removing from a complex nested structure
+        let mut jsonb = Jsonb::from_str(
+            r#"
+        {
+            "store": {
+                "book": [
+                    {
+                        "category": "fiction",
+                        "author": "J.R.R. Tolkien",
+                        "title": "The Lord of the Rings",
+                        "price": 22.99
+                    },
+                    {
+                        "category": "fiction",
+                        "author": "George R.R. Martin",
+                        "title": "A Song of Ice and Fire",
+                        "price": 19.99
+                    }
+                ],
+                "bicycle": {
+                    "color": "red",
+                    "price": 399.99
+                }
+            }
+        }
+        "#,
+        )
+        .unwrap();
+
+        // Remove the first book's title
+        let path = json_path("$.store.book[0].title").unwrap();
+        jsonb.remove_by_path(&path).unwrap();
+
+        // Verify the first book no longer has a title but everything else is intact
+        let result = jsonb.to_string().unwrap();
+        assert!(result.contains(r#""author":"J.R.R. Tolkien"#));
+        assert!(result.contains(r#""price":22.99"#));
+        assert!(!result.contains(r#""title":"The Lord of the Rings"#));
+        assert!(result.contains(r#""title":"A Song of Ice and Fire"#));
+    }
+
+    #[test]
+    fn test_replace_by_path_simple_value() {
+        // Test replacing a simple value
+        let mut jsonb = Jsonb::from_str(r#"{"a": 1, "b": 2, "c": 3}"#).unwrap();
+        let path = json_path("$.b").unwrap();
+        let new_value = Jsonb::from_str("42").unwrap();
+
+        jsonb.replace_by_path(&path, new_value).unwrap();
+        assert_eq!(jsonb.to_string().unwrap(), r#"{"a":1,"b":42,"c":3}"#);
+    }
+
+    #[test]
+    fn test_replace_by_path_complex_value() {
+        // Test replacing with a more complex value
+        let mut jsonb = Jsonb::from_str(r#"{"name": "Original", "value": 123}"#).unwrap();
+        let path = json_path("$.value").unwrap();
+        let new_value = Jsonb::from_str(r#"{"nested": true, "array": [1, 2, 3]}"#).unwrap();
+
+        jsonb.replace_by_path(&path, new_value).unwrap();
+        assert_eq!(
+            jsonb.to_string().unwrap(),
+            r#"{"name":"Original","value":{"nested":true,"array":[1,2,3]}}"#
+        );
+    }
+
+    #[test]
+    fn test_replace_by_path_array_element() {
+        // Test replacing an array element
+        let mut jsonb = Jsonb::from_str(r#"[10, 20, 30, 40]"#).unwrap();
+        let path = json_path("$[2]").unwrap();
+        let new_value = Jsonb::from_str(r#""replaced""#).unwrap();
+
+        jsonb.replace_by_path(&path, new_value).unwrap();
+        assert_eq!(jsonb.to_string().unwrap(), r#"[10,20,"replaced",40]"#);
+    }
+
+    #[test]
+    fn test_replace_by_path_nested_object() {
+        // Test replacing a property in a nested object
+        let mut jsonb = Jsonb::from_str(r#"{"user": {"name": "Alice", "age": 30}}"#).unwrap();
+        let path = json_path("$.user.age").unwrap();
+        let new_value = Jsonb::from_str("31").unwrap();
+
+        jsonb.replace_by_path(&path, new_value).unwrap();
+        assert_eq!(
+            jsonb.to_string().unwrap(),
+            r#"{"user":{"name":"Alice","age":31}}"#
+        );
+    }
+
+    #[test]
+    fn test_replace_by_path_entire_object() {
+        // Test replacing the entire object
+        let mut jsonb = Jsonb::from_str(r#"{"old": "data"}"#).unwrap();
+        let path = json_path("$").unwrap();
+        let new_value = Jsonb::from_str(r#"["completely", "new", "structure"]"#).unwrap();
+
+        jsonb.replace_by_path(&path, new_value).unwrap();
+        assert_eq!(
+            jsonb.to_string().unwrap(),
+            r#"["completely","new","structure"]"#
+        );
+    }
+
+    #[test]
+    fn test_replace_by_path_with_longer_value() {
+        // Test replacing with a significantly longer value to trigger header recalculation
+        let mut jsonb = Jsonb::from_str(r#"{"key": "short"}"#).unwrap();
+        let path = json_path("$.key").unwrap();
+        let new_value = Jsonb::from_str(r#""this is a much longer string that will require more storage space and potentially change the header size""#).unwrap();
+
+        jsonb.replace_by_path(&path, new_value).unwrap();
+        assert_eq!(
+            jsonb.to_string().unwrap(),
+            r#"{"key":"this is a much longer string that will require more storage space and potentially change the header size"}"#
+        );
+    }
+
+    #[test]
+    fn test_replace_by_path_with_shorter_value() {
+        // Test replacing with a significantly shorter value to trigger header recalculation
+        let mut jsonb = Jsonb::from_str(r#"{"key": "this is a long string that takes up considerable space in the binary format"}"#).unwrap();
+        let path = json_path("$.key").unwrap();
+        let new_value = Jsonb::from_str(r#""short""#).unwrap();
+
+        jsonb.replace_by_path(&path, new_value).unwrap();
+        assert_eq!(jsonb.to_string().unwrap(), r#"{"key":"short"}"#);
+    }
+
+    #[test]
+    fn test_replace_by_path_deeply_nested() {
+        // Test replacing a value in a deeply nested structure
+        let mut jsonb = Jsonb::from_str(
+            r#"
+        {
+            "level1": {
+                "level2": {
+                    "level3": {
+                        "level4": {
+                            "target": "original value"
+                        }
+                    }
+                }
+            }
+        }
+        "#,
+        )
+        .unwrap();
+
+        let path = json_path("$.level1.level2.level3.level4.target").unwrap();
+        let new_value = Jsonb::from_str(r#""replaced value""#).unwrap();
+
+        jsonb.replace_by_path(&path, new_value).unwrap();
+        assert!(jsonb
+            .to_string()
+            .unwrap()
+            .contains(r#""target":"replaced value""#));
+    }
+
+    #[test]
+    fn test_replace_by_path_null_with_complex() {
+        // Test replacing a null value with a complex structure
+        let mut jsonb = Jsonb::from_str(r#"{"data": null}"#).unwrap();
+        let path = json_path("$.data").unwrap();
+        let new_value = Jsonb::from_str(r#"{"complex": {"nested": [1, 2, 3]}}"#).unwrap();
+
+        jsonb.replace_by_path(&path, new_value).unwrap();
+        assert_eq!(
+            jsonb.to_string().unwrap(),
+            r#"{"data":{"complex":{"nested":[1,2,3]}}}"#
+        );
+    }
+
+    #[test]
+    fn test_replace_by_path_nonexistent() {
+        // Test behavior when the path doesn't exist
+        let mut jsonb = Jsonb::from_str(r#"{"a": 1, "b": 2}"#).unwrap();
+        let path = json_path("$.c").unwrap();
+        let new_value = Jsonb::from_str("42").unwrap();
+
+        // This should return an error
+        let result = jsonb.replace_by_path(&path, new_value);
+        assert!(result.is_err());
+
+        // Original JSON should remain unchanged
+        assert_eq!(jsonb.to_string().unwrap(), r#"{"a":1,"b":2}"#);
     }
 }

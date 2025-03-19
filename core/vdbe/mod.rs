@@ -2247,24 +2247,40 @@ impl Program {
                                 state.registers[*dest] = json_patch(target, patch)?;
                             }
                             JsonFunc::JsonRemove => {
-                                state.registers[*dest] = json_remove(
+                                if let Ok(json) = json_remove(
                                     &state.registers[*start_reg..*start_reg + arg_count],
-                                )?;
+                                ) {
+                                    state.registers[*dest] = json;
+                                } else {
+                                    state.registers[*dest] = OwnedValue::Null;
+                                }
                             }
                             JsonFunc::JsonbRemove => {
-                                state.registers[*dest] = jsonb_remove(
+                                if let Ok(json) = jsonb_remove(
                                     &state.registers[*start_reg..*start_reg + arg_count],
-                                )?;
+                                ) {
+                                    state.registers[*dest] = json;
+                                } else {
+                                    state.registers[*dest] = OwnedValue::Null;
+                                }
                             }
                             JsonFunc::JsonReplace => {
-                                state.registers[*dest] = json_replace(
+                                if let Ok(json) = json_replace(
                                     &state.registers[*start_reg..*start_reg + arg_count],
-                                )?;
+                                ) {
+                                    state.registers[*dest] = json;
+                                } else {
+                                    state.registers[*dest] = OwnedValue::Null;
+                                }
                             }
                             JsonFunc::JsonbReplace => {
-                                state.registers[*dest] = jsonb_replace(
+                                if let Ok(json) = jsonb_replace(
                                     &state.registers[*start_reg..*start_reg + arg_count],
-                                )?;
+                                ) {
+                                    state.registers[*dest] = json;
+                                } else {
+                                    state.registers[*dest] = OwnedValue::Null;
+                                }
                             }
                             JsonFunc::JsonPretty => {
                                 let json_value = &state.registers[*start_reg];
