@@ -360,14 +360,14 @@ Modifiers:
 
 | Function                           | Status  | Comment                                                                                                                                      |
 | ---------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| json(json)                         | Partial |                                                                                                                                              |
+| json(json)                         | Yes     |                                                                                                                                              |
 | jsonb(json)                        | Yes     |                                                                                                                                              |
 | json_array(value1,value2,...)      | Yes     |                                                                                                                                              |
 | jsonb_array(value1,value2,...)     |         |                                                                                                                                              |
 | json_array_length(json)            | Yes     |                                                                                                                                              |
 | json_array_length(json,path)       | Yes     |                                                                                                                                              |
 | json_error_position(json)          | Yes     |                                                                                                                                              |
-| json_extract(json,path,...)        | Partial | Does not fully support unicode literal syntax and does not allow numbers > 2^127 - 1 (which SQLite truncates to i32), does not support BLOBs |
+| json_extract(json,path,...)        | Yes     |                                                                                                                                              |
 | jsonb_extract(json,path,...)       | Yes     |                                                                                                                                              |
 | json -> path                       | Yes     |                                                                                                                                              |
 | json ->> path                      | Yes     |                                                                                                                                              |
@@ -378,10 +378,10 @@ Modifiers:
 | json_patch(json1,json2)            | Yes     |                                                                                                                                              |
 | jsonb_patch(json1,json2)           |         |                                                                                                                                              |
 | json_pretty(json)                  | Partial | Shares same json(val) limitations. Also, when passing blobs for indentation, conversion is not exactly the same as in SQLite                 |
-| json_remove(json,path,...)         | Partial | Uses same json path parser as json_extract so shares same limitations.                                                                       |
-| jsonb_remove(json,path,...)        |         |                                                                                                                                              |
-| json_replace(json,path,value,...)  |         |                                                                                                                                              |
-| jsonb_replace(json,path,value,...) |         |                                                                                                                                              |
+| json_remove(json,path,...)         | Yes     |                                                                                                                                              |
+| jsonb_remove(json,path,...)        | Yes     |                                                                                                                                              |
+| json_replace(json,path,value,...)  | Yes     |                                                                                                                                              |
+| jsonb_replace(json,path,value,...) | Yes     |                                                                                                                                              |
 | json_set(json,path,value,...)      | Yes     |                                                                                                                                              |
 | jsonb_set(json,path,value,...)     |         |                                                                                                                                              |
 | json_type(json)                    | Yes     |                                                                                                                                              |
