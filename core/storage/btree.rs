@@ -363,7 +363,6 @@ impl BTreeCursor {
 
             let cell = contents.cell_get(
                 cell_idx,
-                self.pager.clone(),
                 payload_overflow_threshold_max(contents.page_type(), self.usable_space() as u16),
                 payload_overflow_threshold_min(contents.page_type(), self.usable_space() as u16),
                 self.usable_space(),
@@ -465,7 +464,6 @@ impl BTreeCursor {
 
             let cell = contents.cell_get(
                 cell_idx,
-                self.pager.clone(),
                 payload_overflow_threshold_max(contents.page_type(), self.usable_space() as u16),
                 payload_overflow_threshold_min(contents.page_type(), self.usable_space() as u16),
                 self.usable_space(),
@@ -590,7 +588,6 @@ impl BTreeCursor {
             for cell_idx in 0..contents.cell_count() {
                 let cell = contents.cell_get(
                     cell_idx,
-                    self.pager.clone(),
                     payload_overflow_threshold_max(
                         contents.page_type(),
                         self.usable_space() as u16,
@@ -753,7 +750,6 @@ impl BTreeCursor {
             for cell_idx in 0..contents.cell_count() {
                 match &contents.cell_get(
                     cell_idx,
-                    self.pager.clone(),
                     payload_overflow_threshold_max(
                         contents.page_type(),
                         self.usable_space() as u16,
@@ -886,7 +882,6 @@ impl BTreeCursor {
                     if cell_idx < page.get_contents().cell_count() {
                         if let BTreeCell::TableLeafCell(tbl_leaf) = page.get_contents().cell_get(
                             cell_idx,
-                            self.pager.clone(),
                             payload_overflow_threshold_max(page_type, self.usable_space() as u16),
                             payload_overflow_threshold_min(page_type, self.usable_space() as u16),
                             self.usable_space(),
@@ -1120,7 +1115,6 @@ impl BTreeCursor {
                     let next_cell_divider = i + first_cell_divider - 1;
                     pgno = match parent_contents.cell_get(
                         next_cell_divider,
-                        self.pager.clone(),
                         payload_overflow_threshold_max(
                             parent_contents.page_type(),
                             self.usable_space() as u16,
@@ -1691,7 +1685,6 @@ impl BTreeCursor {
             match page
                 .cell_get(
                     cell_idx,
-                    self.pager.clone(),
                     payload_overflow_threshold_max(page.page_type(), self.usable_space() as u16),
                     payload_overflow_threshold_min(page.page_type(), self.usable_space() as u16),
                     self.usable_space(),
@@ -1905,7 +1898,6 @@ impl BTreeCursor {
 
                     let cell = contents.cell_get(
                         cell_idx,
-                        self.pager.clone(),
                         payload_overflow_threshold_max(
                             contents.page_type(),
                             self.usable_space() as u16,
@@ -1988,7 +1980,6 @@ impl BTreeCursor {
                     let leaf_cell_idx = self.stack.current_cell_index() as usize - 1;
                     let predecessor_cell = leaf_contents.cell_get(
                         leaf_cell_idx,
-                        self.pager.clone(),
                         payload_overflow_threshold_max(
                             leaf_contents.page_type(),
                             self.usable_space() as u16,
@@ -2177,7 +2168,6 @@ impl BTreeCursor {
         } else {
             let equals = match &contents.cell_get(
                 cell_idx,
-                self.pager.clone(),
                 payload_overflow_threshold_max(contents.page_type(), self.usable_space() as u16),
                 payload_overflow_threshold_min(contents.page_type(), self.usable_space() as u16),
                 self.usable_space(),
@@ -2351,7 +2341,6 @@ impl BTreeCursor {
                     //  Get the current cell
                     let cell = contents.cell_get(
                         cell_idx as usize,
-                        Rc::clone(&self.pager),
                         payload_overflow_threshold_max(
                             contents.page_type(),
                             self.usable_space() as u16,
@@ -3404,6 +3393,7 @@ mod tests {
     use crate::Connection;
     use crate::{BufferPool, DatabaseStorage, WalFile, WalFileShared, WriteCompletion};
     use std::cell::RefCell;
+    use std::mem::transmute;
     use std::ops::Deref;
     use std::panic;
     use std::rc::Rc;
@@ -3563,7 +3553,6 @@ mod tests {
             let cell = contents
                 .cell_get(
                     cell_idx,
-                    pager.clone(),
                     payload_overflow_threshold_max(page_type, 4096),
                     payload_overflow_threshold_min(page_type, 4096),
                     cursor.usable_space(),
@@ -3626,7 +3615,6 @@ mod tests {
             let cell = contents
                 .cell_get(
                     cell_idx,
-                    pager.clone(),
                     payload_overflow_threshold_max(page_type, 4096),
                     payload_overflow_threshold_min(page_type, 4096),
                     cursor.usable_space(),
@@ -4032,7 +4020,7 @@ mod tests {
         // Create leaf cell pointing to start of overflow chain
         let leaf_cell = BTreeCell::TableLeafCell(TableLeafCell {
             _rowid: 1,
-            _payload: large_payload,
+            _payload: unsafe { transmute::<&[u8], &'static [u8]>(large_payload.as_slice()) },
             first_overflow_page: Some(2), // Point to first overflow page
         });
 
@@ -4087,7 +4075,7 @@ mod tests {
         // Create leaf cell with no overflow pages
         let leaf_cell = BTreeCell::TableLeafCell(TableLeafCell {
             _rowid: 1,
-            _payload: small_payload,
+            _payload: unsafe { transmute::<&[u8], &'static [u8]>(small_payload.as_slice()) },
             first_overflow_page: None,
         });
 

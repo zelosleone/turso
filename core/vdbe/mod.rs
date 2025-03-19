@@ -392,7 +392,6 @@ impl Program {
         buff
     }
 
-    #[instrument(skip_all)]
     pub fn step(
         &self,
         state: &mut ProgramState,

@@ -1,4 +1,4 @@
-use crate::common;
+use crate::common::{self, maybe_setup_tracing};
 use crate::common::{compare_string, do_flush, TempDatabase};
 use limbo_core::{Connection, StepResult};
 use log::debug;
@@ -157,6 +157,7 @@ fn test_sequential_overflow_page() -> anyhow::Result<()> {
 #[test_log::test]
 fn test_sequential_write() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
+    maybe_setup_tracing();
 
     let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE test (x INTEGER PRIMARY KEY);");
     let conn = tmp_db.connect_limbo();
