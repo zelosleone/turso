@@ -390,13 +390,13 @@ Edit the workspace `Cargo.toml` to include your extension as a workspace depende
 
 ```diff
 [workspace.dependencies]
-limbo_core = { path = "core", version = "0.0.16" }
-limbo_crypto = { path = "extensions/crypto", version = "0.0.16" }
-limbo_ext = { path = "extensions/core", version = "0.0.16" }
-limbo_macros = { path = "macros", version = "0.0.16" }
-limbo_uuid = { path = "extensions/uuid", version = "0.0.16" }
+limbo_core = { path = "core", version = "0.0.17" }
+limbo_crypto = { path = "extensions/crypto", version = "0.0.17" }
+limbo_ext = { path = "extensions/core", version = "0.0.17" }
+limbo_macros = { path = "macros", version = "0.0.17" }
+limbo_uuid = { path = "extensions/uuid", version = "0.0.17" }
 ...
-+limbo_csv = { path = "extensions/csv", version = "0.0.16" }
++limbo_csv = { path = "extensions/csv", version = "0.0.17" }
 
 ```
 

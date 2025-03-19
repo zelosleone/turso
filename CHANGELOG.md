@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.0.17 - 2025-03-19
+
+### Added
+
+* `BEGIN DEFERRED` support (Diego Reis)
+* Experimental MVCC integration (Pekka Enberg)
+* `DROP TABLE` support (Zaid Humayun)
+* Initial pass on Virtual FileSystem extension module (Preston Thorpe)
+* JSONB support (Ihor Andrianov)
+* Shell command completion (Pedro Muniz)
+
+### Updated
+
+### Fixed
+
+* Fixes and improvements to Rust bindings (yirt grek and 南宫茜)
+* Transaction management fixes (Pere Diaz Bou and Diego Reis)
+* JSON function fixes (Ihor Andrianov)
+
+
 ## 0.0.16 - 2025-03-05
 
 ### Added
