@@ -525,6 +525,10 @@ impl Connection {
         }
         all_vfs
     }
+
+    pub fn get_auto_commit(&self) -> bool {
+        *self.auto_commit.borrow()
+    }
 }
 
 pub struct Statement {

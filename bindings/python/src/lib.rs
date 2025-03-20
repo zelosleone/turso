@@ -215,6 +215,13 @@ fn stmt_is_ddl(sql: &str) -> bool {
     sql.starts_with("CREATE") || sql.starts_with("ALTER") || sql.starts_with("DROP")
 }
 
+#[pyclass(unsendable)]
+#[derive(Clone)]
+pub struct Connection {
+    conn: Rc<limbo_core::Connection>,
+    io: Arc<dyn limbo_core::IO>,
+}
+
 #[pymethods]
 impl Connection {
     pub fn cursor(&self) -> Result<Cursor> {
@@ -232,9 +239,16 @@ impl Connection {
     }
 
     pub fn commit(&self) -> PyResult<()> {
-        Err(PyErr::new::<NotSupportedError, _>(
-            "Transactions are not supported in this version",
-        ))
+        if !self.conn.get_auto_commit() {
+            self.conn.execute("COMMIT").map_err(|e| {
+                PyErr::new::<OperationalError, _>(format!("Failed to commit: {:?}", e))
+            })?;
+
+            self.conn.execute("BEGIN").map_err(|e| {
+                PyErr::new::<OperationalError, _>(format!("Failed to commit: {:?}", e))
+            })?;
+        }
+        Ok(())
     }
 
     pub fn rollback(&self) -> PyResult<()> {
