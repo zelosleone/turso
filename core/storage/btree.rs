@@ -1,3 +1,4 @@
+use io_uring::opcode::Write;
 use tracing::debug;
 
 use crate::storage::pager::Pager;
@@ -1899,17 +1900,9 @@ impl BTreeCursor {
         let needs_balancing = free_space as usize * 3 > usable_space * 2;
 
         if needs_balancing {
-            let write_info = WriteInfo {
-                state: WriteState::BalanceStart,
-                balance_info: RefCell::new(Some(BalanceInfo {
-                    pages_to_balance: Vec::new(),
-                    rightmost_pointer: std::ptr::null_mut(),
-                    divider_cells: Vec::new(),
-                    sibling_count: 0,
-                    first_divider_cell: 0,
-                })),
-            };
-            self.state = CursorState::Write(write_info);
+            if let CursorState::None = &self.state {
+                self.state = CursorState::Write(WriteInfo::new());
+            }
 
             loop {
                 let write_state = self.state.write_info().unwrap().state;
