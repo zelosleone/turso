@@ -895,6 +895,7 @@ pub fn translate_expr(
                         )
                     }
                     JsonFunc::JsonArray
+                    | JsonFunc::JsonbArray
                     | JsonFunc::JsonExtract
                     | JsonFunc::JsonSet
                     | JsonFunc::JsonbExtract
@@ -950,7 +951,7 @@ pub fn translate_expr(
                         });
                         Ok(target_register)
                     }
-                    JsonFunc::JsonObject => {
+                    JsonFunc::JsonObject | JsonFunc::JsonbObject => {
                         let args = expect_arguments_even!(args, j);
 
                         translate_function(

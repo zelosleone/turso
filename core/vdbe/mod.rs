@@ -53,7 +53,8 @@ use crate::{
     json::json_array_length, json::json_arrow_extract, json::json_arrow_shift_extract,
     json::json_error_position, json::json_extract, json::json_object, json::json_patch,
     json::json_quote, json::json_remove, json::json_replace, json::json_set, json::json_type,
-    json::jsonb, json::jsonb_extract, json::jsonb_remove, json::jsonb_replace,
+    json::jsonb, json::jsonb_array, json::jsonb_extract, json::jsonb_object, json::jsonb_remove,
+    json::jsonb_replace,
 };
 use crate::{info, CheckpointStatus};
 use crate::{
@@ -2142,13 +2143,18 @@ impl Program {
                                     Err(e) => return Err(e),
                                 }
                             }
-                            JsonFunc::JsonArray | JsonFunc::JsonObject => {
+                            JsonFunc::JsonArray
+                            | JsonFunc::JsonObject
+                            | JsonFunc::JsonbArray
+                            | JsonFunc::JsonbObject => {
                                 let reg_values =
                                     &state.registers[*start_reg..*start_reg + arg_count];
 
                                 let json_func = match json_func {
                                     JsonFunc::JsonArray => json_array,
                                     JsonFunc::JsonObject => json_object,
+                                    JsonFunc::JsonbArray => jsonb_array,
+                                    JsonFunc::JsonbObject => jsonb_object,
                                     _ => unreachable!(),
                                 };
                                 let json_result = json_func(reg_values);

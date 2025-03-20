@@ -401,12 +401,26 @@ impl Jsonb {
         jsonb
     }
 
+    pub fn make_empty_obj(size: usize) -> Self {
+        let mut jsonb = Self {
+            data: Vec::with_capacity(size),
+        };
+        jsonb
+            .write_element_header(0, ElementType::OBJECT, 0, false)
+            .unwrap();
+        jsonb
+    }
+
     pub fn append_to_array_unsafe(&mut self, data: &[u8]) {
         self.data.extend_from_slice(data);
     }
 
-    pub fn finalize_array_unsafe(&mut self) -> Result<()> {
-        self.write_element_header(0, ElementType::ARRAY, self.len() - 1, false)?;
+    pub fn append_jsonb_to_array(&mut self, mut data: Vec<u8>) {
+        self.data.append(&mut data);
+    }
+
+    pub fn finalize_unsafe(&mut self, element_type: ElementType) -> Result<()> {
+        self.write_element_header(0, element_type, self.len() - 1, false)?;
         Ok(())
     }
 

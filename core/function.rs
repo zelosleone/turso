@@ -73,12 +73,14 @@ pub enum JsonFunc {
     Json,
     Jsonb,
     JsonArray,
+    JsonbArray,
     JsonArrayLength,
     JsonArrowExtract,
     JsonArrowShiftExtract,
     JsonExtract,
     JsonbExtract,
     JsonObject,
+    JsonbObject,
     JsonType,
     JsonErrorPosition,
     JsonValid,
@@ -102,12 +104,14 @@ impl Display for JsonFunc {
                 Self::Json => "json".to_string(),
                 Self::Jsonb => "jsonb".to_string(),
                 Self::JsonArray => "json_array".to_string(),
+                Self::JsonbArray => "jsonb_array".to_string(),
                 Self::JsonExtract => "json_extract".to_string(),
                 Self::JsonbExtract => "jsonb_extract".to_string(),
                 Self::JsonArrayLength => "json_array_length".to_string(),
                 Self::JsonArrowExtract => "->".to_string(),
                 Self::JsonArrowShiftExtract => "->>".to_string(),
                 Self::JsonObject => "json_object".to_string(),
+                Self::JsonbObject => "jsonb_object".to_string(),
                 Self::JsonType => "json_type".to_string(),
                 Self::JsonErrorPosition => "json_error_position".to_string(),
                 Self::JsonValid => "json_valid".to_string(),
@@ -565,11 +569,15 @@ impl Func {
             #[cfg(feature = "json")]
             "json_array" => Ok(Self::Json(JsonFunc::JsonArray)),
             #[cfg(feature = "json")]
+            "jsonb_array" => Ok(Self::Json(JsonFunc::JsonArray)),
+            #[cfg(feature = "json")]
             "json_extract" => Ok(Func::Json(JsonFunc::JsonExtract)),
             #[cfg(feature = "json")]
             "jsonb_extract" => Ok(Func::Json(JsonFunc::JsonbExtract)),
             #[cfg(feature = "json")]
             "json_object" => Ok(Func::Json(JsonFunc::JsonObject)),
+            #[cfg(feature = "json")]
+            "jsonb_object" => Ok(Func::Json(JsonFunc::JsonObject)),
             #[cfg(feature = "json")]
             "json_type" => Ok(Func::Json(JsonFunc::JsonType)),
             #[cfg(feature = "json")]
