@@ -1885,7 +1885,22 @@ impl BTreeCursor {
             drop_cell(contents, cell_idx, self.usable_space() as u16)?;
         }
 
-        // TODO(Krishna): Implement balance after delete. I will implement after balance_nonroot is extended.
+        let page = self.stack.top();
+        return_if_locked!(page);
+
+        if !page.is_loaded() {
+            self.pager.load_page(page.clone())?;
+            return Ok(CursorResult::IO);
+        }
+
+        let contents = page.get().contents.as_ref().unwrap();
+        let free_space = compute_free_space(contents, self.usable_space() as u16);
+        if free_space as usize * 3 > self.usable_space() * 2 {
+            //need balancing
+        } else {
+            self.stack.retreat();
+            return Ok(CursorResult::Ok(()));
+        }
         Ok(CursorResult::Ok(()))
     }
 
