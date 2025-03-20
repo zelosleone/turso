@@ -1,8 +1,11 @@
 use anyhow::Result;
 use errors::*;
+use limbo_core::types::Text;
+use limbo_core::OwnedValue;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 use std::cell::RefCell;
+use std::num::NonZeroUsize;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -62,13 +65,6 @@ pub struct Cursor {
     smt: Option<Rc<RefCell<limbo_core::Statement>>>,
 }
 
-#[pyclass(unsendable)]
-#[derive(Clone)]
-pub struct Connection {
-    conn: Rc<limbo_core::Connection>,
-    io: Arc<dyn limbo_core::IO>,
-}
-
 #[allow(unused_variables, clippy::arc_with_non_send_sync)]
 #[pymethods]
 impl Cursor {
@@ -82,6 +78,20 @@ impl Cursor {
         })?;
 
         let stmt = Rc::new(RefCell::new(statement));
+
+        Python::with_gil(|py| {
+            if let Some(params) = parameters {
+                let obj = params.into_bound(py);
+
+                for (i, elem) in obj.iter().enumerate() {
+                    let value = py_to_owned_value(&elem)?;
+                    stmt.borrow_mut()
+                        .bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
+                }
+            }
+
+            Ok::<(), anyhow::Error>(())
+        })?;
 
         // For DDL and DML statements,
         // we need to execute the statement immediately
@@ -305,6 +315,27 @@ fn row_to_py(py: Python, row: &limbo_core::Row) -> Result<PyObject> {
         .unwrap()
         .into_pyobject(py)?
         .into())
+}
+
+/// Converts a Python object to a Limbo OwnedValue
+fn py_to_owned_value(obj: &Bound<PyAny>) -> Result<limbo_core::OwnedValue> {
+    if obj.is_none() {
+        return Ok(OwnedValue::Null);
+    } else if let Ok(integer) = obj.extract::<i64>() {
+        return Ok(OwnedValue::Integer(integer));
+    } else if let Ok(float) = obj.extract::<f64>() {
+        return Ok(OwnedValue::Float(float));
+    } else if let Ok(string) = obj.extract::<String>() {
+        return Ok(OwnedValue::Text(Text::from_str(string)));
+    } else if let Ok(bytes) = obj.downcast::<PyBytes>() {
+        return Ok(OwnedValue::Blob(Rc::new(bytes.as_bytes().to_vec())));
+    } else {
+        return Err(PyErr::new::<ProgrammingError, _>(format!(
+            "Unsupported Python type: {}",
+            obj.get_type().name()?
+        ))
+        .into());
+    }
 }
 
 #[pymodule]
