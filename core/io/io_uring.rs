@@ -1,4 +1,4 @@
-use super::{common, Completion, File, OpenFlags, IO};
+use super::{common, Completion, File, OpenFlags, WriteCompletion, IO};
 use crate::{LimboError, Result};
 use rustix::fs::{self, FlockOperation, OFlags};
 use rustix::io_uring::iovec;
@@ -279,7 +279,14 @@ impl File for UringFile {
                 .build()
                 .user_data(io.ring.get_key())
         };
-        io.ring.submit_entry(&write, c);
+        io.ring.submit_entry(
+            &write,
+            Completion::Write(WriteCompletion::new(Box::new(move |result| {
+                c.complete(result);
+                // NOTE: Explicitly reference buffer to ensure it lives until here
+                let _ = buffer.borrow();
+            }))),
+        );
         Ok(())
     }
 
