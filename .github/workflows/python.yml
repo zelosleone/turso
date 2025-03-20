@@ -230,4 +230,4 @@ jobs:
         with:
           working-directory: ${{ env.working-directory }}
           command: upload
-          args: --skip-existing *
+          args: --skip-existing dist/*
