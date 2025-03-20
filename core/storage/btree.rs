@@ -1895,13 +1895,46 @@ impl BTreeCursor {
 
         let contents = page.get().contents.as_ref().unwrap();
         let free_space = compute_free_space(contents, self.usable_space() as u16);
-        if free_space as usize * 3 > self.usable_space() * 2 {
-            //need balancing
+        let usable_space = self.usable_space();
+        let needs_balancing = free_space as usize * 3 > usable_space * 2;
+
+        if needs_balancing {
+            let write_info = WriteInfo {
+                state: WriteState::BalanceStart,
+                balance_info: RefCell::new(Some(BalanceInfo {
+                    pages_to_balance: Vec::new(),
+                    rightmost_pointer: std::ptr::null_mut(),
+                    divider_cells: Vec::new(),
+                    sibling_count: 0,
+                    first_divider_cell: 0,
+                })),
+            };
+            self.state = CursorState::Write(write_info);
+
+            loop {
+                let write_state = self.state.write_info().unwrap().state;
+                match write_state {
+                    WriteState::Start => {
+                        let write_info = self.state.mut_write_info().unwrap();
+                        write_info.state = WriteState::BalanceStart;
+                    }
+                    WriteState::BalanceStart
+                    | WriteState::BalanceNonRoot
+                    | WriteState::BalanceNonRootWaitLoadPages => {
+                        return_if_io!(self.balance());
+                    }
+                    WriteState::Finish => {
+                        self.state = CursorState::None;
+                        return_if_io!(self.move_to(SeekKey::TableRowId(target_rowid), SeekOp::EQ));
+                        return Ok(CursorResult::Ok(()));
+                    }
+                }
+            }
         } else {
+            // No balancing needed
             self.stack.retreat();
-            return Ok(CursorResult::Ok(()));
+            Ok(CursorResult::Ok(()))
         }
-        Ok(CursorResult::Ok(()))
     }
 
     pub fn set_null_flag(&mut self, flag: bool) {
