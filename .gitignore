@@ -20,6 +20,7 @@ dist/
 .tmp/
 
 
+*.db
 **/*.db-wal
 **/*.db-shm
 **/*-wal
