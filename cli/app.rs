@@ -200,7 +200,7 @@ macro_rules! query_internal {
     }};
 }
 
-static COLORS: &[Color] = &[Color::DarkRed, Color::DarkGreen, Color::DarkBlue];
+static COLORS: &[Color] = &[Color::Green, Color::Black, Color::Grey];
 
 impl<'a> Limbo<'a> {
     pub fn new(rl: &'a mut rustyline::Editor<LimboHelper, DefaultHistory>) -> anyhow::Result<Self> {
@@ -757,7 +757,7 @@ impl<'a> Limbo<'a> {
                                 let name = rows.get_column_name(i);
                                 Cell::new(name)
                                     .add_attribute(Attribute::Bold)
-                                    .fg(Color::AnsiValue(49)) // Green color for headers
+                                    .fg(Color::White)
                             })
                             .collect::<Vec<_>>();
                         table.set_header(header);
