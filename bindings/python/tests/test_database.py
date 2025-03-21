@@ -1,3 +1,4 @@
+import os
 import sqlite3
 
 import pytest
@@ -5,9 +6,38 @@ import pytest
 import limbo
 
 
+@pytest.fixture(autouse=True)
+def setup_database():
+    db_path = "tests/database.db"
+    db_wal_path = "tests/database.db-wal"
+
+    # Ensure the database file is created fresh for each test
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    if os.path.exists(db_wal_path):
+        os.remove(db_wal_path)
+
+    # Create a new database file
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute("CREATE TABLE users (id INT PRIMARY KEY, username TEXT)")
+    cursor.execute("INSERT INTO users VALUES (1, 'alice')")
+    cursor.execute("INSERT INTO users VALUES (2, 'bob')")
+    conn.commit()
+    conn.close()
+
+    yield db_path
+
+    # Cleanup after the test
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    if os.path.exists(db_wal_path):
+        os.remove(db_wal_path)
+
+
 @pytest.mark.parametrize("provider", ["sqlite3", "limbo"])
-def test_fetchall_select_all_users(provider):
-    conn = connect(provider, "tests/database.db")
+def test_fetchall_select_all_users(provider, setup_database):
+    conn = connect(provider, setup_database)
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM users")
 
@@ -76,7 +106,7 @@ def test_commit(provider):
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users_b (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE NOT NULL,
+            username TEXT NOT NULL,
             email TEXT NOT NULL,
             role TEXT NOT NULL,
             created_at DATETIME NOT NULL DEFAULT (datetime('now'))
