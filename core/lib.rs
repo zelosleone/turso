@@ -14,7 +14,7 @@ pub mod result;
 mod schema;
 mod storage;
 mod translate;
-mod types;
+pub mod types;
 #[allow(dead_code)]
 mod util;
 mod vdbe;
@@ -524,6 +524,10 @@ impl Connection {
             all_vfs.extend(crate::ext::list_vfs_modules());
         }
         all_vfs
+    }
+
+    pub fn get_auto_commit(&self) -> bool {
+        *self.auto_commit.borrow()
     }
 }
 

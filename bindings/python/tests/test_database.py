@@ -67,6 +67,42 @@ def test_fetchone_select_max_user_id(provider):
     assert max_id == (2,)
 
 
+# Test case for: https://github.com/tursodatabase/limbo/issues/494
+@pytest.mark.parametrize("provider", ["sqlite3", "limbo"])
+def test_commit(provider):
+    con = connect(provider, "tests/database.db")
+    cur = con.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS users_b (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT NOT NULL,
+            role TEXT NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+
+    con.commit()
+
+    sample_users = [
+        ("alice", "alice@example.com", "admin"),
+        ("bob", "bob@example.com", "user"),
+        ("charlie", "charlie@example.com", "moderator"),
+        ("diana", "diana@example.com", "user"),
+    ]
+
+    for username, email, role in sample_users:
+        cur.execute("INSERT INTO users_b (username, email, role) VALUES (?, ?, ?)", (username, email, role))
+
+    con.commit()
+
+    # Now query the table
+    res = cur.execute("SELECT * FROM users_b")
+    record = res.fetchone()
+    assert record
+
+
 def connect(provider, database):
     if provider == "limbo":
         return limbo.connect(database)
