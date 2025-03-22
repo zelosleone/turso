@@ -104,7 +104,7 @@ class TestLimboShell:
         flags="",
     ):
         if exec_name is None:
-            exec_name = "./target/debug/limbo"
+            exec_name = "./scripts/limbo-sqlite3"
             if flags == "":
                 flags = "-q"
         self.config = ShellConfig(exe_name=exec_name, flags=flags)

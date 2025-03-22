@@ -2,7 +2,7 @@
 import os
 from test_limbo_cli import TestLimboShell
 
-sqlite_exec = "./target/debug/limbo"
+sqlite_exec = "./scripts/limbo-sqlite3"
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
 
 test_data = """CREATE TABLE numbers ( id INTEGER PRIMARY KEY, value FLOAT NOT NULL);

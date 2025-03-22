@@ -5,7 +5,7 @@ RUSTUP := $(shell command -v rustup 2> /dev/null)
 UNAME_S := $(shell uname -s)
 
 # Executable used to execute the compatibility tests.
-SQLITE_EXEC ?= ./target/debug/limbo
+SQLITE_EXEC ?= scripts/limbo-sqlite3
 
 # Static library to use for SQLite C API compatibility tests.
 BASE_SQLITE_LIB = ./target/$(CURRENT_RUST_TARGET)/debug/liblimbo_sqlite3.a
