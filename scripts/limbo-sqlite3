@@ -1,0 +1,3 @@
+#!/bin/bash
+
+target/debug/limbo -m list "$@"
