@@ -47,6 +47,7 @@ use crate::util::{
 use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::Insn;
 use crate::vector::{vector32, vector64, vector_distance_cos, vector_extract};
+use crate::{bail_constraint_error, info, CheckpointStatus};
 #[cfg(feature = "json")]
 use crate::{
     function::JsonFunc, json::get_json, json::is_json_valid, json::json_array,
@@ -56,7 +57,6 @@ use crate::{
     json::jsonb, json::jsonb_array, json::jsonb_extract, json::jsonb_object, json::jsonb_remove,
     json::jsonb_replace,
 };
-use crate::{info, CheckpointStatus};
 use crate::{
     resolve_ext_path, Connection, MvCursor, MvStore, Result, TransactionState, DATABASE_VERSION,
 };
@@ -2323,11 +2323,15 @@ impl Program {
                                 state.registers[*dest] = json_str;
                             }
                             JsonFunc::JsonSet => {
+                                if arg_count % 2 == 0 {
+                                    bail_constraint_error!(
+                                        "json_set() needs an odd number of arguments"
+                                    )
+                                }
                                 let reg_values =
-                                    &state.registers[*start_reg + 1..*start_reg + arg_count];
+                                    &state.registers[*start_reg..*start_reg + arg_count];
 
-                                let json_result =
-                                    json_set(&state.registers[*start_reg], reg_values);
+                                let json_result = json_set(reg_values);
 
                                 match json_result {
                                     Ok(json) => state.registers[*dest] = json,

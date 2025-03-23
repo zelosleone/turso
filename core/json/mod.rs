@@ -13,9 +13,9 @@ pub use crate::json::json_operations::{
 };
 use crate::json::json_path::{json_path, JsonPath, PathElement};
 pub use crate::json::ser::to_string;
-use crate::types::{OwnedValue, Text, TextSubtype};
+use crate::types::{OwnedValue, OwnedValueType, Text, TextSubtype};
 use crate::{bail_parse_error, json::de::ordered_object};
-use jsonb::{ElementType, Jsonb, JsonbHeader};
+use jsonb::{ElementType, Jsonb, JsonbHeader, PathOperationMode, SearchOperation, SetOperation};
 use ser::to_string_pretty;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -166,7 +166,7 @@ pub fn json_array(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
             crate::bail_constraint_error!("JSON cannot hold BLOB values")
         }
         let value = convert_dbtype_to_jsonb(value, Conv::NotStrict)?;
-        json.append_jsonb_to_array(value.data());
+        json.append_jsonb_to_end(value.data());
     }
     json.finalize_unsafe(ElementType::ARRAY)?;
 
@@ -181,7 +181,7 @@ pub fn jsonb_array(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
             crate::bail_constraint_error!("JSON cannot hold BLOB values")
         }
         let value = convert_dbtype_to_jsonb(value, Conv::NotStrict)?;
-        json.append_jsonb_to_array(value.data());
+        json.append_jsonb_to_end(value.data());
     }
     json.finalize_unsafe(ElementType::ARRAY)?;
 
@@ -192,65 +192,46 @@ pub fn json_array_length(
     json_value: &OwnedValue,
     json_path: Option<&OwnedValue>,
 ) -> crate::Result<OwnedValue> {
-    let json = convert_dbtype_to_jsonb(json_value, Conv::Strict)?;
+    let mut json = convert_dbtype_to_jsonb(json_value, Conv::Strict)?;
 
     if json_path.is_none() {
-        let result = json.array_len()?;
-        return Ok(OwnedValue::Integer(result as i64));
+        let len = json.array_len()?;
+        return Ok(OwnedValue::Integer(len as i64));
     }
 
     let path = json_path_from_owned_value(json_path.expect("We already checked none"), true)?;
 
     if let Some(path) = path {
-        if let Ok(len) = json
-            .get_by_path(&path)
-            .and_then(|(json, _)| json.array_len())
-        {
+        let mut op = SearchOperation::new(json.len() / 2);
+        let _ = json.operate_on_path(&path, &mut op);
+        if let Ok(len) = op.result().array_len() {
             return Ok(OwnedValue::Integer(len as i64));
         }
     }
     Ok(OwnedValue::Null)
 }
 
-pub fn json_set(json: &OwnedValue, values: &[OwnedValue]) -> crate::Result<OwnedValue> {
-    let mut json_value = get_json_value(json)?;
+pub fn json_set(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
+    if args.is_empty() {
+        return Ok(OwnedValue::Null);
+    }
 
-    values
-        .chunks(2)
-        .map(|chunk| match chunk {
-            [path, value] => {
-                let path = json_path_from_owned_value(path, true)?;
+    let mut json = convert_dbtype_to_jsonb(&args[0], Conv::Strict)?;
+    let other = args[1..].chunks_exact(2);
 
-                if let Some(path) = path {
-                    let new_value = match value {
-                        OwnedValue::Text(
-                            t @ Text {
-                                subtype: TextSubtype::Text,
-                                ..
-                            },
-                        ) => Val::String(t.as_str().to_string()),
-                        _ => get_json_value(value)?,
-                    };
+    for chunk in other {
+        let path = json_path_from_owned_value(&chunk[0], true)?;
 
-                    let mut new_json_value = json_value.clone();
+        let value = convert_dbtype_to_jsonb(&chunk[1], Conv::NotStrict)?;
+        let mut op = SetOperation::new(value);
+        if let Some(path) = path {
+            let _ = json.operate_on_path(&path, &mut op);
+        }
+    }
 
-                    match create_and_mutate_json_by_path(&mut new_json_value, path, |val| match val
-                    {
-                        Target::Array(arr, index) => arr[index] = new_value.clone(),
-                        Target::Value(val) => *val = new_value.clone(),
-                    }) {
-                        Some(_) => json_value = new_json_value,
-                        _ => {}
-                    }
-                }
+    let el_type = json.is_valid()?;
 
-                Ok(())
-            }
-            _ => crate::bail_constraint_error!("json_set needs an odd number of arguments"),
-        })
-        .collect::<crate::Result<()>>()?;
-
-    convert_json_to_db_type(&json_value, true)
+    json_string_to_db_type(json, el_type, OutputVariant::AsString)
 }
 
 /// Implements the -> operator. Always returns a proper JSON value.
@@ -261,10 +242,12 @@ pub fn json_arrow_extract(value: &OwnedValue, path: &OwnedValue) -> crate::Resul
     }
 
     if let Some(path) = json_path_from_owned_value(path, false)? {
-        let json = convert_dbtype_to_jsonb(value, Conv::Strict)?;
-        let extracted = json.get_by_path(&path);
-        if let Ok((json, _)) = extracted {
-            Ok(OwnedValue::Text(Text::json(json.to_string()?)))
+        let mut json = convert_dbtype_to_jsonb(value, Conv::Strict)?;
+        let mut op = SearchOperation::new(json.len());
+        let res = json.operate_on_path(&path, &mut op);
+        let extracted = op.result();
+        if res.is_ok() {
+            Ok(OwnedValue::Text(Text::json(extracted.to_string()?)))
         } else {
             Ok(OwnedValue::Null)
         }
@@ -283,11 +266,18 @@ pub fn json_arrow_shift_extract(
         return Ok(OwnedValue::Null);
     }
     if let Some(path) = json_path_from_owned_value(path, false)? {
-        let json = convert_dbtype_to_jsonb(value, Conv::Strict)?;
-        let extracted = json.get_by_path(&path);
-        if let Ok((json, element_type)) = extracted {
+        let mut json = convert_dbtype_to_jsonb(value, Conv::Strict)?;
+        let mut op = SearchOperation::new(json.len());
+        let res = json.operate_on_path(&path, &mut op);
+        let extracted = op.result();
+        let element_type = match extracted.is_valid() {
+            Err(_) => return Ok(OwnedValue::Null),
+            Ok(el) => el,
+        };
+
+        if res.is_ok() {
             Ok(json_string_to_db_type(
-                json,
+                extracted,
                 element_type,
                 OutputVariant::AsElementType,
             )?)
@@ -339,9 +329,17 @@ fn jsonb_extract_internal(
     let null = Jsonb::from_raw_data(JsonbHeader::make_null().into_bytes().as_bytes());
     if paths.len() == 1 {
         if let Some(path) = json_path_from_owned_value(&paths[0], true)? {
-            let json = convert_dbtype_to_jsonb(value, Conv::Strict)?;
-            if let Ok((json, value_type)) = json.get_by_path(&path) {
-                return Ok((json, value_type));
+            let mut json = convert_dbtype_to_jsonb(value, Conv::Strict)?;
+
+            let mut op = SearchOperation::new(json.len());
+            let res = json.operate_on_path(&path, &mut op);
+            let extracted = op.result();
+            let element_type = match extracted.is_valid() {
+                Err(_) => return Ok((null, ElementType::NULL)),
+                Ok(el) => el,
+            };
+            if res.is_ok() {
+                return Ok((extracted, element_type));
             } else {
                 return Ok((null, ElementType::NULL));
             }
@@ -350,15 +348,18 @@ fn jsonb_extract_internal(
         }
     }
 
-    let json = convert_dbtype_to_jsonb(value, Conv::Strict)?;
+    let mut json = convert_dbtype_to_jsonb(value, Conv::Strict)?;
     let mut result = Jsonb::make_empty_array(json.len());
 
+    // TODO: make an op to avoid creating new json for every path element
     let paths = paths.iter().map(|p| json_path_from_owned_value(p, true));
     for path in paths {
         if let Some(path) = path? {
-            let fragment = json.get_by_path_raw(&path);
-            if let Ok(data) = fragment {
-                result.append_to_array_unsafe(data);
+            let mut op = SearchOperation::new(json.len());
+            let res = json.operate_on_path(&path, &mut op);
+            let extracted = op.result();
+            if res.is_ok() {
+                result.append_to_array_unsafe(&extracted.data());
             } else {
                 result.append_to_array_unsafe(JsonbHeader::make_null().into_bytes().as_bytes());
             }
@@ -465,9 +466,15 @@ pub fn json_type(value: &OwnedValue, path: Option<&OwnedValue>) -> crate::Result
         return Ok(OwnedValue::Text(Text::json(element_type.into())));
     }
     if let Some(path) = json_path_from_owned_value(path.unwrap(), true)? {
-        let json = convert_dbtype_to_jsonb(value, Conv::Strict)?;
+        let mut json = convert_dbtype_to_jsonb(value, Conv::Strict)?;
 
-        if let Ok((_, element_type)) = json.get_by_path(&path) {
+        if let Ok(mut path) = json.navigate_path(&path, PathOperationMode::ReplaceExisting) {
+            let target = path.pop().expect("Should exist");
+            let element_type = if let Some(el_index) = target.get_array_index() {
+                json.element_type_at(el_index)
+            } else {
+                json.element_type_at(target.field_value_index)
+            }?;
             Ok(OwnedValue::Text(Text::json(element_type.into())))
         } else {
             Ok(OwnedValue::Null)
@@ -636,13 +643,19 @@ pub fn json_error_position(json: &OwnedValue) -> crate::Result<OwnedValue> {
 /// The number of values must be even, and the first value of each pair (which represents the map key)
 /// must be a TEXT value. The second value of each pair can be any JSON value (which represents the map value)
 pub fn json_object(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
+    if values.len() % 2 != 0 {
+        bail_constraint_error!("json_object() requires an even number of arguments")
+    }
     let mut json = Jsonb::make_empty_obj(values.len() * 50);
 
     for chunk in values.chunks_exact(2) {
+        if chunk[0].value_type() != OwnedValueType::Text {
+            bail_constraint_error!("json_object() labels must be TEXT")
+        }
         let key = convert_dbtype_to_jsonb(&chunk[0], Conv::ToString)?;
-        json.append_jsonb_to_array(key.data());
+        json.append_jsonb_to_end(key.data());
         let value = convert_dbtype_to_jsonb(&chunk[1], Conv::NotStrict)?;
-        json.append_jsonb_to_array(value.data());
+        json.append_jsonb_to_end(value.data());
     }
 
     json.finalize_unsafe(ElementType::OBJECT)?;
@@ -651,13 +664,19 @@ pub fn json_object(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
 }
 
 pub fn jsonb_object(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
+    if values.len() % 2 != 0 {
+        bail_constraint_error!("json_object() requires an even number of arguments")
+    }
     let mut json = Jsonb::make_empty_obj(values.len() * 50);
 
     for chunk in values.chunks_exact(2) {
+        if chunk[0].value_type() != OwnedValueType::Text {
+            bail_constraint_error!("json_object() labels must be TEXT")
+        }
         let key = convert_dbtype_to_jsonb(&chunk[0], Conv::ToString)?;
-        json.append_jsonb_to_array(key.data());
+        json.append_jsonb_to_end(key.data());
         let value = convert_dbtype_to_jsonb(&chunk[1], Conv::NotStrict)?;
-        json.append_jsonb_to_array(value.data());
+        json.append_jsonb_to_end(value.data());
     }
 
     json.finalize_unsafe(ElementType::OBJECT)?;
@@ -1172,7 +1191,7 @@ mod tests {
         let OwnedValue::Text(json_text) = result else {
             panic!("Expected OwnedValue::Text");
         };
-        assert_eq!(json_text.as_str(), r#"{"key":"value"}"#);
+        assert_eq!(json_text.as_str(), r#"{"key":"value","key":"value"}"#);
     }
 
     #[test]
@@ -1204,12 +1223,7 @@ mod tests {
         let value = OwnedValue::build_text("value");
         let input = vec![key.clone(), value, key];
 
-        match json_object(&input) {
-            Ok(_) => panic!("Expected error for odd number of values"),
-            Err(e) => assert!(e
-                .to_string()
-                .contains("json_object requires an even number of values")),
-        }
+        assert!(json_object(&input).is_err());
     }
 
     #[test]
@@ -1341,219 +1355,186 @@ mod tests {
 
     #[test]
     fn test_json_set_field_empty_object() {
-        let result = json_set(
-            &OwnedValue::build_text("{}"),
-            &[
-                OwnedValue::build_text("$.field"),
-                OwnedValue::build_text("value"),
-            ],
-        );
+        let result = json_set(&[
+            OwnedValue::build_text("{}"),
+            OwnedValue::build_text("$.field"),
+            OwnedValue::build_text("value"),
+        ]);
 
         assert!(result.is_ok());
 
-        assert_eq!(
-            result.unwrap(),
-            OwnedValue::build_text(r#"{"field":"value"}"#)
-        );
+        assert_eq!(result.unwrap().to_text().unwrap(), r#"{"field":"value"}"#);
     }
 
     #[test]
     fn test_json_set_replace_field() {
-        let result = json_set(
-            &OwnedValue::build_text(r#"{"field":"old_value"}"#),
-            &[
-                OwnedValue::build_text("$.field"),
-                OwnedValue::build_text("new_value"),
-            ],
-        );
+        let result = json_set(&[
+            OwnedValue::build_text(r#"{"field":"old_value"}"#),
+            OwnedValue::build_text("$.field"),
+            OwnedValue::build_text("new_value"),
+        ]);
 
         assert!(result.is_ok());
 
         assert_eq!(
-            result.unwrap(),
-            OwnedValue::build_text(r#"{"field":"new_value"}"#)
+            result.unwrap().to_text().unwrap(),
+            r#"{"field":"new_value"}"#
         );
     }
 
     #[test]
     fn test_json_set_set_deeply_nested_key() {
-        let result = json_set(
-            &OwnedValue::build_text("{}"),
-            &[
-                OwnedValue::build_text("$.object.doesnt.exist"),
-                OwnedValue::build_text("value"),
-            ],
-        );
+        let result = json_set(&[
+            OwnedValue::build_text("{}"),
+            OwnedValue::build_text("$.object.doesnt.exist"),
+            OwnedValue::build_text("value"),
+        ]);
 
         assert!(result.is_ok());
 
         assert_eq!(
-            result.unwrap(),
-            OwnedValue::build_text(r#"{"object":{"doesnt":{"exist":"value"}}}"#)
+            result.unwrap().to_text().unwrap(),
+            r#"{"object":{"doesnt":{"exist":"value"}}}"#
         );
     }
 
     #[test]
     fn test_json_set_add_value_to_empty_array() {
-        let result = json_set(
-            &OwnedValue::build_text("[]"),
-            &[
-                OwnedValue::build_text("$[0]"),
-                OwnedValue::build_text("value"),
-            ],
-        );
+        let result = json_set(&[
+            OwnedValue::build_text("[]"),
+            OwnedValue::build_text("$[0]"),
+            OwnedValue::build_text("value"),
+        ]);
 
         assert!(result.is_ok());
 
-        assert_eq!(result.unwrap(), OwnedValue::build_text(r#"["value"]"#));
+        assert_eq!(result.unwrap().to_text().unwrap(), r#"["value"]"#);
     }
 
     #[test]
     fn test_json_set_add_value_to_nonexistent_array() {
-        let result = json_set(
-            &OwnedValue::build_text("{}"),
-            &[
-                OwnedValue::build_text("$.some_array[0]"),
-                OwnedValue::Integer(123),
-            ],
-        );
+        let result = json_set(&[
+            OwnedValue::build_text("{}"),
+            OwnedValue::build_text("$.some_array[0]"),
+            OwnedValue::Integer(123),
+        ]);
 
         assert!(result.is_ok());
 
         assert_eq!(
-            result.unwrap(),
-            OwnedValue::build_text(r#"{"some_array":[123]}"#)
+            result.unwrap().to_text().unwrap(),
+            r#"{"some_array":[123]}"#
         );
     }
 
     #[test]
     fn test_json_set_add_value_to_array() {
-        let result = json_set(
-            &OwnedValue::build_text("[123]"),
-            &[OwnedValue::build_text("$[1]"), OwnedValue::Integer(456)],
-        );
+        let result = json_set(&[
+            OwnedValue::build_text("[123]"),
+            OwnedValue::build_text("$[1]"),
+            OwnedValue::Integer(456),
+        ]);
 
         assert!(result.is_ok());
 
-        assert_eq!(result.unwrap(), OwnedValue::build_text("[123,456]"));
+        assert_eq!(result.unwrap().to_text().unwrap(), "[123,456]");
     }
 
     #[test]
     fn test_json_set_add_value_to_array_out_of_bounds() {
-        let result = json_set(
-            &OwnedValue::build_text("[123]"),
-            &[OwnedValue::build_text("$[200]"), OwnedValue::Integer(456)],
-        );
+        let result = json_set(&[
+            OwnedValue::build_text("[123]"),
+            OwnedValue::build_text("$[200]"),
+            OwnedValue::Integer(456),
+        ]);
 
         assert!(result.is_ok());
 
-        assert_eq!(result.unwrap(), OwnedValue::build_text("[123]"));
+        assert_eq!(result.unwrap().to_text().unwrap(), "[123]");
     }
 
     #[test]
     fn test_json_set_replace_value_in_array() {
-        let result = json_set(
-            &OwnedValue::build_text("[123]"),
-            &[OwnedValue::build_text("$[0]"), OwnedValue::Integer(456)],
-        );
+        let result = json_set(&[
+            OwnedValue::build_text("[123]"),
+            OwnedValue::build_text("$[0]"),
+            OwnedValue::Integer(456),
+        ]);
 
         assert!(result.is_ok());
 
-        assert_eq!(result.unwrap(), OwnedValue::build_text("[456]"));
+        assert_eq!(result.unwrap().to_text().unwrap(), "[456]");
     }
 
     #[test]
     fn test_json_set_null_path() {
-        let result = json_set(
-            &OwnedValue::build_text("{}"),
-            &[OwnedValue::Null, OwnedValue::Integer(456)],
-        );
+        let result = json_set(&[
+            OwnedValue::build_text("{}"),
+            OwnedValue::Null,
+            OwnedValue::Integer(456),
+        ]);
 
         assert!(result.is_ok());
 
-        assert_eq!(result.unwrap(), OwnedValue::build_text("{}"));
+        assert_eq!(result.unwrap().to_text().unwrap(), "{}");
     }
 
     #[test]
     fn test_json_set_multiple_keys() {
-        let result = json_set(
-            &OwnedValue::build_text("[123]"),
-            &[
-                OwnedValue::build_text("$[0]"),
-                OwnedValue::Integer(456),
-                OwnedValue::build_text("$[1]"),
-                OwnedValue::Integer(789),
-            ],
-        );
+        let result = json_set(&[
+            OwnedValue::build_text("[123]"),
+            OwnedValue::build_text("$[0]"),
+            OwnedValue::Integer(456),
+            OwnedValue::build_text("$[1]"),
+            OwnedValue::Integer(789),
+        ]);
 
         assert!(result.is_ok());
 
-        assert_eq!(result.unwrap(), OwnedValue::build_text("[456,789]"));
-    }
-
-    #[test]
-    fn test_json_set_missing_value() {
-        let result = json_set(
-            &OwnedValue::build_text("[123]"),
-            &[OwnedValue::build_text("$[0]")],
-        );
-
-        assert!(result.is_err());
+        assert_eq!(result.unwrap().to_text().unwrap(), "[456,789]");
     }
 
     #[test]
     fn test_json_set_add_array_in_nested_object() {
-        let result = json_set(
-            &OwnedValue::build_text("{}"),
-            &[
-                OwnedValue::build_text("$.object[0].field"),
-                OwnedValue::Integer(123),
-            ],
-        );
+        let result = json_set(&[
+            OwnedValue::build_text("{}"),
+            OwnedValue::build_text("$.object[0].field"),
+            OwnedValue::Integer(123),
+        ]);
 
         assert!(result.is_ok());
 
         assert_eq!(
-            result.unwrap(),
-            OwnedValue::build_text(r#"{"object":[{"field":123}]}"#)
+            result.unwrap().to_text().unwrap(),
+            r#"{"object":[{"field":123}]}"#
         );
     }
 
     #[test]
     fn test_json_set_add_array_in_array_in_nested_object() {
-        let result = json_set(
-            &OwnedValue::build_text("{}"),
-            &[
-                OwnedValue::build_text("$.object[0][0]"),
-                OwnedValue::Integer(123),
-            ],
-        );
+        let result = json_set(&[
+            OwnedValue::build_text("{}"),
+            OwnedValue::build_text("$.object[0][0]"),
+            OwnedValue::Integer(123),
+        ]);
 
         assert!(result.is_ok());
 
-        assert_eq!(
-            result.unwrap(),
-            OwnedValue::build_text(r#"{"object":[[123]]}"#)
-        );
+        assert_eq!(result.unwrap().to_text().unwrap(), r#"{"object":[[123]]}"#);
     }
 
     #[test]
     fn test_json_set_add_array_in_array_in_nested_object_out_of_bounds() {
-        let result = json_set(
-            &OwnedValue::build_text("{}"),
-            &[
-                OwnedValue::build_text("$.object[123].another"),
-                OwnedValue::build_text("value"),
-                OwnedValue::build_text("$.field"),
-                OwnedValue::build_text("value"),
-            ],
-        );
+        let result = json_set(&[
+            OwnedValue::build_text("{}"),
+            OwnedValue::build_text("$.object[123].another"),
+            OwnedValue::build_text("value"),
+            OwnedValue::build_text("$.field"),
+            OwnedValue::build_text("value"),
+        ]);
 
         assert!(result.is_ok());
 
-        assert_eq!(
-            result.unwrap(),
-            OwnedValue::build_text(r#"{"field":"value"}"#)
-        );
+        assert_eq!(result.unwrap().to_text().unwrap(), r#"{"field":"value"}"#,);
     }
 }
