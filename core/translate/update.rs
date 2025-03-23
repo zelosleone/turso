@@ -9,11 +9,40 @@ use crate::{
     },
     SymbolTable,
 };
-use limbo_sqlite3_parser::ast::{self, Update};
+use limbo_sqlite3_parser::ast::Update;
 
 use super::expr::translate_condition_expr;
 use super::{emitter::Resolver, expr::translate_expr, plan::TableReference};
 
+/*
+* Update is simple. By default we scan the table, and for each row, we check the WHERE
+* clause. If it evaluates to true, we build the new record with the updated value and insert.
+*
+* EXAMPLE:
+*
+sqlite> explain update t set a = 100 where b = 5;
+addr  opcode         p1    p2    p3    p4             p5  comment
+----  -------------  ----  ----  ----  -------------  --  -------------
+0     Init           0     16    0                    0   Start at 16
+1     Null           0     1     2                    0   r[1..2]=NULL
+2     Noop           1     0     1                    0
+3     OpenWrite      0     2     0     3              0   root=2 iDb=0; t
+4     Rewind         0     15    0                    0
+5       Column         0     1     6                    0   r[6]= cursor 0 column 1
+6       Ne             7     14    6     BINARY-8       81  if r[6]!=r[7] goto 14
+7       Rowid          0     2     0                    0   r[2]= rowid of 0
+8       IsNull         2     15    0                    0   if r[2]==NULL goto 15
+9       Integer        100   3     0                    0   r[3]=100
+10      Column         0     1     4                    0   r[4]= cursor 0 column 1
+11      Column         0     2     5                    0   r[5]= cursor 0 column 2
+12      MakeRecord     3     3     1                    0   r[1]=mkrec(r[3..5])
+13      Insert         0     1     2     t              7   intkey=r[2] data=r[1]
+14    Next           0     5     0                    1
+15    Halt           0     0     0                    0
+16    Transaction    0     1     1     0              1   usesStmtJournal=0
+17    Integer        5     7     0                    0   r[7]=5
+18    Goto           0     1     0                    0
+*/
 pub fn translate_update(
     query_mode: QueryMode,
     schema: &Schema,
@@ -97,46 +126,10 @@ pub fn translate_update(
     let loop_start = program.offset();
     let skip_label = program.allocate_label();
     if let Some(where_clause) = &body.where_clause {
-        let expr = if let ast::Expr::Binary(lhs, op, rhs) = where_clause.as_ref() {
-            // we don't support Expr::Id in translate_expr, so we rewrite to an Expr::Column
-            let lhs = if let ast::Expr::Id(col_name) = lhs.as_ref() {
-                let Some((col_idx, col)) = btree_table.get_column(&col_name.0) else {
-                    bail_parse_error!("column {} not found", col_name.0);
-                };
-                &ast::Expr::Column {
-                    table: 0, // one table in our [referenced_tables]
-                    database: None,
-                    column: col_idx,
-                    is_rowid_alias: col.is_rowid_alias,
-                }
-            } else {
-                &lhs
-            };
-            let rhs = if let ast::Expr::Id(col_name) = rhs.as_ref() {
-                let Some((col_idx, col)) = btree_table.get_column(&col_name.0) else {
-                    bail_parse_error!("column {} not found", col_name.0);
-                };
-                &ast::Expr::Column {
-                    table: 0,
-                    database: None,
-                    column: col_idx,
-                    is_rowid_alias: col.is_rowid_alias,
-                }
-            } else {
-                &rhs
-            };
-            &Box::new(ast::Expr::Binary(
-                Box::new(lhs.clone()),
-                *op,
-                Box::new(rhs.clone()),
-            ))
-        } else {
-            where_clause
-        };
         translate_condition_expr(
             &mut program,
             &referenced_tables,
-            expr,
+            where_clause,
             super::expr::ConditionMetadata {
                 jump_if_condition_is_true: false,
                 jump_target_when_true: crate::vdbe::BranchOffset::Placeholder,
@@ -161,7 +154,13 @@ pub fn translate_update(
     for idx in 0..btree_table.columns.len() {
         if let Some((idx, expr)) = update_idxs.iter().find(|(i, _)| *i == idx) {
             let target_reg = first_col_reg + idx;
-            translate_expr(&mut program, None, expr, target_reg, &resolver)?;
+            translate_expr(
+                &mut program,
+                Some(&referenced_tables),
+                expr,
+                target_reg,
+                &resolver,
+            )?;
         } else {
             program.emit_insn(Insn::Column {
                 cursor_id,
