@@ -573,7 +573,7 @@ impl Func {
             #[cfg(feature = "json")]
             "json_array" => Ok(Self::Json(JsonFunc::JsonArray)),
             #[cfg(feature = "json")]
-            "jsonb_array" => Ok(Self::Json(JsonFunc::JsonArray)),
+            "jsonb_array" => Ok(Self::Json(JsonFunc::JsonbArray)),
             #[cfg(feature = "json")]
             "json_extract" => Ok(Func::Json(JsonFunc::JsonExtract)),
             #[cfg(feature = "json")]
@@ -581,7 +581,7 @@ impl Func {
             #[cfg(feature = "json")]
             "json_object" => Ok(Func::Json(JsonFunc::JsonObject)),
             #[cfg(feature = "json")]
-            "jsonb_object" => Ok(Func::Json(JsonFunc::JsonObject)),
+            "jsonb_object" => Ok(Func::Json(JsonFunc::JsonbObject)),
             #[cfg(feature = "json")]
             "json_type" => Ok(Func::Json(JsonFunc::JsonType)),
             #[cfg(feature = "json")]
