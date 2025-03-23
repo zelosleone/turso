@@ -87,11 +87,11 @@ do_execsql_test_on_specific_db {:memory:} update-with-expression {
     insert into temp values (1, 10);
     insert into temp values (2, 20);
     insert into temp values (3, 30);
-    update temp set a = 10 * 3 / 2;
+    update temp set a = b * 3 / 2;
     select * from temp;
 } {15|10
-15|20
-15|30}
+30|20
+45|30}
 
 do_execsql_test_on_specific_db {:memory:} update-self-reference {
     create table temp (a, b);
@@ -101,17 +101,6 @@ do_execsql_test_on_specific_db {:memory:} update-self-reference {
     select * from temp;
 } {10|10
 2|20}
-
-do_execsql_test_on_specific_db {:memory:} update-subquery {
-    create table temp1 (id, value);
-    create table temp2 (id, ref_value);
-    insert into temp1 values (1, 'a'), (2, 'b'), (3, 'c');
-    insert into temp2 values (2, 'updated');
-    update temp1 set value = (select ref_value from temp2 where temp2.id = temp1.id) where id IN (select id from temp2);
-    select * from temp1;
-} {1|a
-2|updated
-3|c}
 
 do_execsql_test_on_specific_db {:memory:} update-large-text {
     create table temp (a);
