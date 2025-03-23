@@ -414,25 +414,21 @@ impl PathOperation for DeleteOperation {
                 0
             };
             json.update_parent_references(stack, target.delta + delta + h_delta)?;
+        } else if let JsonLocationKind::ObjectProperty(key_idx) = target.field_key_index {
+            let value_idx = target.field_value_index;
+            let (JsonbHeader(_, value_size), value_header_size) = json.read_header(value_idx)?;
+            let (JsonbHeader(_, key_size), key_header_size) = json.read_header(key_idx)?;
+            let delta = 0 - (value_header_size + value_size + key_size + key_header_size) as isize;
+
+            let end_pos = key_idx + value_header_size + value_size + key_size + key_header_size;
+            json.data.drain(key_idx..end_pos);
+
+            json.update_parent_references(stack, delta + target.delta)?;
         } else {
-            if let JsonLocationKind::ObjectProperty(key_idx) = target.field_key_index {
-                let value_idx = target.field_value_index;
-                let (JsonbHeader(_, value_size), value_header_size) =
-                    json.read_header(value_idx)?;
-                let (JsonbHeader(_, key_size), key_header_size) = json.read_header(key_idx)?;
-                let delta =
-                    0 - (value_header_size + value_size + key_size + key_header_size) as isize;
-
-                let end_pos = key_idx + value_header_size + value_size + key_size + key_header_size;
-                json.data.drain(key_idx..end_pos);
-
-                json.update_parent_references(stack, delta + target.delta)?;
-            } else {
-                let nul = JsonbHeader::make_null().into_bytes();
-                let nul_bytes = nul.as_bytes();
-                json.data.clear();
-                json.data.extend_from_slice(nul_bytes);
-            }
+            let nul = JsonbHeader::make_null().into_bytes();
+            let nul_bytes = nul.as_bytes();
+            json.data.clear();
+            json.data.extend_from_slice(nul_bytes);
         }
 
         Ok(())
@@ -1302,7 +1298,7 @@ impl Jsonb {
             b'"' | b'\'' => {
                 pos = self.deserialize_string(input, pos)?;
             }
-            c if (b'0'..=b'9').contains(&c)
+            c if c.is_ascii_digit()
                 || c == b'-'
                 || c == b'+'
                 || c == b'.'
@@ -1987,7 +1983,7 @@ impl Jsonb {
         Ok(stack)
     }
 
-    pub fn operate_on_path<'a, T>(&mut self, path: &JsonPath, operation: &'a mut T) -> Result<()>
+    pub fn operate_on_path<T>(&mut self, path: &JsonPath, operation: &mut T) -> Result<()>
     where
         T: PathOperation,
     {
@@ -2501,7 +2497,7 @@ impl Jsonb {
             }
         };
 
-        return Err(LimboError::ParseError("Not found".to_string()));
+        Err(LimboError::ParseError("Not found".to_string()))
     }
 
     fn skip_element(&self, mut pos: usize) -> Result<usize> {

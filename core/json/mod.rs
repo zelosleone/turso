@@ -43,9 +43,9 @@ enum Conv {
 }
 
 enum OutputVariant {
-    AsElementType,
-    AsBinary,
-    AsString,
+    ElementType,
+    Binary,
+    String,
 }
 
 pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<OwnedValue> {
@@ -170,7 +170,7 @@ pub fn json_array(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
     }
     json.finalize_unsafe(ElementType::ARRAY)?;
 
-    json_string_to_db_type(json, ElementType::ARRAY, OutputVariant::AsElementType)
+    json_string_to_db_type(json, ElementType::ARRAY, OutputVariant::ElementType)
 }
 
 pub fn jsonb_array(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
@@ -185,7 +185,7 @@ pub fn jsonb_array(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
     }
     json.finalize_unsafe(ElementType::ARRAY)?;
 
-    json_string_to_db_type(json, ElementType::ARRAY, OutputVariant::AsBinary)
+    json_string_to_db_type(json, ElementType::ARRAY, OutputVariant::Binary)
 }
 
 pub fn json_array_length(
@@ -231,7 +231,7 @@ pub fn json_set(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
 
     let el_type = json.is_valid()?;
 
-    json_string_to_db_type(json, el_type, OutputVariant::AsString)
+    json_string_to_db_type(json, el_type, OutputVariant::String)
 }
 
 /// Implements the -> operator. Always returns a proper JSON value.
@@ -279,7 +279,7 @@ pub fn json_arrow_shift_extract(
             Ok(json_string_to_db_type(
                 extracted,
                 element_type,
-                OutputVariant::AsElementType,
+                OutputVariant::ElementType,
             )?)
         } else {
             Ok(OwnedValue::Null)
@@ -302,7 +302,7 @@ pub fn json_extract(value: &OwnedValue, paths: &[OwnedValue]) -> crate::Result<O
     }
     let (json, element_type) = jsonb_extract_internal(value, paths)?;
 
-    let result = json_string_to_db_type(json, element_type, OutputVariant::AsElementType)?;
+    let result = json_string_to_db_type(json, element_type, OutputVariant::ElementType)?;
 
     Ok(result)
 }
@@ -317,7 +317,7 @@ pub fn jsonb_extract(value: &OwnedValue, paths: &[OwnedValue]) -> crate::Result<
     }
 
     let (json, element_type) = jsonb_extract_internal(value, paths)?;
-    let result = json_string_to_db_type(json, element_type, OutputVariant::AsElementType)?;
+    let result = json_string_to_db_type(json, element_type, OutputVariant::ElementType)?;
 
     Ok(result)
 }
@@ -377,13 +377,13 @@ fn json_string_to_db_type(
     flag: OutputVariant,
 ) -> crate::Result<OwnedValue> {
     let mut json_string = json.to_string()?;
-    if matches!(flag, OutputVariant::AsBinary) {
+    if matches!(flag, OutputVariant::Binary) {
         return Ok(OwnedValue::Blob(Rc::new(json.data())));
     }
     match element_type {
         ElementType::ARRAY | ElementType::OBJECT => Ok(OwnedValue::Text(Text::json(json_string))),
         ElementType::TEXT | ElementType::TEXT5 | ElementType::TEXTJ | ElementType::TEXTRAW => {
-            if matches!(flag, OutputVariant::AsElementType) {
+            if matches!(flag, OutputVariant::ElementType) {
                 json_string.remove(json_string.len() - 1);
                 json_string.remove(0);
                 Ok(OwnedValue::Text(Text {
@@ -568,7 +568,7 @@ pub fn json_object(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
 
     json.finalize_unsafe(ElementType::OBJECT)?;
 
-    json_string_to_db_type(json, ElementType::OBJECT, OutputVariant::AsString)
+    json_string_to_db_type(json, ElementType::OBJECT, OutputVariant::String)
 }
 
 pub fn jsonb_object(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
@@ -589,7 +589,7 @@ pub fn jsonb_object(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
 
     json.finalize_unsafe(ElementType::OBJECT)?;
 
-    json_string_to_db_type(json, ElementType::OBJECT, OutputVariant::AsBinary)
+    json_string_to_db_type(json, ElementType::OBJECT, OutputVariant::Binary)
 }
 
 pub fn is_json_valid(json_value: &OwnedValue) -> OwnedValue {

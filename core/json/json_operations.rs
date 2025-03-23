@@ -167,7 +167,7 @@ pub fn json_remove(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
 
     let el_type = json.is_valid()?;
 
-    json_string_to_db_type(json, el_type, OutputVariant::AsString)
+    json_string_to_db_type(json, el_type, OutputVariant::String)
 }
 
 pub fn jsonb_remove(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
@@ -206,7 +206,7 @@ pub fn json_replace(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
 
     let el_type = json.is_valid()?;
 
-    json_string_to_db_type(json, el_type, super::OutputVariant::AsString)
+    json_string_to_db_type(json, el_type, super::OutputVariant::String)
 }
 
 pub fn jsonb_replace(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
@@ -228,7 +228,7 @@ pub fn jsonb_replace(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
 
     let el_type = json.is_valid()?;
 
-    json_string_to_db_type(json, el_type, OutputVariant::AsBinary)
+    json_string_to_db_type(json, el_type, OutputVariant::Binary)
 }
 
 pub fn json_insert(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
@@ -250,7 +250,7 @@ pub fn json_insert(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
 
     let el_type = json.is_valid()?;
 
-    json_string_to_db_type(json, el_type, OutputVariant::AsString)
+    json_string_to_db_type(json, el_type, OutputVariant::String)
 }
 
 pub fn jsonb_insert(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
@@ -272,7 +272,7 @@ pub fn jsonb_insert(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
 
     let el_type = json.is_valid()?;
 
-    json_string_to_db_type(json, el_type, OutputVariant::AsBinary)
+    json_string_to_db_type(json, el_type, OutputVariant::Binary)
 }
 
 #[cfg(test)]
