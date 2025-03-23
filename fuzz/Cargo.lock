@@ -643,7 +643,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_core"
-version = "0.0.17"
+version = "0.0.18-pre.3"
 dependencies = [
  "built",
  "cfg_block",
@@ -680,7 +680,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_ext"
-version = "0.0.17"
+version = "0.0.18-pre.3"
 dependencies = [
  "chrono",
  "getrandom 0.3.1",
@@ -689,7 +689,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_macros"
-version = "0.0.17"
+version = "0.0.18-pre.3"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -698,7 +698,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_sqlite3_parser"
-version = "0.0.17"
+version = "0.0.18-pre.3"
 dependencies = [
  "bitflags",
  "cc",
@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_time"
-version = "0.0.17"
+version = "0.0.18-pre.3"
 dependencies = [
  "chrono",
  "limbo_ext",
@@ -729,7 +729,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_uuid"
-version = "0.0.17"
+version = "0.0.18-pre.3"
 dependencies = [
  "limbo_ext",
  "mimalloc",
