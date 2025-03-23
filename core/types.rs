@@ -61,7 +61,7 @@ impl Text {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum OwnedValue {
     Null,
     Integer(i64),
@@ -246,6 +246,36 @@ impl AggContext {
             Self::GroupConcat(s) => s,
             Self::External(ext_state) => ext_state.finalized_value.as_ref().unwrap_or(&NULL),
         }
+    }
+}
+
+impl PartialEq<OwnedValue> for OwnedValue {
+    fn eq(&self, other: &OwnedValue) -> bool {
+        match (self, other) {
+            (Self::Integer(int_left), Self::Integer(int_right)) => int_left == int_right,
+            (Self::Integer(int_left), Self::Float(float_right)) => {
+                (*int_left as f64) == (*float_right)
+            }
+            (Self::Float(float_left), Self::Integer(int_right)) => {
+                float_left == (&(*int_right as f64))
+            }
+            (Self::Float(float_left), Self::Float(float_right)) => float_left == float_right,
+            (Self::Integer(_) | Self::Float(_), Self::Text(_) | Self::Blob(_)) => false,
+            (Self::Text(_) | Self::Blob(_), Self::Integer(_) | Self::Float(_)) => false,
+            (Self::Text(text_left), Self::Text(text_right)) => {
+                text_left.value.eq(&text_right.value)
+            }
+            (Self::Blob(blob_left), Self::Blob(blob_right)) => blob_left.eq(blob_right),
+            (Self::Null, Self::Null) => true,
+            (Self::Agg(a), Self::Agg(b)) => a.eq(b),
+            (Self::Agg(a), other) => a.final_value().eq(other),
+            (other, Self::Agg(b)) => other.eq(b.final_value()),
+            _ => false,
+        }
+    }
+
+    fn ne(&self, other: &OwnedValue) -> bool {
+        !self.eq(other)
     }
 }
 
