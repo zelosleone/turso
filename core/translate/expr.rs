@@ -901,7 +901,9 @@ pub fn translate_expr(
                     | JsonFunc::JsonbExtract
                     | JsonFunc::JsonReplace
                     | JsonFunc::JsonbReplace
-                    | JsonFunc::JsonbRemove => translate_function(
+                    | JsonFunc::JsonbRemove
+                    | JsonFunc::JsonInsert
+                    | JsonFunc::JsonbInsert => translate_function(
                         program,
                         args.as_deref().unwrap_or_default(),
                         referenced_tables,

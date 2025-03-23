@@ -9,7 +9,7 @@ use crate::bail_constraint_error;
 pub use crate::json::de::from_str;
 use crate::json::error::Error as JsonError;
 pub use crate::json::json_operations::{
-    json_patch, json_remove, json_replace, jsonb_remove, jsonb_replace,
+    json_insert, json_patch, json_remove, json_replace, jsonb_insert, jsonb_remove, jsonb_replace,
 };
 use crate::json::json_path::{json_path, JsonPath, PathElement};
 pub use crate::json::ser::to_string;
@@ -523,98 +523,6 @@ fn json_path_from_owned_value(path: &OwnedValue, strict: bool) -> crate::Result<
     };
 
     Ok(Some(json_path))
-}
-
-enum Target<'a> {
-    Array(&'a mut Vec<Val>, usize),
-    Value(&'a mut Val),
-}
-
-fn create_and_mutate_json_by_path<F, R>(json: &mut Val, path: JsonPath, closure: F) -> Option<R>
-where
-    F: FnOnce(Target) -> R,
-{
-    find_or_create_target(json, &path).map(closure)
-}
-
-fn find_or_create_target<'a>(json: &'a mut Val, path: &JsonPath) -> Option<Target<'a>> {
-    let mut current = json;
-    for (i, key) in path.elements.iter().enumerate() {
-        let is_last = i == path.elements.len() - 1;
-        match key {
-            PathElement::Root() => continue,
-            PathElement::ArrayLocator(index) => match current {
-                Val::Array(arr) => {
-                    if let Some(index) = match index {
-                        Some(i) if *i < 0 => arr.len().checked_sub(i.unsigned_abs() as usize),
-                        Some(i) => Some(*i as usize),
-                        None => Some(arr.len()),
-                    } {
-                        if is_last {
-                            if index == arr.len() {
-                                arr.push(Val::Null);
-                            }
-
-                            if index >= arr.len() {
-                                return None;
-                            }
-
-                            return Some(Target::Array(arr, index));
-                        } else {
-                            if index == arr.len() {
-                                arr.push(
-                                    if matches!(path.elements[i + 1], PathElement::ArrayLocator(_))
-                                    {
-                                        Val::Array(vec![])
-                                    } else {
-                                        Val::Object(vec![])
-                                    },
-                                );
-                            }
-
-                            if index >= arr.len() {
-                                return None;
-                            }
-
-                            current = &mut arr[index];
-                        }
-                    } else {
-                        return None;
-                    }
-                }
-                _ => {
-                    *current = Val::Array(vec![]);
-                }
-            },
-            PathElement::Key(key, _) => match current {
-                Val::Object(obj) => {
-                    if let Some(pos) = &obj
-                        .iter()
-                        .position(|(k, v)| k == key && !matches!(v, Val::Removed))
-                    {
-                        let val = &mut obj[*pos].1;
-                        current = val;
-                    } else {
-                        let element = if !is_last
-                            && matches!(path.elements[i + 1], PathElement::ArrayLocator(_))
-                        {
-                            Val::Array(vec![])
-                        } else {
-                            Val::Object(vec![])
-                        };
-
-                        obj.push((key.to_string(), element));
-                        let index = obj.len() - 1;
-                        current = &mut obj[index].1;
-                    }
-                }
-                _ => {
-                    return None;
-                }
-            },
-        }
-    }
-    Some(Target::Value(current))
 }
 
 pub fn json_error_position(json: &OwnedValue) -> crate::Result<OwnedValue> {

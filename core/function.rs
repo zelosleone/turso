@@ -89,6 +89,8 @@ pub enum JsonFunc {
     JsonbRemove,
     JsonReplace,
     JsonbReplace,
+    JsonInsert,
+    JsonbInsert,
     JsonPretty,
     JsonSet,
     JsonQuote,
@@ -120,6 +122,8 @@ impl Display for JsonFunc {
                 Self::JsonbRemove => "jsonb_remove".to_string(),
                 Self::JsonReplace => "json_replace".to_string(),
                 Self::JsonbReplace => "jsonb_replace".to_string(),
+                Self::JsonInsert => "json_insert".to_string(),
+                Self::JsonbInsert => "jsonb_insert".to_string(),
                 Self::JsonPretty => "json_pretty".to_string(),
                 Self::JsonSet => "json_set".to_string(),
                 Self::JsonQuote => "json_quote".to_string(),
@@ -592,6 +596,10 @@ impl Func {
             "jsonb_remove" => Ok(Self::Json(JsonFunc::JsonbRemove)),
             #[cfg(feature = "json")]
             "json_replace" => Ok(Self::Json(JsonFunc::JsonReplace)),
+            #[cfg(feature = "json")]
+            "json_insert" => Ok(Self::Json(JsonFunc::JsonInsert)),
+            #[cfg(feature = "json")]
+            "jsonb_insert" => Ok(Self::Json(JsonFunc::JsonbInsert)),
             #[cfg(feature = "json")]
             "jsonb_replace" => Ok(Self::Json(JsonFunc::JsonReplace)),
             #[cfg(feature = "json")]

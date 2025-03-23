@@ -52,10 +52,10 @@ use crate::{bail_constraint_error, info, CheckpointStatus};
 use crate::{
     function::JsonFunc, json::get_json, json::is_json_valid, json::json_array,
     json::json_array_length, json::json_arrow_extract, json::json_arrow_shift_extract,
-    json::json_error_position, json::json_extract, json::json_object, json::json_patch,
-    json::json_quote, json::json_remove, json::json_replace, json::json_set, json::json_type,
-    json::jsonb, json::jsonb_array, json::jsonb_extract, json::jsonb_object, json::jsonb_remove,
-    json::jsonb_replace,
+    json::json_error_position, json::json_extract, json::json_insert, json::json_object,
+    json::json_patch, json::json_quote, json::json_remove, json::json_replace, json::json_set,
+    json::json_type, json::jsonb, json::jsonb_array, json::jsonb_extract, json::jsonb_insert,
+    json::jsonb_object, json::jsonb_remove, json::jsonb_replace,
 };
 use crate::{
     resolve_ext_path, Connection, MvCursor, MvStore, Result, TransactionState, DATABASE_VERSION,
@@ -2281,6 +2281,24 @@ impl Program {
                             }
                             JsonFunc::JsonbReplace => {
                                 if let Ok(json) = jsonb_replace(
+                                    &state.registers[*start_reg..*start_reg + arg_count],
+                                ) {
+                                    state.registers[*dest] = json;
+                                } else {
+                                    state.registers[*dest] = OwnedValue::Null;
+                                }
+                            }
+                            JsonFunc::JsonInsert => {
+                                if let Ok(json) = json_insert(
+                                    &state.registers[*start_reg..*start_reg + arg_count],
+                                ) {
+                                    state.registers[*dest] = json;
+                                } else {
+                                    state.registers[*dest] = OwnedValue::Null;
+                                }
+                            }
+                            JsonFunc::JsonbInsert => {
+                                if let Ok(json) = jsonb_insert(
                                     &state.registers[*start_reg..*start_reg + arg_count],
                                 ) {
                                     state.registers[*dest] = json;

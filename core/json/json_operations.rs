@@ -5,7 +5,7 @@ use crate::types::OwnedValue;
 use super::{
     convert_dbtype_to_jsonb, convert_json_to_db_type, get_json_value, json_path_from_owned_value,
     json_string_to_db_type,
-    jsonb::{DeleteOperation, ReplaceOperation},
+    jsonb::{DeleteOperation, InsertOperation, ReplaceOperation},
     Conv, OutputVariant, Val,
 };
 
@@ -228,7 +228,51 @@ pub fn jsonb_replace(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
 
     let el_type = json.is_valid()?;
 
+    json_string_to_db_type(json, el_type, OutputVariant::AsBinary)
+}
+
+pub fn json_insert(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
+    if args.is_empty() {
+        return Ok(OwnedValue::Null);
+    }
+
+    let mut json = convert_dbtype_to_jsonb(&args[0], Conv::Strict)?;
+    let other = args[1..].chunks_exact(2);
+    for chunk in other {
+        let path = json_path_from_owned_value(&chunk[0], true)?;
+        let value = convert_dbtype_to_jsonb(&chunk[1], Conv::NotStrict)?;
+        if let Some(path) = path {
+            let mut op = InsertOperation::new(value);
+
+            let _ = json.operate_on_path(&path, &mut op);
+        }
+    }
+
+    let el_type = json.is_valid()?;
+
     json_string_to_db_type(json, el_type, OutputVariant::AsString)
+}
+
+pub fn jsonb_insert(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
+    if args.is_empty() {
+        return Ok(OwnedValue::Null);
+    }
+
+    let mut json = convert_dbtype_to_jsonb(&args[0], Conv::Strict)?;
+    let other = args[1..].chunks_exact(2);
+    for chunk in other {
+        let path = json_path_from_owned_value(&chunk[0], true)?;
+        let value = convert_dbtype_to_jsonb(&chunk[1], Conv::NotStrict)?;
+        if let Some(path) = path {
+            let mut op = InsertOperation::new(value);
+
+            let _ = json.operate_on_path(&path, &mut op);
+        }
+    }
+
+    let el_type = json.is_valid()?;
+
+    json_string_to_db_type(json, el_type, OutputVariant::AsBinary)
 }
 
 #[cfg(test)]
