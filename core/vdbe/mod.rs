@@ -3110,11 +3110,8 @@ impl Program {
                     if *is_temp == 1 {
                         todo!("temp databases not implemented yet.");
                     }
-                    {
-                        let mut cursor = state.get_cursor(*root);
-                        let cursor = cursor.as_btree_mut();
-                        cursor.btree_destroy()?;
-                    }
+                    let mut cursor = BTreeCursor::new(None, pager.clone(), *root);
+                    cursor.btree_destroy()?;
                     state.pc += 1;
                 }
                 Insn::DropTable {
