@@ -102,6 +102,15 @@ do_execsql_test_on_specific_db {:memory:} update-self-reference {
 } {10|10
 2|20}
 
+do_execsql_test_on_specific_db {:memory:} update-self-ref-all {
+    create table temp (a, b, c);
+    insert into temp values (1, 2, 3);
+    insert into temp values (4, 5, 6);
+    update temp set a = b;
+    select * from temp;
+} {2|2|3
+5|5|6}
+
 do_execsql_test_on_specific_db {:memory:} update-large-text {
     create table temp (a);
     insert into temp values ('short');
@@ -144,3 +153,13 @@ do_execsql_test_on_specific_db {:memory:} update-multiple-columns {
     select * from temp;
 } {10|20|30
 10|20|30}
+
+do_execsql_test_on_specific_db {:memory:} update-true-expr {
+    create table temp (a, b, c);
+    insert into temp values (1, 2, 3);
+    insert into temp values (4, 5, 6);
+    update temp set a = 10, b = 20, c = 30 where 1;
+    select * from temp;
+} {10|20|30
+10|20|30}
+
