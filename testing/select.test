@@ -165,3 +165,12 @@ do_execsql_test select-not-like-expression {
 do_execsql_test select-like-expression {
     select 2 % 0.5
 } {}
+
+# regression test for https://github.com/tursodatabase/limbo/issues/1157
+do_execsql_test select-invalid-numeric-text {
+  select -'e';
+} {0}
+
+do_execsql_test select-invalid-numeric-text {
+  select -'E';
+} {0}

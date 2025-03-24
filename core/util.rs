@@ -716,9 +716,14 @@ fn parse_numeric_str(text: &str) -> Result<(OwnedValueType, &str), ()> {
     let text = text.trim();
     let bytes = text.as_bytes();
 
-    if bytes.is_empty() {
+    if bytes.is_empty()
+        || bytes[0] == b'e'
+        || bytes[0] == b'E'
+        || (bytes[0] == b'.' && (bytes[1] == b'e' || bytes[1] == b'E'))
+    {
         return Err(());
     }
+
     let mut end = 0;
     let mut has_decimal = false;
     let mut has_exponent = false;
@@ -1514,6 +1519,8 @@ pub mod tests {
         assert_eq!(cast_text_to_numeric("-0.0"), OwnedValue::Float(0.0));
         assert_eq!(cast_text_to_numeric("0.0"), OwnedValue::Float(0.0));
         assert_eq!(cast_text_to_numeric("-"), OwnedValue::Integer(0));
+        assert_eq!(cast_text_to_numeric("-e"), OwnedValue::Integer(0));
+        assert_eq!(cast_text_to_numeric("-E"), OwnedValue::Integer(0));
     }
 
     #[test]
@@ -1554,6 +1561,10 @@ pub mod tests {
             parse_numeric_str("1.23E+4"),
             Ok((OwnedValueType::Float, "1.23E+4"))
         );
+        assert_eq!(
+            parse_numeric_str("1.2.3"),
+            Ok((OwnedValueType::Float, "1.2"))
+        )
     }
 
     #[test]
@@ -1572,7 +1583,6 @@ pub mod tests {
         assert_eq!(parse_numeric_str("-"), Err(()));
         assert_eq!(parse_numeric_str("e10"), Err(()));
         assert_eq!(parse_numeric_str(".e10"), Err(()));
-        assert_eq!(parse_numeric_str("1.2.3"), Err(()));
     }
 
     #[test]
