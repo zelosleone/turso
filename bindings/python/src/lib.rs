@@ -266,6 +266,19 @@ impl Connection {
             "Transactions are not supported in this version",
         ))
     }
+
+    fn __enter__(&self) -> PyResult<Self> {
+        Ok(self.clone())
+    }
+
+    fn __exit__(
+        &self,
+        _exc_type: Option<&Bound<'_, PyAny>>,
+        _exc_val: Option<&Bound<'_, PyAny>>,
+        _exc_tb: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        self.close()
+    }
 }
 
 #[allow(clippy::arc_with_non_send_sync)]
