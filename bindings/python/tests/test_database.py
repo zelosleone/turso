@@ -144,17 +144,19 @@ def test_commit(provider):
     conn.close()
     assert record
 
+
 @pytest.mark.parametrize("provider", ["sqlite3", "limbo"])
 def test_with_statement(provider):
     with connect(provider, "tests/database.db") as conn:
         conn = connect(provider, "tests/database.db")
         cursor = conn.cursor()
         cursor.execute("SELECT MAX(id) FROM users")
-    
+
         max_id = cursor.fetchone()
-    
+
         assert max_id
         assert max_id == (2,)
+
 
 def connect(provider, database):
     if provider == "limbo":

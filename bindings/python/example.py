@@ -15,16 +15,19 @@ with limbo.connect("sqlite.db") as con:
 
     # Insert some sample data
     sample_users = [
-         ("alice", "alice@example.com", "admin"),
-         ("bob", "bob@example.com", "user"),
-         ("charlie", "charlie@example.com", "moderator"),
-         ("diana", "diana@example.com", "user")
-     ]
+        ("alice", "alice@example.com", "admin"),
+        ("bob", "bob@example.com", "user"),
+        ("charlie", "charlie@example.com", "moderator"),
+        ("diana", "diana@example.com", "user"),
+    ]
     for username, email, role in sample_users:
-         cur.execute("""
+        cur.execute(
+            """
              INSERT INTO users (username, email, role)
              VALUES (?, ?, ?)
-         """, (username, email, role))
+         """,
+            (username, email, role),
+        )
 
     # Use commit to ensure the data is saved
     con.commit()
