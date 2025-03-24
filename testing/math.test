@@ -1352,3 +1352,35 @@ do_execsql_test mod-agg-int {
 do_execsql_test mod-agg-float {
     SELECT count(*) % 2.43 from users 
 } { 0.0 }
+
+do_execsql_test comp-float-float {
+    SELECT 0.0 = 0.0
+} { 1 }
+
+do_execsql_test comp-int-float {
+    SELECT 0 = 0.0
+} { 1 }
+
+do_execsql_test comp-float-int {
+    SELECT 0.0 = 0
+} { 1 }
+
+do_execsql_test comp-int-string {
+    SELECT 0 = '0'
+} { 0 }
+
+do_execsql_test comp-string-int {
+    SELECT '0' = 0
+} { 0 }
+
+do_execsql_test comp-string-blog {
+    SELECT '0' = cast('0' as BLOB)
+} { 0 }
+
+do_execsql_test comp-blog-string {
+    SELECT cast('0' as BLOB) = '0'
+} { 0 }
+
+do_execsql_test comp-blog-blog {
+    SELECT cast('0' as BLOB) = cast('0' as BLOB)
+} { 1 }
