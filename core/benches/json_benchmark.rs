@@ -485,9 +485,167 @@ fn bench(criterion: &mut Criterion) {
     }
 }
 
+fn bench_sequential_jsonb(criterion: &mut Criterion) {
+    // Flag to disable rusqlite benchmarks if needed
+    let enable_rusqlite = std::env::var("DISABLE_RUSQLITE_BENCHMARK").is_err();
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let io = Arc::new(PlatformIO::new().unwrap());
+    let db = Database::open_file(io.clone(), "../testing/testing.db", false).unwrap();
+    let limbo_conn = db.connect().unwrap();
+
+    // Select a subset of JSON payloads to use in the sequential test
+    let json_payloads = [
+        ("Small", r#"{"id": 1, "name": "Test"}"#),
+        (
+            "Medium",
+            r#"{"id": 1, "name": "Test", "attributes": {"color": "blue", "size": "medium", "tags": ["tag1", "tag2", "tag3"]}}"#,
+        ),
+        (
+            "Real world json #1",
+            r#"{
+          "user": {
+            "id": "usr_7f8d3a2e",
+            "name": "Jane Smith",
+            "email": "jane.smith@example.com",
+            "verified": true,
+            "created_at": "2023-05-12T15:42:31Z",
+            "preferences": {
+              "theme": "dark",
+              "notifications": {
+                "email": true,
+                "push": false,
+                "sms": true
+              },
+              "language": "en-US"
+            }
+          }
+        }"#,
+        ),
+        (
+            "Real world json #2",
+            r#"{
+      "feed": {
+        "user_id": "u_12345",
+        "posts": [
+          {
+            "id": "post_001",
+            "author": "user_789",
+            "content": "Just launched our new product! Check it out at example.com/new",
+            "timestamp": "2024-03-13T14:27:32Z",
+            "likes": 24,
+            "comments": [
+              {
+                "id": "comment_001",
+                "author": "user_456",
+                "content": "Looks amazing! Cant wait to try it.",
+                "timestamp": "2024-03-13T14:35:12Z",
+                "likes": 3
+              },
+              {
+                "id": "comment_002",
+                "author": "user_789",
+                "content": "Thanks! Let me know what you think after youve tried it.",
+                "timestamp": "2024-03-13T14:42:45Z",
+                "likes": 1
+              }
+            ],
+            "tags": ["product", "launch", "technology"]
+          },
+          {
+            "id": "post_002",
+            "author": "user_123",
+            "content": "Beautiful day for hiking! #nature #outdoors",
+            "timestamp": "2024-03-13T11:15:22Z",
+            "likes": 57,
+            "comments": [
+              {
+                "id": "comment_003",
+                "author": "user_345",
+                "content": "Where is this? So beautiful!",
+                "timestamp": "2024-03-13T11:22:05Z",
+                "likes": 2
+              },
+              {
+                "id": "comment_004",
+                "author": "user_123",
+                "content": "Mount Rainier National Park!",
+                "timestamp": "2024-03-13T11:30:16Z",
+                "likes": 3
+              }
+            ],
+            "tags": ["nature", "outdoors", "hiking"],
+            "location": {
+              "name": "Mount Rainier National Park",
+              "latitude": 46.8800,
+              "longitude": -121.7269
+            }
+          }
+        ],
+        "has_more": true,
+        "next_cursor": "cursor_xyz123"
+      }
+    }"#,
+        ),
+    ];
+
+    // Create a query that calls jsonb() multiple times in sequence
+    let query = format!(
+        "SELECT jsonb('{}'), jsonb('{}'), jsonb('{}'), jsonb('{}'), jsonb('{}'), jsonb('{}'), jsonb('{}'), jsonb('{}')",
+        json_payloads[0].1.replace("'", "\\'"),
+        json_payloads[1].1.replace("'", "\\'"),
+        json_payloads[2].1.replace("'", "\\'"),
+        json_payloads[3].1.replace("'", "\\'"),
+        json_payloads[0].1.replace("'", "\\'"),
+        json_payloads[1].1.replace("'", "\\'"),
+        json_payloads[2].1.replace("'", "\\'"),
+        json_payloads[3].1.replace("'", "\\'"),
+    );
+
+    let mut group = criterion.benchmark_group("Sequential JSONB Calls");
+
+    group.bench_function("Limbo - Sequential", |b| {
+        let mut stmt = limbo_conn.prepare(&query).unwrap();
+        let io = io.clone();
+        b.iter(|| {
+            loop {
+                match stmt.step().unwrap() {
+                    limbo_core::StepResult::Row => {}
+                    limbo_core::StepResult::IO => {
+                        let _ = io.run_once();
+                    }
+                    limbo_core::StepResult::Done => {
+                        break;
+                    }
+                    limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => {
+                        unreachable!();
+                    }
+                }
+            }
+            stmt.reset();
+        });
+    });
+
+    if enable_rusqlite {
+        let sqlite_conn = rusqlite_open();
+
+        group.bench_function("Sqlite3 - Sequential", |b| {
+            let mut stmt = sqlite_conn.prepare(&query).unwrap();
+            b.iter(|| {
+                let mut rows = stmt.raw_query();
+                while let Some(row) = rows.next().unwrap() {
+                    black_box(row);
+                }
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(Some(Options::default()))));
-    targets = bench
+    targets = bench, bench_sequential_jsonb
 }
 criterion_main!(benches);
