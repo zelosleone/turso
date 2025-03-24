@@ -69,13 +69,14 @@ pub fn translate(
             if_not_exists,
             tbl_name,
             body,
-        } => {
-            if temporary {
-                bail_parse_error!("TEMPORARY table not supported yet");
-            }
-
-            translate_create_table(query_mode, tbl_name, *body, if_not_exists, schema)?
-        }
+        } => translate_create_table(
+            query_mode,
+            tbl_name,
+            temporary,
+            *body,
+            if_not_exists,
+            schema,
+        )?,
         ast::Stmt::CreateTrigger { .. } => bail_parse_error!("CREATE TRIGGER not supported yet"),
         ast::Stmt::CreateView { .. } => bail_parse_error!("CREATE VIEW not supported yet"),
         ast::Stmt::CreateVirtualTable(vtab) => {
@@ -394,10 +395,14 @@ fn check_automatic_pk_index_required(
 fn translate_create_table(
     query_mode: QueryMode,
     tbl_name: ast::QualifiedName,
+    temporary: bool,
     body: ast::CreateTableBody,
     if_not_exists: bool,
     schema: &Schema,
 ) -> Result<ProgramBuilder> {
+    if temporary {
+        bail_parse_error!("TEMPORARY table not supported yet");
+    }
     let mut program = ProgramBuilder::new(ProgramBuilderOpts {
         query_mode,
         num_cursors: 1,
