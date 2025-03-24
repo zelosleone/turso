@@ -1871,12 +1871,10 @@ pub fn translate_expr(
             }
         }
         ast::Expr::FunctionCallStar { .. } => todo!(),
-        ast::Expr::Id(id) => {
-            crate::bail_parse_error!(
-                "no such column: {} - should this be a string literal in single-quotes?",
-                id.0
-            )
-        }
+        ast::Expr::Id(id) => crate::bail_parse_error!(
+            "no such column: {} - should this be a string literal in single-quotes?",
+            id.0
+        ),
         ast::Expr::Column {
             database: _,
             table,
@@ -2205,7 +2203,7 @@ fn translate_like_base(
                 dest: target_register,
                 func: FuncCtx {
                     func: Func::Scalar(func),
-                    arg_count: arg_count,
+                    arg_count,
                 },
             });
         }
