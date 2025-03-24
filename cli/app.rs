@@ -319,7 +319,7 @@ impl<'a> Limbo<'a> {
             |row: &limbo_core::Row| -> Result<(), LimboError> {
                 let values = row
                     .get_values()
-                    .into_iter()
+                    .iter()
                     .zip(value_types.iter())
                     .map(|(value, value_type)| {
                         // If the type affinity is TEXT, replace each single
@@ -345,7 +345,7 @@ impl<'a> Limbo<'a> {
                     })
                     .collect::<Vec<_>>()
                     .join(",");
-                let _ = self.write_fmt(format_args!("INSERT INTO {} VALUES({});", name, values))?;
+                self.write_fmt(format_args!("INSERT INTO {} VALUES({});", name, values))?;
                 Ok(())
             }
         )?;
@@ -371,7 +371,7 @@ impl<'a> Limbo<'a> {
             |row: &limbo_core::Row| -> Result<(), LimboError> {
                 let sql: &str = row.get::<&str>(2)?;
                 let name: &str = row.get::<&str>(0)?;
-                let _ = self.write_fmt(format_args!("{};", sql))?;
+                self.write_fmt(format_args!("{};", sql))?;
                 self.dump_table(name)
             }
         );
@@ -491,13 +491,20 @@ impl<'a> Limbo<'a> {
     fn run_query(&mut self, input: &str) {
         let echo = self.opts.echo;
         if echo {
-            let _ = self.writeln(&input);
+            let _ = self.writeln(input);
         }
-        let conn = self.conn.clone();
-        let runner = conn.query_runner(input.as_bytes());
-        for output in runner {
-            if let Err(_) = self.print_query_result(&input, output) {
-                break;
+
+        if input.trim_start().starts_with("explain") {
+            if let Ok(Some(stmt)) = self.conn.query(input) {
+                let _ = self.writeln(stmt.explain().as_bytes());
+            }
+        } else {
+            let conn = self.conn.clone();
+            let runner = conn.query_runner(input.as_bytes());
+            for output in runner {
+                if self.print_query_result(input, output).is_err() {
+                    break;
+                }
             }
         }
         self.reset_input();
