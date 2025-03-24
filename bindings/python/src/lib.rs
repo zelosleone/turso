@@ -193,9 +193,9 @@ impl Cursor {
     }
 
     pub fn close(&self) -> PyResult<()> {
-        Err(PyErr::new::<NotSupportedError, _>(
-            "close() is not supported in this version",
-        ))
+        self.conn.close()?;
+
+        Ok(())
     }
 
     #[pyo3(signature = (sql, parameters=None))]
@@ -244,8 +244,12 @@ impl Connection {
         })
     }
 
-    pub fn close(&self) {
-        drop(self.conn.clone());
+    pub fn close(&self) -> PyResult<()> {
+        self.conn.close().map_err(|e| {
+            PyErr::new::<OperationalError, _>(format!("Failed to close connection: {:?}", e))
+        })?;
+
+        Ok(())
     }
 
     pub fn commit(&self) -> PyResult<()> {
@@ -278,6 +282,14 @@ impl Connection {
         _exc_tb: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         self.close()
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.conn
+            .close()
+            .expect("Failed to drop (close) connection");
     }
 }
 
