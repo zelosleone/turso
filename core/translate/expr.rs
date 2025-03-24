@@ -895,12 +895,15 @@ pub fn translate_expr(
                         )
                     }
                     JsonFunc::JsonArray
+                    | JsonFunc::JsonbArray
                     | JsonFunc::JsonExtract
                     | JsonFunc::JsonSet
                     | JsonFunc::JsonbExtract
                     | JsonFunc::JsonReplace
                     | JsonFunc::JsonbReplace
-                    | JsonFunc::JsonbRemove => translate_function(
+                    | JsonFunc::JsonbRemove
+                    | JsonFunc::JsonInsert
+                    | JsonFunc::JsonbInsert => translate_function(
                         program,
                         args.as_deref().unwrap_or_default(),
                         referenced_tables,
@@ -950,7 +953,7 @@ pub fn translate_expr(
                         });
                         Ok(target_register)
                     }
-                    JsonFunc::JsonObject => {
+                    JsonFunc::JsonObject | JsonFunc::JsonbObject => {
                         let args = expect_arguments_even!(args, j);
 
                         translate_function(

@@ -48,15 +48,16 @@ use crate::util::{
 use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::Insn;
 use crate::vector::{vector32, vector64, vector_distance_cos, vector_extract};
+use crate::{bail_constraint_error, info, CheckpointStatus};
 #[cfg(feature = "json")]
 use crate::{
     function::JsonFunc, json::get_json, json::is_json_valid, json::json_array,
     json::json_array_length, json::json_arrow_extract, json::json_arrow_shift_extract,
-    json::json_error_position, json::json_extract, json::json_object, json::json_patch,
-    json::json_quote, json::json_remove, json::json_replace, json::json_set, json::json_type,
-    json::jsonb, json::jsonb_extract, json::jsonb_remove, json::jsonb_replace,
+    json::json_error_position, json::json_extract, json::json_insert, json::json_object,
+    json::json_patch, json::json_quote, json::json_remove, json::json_replace, json::json_set,
+    json::json_type, json::jsonb, json::jsonb_array, json::jsonb_extract, json::jsonb_insert,
+    json::jsonb_object, json::jsonb_remove, json::jsonb_replace,
 };
-use crate::{info, CheckpointStatus};
 use crate::{
     resolve_ext_path, Connection, MvCursor, MvStore, Result, TransactionState, DATABASE_VERSION,
 };
@@ -2143,13 +2144,18 @@ impl Program {
                                     Err(e) => return Err(e),
                                 }
                             }
-                            JsonFunc::JsonArray | JsonFunc::JsonObject => {
+                            JsonFunc::JsonArray
+                            | JsonFunc::JsonObject
+                            | JsonFunc::JsonbArray
+                            | JsonFunc::JsonbObject => {
                                 let reg_values =
                                     &state.registers[*start_reg..*start_reg + arg_count];
 
                                 let json_func = match json_func {
                                     JsonFunc::JsonArray => json_array,
                                     JsonFunc::JsonObject => json_object,
+                                    JsonFunc::JsonbArray => jsonb_array,
+                                    JsonFunc::JsonbObject => jsonb_object,
                                     _ => unreachable!(),
                                 };
                                 let json_result = json_func(reg_values);
@@ -2283,6 +2289,24 @@ impl Program {
                                     state.registers[*dest] = OwnedValue::Null;
                                 }
                             }
+                            JsonFunc::JsonInsert => {
+                                if let Ok(json) = json_insert(
+                                    &state.registers[*start_reg..*start_reg + arg_count],
+                                ) {
+                                    state.registers[*dest] = json;
+                                } else {
+                                    state.registers[*dest] = OwnedValue::Null;
+                                }
+                            }
+                            JsonFunc::JsonbInsert => {
+                                if let Ok(json) = jsonb_insert(
+                                    &state.registers[*start_reg..*start_reg + arg_count],
+                                ) {
+                                    state.registers[*dest] = json;
+                                } else {
+                                    state.registers[*dest] = OwnedValue::Null;
+                                }
+                            }
                             JsonFunc::JsonPretty => {
                                 let json_value = &state.registers[*start_reg];
                                 let indent = if arg_count > 1 {
@@ -2318,11 +2342,15 @@ impl Program {
                                 state.registers[*dest] = json_str;
                             }
                             JsonFunc::JsonSet => {
+                                if arg_count % 2 == 0 {
+                                    bail_constraint_error!(
+                                        "json_set() needs an odd number of arguments"
+                                    )
+                                }
                                 let reg_values =
-                                    &state.registers[*start_reg + 1..*start_reg + arg_count];
+                                    &state.registers[*start_reg..*start_reg + arg_count];
 
-                                let json_result =
-                                    json_set(&state.registers[*start_reg], reg_values);
+                                let json_result = json_set(reg_values);
 
                                 match json_result {
                                     Ok(json) => state.registers[*dest] = json,

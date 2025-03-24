@@ -1,5 +1,9 @@
 use crate::{bail_parse_error, LimboError, Result};
-use std::{cmp::Ordering, fmt::Write, str::from_utf8};
+use std::{
+    collections::HashMap,
+    fmt::Write,
+    str::{from_utf8, from_utf8_unchecked},
+};
 
 use super::json_path::{JsonPath, PathElement};
 
@@ -192,6 +196,12 @@ pub enum ElementType {
     RESERVED3 = 15,
 }
 
+impl ElementType {
+    pub fn is_valid_key(&self) -> bool {
+        matches!(self, Self::TEXT | Self::TEXT5 | Self::TEXTJ | Self::TEXTRAW)
+    }
+}
+
 impl From<ElementType> for String {
     fn from(element_type: ElementType) -> String {
         match element_type {
@@ -238,12 +248,447 @@ impl TryFrom<u8> for ElementType {
 
 type PayloadSize = usize;
 
-type TargetPos = usize;
-type KeyPos = usize;
+#[derive(Debug, Clone)]
+pub enum ArrayPositionKind {
+    SpecificIndex(usize),
+}
 
-pub enum TraverseResult {
-    Value(TargetPos),
-    ObjectValue(TargetPos, KeyPos),
+#[derive(Debug, Clone, PartialEq)]
+pub enum JsonLocationKind {
+    ObjectProperty(usize),
+    DocumentRoot,
+    ArrayEntry,
+}
+
+#[derive(Debug, Clone)]
+pub struct JsonTraversalResult {
+    field_key_index: JsonLocationKind,
+    pub field_value_index: usize,
+    delta: isize,
+    array_position_info: Option<ArrayPositionKind>,
+}
+
+#[derive(Debug, Clone)]
+pub enum SegmentVariant<'a> {
+    Single(&'a PathElement<'a>),
+    KeyWithArrayIndex(&'a PathElement<'a>, &'a PathElement<'a>),
+}
+
+pub trait PathOperation {
+    // Get the operation mode for this operation
+    fn operation_mode(&self) -> PathOperationMode;
+
+    // Execute the actual operation
+    fn execute(&mut self, json: &mut Jsonb, stack: Vec<JsonTraversalResult>) -> Result<()>;
+
+    // Name of the operation for logging/debugging
+}
+
+pub struct SetOperation {
+    value: Jsonb,
+    mode: PathOperationMode,
+}
+
+impl SetOperation {
+    pub fn new(value: Jsonb) -> Self {
+        Self {
+            value,
+            mode: PathOperationMode::Upsert,
+        }
+    }
+}
+
+impl PathOperation for SetOperation {
+    fn operation_mode(&self) -> PathOperationMode {
+        self.mode
+    }
+
+    fn execute(&mut self, json: &mut Jsonb, mut stack: Vec<JsonTraversalResult>) -> Result<()> {
+        if stack.is_empty() {
+            bail_parse_error!("Nothing to operate on!")
+        }
+        let value = &self.value.data;
+        let target = stack.pop().unwrap();
+
+        // handle array
+        if target.has_specific_index() {
+            let array_value_idx = target.get_array_index().unwrap();
+            let obj_value_idx = target.field_value_index;
+            let (JsonbHeader(_, obj_value_size), obj_value_header_size) =
+                json.read_header(obj_value_idx)?;
+            let (JsonbHeader(_, array_value_size), array_value_header_size) =
+                json.read_header(array_value_idx)?;
+
+            let delta =
+                value.len() as isize - (array_value_size + array_value_header_size) as isize;
+
+            let end_pos = array_value_idx + array_value_size + array_value_header_size;
+            json.data
+                .splice(array_value_idx..end_pos, value.iter().copied());
+
+            // update parent
+            let h_delta = if matches!(
+                target.field_key_index,
+                JsonLocationKind::ObjectProperty(_) | JsonLocationKind::DocumentRoot
+            ) {
+                let new_h_delta = json.write_element_header(
+                    obj_value_idx,
+                    ElementType::ARRAY,
+                    (obj_value_size as isize + delta) as usize,
+                    true,
+                )?;
+                (new_h_delta - obj_value_header_size) as isize
+            } else {
+                0
+            };
+
+            json.update_parent_references(stack, target.delta + delta + h_delta)?;
+        } else {
+            let old_value_idx = target.field_value_index;
+            let (JsonbHeader(_, old_value_size), old_value_header_size) =
+                json.read_header(old_value_idx)?;
+            let delta = value.len() as isize - (old_value_header_size + old_value_size) as isize;
+
+            let end_pos = old_value_idx + old_value_header_size + old_value_size;
+
+            json.data
+                .splice(old_value_idx..end_pos, value.iter().copied());
+
+            json.update_parent_references(stack, delta + target.delta)?;
+        }
+
+        Ok(())
+    }
+}
+
+pub struct DeleteOperation {
+    mode: PathOperationMode,
+}
+
+impl DeleteOperation {
+    pub fn new() -> Self {
+        Self {
+            mode: PathOperationMode::ReplaceExisting,
+        }
+    }
+}
+
+impl PathOperation for DeleteOperation {
+    fn operation_mode(&self) -> PathOperationMode {
+        self.mode
+    }
+
+    fn execute(&mut self, json: &mut Jsonb, mut stack: Vec<JsonTraversalResult>) -> Result<()> {
+        if stack.is_empty() {
+            bail_parse_error!("Nothing to operate on!")
+        }
+
+        let target = stack.pop().unwrap();
+
+        // handle array
+        if target.has_specific_index() {
+            let array_value_idx = target.get_array_index().unwrap();
+
+            let obj_value_idx = target.field_value_index;
+            let (JsonbHeader(_, obj_value_size), obj_value_header_size) =
+                json.read_header(obj_value_idx)?;
+            let (JsonbHeader(_, array_value_size), array_value_header_size) =
+                json.read_header(array_value_idx)?;
+            let delta = 0 - (array_value_size + array_value_header_size) as isize;
+
+            let end_pos = array_value_idx + array_value_size + array_value_header_size;
+            json.data.drain(array_value_idx..end_pos);
+
+            let h_delta = if matches!(
+                target.field_key_index,
+                JsonLocationKind::ObjectProperty(_) | JsonLocationKind::DocumentRoot
+            ) {
+                let new_h_delta = json.write_element_header(
+                    obj_value_idx,
+                    ElementType::ARRAY,
+                    (obj_value_size as isize + delta) as usize,
+                    true,
+                )?;
+                new_h_delta as isize - obj_value_header_size as isize
+            } else {
+                0
+            };
+            json.update_parent_references(stack, target.delta + delta + h_delta)?;
+        } else if let JsonLocationKind::ObjectProperty(key_idx) = target.field_key_index {
+            let value_idx = target.field_value_index;
+            let (JsonbHeader(_, value_size), value_header_size) = json.read_header(value_idx)?;
+            let (JsonbHeader(_, key_size), key_header_size) = json.read_header(key_idx)?;
+            let delta = 0 - (value_header_size + value_size + key_size + key_header_size) as isize;
+
+            let end_pos = key_idx + value_header_size + value_size + key_size + key_header_size;
+            json.data.drain(key_idx..end_pos);
+
+            json.update_parent_references(stack, delta + target.delta)?;
+        } else {
+            let nul = JsonbHeader::make_null().into_bytes();
+            let nul_bytes = nul.as_bytes();
+            json.data.clear();
+            json.data.extend_from_slice(nul_bytes);
+        }
+
+        Ok(())
+    }
+}
+
+pub struct ReplaceOperation {
+    value: Jsonb,
+    mode: PathOperationMode,
+}
+
+impl ReplaceOperation {
+    pub fn new(value: Jsonb) -> Self {
+        Self {
+            value,
+            mode: PathOperationMode::ReplaceExisting,
+        }
+    }
+}
+
+impl PathOperation for ReplaceOperation {
+    fn operation_mode(&self) -> PathOperationMode {
+        self.mode
+    }
+
+    fn execute(&mut self, json: &mut Jsonb, mut stack: Vec<JsonTraversalResult>) -> Result<()> {
+        if stack.is_empty() {
+            bail_parse_error!("Nothing to operate on!")
+        }
+        let value = &self.value.data;
+        let target = stack.pop().unwrap();
+
+        // handle array
+        if target.has_specific_index() {
+            let array_value_idx = target.get_array_index().unwrap();
+            let obj_value_idx = target.field_value_index;
+            let (JsonbHeader(_, obj_value_size), obj_value_header_size) =
+                json.read_header(obj_value_idx)?;
+            let (JsonbHeader(_, array_value_size), array_value_header_size) =
+                json.read_header(array_value_idx)?;
+
+            let delta =
+                value.len() as isize - (array_value_size + array_value_header_size) as isize;
+
+            let end_pos = array_value_idx + array_value_size + array_value_header_size;
+            json.data
+                .splice(array_value_idx..end_pos, value.iter().copied());
+
+            // update parent
+            let h_delta = if matches!(
+                target.field_key_index,
+                JsonLocationKind::ObjectProperty(_) | JsonLocationKind::DocumentRoot
+            ) {
+                let new_h_delta = json.write_element_header(
+                    obj_value_idx,
+                    ElementType::ARRAY,
+                    (obj_value_size as isize + delta) as usize,
+                    true,
+                )?;
+                (new_h_delta - obj_value_header_size) as isize
+            } else {
+                0
+            };
+
+            json.update_parent_references(stack, target.delta + delta + h_delta)?;
+        } else {
+            let old_value_idx = target.field_value_index;
+            let (JsonbHeader(_, old_value_size), old_value_header_size) =
+                json.read_header(old_value_idx)?;
+            let delta = value.len() as isize - (old_value_header_size + old_value_size) as isize;
+
+            let end_pos = old_value_idx + old_value_header_size + old_value_size;
+
+            json.data
+                .splice(old_value_idx..end_pos, value.iter().copied());
+
+            json.update_parent_references(stack, delta + target.delta)?;
+        }
+
+        Ok(())
+    }
+}
+
+pub struct InsertOperation {
+    value: Jsonb,
+    mode: PathOperationMode,
+}
+
+impl InsertOperation {
+    pub fn new(value: Jsonb) -> Self {
+        Self {
+            value,
+            mode: PathOperationMode::InsertNew,
+        }
+    }
+}
+
+impl PathOperation for InsertOperation {
+    fn operation_mode(&self) -> PathOperationMode {
+        self.mode
+    }
+
+    fn execute(&mut self, json: &mut Jsonb, mut stack: Vec<JsonTraversalResult>) -> Result<()> {
+        if stack.is_empty() {
+            bail_parse_error!("Nothing to operate on!")
+        }
+        let value = &self.value.data;
+        let target = stack.pop().unwrap();
+
+        // handle array
+        if target.has_specific_index() {
+            let array_value_idx = target.get_array_index().unwrap();
+            let obj_value_idx = target.field_value_index;
+            let (JsonbHeader(_, obj_value_size), obj_value_header_size) =
+                json.read_header(obj_value_idx)?;
+            let (JsonbHeader(_, array_value_size), array_value_header_size) =
+                json.read_header(array_value_idx)?;
+
+            let delta =
+                value.len() as isize - (array_value_size + array_value_header_size) as isize;
+
+            let end_pos = array_value_idx + array_value_size + array_value_header_size;
+            json.data
+                .splice(array_value_idx..end_pos, value.iter().copied());
+
+            // update parent
+            let h_delta = if matches!(
+                target.field_key_index,
+                JsonLocationKind::ObjectProperty(_) | JsonLocationKind::DocumentRoot
+            ) {
+                let new_h_delta = json.write_element_header(
+                    obj_value_idx,
+                    ElementType::ARRAY,
+                    (obj_value_size as isize + delta) as usize,
+                    true,
+                )?;
+                (new_h_delta - obj_value_header_size) as isize
+            } else {
+                0
+            };
+
+            json.update_parent_references(stack, target.delta + delta + h_delta)?;
+        } else {
+            let old_value_idx = target.field_value_index;
+            let (JsonbHeader(_, old_value_size), old_value_header_size) =
+                json.read_header(old_value_idx)?;
+            let delta = value.len() as isize - (old_value_header_size + old_value_size) as isize;
+
+            let end_pos = old_value_idx + old_value_header_size + old_value_size;
+
+            json.data
+                .splice(old_value_idx..end_pos, value.iter().copied());
+
+            json.update_parent_references(stack, delta + target.delta)?;
+        }
+
+        Ok(())
+    }
+}
+
+pub struct SearchOperation {
+    value: Jsonb,
+    mode: PathOperationMode,
+}
+
+impl SearchOperation {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            mode: PathOperationMode::ReplaceExisting,
+            value: Jsonb::new(capacity, None),
+        }
+    }
+
+    pub fn result(self) -> Jsonb {
+        self.value
+    }
+}
+
+impl PathOperation for SearchOperation {
+    fn operation_mode(&self) -> PathOperationMode {
+        self.mode
+    }
+
+    fn execute(&mut self, json: &mut Jsonb, mut stack: Vec<JsonTraversalResult>) -> Result<()> {
+        let target = stack.pop().unwrap();
+        let idx = if let Some(idx) = target.get_array_index() {
+            idx
+        } else {
+            target.field_value_index
+        };
+        let (JsonbHeader(_, size), header_size) = json.read_header(idx)?;
+        self.value
+            .data
+            .extend_from_slice(&json.data[idx..idx + header_size + size]);
+
+        Ok(())
+    }
+}
+
+impl JsonTraversalResult {
+    pub fn new(field_value_index: usize, field_key_index: JsonLocationKind, delta: isize) -> Self {
+        Self {
+            field_value_index,
+            delta,
+            field_key_index,
+            array_position_info: None,
+        }
+    }
+
+    pub fn with_array_index(
+        field_value_index: usize,
+        field_key_index: JsonLocationKind,
+        delta: isize,
+        index: usize,
+    ) -> Self {
+        Self {
+            field_value_index,
+            field_key_index,
+            delta,
+            array_position_info: Some(ArrayPositionKind::SpecificIndex(index)),
+        }
+    }
+
+    pub fn has_specific_index(&self) -> bool {
+        matches!(
+            self.array_position_info,
+            Some(ArrayPositionKind::SpecificIndex(_))
+        )
+    }
+
+    pub fn get_array_index(&self) -> Option<usize> {
+        match self.array_position_info {
+            Some(ArrayPositionKind::SpecificIndex(idx)) => Some(idx),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathOperationMode {
+    /// Only replace values if the complete path already exists
+    ReplaceExisting,
+
+    /// Only insert values if the path doesn't exist yet
+    InsertNew,
+
+    /// Either replace existing values or create new ones as needed
+    Upsert,
+}
+
+impl PathOperationMode {
+    /// Returns true if this mode allows replacing existing values
+    pub fn allows_replace(&self) -> bool {
+        matches!(self, Self::ReplaceExisting | Self::Upsert)
+    }
+
+    /// Returns true if this mode allows creating new paths
+    pub fn allows_insert(&self) -> bool {
+        matches!(self, Self::InsertNew | Self::Upsert)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -401,12 +846,26 @@ impl Jsonb {
         jsonb
     }
 
+    pub fn make_empty_obj(size: usize) -> Self {
+        let mut jsonb = Self {
+            data: Vec::with_capacity(size),
+        };
+        jsonb
+            .write_element_header(0, ElementType::OBJECT, 0, false)
+            .unwrap();
+        jsonb
+    }
+
     pub fn append_to_array_unsafe(&mut self, data: &[u8]) {
         self.data.extend_from_slice(data);
     }
 
-    pub fn finalize_array_unsafe(&mut self) -> Result<()> {
-        self.write_element_header(0, ElementType::ARRAY, self.len() - 1, false)?;
+    pub fn append_jsonb_to_end(&mut self, mut data: Vec<u8>) {
+        self.data.append(&mut data);
+    }
+
+    pub fn finalize_unsafe(&mut self, element_type: ElementType) -> Result<()> {
+        self.write_element_header(0, element_type, self.len() - 1, false)?;
         Ok(())
     }
 
@@ -444,6 +903,7 @@ impl Jsonb {
 
     fn serialize_value(&self, string: &mut String, cursor: usize) -> Result<usize> {
         let (header, skip_header) = self.read_header(cursor)?;
+
         let cursor = cursor + skip_header;
         let current_cursor = match header {
             JsonbHeader(ElementType::OBJECT, len) => self.serialize_object(string, cursor, len)?,
@@ -838,7 +1298,7 @@ impl Jsonb {
             b'"' | b'\'' => {
                 pos = self.deserialize_string(input, pos)?;
             }
-            c if (b'0'..=b'9').contains(&c)
+            c if c.is_ascii_digit()
                 || c == b'-'
                 || c == b'+'
                 || c == b'.'
@@ -1381,7 +1841,6 @@ impl Jsonb {
             return Ok(pos);
         }
 
-        // If we get here, we didn't match either pattern
         bail_parse_error!("Expected 'null' or 'nan'");
     }
 
@@ -1403,60 +1862,37 @@ impl Jsonb {
         }
 
         let header = JsonbHeader::new(element_type, payload_size).into_bytes();
-
         let header_bytes = header.as_bytes();
         let header_len = header_bytes.len();
+
         if cursor == self.len() {
             self.data.extend_from_slice(header_bytes);
-            Ok(header_len)
-        } else {
-            // Calculate difference in length
-            let old_len = if size_might_change {
-                let (_, offset) = self.read_header(cursor)?;
-                offset
-            } else {
-                1
-            }; // We're replacing 1 byte
-            let new_len = header_bytes.len();
-            let diff = new_len as isize - old_len as isize;
-
-            // Resize the Vec if needed
-            match diff.cmp(&0isize) {
-                Ordering::Greater => {
-                    // Need to make room
-                    self.data.resize(self.data.len() + diff as usize, 0);
-
-                    // Shift data after cursor to the right
-                    unsafe {
-                        let ptr = self.data.as_mut_ptr();
-                        std::ptr::copy(
-                            ptr.add(cursor + old_len),
-                            ptr.add(cursor + new_len),
-                            self.data.len() - cursor - new_len,
-                        );
-                    }
-                }
-                Ordering::Less => {
-                    // Need to shrink
-                    unsafe {
-                        let ptr = self.data.as_mut_ptr();
-                        std::ptr::copy(
-                            ptr.add(cursor + old_len),
-                            ptr.add(cursor + new_len),
-                            self.data.len() - cursor - old_len,
-                        );
-                    }
-                }
-                Ordering::Equal => (),
-            };
-
-            // Copy the header bytes
-            for (i, &byte) in header_bytes.iter().enumerate() {
-                self.data[cursor + i] = byte;
-            }
-
-            Ok(new_len)
+            return Ok(header_len);
         }
+
+        let old_len = if size_might_change {
+            let (_, offset) = self.read_header(cursor)?;
+            offset
+        } else {
+            1
+        };
+
+        let new_len = header_bytes.len();
+
+        if new_len > old_len {
+            self.data.splice(
+                cursor + old_len..cursor + old_len,
+                std::iter::repeat(0).take(new_len - old_len),
+            );
+        } else if new_len < old_len {
+            self.data.drain(cursor + new_len..cursor + old_len);
+        }
+
+        for (i, &byte) in header_bytes.iter().enumerate() {
+            self.data[cursor + i] = byte;
+        }
+
+        Ok(new_len)
     }
 
     fn from_str(input: &str) -> Result<Self> {
@@ -1490,38 +1926,9 @@ impl Jsonb {
         self.data
     }
 
-    pub fn get_by_path(&self, path: &JsonPath) -> Result<(Jsonb, ElementType)> {
-        let mut pos = 0;
-        let mut string_buffer = String::with_capacity(1024);
-        let mut nav_result: TraverseResult;
-
-        for segment in path.elements.iter() {
-            nav_result = self.navigate_to_segment(segment, pos, &mut string_buffer)?;
-            pos = match nav_result {
-                TraverseResult::Value(v) => v,
-                TraverseResult::ObjectValue(v, _) => v,
-            }
-        }
-        let (JsonbHeader(element_type, value_size), header_size) = self.read_header(pos)?;
-        let end = pos + header_size + value_size;
-        Ok((Jsonb::from_raw_data(&self.data[pos..end]), element_type))
-    }
-
-    pub fn get_by_path_raw(&self, path: &JsonPath) -> Result<&[u8]> {
-        let mut pos = 0;
-        let mut string_buffer = String::with_capacity(1024);
-        let mut nav_result: TraverseResult;
-
-        for segment in path.elements.iter() {
-            nav_result = self.navigate_to_segment(segment, pos, &mut string_buffer)?;
-            pos = match nav_result {
-                TraverseResult::Value(v) => v,
-                TraverseResult::ObjectValue(v, _) => v,
-            }
-        }
-        let (JsonbHeader(_, value_size), header_size) = self.read_header(pos)?;
-        let end = pos + header_size + value_size;
-        Ok(&self.data[pos..end])
+    pub fn element_type_at(&self, idx: usize) -> Result<ElementType> {
+        let (JsonbHeader(element_type, _), _) = self.read_header(idx)?;
+        Ok(element_type)
     }
 
     pub fn array_len(&self) -> Result<usize> {
@@ -1540,212 +1947,557 @@ impl Jsonb {
         Ok(count)
     }
 
-    pub fn remove_by_path(&mut self, path: &JsonPath) -> Result<()> {
+    pub fn navigate_path(
+        &mut self,
+        path: &JsonPath,
+        mode: PathOperationMode,
+    ) -> Result<Vec<JsonTraversalResult>> {
+        let mut path_iter = path.elements.iter().peekable();
         let mut pos = 0;
-        let mut string_buffer = String::with_capacity(self.len() / 2);
-        let element_len = path.elements.len();
+        let mut stack: Vec<JsonTraversalResult> = Vec::with_capacity(path.elements.len());
 
-        let mut nav_stack: Vec<TraverseResult> = Vec::with_capacity(element_len);
+        while let Some(current) = path_iter.next() {
+            let next_is_array = matches!(path_iter.peek(), Some(PathElement::ArrayLocator(_)))
+                && !matches!(current, PathElement::ArrayLocator(_));
 
-        for segment in path.elements.iter() {
-            let nav_result = self.navigate_to_segment(segment, pos, &mut string_buffer)?;
-            pos = match nav_result {
-                TraverseResult::Value(v) => v,
-                TraverseResult::ObjectValue(v, _) => v,
-            };
-            nav_stack.push(nav_result)
-        }
-        let target = nav_stack.pop().unwrap();
+            let result = if next_is_array {
+                let array_locator = path_iter.next().unwrap();
 
-        match target {
-            TraverseResult::Value(target_pos) => {
-                if target_pos == 0 {
-                    let null = JsonbHeader::make_null().into_bytes();
-                    self.data.clear();
-                    self.data.push(null.as_bytes()[0]);
-                    return Ok(());
-                };
-                let (target_header, offset) = self.read_header(target_pos)?;
-                let delta = offset + target_header.1;
-                self.data.drain(target_pos..target_pos + delta);
-
-                // delta is alway positive
-                self.recalculate_headers(nav_stack, delta as isize)?;
-            }
-            TraverseResult::ObjectValue(target_pos, key_pos) => {
-                let (JsonbHeader(_, target_size), target_header_size) =
-                    self.read_header(target_pos)?;
-                let delta = (target_pos + target_header_size + target_size) - key_pos;
-                self.data.drain(key_pos..key_pos + delta);
-
-                // delta is alway positive
-                self.recalculate_headers(nav_stack, delta as isize)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn replace_by_path(&mut self, path: &JsonPath, value: Jsonb) -> Result<()> {
-        let mut pos = 0;
-        let mut string_buffer = String::with_capacity(self.len() / 2);
-        let element_len = path.elements.len();
-
-        let mut nav_stack: Vec<TraverseResult> = Vec::with_capacity(element_len);
-
-        for segment in path.elements.iter() {
-            let nav_result = self.navigate_to_segment(segment, pos, &mut string_buffer)?;
-            pos = match nav_result {
-                TraverseResult::Value(v) => v,
-                TraverseResult::ObjectValue(v, _) => v,
-            };
-            nav_stack.push(nav_result)
-        }
-
-        let target = nav_stack.pop().expect("Target should always be present");
-
-        match target {
-            TraverseResult::Value(target_pos) | TraverseResult::ObjectValue(target_pos, _) => {
-                let (JsonbHeader(_, target_size), target_header_size) =
-                    self.read_header(target_pos)?;
-                let target_delta = target_header_size + target_size;
-                let value_delta = value.len();
-                let delta: isize = target_delta as isize - value_delta as isize;
-                self.data.splice(
-                    target_pos..target_pos + target_delta,
-                    value.data().into_iter(),
-                );
-
-                self.recalculate_headers(nav_stack, delta)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn recalculate_headers(&mut self, stack: Vec<TraverseResult>, delta: isize) -> Result<()> {
-        let mut delta = delta;
-        let stack = stack.into_iter().rev();
-
-        // Going backwards parent by parent and recalculating headers
-        for parent in stack {
-            let pos = match parent {
-                TraverseResult::Value(v) => v,
-                TraverseResult::ObjectValue(v, _) => v,
-            };
-            let (JsonbHeader(value_type, value_size), header_size) = self.read_header(pos)?;
-
-            let new_size = if delta < 0 {
-                value_size.saturating_add(delta.unsigned_abs())
+                self.navigate_to_segment(
+                    SegmentVariant::KeyWithArrayIndex(current, array_locator),
+                    pos,
+                    mode,
+                )?
             } else {
-                value_size.saturating_sub(delta as usize)
+                self.navigate_to_segment(SegmentVariant::Single(current), pos, mode)?
             };
 
-            let new_header_size = self.write_element_header(pos, value_type, new_size, true)?;
+            pos = match &result.array_position_info {
+                Some(ArrayPositionKind::SpecificIndex(idx)) => *idx,
+                None => result.field_value_index,
+            };
 
-            let diff = new_header_size.abs_diff(header_size);
-            if new_header_size <= header_size {
-                delta += diff as isize;
-            } else if new_header_size > header_size {
-                delta -= diff as isize;
+            stack.push(result);
+        }
+
+        Ok(stack)
+    }
+
+    pub fn operate_on_path<T>(&mut self, path: &JsonPath, operation: &mut T) -> Result<()>
+    where
+        T: PathOperation,
+    {
+        let mode = operation.operation_mode();
+
+        let stack = self.navigate_path(path, mode)?;
+
+        operation.execute(self, stack)?;
+
+        Ok(())
+    }
+
+    fn update_parent_references(
+        &mut self,
+        stack: Vec<JsonTraversalResult>,
+        delta: isize,
+    ) -> Result<()> {
+        let mut delta = delta;
+        let mut is_prev_arr = false;
+        for parent in stack.iter().rev() {
+            let (JsonbHeader(el_type, el_size), el_header_len) =
+                self.read_header(parent.field_value_index)?;
+
+            if el_type == ElementType::ARRAY && !is_prev_arr {
+                is_prev_arr = true;
+                let arr_element_idx = parent.get_array_index().unwrap();
+                let (JsonbHeader(arr_el_type, arr_el_size), arr_el_header_len) =
+                    self.read_header(arr_element_idx)?;
+
+                let new_arr_el_header_len = self.write_element_header(
+                    arr_element_idx,
+                    arr_el_type,
+                    (arr_el_size as isize + delta) as usize,
+                    true,
+                )?;
+
+                delta += (new_arr_el_header_len - arr_el_header_len) as isize;
+            } else {
+                is_prev_arr = false;
             }
+            let new_size = el_size as isize + delta;
+            let new_header_size = self.write_element_header(
+                parent.field_value_index,
+                el_type,
+                new_size as usize,
+                true,
+            )?;
+
+            let header_diff = new_header_size as isize - el_header_len as isize;
+
+            delta += parent.delta;
+            delta += header_diff;
         }
 
         Ok(())
     }
 
     fn navigate_to_segment(
-        &self,
-        segment: &PathElement,
-        pos: usize,
-        string_buffer: &mut String,
-    ) -> Result<TraverseResult> {
-        let (header, skip_header) = self.read_header(pos)?;
-        let (parent_type, parent_size) = (header.0, header.1);
-        let mut current_pos = pos + skip_header;
+        &mut self,
+        segment: SegmentVariant,
+        mut pos: usize,
+        mode: PathOperationMode,
+    ) -> Result<JsonTraversalResult> {
+        let (JsonbHeader(element_type, element_size), header_size) = self.read_header(pos)?;
 
         match segment {
-            PathElement::Root() => return Ok(TraverseResult::Value(0)),
-            PathElement::Key(path_key, is_raw) => {
-                if parent_type != ElementType::OBJECT {
-                    bail_parse_error!("parent is not object")
-                };
-                while current_pos < pos + parent_size {
-                    let key_pos = current_pos;
-                    let (key_header, skip_header) = self.read_header(current_pos)?;
-                    let (key_type, key_size) = (key_header.0, key_header.1);
-                    current_pos += skip_header;
-
-                    if matches!(
-                        key_header.0,
-                        ElementType::TEXT
-                            | ElementType::TEXT5
-                            | ElementType::TEXTJ
-                            | ElementType::TEXTRAW
-                    ) {
-                        string_buffer.clear();
-                        current_pos = self.serialize_string(
-                            string_buffer,
-                            current_pos,
-                            key_size,
-                            &key_type,
-                            false,
-                        )?;
-
-                        if compare((&string_buffer, key_type), (path_key, *is_raw)) {
-                            return Ok(TraverseResult::ObjectValue(current_pos, key_pos));
-                        } else {
-                            current_pos = self.skip_element(current_pos)?;
-                        }
-                    } else {
-                        bail_parse_error!("Key is not text!")
-                    };
-                }
+            SegmentVariant::Single(PathElement::Root()) => {
+                return Ok(JsonTraversalResult::new(
+                    pos,
+                    JsonLocationKind::DocumentRoot,
+                    0,
+                ));
             }
-            PathElement::ArrayLocator(idx) => {
-                if parent_type != ElementType::ARRAY {
-                    bail_parse_error!("parent is not array");
-                };
-                if let Some(id) = idx {
-                    let id = id.to_owned();
+            SegmentVariant::Single(PathElement::ArrayLocator(idx)) => {
+                let (JsonbHeader(root_type, root_size), root_header_size) =
+                    self.read_header(pos)?;
 
-                    if id >= 0 {
-                        for _ in 0..id as usize {
-                            if current_pos < pos + parent_size {
-                                current_pos = self.skip_element(current_pos)?;
+                if root_type == ElementType::ARRAY {
+                    let end_pos = pos + root_header_size + root_size;
+
+                    match idx {
+                        Some(idx) if *idx >= 0 => {
+                            let mut count = 0;
+                            let mut arr_pos = pos + root_header_size;
+
+                            while arr_pos < end_pos && count != *idx as usize {
+                                arr_pos = self.skip_element(arr_pos)?;
+                                count += 1;
+                            }
+
+                            if mode.allows_insert() && arr_pos == end_pos {
+                                let placeholder =
+                                    JsonbHeader::new(ElementType::OBJECT, 0).into_bytes();
+                                let placeholder_bytes = placeholder.as_bytes();
+
+                                self.data
+                                    .splice(arr_pos..arr_pos, placeholder_bytes.iter().copied());
+
+                                return Ok(JsonTraversalResult::with_array_index(
+                                    pos + root_header_size,
+                                    JsonLocationKind::ArrayEntry,
+                                    placeholder_bytes.len() as isize,
+                                    arr_pos,
+                                ));
+                            }
+
+                            if arr_pos != end_pos && mode.allows_replace() {
+                                return Ok(JsonTraversalResult::with_array_index(
+                                    pos,
+                                    JsonLocationKind::ArrayEntry,
+                                    0,
+                                    arr_pos,
+                                ));
+                            }
+
+                            bail_parse_error!("Not found!");
+                        }
+                        Some(idx) if *idx < 0 => {
+                            let mut idx_map: HashMap<i32, usize> = HashMap::with_capacity(100);
+                            let mut element_idx = 0;
+                            let mut arr_pos = pos + root_header_size;
+
+                            while arr_pos < end_pos {
+                                idx_map.insert(element_idx, arr_pos);
+                                arr_pos = self.skip_element(arr_pos)?;
+                                element_idx += 1;
+                            }
+
+                            let real_idx = element_idx + idx;
+
+                            if let Some(index) = idx_map.get(&real_idx) {
+                                return Ok(JsonTraversalResult::with_array_index(
+                                    pos,
+                                    JsonLocationKind::ArrayEntry,
+                                    0,
+                                    *index,
+                                ));
                             } else {
-                                bail_parse_error!("Index is bigger then array size");
+                                bail_parse_error!("Element with negative index not found")
                             }
                         }
-                        return Ok(TraverseResult::Value(current_pos));
-                        // fix this after we remove serialized json
-                    } else {
-                        let mut temp_pos = current_pos;
-                        let mut count_elements = 0;
-                        while temp_pos < pos + parent_size {
-                            temp_pos = self.skip_element(temp_pos)?;
-                            count_elements += 1;
-                        }
-                        let corrected_idx = count_elements + id;
-                        if corrected_idx < 0 {
-                            bail_parse_error!("Index is bigger then array size")
-                        }
-                        for _ in 0..corrected_idx as usize {
-                            if current_pos < pos + parent_size {
-                                current_pos = self.skip_element(current_pos)?;
-                            } else {
-                                bail_parse_error!("Index is bigger then array size");
-                            }
-                        }
-                        return Ok(TraverseResult::Value(current_pos));
+                        _ => unreachable!(),
                     }
                 } else {
-                    return Ok(TraverseResult::Value(pos));
+                    if root_type == ElementType::OBJECT
+                        && root_size == 0
+                        && (*idx == Some(0) || *idx == None)
+                        && mode.allows_insert()
+                    {
+                        let array = JsonbHeader::new(ElementType::ARRAY, 0).into_bytes();
+                        let array_bytes = array.as_bytes();
+                        let placeholder = JsonbHeader::new(ElementType::OBJECT, 0).into_bytes();
+                        let placeholder_bytes = placeholder.as_bytes();
+                        self.data.splice(
+                            pos..pos + root_header_size,
+                            array_bytes
+                                .iter()
+                                .copied()
+                                .chain(placeholder_bytes.iter().copied()),
+                        );
+
+                        return Ok(JsonTraversalResult::with_array_index(
+                            pos,
+                            JsonLocationKind::ArrayEntry,
+                            placeholder_bytes.len() as isize,
+                            pos + array_bytes.len(),
+                        ));
+                    };
+                    bail_parse_error!("Root is not an array");
                 }
             }
-        }
+            SegmentVariant::Single(PathElement::Key(path_key, is_raw)) => {
+                if element_type == ElementType::OBJECT {
+                    let end_pos = pos + element_size + header_size;
 
-        bail_parse_error!("Not found")
+                    pos += header_size;
+
+                    while pos < end_pos {
+                        let (JsonbHeader(key_type, key_len), key_header_len) =
+                            self.read_header(pos)?;
+
+                        if !key_type.is_valid_key() {
+                            bail_parse_error!("Key should be string");
+                        }
+
+                        let key_start = pos + key_header_len;
+                        let json_key = unsafe {
+                            from_utf8_unchecked(&self.data[key_start..key_start + key_len])
+                        };
+
+                        if compare((json_key, key_type), (path_key, *is_raw)) {
+                            if mode.allows_replace() {
+                                let value_pos = pos + key_header_len + key_len;
+                                let key_pos = pos;
+
+                                return Ok(JsonTraversalResult::new(
+                                    value_pos,
+                                    JsonLocationKind::ObjectProperty(key_pos),
+                                    0,
+                                ));
+                            } else {
+                                bail_parse_error!("Cant replace")
+                            }
+                        } else {
+                            pos += key_header_len + key_len;
+                            pos = self.skip_element(pos)?;
+                        }
+                    }
+
+                    if mode.allows_insert() {
+                        let key_type = if *is_raw {
+                            ElementType::TEXTRAW
+                        } else {
+                            ElementType::TEXT
+                        };
+
+                        let key_header = JsonbHeader::new(key_type, path_key.len()).into_bytes();
+                        let key_header_bytes = key_header.as_bytes();
+                        let key_bytes = path_key.as_bytes();
+                        let value_header = JsonbHeader::new(ElementType::OBJECT, 0).into_bytes();
+                        let value_header_bytes = value_header.as_bytes();
+
+                        self.data.splice(
+                            pos..pos,
+                            key_header_bytes
+                                .iter()
+                                .copied()
+                                .chain(key_bytes.iter().copied())
+                                .chain(value_header_bytes.iter().copied()),
+                        );
+
+                        let key_idx = pos;
+                        let value_idx = pos + key_header_bytes.len() + key_bytes.len();
+                        let delta =
+                            key_header_bytes.len() + key_bytes.len() + value_header_bytes.len();
+
+                        return Ok(JsonTraversalResult::new(
+                            value_idx,
+                            JsonLocationKind::ObjectProperty(key_idx),
+                            delta as isize,
+                        ));
+                    } else {
+                        bail_parse_error!("Mode does not allow insert cannot create new key!")
+                    }
+                } else {
+                    bail_parse_error!("Looks like this is noop");
+                }
+            }
+            SegmentVariant::KeyWithArrayIndex(
+                PathElement::Root(),
+                PathElement::ArrayLocator(idx),
+            ) => {
+                let (JsonbHeader(root_type, root_size), root_header_size) =
+                    self.read_header(pos)?;
+
+                if root_type == ElementType::ARRAY {
+                    let end_pos = pos + root_header_size + root_size;
+
+                    match idx {
+                        Some(idx) if *idx >= 0 => {
+                            let mut count = 0;
+                            let mut arr_pos = pos + root_header_size;
+
+                            while arr_pos < end_pos && count != *idx as usize {
+                                arr_pos = self.skip_element(arr_pos)?;
+                                count += 1;
+                            }
+
+                            if mode.allows_insert() && arr_pos == end_pos && count == *idx as usize
+                            {
+                                let placeholder =
+                                    JsonbHeader::new(ElementType::OBJECT, 0).into_bytes();
+                                let placeholder_bytes = placeholder.as_bytes();
+
+                                self.data
+                                    .splice(arr_pos..arr_pos, placeholder_bytes.iter().copied());
+
+                                return Ok(JsonTraversalResult::with_array_index(
+                                    pos,
+                                    JsonLocationKind::DocumentRoot,
+                                    placeholder_bytes.len() as isize,
+                                    arr_pos,
+                                ));
+                            }
+
+                            if arr_pos != end_pos && mode.allows_replace() {
+                                return Ok(JsonTraversalResult::with_array_index(
+                                    pos,
+                                    JsonLocationKind::DocumentRoot,
+                                    0,
+                                    arr_pos,
+                                ));
+                            }
+
+                            bail_parse_error!("Not found!");
+                        }
+                        Some(idx) if *idx < 0 => {
+                            let mut idx_map: HashMap<i32, usize> = HashMap::with_capacity(100);
+                            let mut element_idx = 0;
+                            let mut arr_pos = pos + root_header_size;
+
+                            while arr_pos < end_pos {
+                                idx_map.insert(element_idx, arr_pos);
+                                arr_pos = self.skip_element(arr_pos)?;
+                                element_idx += 1;
+                            }
+
+                            let real_idx = element_idx + idx;
+
+                            if let Some(index) = idx_map.get(&real_idx) {
+                                return Ok(JsonTraversalResult::with_array_index(
+                                    pos,
+                                    JsonLocationKind::DocumentRoot,
+                                    0,
+                                    *index,
+                                ));
+                            } else {
+                                bail_parse_error!("Element with negative index not found")
+                            }
+                        }
+                        _ => unreachable!(),
+                    }
+                } else {
+                    bail_parse_error!("Root is not an array");
+                }
+            }
+            SegmentVariant::KeyWithArrayIndex(
+                PathElement::Key(path_key, is_raw),
+                PathElement::ArrayLocator(idx),
+            ) => {
+                if element_type != ElementType::OBJECT {
+                    bail_parse_error!("Not an object");
+                }
+
+                let end_pos = pos + header_size + element_size;
+
+                let mut current_pos = pos + header_size;
+
+                while current_pos < end_pos {
+                    let (JsonbHeader(key_type, key_size), key_header_size) =
+                        self.read_header(current_pos)?;
+
+                    if !key_type.is_valid_key() {
+                        bail_parse_error!("Key should be string")
+                    }
+
+                    let obj_key = unsafe {
+                        from_utf8_unchecked(
+                            &self.data[current_pos + key_header_size
+                                ..current_pos + key_header_size + key_size],
+                        )
+                    };
+
+                    if compare((obj_key, key_type), (path_key, *is_raw)) {
+                        break;
+                    } else {
+                        current_pos =
+                            self.skip_element(current_pos + key_size + key_header_size)?;
+                    }
+                }
+
+                if current_pos == end_pos && mode.allows_insert() {
+                    if idx.is_some() && idx.unwrap() != 0 {
+                        bail_parse_error!("cant create new arr with idx");
+                    }
+
+                    let key_header_type = if *is_raw {
+                        ElementType::TEXTRAW
+                    } else {
+                        ElementType::TEXT
+                    };
+
+                    let key_header = JsonbHeader::new(key_header_type, path_key.len()).into_bytes();
+                    let key_header_bytes = key_header.as_bytes();
+                    let key_bytes = path_key.as_bytes();
+                    let array_header = JsonbHeader::new(ElementType::ARRAY, 1).into_bytes();
+                    let array_header_bytes = array_header.as_bytes();
+                    let array_value_header = JsonbHeader::new(ElementType::OBJECT, 0).into_bytes();
+                    let array_value_header_bytes = array_value_header.as_bytes();
+
+                    let delta = key_header_bytes.len()
+                        + key_bytes.len()
+                        + array_header_bytes.len()
+                        + array_value_header_bytes.len();
+
+                    self.data.splice(
+                        current_pos..current_pos,
+                        key_header_bytes
+                            .iter()
+                            .copied()
+                            .chain(key_bytes.iter().copied())
+                            .chain(array_header_bytes.iter().copied())
+                            .chain(array_value_header_bytes.iter().copied()),
+                    );
+
+                    let key_idx = current_pos;
+                    let value_idx = current_pos + key_header_bytes.len() + key_bytes.len();
+                    let array_idx = value_idx + array_header_bytes.len();
+
+                    return Ok(JsonTraversalResult::with_array_index(
+                        value_idx,
+                        JsonLocationKind::ObjectProperty(key_idx),
+                        delta as isize,
+                        array_idx,
+                    ));
+                }
+
+                if current_pos != end_pos && mode.allows_replace() {
+                    let key_idx = current_pos;
+
+                    current_pos = self.skip_element(current_pos)?;
+                    let value_idx = current_pos;
+
+                    let (JsonbHeader(value_type, value_size), value_header_size) =
+                        self.read_header(value_idx)?;
+
+                    if value_type != ElementType::ARRAY {
+                        bail_parse_error!("Should be array")
+                    }
+
+                    let end_pos = current_pos + value_header_size + value_size;
+
+                    match idx {
+                        Some(idx) if *idx >= 0 => {
+                            let mut count = 0;
+                            let mut arr_pos = value_idx + value_header_size;
+
+                            while arr_pos < end_pos && count != *idx as usize {
+                                arr_pos = self.skip_element(arr_pos)?;
+                                count += 1;
+                            }
+
+                            if mode.allows_insert() && arr_pos == end_pos && count == *idx as usize
+                            {
+                                let placeholder =
+                                    JsonbHeader::new(ElementType::OBJECT, 0).into_bytes();
+                                let placeholder_bytes = placeholder.as_bytes();
+
+                                self.data
+                                    .splice(arr_pos..arr_pos, placeholder_bytes.iter().copied());
+                                self.write_element_header(
+                                    value_idx,
+                                    ElementType::ARRAY,
+                                    value_size + placeholder_bytes.len(),
+                                    true,
+                                )?;
+                                return Ok(JsonTraversalResult::with_array_index(
+                                    value_idx,
+                                    JsonLocationKind::ObjectProperty(key_idx),
+                                    placeholder_bytes.len() as isize,
+                                    arr_pos,
+                                ));
+                            }
+
+                            if arr_pos != end_pos && mode.allows_replace() {
+                                return Ok(JsonTraversalResult::with_array_index(
+                                    value_idx,
+                                    JsonLocationKind::ObjectProperty(key_idx),
+                                    0,
+                                    arr_pos,
+                                ));
+                            }
+
+                            bail_parse_error!("Not found!");
+                        }
+                        Some(idx) if *idx < 0 => {
+                            let mut idx_map: HashMap<i32, usize> = HashMap::with_capacity(100);
+                            let mut element_idx = 0;
+                            let mut arr_pos = value_idx + value_header_size;
+
+                            while arr_pos < end_pos {
+                                idx_map.insert(element_idx, arr_pos);
+                                arr_pos = self.skip_element(arr_pos)?;
+                                element_idx += 1;
+                            }
+
+                            let real_idx = element_idx + idx;
+
+                            if let Some(index) = idx_map.get(&real_idx) {
+                                return Ok(JsonTraversalResult::with_array_index(
+                                    value_idx,
+                                    JsonLocationKind::ObjectProperty(key_idx),
+                                    0,
+                                    *index,
+                                ));
+                            } else {
+                                bail_parse_error!(
+                                    "ERROR: Element at negative index {} not found",
+                                    idx
+                                );
+                            }
+                        }
+                        Some(_) => unreachable!(),
+                        None => {
+                            if mode.allows_insert() {
+                                let placeholder =
+                                    JsonbHeader::new(ElementType::OBJECT, 0).into_bytes();
+                                let placeholder_bytes = placeholder.as_bytes();
+                                let insertion_point = value_idx + value_size + value_header_size;
+
+                                self.data.insert(insertion_point, placeholder_bytes[0]);
+                            } else {
+                                bail_parse_error!("Cant insert")
+                            }
+                        }
+                    }
+                }
+            }
+            _ => {
+                unreachable!()
+            }
+        };
+
+        Err(LimboError::ParseError("Not found".to_string()))
     }
 
     fn skip_element(&self, mut pos: usize) -> Result<usize> {
@@ -2491,282 +3243,388 @@ world""#,
 }
 
 #[cfg(test)]
-mod path_mutation_tests {
+mod path_operations_tests {
     use super::*;
-    use crate::json::json_path;
+    use crate::json::json_path::{JsonPath, PathElement};
+    use std::borrow::Cow;
 
-    #[test]
-    fn test_remove_by_path_simple_object() {
-        // Test removing a simple key from an object
-        let mut jsonb = Jsonb::from_str(r#"{"a": 1, "b": 2, "c": 3}"#).unwrap();
-        let path = json_path("$.b").unwrap();
-
-        jsonb.remove_by_path(&path).unwrap();
-        assert_eq!(jsonb.to_string().unwrap(), r#"{"a":1,"c":3}"#);
+    // Helper function to create a simple JsonPath
+    fn create_path(elements: Vec<PathElement>) -> JsonPath {
+        JsonPath { elements }
     }
 
     #[test]
-    fn test_remove_by_path_array_element() {
-        // Test removing an element from an array
-        let mut jsonb = Jsonb::from_str(r#"[10, 20, 30, 40]"#).unwrap();
-        let path = json_path("$[1]").unwrap();
+    fn test_navigate_root_path() {
+        let json_str = r#"{"name": "John", "age": 30}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
 
-        jsonb.remove_by_path(&path).unwrap();
-        assert_eq!(jsonb.to_string().unwrap(), r#"[10,30,40]"#);
+        // Create a path to the root
+        let path = create_path(vec![PathElement::Root()]);
+
+        // Navigate to the path
+        let result = jsonb.navigate_path(&path, PathOperationMode::ReplaceExisting);
+
+        // Verify navigation succeeds
+        assert!(result.is_ok());
+        let stack = result.unwrap();
+        assert_eq!(stack.len(), 1);
+        assert_eq!(stack[0].field_value_index, 0);
+        assert_eq!(stack[0].field_key_index, JsonLocationKind::DocumentRoot);
     }
 
     #[test]
-    fn test_remove_by_path_nested_object() {
-        // Test removing a nested property
-        let mut jsonb = Jsonb::from_str(
-            r#"{"user": {"name": "Alice", "age": 30, "email": "alice@example.com"}}"#,
-        )
-        .unwrap();
-        let path = json_path("$.user.email").unwrap();
+    fn test_navigate_object_property() {
+        let json_str = r#"{"name": "John", "age": 30}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
 
-        jsonb.remove_by_path(&path).unwrap();
+        // Create a path to the "name" property
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("name"), false),
+        ]);
+
+        // Navigate to the path
+        let result = jsonb.navigate_path(&path, PathOperationMode::ReplaceExisting);
+
+        // Verify navigation succeeds and points to the correct value
+        assert!(result.is_ok());
+        let stack = result.unwrap();
+        assert_eq!(stack.len(), 2);
+
+        // Verify we can get the value at this position
+        let name_index = stack[1].field_value_index;
+        let (header, header_size) = jsonb.read_header(name_index).unwrap();
+        assert_eq!(header.0, ElementType::TEXT);
+
+        // Extract the actual string value to verify
+        let text_bytes = &jsonb.data[name_index + header_size..name_index + header_size + header.1];
+        let text = std::str::from_utf8(text_bytes).unwrap();
+        assert_eq!(text, "John");
+    }
+
+    #[test]
+    fn test_navigate_nested_object_property() {
+        let json_str = r#"{"person": {"name": "John", "age": 30}}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
+
+        // Create a path to the nested "name" property
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("person"), false),
+            PathElement::Key(Cow::Borrowed("name"), false),
+        ]);
+
+        // Navigate to the path
+        let result = jsonb.navigate_path(&path, PathOperationMode::ReplaceExisting);
+
+        // Verify navigation succeeds
+        assert!(result.is_ok());
+        let stack = result.unwrap();
+        assert_eq!(stack.len(), 3);
+    }
+
+    #[test]
+    fn test_navigate_array_element() {
+        let json_str = r#"{"items": [10, 20, 30]}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
+
+        // Create a path to the second array element (index 1)
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("items"), false),
+            PathElement::ArrayLocator(Some(1)),
+        ]);
+
+        // Navigate to the path
+        let result = jsonb.navigate_path(&path, PathOperationMode::ReplaceExisting);
+
+        // Verify navigation succeeds
+        assert!(result.is_ok());
+        let stack = result.unwrap();
+        assert_eq!(stack.len(), 2);
+
+        // Verify we can get the value at the array position
+        assert!(stack[1].has_specific_index());
+        let array_element_index = stack[1].get_array_index().unwrap();
+        let (header, header_size) = jsonb.read_header(array_element_index).unwrap();
+        assert_eq!(header.0, ElementType::INT);
+
+        // Extract the actual integer value to verify
+        let int_bytes = &jsonb.data
+            [array_element_index + header_size..array_element_index + header_size + header.1];
+        let int_str = std::str::from_utf8(int_bytes).unwrap();
+        assert_eq!(int_str, "20");
+    }
+
+    #[test]
+    fn test_navigate_negative_array_index() {
+        let json_str = r#"{"items": [10, 20, 30]}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
+
+        // Create a path to the last array element (index -1)
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("items"), false),
+            PathElement::ArrayLocator(Some(-1)),
+        ]);
+
+        // Navigate to the path
+        let result = jsonb.navigate_path(&path, PathOperationMode::ReplaceExisting);
+
+        // Verify navigation succeeds
+        assert!(result.is_ok());
+        let stack = result.unwrap();
+        assert_eq!(stack.len(), 2);
+
+        // Verify we can get the value at the array position
+        assert!(stack[1].has_specific_index());
+    }
+
+    #[test]
+    fn test_set_operation() {
+        let json_str = r#"{"name": "John", "age": 30}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
+
+        // Create a new value to set
+        let new_value = Jsonb::from_str("\"Jane\"").unwrap();
+        let mut operation = SetOperation::new(new_value);
+
+        // Create a path to the "name" property
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("name"), false),
+        ]);
+
+        // Execute the operation
+        let result = jsonb.operate_on_path(&path, &mut operation);
+        assert!(result.is_ok());
+
+        // Verify the value was updated
+        let updated_json = jsonb.to_string().unwrap();
+        assert_eq!(updated_json, r#"{"name":"Jane","age":30}"#);
+    }
+
+    #[test]
+    fn test_insert_operation() {
+        let json_str = r#"{"name": "John"}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
+
+        // Create a new value to insert
+        let new_value = Jsonb::from_str("30").unwrap();
+        let mut operation = InsertOperation::new(new_value);
+
+        // Create a path to a new "age" property
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("age"), false),
+        ]);
+
+        // Execute the operation
+        let result = jsonb.operate_on_path(&path, &mut operation);
+        assert!(result.is_ok());
+
+        // Verify the value was inserted
+        let updated_json = jsonb.to_string().unwrap();
+        assert_eq!(updated_json, r#"{"name":"John","age":30}"#);
+    }
+
+    #[test]
+    fn test_delete_operation() {
+        let json_str = r#"{"name": "John", "age": 30}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
+
+        // Create a delete operation
+        let mut operation = DeleteOperation::new();
+
+        // Create a path to the "age" property
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("age"), false),
+        ]);
+
+        // Execute the operation
+        let result = jsonb.operate_on_path(&path, &mut operation);
+        assert!(result.is_ok());
+
+        // Verify the property was deleted
+        let updated_json = jsonb.to_string().unwrap();
+        assert_eq!(updated_json, r#"{"name":"John"}"#);
+    }
+
+    #[test]
+    fn test_replace_operation() {
+        let json_str = r#"{"items": [10, 20, 30]}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
+
+        // Create a new value to replace with
+        let new_value = Jsonb::from_str("50").unwrap();
+        let mut operation = ReplaceOperation::new(new_value);
+
+        // Create a path to the second array element (index 1)
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("items"), false),
+            PathElement::ArrayLocator(Some(1)),
+        ]);
+
+        // Execute the operation
+        let result = jsonb.operate_on_path(&path, &mut operation);
+        assert!(result.is_ok());
+
+        // Verify the value was replaced
+        let updated_json = jsonb.to_string().unwrap();
+        assert_eq!(updated_json, r#"{"items":[10,50,30]}"#);
+    }
+
+    #[test]
+    fn test_search_operation() {
+        let json_str = r#"{"person": {"name": "John", "age": 30}}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
+
+        // Create a search operation
+        let mut operation = SearchOperation::new(100);
+
+        // Create a path to the "person" property
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("person"), false),
+        ]);
+
+        // Execute the operation
+        let result = jsonb.operate_on_path(&path, &mut operation);
+        assert!(result.is_ok());
+
+        // Get the search result
+        let search_result = operation.result();
+        let result_str = search_result.to_string().unwrap();
+
+        // Verify the search found the correct value
+        assert_eq!(result_str, r#"{"name":"John","age":30}"#);
+    }
+
+    #[test]
+    fn test_error_for_nonexistent_path() {
+        let json_str = r#"{"name": "John", "age": 30}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
+
+        // Create a new value to set
+        let new_value = Jsonb::from_str("\"Doe\"").unwrap();
+        let mut operation = ReplaceOperation::new(new_value);
+
+        // Create a path to a non-existent property with ReplaceExisting mode
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("surname"), false),
+        ]);
+
+        // Execute the operation - should fail because path doesn't exist
+        let result = jsonb.operate_on_path(&path, &mut operation);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_deep_nested_path() {
+        let json_str = r#"{"level1": {"level2": {"level3": {"value": 42}}}}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
+
+        // Create a new value to set
+        let new_value = Jsonb::from_str("100").unwrap();
+        let mut operation = SetOperation::new(new_value);
+
+        // Create a deeply nested path
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("level1"), false),
+            PathElement::Key(Cow::Borrowed("level2"), false),
+            PathElement::Key(Cow::Borrowed("level3"), false),
+            PathElement::Key(Cow::Borrowed("value"), false),
+        ]);
+
+        // Execute the operation
+        let result = jsonb.operate_on_path(&path, &mut operation);
+        assert!(result.is_ok());
+
+        // Verify the deep value was updated
+        let updated_json = jsonb.to_string().unwrap();
         assert_eq!(
-            jsonb.to_string().unwrap(),
-            r#"{"user":{"name":"Alice","age":30}}"#
+            updated_json,
+            r#"{"level1":{"level2":{"level3":{"value":100}}}}"#
         );
     }
 
     #[test]
-    fn test_remove_by_path_nested_array() {
-        // Test removing an element from a nested array
-        let mut jsonb = Jsonb::from_str(r#"{"data": {"values": [1, 2, 3, 4, 5]}}"#).unwrap();
-        let path = json_path("$.data.values[2]").unwrap();
+    fn test_path_modes() {
+        // Test the different path operation modes
 
-        jsonb.remove_by_path(&path).unwrap();
-        assert_eq!(
-            jsonb.to_string().unwrap(),
-            r#"{"data":{"values":[1,2,4,5]}}"#
-        );
-    }
+        // 1. ReplaceExisting mode - should fail when path doesn't exist
+        let json_str = r#"{"name": "John"}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
 
-    #[test]
-    fn test_remove_by_path_quoted_key() {
-        // Test removing an element with a key that contains special characters
-        let mut jsonb =
-            Jsonb::from_str(r#"{"normal": 1, "key.with.dots": 2, "key[0]": 3}"#).unwrap();
-        let path = json_path(r#"$."key.with.dots""#).unwrap();
+        let mut operation = SetOperation::new(Jsonb::from_str("30").unwrap());
+        operation.mode = PathOperationMode::ReplaceExisting;
 
-        jsonb.remove_by_path(&path).unwrap();
-        assert_eq!(jsonb.to_string().unwrap(), r#"{"normal":1,"key[0]":3}"#);
-    }
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("age"), false),
+        ]);
 
-    #[test]
-    fn test_remove_by_path_entire_object() {
-        // Test removing the entire object
-        let mut jsonb = Jsonb::from_str(r#"{"a": 1, "b": 2}"#).unwrap();
-        let path = json_path("$").unwrap();
-
-        jsonb.remove_by_path(&path).unwrap();
-        assert_eq!(jsonb.to_string().unwrap(), "null");
-    }
-
-    #[test]
-    fn test_remove_by_path_nonexistent() {
-        // Test behavior when the path doesn't exist
-        let mut jsonb = Jsonb::from_str(r#"{"a": 1, "b": 2}"#).unwrap();
-        let path = json_path("$.c").unwrap();
-
-        // This should return an error
-        let result = jsonb.remove_by_path(&path);
+        let result = jsonb.operate_on_path(&path, &mut operation);
         assert!(result.is_err());
 
-        // Original JSON should remain unchanged
-        assert_eq!(jsonb.to_string().unwrap(), r#"{"a":1,"b":2}"#);
-    }
+        // 2. InsertNew mode - should succeed for new paths
+        let json_str = r#"{"name": "John"}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
 
-    #[test]
-    fn test_remove_by_path_complex_nested() {
-        // Test removing from a complex nested structure
-        let mut jsonb = Jsonb::from_str(
-            r#"
-        {
-            "store": {
-                "book": [
-                    {
-                        "category": "fiction",
-                        "author": "J.R.R. Tolkien",
-                        "title": "The Lord of the Rings",
-                        "price": 22.99
-                    },
-                    {
-                        "category": "fiction",
-                        "author": "George R.R. Martin",
-                        "title": "A Song of Ice and Fire",
-                        "price": 19.99
-                    }
-                ],
-                "bicycle": {
-                    "color": "red",
-                    "price": 399.99
-                }
-            }
-        }
-        "#,
-        )
-        .unwrap();
+        let mut operation = InsertOperation::new(Jsonb::from_str("30").unwrap());
+        operation.mode = PathOperationMode::InsertNew;
 
-        // Remove the first book's title
-        let path = json_path("$.store.book[0].title").unwrap();
-        jsonb.remove_by_path(&path).unwrap();
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("age"), false),
+        ]);
 
-        // Verify the first book no longer has a title but everything else is intact
-        let result = jsonb.to_string().unwrap();
-        assert!(result.contains(r#""author":"J.R.R. Tolkien"#));
-        assert!(result.contains(r#""price":22.99"#));
-        assert!(!result.contains(r#""title":"The Lord of the Rings"#));
-        assert!(result.contains(r#""title":"A Song of Ice and Fire"#));
-    }
+        let result = jsonb.operate_on_path(&path, &mut operation);
+        assert!(result.is_ok());
 
-    #[test]
-    fn test_replace_by_path_simple_value() {
-        // Test replacing a simple value
-        let mut jsonb = Jsonb::from_str(r#"{"a": 1, "b": 2, "c": 3}"#).unwrap();
-        let path = json_path("$.b").unwrap();
-        let new_value = Jsonb::from_str("42").unwrap();
+        let updated_json = jsonb.to_string().unwrap();
+        assert_eq!(updated_json, r#"{"name":"John","age":30}"#);
 
-        jsonb.replace_by_path(&path, new_value).unwrap();
-        assert_eq!(jsonb.to_string().unwrap(), r#"{"a":1,"b":42,"c":3}"#);
-    }
+        // 3. InsertNew mode - should fail when path already exists
+        let mut operation = InsertOperation::new(Jsonb::from_str("31").unwrap());
+        operation.mode = PathOperationMode::InsertNew;
 
-    #[test]
-    fn test_replace_by_path_complex_value() {
-        // Test replacing with a more complex value
-        let mut jsonb = Jsonb::from_str(r#"{"name": "Original", "value": 123}"#).unwrap();
-        let path = json_path("$.value").unwrap();
-        let new_value = Jsonb::from_str(r#"{"nested": true, "array": [1, 2, 3]}"#).unwrap();
-
-        jsonb.replace_by_path(&path, new_value).unwrap();
-        assert_eq!(
-            jsonb.to_string().unwrap(),
-            r#"{"name":"Original","value":{"nested":true,"array":[1,2,3]}}"#
-        );
-    }
-
-    #[test]
-    fn test_replace_by_path_array_element() {
-        // Test replacing an array element
-        let mut jsonb = Jsonb::from_str(r#"[10, 20, 30, 40]"#).unwrap();
-        let path = json_path("$[2]").unwrap();
-        let new_value = Jsonb::from_str(r#""replaced""#).unwrap();
-
-        jsonb.replace_by_path(&path, new_value).unwrap();
-        assert_eq!(jsonb.to_string().unwrap(), r#"[10,20,"replaced",40]"#);
-    }
-
-    #[test]
-    fn test_replace_by_path_nested_object() {
-        // Test replacing a property in a nested object
-        let mut jsonb = Jsonb::from_str(r#"{"user": {"name": "Alice", "age": 30}}"#).unwrap();
-        let path = json_path("$.user.age").unwrap();
-        let new_value = Jsonb::from_str("31").unwrap();
-
-        jsonb.replace_by_path(&path, new_value).unwrap();
-        assert_eq!(
-            jsonb.to_string().unwrap(),
-            r#"{"user":{"name":"Alice","age":31}}"#
-        );
-    }
-
-    #[test]
-    fn test_replace_by_path_entire_object() {
-        // Test replacing the entire object
-        let mut jsonb = Jsonb::from_str(r#"{"old": "data"}"#).unwrap();
-        let path = json_path("$").unwrap();
-        let new_value = Jsonb::from_str(r#"["completely", "new", "structure"]"#).unwrap();
-
-        jsonb.replace_by_path(&path, new_value).unwrap();
-        assert_eq!(
-            jsonb.to_string().unwrap(),
-            r#"["completely","new","structure"]"#
-        );
-    }
-
-    #[test]
-    fn test_replace_by_path_with_longer_value() {
-        // Test replacing with a significantly longer value to trigger header recalculation
-        let mut jsonb = Jsonb::from_str(r#"{"key": "short"}"#).unwrap();
-        let path = json_path("$.key").unwrap();
-        let new_value = Jsonb::from_str(r#""this is a much longer string that will require more storage space and potentially change the header size""#).unwrap();
-
-        jsonb.replace_by_path(&path, new_value).unwrap();
-        assert_eq!(
-            jsonb.to_string().unwrap(),
-            r#"{"key":"this is a much longer string that will require more storage space and potentially change the header size"}"#
-        );
-    }
-
-    #[test]
-    fn test_replace_by_path_with_shorter_value() {
-        // Test replacing with a significantly shorter value to trigger header recalculation
-        let mut jsonb = Jsonb::from_str(r#"{"key": "this is a long string that takes up considerable space in the binary format"}"#).unwrap();
-        let path = json_path("$.key").unwrap();
-        let new_value = Jsonb::from_str(r#""short""#).unwrap();
-
-        jsonb.replace_by_path(&path, new_value).unwrap();
-        assert_eq!(jsonb.to_string().unwrap(), r#"{"key":"short"}"#);
-    }
-
-    #[test]
-    fn test_replace_by_path_deeply_nested() {
-        // Test replacing a value in a deeply nested structure
-        let mut jsonb = Jsonb::from_str(
-            r#"
-        {
-            "level1": {
-                "level2": {
-                    "level3": {
-                        "level4": {
-                            "target": "original value"
-                        }
-                    }
-                }
-            }
-        }
-        "#,
-        )
-        .unwrap();
-
-        let path = json_path("$.level1.level2.level3.level4.target").unwrap();
-        let new_value = Jsonb::from_str(r#""replaced value""#).unwrap();
-
-        jsonb.replace_by_path(&path, new_value).unwrap();
-        assert!(jsonb
-            .to_string()
-            .unwrap()
-            .contains(r#""target":"replaced value""#));
-    }
-
-    #[test]
-    fn test_replace_by_path_null_with_complex() {
-        // Test replacing a null value with a complex structure
-        let mut jsonb = Jsonb::from_str(r#"{"data": null}"#).unwrap();
-        let path = json_path("$.data").unwrap();
-        let new_value = Jsonb::from_str(r#"{"complex": {"nested": [1, 2, 3]}}"#).unwrap();
-
-        jsonb.replace_by_path(&path, new_value).unwrap();
-        assert_eq!(
-            jsonb.to_string().unwrap(),
-            r#"{"data":{"complex":{"nested":[1,2,3]}}}"#
-        );
-    }
-
-    #[test]
-    fn test_replace_by_path_nonexistent() {
-        // Test behavior when the path doesn't exist
-        let mut jsonb = Jsonb::from_str(r#"{"a": 1, "b": 2}"#).unwrap();
-        let path = json_path("$.c").unwrap();
-        let new_value = Jsonb::from_str("42").unwrap();
-
-        // This should return an error
-        let result = jsonb.replace_by_path(&path, new_value);
+        let result = jsonb.operate_on_path(&path, &mut operation);
         assert!(result.is_err());
 
-        // Original JSON should remain unchanged
-        assert_eq!(jsonb.to_string().unwrap(), r#"{"a":1,"b":2}"#);
+        // 4. Upsert mode - should work for both existing and new paths
+        let json_str = r#"{"name": "John", "age": 30}"#;
+        let mut jsonb = Jsonb::from_str(json_str).unwrap();
+
+        // Update existing value with Upsert
+        let mut operation = SetOperation::new(Jsonb::from_str("31").unwrap());
+        operation.mode = PathOperationMode::Upsert;
+
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("age"), false),
+        ]);
+
+        let result = jsonb.operate_on_path(&path, &mut operation);
+        assert!(result.is_ok());
+
+        // Insert new value with Upsert
+        let mut operation = SetOperation::new(Jsonb::from_str("\"Doe\"").unwrap());
+        operation.mode = PathOperationMode::Upsert;
+
+        let path = create_path(vec![
+            PathElement::Root(),
+            PathElement::Key(Cow::Borrowed("surname"), false),
+        ]);
+
+        let result = jsonb.operate_on_path(&path, &mut operation);
+        assert!(result.is_ok());
+
+        let updated_json = jsonb.to_string().unwrap();
+        assert_eq!(updated_json, r#"{"name":"John","age":31,"surname":"Doe"}"#);
     }
 }

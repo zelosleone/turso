@@ -363,7 +363,7 @@ Modifiers:
 | json(json)                         | Yes     |                                                                                                                                              |
 | jsonb(json)                        | Yes     |                                                                                                                                              |
 | json_array(value1,value2,...)      | Yes     |                                                                                                                                              |
-| jsonb_array(value1,value2,...)     |         |                                                                                                                                              |
+| jsonb_array(value1,value2,...)     | Yes     |                                                                                                                                              |
 | json_array_length(json)            | Yes     |                                                                                                                                              |
 | json_array_length(json,path)       | Yes     |                                                                                                                                              |
 | json_error_position(json)          | Yes     |                                                                                                                                              |
@@ -371,10 +371,10 @@ Modifiers:
 | jsonb_extract(json,path,...)       | Yes     |                                                                                                                                              |
 | json -> path                       | Yes     |                                                                                                                                              |
 | json ->> path                      | Yes     |                                                                                                                                              |
-| json_insert(json,path,value,...)   |         |                                                                                                                                              |
-| jsonb_insert(json,path,value,...)  |         |                                                                                                                                              |
-| json_object(label1,value1,...)     | Yes     | When keys are duplicated, only the last one processed is returned. This differs from sqlite, where the keys in the output can be duplicated  |
-| jsonb_object(label1,value1,...)    |         |                                                                                                                                              |
+| json_insert(json,path,value,...)   | Yes     |                                                                                                                                              |
+| jsonb_insert(json,path,value,...)  | Yes     |                                                                                                                                              |
+| json_object(label1,value1,...)     | Yes     |                                                              |
+| jsonb_object(label1,value1,...)    | Yes     |                                                                                                                                              |
 | json_patch(json1,json2)            | Yes     |                                                                                                                                              |
 | jsonb_patch(json1,json2)           |         |                                                                                                                                              |
 | json_pretty(json)                  | Partial | Shares same json(val) limitations. Also, when passing blobs for indentation, conversion is not exactly the same as in SQLite                 |
@@ -383,7 +383,7 @@ Modifiers:
 | json_replace(json,path,value,...)  | Yes     |                                                                                                                                              |
 | jsonb_replace(json,path,value,...) | Yes     |                                                                                                                                              |
 | json_set(json,path,value,...)      | Yes     |                                                                                                                                              |
-| jsonb_set(json,path,value,...)     |         |                                                                                                                                              |
+| jsonb_set(json,path,value,...)     | Yes     |                                                                                                                                              |
 | json_type(json)                    | Yes     |                                                                                                                                              |
 | json_type(json,path)               | Yes     |                                                                                                                                              |
 | json_valid(json)                   | Yes     |                                                                                                                                              |
