@@ -11,8 +11,12 @@ use crate::{
 };
 use limbo_sqlite3_parser::ast::Update;
 
-use super::expr::translate_condition_expr;
-use super::{emitter::Resolver, expr::translate_expr, plan::TableReference};
+use super::planner::bind_column_references;
+use super::{
+    emitter::Resolver,
+    expr::{translate_condition_expr, translate_expr, ConditionMetadata},
+    plan::TableReference,
+};
 
 /*
 * Update is simple. By default we scan the table, and for each row, we check the WHERE
@@ -46,7 +50,7 @@ addr  opcode         p1    p2    p3    p4             p5  comment
 pub fn translate_update(
     query_mode: QueryMode,
     schema: &Schema,
-    body: &Update,
+    body: &mut Update,
     syms: &SymbolTable,
 ) -> crate::Result<ProgramBuilder> {
     // TODO: freestyling these numbers
@@ -109,7 +113,7 @@ pub fn translate_update(
     // store the (col_index, Expr value) of each 'Set'
     // if a column declared here isn't found: error
     let mut update_idxs = Vec::with_capacity(body.sets.len());
-    for s in body.sets.iter() {
+    for s in body.sets.iter_mut() {
         let ident = normalize_ident(s.col_names[0].0.as_str());
         if let Some((i, _)) = btree_table.columns.iter().enumerate().find(|(_, col)| {
             col.name
@@ -117,6 +121,7 @@ pub fn translate_update(
                 .unwrap_or(&String::new())
                 .eq_ignore_ascii_case(&ident)
         }) {
+            bind_column_references(&mut s.expr, &referenced_tables, None)?;
             update_idxs.push((i, &s.expr));
         } else {
             bail_parse_error!("column {} not found", ident);
@@ -125,12 +130,13 @@ pub fn translate_update(
 
     let loop_start = program.offset();
     let skip_label = program.allocate_label();
-    if let Some(where_clause) = &body.where_clause {
+    if let Some(where_clause) = body.where_clause.as_mut() {
+        bind_column_references(where_clause, &referenced_tables, None)?;
         translate_condition_expr(
             &mut program,
             &referenced_tables,
             where_clause,
-            super::expr::ConditionMetadata {
+            ConditionMetadata {
                 jump_if_condition_is_true: false,
                 jump_target_when_true: crate::vdbe::BranchOffset::Placeholder,
                 jump_target_when_false: skip_label,

@@ -111,7 +111,7 @@ pub fn translate(
         ast::Stmt::Rollback { .. } => bail_parse_error!("ROLLBACK not supported yet"),
         ast::Stmt::Savepoint(_) => bail_parse_error!("SAVEPOINT not supported yet"),
         ast::Stmt::Select(select) => translate_select(query_mode, schema, *select, syms)?,
-        ast::Stmt::Update(update) => translate_update(query_mode, schema, &update, syms)?,
+        ast::Stmt::Update(mut update) => translate_update(query_mode, schema, &mut update, syms)?,
         ast::Stmt::Vacuum(_, _) => bail_parse_error!("VACUUM not supported yet"),
         ast::Stmt::Insert(insert) => {
             let Insert {

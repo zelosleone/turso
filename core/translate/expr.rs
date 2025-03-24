@@ -1868,27 +1868,10 @@ pub fn translate_expr(
             }
         }
         ast::Expr::FunctionCallStar { .. } => todo!(),
-        ast::Expr::Id(id) => {
-            let Some(tables) = referenced_tables else {
-                crate::bail_parse_error!(
-                    "no such column: {} - should this be a string literal in single-quotes?",
-                    id.0
-                )
-            };
-            match resolve_unambiguous_col(tables, &id.0) {
-                Ok((tbl, column)) => {
-                    let cursor_id =
-                        program.resolve_cursor_id(&tables.get(tbl).as_ref().unwrap().identifier);
-                    program.emit_insn(Insn::Column {
-                        column,
-                        cursor_id,
-                        dest: target_register,
-                    });
-                    Ok(target_register)
-                }
-                Err(e) => crate::bail_parse_error!("{}", e),
-            }
-        }
+        ast::Expr::Id(id) => crate::bail_parse_error!(
+            "no such column: {} - should this be a string literal in single-quotes?",
+            id.0
+        ),
         ast::Expr::Column {
             database: _,
             table,
@@ -2217,7 +2200,7 @@ fn translate_like_base(
                 dest: target_register,
                 func: FuncCtx {
                     func: Func::Scalar(func),
-                    arg_count: arg_count,
+                    arg_count,
                 },
             });
         }
@@ -2322,38 +2305,4 @@ pub fn translate_and_mark(
 /// and escaping double single quotes
 pub fn sanitize_string(input: &str) -> String {
     input[1..input.len() - 1].replace("''", "'").to_string()
-}
-
-/// Returns the table and col indexes of a column matching the identifier, only if it is
-/// completely unambiguous in the provided tables.
-fn resolve_unambiguous_col(tables: &[TableReference], id: &str) -> Result<(usize, usize)> {
-    let mut found_cols = 0;
-    let mut table_index = 0;
-    let mut column_index = 0;
-    for (i, table) in tables.iter().enumerate() {
-        if let Some((idx, _)) = table
-            .table
-            .columns()
-            .iter()
-            .enumerate()
-            .find(|(_, c)| c.name.as_ref().unwrap().eq_ignore_ascii_case(id))
-        {
-            if found_cols > 0 {
-                return Err(crate::LimboError::ParseError(format!(
-                    "ambiguous column name: {}",
-                    id
-                )));
-            }
-            table_index = i;
-            column_index = idx;
-            found_cols += 1;
-        }
-    }
-    if found_cols > 0 {
-        return Ok((table_index, column_index));
-    }
-    Err(crate::LimboError::ParseError(format!(
-        "no such column: {}",
-        id
-    )))
 }
