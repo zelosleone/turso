@@ -154,6 +154,7 @@ impl JsonCacheCell {
         unsafe {
             let cache_ptr = self.inner.get();
             if (*cache_ptr).is_none() {
+                self.accessed.set(false);
                 return;
             }
 
