@@ -12,27 +12,41 @@ def setup_database():
     db_wal_path = "tests/database.db-wal"
 
     # Ensure the database file is created fresh for each test
-    if os.path.exists(db_path):
-        os.remove(db_path)
-    if os.path.exists(db_wal_path):
-        os.remove(db_wal_path)
+    try:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        if os.path.exists(db_wal_path):
+            os.remove(db_wal_path)
+    except PermissionError as e:
+        print(f"Failed to clean up: {e}")
 
     # Create a new database file
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
-    cursor.execute("CREATE TABLE users (id INT PRIMARY KEY, username TEXT)")
-    cursor.execute("INSERT INTO users VALUES (1, 'alice')")
-    cursor.execute("INSERT INTO users VALUES (2, 'bob')")
+    cursor.execute("CREATE TABLE IF NOT EXISTS users (id INT PRIMARY KEY, username TEXT)")
+    cursor.execute("""
+        INSERT INTO users (id, username)
+        SELECT 1, 'alice'
+        WHERE NOT EXISTS (SELECT 1 FROM users WHERE id = 1)
+    """)
+    cursor.execute("""
+        INSERT INTO users (id, username)
+        SELECT 2, 'bob'
+        WHERE NOT EXISTS (SELECT 1 FROM users WHERE id = 2)
+    """)
     conn.commit()
     conn.close()
 
     yield db_path
 
     # Cleanup after the test
-    if os.path.exists(db_path):
-        os.remove(db_path)
-    if os.path.exists(db_wal_path):
-        os.remove(db_wal_path)
+    try:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        if os.path.exists(db_wal_path):
+            os.remove(db_wal_path)
+    except PermissionError as e:
+        print(f"Failed to clean up: {e}")
 
 
 @pytest.mark.parametrize("provider", ["sqlite3", "limbo"])
@@ -148,7 +162,6 @@ def test_commit(provider):
 @pytest.mark.parametrize("provider", ["sqlite3", "limbo"])
 def test_with_statement(provider):
     with connect(provider, "tests/database.db") as conn:
-        conn = connect(provider, "tests/database.db")
         cursor = conn.cursor()
         cursor.execute("SELECT MAX(id) FROM users")
 
