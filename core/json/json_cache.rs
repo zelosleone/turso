@@ -67,6 +67,11 @@ impl JsonCache {
         }
         None
     }
+
+    pub fn clear(&mut self) {
+        self.counter = 0;
+        self.used = 0;
+    }
 }
 
 #[derive(Debug)]
@@ -83,6 +88,7 @@ impl JsonCacheCell {
         }
     }
 
+    #[cfg(test)]
     pub fn lookup(&self, key: &OwnedValue) -> Option<Jsonb> {
         assert_eq!(self.accessed.get(), false);
 
@@ -140,6 +146,22 @@ impl JsonCacheCell {
         self.accessed.set(false);
 
         result
+    }
+
+    pub fn clear(&mut self) {
+        assert_eq!(self.accessed.get(), false);
+        self.accessed.set(true);
+        unsafe {
+            let cache_ptr = self.inner.get();
+            if (*cache_ptr).is_none() {
+                return;
+            }
+
+            if let Some(cache) = &mut (*cache_ptr) {
+                cache.clear()
+            }
+        }
+        self.accessed.set(false);
     }
 }
 
@@ -384,6 +406,7 @@ mod tests {
         cache_cell.accessed.set(true);
 
         // This should panic due to double access
+
         let _ = cache_cell.lookup(&key);
     }
 

@@ -5,9 +5,6 @@ use std::{
     sync::Arc,
 };
 
-#[cfg(feature = "json")]
-use crate::json::JsonCacheCell;
-
 use crate::{
     fast_lock::SpinLock,
     parameters::Parameters,
@@ -462,8 +459,6 @@ impl ProgramBuilder {
             change_cnt_on,
             result_columns: self.result_columns,
             table_references: self.table_references,
-            #[cfg(feature = "json")]
-            json_cache: JsonCacheCell::new(),
         }
     }
 }
