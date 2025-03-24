@@ -1769,33 +1769,8 @@ impl BTreeCursor {
             None => return Ok(CursorResult::Ok(())),
         };
 
-        let contents = page.get().contents.as_ref().unwrap();
-
-        // TODO(Krishna): We are doing this linear search here because seek() is returning the index of previous cell.
-        // And the fix is currently not very clear to me.
-        // This finds the cell with matching rowid with in a page.
-        let mut cell_idx = None;
-        for idx in 0..contents.cell_count() {
-            let cell = contents.cell_get(
-                idx,
-                self.pager.clone(),
-                payload_overflow_threshold_max(contents.page_type(), self.usable_space() as u16),
-                payload_overflow_threshold_min(contents.page_type(), self.usable_space() as u16),
-                self.usable_space(),
-            )?;
-
-            if let BTreeCell::TableLeafCell(leaf_cell) = cell {
-                if leaf_cell._rowid == target_rowid {
-                    cell_idx = Some(idx);
-                    break;
-                }
-            }
-        }
-
-        let cell_idx = match cell_idx {
-            Some(idx) => idx,
-            None => return Ok(CursorResult::Ok(())),
-        };
+        let mut cell_idx = self.stack.current_cell_index() as usize;
+        cell_idx -= 1;
 
         let contents = page.get().contents.as_ref().unwrap();
         let cell = contents.cell_get(
