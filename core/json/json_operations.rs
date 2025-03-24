@@ -3,10 +3,10 @@ use std::{collections::VecDeque, rc::Rc};
 use crate::types::OwnedValue;
 
 use super::{
-    convert_dbtype_to_jsonb, convert_json_to_db_type, get_json_value, json_path_from_owned_value,
-    json_string_to_db_type,
+    convert_dbtype_to_jsonb, convert_json_to_db_type, curry_convert_dbtype_to_jsonb,
+    get_json_value, json_path_from_owned_value, json_string_to_db_type,
     jsonb::{DeleteOperation, InsertOperation, ReplaceOperation},
-    Conv, OutputVariant, Val,
+    Conv, JsonCacheCell, OutputVariant, Val,
 };
 
 /// Represents a single patch operation in the merge queue.
@@ -152,12 +152,13 @@ impl JsonPatcher {
     }
 }
 
-pub fn json_remove(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn json_remove(args: &[OwnedValue], json_cache: &JsonCacheCell) -> crate::Result<OwnedValue> {
     if args.is_empty() {
         return Ok(OwnedValue::Null);
     }
 
-    let mut json = convert_dbtype_to_jsonb(&args[0], Conv::Strict)?;
+    let make_jsonb_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
+    let mut json = json_cache.get_or_insert_with(&args[0], make_jsonb_fn)?;
     for arg in &args[1..] {
         if let Some(path) = json_path_from_owned_value(arg, true)? {
             let mut op = DeleteOperation::new();
@@ -170,12 +171,13 @@ pub fn json_remove(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
     json_string_to_db_type(json, el_type, OutputVariant::String)
 }
 
-pub fn jsonb_remove(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn jsonb_remove(args: &[OwnedValue], json_cache: &JsonCacheCell) -> crate::Result<OwnedValue> {
     if args.is_empty() {
         return Ok(OwnedValue::Null);
     }
 
-    let mut json = convert_dbtype_to_jsonb(&args[0], Conv::Strict)?;
+    let make_jsonb_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
+    let mut json = json_cache.get_or_insert_with(&args[0], make_jsonb_fn)?;
     for arg in &args[1..] {
         if let Some(path) = json_path_from_owned_value(arg, true)? {
             let mut op = DeleteOperation::new();
@@ -186,12 +188,13 @@ pub fn jsonb_remove(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
     Ok(OwnedValue::Blob(Rc::new(json.data())))
 }
 
-pub fn json_replace(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn json_replace(args: &[OwnedValue], json_cache: &JsonCacheCell) -> crate::Result<OwnedValue> {
     if args.is_empty() {
         return Ok(OwnedValue::Null);
     }
 
-    let mut json = convert_dbtype_to_jsonb(&args[0], Conv::Strict)?;
+    let make_jsonb_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
+    let mut json = json_cache.get_or_insert_with(&args[0], make_jsonb_fn)?;
     let other = args[1..].chunks_exact(2);
     for chunk in other {
         let path = json_path_from_owned_value(&chunk[0], true)?;
@@ -209,12 +212,13 @@ pub fn json_replace(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
     json_string_to_db_type(json, el_type, super::OutputVariant::String)
 }
 
-pub fn jsonb_replace(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn jsonb_replace(args: &[OwnedValue], json_cache: &JsonCacheCell) -> crate::Result<OwnedValue> {
     if args.is_empty() {
         return Ok(OwnedValue::Null);
     }
 
-    let mut json = convert_dbtype_to_jsonb(&args[0], Conv::Strict)?;
+    let make_jsonb_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
+    let mut json = json_cache.get_or_insert_with(&args[0], make_jsonb_fn)?;
     let other = args[1..].chunks_exact(2);
     for chunk in other {
         let path = json_path_from_owned_value(&chunk[0], true)?;
@@ -231,12 +235,13 @@ pub fn jsonb_replace(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
     json_string_to_db_type(json, el_type, OutputVariant::Binary)
 }
 
-pub fn json_insert(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn json_insert(args: &[OwnedValue], json_cache: &JsonCacheCell) -> crate::Result<OwnedValue> {
     if args.is_empty() {
         return Ok(OwnedValue::Null);
     }
 
-    let mut json = convert_dbtype_to_jsonb(&args[0], Conv::Strict)?;
+    let make_jsonb_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
+    let mut json = json_cache.get_or_insert_with(&args[0], make_jsonb_fn)?;
     let other = args[1..].chunks_exact(2);
     for chunk in other {
         let path = json_path_from_owned_value(&chunk[0], true)?;
@@ -253,12 +258,13 @@ pub fn json_insert(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
     json_string_to_db_type(json, el_type, OutputVariant::String)
 }
 
-pub fn jsonb_insert(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn jsonb_insert(args: &[OwnedValue], json_cache: &JsonCacheCell) -> crate::Result<OwnedValue> {
     if args.is_empty() {
         return Ok(OwnedValue::Null);
     }
 
-    let mut json = convert_dbtype_to_jsonb(&args[0], Conv::Strict)?;
+    let make_jsonb_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
+    let mut json = json_cache.get_or_insert_with(&args[0], make_jsonb_fn)?;
     let other = args[1..].chunks_exact(2);
     for chunk in other {
         let path = json_path_from_owned_value(&chunk[0], true)?;
@@ -596,14 +602,16 @@ mod tests {
     #[test]
     fn test_json_remove_empty_args() {
         let args = vec![];
-        assert_eq!(json_remove(&args).unwrap(), OwnedValue::Null);
+        let json_cache = JsonCacheCell::new();
+        assert_eq!(json_remove(&args, &json_cache).unwrap(), OwnedValue::Null);
     }
 
     #[test]
     fn test_json_remove_array_element() {
         let args = vec![create_json(r#"[1,2,3,4,5]"#), create_text("$[2]")];
 
-        let result = json_remove(&args).unwrap();
+        let json_cache = JsonCacheCell::new();
+        let result = json_remove(&args, &json_cache).unwrap();
         match result {
             OwnedValue::Text(t) => assert_eq!(t.as_str(), "[1,2,4,5]"),
             _ => panic!("Expected Text value"),
@@ -618,7 +626,8 @@ mod tests {
             create_text("$.c"),
         ];
 
-        let result = json_remove(&args).unwrap();
+        let json_cache = JsonCacheCell::new();
+        let result = json_remove(&args, &json_cache).unwrap();
         match result {
             OwnedValue::Text(t) => assert_eq!(t.as_str(), r#"{"b":2}"#),
             _ => panic!("Expected Text value"),
@@ -632,7 +641,8 @@ mod tests {
             create_text("$.a.b.c"),
         ];
 
-        let result = json_remove(&args).unwrap();
+        let json_cache = JsonCacheCell::new();
+        let result = json_remove(&args, &json_cache).unwrap();
         match result {
             OwnedValue::Text(t) => assert_eq!(t.as_str(), r#"{"a":{"b":{"d":2}}}"#),
             _ => panic!("Expected Text value"),
@@ -646,7 +656,8 @@ mod tests {
             create_text("$.a"),
         ];
 
-        let result = json_remove(&args).unwrap();
+        let json_cache = JsonCacheCell::new();
+        let result = json_remove(&args, &json_cache).unwrap();
         match result {
             OwnedValue::Text(t) => assert_eq!(t.as_str(), r#"{"a":2,"a":3}"#),
             _ => panic!("Expected Text value"),
@@ -660,7 +671,8 @@ mod tests {
             OwnedValue::Integer(42), // Invalid path type
         ];
 
-        assert!(json_remove(&args).is_err());
+        let json_cache = JsonCacheCell::new();
+        assert!(json_remove(&args, &json_cache).is_err());
     }
 
     #[test]
@@ -672,7 +684,8 @@ mod tests {
             create_text("$.c[0].y"),
         ];
 
-        let result = json_remove(&args).unwrap();
+        let json_cache = JsonCacheCell::new();
+        let result = json_remove(&args, &json_cache).unwrap();
         match result {
             OwnedValue::Text(t) => {
                 let value = t.as_str();

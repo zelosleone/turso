@@ -5,6 +5,9 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(feature = "json")]
+use crate::json::JsonCacheCell;
+
 use crate::{
     fast_lock::SpinLock,
     parameters::Parameters,
@@ -445,6 +448,7 @@ impl ProgramBuilder {
             self.constant_insns.is_empty(),
             "constant_insns is not empty when build() is called, did you forget to call emit_constant_insns()?"
         );
+
         self.parameters.list.dedup();
         Program {
             max_registers: self.next_free_register,
@@ -458,6 +462,8 @@ impl ProgramBuilder {
             change_cnt_on,
             result_columns: self.result_columns,
             table_references: self.table_references,
+            #[cfg(feature = "json")]
+            json_cache: JsonCacheCell::new(),
         }
     }
 }
