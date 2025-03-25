@@ -975,7 +975,15 @@ pub fn exec_shift_left(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue
 }
 
 fn compute_shl(lhs: i64, rhs: i64) -> i64 {
-    compute_shr(lhs, -rhs)
+    if rhs == 0 {
+        lhs
+    } else if rhs >= 64 || rhs <= -64 {
+        0
+    } else if rhs > 0 {
+        lhs << rhs
+    } else {
+        lhs >> -rhs
+    }
 }
 
 pub fn exec_shift_right(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
