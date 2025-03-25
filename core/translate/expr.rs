@@ -2040,19 +2040,14 @@ pub fn translate_expr(
         ast::Expr::Raise(_, _) => todo!(),
         ast::Expr::Subquery(_) => todo!(),
         ast::Expr::Unary(op, expr) => match (op, expr.as_ref()) {
-            (
-                UnaryOperator::Negative | UnaryOperator::Positive,
-                ast::Expr::Literal(ast::Literal::Numeric(numeric_value)),
-            ) => {
-                let multiplier = if let UnaryOperator::Negative = op {
-                    -1
-                } else {
-                    1
-                };
-
+            (UnaryOperator::Positive, expr) => {
+                translate_expr(program, referenced_tables, expr, target_register, resolver)
+            }
+            (UnaryOperator::Negative, ast::Expr::Literal(ast::Literal::Numeric(numeric_value))) => {
                 // Special case: if we're negating "9223372036854775808", this is exactly MIN_INT64
-                // If we don't do this -1 * 9223372036854775808 will overflow and parse will fail and trigger conversion to Real.
-                if multiplier == -1 && numeric_value == "9223372036854775808" {
+                // If we don't do this -1 * 9223372036854775808 will overflow and parse will fail
+                // and trigger conversion to Real.
+                if numeric_value == "9223372036854775808" {
                     program.emit_insn(Insn::Integer {
                         value: i64::MIN,
                         dest: target_register,
@@ -2061,25 +2056,21 @@ pub fn translate_expr(
                     let maybe_int = numeric_value.parse::<i64>();
                     if let Ok(value) = maybe_int {
                         program.emit_insn(Insn::Integer {
-                            value: value * multiplier,
+                            value: value * -1,
                             dest: target_register,
                         });
                     } else {
                         let value = numeric_value.parse::<f64>()?;
                         program.emit_insn(Insn::Real {
-                            value: value * multiplier as f64,
+                            value: value * -1 as f64,
                             dest: target_register,
                         });
                     }
                 }
                 Ok(target_register)
             }
-            (UnaryOperator::Negative | UnaryOperator::Positive, _) => {
-                let value = if let UnaryOperator::Negative = op {
-                    -1
-                } else {
-                    1
-                };
+            (UnaryOperator::Negative, _) => {
+                let value = -1;
 
                 let reg = program.alloc_register();
                 translate_expr(program, referenced_tables, expr, reg, resolver)?;
