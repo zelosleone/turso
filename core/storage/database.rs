@@ -20,17 +20,17 @@ pub trait DatabaseStorage: Send + Sync {
 }
 
 #[cfg(feature = "fs")]
-pub struct FileStorage {
+pub struct DatabaseFile {
     file: Arc<dyn crate::io::File>,
 }
 
 #[cfg(feature = "fs")]
-unsafe impl Send for FileStorage {}
+unsafe impl Send for DatabaseFile {}
 #[cfg(feature = "fs")]
-unsafe impl Sync for FileStorage {}
+unsafe impl Sync for DatabaseFile {}
 
 #[cfg(feature = "fs")]
-impl DatabaseStorage for FileStorage {
+impl DatabaseStorage for DatabaseFile {
     fn read_page(&self, page_idx: usize, c: Completion) -> Result<()> {
         let r = c.as_read();
         let size = r.buf().len();
@@ -64,7 +64,7 @@ impl DatabaseStorage for FileStorage {
 }
 
 #[cfg(feature = "fs")]
-impl FileStorage {
+impl DatabaseFile {
     pub fn new(file: Arc<dyn crate::io::File>) -> Self {
         Self { file }
     }

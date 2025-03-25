@@ -244,7 +244,7 @@ impl Default for DatabaseHeader {
 }
 
 pub fn begin_read_database_header(
-    page_io: Arc<dyn DatabaseStorage>,
+    db_file: Arc<dyn DatabaseStorage>,
 ) -> Result<Arc<SpinLock<DatabaseHeader>>> {
     let drop_fn = Rc::new(|_buf| {});
     #[allow(clippy::arc_with_non_send_sync)]
@@ -256,7 +256,7 @@ pub fn begin_read_database_header(
         finish_read_database_header(buf, header).unwrap();
     });
     let c = Completion::Read(ReadCompletion::new(buf, complete));
-    page_io.read_page(1, c)?;
+    db_file.read_page(1, c)?;
     Ok(result)
 }
 
@@ -297,7 +297,7 @@ fn finish_read_database_header(
 }
 
 pub fn begin_write_database_header(header: &DatabaseHeader, pager: &Pager) -> Result<()> {
-    let page_source = pager.page_io.clone();
+    let page_source = pager.db_file.clone();
     let header = Rc::new(header.clone());
 
     let drop_fn = Rc::new(|_buf| {});
@@ -700,7 +700,7 @@ impl PageContent {
 }
 
 pub fn begin_read_page(
-    page_io: Arc<dyn DatabaseStorage>,
+    db_file: Arc<dyn DatabaseStorage>,
     buffer_pool: Rc<BufferPool>,
     page: PageRef,
     page_idx: usize,
@@ -720,7 +720,7 @@ pub fn begin_read_page(
         }
     });
     let c = Completion::Read(ReadCompletion::new(buf, complete));
-    page_io.read_page(page_idx, c)?;
+    db_file.read_page(page_idx, c)?;
     Ok(())
 }
 
@@ -755,7 +755,7 @@ pub fn begin_write_btree_page(
     write_counter: Rc<RefCell<usize>>,
 ) -> Result<()> {
     trace!("begin_write_btree_page(page={})", page.get().id);
-    let page_source = &pager.page_io;
+    let page_source = &pager.db_file;
     let page_finish = page.clone();
 
     let page_id = page.get().id;
@@ -786,7 +786,7 @@ pub fn begin_write_btree_page(
     Ok(())
 }
 
-pub fn begin_sync(page_io: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>) -> Result<()> {
+pub fn begin_sync(db_file: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>) -> Result<()> {
     assert!(!*syncing.borrow());
     *syncing.borrow_mut() = true;
     let completion = Completion::Sync(SyncCompletion {
@@ -794,7 +794,7 @@ pub fn begin_sync(page_io: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>)
             *syncing.borrow_mut() = false;
         }),
     });
-    page_io.sync(completion)?;
+    db_file.sync(completion)?;
     Ok(())
 }
 

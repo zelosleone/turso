@@ -153,7 +153,7 @@ struct FlushInfo {
 /// transaction management.
 pub struct Pager {
     /// Source of the database pages.
-    pub page_io: Arc<dyn DatabaseStorage>,
+    pub db_file: Arc<dyn DatabaseStorage>,
     /// The write-ahead log (WAL) for the database.
     wal: Rc<RefCell<dyn Wal>>,
     /// A page cache for the database.
@@ -173,21 +173,21 @@ pub struct Pager {
 
 impl Pager {
     /// Begins opening a database by reading the database header.
-    pub fn begin_open(page_io: Arc<dyn DatabaseStorage>) -> Result<Arc<SpinLock<DatabaseHeader>>> {
-        sqlite3_ondisk::begin_read_database_header(page_io)
+    pub fn begin_open(db_file: Arc<dyn DatabaseStorage>) -> Result<Arc<SpinLock<DatabaseHeader>>> {
+        sqlite3_ondisk::begin_read_database_header(db_file)
     }
 
     /// Completes opening a database by initializing the Pager with the database header.
     pub fn finish_open(
         db_header_ref: Arc<SpinLock<DatabaseHeader>>,
-        page_io: Arc<dyn DatabaseStorage>,
+        db_file: Arc<dyn DatabaseStorage>,
         wal: Rc<RefCell<dyn Wal>>,
         io: Arc<dyn crate::io::IO>,
         page_cache: Arc<RwLock<DumbLruPageCache>>,
         buffer_pool: Rc<BufferPool>,
     ) -> Result<Self> {
         Ok(Self {
-            page_io,
+            db_file,
             wal,
             page_cache,
             io,
@@ -285,7 +285,7 @@ impl Pager {
             return Ok(page);
         }
         sqlite3_ondisk::begin_read_page(
-            self.page_io.clone(),
+            self.db_file.clone(),
             self.buffer_pool.clone(),
             page.clone(),
             page_idx,
@@ -316,7 +316,7 @@ impl Pager {
             return Ok(());
         }
         sqlite3_ondisk::begin_read_page(
-            self.page_io.clone(),
+            self.db_file.clone(),
             self.buffer_pool.clone(),
             page.clone(),
             id,
@@ -407,7 +407,7 @@ impl Pager {
                     };
                 }
                 FlushState::SyncDbFile => {
-                    sqlite3_ondisk::begin_sync(self.page_io.clone(), self.syncing.clone())?;
+                    sqlite3_ondisk::begin_sync(self.db_file.clone(), self.syncing.clone())?;
                     self.flush_info.borrow_mut().state = FlushState::WaitSyncDbFile;
                 }
                 FlushState::WaitSyncDbFile => {
@@ -444,7 +444,7 @@ impl Pager {
                     };
                 }
                 CheckpointState::SyncDbFile => {
-                    sqlite3_ondisk::begin_sync(self.page_io.clone(), self.syncing.clone())?;
+                    sqlite3_ondisk::begin_sync(self.db_file.clone(), self.syncing.clone())?;
                     self.checkpoint_state
                         .replace(CheckpointState::WaitSyncDbFile);
                 }

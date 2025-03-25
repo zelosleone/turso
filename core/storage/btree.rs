@@ -3159,7 +3159,7 @@ mod tests {
     use super::*;
     use crate::fast_lock::SpinLock;
     use crate::io::{Buffer, Completion, MemoryIO, OpenFlags, IO};
-    use crate::storage::database::FileStorage;
+    use crate::storage::database::DatabaseFile;
     use crate::storage::page_cache::DumbLruPageCache;
     use crate::storage::sqlite3_ondisk;
     use crate::storage::sqlite3_ondisk::DatabaseHeader;
@@ -3443,7 +3443,7 @@ mod tests {
         #[allow(clippy::arc_with_non_send_sync)]
         let io: Arc<dyn IO> = Arc::new(MemoryIO::new());
         let io_file = io.open_file("test.db", OpenFlags::Create, false).unwrap();
-        let page_io = Arc::new(FileStorage::new(io_file));
+        let db_file = Arc::new(DatabaseFile::new(io_file));
 
         let buffer_pool = Rc::new(BufferPool::new(db_header.page_size as usize));
         let wal_shared = WalFileShared::open_shared(&io, "test.wal", db_header.page_size).unwrap();
@@ -3453,7 +3453,7 @@ mod tests {
         let page_cache = Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(10)));
         let pager = {
             let db_header = Arc::new(SpinLock::new(db_header.clone()));
-            Pager::finish_open(db_header, page_io, wal, io, page_cache, buffer_pool).unwrap()
+            Pager::finish_open(db_header, db_file, wal, io, page_cache, buffer_pool).unwrap()
         };
         let pager = Rc::new(pager);
         let page1 = pager.allocate_page().unwrap();
@@ -3700,7 +3700,7 @@ mod tests {
         }
 
         let io: Arc<dyn IO> = Arc::new(MemoryIO::new());
-        let page_io = Arc::new(FileStorage::new(
+        let db_file = Arc::new(DatabaseFile::new(
             io.open_file("test.db", OpenFlags::Create, false).unwrap(),
         ));
 
@@ -3714,7 +3714,7 @@ mod tests {
 
         let write_complete = Box::new(|_| {});
         let c = Completion::Write(WriteCompletion::new(write_complete));
-        page_io.write_page(1, buf.clone(), c).unwrap();
+        db_file.write_page(1, buf.clone(), c).unwrap();
 
         let wal_shared = WalFileShared::open_shared(&io, "test.wal", page_size).unwrap();
         let wal = Rc::new(RefCell::new(WalFile::new(
@@ -3727,7 +3727,7 @@ mod tests {
         let pager = Rc::new(
             Pager::finish_open(
                 db_header.clone(),
-                page_io,
+                db_file,
                 wal,
                 io,
                 Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(10))),
@@ -3765,7 +3765,7 @@ mod tests {
             let write_complete = Box::new(|_| {});
             let c = Completion::Write(WriteCompletion::new(write_complete));
             pager
-                .page_io
+                .db_file
                 .write_page(current_page as usize, buf.clone(), c)?;
             pager.io.run_once()?;
 
