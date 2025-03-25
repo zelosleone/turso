@@ -47,7 +47,7 @@ use std::{
 };
 use storage::btree::btree_init_page;
 #[cfg(feature = "fs")]
-use storage::database::FileStorage;
+use storage::database::DatabaseFile;
 pub use storage::{
     buffer_pool::BufferPool,
     database::DatabaseStorage,
@@ -84,7 +84,7 @@ pub struct Database {
     schema: Arc<RwLock<Schema>>,
     // TODO: make header work without lock
     header: Arc<SpinLock<DatabaseHeader>>,
-    page_io: Arc<dyn DatabaseStorage>,
+    db_file: Arc<dyn DatabaseStorage>,
     io: Arc<dyn IO>,
     page_size: u16,
     // Shared structures of a Database are the parts that are common to multiple threads that might
@@ -103,23 +103,23 @@ impl Database {
 
         let file = io.open_file(path, OpenFlags::Create, true)?;
         maybe_init_database_file(&file, &io)?;
-        let page_io = Arc::new(FileStorage::new(file));
+        let db_file = Arc::new(DatabaseFile::new(file));
         let wal_path = format!("{}-wal", path);
-        let db_header = Pager::begin_open(page_io.clone())?;
+        let db_header = Pager::begin_open(db_file.clone())?;
         io.run_once()?;
         let page_size = db_header.lock().page_size;
         let wal_shared = WalFileShared::open_shared(&io, wal_path.as_str(), page_size)?;
-        Self::open(io, page_io, wal_shared, enable_mvcc)
+        Self::open(io, db_file, wal_shared, enable_mvcc)
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn open(
         io: Arc<dyn IO>,
-        page_io: Arc<dyn DatabaseStorage>,
+        db_file: Arc<dyn DatabaseStorage>,
         shared_wal: Arc<RwLock<WalFileShared>>,
         enable_mvcc: bool,
     ) -> Result<Arc<Database>> {
-        let db_header = Pager::begin_open(page_io.clone())?;
+        let db_header = Pager::begin_open(db_file.clone())?;
         io.run_once()?;
         DATABASE_VERSION.get_or_init(|| {
             let version = db_header.lock().version_number;
@@ -143,7 +143,7 @@ impl Database {
             header: header.clone(),
             shared_page_cache: shared_page_cache.clone(),
             shared_wal: shared_wal.clone(),
-            page_io,
+            db_file,
             io: io.clone(),
             page_size,
         };
@@ -172,7 +172,7 @@ impl Database {
         )));
         let pager = Rc::new(Pager::finish_open(
             self.header.clone(),
-            self.page_io.clone(),
+            self.db_file.clone(),
             wal,
             self.io.clone(),
             self.shared_page_cache.clone(),

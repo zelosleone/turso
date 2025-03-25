@@ -21,8 +21,8 @@ impl Database {
             .open_file(path, limbo_core::OpenFlags::Create, false)
             .unwrap();
         maybe_init_database_file(&file, &io).unwrap();
-        let page_io = Arc::new(DatabaseStorage::new(file));
-        let db_header = Pager::begin_open(page_io.clone()).unwrap();
+        let db_file = Arc::new(DatabaseFile::new(file));
+        let db_header = Pager::begin_open(db_file.clone()).unwrap();
 
         // ensure db header is there
         io.run_once().unwrap();
@@ -32,7 +32,7 @@ impl Database {
         let wal_path = format!("{}-wal", path);
         let wal_shared = WalFileShared::open_shared(&io, wal_path.as_str(), page_size).unwrap();
 
-        let db = limbo_core::Database::open(io, page_io, wal_shared, false).unwrap();
+        let db = limbo_core::Database::open(io, db_file, wal_shared, false).unwrap();
         let conn = db.connect().unwrap();
         Database { db, conn }
     }
@@ -315,19 +315,20 @@ extern "C" {
     fn toISOString(this: &Date) -> String;
 }
 
-pub struct DatabaseStorage {
+pub struct DatabaseFile {
     file: Arc<dyn limbo_core::File>,
 }
-unsafe impl Send for DatabaseStorage {}
-unsafe impl Sync for DatabaseStorage {}
 
-impl DatabaseStorage {
+unsafe impl Send for DatabaseFile {}
+unsafe impl Sync for DatabaseFile {}
+
+impl DatabaseFile {
     pub fn new(file: Arc<dyn limbo_core::File>) -> Self {
         Self { file }
     }
 }
 
-impl limbo_core::DatabaseStorage for DatabaseStorage {
+impl limbo_core::DatabaseStorage for DatabaseFile {
     fn read_page(&self, page_idx: usize, c: limbo_core::Completion) -> Result<()> {
         let r = match c {
             limbo_core::Completion::Read(ref r) => r,
