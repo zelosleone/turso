@@ -165,3 +165,32 @@ do_execsql_test select-not-like-expression {
 do_execsql_test select-like-expression {
     select 2 % 0.5
 } {}
+
+do_execsql_test select_shl_large_negative_float {
+    SELECT 1 << -1e19;
+    SELECT 1 << -9223372036854775808;  -- i64::MIN
+    SELECT 1 << 9223372036854775807;   -- i64::MAX
+} {0 0 0}
+
+do_execsql_test select_shl_basic {
+    SELECT 1 << 0, 1 << 1, 1 << 2, 1 << 3;
+    SELECT 2 << 0, 2 << 1, 2 << 2, 2 << 3;
+} {1|2|4|8
+2|4|8|16}
+
+do_execsql_test select_shl_negative_numbers {
+    SELECT -1 << 0, -1 << 1, -1 << 2, -1 << 3;
+    SELECT -2 << 0, -2 << 1, -2 << 2, -2 << 3;
+} {-1|-2|-4|-8
+-2|-4|-8|-16}
+do_execsql_test select_shl_negative_shifts {
+    SELECT 8 << -1, 8 << -2, 8 << -3, 8 << -4;
+    SELECT -8 << -1, -8 << -2, -8 << -3, -8 << -4;
+} {4|2|1|0
+-4|-2|-1|-1}
+
+do_execsql_test select_shl_large_shifts {
+    SELECT 1 << 62, 1 << 63, 1 << 64;
+    SELECT -1 << 62, -1 << 63, -1 << 64;
+} {4611686018427387904|-9223372036854775808|0
+-4611686018427387904|-9223372036854775808|0}
