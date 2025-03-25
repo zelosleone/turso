@@ -1,4 +1,3 @@
-use io_uring::opcode::Write;
 use tracing::debug;
 
 use crate::storage::pager::Pager;
@@ -2056,14 +2055,16 @@ impl BTreeCursor {
                 | WriteState::BalanceNonRoot
                 | WriteState::BalanceNonRootWaitLoadPages => {
                     return_if_io!(self.balance());
+                    // TODO(Krishna): Add second balance in the case where deletion causes cursor to end up
+                    // a level deeper.
                 }
                 WriteState::Finish => {
                     if needs_balancing {
-                        self.state = CursorState::None;
                         return_if_io!(self.move_to(SeekKey::TableRowId(target_rowid), SeekOp::EQ));
                     } else {
                         self.stack.retreat();
                     }
+                    self.state = CursorState::None;
                     return Ok(CursorResult::Ok(()));
                 }
             }
