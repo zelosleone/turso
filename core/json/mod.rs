@@ -1,5 +1,6 @@
 mod de;
 mod error;
+mod json_cache;
 mod json_operations;
 mod json_path;
 mod jsonb;
@@ -15,6 +16,7 @@ use crate::json::json_path::{json_path, JsonPath, PathElement};
 pub use crate::json::ser::to_string;
 use crate::types::{OwnedValue, OwnedValueType, Text, TextSubtype};
 use crate::{bail_parse_error, json::de::ordered_object};
+pub use json_cache::JsonCacheCell;
 use jsonb::{ElementType, Jsonb, JsonbHeader, PathOperationMode, SearchOperation, SetOperation};
 use ser::to_string_pretty;
 use serde::{Deserialize, Serialize};
@@ -36,7 +38,8 @@ pub enum Val {
     Object(Vec<(String, Val)>),
 }
 
-enum Conv {
+#[derive(Debug, Clone, Copy)]
+pub enum Conv {
     Strict,
     NotStrict,
     ToString,
@@ -86,8 +89,10 @@ pub fn get_json(json_value: &OwnedValue, indent: Option<&str>) -> crate::Result<
     }
 }
 
-pub fn jsonb(json_value: &OwnedValue) -> crate::Result<OwnedValue> {
-    let jsonbin = convert_dbtype_to_jsonb(json_value, Conv::Strict);
+pub fn jsonb(json_value: &OwnedValue, cache: &JsonCacheCell) -> crate::Result<OwnedValue> {
+    let json_conv_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
+
+    let jsonbin = cache.get_or_insert_with(json_value, json_conv_fn);
     match jsonbin {
         Ok(jsonbin) => Ok(OwnedValue::Blob(Rc::new(jsonbin.data()))),
         Err(_) => {
@@ -140,6 +145,10 @@ fn convert_dbtype_to_jsonb(val: &OwnedValue, strict: Conv) -> crate::Result<Json
     }
 }
 
+pub fn curry_convert_dbtype_to_jsonb(strict: Conv) -> impl Fn(&OwnedValue) -> crate::Result<Jsonb> {
+    move |val| convert_dbtype_to_jsonb(val, strict)
+}
+
 fn get_json_value(json_value: &OwnedValue) -> crate::Result<Val> {
     match json_value {
         OwnedValue::Text(ref t) => match from_str::<Val>(t.as_str()) {
@@ -189,17 +198,19 @@ pub fn jsonb_array(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
 }
 
 pub fn json_array_length(
-    json_value: &OwnedValue,
-    json_path: Option<&OwnedValue>,
+    value: &OwnedValue,
+    path: Option<&OwnedValue>,
+    json_cache: &JsonCacheCell,
 ) -> crate::Result<OwnedValue> {
-    let mut json = convert_dbtype_to_jsonb(json_value, Conv::Strict)?;
+    let make_jsonb_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
+    let mut json = json_cache.get_or_insert_with(value, make_jsonb_fn)?;
 
-    if json_path.is_none() {
+    if path.is_none() {
         let len = json.array_len()?;
         return Ok(OwnedValue::Integer(len as i64));
     }
 
-    let path = json_path_from_owned_value(json_path.expect("We already checked none"), true)?;
+    let path = json_path_from_owned_value(path.expect("We already checked none"), true)?;
 
     if let Some(path) = path {
         let mut op = SearchOperation::new(json.len() / 2);
@@ -211,12 +222,13 @@ pub fn json_array_length(
     Ok(OwnedValue::Null)
 }
 
-pub fn json_set(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn json_set(args: &[OwnedValue], json_cache: &JsonCacheCell) -> crate::Result<OwnedValue> {
     if args.is_empty() {
         return Ok(OwnedValue::Null);
     }
 
-    let mut json = convert_dbtype_to_jsonb(&args[0], Conv::Strict)?;
+    let make_jsonb_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
+    let mut json = json_cache.get_or_insert_with(&args[0], make_jsonb_fn)?;
     let other = args[1..].chunks_exact(2);
 
     for chunk in other {
@@ -236,13 +248,18 @@ pub fn json_set(args: &[OwnedValue]) -> crate::Result<OwnedValue> {
 
 /// Implements the -> operator. Always returns a proper JSON value.
 /// https://sqlite.org/json1.html#the_and_operators
-pub fn json_arrow_extract(value: &OwnedValue, path: &OwnedValue) -> crate::Result<OwnedValue> {
+pub fn json_arrow_extract(
+    value: &OwnedValue,
+    path: &OwnedValue,
+    json_cache: &JsonCacheCell,
+) -> crate::Result<OwnedValue> {
     if let OwnedValue::Null = value {
         return Ok(OwnedValue::Null);
     }
 
     if let Some(path) = json_path_from_owned_value(path, false)? {
-        let mut json = convert_dbtype_to_jsonb(value, Conv::Strict)?;
+        let make_jsonb_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
+        let mut json = json_cache.get_or_insert_with(value, make_jsonb_fn)?;
         let mut op = SearchOperation::new(json.len());
         let res = json.operate_on_path(&path, &mut op);
         let extracted = op.result();
@@ -261,12 +278,14 @@ pub fn json_arrow_extract(value: &OwnedValue, path: &OwnedValue) -> crate::Resul
 pub fn json_arrow_shift_extract(
     value: &OwnedValue,
     path: &OwnedValue,
+    json_cache: &JsonCacheCell,
 ) -> crate::Result<OwnedValue> {
     if let OwnedValue::Null = value {
         return Ok(OwnedValue::Null);
     }
     if let Some(path) = json_path_from_owned_value(path, false)? {
-        let mut json = convert_dbtype_to_jsonb(value, Conv::Strict)?;
+        let make_jsonb_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
+        let mut json = json_cache.get_or_insert_with(value, make_jsonb_fn)?;
         let mut op = SearchOperation::new(json.len());
         let res = json.operate_on_path(&path, &mut op);
         let extracted = op.result();
@@ -292,7 +311,11 @@ pub fn json_arrow_shift_extract(
 /// Extracts a JSON value from a JSON object or array.
 /// If there's only a single path, the return value might be either a TEXT or a database type.
 /// https://sqlite.org/json1.html#the_json_extract_function
-pub fn json_extract(value: &OwnedValue, paths: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn json_extract(
+    value: &OwnedValue,
+    paths: &[OwnedValue],
+    json_cache: &JsonCacheCell,
+) -> crate::Result<OwnedValue> {
     if let OwnedValue::Null = value {
         return Ok(OwnedValue::Null);
     }
@@ -300,14 +323,20 @@ pub fn json_extract(value: &OwnedValue, paths: &[OwnedValue]) -> crate::Result<O
     if paths.is_empty() {
         return Ok(OwnedValue::Null);
     }
-    let (json, element_type) = jsonb_extract_internal(value, paths)?;
+    let convert_to_jsonb = curry_convert_dbtype_to_jsonb(Conv::Strict);
+    let jsonb = json_cache.get_or_insert_with(value, convert_to_jsonb)?;
+    let (json, element_type) = jsonb_extract_internal(jsonb, paths)?;
 
     let result = json_string_to_db_type(json, element_type, OutputVariant::ElementType)?;
 
     Ok(result)
 }
 
-pub fn jsonb_extract(value: &OwnedValue, paths: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn jsonb_extract(
+    value: &OwnedValue,
+    paths: &[OwnedValue],
+    json_cache: &JsonCacheCell,
+) -> crate::Result<OwnedValue> {
     if let OwnedValue::Null = value {
         return Ok(OwnedValue::Null);
     }
@@ -315,21 +344,23 @@ pub fn jsonb_extract(value: &OwnedValue, paths: &[OwnedValue]) -> crate::Result<
     if paths.is_empty() {
         return Ok(OwnedValue::Null);
     }
+    let convert_to_jsonb = curry_convert_dbtype_to_jsonb(Conv::Strict);
+    let jsonb = json_cache.get_or_insert_with(value, convert_to_jsonb)?;
 
-    let (json, element_type) = jsonb_extract_internal(value, paths)?;
+    let (json, element_type) = jsonb_extract_internal(jsonb, paths)?;
     let result = json_string_to_db_type(json, element_type, OutputVariant::ElementType)?;
 
     Ok(result)
 }
 
 fn jsonb_extract_internal(
-    value: &OwnedValue,
+    value: Jsonb,
     paths: &[OwnedValue],
 ) -> crate::Result<(Jsonb, ElementType)> {
     let null = Jsonb::from_raw_data(JsonbHeader::make_null().into_bytes().as_bytes());
     if paths.len() == 1 {
         if let Some(path) = json_path_from_owned_value(&paths[0], true)? {
-            let mut json = convert_dbtype_to_jsonb(value, Conv::Strict)?;
+            let mut json = value;
 
             let mut op = SearchOperation::new(json.len());
             let res = json.operate_on_path(&path, &mut op);
@@ -348,7 +379,7 @@ fn jsonb_extract_internal(
         }
     }
 
-    let mut json = convert_dbtype_to_jsonb(value, Conv::Strict)?;
+    let mut json = value;
     let mut result = Jsonb::make_empty_array(json.len());
 
     // TODO: make an op to avoid creating new json for every path element
@@ -818,7 +849,8 @@ mod tests {
     #[test]
     fn test_json_array_length() {
         let input = OwnedValue::build_text("[1,2,3,4]");
-        let result = json_array_length(&input, None).unwrap();
+        let json_cache = JsonCacheCell::new();
+        let result = json_array_length(&input, None, &json_cache).unwrap();
         if let OwnedValue::Integer(res) = result {
             assert_eq!(res, 4);
         } else {
@@ -829,7 +861,8 @@ mod tests {
     #[test]
     fn test_json_array_length_empty() {
         let input = OwnedValue::build_text("[]");
-        let result = json_array_length(&input, None).unwrap();
+        let json_cache = JsonCacheCell::new();
+        let result = json_array_length(&input, None, &json_cache).unwrap();
         if let OwnedValue::Integer(res) = result {
             assert_eq!(res, 0);
         } else {
@@ -840,7 +873,9 @@ mod tests {
     #[test]
     fn test_json_array_length_root() {
         let input = OwnedValue::build_text("[1,2,3,4]");
-        let result = json_array_length(&input, Some(&OwnedValue::build_text("$"))).unwrap();
+        let json_cache = JsonCacheCell::new();
+        let result =
+            json_array_length(&input, Some(&OwnedValue::build_text("$")), &json_cache).unwrap();
         if let OwnedValue::Integer(res) = result {
             assert_eq!(res, 4);
         } else {
@@ -851,7 +886,8 @@ mod tests {
     #[test]
     fn test_json_array_length_not_array() {
         let input = OwnedValue::build_text("{one: [1,2,3,4]}");
-        let result = json_array_length(&input, None).unwrap();
+        let json_cache = JsonCacheCell::new();
+        let result = json_array_length(&input, None, &json_cache).unwrap();
         if let OwnedValue::Integer(res) = result {
             assert_eq!(res, 0);
         } else {
@@ -862,7 +898,9 @@ mod tests {
     #[test]
     fn test_json_array_length_via_prop() {
         let input = OwnedValue::build_text("{one: [1,2,3,4]}");
-        let result = json_array_length(&input, Some(&OwnedValue::build_text("$.one"))).unwrap();
+        let json_cache = JsonCacheCell::new();
+        let result =
+            json_array_length(&input, Some(&OwnedValue::build_text("$.one")), &json_cache).unwrap();
         if let OwnedValue::Integer(res) = result {
             assert_eq!(res, 4);
         } else {
@@ -873,7 +911,9 @@ mod tests {
     #[test]
     fn test_json_array_length_via_index() {
         let input = OwnedValue::build_text("[[1,2,3,4]]");
-        let result = json_array_length(&input, Some(&OwnedValue::build_text("$[0]"))).unwrap();
+        let json_cache = JsonCacheCell::new();
+        let result =
+            json_array_length(&input, Some(&OwnedValue::build_text("$[0]")), &json_cache).unwrap();
         if let OwnedValue::Integer(res) = result {
             assert_eq!(res, 4);
         } else {
@@ -884,7 +924,9 @@ mod tests {
     #[test]
     fn test_json_array_length_via_index_not_array() {
         let input = OwnedValue::build_text("[1,2,3,4]");
-        let result = json_array_length(&input, Some(&OwnedValue::build_text("$[2]"))).unwrap();
+        let json_cache = JsonCacheCell::new();
+        let result =
+            json_array_length(&input, Some(&OwnedValue::build_text("$[2]")), &json_cache).unwrap();
         if let OwnedValue::Integer(res) = result {
             assert_eq!(res, 0);
         } else {
@@ -895,15 +937,18 @@ mod tests {
     #[test]
     fn test_json_array_length_via_index_bad_prop() {
         let input = OwnedValue::build_text("{one: [1,2,3,4]}");
-        let result = json_array_length(&input, Some(&OwnedValue::build_text("$.two"))).unwrap();
+        let json_cache = JsonCacheCell::new();
+        let result =
+            json_array_length(&input, Some(&OwnedValue::build_text("$.two")), &json_cache).unwrap();
         assert_eq!(OwnedValue::Null, result);
     }
 
     #[test]
     fn test_json_array_length_simple_json_subtype() {
         let input = OwnedValue::build_text("[1,2,3]");
+        let json_cache = JsonCacheCell::new();
         let wrapped = get_json(&input, None).unwrap();
-        let result = json_array_length(&wrapped, None).unwrap();
+        let result = json_array_length(&wrapped, None, &json_cache).unwrap();
 
         if let OwnedValue::Integer(res) = result {
             assert_eq!(res, 3);
@@ -914,9 +959,11 @@ mod tests {
 
     #[test]
     fn test_json_extract_missing_path() {
+        let json_cache = JsonCacheCell::new();
         let result = json_extract(
             &OwnedValue::build_text("{\"a\":2}"),
             &[OwnedValue::build_text("$.x")],
+            &json_cache,
         );
 
         match result {
@@ -926,7 +973,12 @@ mod tests {
     }
     #[test]
     fn test_json_extract_null_path() {
-        let result = json_extract(&OwnedValue::build_text("{\"a\":2}"), &[OwnedValue::Null]);
+        let json_cache = JsonCacheCell::new();
+        let result = json_extract(
+            &OwnedValue::build_text("{\"a\":2}"),
+            &[OwnedValue::Null],
+            &json_cache,
+        );
 
         match result {
             Ok(OwnedValue::Null) => (),
@@ -936,9 +988,11 @@ mod tests {
 
     #[test]
     fn test_json_path_invalid() {
+        let json_cache = JsonCacheCell::new();
         let result = json_extract(
             &OwnedValue::build_text("{\"a\":2}"),
             &[OwnedValue::Float(1.1)],
+            &json_cache,
         );
 
         match result {
@@ -1263,11 +1317,15 @@ mod tests {
 
     #[test]
     fn test_json_set_field_empty_object() {
-        let result = json_set(&[
-            OwnedValue::build_text("{}"),
-            OwnedValue::build_text("$.field"),
-            OwnedValue::build_text("value"),
-        ]);
+        let json_cache = JsonCacheCell::new();
+        let result = json_set(
+            &[
+                OwnedValue::build_text("{}"),
+                OwnedValue::build_text("$.field"),
+                OwnedValue::build_text("value"),
+            ],
+            &json_cache,
+        );
 
         assert!(result.is_ok());
 
@@ -1276,11 +1334,15 @@ mod tests {
 
     #[test]
     fn test_json_set_replace_field() {
-        let result = json_set(&[
-            OwnedValue::build_text(r#"{"field":"old_value"}"#),
-            OwnedValue::build_text("$.field"),
-            OwnedValue::build_text("new_value"),
-        ]);
+        let json_cache = JsonCacheCell::new();
+        let result = json_set(
+            &[
+                OwnedValue::build_text(r#"{"field":"old_value"}"#),
+                OwnedValue::build_text("$.field"),
+                OwnedValue::build_text("new_value"),
+            ],
+            &json_cache,
+        );
 
         assert!(result.is_ok());
 
@@ -1292,11 +1354,15 @@ mod tests {
 
     #[test]
     fn test_json_set_set_deeply_nested_key() {
-        let result = json_set(&[
-            OwnedValue::build_text("{}"),
-            OwnedValue::build_text("$.object.doesnt.exist"),
-            OwnedValue::build_text("value"),
-        ]);
+        let json_cache = JsonCacheCell::new();
+        let result = json_set(
+            &[
+                OwnedValue::build_text("{}"),
+                OwnedValue::build_text("$.object.doesnt.exist"),
+                OwnedValue::build_text("value"),
+            ],
+            &json_cache,
+        );
 
         assert!(result.is_ok());
 
@@ -1308,11 +1374,15 @@ mod tests {
 
     #[test]
     fn test_json_set_add_value_to_empty_array() {
-        let result = json_set(&[
-            OwnedValue::build_text("[]"),
-            OwnedValue::build_text("$[0]"),
-            OwnedValue::build_text("value"),
-        ]);
+        let json_cache = JsonCacheCell::new();
+        let result = json_set(
+            &[
+                OwnedValue::build_text("[]"),
+                OwnedValue::build_text("$[0]"),
+                OwnedValue::build_text("value"),
+            ],
+            &json_cache,
+        );
 
         assert!(result.is_ok());
 
@@ -1321,11 +1391,15 @@ mod tests {
 
     #[test]
     fn test_json_set_add_value_to_nonexistent_array() {
-        let result = json_set(&[
-            OwnedValue::build_text("{}"),
-            OwnedValue::build_text("$.some_array[0]"),
-            OwnedValue::Integer(123),
-        ]);
+        let json_cache = JsonCacheCell::new();
+        let result = json_set(
+            &[
+                OwnedValue::build_text("{}"),
+                OwnedValue::build_text("$.some_array[0]"),
+                OwnedValue::Integer(123),
+            ],
+            &json_cache,
+        );
 
         assert!(result.is_ok());
 
@@ -1337,11 +1411,15 @@ mod tests {
 
     #[test]
     fn test_json_set_add_value_to_array() {
-        let result = json_set(&[
-            OwnedValue::build_text("[123]"),
-            OwnedValue::build_text("$[1]"),
-            OwnedValue::Integer(456),
-        ]);
+        let json_cache = JsonCacheCell::new();
+        let result = json_set(
+            &[
+                OwnedValue::build_text("[123]"),
+                OwnedValue::build_text("$[1]"),
+                OwnedValue::Integer(456),
+            ],
+            &json_cache,
+        );
 
         assert!(result.is_ok());
 
@@ -1350,11 +1428,15 @@ mod tests {
 
     #[test]
     fn test_json_set_add_value_to_array_out_of_bounds() {
-        let result = json_set(&[
-            OwnedValue::build_text("[123]"),
-            OwnedValue::build_text("$[200]"),
-            OwnedValue::Integer(456),
-        ]);
+        let json_cache = JsonCacheCell::new();
+        let result = json_set(
+            &[
+                OwnedValue::build_text("[123]"),
+                OwnedValue::build_text("$[200]"),
+                OwnedValue::Integer(456),
+            ],
+            &json_cache,
+        );
 
         assert!(result.is_ok());
 
@@ -1363,11 +1445,15 @@ mod tests {
 
     #[test]
     fn test_json_set_replace_value_in_array() {
-        let result = json_set(&[
-            OwnedValue::build_text("[123]"),
-            OwnedValue::build_text("$[0]"),
-            OwnedValue::Integer(456),
-        ]);
+        let json_cache = JsonCacheCell::new();
+        let result = json_set(
+            &[
+                OwnedValue::build_text("[123]"),
+                OwnedValue::build_text("$[0]"),
+                OwnedValue::Integer(456),
+            ],
+            &json_cache,
+        );
 
         assert!(result.is_ok());
 
@@ -1376,11 +1462,15 @@ mod tests {
 
     #[test]
     fn test_json_set_null_path() {
-        let result = json_set(&[
-            OwnedValue::build_text("{}"),
-            OwnedValue::Null,
-            OwnedValue::Integer(456),
-        ]);
+        let json_cache = JsonCacheCell::new();
+        let result = json_set(
+            &[
+                OwnedValue::build_text("{}"),
+                OwnedValue::Null,
+                OwnedValue::Integer(456),
+            ],
+            &json_cache,
+        );
 
         assert!(result.is_ok());
 
@@ -1389,13 +1479,17 @@ mod tests {
 
     #[test]
     fn test_json_set_multiple_keys() {
-        let result = json_set(&[
-            OwnedValue::build_text("[123]"),
-            OwnedValue::build_text("$[0]"),
-            OwnedValue::Integer(456),
-            OwnedValue::build_text("$[1]"),
-            OwnedValue::Integer(789),
-        ]);
+        let json_cache = JsonCacheCell::new();
+        let result = json_set(
+            &[
+                OwnedValue::build_text("[123]"),
+                OwnedValue::build_text("$[0]"),
+                OwnedValue::Integer(456),
+                OwnedValue::build_text("$[1]"),
+                OwnedValue::Integer(789),
+            ],
+            &json_cache,
+        );
 
         assert!(result.is_ok());
 
@@ -1404,11 +1498,15 @@ mod tests {
 
     #[test]
     fn test_json_set_add_array_in_nested_object() {
-        let result = json_set(&[
-            OwnedValue::build_text("{}"),
-            OwnedValue::build_text("$.object[0].field"),
-            OwnedValue::Integer(123),
-        ]);
+        let json_cache = JsonCacheCell::new();
+        let result = json_set(
+            &[
+                OwnedValue::build_text("{}"),
+                OwnedValue::build_text("$.object[0].field"),
+                OwnedValue::Integer(123),
+            ],
+            &json_cache,
+        );
 
         assert!(result.is_ok());
 
@@ -1420,11 +1518,15 @@ mod tests {
 
     #[test]
     fn test_json_set_add_array_in_array_in_nested_object() {
-        let result = json_set(&[
-            OwnedValue::build_text("{}"),
-            OwnedValue::build_text("$.object[0][0]"),
-            OwnedValue::Integer(123),
-        ]);
+        let json_cache = JsonCacheCell::new();
+        let result = json_set(
+            &[
+                OwnedValue::build_text("{}"),
+                OwnedValue::build_text("$.object[0][0]"),
+                OwnedValue::Integer(123),
+            ],
+            &json_cache,
+        );
 
         assert!(result.is_ok());
 
@@ -1433,13 +1535,17 @@ mod tests {
 
     #[test]
     fn test_json_set_add_array_in_array_in_nested_object_out_of_bounds() {
-        let result = json_set(&[
-            OwnedValue::build_text("{}"),
-            OwnedValue::build_text("$.object[123].another"),
-            OwnedValue::build_text("value"),
-            OwnedValue::build_text("$.field"),
-            OwnedValue::build_text("value"),
-        ]);
+        let json_cache = JsonCacheCell::new();
+        let result = json_set(
+            &[
+                OwnedValue::build_text("{}"),
+                OwnedValue::build_text("$.object[123].another"),
+                OwnedValue::build_text("value"),
+                OwnedValue::build_text("$.field"),
+                OwnedValue::build_text("value"),
+            ],
+            &json_cache,
+        );
 
         assert!(result.is_ok());
 

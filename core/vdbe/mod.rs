@@ -31,6 +31,7 @@ use crate::functions::datetime::{
     exec_date, exec_datetime_full, exec_julianday, exec_strftime, exec_time, exec_unixepoch,
 };
 use crate::functions::printf::exec_printf;
+
 use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
 use crate::schema::{affinity, Affinity};
@@ -56,7 +57,7 @@ use crate::{
     json::json_error_position, json::json_extract, json::json_insert, json::json_object,
     json::json_patch, json::json_quote, json::json_remove, json::json_replace, json::json_set,
     json::json_type, json::jsonb, json::jsonb_array, json::jsonb_extract, json::jsonb_insert,
-    json::jsonb_object, json::jsonb_remove, json::jsonb_replace,
+    json::jsonb_object, json::jsonb_remove, json::jsonb_replace, json::JsonCacheCell,
 };
 use crate::{
     resolve_ext_path, Connection, MvCursor, MvStore, Result, TransactionState, DATABASE_VERSION,
@@ -244,6 +245,8 @@ pub struct ProgramState {
     interrupted: bool,
     parameters: HashMap<NonZero<usize>, OwnedValue>,
     halt_state: Option<HaltState>,
+    #[cfg(feature = "json")]
+    json_cache: JsonCacheCell,
 }
 
 impl ProgramState {
@@ -264,6 +267,8 @@ impl ProgramState {
             interrupted: false,
             parameters: HashMap::new(),
             halt_state: None,
+            #[cfg(feature = "json")]
+            json_cache: JsonCacheCell::new(),
         }
     }
 
@@ -303,6 +308,8 @@ impl ProgramState {
         self.regex_cache.like.clear();
         self.interrupted = false;
         self.parameters.clear();
+        #[cfg(feature = "json")]
+        self.json_cache.clear()
     }
 
     pub fn get_cursor<'a>(&'a self, cursor_id: CursorID) -> std::cell::RefMut<'a, Cursor> {
@@ -2123,6 +2130,7 @@ impl Program {
                     dest,
                 } => {
                     let arg_count = func.arg_count;
+
                     match &func.func {
                         #[cfg(feature = "json")]
                         crate::function::Func::Json(json_func) => match json_func {
@@ -2136,7 +2144,7 @@ impl Program {
                             }
                             JsonFunc::Jsonb => {
                                 let json_value = &state.registers[*start_reg];
-                                let json_blob = jsonb(json_value);
+                                let json_blob = jsonb(json_value, &state.json_cache);
                                 match json_blob {
                                     Ok(json) => state.registers[*dest] = json,
                                     Err(e) => return Err(e),
@@ -2165,13 +2173,13 @@ impl Program {
                             }
                             JsonFunc::JsonExtract => {
                                 let result = match arg_count {
-                                    0 => json_extract(&OwnedValue::Null, &[]),
+                                    0 => Ok(OwnedValue::Null),
                                     _ => {
                                         let val = &state.registers[*start_reg];
                                         let reg_values = &state.registers
                                             [*start_reg + 1..*start_reg + arg_count];
 
-                                        json_extract(val, reg_values)
+                                        json_extract(val, reg_values, &state.json_cache)
                                     }
                                 };
 
@@ -2182,13 +2190,13 @@ impl Program {
                             }
                             JsonFunc::JsonbExtract => {
                                 let result = match arg_count {
-                                    0 => jsonb_extract(&OwnedValue::Null, &[]),
+                                    0 => Ok(OwnedValue::Null),
                                     _ => {
                                         let val = &state.registers[*start_reg];
                                         let reg_values = &state.registers
                                             [*start_reg + 1..*start_reg + arg_count];
 
-                                        jsonb_extract(val, reg_values)
+                                        jsonb_extract(val, reg_values, &state.json_cache)
                                     }
                                 };
 
@@ -2207,7 +2215,7 @@ impl Program {
                                     JsonFunc::JsonArrowShiftExtract => json_arrow_shift_extract,
                                     _ => unreachable!(),
                                 };
-                                let json_str = json_func(json, path);
+                                let json_str = json_func(json, path, &state.json_cache);
                                 match json_str {
                                     Ok(json) => state.registers[*dest] = json,
                                     Err(e) => return Err(e),
@@ -2222,7 +2230,7 @@ impl Program {
                                 };
                                 let func_result = match json_func {
                                     JsonFunc::JsonArrayLength => {
-                                        json_array_length(json_value, path_value)
+                                        json_array_length(json_value, path_value, &state.json_cache)
                                     }
                                     JsonFunc::JsonType => json_type(json_value, path_value),
                                     _ => unreachable!(),
@@ -2254,6 +2262,7 @@ impl Program {
                             JsonFunc::JsonRemove => {
                                 if let Ok(json) = json_remove(
                                     &state.registers[*start_reg..*start_reg + arg_count],
+                                    &state.json_cache,
                                 ) {
                                     state.registers[*dest] = json;
                                 } else {
@@ -2263,6 +2272,7 @@ impl Program {
                             JsonFunc::JsonbRemove => {
                                 if let Ok(json) = jsonb_remove(
                                     &state.registers[*start_reg..*start_reg + arg_count],
+                                    &state.json_cache,
                                 ) {
                                     state.registers[*dest] = json;
                                 } else {
@@ -2272,6 +2282,7 @@ impl Program {
                             JsonFunc::JsonReplace => {
                                 if let Ok(json) = json_replace(
                                     &state.registers[*start_reg..*start_reg + arg_count],
+                                    &state.json_cache,
                                 ) {
                                     state.registers[*dest] = json;
                                 } else {
@@ -2281,6 +2292,7 @@ impl Program {
                             JsonFunc::JsonbReplace => {
                                 if let Ok(json) = jsonb_replace(
                                     &state.registers[*start_reg..*start_reg + arg_count],
+                                    &state.json_cache,
                                 ) {
                                     state.registers[*dest] = json;
                                 } else {
@@ -2290,6 +2302,7 @@ impl Program {
                             JsonFunc::JsonInsert => {
                                 if let Ok(json) = json_insert(
                                     &state.registers[*start_reg..*start_reg + arg_count],
+                                    &state.json_cache,
                                 ) {
                                     state.registers[*dest] = json;
                                 } else {
@@ -2299,6 +2312,7 @@ impl Program {
                             JsonFunc::JsonbInsert => {
                                 if let Ok(json) = jsonb_insert(
                                     &state.registers[*start_reg..*start_reg + arg_count],
+                                    &state.json_cache,
                                 ) {
                                     state.registers[*dest] = json;
                                 } else {
@@ -2348,7 +2362,7 @@ impl Program {
                                 let reg_values =
                                     &state.registers[*start_reg..*start_reg + arg_count];
 
-                                let json_result = json_set(reg_values);
+                                let json_result = json_set(reg_values, &state.json_cache);
 
                                 match json_result {
                                     Ok(json) => state.registers[*dest] = json,

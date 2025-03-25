@@ -445,6 +445,7 @@ impl ProgramBuilder {
             self.constant_insns.is_empty(),
             "constant_insns is not empty when build() is called, did you forget to call emit_constant_insns()?"
         );
+
         self.parameters.list.dedup();
         Program {
             max_registers: self.next_free_register,

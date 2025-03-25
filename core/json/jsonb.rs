@@ -171,7 +171,7 @@ const fn make_character_type_ok_table() -> [u8; 256] {
 
 static CHARACTER_TYPE_OK: [u8; 256] = make_character_type_ok_table();
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Jsonb {
     data: Vec<u8>,
 }
