@@ -194,3 +194,20 @@ do_execsql_test select_shl_large_shifts {
     SELECT -1 << 62, -1 << 63, -1 << 64;
 } {4611686018427387904|-9223372036854775808|0
 -4611686018427387904|-9223372036854775808|0}
+
+do_execsql_test select_shl_text_conversion {
+    SELECT '1' << '2';
+    SELECT '8' << '-2';
+    SELECT '-4' << '2';
+} {4 2 -16}
+
+do_execsql_test select_shl_chained {
+    SELECT (1 << 2) << 3;
+    SELECT (2 << 1) << (1 << 1);
+} {32 16}
+
+do_execsql_test select_shl_numeric_types {
+    SELECT CAST(1 AS INTEGER) << 2;
+    SELECT 1.0 << 2;
+    SELECT 1.5 << 2;
+} {4 4 4}
