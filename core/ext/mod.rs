@@ -68,7 +68,7 @@ pub(crate) unsafe extern "C" fn register_vtab_module(
     if name.is_null() || ctx.is_null() {
         return ResultCode::Error;
     }
-    let c_str = unsafe { CString::from_raw(name as *mut i8) };
+    let c_str = unsafe { CString::from_raw(name as *mut _) };
     let name_str = match c_str.to_str() {
         Ok(s) => s.to_string(),
         Err(_) => return ResultCode::Error,

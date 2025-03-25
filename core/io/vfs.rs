@@ -48,7 +48,7 @@ impl IO for VfsMod {
         unsafe {
             let vfs = &*self.ctx;
             let chars = (vfs.current_time)();
-            let cstr = CString::from_raw(chars as *mut i8);
+            let cstr = CString::from_raw(chars as *mut _);
             cstr.to_string_lossy().into_owned()
         }
     }
