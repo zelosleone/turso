@@ -1102,7 +1102,7 @@ impl Program {
                                     if cursor.get_null_flag() {
                                         OwnedValue::Null
                                     } else {
-                                        record.get_value(*column).clone()
+                                        record.get_value(*column).to_owned()
                                     }
                                 } else {
                                     OwnedValue::Null
@@ -1580,7 +1580,9 @@ impl Program {
                         let pc = if let Some(ref idx_record) = *cursor.record() {
                             // Compare against the same number of values
                             if idx_record.get_values()[..record_from_regs.len()]
-                                >= record_from_regs.get_values()[..]
+                                .iter()
+                                .zip(&record_from_regs.get_values()[..])
+                                .all(|(a, b)| a >= b)
                             {
                                 target_pc.to_offset_int()
                             } else {
@@ -1608,7 +1610,9 @@ impl Program {
                         let pc = if let Some(ref idx_record) = *cursor.record() {
                             // Compare against the same number of values
                             if idx_record.get_values()[..record_from_regs.len()]
-                                <= record_from_regs.get_values()[..]
+                                .iter()
+                                .zip(&record_from_regs.get_values()[..])
+                                .all(|(a, b)| a <= b)
                             {
                                 target_pc.to_offset_int()
                             } else {
@@ -1636,7 +1640,9 @@ impl Program {
                         let pc = if let Some(ref idx_record) = *cursor.record() {
                             // Compare against the same number of values
                             if idx_record.get_values()[..record_from_regs.len()]
-                                > record_from_regs.get_values()[..]
+                                .iter()
+                                .zip(&record_from_regs.get_values()[..])
+                                .all(|(a, b)| a > b)
                             {
                                 target_pc.to_offset_int()
                             } else {
@@ -1664,7 +1670,9 @@ impl Program {
                         let pc = if let Some(ref idx_record) = *cursor.record() {
                             // Compare against the same number of values
                             if idx_record.get_values()[..record_from_regs.len()]
-                                < record_from_regs.get_values()[..]
+                                .iter()
+                                .zip(&record_from_regs.get_values()[..])
+                                .all(|(a, b)| a < b)
                             {
                                 target_pc.to_offset_int()
                             } else {

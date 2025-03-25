@@ -8,7 +8,9 @@ use crate::storage::sqlite3_ondisk::write_varint;
 use crate::vdbe::sorter::Sorter;
 use crate::vdbe::VTabOpaqueCursor;
 use crate::Result;
+use std::cmp::Ordering;
 use std::fmt::Display;
+use std::pin::Pin;
 use std::rc::Rc;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -30,6 +32,12 @@ pub enum TextSubtype {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Text {
     pub value: Rc<Vec<u8>>,
+    pub subtype: TextSubtype,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextRef {
+    pub value: RawSlice,
     pub subtype: TextSubtype,
 }
 
@@ -70,6 +78,21 @@ pub enum OwnedValue {
     Blob(Rc<Vec<u8>>),
     Agg(Box<AggContext>), // TODO(pere): make this without Box. Currently this might cause cache miss but let's leave it for future analysis
     Record(Record),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawSlice {
+    pub data: *const u8,
+    pub len: usize,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum RefValue {
+    Null,
+    Integer(i64),
+    Float(f64),
+    Text(TextRef),
+    Blob(RawSlice),
 }
 
 impl OwnedValue {
@@ -486,6 +509,15 @@ impl<'a> FromValue<'a> for &'a str {
     }
 }
 
+/// This struct serves the purpose of not allocating multiple vectors of bytes if not needed.
+/// A value in a record that has already been serialized can stay serialized and what this struct offsers
+/// is easy acces to each value which point to the payload.
+#[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ImmutableRecord {
+    pub payload: Pin<Vec<u8>>, // << point to this
+    pub values: Vec<RefValue>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Record {
     values: Vec<OwnedValue>,
@@ -516,6 +548,246 @@ impl Record {
     pub fn len(&self) -> usize {
         self.values.len()
     }
+}
+
+impl ImmutableRecord {
+    // pub fn get<'a, T: FromValue<'a> + 'a>(&'a self, idx: usize) -> Result<T> {
+    //     let value = &self.values[idx];
+    //     T::from_value(value)
+    // }
+
+    pub fn count(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn last_value(&self) -> Option<&RefValue> {
+        self.values.last()
+    }
+
+    pub fn get_values(&self) -> &Vec<RefValue> {
+        &self.values
+    }
+
+    pub fn get_value(&self, idx: usize) -> &RefValue {
+        &self.values[idx]
+    }
+
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+}
+
+impl RefValue {
+    pub fn to_owned(&self) -> OwnedValue {
+        match self {
+            RefValue::Null => OwnedValue::Null,
+            RefValue::Integer(i) => OwnedValue::Integer(*i),
+            RefValue::Float(f) => OwnedValue::Float(*f),
+            RefValue::Text(text_ref) => OwnedValue::Text(Text {
+                value: Rc::new(text_ref.value.to_slice().to_vec()),
+                subtype: text_ref.subtype.clone(),
+            }),
+            RefValue::Blob(b) => OwnedValue::Blob(Rc::new(b.to_slice().to_vec())),
+        }
+    }
+}
+impl Eq for RefValue {}
+
+impl Ord for RefValue {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+#[allow(clippy::non_canonical_partial_ord_impl)]
+impl PartialOrd<RefValue> for RefValue {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Self::Integer(int_left), Self::Integer(int_right)) => int_left.partial_cmp(int_right),
+            (Self::Integer(int_left), Self::Float(float_right)) => {
+                (*int_left as f64).partial_cmp(float_right)
+            }
+            (Self::Float(float_left), Self::Integer(int_right)) => {
+                float_left.partial_cmp(&(*int_right as f64))
+            }
+            (Self::Float(float_left), Self::Float(float_right)) => {
+                float_left.partial_cmp(float_right)
+            }
+            // Numeric vs Text/Blob
+            (Self::Integer(_) | Self::Float(_), Self::Text(_) | Self::Blob(_)) => {
+                Some(std::cmp::Ordering::Less)
+            }
+            (Self::Text(_) | Self::Blob(_), Self::Integer(_) | Self::Float(_)) => {
+                Some(std::cmp::Ordering::Greater)
+            }
+
+            (Self::Text(text_left), Self::Text(text_right)) => text_left
+                .value
+                .to_slice()
+                .partial_cmp(text_right.value.to_slice()),
+            // Text vs Blob
+            (Self::Text(_), Self::Blob(_)) => Some(std::cmp::Ordering::Less),
+            (Self::Blob(_), Self::Text(_)) => Some(std::cmp::Ordering::Greater),
+
+            (Self::Blob(blob_left), Self::Blob(blob_right)) => {
+                blob_left.to_slice().partial_cmp(blob_right.to_slice())
+            }
+            (Self::Null, Self::Null) => Some(std::cmp::Ordering::Equal),
+            (Self::Null, _) => Some(std::cmp::Ordering::Less),
+            (_, Self::Null) => Some(std::cmp::Ordering::Greater),
+        }
+    }
+}
+
+#[allow(clippy::non_canonical_partial_ord_impl)]
+impl PartialOrd<OwnedValue> for RefValue {
+    fn partial_cmp(&self, other: &OwnedValue) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Self::Integer(int_left), OwnedValue::Integer(int_right)) => {
+                int_left.partial_cmp(int_right)
+            }
+            (Self::Integer(int_left), OwnedValue::Float(float_right)) => {
+                (*int_left as f64).partial_cmp(float_right)
+            }
+            (Self::Float(float_left), OwnedValue::Integer(int_right)) => {
+                float_left.partial_cmp(&(*int_right as f64))
+            }
+            (Self::Float(float_left), OwnedValue::Float(float_right)) => {
+                float_left.partial_cmp(float_right)
+            }
+            // Numeric vs Text/Blob
+            (Self::Integer(_) | Self::Float(_), OwnedValue::Text(_) | OwnedValue::Blob(_)) => {
+                Some(std::cmp::Ordering::Less)
+            }
+            (Self::Text(_) | Self::Blob(_), OwnedValue::Integer(_) | OwnedValue::Float(_)) => {
+                Some(std::cmp::Ordering::Greater)
+            }
+
+            (Self::Text(text_left), OwnedValue::Text(text_right)) => {
+                let text_left = text_left.value.to_slice();
+                text_left.partial_cmp(&text_right.value)
+            }
+            // Text vs Blob
+            (Self::Text(_), OwnedValue::Blob(_)) => Some(std::cmp::Ordering::Less),
+            (Self::Blob(_), OwnedValue::Text(_)) => Some(std::cmp::Ordering::Greater),
+
+            (Self::Blob(blob_left), OwnedValue::Blob(blob_right)) => {
+                let blob_left = blob_left.to_slice();
+                blob_left.partial_cmp(blob_right)
+            }
+            (Self::Null, OwnedValue::Null) => Some(std::cmp::Ordering::Equal),
+            (Self::Null, _) => Some(std::cmp::Ordering::Less),
+            (_, OwnedValue::Null) => Some(std::cmp::Ordering::Greater),
+            other => todo!("{:?}", other),
+        }
+    }
+}
+
+#[allow(clippy::non_canonical_partial_ord_impl)]
+impl PartialOrd<RefValue> for OwnedValue {
+    fn partial_cmp(&self, other: &RefValue) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Self::Integer(int_left), RefValue::Integer(int_right)) => {
+                int_left.partial_cmp(int_right)
+            }
+            (Self::Integer(int_left), RefValue::Float(float_right)) => {
+                (*int_left as f64).partial_cmp(float_right)
+            }
+            (Self::Float(float_left), RefValue::Integer(int_right)) => {
+                float_left.partial_cmp(&(*int_right as f64))
+            }
+            (Self::Float(float_left), RefValue::Float(float_right)) => {
+                float_left.partial_cmp(float_right)
+            }
+            // Numeric vs Text/Blob
+            (Self::Integer(_) | Self::Float(_), RefValue::Text(_) | RefValue::Blob(_)) => {
+                Some(std::cmp::Ordering::Less)
+            }
+            (Self::Text(_) | Self::Blob(_), RefValue::Integer(_) | RefValue::Float(_)) => {
+                Some(std::cmp::Ordering::Greater)
+            }
+
+            (Self::Text(text_left), RefValue::Text(text_right)) => {
+                let text_right = text_right.value.to_slice();
+                text_left.value.as_slice().partial_cmp(text_right)
+            }
+            // Text vs Blob
+            (Self::Text(_), RefValue::Blob(_)) => Some(std::cmp::Ordering::Less),
+            (Self::Blob(_), RefValue::Text(_)) => Some(std::cmp::Ordering::Greater),
+
+            (Self::Blob(blob_left), RefValue::Blob(blob_right)) => {
+                let blob_right = blob_right.to_slice();
+                blob_left.as_slice().partial_cmp(blob_right)
+            }
+            (Self::Null, RefValue::Null) => Some(std::cmp::Ordering::Equal),
+            (Self::Null, _) => Some(std::cmp::Ordering::Less),
+            (_, RefValue::Null) => Some(std::cmp::Ordering::Greater),
+            other => todo!("{:?}", other),
+        }
+    }
+}
+
+impl PartialEq<RefValue> for OwnedValue {
+    fn eq(&self, other: &RefValue) -> bool {
+        match (self, other) {
+            (Self::Integer(int_left), RefValue::Integer(int_right)) => int_left == int_right,
+            (Self::Float(float_left), RefValue::Float(float_right)) => float_left == float_right,
+            (Self::Text(text_left), RefValue::Text(text_right)) => {
+                text_left.value.as_slice() == text_right.value.to_slice()
+            }
+            (Self::Blob(blob_left), RefValue::Blob(blob_right)) => {
+                blob_left.as_slice() == blob_right.to_slice()
+            }
+            (Self::Null, RefValue::Null) => true,
+            _ => false,
+        }
+    }
+}
+
+impl PartialEq<OwnedValue> for RefValue {
+    fn eq(&self, other: &OwnedValue) -> bool {
+        match (self, other) {
+            (Self::Integer(int_left), OwnedValue::Integer(int_right)) => int_left == int_right,
+            (Self::Float(float_left), OwnedValue::Float(float_right)) => float_left == float_right,
+            (Self::Text(text_left), OwnedValue::Text(text_right)) => {
+                text_left.value.to_slice() == text_right.value.as_slice()
+            }
+            (Self::Blob(blob_left), OwnedValue::Blob(blob_right)) => {
+                blob_left.to_slice() == blob_right.as_slice()
+            }
+            (Self::Null, OwnedValue::Null) => true,
+            _ => false,
+        }
+    }
+}
+
+pub fn compare_record_to_immutable(
+    record: &[OwnedValue],
+    immutable: &[RefValue],
+) -> std::cmp::Ordering {
+    for (a, b) in record.iter().zip(immutable.iter()) {
+        match a.partial_cmp(b).unwrap() {
+            Ordering::Equal => {}
+            order => {
+                return order;
+            }
+        }
+    }
+    Ordering::Equal
+}
+pub fn compare_immutable_to_record(
+    immutable: &[RefValue],
+    record: &[OwnedValue],
+) -> std::cmp::Ordering {
+    for (a, b) in immutable.iter().zip(record.iter()) {
+        match a.partial_cmp(b).unwrap() {
+            Ordering::Equal => {}
+            order => {
+                return order;
+            }
+        }
+    }
+    Ordering::Equal
 }
 
 const I8_LOW: i64 = -128;
@@ -714,6 +986,12 @@ pub enum SeekOp {
 pub enum SeekKey<'a> {
     TableRowId(u64),
     IndexKey(&'a Record),
+}
+
+impl RawSlice {
+    pub fn to_slice(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.data, self.len) }
+    }
 }
 
 #[cfg(test)]
