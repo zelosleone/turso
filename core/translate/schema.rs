@@ -434,7 +434,7 @@ fn create_vtable_body_to_str(vtab: &CreateVirtualTable, module: Rc<VTabImpl>) ->
         "()"
     };
     format!(
-        "CREATE VIRTUAL TABLE {} {} USING {}{}\n /*{}{}*/;",
+        "CREATE VIRTUAL TABLE {} {} USING {}{}\n /*{}{}*/",
         vtab.tbl_name.name.0,
         if_not_exists,
         vtab.module_name.0,
