@@ -91,7 +91,7 @@ criterion = { version = "0.5", features = [
     "async_futures",
 ] }
 rstest = "0.18.2"
-rusqlite = "0.33.0"
+rusqlite = "0.34.0"
 tempfile = "3.8.0"
 quickcheck = { version = "1.0", default-features = false }
 quickcheck_macros = { version = "1.0", default-features = false }
