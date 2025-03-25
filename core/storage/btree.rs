@@ -4557,6 +4557,63 @@ mod tests {
         dbg!(free);
     }
 
+    #[test]
+    pub fn test_delete_balancing() {
+        let (pager, root_page) = empty_btree();
+
+        for i in 1..=10000 {
+            let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
+            let key = OwnedValue::Integer(i);
+            let value = Record::new(vec![OwnedValue::Text(Text::new("hello world"))]);
+
+            run_until_done(
+                || {
+                    let key = SeekKey::TableRowId(i as u64);
+                    cursor.move_to(key, SeekOp::EQ)
+                },
+                pager.deref(),
+            )
+            .unwrap();
+
+            run_until_done(|| cursor.insert(&key, &value, true), pager.deref()).unwrap();
+        }
+
+        match validate_btree(pager.clone(), root_page) {
+            (_, false) => panic!("Invalid B-tree after insertion"),
+            _ => {}
+        }
+
+        for i in 500..=3500 {
+            let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
+            let seek_key = SeekKey::TableRowId(i as u64);
+
+            let found = run_until_done(|| cursor.seek(seek_key.clone(), SeekOp::EQ), pager.deref())
+                .unwrap();
+
+            if found {
+                run_until_done(|| cursor.delete(), pager.deref()).unwrap();
+            }
+        }
+
+        for i in 1..=10000 {
+            if i >= 500 && i <= 3500 {
+                continue;
+            }
+
+            let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
+            let key = OwnedValue::Integer(i);
+            let exists = run_until_done(|| cursor.exists(&key), pager.deref()).unwrap();
+            assert!(exists, "Key {} should exist but doesn't", i);
+        }
+
+        for i in 500..=3500 {
+            let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
+            let key = OwnedValue::Integer(i);
+            let exists = run_until_done(|| cursor.exists(&key), pager.deref()).unwrap();
+            assert!(!exists, "Deleted key {} still exists", i);
+        }
+    }
+
     fn run_until_done<T>(
         mut action: impl FnMut() -> Result<CursorResult<T>>,
         pager: &Pager,
