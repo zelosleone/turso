@@ -109,7 +109,7 @@ pub fn init_loop(
                             program.emit_insn(Insn::OpenReadAwait {});
                         }
                     }
-                    (OperationMode::DELETE, Table::BTree(btree)) => {
+                    (OperationMode::DELETE | OperationMode::UPDATE, Table::BTree(btree)) => {
                         let root_page = btree.root_page;
                         program.emit_insn(Insn::OpenWriteAsync {
                             cursor_id,
@@ -131,11 +131,7 @@ pub fn init_loop(
                         }
                         program.emit_insn(Insn::OpenWriteAwait {});
                     }
-                    (OperationMode::SELECT, Table::Virtual(_)) => {
-                        program.emit_insn(Insn::VOpenAsync { cursor_id });
-                        program.emit_insn(Insn::VOpenAwait {});
-                    }
-                    (OperationMode::DELETE, Table::Virtual(_)) => {
+                    (_, Table::Virtual(_)) => {
                         program.emit_insn(Insn::VOpenAsync { cursor_id });
                         program.emit_insn(Insn::VOpenAwait {});
                     }
@@ -158,14 +154,7 @@ pub fn init_loop(
                         });
                         program.emit_insn(Insn::OpenReadAwait {});
                     }
-                    OperationMode::DELETE => {
-                        program.emit_insn(Insn::OpenWriteAsync {
-                            cursor_id: table_cursor_id,
-                            root_page: table.table.get_root_page().into(),
-                        });
-                        program.emit_insn(Insn::OpenWriteAwait {});
-                    }
-                    OperationMode::UPDATE => {
+                    OperationMode::DELETE | OperationMode::UPDATE => {
                         program.emit_insn(Insn::OpenWriteAsync {
                             cursor_id: table_cursor_id,
                             root_page: table.table.get_root_page().into(),
@@ -191,17 +180,10 @@ pub fn init_loop(
                             });
                             program.emit_insn(Insn::OpenReadAwait);
                         }
-                        OperationMode::DELETE => {
+                        OperationMode::UPDATE | OperationMode::DELETE => {
                             program.emit_insn(Insn::OpenWriteAsync {
                                 cursor_id: index_cursor_id,
-                                root_page: index.root_page.into(),
-                            });
-                            program.emit_insn(Insn::OpenWriteAwait {});
-                        }
-                        OperationMode::UPDATE => {
-                            program.emit_insn(Insn::OpenWriteAsync {
-                                cursor_id: index_cursor_id,
-                                root_page: index.root_page.into(),
+                                root_page: index.root_page,
                             });
                             program.emit_insn(Insn::OpenWriteAwait {});
                         }
