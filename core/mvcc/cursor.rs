@@ -170,10 +170,7 @@ impl<Clock: LogicalClock> BucketScanCursor<Clock> {
         if self.index < self.bucket.len() {
             true
         } else {
-            match self.next_bucket() {
-                Ok(res) => res,
-                Err(_) => false,
-            }
+            self.next_bucket().unwrap_or_default()
         }
     }
 
