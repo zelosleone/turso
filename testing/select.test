@@ -211,3 +211,7 @@ do_execsql_test select_shl_numeric_types {
     SELECT 1.0 << 2;
     SELECT 1.5 << 2;
 } {4 4 4}
+
+do execsql_test select_fuzz_failure_case {
+  SELECT (-9 << ((-6) << (9)) >> ((5)) % -10 - + - (-9));
+}{-16}

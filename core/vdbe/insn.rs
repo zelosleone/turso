@@ -977,12 +977,24 @@ pub fn exec_shift_left(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue
 fn compute_shl(lhs: i64, rhs: i64) -> i64 {
     if rhs == 0 {
         lhs
-    } else if rhs >= 64 || rhs <= -64 {
-        0
     } else if rhs > 0 {
-        lhs << rhs
+        // for positive shifts, if it's too large return 0
+        if rhs >= 64 {
+            0
+        } else {
+            lhs << rhs
+        }
     } else {
-        lhs >> -rhs
+        // for negative shifts, check if it's i64::MIN to avoid overflow on negation
+        if rhs == i64::MIN || rhs <= -64 {
+            if lhs < 0 {
+                -1
+            } else {
+                0
+            }
+        } else {
+            lhs >> (-rhs)
+        }
     }
 }
 
@@ -1021,15 +1033,24 @@ pub fn exec_shift_right(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValu
 fn compute_shr(lhs: i64, rhs: i64) -> i64 {
     if rhs == 0 {
         lhs
-    } else if rhs >= 64 && lhs >= 0 || rhs <= -64 {
-        0
-    } else if rhs >= 64 && lhs < 0 {
-        -1
-    } else if rhs < 0 {
-        // if negative do left shift
-        lhs << (-rhs)
+    } else if rhs > 0 {
+        // for positive right shifts
+        if rhs >= 64 {
+            if lhs < 0 {
+                -1
+            } else {
+                0
+            }
+        } else {
+            lhs >> rhs
+        }
     } else {
-        lhs >> rhs
+        // for negative right shifts, check if it's i64::MIN to avoid overflow
+        if rhs == i64::MIN || -rhs >= 64 {
+            0
+        } else {
+            lhs << (-rhs)
+        }
     }
 }
 
