@@ -191,7 +191,6 @@ fn to_js_value(value: &limbo_core::OwnedValue) -> JsValue {
         limbo_core::OwnedValue::Float(f) => JsValue::from(*f),
         limbo_core::OwnedValue::Text(t) => JsValue::from_str(t.as_str()),
         limbo_core::OwnedValue::Blob(b) => js_sys::Uint8Array::from(b.as_slice()).into(),
-        _ => unreachable!(),
     }
 }
 

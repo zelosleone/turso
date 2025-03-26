@@ -717,7 +717,6 @@ impl<'a> Limbo<'a> {
                                         OwnedValue::Blob(b) => {
                                             format!("{}", String::from_utf8_lossy(b))
                                         }
-                                        _ => unreachable!(),
                                     }
                                     .as_bytes(),
                                 )?;
@@ -784,7 +783,6 @@ impl<'a> Limbo<'a> {
                                             String::from_utf8_lossy(b).to_string(),
                                             CellAlignment::Left,
                                         ),
-                                        _ => unreachable!(),
                                     };
                                     row.add_cell(
                                         Cell::new(content)

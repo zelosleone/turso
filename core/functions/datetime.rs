@@ -1,33 +1,33 @@
-use crate::types::OwnedValue;
 use crate::LimboError::InvalidModifier;
 use crate::Result;
+use crate::{types::OwnedValue, vdbe::Register};
 use chrono::{
     DateTime, Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, TimeZone, Timelike, Utc,
 };
 
 /// Execution of date/time/datetime functions
 #[inline(always)]
-pub fn exec_date(values: &[OwnedValue]) -> OwnedValue {
+pub fn exec_date(values: &[Register]) -> OwnedValue {
     exec_datetime(values, DateTimeOutput::Date)
 }
 
 #[inline(always)]
-pub fn exec_time(values: &[OwnedValue]) -> OwnedValue {
+pub fn exec_time(values: &[Register]) -> OwnedValue {
     exec_datetime(values, DateTimeOutput::Time)
 }
 
 #[inline(always)]
-pub fn exec_datetime_full(values: &[OwnedValue]) -> OwnedValue {
+pub fn exec_datetime_full(values: &[Register]) -> OwnedValue {
     exec_datetime(values, DateTimeOutput::DateTime)
 }
 
 #[inline(always)]
-pub fn exec_strftime(values: &[OwnedValue]) -> OwnedValue {
+pub fn exec_strftime(values: &[Register]) -> OwnedValue {
     if values.is_empty() {
         return OwnedValue::Null;
     }
 
-    let format_str = match &values[0] {
+    let format_str = match &values[0].get_owned_value() {
         OwnedValue::Text(text) => text.as_str().to_string(),
         OwnedValue::Integer(num) => num.to_string(),
         OwnedValue::Float(num) => format!("{:.14}", num),
@@ -45,7 +45,7 @@ enum DateTimeOutput {
     StrfTime(String),
 }
 
-fn exec_datetime(values: &[OwnedValue], output_type: DateTimeOutput) -> OwnedValue {
+fn exec_datetime(values: &[Register], output_type: DateTimeOutput) -> OwnedValue {
     if values.is_empty() {
         let now = parse_naive_date_time(&OwnedValue::build_text("now")).unwrap();
 
@@ -59,7 +59,7 @@ fn exec_datetime(values: &[OwnedValue], output_type: DateTimeOutput) -> OwnedVal
         // Parse here
         return OwnedValue::build_text(&formatted_str);
     }
-    if let Some(mut dt) = parse_naive_date_time(&values[0]) {
+    if let Some(mut dt) = parse_naive_date_time(values[0].get_owned_value()) {
         // if successful, treat subsequent entries as modifiers
         modify_dt(&mut dt, &values[1..], output_type)
     } else {
@@ -69,15 +69,11 @@ fn exec_datetime(values: &[OwnedValue], output_type: DateTimeOutput) -> OwnedVal
     }
 }
 
-fn modify_dt(
-    dt: &mut NaiveDateTime,
-    mods: &[OwnedValue],
-    output_type: DateTimeOutput,
-) -> OwnedValue {
+fn modify_dt(dt: &mut NaiveDateTime, mods: &[Register], output_type: DateTimeOutput) -> OwnedValue {
     let mut subsec_requested = false;
 
     for modifier in mods {
-        if let OwnedValue::Text(ref text_rc) = modifier {
+        if let OwnedValue::Text(ref text_rc) = modifier.get_owned_value() {
             // TODO: to prevent double conversion and properly support 'utc'/'localtime', we also
             // need to keep track of the current timezone and apply it to the modifier.
             match apply_modifier(dt, text_rc.as_str()) {
@@ -806,7 +802,7 @@ mod tests {
         ];
 
         for (input, expected) in test_cases {
-            let result = exec_date(&[input.clone()]);
+            let result = exec_date(&[Register::OwnedValue(input.clone())]);
             assert_eq!(
                 result,
                 OwnedValue::build_text(expected),
@@ -847,7 +843,7 @@ mod tests {
         ];
 
         for case in invalid_cases.iter() {
-            let result = exec_date(&[case.clone()]);
+            let result = exec_date(&[Register::OwnedValue(case.clone())]);
             match result {
                 OwnedValue::Text(ref result_str) if result_str.value.is_empty() => (),
                 _ => panic!(
@@ -960,7 +956,7 @@ mod tests {
         ];
 
         for (input, expected) in test_cases {
-            let result = exec_time(&[input]);
+            let result = exec_time(&[Register::OwnedValue(input)]);
             if let OwnedValue::Text(result_str) = result {
                 assert_eq!(result_str.as_str(), expected);
             } else {
@@ -1000,7 +996,7 @@ mod tests {
         ];
 
         for case in invalid_cases {
-            let result = exec_time(&[case.clone()]);
+            let result = exec_time(&[Register::OwnedValue(case.clone())]);
             match result {
                 OwnedValue::Text(ref result_str) if result_str.value.is_empty() => (),
                 _ => panic!(
@@ -1302,8 +1298,8 @@ mod tests {
         assert_eq!(dt, create_datetime(2023, 6, 15, 0, 0, 0));
     }
 
-    fn text(value: &str) -> OwnedValue {
-        OwnedValue::build_text(value)
+    fn text(value: &str) -> Register {
+        Register::OwnedValue(OwnedValue::build_text(value))
     }
 
     fn format(dt: NaiveDateTime) -> String {
@@ -1321,7 +1317,7 @@ mod tests {
             &[text("2023-06-15 12:30:45"), text("-1 day")],
             DateTimeOutput::DateTime,
         );
-        assert_eq!(result, text(&expected));
+        assert_eq!(result, *text(&expected).get_owned_value());
     }
 
     #[test]
@@ -1336,7 +1332,7 @@ mod tests {
             ],
             DateTimeOutput::DateTime,
         );
-        assert_eq!(result, text(&expected));
+        assert_eq!(result, *text(&expected).get_owned_value());
     }
 
     #[test]
@@ -1363,7 +1359,7 @@ mod tests {
             ],
             DateTimeOutput::DateTime,
         );
-        assert_eq!(result, text(&expected));
+        assert_eq!(result, *text(&expected).get_owned_value());
     }
 
     #[test]
@@ -1382,7 +1378,7 @@ mod tests {
             ],
             DateTimeOutput::DateTime,
         );
-        assert_eq!(result, text(&expected));
+        assert_eq!(result, *text(&expected).get_owned_value());
     }
 
     #[test]
@@ -1402,7 +1398,7 @@ mod tests {
             ],
             DateTimeOutput::DateTime,
         );
-        assert_eq!(result, text(&expected));
+        assert_eq!(result, *text(&expected).get_owned_value());
     }
 
     #[test]
@@ -1414,12 +1410,13 @@ mod tests {
         );
         assert_eq!(
             result_local,
-            text(
+            *text(
                 &dt.and_utc()
                     .with_timezone(&chrono::Local)
                     .format("%Y-%m-%d %H:%M:%S")
                     .to_string()
             )
+            .get_owned_value()
         );
         // TODO: utc modifier assumes time given is not already utc
         // add test when fixed in the future
@@ -1457,7 +1454,7 @@ mod tests {
             .unwrap();
         let expected = format(max);
         let result = exec_datetime(&[text("9999-12-31 23:59:59")], DateTimeOutput::DateTime);
-        assert_eq!(result, text(&expected));
+        assert_eq!(result, *text(&expected).get_owned_value());
     }
 
     // leap second
@@ -1469,7 +1466,7 @@ mod tests {
             .unwrap();
         let expected = String::new(); // SQLite ignores leap seconds
         let result = exec_datetime(&[text(&leap_second.to_string())], DateTimeOutput::DateTime);
-        assert_eq!(result, text(&expected));
+        assert_eq!(result, *text(&expected).get_owned_value());
     }
 
     #[test]

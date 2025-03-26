@@ -116,7 +116,6 @@ fn row_to_obj_array<'local>(
             }
             limbo_core::OwnedValue::Text(s) => env.new_string(s.as_str())?.into(),
             limbo_core::OwnedValue::Blob(b) => env.byte_array_from_slice(&b)?.into(),
-            _ => unreachable!(),
         };
         if let Err(e) = env.set_object_array_element(&obj_array, i as i32, obj) {
             eprintln!("Error on parsing row: {:?}", e);

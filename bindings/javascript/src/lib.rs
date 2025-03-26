@@ -101,7 +101,6 @@ fn to_js_value(env: &napi::Env, value: &limbo_core::OwnedValue) -> JsUnknown {
         limbo_core::OwnedValue::Blob(b) => {
             env.create_buffer_copy(b.as_ref()).unwrap().into_unknown()
         }
-        _ => env.get_null().unwrap().into_unknown(),
     }
 }
 

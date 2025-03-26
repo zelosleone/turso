@@ -15,6 +15,7 @@ pub use crate::json::json_operations::{
 use crate::json::json_path::{json_path, JsonPath, PathElement};
 pub use crate::json::ser::to_string;
 use crate::types::{OwnedValue, OwnedValueType, Text, TextSubtype};
+use crate::vdbe::Register;
 use crate::{bail_parse_error, json::de::ordered_object};
 pub use json_cache::JsonCacheCell;
 use jsonb::{ElementType, Jsonb, JsonbHeader, PathOperationMode, SearchOperation, SetOperation};
@@ -131,9 +132,6 @@ fn convert_dbtype_to_jsonb(val: &OwnedValue, strict: Conv) -> crate::Result<Json
             json.is_valid()?;
             Ok(json)
         }
-        OwnedValue::Record(_) | OwnedValue::Agg(_) => {
-            bail_constraint_error!("Wrong number of arguments");
-        }
         OwnedValue::Null => Ok(Jsonb::from_raw_data(
             JsonbHeader::make_null().into_bytes().as_bytes(),
         )),
@@ -163,18 +161,17 @@ fn get_json_value(json_value: &OwnedValue) -> crate::Result<Val> {
         OwnedValue::Null => Ok(Val::Null),
         OwnedValue::Float(f) => Ok(Val::Float(*f)),
         OwnedValue::Integer(i) => Ok(Val::Integer(*i)),
-        _ => Ok(Val::String(json_value.to_string())),
     }
 }
 
-pub fn json_array(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn json_array(values: &[Register]) -> crate::Result<OwnedValue> {
     let mut json = Jsonb::make_empty_array(values.len());
 
     for value in values.iter() {
-        if matches!(value, OwnedValue::Blob(_)) {
+        if matches!(value.get_owned_value(), OwnedValue::Blob(_)) {
             crate::bail_constraint_error!("JSON cannot hold BLOB values")
         }
-        let value = convert_dbtype_to_jsonb(value, Conv::NotStrict)?;
+        let value = convert_dbtype_to_jsonb(value.get_owned_value(), Conv::NotStrict)?;
         json.append_jsonb_to_end(value.data());
     }
     json.finalize_unsafe(ElementType::ARRAY)?;
@@ -182,14 +179,14 @@ pub fn json_array(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
     json_string_to_db_type(json, ElementType::ARRAY, OutputVariant::ElementType)
 }
 
-pub fn jsonb_array(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn jsonb_array(values: &[Register]) -> crate::Result<OwnedValue> {
     let mut json = Jsonb::make_empty_array(values.len());
 
     for value in values.iter() {
-        if matches!(value, OwnedValue::Blob(_)) {
+        if matches!(value.get_owned_value(), OwnedValue::Blob(_)) {
             crate::bail_constraint_error!("JSON cannot hold BLOB values")
         }
-        let value = convert_dbtype_to_jsonb(value, Conv::NotStrict)?;
+        let value = convert_dbtype_to_jsonb(value.get_owned_value(), Conv::NotStrict)?;
         json.append_jsonb_to_end(value.data());
     }
     json.finalize_unsafe(ElementType::ARRAY)?;
@@ -222,19 +219,19 @@ pub fn json_array_length(
     Ok(OwnedValue::Null)
 }
 
-pub fn json_set(args: &[OwnedValue], json_cache: &JsonCacheCell) -> crate::Result<OwnedValue> {
+pub fn json_set(args: &[Register], json_cache: &JsonCacheCell) -> crate::Result<OwnedValue> {
     if args.is_empty() {
         return Ok(OwnedValue::Null);
     }
 
     let make_jsonb_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
-    let mut json = json_cache.get_or_insert_with(&args[0], make_jsonb_fn)?;
+    let mut json = json_cache.get_or_insert_with(&args[0].get_owned_value(), make_jsonb_fn)?;
     let other = args[1..].chunks_exact(2);
 
     for chunk in other {
-        let path = json_path_from_owned_value(&chunk[0], true)?;
+        let path = json_path_from_owned_value(&chunk[0].get_owned_value(), true)?;
 
-        let value = convert_dbtype_to_jsonb(&chunk[1], Conv::NotStrict)?;
+        let value = convert_dbtype_to_jsonb(&chunk[1].get_owned_value(), Conv::NotStrict)?;
         let mut op = SetOperation::new(value);
         if let Some(path) = path {
             let _ = json.operate_on_path(&path, &mut op);
@@ -313,7 +310,7 @@ pub fn json_arrow_shift_extract(
 /// https://sqlite.org/json1.html#the_json_extract_function
 pub fn json_extract(
     value: &OwnedValue,
-    paths: &[OwnedValue],
+    paths: &[Register],
     json_cache: &JsonCacheCell,
 ) -> crate::Result<OwnedValue> {
     if let OwnedValue::Null = value {
@@ -334,7 +331,7 @@ pub fn json_extract(
 
 pub fn jsonb_extract(
     value: &OwnedValue,
-    paths: &[OwnedValue],
+    paths: &[Register],
     json_cache: &JsonCacheCell,
 ) -> crate::Result<OwnedValue> {
     if let OwnedValue::Null = value {
@@ -353,13 +350,10 @@ pub fn jsonb_extract(
     Ok(result)
 }
 
-fn jsonb_extract_internal(
-    value: Jsonb,
-    paths: &[OwnedValue],
-) -> crate::Result<(Jsonb, ElementType)> {
+fn jsonb_extract_internal(value: Jsonb, paths: &[Register]) -> crate::Result<(Jsonb, ElementType)> {
     let null = Jsonb::from_raw_data(JsonbHeader::make_null().into_bytes().as_bytes());
     if paths.len() == 1 {
-        if let Some(path) = json_path_from_owned_value(&paths[0], true)? {
+        if let Some(path) = json_path_from_owned_value(&paths[0].get_owned_value(), true)? {
             let mut json = value;
 
             let mut op = SearchOperation::new(json.len());
@@ -383,7 +377,9 @@ fn jsonb_extract_internal(
     let mut result = Jsonb::make_empty_array(json.len());
 
     // TODO: make an op to avoid creating new json for every path element
-    let paths = paths.iter().map(|p| json_path_from_owned_value(p, true));
+    let paths = paths
+        .iter()
+        .map(|p| json_path_from_owned_value(p.get_owned_value(), true));
     for path in paths {
         if let Some(path) = path? {
             let mut op = SearchOperation::new(json.len());
@@ -581,19 +577,19 @@ pub fn json_error_position(json: &OwnedValue) -> crate::Result<OwnedValue> {
 /// Constructs a JSON object from a list of values that represent key-value pairs.
 /// The number of values must be even, and the first value of each pair (which represents the map key)
 /// must be a TEXT value. The second value of each pair can be any JSON value (which represents the map value)
-pub fn json_object(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn json_object(values: &[Register]) -> crate::Result<OwnedValue> {
     if values.len() % 2 != 0 {
         bail_constraint_error!("json_object() requires an even number of arguments")
     }
     let mut json = Jsonb::make_empty_obj(values.len() * 50);
 
     for chunk in values.chunks_exact(2) {
-        if chunk[0].value_type() != OwnedValueType::Text {
+        if chunk[0].get_owned_value().value_type() != OwnedValueType::Text {
             bail_constraint_error!("json_object() labels must be TEXT")
         }
-        let key = convert_dbtype_to_jsonb(&chunk[0], Conv::ToString)?;
+        let key = convert_dbtype_to_jsonb(&chunk[0].get_owned_value(), Conv::ToString)?;
         json.append_jsonb_to_end(key.data());
-        let value = convert_dbtype_to_jsonb(&chunk[1], Conv::NotStrict)?;
+        let value = convert_dbtype_to_jsonb(&chunk[1].get_owned_value(), Conv::NotStrict)?;
         json.append_jsonb_to_end(value.data());
     }
 
@@ -602,19 +598,19 @@ pub fn json_object(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
     json_string_to_db_type(json, ElementType::OBJECT, OutputVariant::String)
 }
 
-pub fn jsonb_object(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn jsonb_object(values: &[Register]) -> crate::Result<OwnedValue> {
     if values.len() % 2 != 0 {
         bail_constraint_error!("json_object() requires an even number of arguments")
     }
     let mut json = Jsonb::make_empty_obj(values.len() * 50);
 
     for chunk in values.chunks_exact(2) {
-        if chunk[0].value_type() != OwnedValueType::Text {
+        if chunk[0].get_owned_value().value_type() != OwnedValueType::Text {
             bail_constraint_error!("json_object() labels must be TEXT")
         }
-        let key = convert_dbtype_to_jsonb(&chunk[0], Conv::ToString)?;
+        let key = convert_dbtype_to_jsonb(&chunk[0].get_owned_value(), Conv::ToString)?;
         json.append_jsonb_to_end(key.data());
-        let value = convert_dbtype_to_jsonb(&chunk[1], Conv::NotStrict)?;
+        let value = convert_dbtype_to_jsonb(&chunk[1].get_owned_value(), Conv::NotStrict)?;
         json.append_jsonb_to_end(value.data());
     }
 
@@ -663,9 +659,6 @@ pub fn json_quote(value: &OwnedValue) -> crate::Result<OwnedValue> {
         OwnedValue::Float(ref float) => Ok(OwnedValue::Float(float.to_owned())),
         OwnedValue::Blob(_) => crate::bail_constraint_error!("JSON cannot hold BLOB values"),
         OwnedValue::Null => Ok(OwnedValue::build_text("null")),
-        _ => {
-            unreachable!()
-        }
     }
 }
 
@@ -806,9 +799,14 @@ mod tests {
 
     #[test]
     fn test_json_array_simple() {
-        let text = OwnedValue::build_text("value1");
-        let json = OwnedValue::Text(Text::json("\"value2\"".to_string()));
-        let input = vec![text, json, OwnedValue::Integer(1), OwnedValue::Float(1.1)];
+        let text = Register::OwnedValue(OwnedValue::build_text("value1"));
+        let json = Register::OwnedValue(OwnedValue::Text(Text::json("\"value2\"".to_string())));
+        let input = vec![
+            text,
+            json,
+            Register::OwnedValue(OwnedValue::Integer(1)),
+            Register::OwnedValue(OwnedValue::Float(1.1)),
+        ];
 
         let result = json_array(&input).unwrap();
         if let OwnedValue::Text(res) = result {
@@ -834,7 +832,7 @@ mod tests {
 
     #[test]
     fn test_json_array_blob_invalid() {
-        let blob = OwnedValue::Blob(Rc::new("1".as_bytes().to_vec()));
+        let blob = Register::OwnedValue(OwnedValue::Blob(Rc::new("1".as_bytes().to_vec())));
 
         let input = vec![blob];
 
@@ -962,7 +960,7 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_extract(
             &OwnedValue::build_text("{\"a\":2}"),
-            &[OwnedValue::build_text("$.x")],
+            &[Register::OwnedValue(OwnedValue::build_text("$.x"))],
             &json_cache,
         );
 
@@ -976,7 +974,7 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_extract(
             &OwnedValue::build_text("{\"a\":2}"),
-            &[OwnedValue::Null],
+            &[Register::OwnedValue(OwnedValue::Null)],
             &json_cache,
         );
 
@@ -991,7 +989,7 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_extract(
             &OwnedValue::build_text("{\"a\":2}"),
-            &[OwnedValue::Float(1.1)],
+            &[Register::OwnedValue(OwnedValue::Float(1.1))],
             &json_cache,
         );
 
@@ -1052,8 +1050,8 @@ mod tests {
 
     #[test]
     fn test_json_object_simple() {
-        let key = OwnedValue::build_text("key");
-        let value = OwnedValue::build_text("value");
+        let key = Register::OwnedValue(OwnedValue::build_text("key"));
+        let value = Register::OwnedValue(OwnedValue::build_text("value"));
         let input = vec![key, value];
 
         let result = json_object(&input).unwrap();
@@ -1077,16 +1075,16 @@ mod tests {
         let null_value = OwnedValue::Null;
 
         let input = vec![
-            text_key,
-            text_value,
-            json_key,
-            json_value,
-            integer_key,
-            integer_value,
-            float_key,
-            float_value,
-            null_key,
-            null_value,
+            Register::OwnedValue(text_key),
+            Register::OwnedValue(text_value),
+            Register::OwnedValue(json_key),
+            Register::OwnedValue(json_value),
+            Register::OwnedValue(integer_key),
+            Register::OwnedValue(integer_value),
+            Register::OwnedValue(float_key),
+            Register::OwnedValue(float_value),
+            Register::OwnedValue(null_key),
+            Register::OwnedValue(null_value),
         ];
 
         let result = json_object(&input).unwrap();
@@ -1101,8 +1099,10 @@ mod tests {
 
     #[test]
     fn test_json_object_json_value_is_rendered_as_json() {
-        let key = OwnedValue::build_text("key");
-        let value = OwnedValue::Text(Text::json(r#"{"json":"value"}"#.to_string()));
+        let key = Register::OwnedValue(OwnedValue::build_text("key"));
+        let value = Register::OwnedValue(OwnedValue::Text(Text::json(
+            r#"{"json":"value"}"#.to_string(),
+        )));
         let input = vec![key, value];
 
         let result = json_object(&input).unwrap();
@@ -1114,8 +1114,8 @@ mod tests {
 
     #[test]
     fn test_json_object_json_text_value_is_rendered_as_regular_text() {
-        let key = OwnedValue::build_text("key");
-        let value = OwnedValue::Text(Text::new(r#"{"json":"value"}"#));
+        let key = Register::OwnedValue(OwnedValue::build_text("key"));
+        let value = Register::OwnedValue(OwnedValue::Text(Text::new(r#"{"json":"value"}"#)));
         let input = vec![key, value];
 
         let result = json_object(&input).unwrap();
@@ -1127,12 +1127,12 @@ mod tests {
 
     #[test]
     fn test_json_object_nested() {
-        let key = OwnedValue::build_text("key");
-        let value = OwnedValue::build_text("value");
+        let key = Register::OwnedValue(OwnedValue::build_text("key"));
+        let value = Register::OwnedValue(OwnedValue::build_text("value"));
         let input = vec![key, value];
 
-        let parent_key = OwnedValue::build_text("parent_key");
-        let parent_value = json_object(&input).unwrap();
+        let parent_key = Register::OwnedValue(OwnedValue::build_text("parent_key"));
+        let parent_value = Register::OwnedValue(json_object(&input).unwrap());
         let parent_input = vec![parent_key, parent_value];
 
         let result = json_object(&parent_input).unwrap();
@@ -1145,8 +1145,8 @@ mod tests {
 
     #[test]
     fn test_json_object_duplicated_keys() {
-        let key = OwnedValue::build_text("key");
-        let value = OwnedValue::build_text("value");
+        let key = Register::OwnedValue(OwnedValue::build_text("key"));
+        let value = Register::OwnedValue(OwnedValue::build_text("value"));
         let input = vec![key.clone(), value.clone(), key, value];
 
         let result = json_object(&input).unwrap();
@@ -1169,8 +1169,8 @@ mod tests {
 
     #[test]
     fn test_json_object_non_text_key() {
-        let key = OwnedValue::Integer(1);
-        let value = OwnedValue::build_text("value");
+        let key = Register::OwnedValue(OwnedValue::Integer(1));
+        let value = Register::OwnedValue(OwnedValue::build_text("value"));
         let input = vec![key, value];
 
         match json_object(&input) {
@@ -1181,8 +1181,8 @@ mod tests {
 
     #[test]
     fn test_json_odd_number_of_values() {
-        let key = OwnedValue::build_text("key");
-        let value = OwnedValue::build_text("value");
+        let key = Register::OwnedValue(OwnedValue::build_text("key"));
+        let value = Register::OwnedValue(OwnedValue::build_text("value"));
         let input = vec![key.clone(), value, key];
 
         assert!(json_object(&input).is_err());
@@ -1320,9 +1320,9 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_set(
             &[
-                OwnedValue::build_text("{}"),
-                OwnedValue::build_text("$.field"),
-                OwnedValue::build_text("value"),
+                Register::OwnedValue(OwnedValue::build_text("{}")),
+                Register::OwnedValue(OwnedValue::build_text("$.field")),
+                Register::OwnedValue(OwnedValue::build_text("value")),
             ],
             &json_cache,
         );
@@ -1337,9 +1337,9 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_set(
             &[
-                OwnedValue::build_text(r#"{"field":"old_value"}"#),
-                OwnedValue::build_text("$.field"),
-                OwnedValue::build_text("new_value"),
+                Register::OwnedValue(OwnedValue::build_text(r#"{"field":"old_value"}"#)),
+                Register::OwnedValue(OwnedValue::build_text("$.field")),
+                Register::OwnedValue(OwnedValue::build_text("new_value")),
             ],
             &json_cache,
         );
@@ -1357,9 +1357,9 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_set(
             &[
-                OwnedValue::build_text("{}"),
-                OwnedValue::build_text("$.object.doesnt.exist"),
-                OwnedValue::build_text("value"),
+                Register::OwnedValue(OwnedValue::build_text("{}")),
+                Register::OwnedValue(OwnedValue::build_text("$.object.doesnt.exist")),
+                Register::OwnedValue(OwnedValue::build_text("value")),
             ],
             &json_cache,
         );
@@ -1377,9 +1377,9 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_set(
             &[
-                OwnedValue::build_text("[]"),
-                OwnedValue::build_text("$[0]"),
-                OwnedValue::build_text("value"),
+                Register::OwnedValue(OwnedValue::build_text("[]")),
+                Register::OwnedValue(OwnedValue::build_text("$[0]")),
+                Register::OwnedValue(OwnedValue::build_text("value")),
             ],
             &json_cache,
         );
@@ -1394,9 +1394,9 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_set(
             &[
-                OwnedValue::build_text("{}"),
-                OwnedValue::build_text("$.some_array[0]"),
-                OwnedValue::Integer(123),
+                Register::OwnedValue(OwnedValue::build_text("{}")),
+                Register::OwnedValue(OwnedValue::build_text("$.some_array[0]")),
+                Register::OwnedValue(OwnedValue::Integer(123)),
             ],
             &json_cache,
         );
@@ -1414,9 +1414,9 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_set(
             &[
-                OwnedValue::build_text("[123]"),
-                OwnedValue::build_text("$[1]"),
-                OwnedValue::Integer(456),
+                Register::OwnedValue(OwnedValue::build_text("[123]")),
+                Register::OwnedValue(OwnedValue::build_text("$[1]")),
+                Register::OwnedValue(OwnedValue::Integer(456)),
             ],
             &json_cache,
         );
@@ -1431,9 +1431,9 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_set(
             &[
-                OwnedValue::build_text("[123]"),
-                OwnedValue::build_text("$[200]"),
-                OwnedValue::Integer(456),
+                Register::OwnedValue(OwnedValue::build_text("[123]")),
+                Register::OwnedValue(OwnedValue::build_text("$[200]")),
+                Register::OwnedValue(OwnedValue::Integer(456)),
             ],
             &json_cache,
         );
@@ -1448,9 +1448,9 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_set(
             &[
-                OwnedValue::build_text("[123]"),
-                OwnedValue::build_text("$[0]"),
-                OwnedValue::Integer(456),
+                Register::OwnedValue(OwnedValue::build_text("[123]")),
+                Register::OwnedValue(OwnedValue::build_text("$[0]")),
+                Register::OwnedValue(OwnedValue::Integer(456)),
             ],
             &json_cache,
         );
@@ -1465,9 +1465,9 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_set(
             &[
-                OwnedValue::build_text("{}"),
-                OwnedValue::Null,
-                OwnedValue::Integer(456),
+                Register::OwnedValue(OwnedValue::build_text("{}")),
+                Register::OwnedValue(OwnedValue::Null),
+                Register::OwnedValue(OwnedValue::Integer(456)),
             ],
             &json_cache,
         );
@@ -1482,11 +1482,11 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_set(
             &[
-                OwnedValue::build_text("[123]"),
-                OwnedValue::build_text("$[0]"),
-                OwnedValue::Integer(456),
-                OwnedValue::build_text("$[1]"),
-                OwnedValue::Integer(789),
+                Register::OwnedValue(OwnedValue::build_text("[123]")),
+                Register::OwnedValue(OwnedValue::build_text("$[0]")),
+                Register::OwnedValue(OwnedValue::Integer(456)),
+                Register::OwnedValue(OwnedValue::build_text("$[1]")),
+                Register::OwnedValue(OwnedValue::Integer(789)),
             ],
             &json_cache,
         );
@@ -1501,9 +1501,9 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_set(
             &[
-                OwnedValue::build_text("{}"),
-                OwnedValue::build_text("$.object[0].field"),
-                OwnedValue::Integer(123),
+                Register::OwnedValue(OwnedValue::build_text("{}")),
+                Register::OwnedValue(OwnedValue::build_text("$.object[0].field")),
+                Register::OwnedValue(OwnedValue::Integer(123)),
             ],
             &json_cache,
         );
@@ -1521,9 +1521,9 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_set(
             &[
-                OwnedValue::build_text("{}"),
-                OwnedValue::build_text("$.object[0][0]"),
-                OwnedValue::Integer(123),
+                Register::OwnedValue(OwnedValue::build_text("{}")),
+                Register::OwnedValue(OwnedValue::build_text("$.object[0][0]")),
+                Register::OwnedValue(OwnedValue::Integer(123)),
             ],
             &json_cache,
         );
@@ -1538,11 +1538,11 @@ mod tests {
         let json_cache = JsonCacheCell::new();
         let result = json_set(
             &[
-                OwnedValue::build_text("{}"),
-                OwnedValue::build_text("$.object[123].another"),
-                OwnedValue::build_text("value"),
-                OwnedValue::build_text("$.field"),
-                OwnedValue::build_text("value"),
+                Register::OwnedValue(OwnedValue::build_text("{}")),
+                Register::OwnedValue(OwnedValue::build_text("$.object[123].another")),
+                Register::OwnedValue(OwnedValue::build_text("value")),
+                Register::OwnedValue(OwnedValue::build_text("$.field")),
+                Register::OwnedValue(OwnedValue::build_text("value")),
             ],
             &json_cache,
         );

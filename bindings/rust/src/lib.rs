@@ -236,8 +236,6 @@ impl Row {
             limbo_core::OwnedValue::Float(f) => Ok(Value::Real(*f)),
             limbo_core::OwnedValue::Text(text) => Ok(Value::Text(text.to_string())),
             limbo_core::OwnedValue::Blob(items) => Ok(Value::Blob(items.to_vec())),
-            limbo_core::OwnedValue::Agg(_agg_context) => todo!(),
-            limbo_core::OwnedValue::Record(_record) => todo!(),
         }
     }
 }
