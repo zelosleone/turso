@@ -498,9 +498,9 @@ impl BTreeCursor {
                     let order =
                         compare_immutable_to_record(&record.get_values(), &index_key.get_values());
                     let found = match op {
-                        SeekOp::GT => order.is_gt(),
-                        SeekOp::GE => order.is_ge(),
-                        SeekOp::EQ => order.is_eq(),
+                        SeekOp::GT => order.is_lt(),
+                        SeekOp::GE => order.is_le(),
+                        SeekOp::EQ => order.is_le(),
                     };
                     if found {
                         let rowid = match record.last_value() {
@@ -753,9 +753,9 @@ impl BTreeCursor {
                             &record.get_values(),
                         );
                         let target_leaf_page_is_in_the_left_subtree = match cmp {
-                            SeekOp::GT => order.is_gt(),
-                            SeekOp::GE => order.is_ge(),
-                            SeekOp::EQ => order.is_eq(),
+                            SeekOp::GT => order.is_lt(),
+                            SeekOp::GE => order.is_le(),
+                            SeekOp::EQ => order.is_le(),
                         };
                         if target_leaf_page_is_in_the_left_subtree {
                             // we don't advance in case of index tree internal nodes because we will visit this node going up
