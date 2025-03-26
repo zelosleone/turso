@@ -1,3 +1,5 @@
+use rand::rngs::OsRng;
+use rand::RngCore;
 use std::collections::HashMap;
 use tracing::{debug, trace};
 
@@ -32,6 +34,12 @@ pub struct CheckpointResult {
     pub num_wal_frames: u64,
     /// number of frames moved successfully from WAL to db file after checkpoint
     pub num_checkpointed_frames: u64,
+}
+
+impl Default for CheckpointResult {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CheckpointResult {
@@ -443,7 +451,7 @@ impl Wal for WalFile {
         let frame_id = if shared.max_frame == 0 {
             1
         } else {
-            shared.max_frame
+            shared.max_frame + 1
         };
         let offset = self.frame_offset(frame_id);
         trace!(
@@ -465,7 +473,7 @@ impl Wal for WalFile {
             checksums,
         )?;
         shared.last_checksum = checksums;
-        shared.max_frame = frame_id + 1;
+        shared.max_frame = frame_id;
         {
             let frames = shared.frame_cache.get_mut(&(page_id as u64));
             match frames {
@@ -501,7 +509,8 @@ impl Wal for WalFile {
             match state {
                 CheckpointState::Start => {
                     // TODO(pere): check what frames are safe to checkpoint between many readers!
-                    self.ongoing_checkpoint.min_frame = self.min_frame;
+                    self.ongoing_checkpoint.min_frame = 1; // TODO(daniel): Check if 1
+                                                           // is needed here
                     let mut shared = self.shared.write();
                     let mut max_safe_frame = shared.max_frame;
                     for (read_lock_idx, read_lock) in shared.read_locks.iter_mut().enumerate() {
@@ -721,8 +730,9 @@ impl WalFile {
     }
 
     fn frame_offset(&self, frame_id: u64) -> usize {
+        assert!(frame_id > 0, "Frame ID must be 1-based");
         let page_size = self.page_size;
-        let page_offset = frame_id * (page_size as u64 + WAL_FRAME_HEADER_SIZE as u64);
+        let page_offset = (frame_id - 1) * (page_size + WAL_FRAME_HEADER_SIZE) as u64;
         let offset = WAL_HEADER_SIZE as u64 + page_offset;
         offset as usize
     }
@@ -755,8 +765,8 @@ impl WalFileShared {
                 file_format: 3007000,
                 page_size: page_size as u32,
                 checkpoint_seq: 0, // TODO implement sequence number
-                salt_1: 0,         // TODO implement salt
-                salt_2: 0,
+                salt_1: OsRng.next_u32(),
+                salt_2: OsRng.next_u32(),
                 checksum_1: 0,
                 checksum_2: 0,
             };
