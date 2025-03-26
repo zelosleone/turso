@@ -180,12 +180,13 @@ fn emit_program_for_select(
     if let Some(limit) = plan.limit {
         if limit == 0 {
             epilogue(program, init_label, start_offset)?;
+            program.result_columns = plan.result_columns;
+            program.table_references = plan.table_references;
+            return Ok(());
         }
     }
-
     // Emit main parts of query
     emit_query(program, &mut plan, &mut t_ctx)?;
-
     // Finalize program
     epilogue(program, init_label, start_offset)?;
     program.result_columns = plan.result_columns;
@@ -301,6 +302,14 @@ fn emit_program_for_delete(
         plan.table_references.len(),
         plan.result_columns.len(),
     )?;
+
+    // exit early if LIMIT 0
+    if let Some(0) = plan.limit {
+        epilogue(program, init_label, start_offset)?;
+        program.result_columns = plan.result_columns;
+        program.table_references = plan.table_references;
+        return Ok(());
+    }
 
     // No rows will be read from source table loops if there is a constant false condition eg. WHERE 0
     let after_main_loop_label = program.allocate_label();
