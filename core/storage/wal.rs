@@ -1,5 +1,3 @@
-use rand::rngs::OsRng;
-use rand::RngCore;
 use std::collections::HashMap;
 use tracing::{debug, trace};
 
@@ -13,7 +11,7 @@ use crate::result::LimboResult;
 use crate::storage::sqlite3_ondisk::{
     begin_read_wal_frame, begin_write_wal_frame, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
 };
-use crate::{Buffer, Result};
+use crate::{Buffer, LimboError, Result};
 use crate::{Completion, Page};
 
 use self::sqlite3_ondisk::{checksum_wal, PageContent, WAL_MAGIC_BE, WAL_MAGIC_LE};
@@ -747,7 +745,7 @@ impl WalFileShared {
         let header = if file.size()? > 0 {
             let wal_header = match sqlite3_ondisk::begin_read_wal_header(&file) {
                 Ok(header) => header,
-                Err(err) => panic!("Couldn't read header page: {:?}", err),
+                Err(err) => return Err(LimboError::ParseError(err.to_string())),
             };
             tracing::info!("recover not implemented yet");
             // TODO: Return a completion instead.
@@ -764,8 +762,8 @@ impl WalFileShared {
                 file_format: 3007000,
                 page_size: page_size as u32,
                 checkpoint_seq: 0, // TODO implement sequence number
-                salt_1: OsRng.next_u32(),
-                salt_2: OsRng.next_u32(),
+                salt_1: io.generate_random_number() as u32,
+                salt_2: io.generate_random_number() as u32,
                 checksum_1: 0,
                 checksum_2: 0,
             };
