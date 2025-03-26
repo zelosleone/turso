@@ -1196,8 +1196,11 @@ pub fn read_value(buf: &[u8], serial_type: SerialType) -> Result<(RefValue, usiz
         if buf.len() < n {
             crate::bail_corrupt_error!("Invalid Blob value");
         }
+        if n == 0 {
+            return Ok((RefValue::Blob(RawSlice::new(std::ptr::null(), 0)), 0));
+        }
         let ptr = &buf[0] as *const u8;
-        let slice = RawSlice { data: ptr, len: n };
+        let slice = RawSlice::new(ptr, n);
         return Ok((RefValue::Blob(slice), n));
     }
 
@@ -1210,8 +1213,12 @@ pub fn read_value(buf: &[u8], serial_type: SerialType) -> Result<(RefValue, usiz
                 n
             );
         }
-        let ptr = &buf[0] as *const u8;
-        let slice = RawSlice { data: ptr, len: n };
+        let slice = if n == 0 {
+            RawSlice::new(std::ptr::null(), 0)
+        } else {
+            let ptr = &buf[0] as *const u8;
+            RawSlice::new(ptr, n)
+        };
         return Ok((
             RefValue::Text(TextRef {
                 value: slice,
@@ -1557,6 +1564,7 @@ mod tests {
     #[case(&[1, 2], SERIAL_TYPE_CONSTINT0, OwnedValue::Integer(0))]
     #[case(&[65, 66], SERIAL_TYPE_CONSTINT1, OwnedValue::Integer(1))]
     #[case(&[1, 2, 3], 18, OwnedValue::Blob(vec![1, 2, 3].into()))]
+    #[case(&[], 12, OwnedValue::Blob(vec![].into()))] // empty blob
     #[case(&[65, 66, 67], 19, OwnedValue::build_text("ABC"))]
     #[case(&[0x80], SERIAL_TYPE_INT8, OwnedValue::Integer(-128))]
     #[case(&[0x80, 0], SERIAL_TYPE_BEINT16, OwnedValue::Integer(-32768))]

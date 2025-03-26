@@ -82,8 +82,8 @@ pub enum OwnedValue {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawSlice {
-    pub data: *const u8,
-    pub len: usize,
+    data: *const u8,
+    len: usize,
 }
 
 #[derive(Debug, PartialEq)]
@@ -989,8 +989,15 @@ pub enum SeekKey<'a> {
 }
 
 impl RawSlice {
+    pub fn new(data: *const u8, len: usize) -> Self {
+        Self { data, len }
+    }
     pub fn to_slice(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.data, self.len) }
+        if self.data.is_null() {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(self.data, self.len) }
+        }
     }
 }
 
