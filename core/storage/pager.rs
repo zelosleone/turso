@@ -346,7 +346,7 @@ impl Pager {
     }
 
     pub fn cacheflush(&self) -> Result<CheckpointStatus> {
-        let mut checkpoint_result = CheckpointResult::new();
+        let mut checkpoint_result = CheckpointResult::default();
         loop {
             let state = self.flush_info.borrow().state;
             trace!("cacheflush {:?}", state);
@@ -424,7 +424,7 @@ impl Pager {
     }
 
     pub fn checkpoint(&self) -> Result<CheckpointStatus> {
-        let mut checkpoint_result = CheckpointResult::new();
+        let mut checkpoint_result = CheckpointResult::default();
         loop {
             let state = *self.checkpoint_state.borrow();
             trace!("pager_checkpoint(state={:?})", state);

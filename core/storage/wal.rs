@@ -11,7 +11,7 @@ use crate::result::LimboResult;
 use crate::storage::sqlite3_ondisk::{
     begin_read_wal_frame, begin_write_wal_frame, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
 };
-use crate::{Buffer, Result};
+use crate::{Buffer, LimboError, Result};
 use crate::{Completion, Page};
 
 use self::sqlite3_ondisk::{checksum_wal, PageContent, WAL_MAGIC_BE, WAL_MAGIC_LE};
@@ -32,6 +32,12 @@ pub struct CheckpointResult {
     pub num_wal_frames: u64,
     /// number of frames moved successfully from WAL to db file after checkpoint
     pub num_checkpointed_frames: u64,
+}
+
+impl Default for CheckpointResult {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl CheckpointResult {
@@ -443,7 +449,7 @@ impl Wal for WalFile {
         let frame_id = if shared.max_frame == 0 {
             1
         } else {
-            shared.max_frame
+            shared.max_frame + 1
         };
         let offset = self.frame_offset(frame_id);
         trace!(
@@ -465,7 +471,7 @@ impl Wal for WalFile {
             checksums,
         )?;
         shared.last_checksum = checksums;
-        shared.max_frame = frame_id + 1;
+        shared.max_frame = frame_id;
         {
             let frames = shared.frame_cache.get_mut(&(page_id as u64));
             match frames {
@@ -721,8 +727,9 @@ impl WalFile {
     }
 
     fn frame_offset(&self, frame_id: u64) -> usize {
+        assert!(frame_id > 0, "Frame ID must be 1-based");
         let page_size = self.page_size;
-        let page_offset = frame_id * (page_size as u64 + WAL_FRAME_HEADER_SIZE as u64);
+        let page_offset = (frame_id - 1) * (page_size + WAL_FRAME_HEADER_SIZE) as u64;
         let offset = WAL_HEADER_SIZE as u64 + page_offset;
         offset as usize
     }
@@ -738,7 +745,7 @@ impl WalFileShared {
         let header = if file.size()? > 0 {
             let wal_header = match sqlite3_ondisk::begin_read_wal_header(&file) {
                 Ok(header) => header,
-                Err(err) => panic!("Couldn't read header page: {:?}", err),
+                Err(err) => return Err(LimboError::ParseError(err.to_string())),
             };
             tracing::info!("recover not implemented yet");
             // TODO: Return a completion instead.
@@ -755,8 +762,8 @@ impl WalFileShared {
                 file_format: 3007000,
                 page_size: page_size as u32,
                 checkpoint_seq: 0, // TODO implement sequence number
-                salt_1: 0,         // TODO implement salt
-                salt_2: 0,
+                salt_1: io.generate_random_number() as u32,
+                salt_2: io.generate_random_number() as u32,
                 checksum_1: 0,
                 checksum_2: 0,
             };
