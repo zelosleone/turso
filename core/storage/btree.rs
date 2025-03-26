@@ -89,6 +89,43 @@ struct DestroyInfo {
     state: DestroyState,
 }
 
+#[derive(Debug, Clone)]
+enum DeleteState {
+    Start,
+    LoadPage,
+    FindCell,
+    ClearOverflowPages {
+        cell_idx: usize,
+        cell: BTreeCell,
+        original_child_pointer: Option<u32>,
+    },
+    InteriorNodeReplacement {
+        cell_idx: usize,
+        original_child_pointer: Option<u32>,
+    },
+    DropCell {
+        cell_idx: usize,
+    },
+    CheckNeedsBalancing,
+    StartBalancing {
+        target_rowid: u64,
+    },
+    WaitForBalancingToComplete {
+        target_rowid: u64,
+    },
+    SeekAfterBalancing {
+        target_rowid: u64,
+    },
+    StackRetreat,
+    Finish,
+}
+
+#[derive(Clone)]
+struct DeleteInfo {
+    state: DeleteState,
+    balance_write_info: Option<WriteInfo>,
+}
+
 /// State machine of a write operation.
 /// May involve balancing due to overflow.
 #[derive(Debug, Clone, Copy)]
@@ -100,6 +137,7 @@ enum WriteState {
     Finish,
 }
 
+#[derive(Clone)]
 struct BalanceInfo {
     /// Old pages being balanced.
     pages_to_balance: Vec<PageRef>,
@@ -113,6 +151,7 @@ struct BalanceInfo {
     first_divider_cell: usize,
 }
 
+#[derive(Clone)]
 struct WriteInfo {
     /// State of the write operation state machine.
     state: WriteState,
@@ -134,6 +173,7 @@ enum CursorState {
     None,
     Write(WriteInfo),
     Destroy(DestroyInfo),
+    Delete(DeleteInfo),
 }
 
 impl CursorState {
@@ -159,6 +199,20 @@ impl CursorState {
     fn mut_destroy_info(&mut self) -> Option<&mut DestroyInfo> {
         match self {
             CursorState::Destroy(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    fn delete_info(&self) -> Option<&DeleteInfo> {
+        match self {
+            CursorState::Delete(x) => Some(x),
+            _ => None,
+        }
+    }
+
+    fn mut_delete_info(&mut self) -> Option<&mut DeleteInfo> {
+        match self {
+            CursorState::Delete(x) => Some(x),
             _ => None,
         }
     }
@@ -1757,19 +1811,33 @@ impl BTreeCursor {
         assert!(self.mv_cursor.is_none());
 
         if let CursorState::None = &self.state {
-            self.state = CursorState::Write(WriteInfo::new());
+            self.state = CursorState::Delete(DeleteInfo {
+                state: DeleteState::Start,
+                balance_write_info: None,
+            })
         }
 
-        let mut needs_balancing = false;
-        let mut target_rowid = 0;
-
         loop {
-            let write_state = {
-                let write_info = self.state.mut_write_info().expect("error");
-                write_info.state
+            let delete_state = {
+                let delete_info = self.state.delete_info().expect("cannot get delete info");
+                delete_info.state.clone()
             };
-            match write_state {
-                WriteState::Start => {
+
+            match delete_state {
+                DeleteState::Start => {
+                    let _target_rowid = match self.rowid.get() {
+                        Some(rowid) => rowid,
+                        None => {
+                            self.state = CursorState::None;
+                            return Ok(CursorResult::Ok(()));
+                        }
+                    };
+
+                    let delete_info = self.state.mut_delete_info().unwrap();
+                    delete_info.state = DeleteState::LoadPage;
+                }
+
+                DeleteState::LoadPage => {
                     let page = self.stack.top();
                     return_if_locked!(page);
 
@@ -1778,14 +1846,24 @@ impl BTreeCursor {
                         return Ok(CursorResult::IO);
                     }
 
-                    target_rowid = match self.rowid.get() {
-                        Some(rowid) => rowid,
-                        None => return Ok(CursorResult::Ok(())),
-                    };
+                    let delete_info = self.state.mut_delete_info().unwrap();
+                    delete_info.state = DeleteState::FindCell;
+                }
 
+                DeleteState::FindCell => {
+                    let page = self.stack.top();
                     let mut cell_idx = self.stack.current_cell_index() as usize;
                     cell_idx -= 1;
+
                     let contents = page.get().contents.as_ref().unwrap();
+                    if cell_idx >= contents.cell_count() {
+                        return_corrupt!(format!(
+                            "Corrupted page: cell index {} is out of bounds for page with {} cells",
+                            cell_idx,
+                            contents.cell_count()
+                        ));
+                    }
+
                     let cell = contents.cell_get(
                         cell_idx,
                         self.pager.clone(),
@@ -1800,23 +1878,116 @@ impl BTreeCursor {
                         self.usable_space(),
                     )?;
 
-                    if cell_idx >= contents.cell_count() {
-                        return_corrupt!(format!(
-                            "Corrupted page: cell index {} is out of bounds for page with {} cells",
-                            cell_idx,
-                            contents.cell_count()
-                        ));
-                    }
-
                     let original_child_pointer = match &cell {
                         BTreeCell::TableInteriorCell(interior) => Some(interior._left_child_page),
                         _ => None,
                     };
 
+                    let delete_info = self.state.mut_delete_info().unwrap();
+                    delete_info.state = DeleteState::ClearOverflowPages {
+                        cell_idx,
+                        cell,
+                        original_child_pointer,
+                    };
+                }
+
+                DeleteState::ClearOverflowPages {
+                    cell_idx,
+                    cell,
+                    original_child_pointer,
+                } => {
                     return_if_io!(self.clear_overflow_pages(&cell));
 
                     let page = self.stack.top();
+                    let contents = page.get().contents.as_ref().unwrap();
+
+                    let delete_info = self.state.mut_delete_info().unwrap();
+                    if !contents.is_leaf() {
+                        delete_info.state = DeleteState::InteriorNodeReplacement {
+                            cell_idx,
+                            original_child_pointer,
+                        };
+                    } else {
+                        delete_info.state = DeleteState::DropCell { cell_idx };
+                    }
+                }
+
+                DeleteState::InteriorNodeReplacement {
+                    cell_idx,
+                    original_child_pointer,
+                } => {
+                    // Move to the largest key in the left subtree
+                    return_if_io!(self.prev());
+
+                    let leaf_page = self.stack.top();
+                    return_if_locked!(leaf_page);
+
+                    if !leaf_page.is_loaded() {
+                        self.pager.load_page(leaf_page.clone())?;
+                        return Ok(CursorResult::IO);
+                    }
+
+                    let parent_page = {
+                        self.stack.pop();
+                        let parent = self.stack.top();
+                        self.stack.push(leaf_page.clone());
+                        parent
+                    };
+
+                    if !parent_page.is_loaded() {
+                        self.pager.load_page(parent_page.clone())?;
+                        return Ok(CursorResult::IO);
+                    }
+
+                    let leaf_contents = leaf_page.get().contents.as_ref().unwrap();
+                    let leaf_cell_idx = self.stack.current_cell_index() as usize - 1;
+                    let predecessor_cell = leaf_contents.cell_get(
+                        leaf_cell_idx,
+                        self.pager.clone(),
+                        payload_overflow_threshold_max(
+                            leaf_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        payload_overflow_threshold_min(
+                            leaf_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        self.usable_space(),
+                    )?;
+
+                    parent_page.set_dirty();
+                    self.pager.add_dirty(parent_page.get().id);
+
+                    let parent_contents = parent_page.get().contents.as_mut().unwrap();
+
+                    // Create an interior cell from the leaf cell
+                    let mut cell_payload: Vec<u8> = Vec::new();
+                    match predecessor_cell {
+                        BTreeCell::TableLeafCell(leaf_cell) => {
+                            if let Some(child_pointer) = original_child_pointer {
+                                cell_payload.extend_from_slice(&child_pointer.to_be_bytes());
+                                write_varint_to_vec(leaf_cell._rowid, &mut cell_payload);
+                            }
+                        }
+                        _ => unreachable!("Expected table leaf cell"),
+                    }
+
+                    insert_into_cell(
+                        parent_contents,
+                        &cell_payload,
+                        cell_idx,
+                        self.usable_space() as u16,
+                    )?;
+                    drop_cell(parent_contents, cell_idx, self.usable_space() as u16)?;
+
+                    let delete_info = self.state.mut_delete_info().unwrap();
+                    delete_info.state = DeleteState::CheckNeedsBalancing;
+                }
+
+                DeleteState::DropCell { cell_idx } => {
+                    let page = self.stack.top();
                     return_if_locked!(page);
+
                     if !page.is_loaded() {
                         self.pager.load_page(page.clone())?;
                         return Ok(CursorResult::IO);
@@ -1826,60 +1997,13 @@ impl BTreeCursor {
                     self.pager.add_dirty(page.get().id);
 
                     let contents = page.get().contents.as_mut().unwrap();
+                    drop_cell(contents, cell_idx, self.usable_space() as u16)?;
 
-                    // If this is an interior node, we need to handle deletion differently
-                    // For interior nodes:
-                    // 1. Move cursor to largest entry in left subtree
-                    // 2. Copy that entry to replace the one being deleted
-                    // 3. Delete the leaf entry
-                    if !contents.is_leaf() {
-                        // 1. Move cursor to largest entry in left subtree
-                        return_if_io!(self.prev());
+                    let delete_info = self.state.mut_delete_info().unwrap();
+                    delete_info.state = DeleteState::CheckNeedsBalancing;
+                }
 
-                        let leaf_page = self.stack.top();
-
-                        // 2. Copy that entry to replace the one being deleted
-                        let leaf_contents = leaf_page.get().contents.as_ref().unwrap();
-                        let leaf_cell_idx = self.stack.current_cell_index() as usize - 1;
-                        let predecessor_cell = leaf_contents.cell_get(
-                            leaf_cell_idx,
-                            self.pager.clone(),
-                            payload_overflow_threshold_max(
-                                leaf_contents.page_type(),
-                                self.usable_space() as u16,
-                            ),
-                            payload_overflow_threshold_min(
-                                leaf_contents.page_type(),
-                                self.usable_space() as u16,
-                            ),
-                            self.usable_space(),
-                        )?;
-
-                        // 3. Create an interior cell from the leaf cell
-                        let mut cell_payload: Vec<u8> = Vec::new();
-                        match predecessor_cell {
-                            BTreeCell::TableLeafCell(leaf_cell) => {
-                                // Format: [left child page (4 bytes)][rowid varint]
-                                if let Some(child_pointer) = original_child_pointer {
-                                    cell_payload.extend_from_slice(&child_pointer.to_be_bytes());
-                                    write_varint_to_vec(leaf_cell._rowid, &mut cell_payload);
-                                }
-                            }
-                            _ => unreachable!("Expected table leaf cell"),
-                        }
-                        insert_into_cell(
-                            contents,
-                            &cell_payload,
-                            cell_idx,
-                            self.usable_space() as u16,
-                        )
-                        .unwrap();
-                        drop_cell(contents, cell_idx, self.usable_space() as u16)?;
-                    } else {
-                        // For leaf nodes, simply remove the cell
-                        drop_cell(contents, cell_idx, self.usable_space() as u16)?;
-                    }
-
+                DeleteState::CheckNeedsBalancing => {
                     let page = self.stack.top();
                     return_if_locked!(page);
 
@@ -1890,31 +2014,16 @@ impl BTreeCursor {
 
                     let contents = page.get().contents.as_ref().unwrap();
                     let free_space = compute_free_space(contents, self.usable_space() as u16);
-                    let usable_space = self.usable_space();
-                    needs_balancing = free_space as usize * 3 > usable_space * 2;
-                    let write_info = self.state.mut_write_info().expect("error");
+                    let needs_balancing = free_space as usize * 3 > self.usable_space() * 2;
 
+                    let target_rowid = self.rowid.get().unwrap();
+
+                    let delete_info = self.state.mut_delete_info().unwrap();
                     if needs_balancing {
-                        write_info.state = WriteState::BalanceStart;
+                        delete_info.state = DeleteState::StartBalancing { target_rowid };
                     } else {
-                        write_info.state = WriteState::Finish;
+                        delete_info.state = DeleteState::StackRetreat;
                     }
-                }
-                WriteState::BalanceStart
-                | WriteState::BalanceNonRoot
-                | WriteState::BalanceNonRootWaitLoadPages => {
-                    return_if_io!(self.balance());
-                    // TODO(Krishna): Add second balance in the case where deletion causes cursor to end up
-                    // a level deeper.
-                }
-                WriteState::Finish => {
-                    if needs_balancing {
-                        return_if_io!(self.move_to(SeekKey::TableRowId(target_rowid), SeekOp::EQ));
-                    } else {
-                        self.stack.retreat();
-                    }
-                    self.state = CursorState::None;
-                    return Ok(CursorResult::Ok(()));
                 }
             }
         }
