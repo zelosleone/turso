@@ -6,7 +6,10 @@ use crate::storage::sqlite3_ondisk::{
 };
 use crate::MvCursor;
 
-use crate::types::{CursorResult, OwnedValue, Record, SeekKey, SeekOp};
+use crate::types::{
+    compare_immutable_to_record, compare_record_to_immutable, CursorResult, ImmutableRecord,
+    OwnedValue, Record, RefValue, SeekKey, SeekOp,
+};
 use crate::{return_corrupt, LimboError, Result};
 
 use std::cell::{Cell, Ref, RefCell};
@@ -179,7 +182,7 @@ pub struct BTreeCursor {
     root_page: usize,
     /// Rowid and record are stored before being consumed.
     rowid: Cell<Option<u64>>,
-    record: RefCell<Option<Record>>,
+    record: RefCell<Option<ImmutableRecord>>,
     null_flag: bool,
     /// Index internal pages are consumed on the way up, so we store going upwards flag in case
     /// we just moved to a parent page and the parent page is an internal index page which requires
@@ -259,7 +262,7 @@ impl BTreeCursor {
 
     /// Move the cursor to the previous record and return it.
     /// Used in backwards iteration.
-    fn get_prev_record(&mut self) -> Result<CursorResult<(Option<u64>, Option<Record>)>> {
+    fn get_prev_record(&mut self) -> Result<CursorResult<(Option<u64>, Option<ImmutableRecord>)>> {
         loop {
             let page = self.stack.top();
             let cell_idx = self.stack.current_cell_index();
@@ -327,7 +330,7 @@ impl BTreeCursor {
                     _rowid, _payload, ..
                 }) => {
                     self.stack.retreat();
-                    let record: Record = crate::storage::sqlite3_ondisk::read_record(&_payload)?;
+                    let record = crate::storage::sqlite3_ondisk::read_record(&_payload)?;
                     return Ok(CursorResult::Ok((Some(_rowid), Some(record))));
                 }
                 BTreeCell::IndexInteriorCell(_) => todo!(),
@@ -341,14 +344,14 @@ impl BTreeCursor {
     fn get_next_record(
         &mut self,
         predicate: Option<(SeekKey<'_>, SeekOp)>,
-    ) -> Result<CursorResult<(Option<u64>, Option<Record>)>> {
+    ) -> Result<CursorResult<(Option<u64>, Option<ImmutableRecord>)>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             let mut mv_cursor = mv_cursor.borrow_mut();
             let rowid = mv_cursor.current_row_id();
             match rowid {
                 Some(rowid) => {
                     let record = mv_cursor.current_row().unwrap().unwrap();
-                    let record: Record = crate::storage::sqlite3_ondisk::read_record(&record.data)?;
+                    let record = crate::storage::sqlite3_ondisk::read_record(&record.data)?;
                     mv_cursor.forward();
                     return Ok(CursorResult::Ok((Some(rowid.row_id), Some(record))));
                 }
@@ -451,7 +454,7 @@ impl BTreeCursor {
                     let record = crate::storage::sqlite3_ondisk::read_record(payload)?;
                     if predicate.is_none() {
                         let rowid = match record.last_value() {
-                            Some(OwnedValue::Integer(rowid)) => *rowid as u64,
+                            Some(RefValue::Integer(rowid)) => *rowid as u64,
                             _ => unreachable!("index cells should have an integer rowid"),
                         };
                         return Ok(CursorResult::Ok((Some(rowid), Some(record))));
@@ -461,14 +464,16 @@ impl BTreeCursor {
                     let SeekKey::IndexKey(index_key) = key else {
                         unreachable!("index seek key should be a record");
                     };
+                    let order =
+                        compare_immutable_to_record(&record.get_values(), &index_key.get_values());
                     let found = match op {
-                        SeekOp::GT => &record > *index_key,
-                        SeekOp::GE => &record >= *index_key,
-                        SeekOp::EQ => &record == *index_key,
+                        SeekOp::GT => order.is_gt(),
+                        SeekOp::GE => order.is_ge(),
+                        SeekOp::EQ => order.is_eq(),
                     };
                     if found {
                         let rowid = match record.last_value() {
-                            Some(OwnedValue::Integer(rowid)) => *rowid as u64,
+                            Some(RefValue::Integer(rowid)) => *rowid as u64,
                             _ => unreachable!("index cells should have an integer rowid"),
                         };
                         return Ok(CursorResult::Ok((Some(rowid), Some(record))));
@@ -481,7 +486,7 @@ impl BTreeCursor {
                     let record = crate::storage::sqlite3_ondisk::read_record(payload)?;
                     if predicate.is_none() {
                         let rowid = match record.last_value() {
-                            Some(OwnedValue::Integer(rowid)) => *rowid as u64,
+                            Some(RefValue::Integer(rowid)) => *rowid as u64,
                             _ => unreachable!("index cells should have an integer rowid"),
                         };
                         return Ok(CursorResult::Ok((Some(rowid), Some(record))));
@@ -490,14 +495,16 @@ impl BTreeCursor {
                     let SeekKey::IndexKey(index_key) = key else {
                         unreachable!("index seek key should be a record");
                     };
+                    let order =
+                        compare_immutable_to_record(&record.get_values(), &index_key.get_values());
                     let found = match op {
-                        SeekOp::GT => &record > *index_key,
-                        SeekOp::GE => &record >= *index_key,
-                        SeekOp::EQ => &record == *index_key,
+                        SeekOp::GT => order.is_lt(),
+                        SeekOp::GE => order.is_le(),
+                        SeekOp::EQ => order.is_le(),
                     };
                     if found {
                         let rowid = match record.last_value() {
-                            Some(OwnedValue::Integer(rowid)) => *rowid as u64,
+                            Some(RefValue::Integer(rowid)) => *rowid as u64,
                             _ => unreachable!("index cells should have an integer rowid"),
                         };
                         return Ok(CursorResult::Ok((Some(rowid), Some(record))));
@@ -517,7 +524,7 @@ impl BTreeCursor {
         &mut self,
         key: SeekKey<'_>,
         op: SeekOp,
-    ) -> Result<CursorResult<(Option<u64>, Option<Record>)>> {
+    ) -> Result<CursorResult<(Option<u64>, Option<ImmutableRecord>)>> {
         return_if_io!(self.move_to(key.clone(), op.clone()));
 
         {
@@ -565,23 +572,19 @@ impl BTreeCursor {
                             unreachable!("index seek key should be a record");
                         };
                         let record = crate::storage::sqlite3_ondisk::read_record(payload)?;
+                        let order = compare_immutable_to_record(
+                            &record.get_values().as_slice()[..record.len() - 1],
+                            &index_key.get_values().as_slice()[..],
+                        );
                         let found = match op {
-                            SeekOp::GT => {
-                                record.get_values()[..record.len() - 1] > index_key.get_values()[..]
-                            }
-                            SeekOp::GE => {
-                                record.get_values()[..record.len() - 1]
-                                    >= index_key.get_values()[..]
-                            }
-                            SeekOp::EQ => {
-                                record.get_values()[..record.len() - 1]
-                                    == index_key.get_values()[..]
-                            }
+                            SeekOp::GT => order.is_gt(),
+                            SeekOp::GE => order.is_ge(),
+                            SeekOp::EQ => order.is_eq(),
                         };
                         self.stack.advance();
                         if found {
                             let rowid = match record.last_value() {
-                                Some(OwnedValue::Integer(rowid)) => *rowid as u64,
+                                Some(RefValue::Integer(rowid)) => *rowid as u64,
                                 _ => unreachable!("index cells should have an integer rowid"),
                             };
                             return Ok(CursorResult::Ok((Some(rowid), Some(record))));
@@ -745,10 +748,14 @@ impl BTreeCursor {
                             unreachable!("index seek key should be a record");
                         };
                         let record = crate::storage::sqlite3_ondisk::read_record(payload)?;
+                        let order = compare_record_to_immutable(
+                            &index_key.get_values(),
+                            &record.get_values(),
+                        );
                         let target_leaf_page_is_in_the_left_subtree = match cmp {
-                            SeekOp::GT => index_key < &record,
-                            SeekOp::GE => index_key <= &record,
-                            SeekOp::EQ => index_key <= &record,
+                            SeekOp::GT => order.is_lt(),
+                            SeekOp::GE => order.is_le(),
+                            SeekOp::EQ => order.is_le(),
                         };
                         if target_leaf_page_is_in_the_left_subtree {
                             // we don't advance in case of index tree internal nodes because we will visit this node going up
@@ -1738,7 +1745,7 @@ impl BTreeCursor {
         Ok(CursorResult::Ok(rowid.is_some()))
     }
 
-    pub fn record(&self) -> Ref<Option<Record>> {
+    pub fn record(&self) -> Ref<Option<ImmutableRecord>> {
         self.record.borrow()
     }
 
