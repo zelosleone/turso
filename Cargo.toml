@@ -5,6 +5,7 @@ resolver = "2"
 members = [
     "bindings/go",
     "bindings/java",
+    "bindings/javascript",
     "bindings/python",
     "bindings/rust",
     "bindings/wasm",
