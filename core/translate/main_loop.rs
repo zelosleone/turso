@@ -9,6 +9,8 @@ use crate::{
     },
     Result,
 };
+use limbo_ext::{ConstraintInfo, OrderByInfo};
+use limbo_sqlite3_parser::ast;
 
 use super::{
     aggregation::translate_aggregation_step,
@@ -18,8 +20,8 @@ use super::{
     optimizer::Optimizable,
     order_by::{order_by_sorter_insert, sorter_insert},
     plan::{
-        IterationDirection, Operation, Search, SeekDef, SelectPlan, SelectQueryType,
-        TableReference, WhereTerm,
+        try_convert_to_constraint_info, IterationDirection, Operation, Search, SeekDef, SelectPlan,
+        SelectQueryType, TableReference, WhereTerm,
     },
 };
 
@@ -251,9 +253,6 @@ pub fn open_loop(
                     end_offset: loop_end,
                 });
 
-                // These are predicates evaluated outside of the subquery,
-                // so they are translated here.
-                // E.g. SELECT foo FROM (SELECT bar as foo FROM t1) sub WHERE sub.foo > 10
                 for cond in predicates
                     .iter()
                     .filter(|cond| cond.should_eval_at_loop(table_index))
@@ -290,12 +289,25 @@ pub fn open_loop(
                             pc_if_empty: loop_end,
                         });
                     }
-                }
-                if let Table::Virtual(ref table) = table.table {
+                } else if let Some(vtab) = table.table.virtual_table() {
+                    let constraints: Vec<ConstraintInfo> = predicates
+                        .iter()
+                        .filter(|p| p.applies_to_table(&table.table, tables))
+                        .filter_map(|p| try_convert_to_constraint_info(p, table_index))
+                        .collect();
+
+                    let order_by = vec![OrderByInfo {
+                        column_index: *t_ctx
+                            .result_column_indexes_in_orderby_sorter
+                            .first()
+                            .unwrap_or(&0) as u32,
+                        desc: matches!(iter_dir, IterationDirection::Backwards),
+                    }];
+                    let index_info = vtab.best_index(&constraints, &order_by);
                     let start_reg =
-                        program.alloc_registers(table.args.as_ref().map(|a| a.len()).unwrap_or(0));
+                        program.alloc_registers(vtab.args.as_ref().map(|a| a.len()).unwrap_or(0));
                     let mut cur_reg = start_reg;
-                    let args = match table.args.as_ref() {
+                    let args = match vtab.args.as_ref() {
                         Some(args) => args,
                         None => &vec![],
                     };
@@ -304,11 +316,22 @@ pub fn open_loop(
                         cur_reg += 1;
                         let _ = translate_expr(program, Some(tables), arg, reg, &t_ctx.resolver)?;
                     }
+                    let mut maybe_idx_str_reg = None;
+                    if let Some(idx_str) = index_info.idx_str {
+                        let reg = program.alloc_register();
+                        program.emit_insn(Insn::String8 {
+                            dest: reg,
+                            value: idx_str,
+                        });
+                        maybe_idx_str_reg = Some(reg);
+                    }
                     program.emit_insn(Insn::VFilter {
                         cursor_id,
                         pc_if_empty: loop_end,
-                        arg_count: table.args.as_ref().map_or(0, |args| args.len()),
+                        arg_count: vtab.args.as_ref().map_or(0, |args| args.len()),
                         args_reg: start_reg,
+                        idx_str: maybe_idx_str_reg,
+                        idx_num: index_info.idx_num as usize,
                     });
                 }
                 program.resolve_label(loop_start, program.offset());

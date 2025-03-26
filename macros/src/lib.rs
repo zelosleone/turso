@@ -455,6 +455,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
     let update_fn_name = format_ident!("update_{}", struct_name);
     let rowid_fn_name = format_ident!("rowid_{}", struct_name);
     let destroy_fn_name = format_ident!("destroy_{}", struct_name);
+    let best_idx_fn_name = format_ident!("best_idx_{}", struct_name);
 
     let expanded = quote! {
         impl #struct_name {
@@ -490,13 +491,20 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                 cursor: *const ::std::ffi::c_void,
                 argc: i32,
                 argv: *const ::limbo_ext::Value,
+                idx_str: *const ::std::ffi::c_char,
+                idx_num: i32,
             ) -> ::limbo_ext::ResultCode {
                 if cursor.is_null() {
                     return ::limbo_ext::ResultCode::Error;
                 }
                 let cursor = unsafe { &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor) };
                 let args = ::std::slice::from_raw_parts(argv, argc as usize);
-                <#struct_name as ::limbo_ext::VTabModule>::filter(cursor, args)
+                let idx_str = if idx_str.is_null() {
+                    None
+                } else {
+                    Some((unsafe { ::std::ffi::CStr::from_ptr(idx_str).to_str().unwrap() }, idx_num))
+                };
+                <#struct_name as ::limbo_ext::VTabModule>::filter(cursor, args, idx_str)
             }
 
             #[no_mangle]
@@ -614,6 +622,18 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
             }
 
             #[no_mangle]
+            pub unsafe extern "C" fn #best_idx_fn_name(
+                constraints: *const ::limbo_ext::ConstraintInfo,
+                n_constraints: i32,
+                order_by: *const ::limbo_ext::OrderByInfo,
+                n_order_by: i32,
+            ) -> ::limbo_ext::ExtIndexInfo {
+                let constraints = std::slice::from_raw_parts(constraints, n_constraints as usize);
+                let order_by = std::slice::from_raw_parts(order_by, n_order_by as usize);
+                <#struct_name as ::limbo_ext::VTabModule>::best_index(constraints, order_by).to_ffi()
+            }
+
+            #[no_mangle]
             pub unsafe extern "C" fn #register_fn_name(
                 api: *const ::limbo_ext::ExtensionApi
             ) -> ::limbo_ext::ResultCode {
@@ -636,6 +656,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                     update: Self::#update_fn_name,
                     rowid: Self::#rowid_fn_name,
                     destroy: Self::#destroy_fn_name,
+                    best_idx: Self::#best_idx_fn_name,
                 };
                 (api.register_vtab_module)(api.ctx, name_c, module, <#struct_name as ::limbo_ext::VTabModule>::VTAB_KIND)
             }
