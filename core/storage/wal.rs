@@ -509,8 +509,7 @@ impl Wal for WalFile {
             match state {
                 CheckpointState::Start => {
                     // TODO(pere): check what frames are safe to checkpoint between many readers!
-                    self.ongoing_checkpoint.min_frame = self.min_frame; // TODO(daniel): Check if 1
-                                                                        // is needed here
+                    self.ongoing_checkpoint.min_frame = self.min_frame;
                     let mut shared = self.shared.write();
                     let mut max_safe_frame = shared.max_frame;
                     for (read_lock_idx, read_lock) in shared.read_locks.iter_mut().enumerate() {
