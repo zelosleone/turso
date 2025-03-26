@@ -1384,3 +1384,11 @@ do_execsql_test comp-blog-string {
 do_execsql_test comp-blog-blog {
     SELECT cast('0' as BLOB) = cast('0' as BLOB)
 } { 1 }
+
+do_execsql_test unary-plus-noop-string {
+    SELECT +'000'
+} { 000 }
+
+do_execsql_test unary-plus-noop-blob {
+    SELECT typeof(+x'00') = 'blob'
+} { 1 }
