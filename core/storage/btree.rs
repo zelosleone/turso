@@ -4408,8 +4408,17 @@ mod tests {
 
     #[test]
     pub fn test_delete_balancing() {
+        // What does this test do:
+        // 1. Insert 10,000 rows of ~15 byte payload each. This creates
+        //    nearly 40 pages (10,000 * 15 / 4096) and 240 rows per page.
+        // 2. Delete enough rows to create empty/ nearly empty pages to trigger balancing
+        //    (verified this in SQLite).
+        // 3. Verify validity/integrity of btree after deleting and also verify that these
+        //    values are actually deleted.
+
         let (pager, root_page) = empty_btree();
 
+        // Insert 10,000 records in to the BTree.
         for i in 1..=10000 {
             let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
             let key = OwnedValue::Integer(i);
@@ -4432,6 +4441,7 @@ mod tests {
             _ => {}
         }
 
+        // Delete records with 500 <= key <= 3500
         for i in 500..=3500 {
             let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
             let seek_key = SeekKey::TableRowId(i as u64);
@@ -4444,6 +4454,7 @@ mod tests {
             }
         }
 
+        // Verify that records with key < 500 and key > 3500 still exist in the BTree.
         for i in 1..=10000 {
             if i >= 500 && i <= 3500 {
                 continue;
@@ -4455,6 +4466,7 @@ mod tests {
             assert!(exists, "Key {} should exist but doesn't", i);
         }
 
+        // Verify the deleted records don't exist.
         for i in 500..=3500 {
             let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
             let key = OwnedValue::Integer(i);
