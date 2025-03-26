@@ -1807,6 +1807,19 @@ impl BTreeCursor {
         Ok(CursorResult::Ok(()))
     }
 
+    /// Delete state machine flow:
+    /// 1. Start -> check if the rowid to be delete is present in the page or not. If not we early return
+    /// 2. LoadPage -> load the page.
+    /// 3. FindCell -> find the cell to be deleted in the page.
+    /// 4. ClearOverflowPages -> clear overflow pages associated with the cell. here if the cell is a leaf page go to DropCell state
+    ///    or else go to InteriorNodeReplacement
+    /// 5. InteriorNodeReplacement -> we copy the left subtree leaf node into the deleted interior node's place.
+    /// 6. DropCell -> only for leaf nodes. drop the cell.
+    /// 7. CheckNeedsBalancing -> check if balancing is needed. If yes, move to StartBalancing else move to StackRetreat
+    /// 8. WaitForBalancingToComplete -> perform balancing
+    /// 9. SeekAfterBalancing -> adjust the cursor to a node that is closer to the deleted value. go to Finish
+    /// 10. StackRetreat -> perform stack retreat for cursor positioning. only when balancing is not needed. go to Finish
+    /// 11. Finish -> Delete operation is done. Return CursorResult(Ok())
     pub fn delete(&mut self) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
 
@@ -1916,6 +1929,12 @@ impl BTreeCursor {
                     cell_idx,
                     original_child_pointer,
                 } => {
+                    // This is an interior node, we need to handle deletion differently
+                    // For interior nodes:
+                    // 1. Move cursor to largest entry in left subtree
+                    // 2. Copy that entry to replace the one being deleted
+                    // 3. Delete the leaf entry
+
                     // Move to the largest key in the left subtree
                     return_if_io!(self.prev());
 
@@ -2046,6 +2065,8 @@ impl BTreeCursor {
                     self.state = CursorState::Write(write_info);
 
                     match self.balance()? {
+                        // TODO(Krishna): Add second balance in the case where deletion causes cursor to end up
+                        // a level deeper.
                         CursorResult::Ok(()) => {
                             let write_info = match &self.state {
                                 CursorState::Write(wi) => wi.clone(),
