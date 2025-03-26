@@ -1396,7 +1396,6 @@ pub fn begin_write_wal_frame(
 
         buf[16..20].copy_from_slice(&header.checksum_1.to_be_bytes());
         buf[20..24].copy_from_slice(&header.checksum_2.to_be_bytes());
-        // buf[WAL_FRAME_HEADER_SIZE..].copy_from_slice(contents.as_ptr());
 
         #[allow(clippy::arc_with_non_send_sync)]
         (Arc::new(RefCell::new(buffer)), final_checksum)
