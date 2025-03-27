@@ -6,7 +6,7 @@ use std::{
 
 #[derive(Debug)]
 pub struct SpinLock<T> {
-    lock: AtomicBool,
+    locked: AtomicBool,
     value: UnsafeCell<T>,
 }
 
@@ -16,7 +16,7 @@ pub struct SpinLockGuard<'a, T> {
 
 impl<'a, T> Drop for SpinLockGuard<'a, T> {
     fn drop(&mut self) {
-        self.lock.unlock();
+        self.lock.locked.store(false, Ordering::Release);
     }
 }
 
@@ -40,20 +40,16 @@ unsafe impl<T> Sync for SpinLock<T> {}
 impl<T> SpinLock<T> {
     pub fn new(value: T) -> Self {
         Self {
-            lock: AtomicBool::new(false),
+            locked: AtomicBool::new(false),
             value: UnsafeCell::new(value),
         }
     }
 
     pub fn lock(&self) -> SpinLockGuard<T> {
-        while self.lock.swap(true, Ordering::Acquire) {
+        while self.locked.swap(true, Ordering::Acquire) {
             std::hint::spin_loop();
         }
         SpinLockGuard { lock: self }
-    }
-
-    pub fn unlock(&self) {
-        self.lock.store(false, Ordering::Release);
     }
 }
 
