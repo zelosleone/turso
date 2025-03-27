@@ -713,10 +713,17 @@ pub fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValu
 }
 
 fn parse_numeric_str(text: &str) -> Result<(OwnedValueType, &str), ()> {
-    let bytes = text.trim_start().as_bytes();
-    if bytes.is_empty() {
+    let text = text.trim();
+    let bytes = text.as_bytes();
+
+    if bytes.is_empty()
+        || bytes[0] == b'e'
+        || bytes[0] == b'E'
+        || (bytes[0] == b'.' && (bytes[1] == b'e' || bytes[1] == b'E'))
+    {
         return Err(());
     }
+
     let mut end = 0;
     let mut has_decimal = false;
     let mut has_exponent = false;
@@ -1512,5 +1519,117 @@ pub mod tests {
         assert_eq!(cast_text_to_numeric("-0.0"), OwnedValue::Float(0.0));
         assert_eq!(cast_text_to_numeric("0.0"), OwnedValue::Float(0.0));
         assert_eq!(cast_text_to_numeric("-"), OwnedValue::Integer(0));
+        assert_eq!(cast_text_to_numeric("-e"), OwnedValue::Integer(0));
+        assert_eq!(cast_text_to_numeric("-E"), OwnedValue::Integer(0));
+    }
+
+    #[test]
+    fn test_parse_numeric_str_valid_integer() {
+        assert_eq!(
+            parse_numeric_str("123"),
+            Ok((OwnedValueType::Integer, "123"))
+        );
+        assert_eq!(
+            parse_numeric_str("-456"),
+            Ok((OwnedValueType::Integer, "-456"))
+        );
+        assert_eq!(
+            parse_numeric_str("000789"),
+            Ok((OwnedValueType::Integer, "000789"))
+        );
+    }
+
+    #[test]
+    fn test_parse_numeric_str_valid_float() {
+        assert_eq!(
+            parse_numeric_str("123.456"),
+            Ok((OwnedValueType::Float, "123.456"))
+        );
+        assert_eq!(
+            parse_numeric_str("-0.789"),
+            Ok((OwnedValueType::Float, "-0.789"))
+        );
+        assert_eq!(
+            parse_numeric_str("1e10"),
+            Ok((OwnedValueType::Float, "1e10"))
+        );
+        assert_eq!(
+            parse_numeric_str("-1.23e-4"),
+            Ok((OwnedValueType::Float, "-1.23e-4"))
+        );
+        assert_eq!(
+            parse_numeric_str("1.23E+4"),
+            Ok((OwnedValueType::Float, "1.23E+4"))
+        );
+        assert_eq!(
+            parse_numeric_str("1.2.3"),
+            Ok((OwnedValueType::Float, "1.2"))
+        )
+    }
+
+    #[test]
+    fn test_parse_numeric_str_edge_cases() {
+        assert_eq!(parse_numeric_str("1e"), Ok((OwnedValueType::Float, "1")));
+        assert_eq!(parse_numeric_str("1e-"), Ok((OwnedValueType::Float, "1")));
+        assert_eq!(parse_numeric_str("1e+"), Ok((OwnedValueType::Float, "1")));
+        assert_eq!(parse_numeric_str("-1e"), Ok((OwnedValueType::Float, "-1")));
+        assert_eq!(parse_numeric_str("-1e-"), Ok((OwnedValueType::Float, "-1")));
+    }
+
+    #[test]
+    fn test_parse_numeric_str_invalid() {
+        assert_eq!(parse_numeric_str(""), Err(()));
+        assert_eq!(parse_numeric_str("abc"), Err(()));
+        assert_eq!(parse_numeric_str("-"), Err(()));
+        assert_eq!(parse_numeric_str("e10"), Err(()));
+        assert_eq!(parse_numeric_str(".e10"), Err(()));
+    }
+
+    #[test]
+    fn test_parse_numeric_str_with_whitespace() {
+        assert_eq!(
+            parse_numeric_str("   123"),
+            Ok((OwnedValueType::Integer, "123"))
+        );
+        assert_eq!(
+            parse_numeric_str("  -456.78  "),
+            Ok((OwnedValueType::Float, "-456.78"))
+        );
+        assert_eq!(
+            parse_numeric_str("  1.23e4  "),
+            Ok((OwnedValueType::Float, "1.23e4"))
+        );
+    }
+
+    #[test]
+    fn test_parse_numeric_str_leading_zeros() {
+        assert_eq!(
+            parse_numeric_str("000123"),
+            Ok((OwnedValueType::Integer, "000123"))
+        );
+        assert_eq!(
+            parse_numeric_str("000.456"),
+            Ok((OwnedValueType::Float, "000.456"))
+        );
+        assert_eq!(
+            parse_numeric_str("0001e3"),
+            Ok((OwnedValueType::Float, "0001e3"))
+        );
+    }
+
+    #[test]
+    fn test_parse_numeric_str_trailing_characters() {
+        assert_eq!(
+            parse_numeric_str("123abc"),
+            Ok((OwnedValueType::Integer, "123"))
+        );
+        assert_eq!(
+            parse_numeric_str("456.78xyz"),
+            Ok((OwnedValueType::Float, "456.78"))
+        );
+        assert_eq!(
+            parse_numeric_str("1.23e4extra"),
+            Ok((OwnedValueType::Float, "1.23e4"))
+        );
     }
 }
