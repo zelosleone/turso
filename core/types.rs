@@ -314,7 +314,6 @@ impl PartialOrd<OwnedValue> for OwnedValue {
             (Self::Null, Self::Null) => Some(std::cmp::Ordering::Equal),
             (Self::Null, _) => Some(std::cmp::Ordering::Less),
             (_, Self::Null) => Some(std::cmp::Ordering::Greater),
-            other => todo!("{:?}", other),
         }
     }
 }
@@ -654,7 +653,6 @@ impl PartialOrd<OwnedValue> for RefValue {
             (Self::Null, OwnedValue::Null) => Some(std::cmp::Ordering::Equal),
             (Self::Null, _) => Some(std::cmp::Ordering::Less),
             (_, OwnedValue::Null) => Some(std::cmp::Ordering::Greater),
-            other => todo!("{:?}", other),
         }
     }
 }
@@ -698,7 +696,6 @@ impl PartialOrd<RefValue> for OwnedValue {
             (Self::Null, RefValue::Null) => Some(std::cmp::Ordering::Equal),
             (Self::Null, _) => Some(std::cmp::Ordering::Less),
             (_, RefValue::Null) => Some(std::cmp::Ordering::Greater),
-            other => todo!("{:?}", other),
         }
     }
 }
