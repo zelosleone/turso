@@ -5,7 +5,7 @@ use crate::{
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
 };
 use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Row, Table};
-use limbo_core::{Database, LimboError, OwnedValue, Statement, StepResult};
+use limbo_core::{Database, LimboError, OwnedValue, RefValue, Statement, StepResult};
 
 use clap::{Parser, ValueEnum};
 use rustyline::{history::DefaultHistory, Editor};
@@ -769,19 +769,19 @@ impl<'a> Limbo<'a> {
                                 row.max_height(1);
                                 for (idx, value) in record.get_values().iter().enumerate() {
                                     let (content, alignment) = match value {
-                                        OwnedValue::Null => {
+                                        RefValue::Null => {
                                             (self.opts.null_value.clone(), CellAlignment::Left)
                                         }
-                                        OwnedValue::Integer(_) => {
+                                        RefValue::Integer(_) => {
                                             (format!("{}", value), CellAlignment::Right)
                                         }
-                                        OwnedValue::Float(_) => {
+                                        RefValue::Float(_) => {
                                             (format!("{}", value), CellAlignment::Right)
                                         }
-                                        OwnedValue::Text(_) => {
+                                        RefValue::Text(_) => {
                                             (format!("{}", value), CellAlignment::Left)
                                         }
-                                        OwnedValue::Blob(_) => {
+                                        RefValue::Blob(_) => {
                                             (format!("{}", value), CellAlignment::Left)
                                         }
                                     };
@@ -849,7 +849,7 @@ impl<'a> Limbo<'a> {
                     match rows.step()? {
                         StepResult::Row => {
                             let row = rows.row().unwrap();
-                            if let Some(OwnedValue::Text(schema)) = row.get_values().first() {
+                            if let Some(RefValue::Text(schema)) = row.get_values().first() {
                                 let _ = self.write_fmt(format_args!("{};", schema.as_str()));
                                 found = true;
                             }
@@ -907,7 +907,7 @@ impl<'a> Limbo<'a> {
                     match rows.step()? {
                         StepResult::Row => {
                             let row = rows.row().unwrap();
-                            if let Some(OwnedValue::Text(table)) = row.get_values().first() {
+                            if let Some(RefValue::Text(table)) = row.get_values().first() {
                                 tables.push_str(table.as_str());
                                 tables.push(' ');
                             }
