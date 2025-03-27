@@ -1876,12 +1876,16 @@ impl Program {
                             AggFunc::GroupConcat | AggFunc::StringAgg => Register::Aggregate(
                                 AggContext::GroupConcat(OwnedValue::build_text("")),
                             ),
-                            AggFunc::JsonGroupArray => Register::Aggregate(
-                                AggContext::GroupConcat(OwnedValue::Blob(Rc::new(vec![]))),
-                            ),
-                            AggFunc::JsonGroupObject => Register::Aggregate(
-                                AggContext::GroupConcat(OwnedValue::Blob(Rc::new(vec![]))),
-                            ),
+                            AggFunc::JsonGroupArray | AggFunc::JsonbGroupArray => {
+                                Register::Aggregate(AggContext::GroupConcat(OwnedValue::Blob(
+                                    Rc::new(vec![]),
+                                )))
+                            }
+                            AggFunc::JsonGroupObject | AggFunc::JsonbGroupObject => {
+                                Register::Aggregate(AggContext::GroupConcat(OwnedValue::Blob(
+                                    Rc::new(vec![]),
+                                )))
+                            }
                             AggFunc::External(func) => match func.as_ref() {
                                 ExtFunc::Aggregate {
                                     init,
@@ -2058,7 +2062,7 @@ impl Program {
                                 *acc += col;
                             }
                         }
-                        AggFunc::JsonGroupObject => {
+                        AggFunc::JsonGroupObject | AggFunc::JsonbGroupObject => {
                             let key = state.registers[*col].clone();
                             let value = state.registers[*delimiter].clone();
                             let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut()
@@ -2087,7 +2091,6 @@ impl Program {
                                         buff.append(&mut val_vec);
                                     } else {
                                         buff.extend_from_slice(&vec);
-
                                         buff.append(&mut key_vec);
                                         buff.append(&mut val_vec);
                                     }
@@ -2097,7 +2100,7 @@ impl Program {
                             *acc = OwnedValue::from_blob(buff);
                         }
 
-                        AggFunc::JsonGroupArray => {
+                        AggFunc::JsonGroupArray | AggFunc::JsonbGroupArray => {
                             let col = state.registers[*col].clone();
                             let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut()
                             else {
@@ -2115,7 +2118,6 @@ impl Program {
                                         buff.push(11);
                                         buff.append(&mut data)
                                     } else {
-                                        println!("{:?}", col);
                                         buff.extend_from_slice(&vec);
                                         buff.append(&mut data);
                                     }
@@ -2221,7 +2223,15 @@ impl Program {
                                 };
                                 let data = acc.to_blob().expect("Should be blob");
                                 state.registers[*register] =
-                                    Register::OwnedValue(json_from_raw_bytes_agg(data)?);
+                                    Register::OwnedValue(json_from_raw_bytes_agg(data, false)?);
+                            }
+                            AggFunc::JsonbGroupObject => {
+                                let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
+                                    unreachable!();
+                                };
+                                let data = acc.to_blob().expect("Should be blob");
+                                state.registers[*register] =
+                                    Register::OwnedValue(json_from_raw_bytes_agg(data, true)?);
                             }
                             AggFunc::JsonGroupArray => {
                                 let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
@@ -2229,7 +2239,15 @@ impl Program {
                                 };
                                 let data = acc.to_blob().expect("Should be blob");
                                 state.registers[*register] =
-                                    Register::OwnedValue(json_from_raw_bytes_agg(data)?);
+                                    Register::OwnedValue(json_from_raw_bytes_agg(data, false)?);
+                            }
+                            AggFunc::JsonbGroupArray => {
+                                let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
+                                    unreachable!();
+                                };
+                                let data = acc.to_blob().expect("Should be blob");
+                                state.registers[*register] =
+                                    Register::OwnedValue(json_from_raw_bytes_agg(data, true)?);
                             }
                             AggFunc::External(_) => {
                                 agg.compute_external()?;
