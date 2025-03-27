@@ -1,12 +1,13 @@
 use crate::types::OwnedValue;
+use crate::vdbe::Register;
 use crate::LimboError;
 
 #[inline(always)]
-pub fn exec_printf(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn exec_printf(values: &[Register]) -> crate::Result<OwnedValue> {
     if values.is_empty() {
         return Ok(OwnedValue::Null);
     }
-    let format_str = match &values[0] {
+    let format_str = match &values[0].get_owned_value() {
         OwnedValue::Text(t) => t.as_str(),
         _ => return Ok(OwnedValue::Null),
     };
@@ -30,7 +31,7 @@ pub fn exec_printf(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
                 if args_index >= values.len() {
                     return Err(LimboError::InvalidArgument("not enough arguments".into()));
                 }
-                match &values[args_index] {
+                match &values[args_index].get_owned_value() {
                     OwnedValue::Integer(i) => result.push_str(&i.to_string()),
                     OwnedValue::Float(f) => result.push_str(&f.to_string()),
                     _ => result.push_str("0".into()),
@@ -41,7 +42,7 @@ pub fn exec_printf(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
                 if args_index >= values.len() {
                     return Err(LimboError::InvalidArgument("not enough arguments".into()));
                 }
-                match &values[args_index] {
+                match &values[args_index].get_owned_value() {
                     OwnedValue::Text(t) => result.push_str(t.as_str()),
                     OwnedValue::Null => result.push_str("(null)"),
                     v => result.push_str(&v.to_string()),
@@ -52,7 +53,7 @@ pub fn exec_printf(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
                 if args_index >= values.len() {
                     return Err(LimboError::InvalidArgument("not enough arguments".into()));
                 }
-                match &values[args_index] {
+                match &values[args_index].get_owned_value() {
                     OwnedValue::Float(f) => result.push_str(&f.to_string()),
                     OwnedValue::Integer(i) => result.push_str(&(*i as f64).to_string()),
                     _ => result.push_str("0.0".into()),
@@ -78,16 +79,16 @@ pub fn exec_printf(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
 mod tests {
     use super::*;
 
-    fn text(value: &str) -> OwnedValue {
-        OwnedValue::build_text(value)
+    fn text(value: &str) -> Register {
+        Register::OwnedValue(OwnedValue::build_text(value))
     }
 
-    fn integer(value: i64) -> OwnedValue {
-        OwnedValue::Integer(value)
+    fn integer(value: i64) -> Register {
+        Register::OwnedValue(OwnedValue::Integer(value))
     }
 
-    fn float(value: f64) -> OwnedValue {
-        OwnedValue::Float(value)
+    fn float(value: f64) -> Register {
+        Register::OwnedValue(OwnedValue::Float(value))
     }
 
     #[test]
@@ -99,7 +100,7 @@ mod tests {
     fn test_printf_basic_string() {
         assert_eq!(
             exec_printf(&[text("Hello World")]).unwrap(),
-            text("Hello World")
+            *text("Hello World").get_owned_value()
         );
     }
 
@@ -118,7 +119,7 @@ mod tests {
             ),
             // String with null value
             (
-                vec![text("Hello, %s!"), OwnedValue::Null],
+                vec![text("Hello, %s!"), Register::OwnedValue(OwnedValue::Null)],
                 text("Hello, (null)!"),
             ),
             // String with number conversion
@@ -127,7 +128,7 @@ mod tests {
             (vec![text("100%% complete")], text("100% complete")),
         ];
         for (input, output) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), output);
+            assert_eq!(exec_printf(&input).unwrap(), *output.get_owned_value());
         }
     }
 
@@ -150,7 +151,7 @@ mod tests {
             ),
         ];
         for (input, output) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), output)
+            assert_eq!(exec_printf(&input).unwrap(), *output.get_owned_value())
         }
     }
 
@@ -179,7 +180,7 @@ mod tests {
         ];
 
         for (input, expected) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), expected);
+            assert_eq!(exec_printf(&input).unwrap(), *expected.get_owned_value());
         }
     }
 
@@ -214,7 +215,7 @@ mod tests {
         ];
 
         for (input, expected) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), expected);
+            assert_eq!(exec_printf(&input).unwrap(), *expected.get_owned_value());
         }
     }
 
@@ -256,7 +257,7 @@ mod tests {
         ];
 
         for (input, expected) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), expected);
+            assert_eq!(exec_printf(&input).unwrap(), *expected.get_owned_value());
         }
     }
 }

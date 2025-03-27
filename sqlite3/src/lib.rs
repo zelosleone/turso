@@ -572,7 +572,6 @@ pub unsafe extern "C" fn sqlite3_value_type(value: *mut ffi::c_void) -> ffi::c_i
         limbo_core::OwnedValue::Float(_) => 2,
         limbo_core::OwnedValue::Text(_) => 3,
         limbo_core::OwnedValue::Blob(_) => 4,
-        _ => unreachable!(),
     }
 }
 

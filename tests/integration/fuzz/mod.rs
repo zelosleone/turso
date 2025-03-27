@@ -79,7 +79,6 @@ mod tests {
                     limbo_core::OwnedValue::Float(x) => rusqlite::types::Value::Real(*x),
                     limbo_core::OwnedValue::Text(x) => rusqlite::types::Value::Text(x.to_string()),
                     limbo_core::OwnedValue::Blob(x) => rusqlite::types::Value::Blob(x.to_vec()),
-                    _ => unreachable!(),
                 })
                 .collect();
             rows.push(row);

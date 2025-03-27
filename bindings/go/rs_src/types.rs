@@ -160,7 +160,6 @@ impl LimboValue {
             limbo_core::OwnedValue::Null => {
                 LimboValue::new(ValueType::Null, ValueUnion::from_null())
             }
-            _ => unreachable!(),
         }
     }
 

@@ -333,7 +333,6 @@ fn row_to_py(py: Python, row: &limbo_core::Row) -> Result<PyObject> {
             limbo_core::OwnedValue::Blob(b) => {
                 py_values.push(PyBytes::new(py, b.as_slice()).into())
             }
-            _ => unreachable!(),
         }
     }
     Ok(PyTuple::new(py, &py_values)

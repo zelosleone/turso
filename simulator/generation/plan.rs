@@ -501,7 +501,6 @@ impl Interaction {
                                     Value::Text(t.as_str().to_string())
                                 }
                                 limbo_core::OwnedValue::Blob(b) => Value::Blob(b.to_vec()),
-                                _ => unreachable!(),
                             };
                             r.push(v);
                         }

@@ -5,18 +5,6 @@ use crate::storage::wal::CheckpointMode;
 use crate::types::{OwnedValue, Record};
 use limbo_macros::Description;
 
-macro_rules! final_agg_values {
-    ($var:ident) => {
-        if let OwnedValue::Agg(agg) = $var {
-            $var = agg.final_value();
-        }
-    };
-    ($lhs:ident, $rhs:ident) => {
-        final_agg_values!($lhs);
-        final_agg_values!($rhs);
-    };
-}
-
 /// Flags provided to comparison instructions (e.g. Eq, Ne) which determine behavior related to NULL values.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CmpInsFlags(usize);
@@ -738,8 +726,7 @@ pub enum Cookie {
     UserVersion = 6,
 }
 
-pub fn exec_add(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    final_agg_values!(lhs, rhs);
+pub fn exec_add(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
     match (lhs, rhs) {
         (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
             let result = lhs.overflowing_add(*rhs);
@@ -764,8 +751,7 @@ pub fn exec_add(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
     }
 }
 
-pub fn exec_subtract(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    final_agg_values!(lhs, rhs);
+pub fn exec_subtract(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
     match (lhs, rhs) {
         (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
             let result = lhs.overflowing_sub(*rhs);
@@ -793,8 +779,7 @@ pub fn exec_subtract(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
     }
 }
 
-pub fn exec_multiply(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    final_agg_values!(lhs, rhs);
+pub fn exec_multiply(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
     match (lhs, rhs) {
         (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
             let result = lhs.overflowing_mul(*rhs);
@@ -820,8 +805,7 @@ pub fn exec_multiply(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
     }
 }
 
-pub fn exec_divide(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    final_agg_values!(lhs, rhs);
+pub fn exec_divide(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
     match (lhs, rhs) {
         (_, OwnedValue::Integer(0)) | (_, OwnedValue::Float(0.0)) => OwnedValue::Null,
         (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
@@ -846,8 +830,7 @@ pub fn exec_divide(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
     }
 }
 
-pub fn exec_bit_and(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    final_agg_values!(lhs, rhs);
+pub fn exec_bit_and(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
     match (lhs, rhs) {
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (_, OwnedValue::Integer(0))
@@ -871,8 +854,7 @@ pub fn exec_bit_and(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
     }
 }
 
-pub fn exec_bit_or(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    final_agg_values!(lhs, rhs);
+pub fn exec_bit_or(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
     match (lhs, rhs) {
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Integer(lh), OwnedValue::Integer(rh)) => OwnedValue::Integer(lh | rh),
@@ -892,8 +874,7 @@ pub fn exec_bit_or(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
     }
 }
 
-pub fn exec_remainder(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    final_agg_values!(lhs, rhs);
+pub fn exec_remainder(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
     match (lhs, rhs) {
         (OwnedValue::Null, _)
         | (_, OwnedValue::Null)
@@ -933,8 +914,7 @@ pub fn exec_remainder(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue 
     }
 }
 
-pub fn exec_bit_not(mut reg: &OwnedValue) -> OwnedValue {
-    final_agg_values!(reg);
+pub fn exec_bit_not(reg: &OwnedValue) -> OwnedValue {
     match reg {
         OwnedValue::Null => OwnedValue::Null,
         OwnedValue::Integer(i) => OwnedValue::Integer(!i),
@@ -944,8 +924,7 @@ pub fn exec_bit_not(mut reg: &OwnedValue) -> OwnedValue {
     }
 }
 
-pub fn exec_shift_left(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    final_agg_values!(lhs, rhs);
+pub fn exec_shift_left(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
     match (lhs, rhs) {
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Integer(lh), OwnedValue::Integer(rh)) => {
@@ -998,8 +977,7 @@ fn compute_shl(lhs: i64, rhs: i64) -> i64 {
     }
 }
 
-pub fn exec_shift_right(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    final_agg_values!(lhs, rhs);
+pub fn exec_shift_right(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
     match (lhs, rhs) {
         (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Integer(lh), OwnedValue::Integer(rh)) => {
@@ -1054,8 +1032,7 @@ fn compute_shr(lhs: i64, rhs: i64) -> i64 {
     }
 }
 
-pub fn exec_boolean_not(mut reg: &OwnedValue) -> OwnedValue {
-    final_agg_values!(reg);
+pub fn exec_boolean_not(reg: &OwnedValue) -> OwnedValue {
     match reg {
         OwnedValue::Null => OwnedValue::Null,
         OwnedValue::Integer(i) => OwnedValue::Integer((*i == 0) as i64),
@@ -1064,8 +1041,7 @@ pub fn exec_boolean_not(mut reg: &OwnedValue) -> OwnedValue {
         _ => todo!(),
     }
 }
-pub fn exec_concat(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    final_agg_values!(lhs, rhs);
+pub fn exec_concat(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
     match (lhs, rhs) {
         (OwnedValue::Text(lhs_text), OwnedValue::Text(rhs_text)) => {
             OwnedValue::build_text(&(lhs_text.as_str().to_string() + rhs_text.as_str()))
@@ -1098,15 +1074,10 @@ pub fn exec_concat(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
         (OwnedValue::Blob(_), _) | (_, OwnedValue::Blob(_)) => {
             todo!("TODO: Handle Blob conversion to String")
         }
-        (OwnedValue::Record(_), _)
-        | (_, OwnedValue::Record(_))
-        | (OwnedValue::Agg(_), _)
-        | (_, OwnedValue::Agg(_)) => unreachable!(),
     }
 }
 
-pub fn exec_and(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    final_agg_values!(lhs, rhs);
+pub fn exec_and(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
     match (lhs, rhs) {
         (_, OwnedValue::Integer(0))
         | (OwnedValue::Integer(0), _)
@@ -1124,8 +1095,7 @@ pub fn exec_and(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
     }
 }
 
-pub fn exec_or(mut lhs: &OwnedValue, mut rhs: &OwnedValue) -> OwnedValue {
-    final_agg_values!(lhs, rhs);
+pub fn exec_or(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
     match (lhs, rhs) {
         (OwnedValue::Null, OwnedValue::Null)
         | (OwnedValue::Null, OwnedValue::Float(0.0))

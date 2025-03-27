@@ -76,8 +76,6 @@ pub enum OwnedValue {
     Float(f64),
     Text(Text),
     Blob(Rc<Vec<u8>>),
-    Agg(Box<AggContext>), // TODO(pere): make this without Box. Currently this might cause cache miss but let's leave it for future analysis
-    Record(Record),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -130,8 +128,6 @@ impl OwnedValue {
             OwnedValue::Float(_) => OwnedValueType::Float,
             OwnedValue::Text(_) => OwnedValueType::Text,
             OwnedValue::Blob(_) => OwnedValueType::Blob,
-            OwnedValue::Agg(_) => OwnedValueType::Null, // Map Agg to Null for FFI
-            OwnedValue::Record(_) => OwnedValueType::Null, // Map Record to Null for FFI
         }
     }
 }
@@ -160,18 +156,6 @@ impl Display for OwnedValue {
             Self::Float(fl) => write!(f, "{:?}", fl),
             Self::Text(s) => write!(f, "{}", s.as_str()),
             Self::Blob(b) => write!(f, "{}", String::from_utf8_lossy(b)),
-            Self::Agg(a) => match a.as_ref() {
-                AggContext::Avg(acc, _count) => write!(f, "{}", acc),
-                AggContext::Sum(acc) => write!(f, "{}", acc),
-                AggContext::Count(count) => write!(f, "{}", count),
-                AggContext::Max(max) => write!(f, "{}", max.as_ref().unwrap_or(&Self::Null)),
-                AggContext::Min(min) => write!(f, "{}", min.as_ref().unwrap_or(&Self::Null)),
-                AggContext::GroupConcat(s) => write!(f, "{}", s),
-                AggContext::External(v) => {
-                    write!(f, "{}", v.finalized_value.as_ref().unwrap_or(&Self::Null))
-                }
-            },
-            Self::Record(r) => write!(f, "{:?}", r),
         }
     }
 }
@@ -184,8 +168,6 @@ impl OwnedValue {
             Self::Float(fl) => ExtValue::from_float(*fl),
             Self::Text(text) => ExtValue::from_text(text.as_str().to_string()),
             Self::Blob(blob) => ExtValue::from_blob(blob.to_vec()),
-            Self::Agg(_) => todo!(),
-            Self::Record(_) => todo!("Record values not yet supported"),
         }
     }
 
@@ -290,9 +272,6 @@ impl PartialEq<OwnedValue> for OwnedValue {
             }
             (Self::Blob(blob_left), Self::Blob(blob_right)) => blob_left.eq(blob_right),
             (Self::Null, Self::Null) => true,
-            (Self::Agg(a), Self::Agg(b)) => a.eq(b),
-            (Self::Agg(a), other) => a.final_value().eq(other),
-            (other, Self::Agg(b)) => other.eq(b.final_value()),
             _ => false,
         }
     }
@@ -335,10 +314,6 @@ impl PartialOrd<OwnedValue> for OwnedValue {
             (Self::Null, Self::Null) => Some(std::cmp::Ordering::Equal),
             (Self::Null, _) => Some(std::cmp::Ordering::Less),
             (_, Self::Null) => Some(std::cmp::Ordering::Greater),
-            (Self::Agg(a), Self::Agg(b)) => a.partial_cmp(b),
-            (Self::Agg(a), other) => a.final_value().partial_cmp(other),
-            (other, Self::Agg(b)) => other.partial_cmp(b.final_value()),
-            other => todo!("{:?}", other),
         }
     }
 }
@@ -678,7 +653,6 @@ impl PartialOrd<OwnedValue> for RefValue {
             (Self::Null, OwnedValue::Null) => Some(std::cmp::Ordering::Equal),
             (Self::Null, _) => Some(std::cmp::Ordering::Less),
             (_, OwnedValue::Null) => Some(std::cmp::Ordering::Greater),
-            other => todo!("{:?}", other),
         }
     }
 }
@@ -722,7 +696,6 @@ impl PartialOrd<RefValue> for OwnedValue {
             (Self::Null, RefValue::Null) => Some(std::cmp::Ordering::Equal),
             (Self::Null, _) => Some(std::cmp::Ordering::Less),
             (_, RefValue::Null) => Some(std::cmp::Ordering::Greater),
-            other => todo!("{:?}", other),
         }
     }
 }
@@ -836,8 +809,6 @@ impl From<&OwnedValue> for SerialType {
             OwnedValue::Blob(b) => SerialType::Blob {
                 content_size: b.len(),
             },
-            OwnedValue::Agg(_) => unreachable!(),
-            OwnedValue::Record(_) => unreachable!(),
         }
     }
 }
@@ -896,9 +867,6 @@ impl Record {
                 OwnedValue::Float(f) => buf.extend_from_slice(&f.to_be_bytes()),
                 OwnedValue::Text(t) => buf.extend_from_slice(&t.value),
                 OwnedValue::Blob(b) => buf.extend_from_slice(b),
-                // non serializable
-                OwnedValue::Agg(_) => unreachable!(),
-                OwnedValue::Record(_) => unreachable!(),
             };
         }
 
