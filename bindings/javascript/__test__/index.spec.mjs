@@ -2,12 +2,12 @@ import test from "ava";
 
 import { Database } from "../index.js"; 
 
-test.serial("Open in-memory database", async (t) => {
+test("Open in-memory database", async (t) => {
     const [db] = await connect(":memory:");
     t.is(db.memory, true);
 });
 
-test.serial("Statement.get()", async (t) => {
+test("Statement.get()", async (t) => {
     const [db] = await connect(":memory:");
     const stmt = db.prepare("SELECT 1");
     const result = stmt.get();
