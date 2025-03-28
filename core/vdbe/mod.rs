@@ -1911,7 +1911,6 @@ impl Program {
                                 })),
                                 _ => unreachable!("scalar function called in aggregate context"),
                             },
-                            _ => unreachable!(),
                         };
                     }
                     match func {
@@ -2163,7 +2162,6 @@ impl Program {
                                 }
                             }
                         }
-                        _ => unreachable!(),
                     };
                     state.pc += 1;
                 }
@@ -2282,7 +2280,6 @@ impl Program {
                                     }
                                 }
                             }
-                            _ => unreachable!(),
                         },
                         Register::OwnedValue(OwnedValue::Null) => {
                             // when the set is empty
