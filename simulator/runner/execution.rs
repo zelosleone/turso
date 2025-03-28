@@ -116,7 +116,7 @@ fn execute_plan(
     let interaction = &plan.plan[state.interaction_pointer].interactions()[state.secondary_pointer];
 
     if let SimConnection::Disconnected = connection {
-        log::info!("connecting {}", connection_index);
+        log::debug!("connecting {}", connection_index);
         env.connections[connection_index] = SimConnection::Connected(env.db.connect().unwrap());
     } else {
         match execute_interaction(env, connection_index, interaction, &mut state.stack) {
@@ -171,7 +171,11 @@ pub(crate) fn execute_interaction(
     interaction: &Interaction,
     stack: &mut Vec<ResultSet>,
 ) -> Result<ExecutionContinuation> {
-    log::info!("executing: {}", interaction);
+    log::trace!(
+        "execute_interaction(connection_index={}, interaction={})",
+        connection_index,
+        interaction
+    );
     match interaction {
         Interaction::Query(_) => {
             let conn = match &mut env.connections[connection_index] {

@@ -97,7 +97,7 @@ fn execute_plan(
     let interaction = &plan[state.interaction_pointer][state.secondary_pointer];
 
     if let SimConnection::Disconnected = connection {
-        log::info!("connecting {}", connection_index);
+        log::debug!("connecting {}", connection_index);
         env.connections[connection_index] = SimConnection::Connected(env.db.connect().unwrap());
     } else {
         match execute_interaction(env, connection_index, interaction, &mut state.stack) {

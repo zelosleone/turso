@@ -219,7 +219,7 @@ fn execute_plan(
     let interaction = &plan.plan[state.interaction_pointer].interactions()[state.secondary_pointer];
 
     if let SimConnection::Disconnected = connection {
-        log::info!("connecting {}", connection_index);
+        log::debug!("connecting {}", connection_index);
         env.connections[connection_index] = SimConnection::Connected(env.db.connect().unwrap());
     } else {
         let limbo_result =
