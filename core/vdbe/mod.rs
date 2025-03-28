@@ -369,9 +369,11 @@ pub struct Program {
 }
 
 impl Program {
-    pub fn explain(&self) {
-        println!("addr  opcode             p1    p2    p3    p4             p5  comment");
-        println!("----  -----------------  ----  ----  ----  -------------  --  -------");
+    #[rustfmt::skip]
+    pub fn explain(&self) -> String {
+        let mut buff = String::with_capacity(1024);
+        buff.push_str("addr  opcode             p1    p2    p3    p4             p5  comment\n");
+        buff.push_str("----  -----------------  ----  ----  ----  -------------  --  -------\n");
         let mut indent_count: usize = 0;
         let indent = "  ";
         let mut prev_insn: Option<&Insn> = None;
@@ -382,9 +384,12 @@ impl Program {
                 addr as InsnReference,
                 insn,
                 indent.repeat(indent_count),
+                &mut buff,
             );
+            buff.push('\n');
             prev_insn = Some(insn);
         }
+        buff
     }
 
     #[instrument(skip_all)]
@@ -3629,7 +3634,7 @@ fn trace_insn(program: &Program, addr: InsnReference, insn: &Insn) {
     );
 }
 
-fn print_insn(program: &Program, addr: InsnReference, insn: &Insn, indent: String) {
+fn print_insn(program: &Program, addr: InsnReference, insn: &Insn, indent: String, w: &mut String) {
     let s = explain::insn_to_str(
         program,
         addr,
@@ -3640,7 +3645,7 @@ fn print_insn(program: &Program, addr: InsnReference, insn: &Insn, indent: Strin
             .as_ref()
             .and_then(|comments| comments.get(&{ addr }).copied()),
     );
-    println!("{}", s);
+    w.push_str(&s);
 }
 
 fn get_indent_count(indent_count: usize, curr_insn: &Insn, prev_insn: Option<&Insn>) -> usize {

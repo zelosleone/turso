@@ -40,6 +40,7 @@ use std::{
     borrow::Cow,
     cell::{Cell, RefCell},
     collections::HashMap,
+    io::Write,
     num::NonZero,
     ops::Deref,
     rc::Rc,
@@ -335,37 +336,25 @@ impl Connection {
     pub(crate) fn run_cmd(self: &Rc<Connection>, cmd: Cmd) -> Result<Option<Statement>> {
         let syms = self.syms.borrow();
         match cmd {
-            Cmd::Stmt(stmt) => {
-                let program = Rc::new(translate::translate(
-                    self.schema
-                        .try_read()
-                        .ok_or(LimboError::SchemaLocked)?
-                        .deref(),
-                    stmt,
-                    self.header.clone(),
-                    self.pager.clone(),
-                    Rc::downgrade(self),
-                    &syms,
-                    QueryMode::Normal,
-                )?);
-                let stmt = Statement::new(program, self._db.mv_store.clone(), self.pager.clone());
-                Ok(Some(stmt))
-            }
-            Cmd::Explain(stmt) => {
+            Cmd::Stmt(ref stmt) | Cmd::Explain(ref stmt) => {
                 let program = translate::translate(
                     self.schema
                         .try_read()
                         .ok_or(LimboError::SchemaLocked)?
                         .deref(),
-                    stmt,
+                    stmt.clone(),
                     self.header.clone(),
                     self.pager.clone(),
                     Rc::downgrade(self),
                     &syms,
-                    QueryMode::Explain,
+                    cmd.into(),
                 )?;
-                program.explain();
-                Ok(None)
+                let stmt = Statement::new(
+                    program.into(),
+                    self._db.mv_store.clone(),
+                    self.pager.clone(),
+                );
+                Ok(Some(stmt))
             }
             Cmd::ExplainQueryPlan(stmt) => {
                 match stmt {
@@ -386,7 +375,7 @@ impl Connection {
                                 .ok_or(LimboError::SchemaLocked)?
                                 .deref(),
                         )?;
-                        println!("{}", plan);
+                        let _ = std::io::stdout().write_all(plan.to_string().as_bytes());
                     }
                     _ => todo!(),
                 }
@@ -421,7 +410,7 @@ impl Connection {
                         &syms,
                         QueryMode::Explain,
                     )?;
-                    program.explain();
+                    let _ = std::io::stdout().write_all(program.explain().as_bytes());
                 }
                 Cmd::ExplainQueryPlan(_stmt) => todo!(),
                 Cmd::Stmt(stmt) => {
@@ -600,6 +589,10 @@ impl Statement {
 
     pub fn row(&self) -> Option<&Row> {
         self.state.result_row.as_ref()
+    }
+
+    pub fn explain(&self) -> String {
+        self.program.explain()
     }
 }
 

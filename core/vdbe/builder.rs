@@ -5,6 +5,8 @@ use std::{
     sync::Arc,
 };
 
+use limbo_sqlite3_parser::ast;
+
 use crate::{
     fast_lock::SpinLock,
     parameters::Parameters,
@@ -56,6 +58,15 @@ impl CursorType {
 pub enum QueryMode {
     Normal,
     Explain,
+}
+
+impl From<ast::Cmd> for QueryMode {
+    fn from(stmt: ast::Cmd) -> Self {
+        match stmt {
+            ast::Cmd::ExplainQueryPlan(_) | ast::Cmd::Explain(_) => QueryMode::Explain,
+            _ => QueryMode::Normal,
+        }
+    }
 }
 
 pub struct ProgramBuilderOpts {
