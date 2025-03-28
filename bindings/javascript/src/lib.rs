@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use napi::{Env, JsObject, JsUnknown, Result as NapiResult};
+use napi::{Env, JsUnknown, Result as NapiResult};
 use napi_derive::napi;
 
 #[napi(js_name = "Database")]
@@ -69,24 +69,24 @@ impl Statement {
     }
 
     #[napi]
-    pub fn get(&self, env: Env) -> NapiResult<JsObject> {
+    pub fn get(&self, env: Env) -> NapiResult<JsUnknown> {
         let mut stmt = self.inner.borrow_mut();
+        stmt.reset();
         match stmt.step() {
             Ok(limbo_core::StepResult::Row) => {
                 let row = stmt.row().unwrap();
                 let mut obj = env.create_object()?;
-
                 for (idx, value) in row.get_values().iter().enumerate() {
-                    let key = (idx + 1).to_string();
+                    let key = stmt.get_column_name(idx);
                     let js_value = to_js_value(&env, value);
                     obj.set_named_property(&key, js_value)?;
                 }
-                Ok(obj)
+                Ok(obj.into_unknown())
             }
+            Ok(limbo_core::StepResult::Done) => Ok(env.get_undefined().unwrap().into_unknown()),
             Ok(limbo_core::StepResult::IO)
-            | Ok(limbo_core::StepResult::Done)
             | Ok(limbo_core::StepResult::Interrupt)
-            | Ok(limbo_core::StepResult::Busy) => Ok(env.create_object()?),
+            | Ok(limbo_core::StepResult::Busy) => todo!(),
             Err(e) => Err(napi::Error::from_reason(format!("Database error: {:?}", e))),
         }
     }
