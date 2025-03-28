@@ -32,6 +32,8 @@ use crate::functions::datetime::{
 };
 use crate::functions::printf::exec_printf;
 
+#[cfg(feature = "json")]
+use crate::bail_constraint_error;
 use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
 use crate::schema::{affinity, Affinity};
@@ -51,7 +53,9 @@ use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::Insn;
 use crate::vector::{vector32, vector64, vector_distance_cos, vector_extract};
 
-use crate::{bail_constraint_error, info, CheckpointStatus, RefValue};
+use crate::{info, CheckpointStatus, RefValue};
+
+#[cfg(feature = "json")]
 use crate::{
     function::JsonFunc, json::convert_dbtype_to_raw_jsonb, json::get_json, json::is_json_valid,
     json::json_array, json::json_array_length, json::json_arrow_extract,
@@ -262,6 +266,7 @@ pub struct ProgramState {
     interrupted: bool,
     parameters: HashMap<NonZero<usize>, OwnedValue>,
     halt_state: Option<HaltState>,
+    #[cfg(feature = "json")]
     json_cache: JsonCacheCell,
 }
 
@@ -283,6 +288,7 @@ impl ProgramState {
             interrupted: false,
             parameters: HashMap::new(),
             halt_state: None,
+            #[cfg(feature = "json")]
             json_cache: JsonCacheCell::new(),
         }
     }
@@ -323,6 +329,7 @@ impl ProgramState {
         self.regex_cache.like.clear();
         self.interrupted = false;
         self.parameters.clear();
+        #[cfg(feature = "json")]
         self.json_cache.clear()
     }
 
@@ -1877,11 +1884,13 @@ impl Program {
                             AggFunc::GroupConcat | AggFunc::StringAgg => Register::Aggregate(
                                 AggContext::GroupConcat(OwnedValue::build_text("")),
                             ),
+                            #[cfg(feature = "json")]
                             AggFunc::JsonGroupArray | AggFunc::JsonbGroupArray => {
                                 Register::Aggregate(AggContext::GroupConcat(OwnedValue::Blob(
                                     Rc::new(vec![]),
                                 )))
                             }
+                            #[cfg(feature = "json")]
                             AggFunc::JsonGroupObject | AggFunc::JsonbGroupObject => {
                                 Register::Aggregate(AggContext::GroupConcat(OwnedValue::Blob(
                                     Rc::new(vec![]),
@@ -1902,6 +1911,7 @@ impl Program {
                                 })),
                                 _ => unreachable!("scalar function called in aggregate context"),
                             },
+                            _ => unreachable!(),
                         };
                     }
                     match func {
@@ -2063,6 +2073,7 @@ impl Program {
                                 *acc += col;
                             }
                         }
+                        #[cfg(feature = "json")]
                         AggFunc::JsonGroupObject | AggFunc::JsonbGroupObject => {
                             let key = state.registers[*col].clone();
                             let value = state.registers[*delimiter].clone();
@@ -2100,7 +2111,7 @@ impl Program {
                             };
                             *acc = OwnedValue::from_blob(buff);
                         }
-
+                        #[cfg(feature = "json")]
                         AggFunc::JsonGroupArray | AggFunc::JsonbGroupArray => {
                             let col = state.registers[*col].clone();
                             let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut()
@@ -2152,6 +2163,7 @@ impl Program {
                                 }
                             }
                         }
+                        _ => unreachable!(),
                     };
                     state.pc += 1;
                 }
@@ -2218,6 +2230,7 @@ impl Program {
                                 };
                                 state.registers[*register] = Register::OwnedValue(acc.clone());
                             }
+                            #[cfg(feature = "json")]
                             AggFunc::JsonGroupObject => {
                                 let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
                                     unreachable!();
@@ -2226,6 +2239,7 @@ impl Program {
                                 state.registers[*register] =
                                     Register::OwnedValue(json_from_raw_bytes_agg(data, false)?);
                             }
+                            #[cfg(feature = "json")]
                             AggFunc::JsonbGroupObject => {
                                 let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
                                     unreachable!();
@@ -2234,6 +2248,7 @@ impl Program {
                                 state.registers[*register] =
                                     Register::OwnedValue(json_from_raw_bytes_agg(data, true)?);
                             }
+                            #[cfg(feature = "json")]
                             AggFunc::JsonGroupArray => {
                                 let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
                                     unreachable!();
@@ -2242,6 +2257,7 @@ impl Program {
                                 state.registers[*register] =
                                     Register::OwnedValue(json_from_raw_bytes_agg(data, false)?);
                             }
+                            #[cfg(feature = "json")]
                             AggFunc::JsonbGroupArray => {
                                 let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
                                     unreachable!();
@@ -2266,6 +2282,7 @@ impl Program {
                                     }
                                 }
                             }
+                            _ => unreachable!(),
                         },
                         Register::OwnedValue(OwnedValue::Null) => {
                             // when the set is empty
@@ -2392,6 +2409,7 @@ impl Program {
                     let arg_count = func.arg_count;
 
                     match &func.func {
+                        #[cfg(feature = "json")]
                         crate::function::Func::Json(json_func) => match json_func {
                             JsonFunc::Json => {
                                 let json_value = &state.registers[*start_reg];
@@ -2401,6 +2419,7 @@ impl Program {
                                     Err(e) => return Err(e),
                                 }
                             }
+
                             JsonFunc::Jsonb => {
                                 let json_value = &state.registers[*start_reg];
                                 let json_blob =
@@ -2410,6 +2429,7 @@ impl Program {
                                     Err(e) => return Err(e),
                                 }
                             }
+
                             JsonFunc::JsonArray
                             | JsonFunc::JsonObject
                             | JsonFunc::JsonbArray
