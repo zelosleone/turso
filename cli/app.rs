@@ -708,7 +708,11 @@ impl<'a> Limbo<'a> {
                                 if i > 0 {
                                     let _ = self.writer.write(b"|");
                                 }
-                                let _ = self.writer.write(format!("{}", value).as_bytes())?;
+                                if matches!(value, OwnedValue::Null) {
+                                    let _ = self.writer.write(self.opts.null_value.as_bytes())?;
+                                } else {
+                                    let _ = self.writer.write(format!("{}", value).as_bytes())?;
+                                }
                             }
                             let _ = self.writeln("");
                         }
@@ -759,7 +763,7 @@ impl<'a> Limbo<'a> {
                                 for (idx, value) in record.get_values().iter().enumerate() {
                                     let (content, alignment) = match value {
                                         OwnedValue::Null => {
-                                            (format!("{}", value), CellAlignment::Left)
+                                            (self.opts.null_value.clone(), CellAlignment::Left)
                                         }
                                         OwnedValue::Integer(_) => {
                                             (format!("{}", value), CellAlignment::Right)

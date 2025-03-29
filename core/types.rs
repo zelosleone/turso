@@ -150,7 +150,7 @@ impl ExternalAggState {
     }
 }
 
-/// Guys please use Display trait for all limbos output
+/// Please use Display trait for all limbo output so we have single origin of truth
 /// When you need value as string:
 /// ---GOOD---
 /// format!("{}", value);
@@ -169,7 +169,9 @@ impl Display for OwnedValue {
             }
             Self::Float(fl) => {
                 let fl = *fl;
-
+                if fl.is_nan() {
+                    return write!(f, "");
+                }
                 // handle negative 0
                 if fl == -0.0 {
                     return write!(f, "{:.1}", fl.abs());

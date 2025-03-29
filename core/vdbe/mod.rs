@@ -3917,7 +3917,7 @@ fn exec_randomblob(reg: &OwnedValue) -> OwnedValue {
 
 fn exec_quote(value: &OwnedValue) -> OwnedValue {
     match value {
-        OwnedValue::Null => OwnedValue::build_text(&OwnedValue::Null.to_string()),
+        OwnedValue::Null => OwnedValue::build_text("NULL"),
         OwnedValue::Integer(_) | OwnedValue::Float(_) => value.to_owned(),
         OwnedValue::Blob(_) => todo!(),
         OwnedValue::Text(s) => {
