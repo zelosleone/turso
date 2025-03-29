@@ -40,8 +40,8 @@ use crate::storage::wal::CheckpointResult;
 use crate::storage::{btree::BTreeCursor, pager::Pager};
 use crate::translate::plan::{ResultSetColumn, TableReference};
 use crate::types::{
-    AggContext, Cursor, CursorResult, ExternalAggState, ImmutableRecord, OwnedValue, SeekKey,
-    SeekOp,
+    compare_immutable, AggContext, Cursor, CursorResult, ExternalAggState, ImmutableRecord,
+    OwnedValue, SeekKey, SeekOp,
 };
 use crate::util::{
     cast_real_to_integer, cast_text_to_integer, cast_text_to_numeric, cast_text_to_real,
@@ -1700,11 +1700,11 @@ impl Program {
                         let record_from_regs = make_record(&state.registers, start_reg, num_regs);
                         let pc = if let Some(ref idx_record) = *cursor.record() {
                             // Compare against the same number of values
-                            if idx_record.get_values()[..record_from_regs.len()]
-                                .iter()
-                                .zip(&record_from_regs.get_values()[..])
-                                .all(|(a, b)| a >= b)
-                            {
+                            let ord = compare_immutable(
+                                &idx_record.get_values()[..record_from_regs.len()],
+                                &record_from_regs.get_values(),
+                            );
+                            if ord.is_ge() {
                                 target_pc.to_offset_int()
                             } else {
                                 state.pc + 1
