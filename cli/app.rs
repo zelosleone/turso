@@ -715,18 +715,11 @@ impl<'a> Limbo<'a> {
                                 if i > 0 {
                                     let _ = self.writer.write(b"|");
                                 }
-                                let _ = self.writer.write(
-                                    match value {
-                                        OwnedValue::Null => self.opts.null_value.clone(),
-                                        OwnedValue::Integer(i) => format!("{}", i),
-                                        OwnedValue::Float(f) => format!("{:?}", f),
-                                        OwnedValue::Text(s) => s.to_string(),
-                                        OwnedValue::Blob(b) => {
-                                            format!("{}", String::from_utf8_lossy(b))
-                                        }
-                                    }
-                                    .as_bytes(),
-                                )?;
+                                if matches!(value, OwnedValue::Null) {
+                                    let _ = self.writer.write(self.opts.null_value.as_bytes())?;
+                                } else {
+                                    let _ = self.writer.write(format!("{}", value).as_bytes())?;
+                                }
                             }
                             let _ = self.writeln("");
                         }
@@ -779,17 +772,18 @@ impl<'a> Limbo<'a> {
                                         OwnedValue::Null => {
                                             (self.opts.null_value.clone(), CellAlignment::Left)
                                         }
-                                        OwnedValue::Integer(i) => {
-                                            (i.to_string(), CellAlignment::Right)
+                                        OwnedValue::Integer(_) => {
+                                            (format!("{}", value), CellAlignment::Right)
                                         }
-                                        OwnedValue::Float(f) => {
-                                            (f.to_string(), CellAlignment::Right)
+                                        OwnedValue::Float(_) => {
+                                            (format!("{}", value), CellAlignment::Right)
                                         }
-                                        OwnedValue::Text(s) => (s.to_string(), CellAlignment::Left),
-                                        OwnedValue::Blob(b) => (
-                                            String::from_utf8_lossy(b).to_string(),
-                                            CellAlignment::Left,
-                                        ),
+                                        OwnedValue::Text(_) => {
+                                            (format!("{}", value), CellAlignment::Left)
+                                        }
+                                        OwnedValue::Blob(_) => {
+                                            (format!("{}", value), CellAlignment::Left)
+                                        }
                                     };
                                     row.add_cell(
                                         Cell::new(content)

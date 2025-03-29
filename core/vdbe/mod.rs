@@ -67,6 +67,7 @@ use insn::{
     exec_divide, exec_multiply, exec_or, exec_remainder, exec_shift_left, exec_shift_right,
     exec_subtract, Cookie,
 };
+
 use likeop::{construct_like_escape_arg, exec_glob, exec_like_with_escape};
 use rand::distributions::{Distribution, Uniform};
 use rand::{thread_rng, Rng};
@@ -3706,11 +3707,9 @@ fn exec_concat_strings(registers: &[Register]) -> OwnedValue {
     let mut result = String::new();
     for reg in registers {
         match reg.get_owned_value() {
-            OwnedValue::Text(text) => result.push_str(text.as_str()),
-            OwnedValue::Integer(i) => result.push_str(&i.to_string()),
-            OwnedValue::Float(f) => result.push_str(&f.to_string()),
             OwnedValue::Null => continue,
             OwnedValue::Blob(_) => todo!("TODO concat blob"),
+            v => result.push_str(&format!("{}", v)),
         }
     }
     OwnedValue::build_text(&result)
@@ -3722,10 +3721,8 @@ fn exec_concat_ws(registers: &[Register]) -> OwnedValue {
     }
 
     let separator = match &registers[0].get_owned_value() {
-        OwnedValue::Text(text) => text.as_str().to_string(),
-        OwnedValue::Integer(i) => i.to_string(),
-        OwnedValue::Float(f) => f.to_string(),
-        _ => return OwnedValue::Null,
+        OwnedValue::Null | OwnedValue::Blob(_) => return OwnedValue::Null,
+        v => format!("{}", v),
     };
 
     let mut result = String::new();
@@ -3734,9 +3731,13 @@ fn exec_concat_ws(registers: &[Register]) -> OwnedValue {
             result.push_str(&separator);
         }
         match reg.get_owned_value() {
-            OwnedValue::Text(text) => result.push_str(text.as_str()),
-            OwnedValue::Integer(i) => result.push_str(&i.to_string()),
-            OwnedValue::Float(f) => result.push_str(&f.to_string()),
+            v if matches!(
+                v,
+                OwnedValue::Text(_) | OwnedValue::Integer(_) | OwnedValue::Float(_)
+            ) =>
+            {
+                result.push_str(&format!("{}", v))
+            }
             _ => continue,
         }
     }
@@ -3919,7 +3920,7 @@ fn exec_randomblob(reg: &OwnedValue) -> OwnedValue {
 
 fn exec_quote(value: &OwnedValue) -> OwnedValue {
     match value {
-        OwnedValue::Null => OwnedValue::build_text(&OwnedValue::Null.to_string()),
+        OwnedValue::Null => OwnedValue::build_text("NULL"),
         OwnedValue::Integer(_) | OwnedValue::Float(_) => value.to_owned(),
         OwnedValue::Blob(_) => todo!(),
         OwnedValue::Text(s) => {
@@ -4392,28 +4393,28 @@ fn exec_math_unary(reg: &OwnedValue, function: &MathFunc) -> OwnedValue {
     };
 
     let result = match function {
-        MathFunc::Acos => f.acos(),
-        MathFunc::Acosh => f.acosh(),
-        MathFunc::Asin => f.asin(),
-        MathFunc::Asinh => f.asinh(),
-        MathFunc::Atan => f.atan(),
-        MathFunc::Atanh => f.atanh(),
-        MathFunc::Ceil | MathFunc::Ceiling => f.ceil(),
-        MathFunc::Cos => f.cos(),
-        MathFunc::Cosh => f.cosh(),
+        MathFunc::Acos => libm::acos(f),
+        MathFunc::Acosh => libm::acosh(f),
+        MathFunc::Asin => libm::asin(f),
+        MathFunc::Asinh => libm::asinh(f),
+        MathFunc::Atan => libm::atan(f),
+        MathFunc::Atanh => libm::atanh(f),
+        MathFunc::Ceil | MathFunc::Ceiling => libm::ceil(f),
+        MathFunc::Cos => libm::cos(f),
+        MathFunc::Cosh => libm::cosh(f),
         MathFunc::Degrees => f.to_degrees(),
-        MathFunc::Exp => f.exp(),
-        MathFunc::Floor => f.floor(),
-        MathFunc::Ln => f.ln(),
-        MathFunc::Log10 => f.log10(),
-        MathFunc::Log2 => f.log2(),
+        MathFunc::Exp => libm::exp(f),
+        MathFunc::Floor => libm::floor(f),
+        MathFunc::Ln => libm::log(f),
+        MathFunc::Log10 => libm::log10(f),
+        MathFunc::Log2 => libm::log2(f),
         MathFunc::Radians => f.to_radians(),
-        MathFunc::Sin => f.sin(),
-        MathFunc::Sinh => f.sinh(),
-        MathFunc::Sqrt => f.sqrt(),
-        MathFunc::Tan => f.tan(),
-        MathFunc::Tanh => f.tanh(),
-        MathFunc::Trunc => f.trunc(),
+        MathFunc::Sin => libm::sin(f),
+        MathFunc::Sinh => libm::sinh(f),
+        MathFunc::Sqrt => libm::sqrt(f),
+        MathFunc::Tan => libm::tan(f),
+        MathFunc::Tanh => libm::tanh(f),
+        MathFunc::Trunc => libm::trunc(f),
         _ => unreachable!("Unexpected mathematical unary function {:?}", function),
     };
 
@@ -4436,9 +4437,9 @@ fn exec_math_binary(lhs: &OwnedValue, rhs: &OwnedValue, function: &MathFunc) -> 
     };
 
     let result = match function {
-        MathFunc::Atan2 => lhs.atan2(rhs),
-        MathFunc::Mod => lhs % rhs,
-        MathFunc::Pow | MathFunc::Power => lhs.powf(rhs),
+        MathFunc::Atan2 => libm::atan2(lhs, rhs),
+        MathFunc::Mod => libm::fmod(lhs, rhs),
+        MathFunc::Pow | MathFunc::Power => libm::pow(lhs, rhs),
         _ => unreachable!("Unexpected mathematical binary function {:?}", function),
     };
 
@@ -4466,8 +4467,10 @@ fn exec_math_log(arg: &OwnedValue, base: Option<&OwnedValue>) -> OwnedValue {
     if f <= 0.0 || base <= 0.0 || base == 1.0 {
         return OwnedValue::Null;
     }
-
-    OwnedValue::Float(f.log(base))
+    let log_x = libm::log(f);
+    let log_base = libm::log(base);
+    let result = log_x / log_base;
+    OwnedValue::Float(result)
 }
 
 #[cfg(test)]

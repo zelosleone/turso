@@ -2,6 +2,7 @@ use crate::types::OwnedValue;
 use crate::vdbe::Register;
 use crate::LimboError;
 
+// TODO: Support %!.3s %i, %x, %X, %o, %e, %E, %c. flags: - + 0 ! ,
 #[inline(always)]
 pub fn exec_printf(values: &[Register]) -> crate::Result<OwnedValue> {
     if values.is_empty() {
@@ -31,9 +32,10 @@ pub fn exec_printf(values: &[Register]) -> crate::Result<OwnedValue> {
                 if args_index >= values.len() {
                     return Err(LimboError::InvalidArgument("not enough arguments".into()));
                 }
-                match &values[args_index].get_owned_value() {
-                    OwnedValue::Integer(i) => result.push_str(&i.to_string()),
-                    OwnedValue::Float(f) => result.push_str(&f.to_string()),
+                let value = &values[args_index].get_owned_value();
+                match value {
+                    OwnedValue::Integer(_) => result.push_str(&format!("{}", value)),
+                    OwnedValue::Float(_) => result.push_str(&format!("{}", value)),
                     _ => result.push_str("0".into()),
                 }
                 args_index += 1;
@@ -45,7 +47,7 @@ pub fn exec_printf(values: &[Register]) -> crate::Result<OwnedValue> {
                 match &values[args_index].get_owned_value() {
                     OwnedValue::Text(t) => result.push_str(t.as_str()),
                     OwnedValue::Null => result.push_str("(null)"),
-                    v => result.push_str(&v.to_string()),
+                    v => result.push_str(&format!("{}", v)),
                 }
                 args_index += 1;
             }
@@ -53,9 +55,10 @@ pub fn exec_printf(values: &[Register]) -> crate::Result<OwnedValue> {
                 if args_index >= values.len() {
                     return Err(LimboError::InvalidArgument("not enough arguments".into()));
                 }
-                match &values[args_index].get_owned_value() {
-                    OwnedValue::Float(f) => result.push_str(&f.to_string()),
-                    OwnedValue::Integer(i) => result.push_str(&(*i as f64).to_string()),
+                let value = &values[args_index].get_owned_value();
+                match value {
+                    OwnedValue::Float(f) => result.push_str(&format!("{:.6}", f)),
+                    OwnedValue::Integer(i) => result.push_str(&format!("{:.6}", *i as f64)),
                     _ => result.push_str("0.0".into()),
                 }
                 args_index += 1;
@@ -159,18 +162,24 @@ mod tests {
     fn test_printf_float_formatting() {
         let test_cases = vec![
             // Basic float formatting
-            (vec![text("Number: %f"), float(42.5)], text("Number: 42.5")),
+            (
+                vec![text("Number: %f"), float(42.5)],
+                text("Number: 42.500000"),
+            ),
             // Negative float
             (
                 vec![text("Number: %f"), float(-42.5)],
-                text("Number: -42.5"),
+                text("Number: -42.500000"),
             ),
             // Integer as float
-            (vec![text("Number: %f"), integer(42)], text("Number: 42")),
+            (
+                vec![text("Number: %f"), integer(42)],
+                text("Number: 42.000000"),
+            ),
             // Multiple floats
             (
                 vec![text("%f + %f = %f"), float(2.5), float(3.5), float(6.0)],
-                text("2.5 + 3.5 = 6"),
+                text("2.500000 + 3.500000 = 6.000000"),
             ),
             // Non-numeric value defaults to 0.0
             (
@@ -200,7 +209,7 @@ mod tests {
                     integer(75),
                     float(75.5),
                 ],
-                text("Progress: 75 (75.5%)"),
+                text("Progress: 75 (75.500000%)"),
             ),
             // Complex format
             (
@@ -210,7 +219,7 @@ mod tests {
                     integer(123),
                     float(95.5),
                 ],
-                text("Name: John, ID: 123, Score: 95.5"),
+                text("Name: John, ID: 123, Score: 95.500000"),
             ),
         ];
 
