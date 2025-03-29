@@ -13,6 +13,8 @@ use std::fmt::Display;
 use std::pin::Pin;
 use std::rc::Rc;
 
+const MAX_REAL_SIZE: u8 = 15;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OwnedValueType {
     Null,
@@ -148,13 +150,119 @@ impl ExternalAggState {
     }
 }
 
+/// Guys please use Display trait for all limbos output
+/// When you need value as string:
+/// ---GOOD---
+/// format!("{}", value);
+/// ---BAD---
+/// match value {
+///   OwnedValue::Integer(i) => *i.as_str(),
+///   OwnedValue::Float(f) => *f.as_str(),
+///   ....
+/// }
 impl Display for OwnedValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Null => write!(f, "NULL"),
-            Self::Integer(i) => write!(f, "{}", i),
-            Self::Float(fl) => write!(f, "{:?}", fl),
-            Self::Text(s) => write!(f, "{}", s.as_str()),
+            Self::Null => write!(f, ""),
+            Self::Integer(i) => {
+                write!(f, "{}", i)
+            }
+            Self::Float(fl) => {
+                let fl = *fl;
+
+                // handle negative 0
+                if fl == -0.0 {
+                    return write!(f, "{:.1}", fl.abs());
+                }
+
+                // handle scientific notation without trailing zeros
+                if (fl.abs() < 1e-4 || fl.abs() >= 1e15) && fl != 0.0 {
+                    let sci_notation = format!("{:.14e}", fl);
+                    let parts: Vec<&str> = sci_notation.split('e').collect();
+
+                    if parts.len() == 2 {
+                        let mantissa = parts[0];
+                        let exponent = parts[1];
+
+                        let decimal_parts: Vec<&str> = mantissa.split('.').collect();
+                        if decimal_parts.len() == 2 {
+                            let whole = decimal_parts[0];
+                            // 1.{this part}
+                            let mut fraction = String::from(decimal_parts[1]);
+
+                            //removing trailing 0 from fraction
+                            while fraction.ends_with('0') {
+                                fraction.pop();
+                            }
+
+                            let trimmed_mantissa = if fraction.is_empty() {
+                                whole.to_string()
+                            } else {
+                                format!("{}.{}", whole, fraction)
+                            };
+                            let (prefix, exponent) = if exponent.starts_with('-') {
+                                ("-0", &exponent[1..])
+                            } else {
+                                ("+", exponent)
+                            };
+                            return write!(f, "{}e{}{}", trimmed_mantissa, prefix, exponent);
+                        }
+                    }
+
+                    // fallback
+                    return write!(f, "{}", sci_notation);
+                }
+
+                // handle floating point max size is 15.
+                // If left > right && right + left > 15 go to sci notation
+                // If right > left && right + left > 15 truncate left so right + left == 15
+                let rounded = fl.round();
+                if (fl - rounded).abs() < 1e-14 {
+                    // if we very close to integer trim decimal part to 1 digit
+                    if rounded == rounded as i64 as f64 {
+                        return write!(f, "{:.1}", fl);
+                    }
+                }
+
+                let fl_str = format!("{}", fl);
+                let splitted = fl_str.split('.').collect::<Vec<&str>>();
+                // fallback
+                if splitted.len() != 2 {
+                    return write!(f, "{:.14e}", fl);
+                }
+
+                let first_part = if fl < 0.0 {
+                    // remove -
+                    &splitted[0][1..]
+                } else {
+                    splitted[0]
+                };
+
+                let second = splitted[1];
+
+                // We want more precision for smaller numbers. in SQLite case we want 15 non zero digits in 0 < number < 1
+                // leading zeroes added to max real size. But if float < 1e-4 we go to scientific notation
+                let leading_zeros = second.chars().take_while(|c| c == &'0').count();
+                let reminder = if first_part != "0" {
+                    MAX_REAL_SIZE as isize - first_part.len() as isize
+                } else {
+                    MAX_REAL_SIZE as isize + leading_zeros as isize
+                };
+                // float that have integer part > 15 converted to sci notation
+                if reminder < 0 {
+                    return write!(f, "{:.14e}", fl);
+                }
+                // trim decimal part to reminder or self len so total digits is 15;
+                let mut fl = format!("{:.*}", second.len().min(reminder as usize), fl);
+                // if decimal part ends with 0 we trim it
+                while fl.ends_with('0') {
+                    fl.pop();
+                }
+                write!(f, "{}", fl)
+            }
+            Self::Text(s) => {
+                write!(f, "{}", s.as_str())
+            }
             Self::Blob(b) => write!(f, "{}", String::from_utf8_lossy(b)),
         }
     }
