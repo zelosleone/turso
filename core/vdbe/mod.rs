@@ -4548,6 +4548,15 @@ impl Row {
         T::from_value(value)
     }
 
+    pub fn get_value<'a>(&'a self, idx: usize) -> &'a OwnedValue {
+        let value = unsafe { self.values.add(idx).as_ref().unwrap() };
+        let value = match value {
+            Register::OwnedValue(owned_value) => owned_value,
+            _ => unreachable!("a row should be formed of values only"),
+        };
+        value
+    }
+
     pub fn get_values(&self) -> impl Iterator<Item = &OwnedValue> {
         let values = unsafe { std::slice::from_raw_parts(self.values, self.count) };
         // This should be ownedvalues

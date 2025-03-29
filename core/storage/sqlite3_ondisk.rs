@@ -1081,10 +1081,6 @@ impl<T: Default + Copy> SmallVec<T> {
             self.len += 1;
         }
     }
-
-    pub fn has_extra_data(&self) -> bool {
-        self.len >= self.data.len()
-    }
 }
 
 pub fn read_record(payload: &[u8], reuse_immutable: &mut ImmutableRecord) -> Result<()> {

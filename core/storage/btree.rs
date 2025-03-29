@@ -7,8 +7,7 @@ use crate::storage::sqlite3_ondisk::{
 use crate::MvCursor;
 
 use crate::types::{
-    compare_immutable, compare_immutable_to_record, CursorResult, ImmutableRecord, OwnedValue,
-    RefValue, SeekKey, SeekOp,
+    compare_immutable, CursorResult, ImmutableRecord, OwnedValue, RefValue, SeekKey, SeekOp,
 };
 use crate::{return_corrupt, LimboError, Result};
 
@@ -329,7 +328,7 @@ impl BTreeCursor {
 
     /// Move the cursor to the previous record and return it.
     /// Used in backwards iteration.
-    fn get_prev_record(&mut self) -> Result<CursorResult<(Option<u64>)>> {
+    fn get_prev_record(&mut self) -> Result<CursorResult<Option<u64>>> {
         loop {
             let page = self.stack.top();
             let cell_idx = self.stack.current_cell_index();
@@ -346,7 +345,7 @@ impl BTreeCursor {
                         self.stack.pop();
                     } else {
                         // moved to begin of btree
-                        return Ok(CursorResult::Ok((None)));
+                        return Ok(CursorResult::Ok(None));
                     }
                 }
                 // continue to next loop to get record from the new page
@@ -398,7 +397,7 @@ impl BTreeCursor {
                     first_overflow_page,
                     payload_size,
                 }) => {
-                    let record = if let Some(next_page) = first_overflow_page {
+                    if let Some(next_page) = first_overflow_page {
                         return_if_io!(self.process_overflow_read(_payload, next_page, payload_size))
                     } else {
                         crate::storage::sqlite3_ondisk::read_record(
@@ -583,7 +582,7 @@ impl BTreeCursor {
                     payload_size,
                 }) => {
                     assert!(predicate.is_none());
-                    let record = if let Some(next_page) = first_overflow_page {
+                    if let Some(next_page) = first_overflow_page {
                         return_if_io!(self.process_overflow_read(
                             _payload,
                             *next_page,
@@ -609,7 +608,7 @@ impl BTreeCursor {
                         self.stack.push(mem_page);
                         continue;
                     }
-                    let record = if let Some(next_page) = first_overflow_page {
+                    if let Some(next_page) = first_overflow_page {
                         return_if_io!(self.process_overflow_read(
                             payload,
                             *next_page,
@@ -662,7 +661,7 @@ impl BTreeCursor {
                     first_overflow_page,
                     payload_size,
                 }) => {
-                    let record = if let Some(next_page) = first_overflow_page {
+                    if let Some(next_page) = first_overflow_page {
                         return_if_io!(self.process_overflow_read(
                             payload,
                             *next_page,
@@ -754,7 +753,7 @@ impl BTreeCursor {
                             SeekOp::EQ => *cell_rowid == rowid_key,
                         };
                         if found {
-                            let record = if let Some(next_page) = first_overflow_page {
+                            if let Some(next_page) = first_overflow_page {
                                 return_if_io!(self.process_overflow_read(
                                     payload,
                                     *next_page,

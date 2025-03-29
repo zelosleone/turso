@@ -4,15 +4,12 @@ use crate::error::LimboError;
 use crate::ext::{ExtValue, ExtValueType};
 use crate::pseudo::PseudoCursor;
 use crate::storage::btree::BTreeCursor;
-use crate::storage::buffer_pool;
 use crate::storage::sqlite3_ondisk::write_varint;
 use crate::vdbe::sorter::Sorter;
 use crate::vdbe::{Register, VTabOpaqueCursor};
 use crate::Result;
 use std::cmp::Ordering;
 use std::fmt::Display;
-use std::pin::Pin;
-use std::rc::Rc;
 
 const MAX_REAL_SIZE: u8 = 15;
 
@@ -1327,7 +1324,6 @@ impl RawSlice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
 
     #[test]
     fn test_serialize_null() {

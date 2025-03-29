@@ -161,23 +161,6 @@ impl LimboValue {
             }
         }
     }
-    pub fn from_value(value: &limbo_core::RefValue) -> Self {
-        match value {
-            limbo_core::RefValue::Integer(i) => {
-                LimboValue::new(ValueType::Integer, ValueUnion::from_int(*i))
-            }
-            limbo_core::RefValue::Float(r) => {
-                LimboValue::new(ValueType::Real, ValueUnion::from_real(*r))
-            }
-            limbo_core::RefValue::Text(s) => {
-                LimboValue::new(ValueType::Text, ValueUnion::from_str(s.as_str()))
-            }
-            limbo_core::RefValue::Blob(b) => {
-                LimboValue::new(ValueType::Blob, ValueUnion::from_bytes(b.to_slice()))
-            }
-            limbo_core::RefValue::Null => LimboValue::new(ValueType::Null, ValueUnion::from_null()),
-        }
-    }
 
     // The values we get from Go need to be temporarily owned by the statement until they are bound
     // then they can be cleaned up immediately afterwards

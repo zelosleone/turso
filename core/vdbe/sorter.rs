@@ -1,4 +1,4 @@
-use crate::types::{ImmutableRecord, Record};
+use crate::types::ImmutableRecord;
 use std::cmp::Ordering;
 
 pub struct Sorter {

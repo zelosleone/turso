@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, rc::Rc};
+use std::collections::VecDeque;
 
 use crate::{types::OwnedValue, vdbe::Register};
 
@@ -283,8 +283,6 @@ pub fn jsonb_insert(args: &[Register], json_cache: &JsonCacheCell) -> crate::Res
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
-
     use crate::types::Text;
 
     use super::*;
