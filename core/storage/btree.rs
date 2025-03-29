@@ -1087,7 +1087,7 @@ impl BTreeCursor {
                         }
                     }
                     // insert cell
-                    let mut cell_payload: Vec<u8> = Vec::new();
+                    let mut cell_payload: Vec<u8> = Vec::with_capacity(record.len() + 4);
                     fill_cell_payload(
                         page_type,
                         Some(int_key),
@@ -2643,7 +2643,7 @@ impl BTreeCursor {
     ) -> Result<CursorResult<()>> {
         // build the new payload
         let page_type = page_ref.get().contents.as_ref().unwrap().page_type();
-        let mut new_payload = Vec::new();
+        let mut new_payload = Vec::with_capacity(record.len());
         fill_cell_payload(
             page_type,
             self.rowid.get(),
@@ -2673,13 +2673,16 @@ impl BTreeCursor {
                 0,
                 new_payload.len(),
             )?;
-            // if there's leftover local space (old_local_size > new_payload.len()), zero it or free it
             let remaining = old_local_size - new_payload.len();
             if remaining > 0 {
-                let buf = page_ref.get().contents.as_mut().unwrap().as_ptr();
-                for i in 0..remaining {
-                    buf[old_offset + new_payload.len() + i] = 0;
-                }
+                // fill the rest with zeros
+                self.overwrite_content(
+                    page_ref.clone(),
+                    old_offset + new_payload.len(),
+                    &[0; 1],
+                    0,
+                    remaining,
+                )?;
             }
             Ok(CursorResult::Ok(()))
         } else {

@@ -539,20 +539,25 @@ fn emit_update_insns(
                     .iter()
                     .position(|c| Some(&c.name) == table_column.name.as_ref())
             });
-            program.emit_insn(Insn::Column {
-                cursor_id: *index
-                    .as_ref()
-                    .and_then(|(_, id)| {
-                        if column_idx_in_index.is_some() {
-                            Some(id)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(&cursor_id),
-                column: column_idx_in_index.unwrap_or(idx),
-                dest: first_col_reg + idx,
-            });
+            let dest = first_col_reg + idx;
+            if table_column.primary_key {
+                program.emit_null(dest, None);
+            } else {
+                program.emit_insn(Insn::Column {
+                    cursor_id: *index
+                        .as_ref()
+                        .and_then(|(_, id)| {
+                            if column_idx_in_index.is_some() {
+                                Some(id)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(&cursor_id),
+                    column: column_idx_in_index.unwrap_or(idx),
+                    dest,
+                });
+            }
         }
     }
     let record_reg = program.alloc_register();

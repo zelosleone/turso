@@ -1,5 +1,5 @@
 use core::fmt;
-use limbo_sqlite3_parser::ast;
+use limbo_sqlite3_parser::ast::{self, SortOrder};
 use std::{
     cmp::Ordering,
     fmt::{Display, Formatter},
@@ -188,6 +188,14 @@ pub struct UpdatePlan {
 pub enum IterationDirection {
     Forwards,
     Backwards,
+}
+impl From<SortOrder> for IterationDirection {
+    fn from(order: SortOrder) -> Self {
+        match order {
+            SortOrder::Asc => IterationDirection::Forwards,
+            SortOrder::Desc => IterationDirection::Backwards,
+        }
+    }
 }
 
 pub fn select_star(tables: &[TableReference], out_columns: &mut Vec<ResultSetColumn>) {

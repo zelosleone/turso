@@ -72,17 +72,10 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
     let Some(btree_table) = table.btree() else {
         bail_parse_error!("Error: {} is not a btree table", table_name);
     };
-    let mut iter_dir = None;
-    if let Some(order_by) = body.order_by.as_ref() {
-        if !order_by.is_empty() {
-            if let Some(order) = order_by.first().unwrap().order {
-                iter_dir = Some(match order {
-                    SortOrder::Asc => IterationDirection::Forwards,
-                    SortOrder::Desc => IterationDirection::Backwards,
-                });
-            }
-        }
-    }
+    let iter_dir: Option<IterationDirection> = body
+        .order_by
+        .as_ref()
+        .and_then(|order_by| order_by.first().and_then(|ob| ob.order.map(|o| o.into())));
     let table_references = vec![TableReference {
         table: Table::BTree(btree_table.clone()),
         identifier: table_name.0.clone(),
@@ -94,7 +87,6 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         .iter_mut()
         .map(|set| {
             let ident = normalize_ident(set.col_names[0].0.as_str());
-
             let col_index = btree_table
                 .columns
                 .iter()
