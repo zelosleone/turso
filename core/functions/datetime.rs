@@ -27,11 +27,14 @@ pub fn exec_strftime(values: &[Register]) -> OwnedValue {
         return OwnedValue::Null;
     }
 
-    let format_str = match &values[0].get_owned_value() {
-        OwnedValue::Text(text) => text.as_str().to_string(),
-        OwnedValue::Integer(num) => num.to_string(),
-        OwnedValue::Float(num) => format!("{:.14}", num),
-        _ => return OwnedValue::Null,
+    let value = &values[0].get_owned_value();
+    let format_str = if matches!(
+        value,
+        OwnedValue::Text(_) | OwnedValue::Integer(_) | OwnedValue::Float(_)
+    ) {
+        format!("{}", value)
+    } else {
+        return OwnedValue::Null;
     };
 
     exec_datetime(&values[1..], DateTimeOutput::StrfTime(format_str))
