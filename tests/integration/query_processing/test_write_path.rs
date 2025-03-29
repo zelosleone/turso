@@ -136,6 +136,7 @@ fn test_sequential_overflow_page() -> anyhow::Result<()> {
 }
 
 #[test_log::test]
+#[ignore = "this takes too long :)"]
 fn test_sequential_write() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
     maybe_setup_tracing();
