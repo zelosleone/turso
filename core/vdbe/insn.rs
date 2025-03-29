@@ -727,7 +727,7 @@ pub enum Cookie {
 }
 
 pub fn exec_add(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    match (lhs, rhs) {
+    let result = match (lhs, rhs) {
         (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
             let result = lhs.overflowing_add(*rhs);
             if result.1 {
@@ -748,11 +748,15 @@ pub fn exec_add(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
             exec_add(&cast_text_to_numeric(text.as_str()), other)
         }
         _ => todo!(),
+    };
+    match result {
+        OwnedValue::Float(f) if f.is_nan() => OwnedValue::Null,
+        _ => result,
     }
 }
 
 pub fn exec_subtract(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    match (lhs, rhs) {
+    let result = match (lhs, rhs) {
         (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
             let result = lhs.overflowing_sub(*rhs);
             if result.1 {
@@ -776,11 +780,15 @@ pub fn exec_subtract(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
             exec_subtract(other, &cast_text_to_numeric(text.as_str()))
         }
         _ => todo!(),
+    };
+    match result {
+        OwnedValue::Float(f) if f.is_nan() => OwnedValue::Null,
+        _ => result,
     }
 }
 
 pub fn exec_multiply(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    match (lhs, rhs) {
+    let result = match (lhs, rhs) {
         (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
             let result = lhs.overflowing_mul(*rhs);
             if result.1 {
@@ -802,11 +810,15 @@ pub fn exec_multiply(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
         }
 
         _ => todo!(),
+    };
+    match result {
+        OwnedValue::Float(f) if f.is_nan() => OwnedValue::Null,
+        _ => result,
     }
 }
 
 pub fn exec_divide(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    match (lhs, rhs) {
+    let result = match (lhs, rhs) {
         (_, OwnedValue::Integer(0)) | (_, OwnedValue::Float(0.0)) => OwnedValue::Null,
         (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
             let result = lhs.overflowing_div(*rhs);
@@ -827,6 +839,10 @@ pub fn exec_divide(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
         (OwnedValue::Text(text), other) => exec_divide(&cast_text_to_numeric(text.as_str()), other),
         (other, OwnedValue::Text(text)) => exec_divide(other, &cast_text_to_numeric(text.as_str())),
         _ => todo!(),
+    };
+    match result {
+        OwnedValue::Float(f) if f.is_nan() => OwnedValue::Null,
+        _ => result,
     }
 }
 
