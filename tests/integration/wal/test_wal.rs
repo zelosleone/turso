@@ -1,5 +1,5 @@
 use crate::common::{do_flush, maybe_setup_tracing, TempDatabase};
-use limbo_core::{Connection, LimboError, RefValue, Result, StepResult};
+use limbo_core::{Connection, LimboError, Result, StepResult};
 use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;

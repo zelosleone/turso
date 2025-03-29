@@ -4579,7 +4579,7 @@ mod tests {
         exec_unhex, exec_unicode, exec_upper, exec_zeroblob, execute_sqlite_version, Bitfield,
         OwnedValue,
     };
-    use std::{collections::HashMap, rc::Rc};
+    use std::collections::HashMap;
 
     #[test]
     fn test_length() {

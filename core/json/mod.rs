@@ -663,8 +663,6 @@ pub fn json_quote(value: &OwnedValue) -> crate::Result<OwnedValue> {
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
-
     use super::*;
     use crate::types::OwnedValue;
 

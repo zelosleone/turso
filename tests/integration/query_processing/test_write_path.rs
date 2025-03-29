@@ -1,6 +1,6 @@
 use crate::common::{self, maybe_setup_tracing};
 use crate::common::{compare_string, do_flush, TempDatabase};
-use limbo_core::{Connection, OwnedValue, RefValue, StepResult};
+use limbo_core::{Connection, OwnedValue, StepResult};
 use log::debug;
 use std::rc::Rc;
 
