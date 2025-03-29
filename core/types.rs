@@ -776,7 +776,9 @@ impl ImmutableRecord {
             let value = value.get_owned_value();
             let start_offset = writer.pos;
             match value {
-                OwnedValue::Null => {}
+                OwnedValue::Null => {
+                    values.push(RefValue::Null);
+                }
                 OwnedValue::Integer(i) => {
                     values.push(RefValue::Integer(*i));
                     let serial_type = SerialType::from(value);
