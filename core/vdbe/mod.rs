@@ -1887,13 +1887,13 @@ impl Program {
                             #[cfg(feature = "json")]
                             AggFunc::JsonGroupArray | AggFunc::JsonbGroupArray => {
                                 Register::Aggregate(AggContext::GroupConcat(OwnedValue::Blob(
-                                    Rc::new(vec![]),
+                                    vec![],
                                 )))
                             }
                             #[cfg(feature = "json")]
                             AggFunc::JsonGroupObject | AggFunc::JsonbGroupObject => {
                                 Register::Aggregate(AggContext::GroupConcat(OwnedValue::Blob(
-                                    Rc::new(vec![]),
+                                    vec![],
                                 )))
                             }
                             AggFunc::External(func) => match func.as_ref() {
@@ -2087,28 +2087,21 @@ impl Program {
                             let mut key_vec = convert_dbtype_to_raw_jsonb(&key.get_owned_value())?;
                             let mut val_vec =
                                 convert_dbtype_to_raw_jsonb(&value.get_owned_value())?;
-                            let mut buff = Vec::with_capacity(
-                                key_vec.len()
-                                    + val_vec.len()
-                                    + acc.to_blob().expect("Should be blob").len(),
-                            );
 
                             match acc {
                                 OwnedValue::Blob(vec) => {
                                     if vec.is_empty() {
                                         // bits for obj header
-                                        buff.push(12);
-                                        buff.append(&mut key_vec);
-                                        buff.append(&mut val_vec);
+                                        vec.push(12);
+                                        vec.append(&mut key_vec);
+                                        vec.append(&mut val_vec);
                                     } else {
-                                        buff.extend_from_slice(&vec);
-                                        buff.append(&mut key_vec);
-                                        buff.append(&mut val_vec);
+                                        vec.append(&mut key_vec);
+                                        vec.append(&mut val_vec);
                                     }
                                 }
                                 _ => unreachable!(),
                             };
-                            *acc = OwnedValue::from_blob(buff);
                         }
                         #[cfg(feature = "json")]
                         AggFunc::JsonGroupArray | AggFunc::JsonbGroupArray => {
@@ -2121,21 +2114,18 @@ impl Program {
                                 unreachable!();
                             };
 
-                            let mut buff = vec![];
                             let mut data = convert_dbtype_to_raw_jsonb(&col.get_owned_value())?;
                             match acc {
                                 OwnedValue::Blob(vec) => {
                                     if vec.is_empty() {
-                                        buff.push(11);
-                                        buff.append(&mut data)
+                                        vec.push(11);
+                                        vec.append(&mut data)
                                     } else {
-                                        buff.extend_from_slice(&vec);
-                                        buff.append(&mut data);
+                                        vec.append(&mut data);
                                     }
                                 }
                                 _ => unreachable!(),
                             };
-                            *acc = OwnedValue::from_blob(buff);
                         }
                         AggFunc::External(_) => {
                             let (step_fn, state_ptr, argc) = {
