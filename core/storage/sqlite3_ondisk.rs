@@ -1624,7 +1624,7 @@ mod tests {
         #[case] expected: OwnedValue,
     ) {
         let result = read_value(buf, serial_type).unwrap();
-        assert_eq!(result.0, expected);
+        assert_eq!(result.0.to_owned(), expected);
     }
 
     #[test]
