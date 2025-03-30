@@ -29,7 +29,7 @@ use crate::{info, MvCursor, RefValue, Row, StepResult, TransactionState};
 use super::insn::{
     exec_add, exec_and, exec_bit_and, exec_bit_not, exec_bit_or, exec_boolean_not, exec_concat,
     exec_divide, exec_multiply, exec_or, exec_remainder, exec_shift_left, exec_shift_right,
-    exec_subtract, Cookie,
+    exec_subtract, Cookie, RegisterOrLiteral,
 };
 use super::HaltState;
 use rand::thread_rng;
@@ -3979,12 +3979,23 @@ pub fn op_open_write_async(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
+    let root_page = match root_page {
+        RegisterOrLiteral::Literal(lit) => *lit as u64,
+        RegisterOrLiteral::Register(reg) => match &state.registers[*reg].get_owned_value() {
+            OwnedValue::Integer(val) => *val as u64,
+            _ => {
+                return Err(LimboError::InternalError(
+                    "OpenWriteAsync: the value in root_page is not an integer".into(),
+                ));
+            }
+        },
+    };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let mut cursors = state.cursors.borrow_mut();
     let is_index = cursor_type.is_index();
     let mv_cursor = match state.mv_tx_id {
         Some(tx_id) => {
-            let table_id = *root_page as u64;
+            let table_id = root_page;
             let mv_store = mv_store.unwrap().clone();
             let mv_cursor = Rc::new(RefCell::new(
                 MvCursor::new(mv_store.clone(), tx_id, table_id).unwrap(),
@@ -3993,7 +4004,7 @@ pub fn op_open_write_async(
         }
         None => None,
     };
-    let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
+    let cursor = BTreeCursor::new(mv_cursor, pager.clone(), root_page as usize);
     if is_index {
         cursors
             .get_mut(*cursor_id)
