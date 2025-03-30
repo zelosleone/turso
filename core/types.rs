@@ -669,15 +669,31 @@ impl Record {
 struct AppendWriter<'a> {
     buf: &'a mut Vec<u8>,
     pos: usize,
+    buf_capacity_start: usize,
+    buf_ptr_start: *const u8,
+}
+
+impl Drop for AppendWriter {
+    fn drop(&mut self) {
+        // let's make sure we didn't reallocate anywhere else
+        assert_eq!(self.buf_capacity_start, self.buf.capacity());
+        assert_eq!(self.buf_ptr_start, self.buf.as_ptr());
+    }
 }
 
 impl<'a> AppendWriter<'a> {
     pub fn new(buf: &'a mut Vec<u8>, pos: usize) -> Self {
-        Self { buf, pos }
+        Self {
+            buf,
+            pos,
+            buf_capacity_start: buf.capacity(),
+            buf_ptr_start: buf.as_ptr(),
+        }
     }
 
     #[inline]
     pub fn extend_from_slice(&mut self, slice: &[u8]) {
+        dbg!(self.pos, slice);
         self.buf[self.pos..self.pos + slice.len()].copy_from_slice(slice);
         self.pos += slice.len();
     }
@@ -728,13 +744,13 @@ impl ImmutableRecord {
 
             let value_size = match serial_type {
                 SerialType::Null => 0,
-                SerialType::I8 => 8,
-                SerialType::I16 => 16,
-                SerialType::I24 => 24,
-                SerialType::I32 => 32,
-                SerialType::I48 => 48,
-                SerialType::I64 => 64,
-                SerialType::F64 => 64,
+                SerialType::I8 => 1,
+                SerialType::I16 => 2,
+                SerialType::I24 => 3,
+                SerialType::I32 => 4,
+                SerialType::I48 => 6,
+                SerialType::I64 => 8,
+                SerialType::F64 => 8,
                 SerialType::Text { content_size } => content_size,
                 SerialType::Blob { content_size } => content_size,
             };
@@ -753,15 +769,15 @@ impl ImmutableRecord {
             // if( nVarint<sqlite3VarintLen(nHdr) ) nHdr++;
         }
         // 1. write header size
-        let mut buf = Vec::with_capacity((header_size + size_values) * 2);
+        let mut buf = Vec::new();
+        buf.reserve_exact(header_size + size_values);
+        assert_eq!(buf.capacity(), header_size + size_values);
         assert!(header_size <= 126);
-        buf.extend(std::iter::repeat(0).take(9));
-        let n = write_varint(buf.as_mut_slice(), header_size as u64);
-        buf.truncate(n);
+        let n = write_varint(&mut serial_type_buf, header_size as u64);
 
-        let start_pos = buf.len();
         buf.resize(buf.capacity(), 0);
-        let mut writer = AppendWriter::new(&mut buf, start_pos);
+        let mut writer = AppendWriter::new(&mut buf, 0);
+        writer.extend_from_slice(&serial_type_buf[..n]);
 
         // 2. Write serial
         for (value, n) in serials {
@@ -816,6 +832,7 @@ impl ImmutableRecord {
             };
         }
 
+        assert_eq!(writer.pos, buf.len());
         Self {
             payload: buf,
             values,
