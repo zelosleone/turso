@@ -768,6 +768,10 @@ impl ImmutableRecord {
         let mut header_size = size_header;
         if header_size <= 126 {
             // common case
+            // This case means the header size can be contained by a single byte, therefore
+            // header_size == size of serial types + 1 byte from the header size
+            // Since header_size is a varint, and a varint the first bit is used to represent we have more bytes to read,
+            // header size here will be 126 == (2^7 - 1)
             header_size += 1;
         } else {
             todo!("calculate big header size extra bytes");
