@@ -402,7 +402,7 @@ impl BTreeCursor {
                     } else {
                         crate::storage::sqlite3_ondisk::read_record(
                             _payload,
-                            self.get_lazy_immutable_record().as_mut().unwrap(),
+                            self.get_immutable_record_or_create().as_mut().unwrap(),
                         )?
                     };
                     self.stack.retreat();
@@ -472,7 +472,7 @@ impl BTreeCursor {
         match res {
             CursorResult::Ok(payload) => {
                 {
-                    let mut reuse_immutable = self.get_lazy_immutable_record();
+                    let mut reuse_immutable = self.get_immutable_record_or_create();
                     crate::storage::sqlite3_ondisk::read_record(
                         &payload,
                         reuse_immutable.as_mut().unwrap(),
@@ -499,7 +499,7 @@ impl BTreeCursor {
                     let record = mv_cursor.current_row().unwrap().unwrap();
                     crate::storage::sqlite3_ondisk::read_record(
                         &record.data,
-                        self.get_lazy_immutable_record().as_mut().unwrap(),
+                        self.get_immutable_record_or_create().as_mut().unwrap(),
                     )?;
                     mv_cursor.forward();
                     return Ok(CursorResult::Ok(Some(rowid.row_id)));
@@ -591,7 +591,7 @@ impl BTreeCursor {
                     } else {
                         crate::storage::sqlite3_ondisk::read_record(
                             _payload,
-                            self.get_lazy_immutable_record().as_mut().unwrap(),
+                            self.get_immutable_record_or_create().as_mut().unwrap(),
                         )?
                     };
                     self.stack.advance();
@@ -617,7 +617,7 @@ impl BTreeCursor {
                     } else {
                         crate::storage::sqlite3_ondisk::read_record(
                             payload,
-                            self.get_lazy_immutable_record().as_mut().unwrap(),
+                            self.get_immutable_record_or_create().as_mut().unwrap(),
                         )?
                     };
 
@@ -670,7 +670,7 @@ impl BTreeCursor {
                     } else {
                         crate::storage::sqlite3_ondisk::read_record(
                             payload,
-                            self.get_lazy_immutable_record().as_mut().unwrap(),
+                            self.get_immutable_record_or_create().as_mut().unwrap(),
                         )?
                     };
 
@@ -762,7 +762,7 @@ impl BTreeCursor {
                             } else {
                                 crate::storage::sqlite3_ondisk::read_record(
                                     payload,
-                                    self.get_lazy_immutable_record().as_mut().unwrap(),
+                                    self.get_immutable_record_or_create().as_mut().unwrap(),
                                 )?
                             };
                             self.stack.advance();
@@ -788,7 +788,7 @@ impl BTreeCursor {
                         } else {
                             crate::storage::sqlite3_ondisk::read_record(
                                 payload,
-                                self.get_lazy_immutable_record().as_mut().unwrap(),
+                                self.get_immutable_record_or_create().as_mut().unwrap(),
                             )?
                         };
                         let record = self.get_immutable_record();
@@ -979,7 +979,7 @@ impl BTreeCursor {
                         } else {
                             crate::storage::sqlite3_ondisk::read_record(
                                 payload,
-                                self.get_lazy_immutable_record().as_mut().unwrap(),
+                                self.get_immutable_record_or_create().as_mut().unwrap(),
                             )?
                         };
                         let order = compare_immutable(
@@ -2737,7 +2737,7 @@ impl BTreeCursor {
         Ok(CursorResult::Ok(()))
     }
 
-    fn get_lazy_immutable_record(&self) -> std::cell::RefMut<'_, Option<ImmutableRecord>> {
+    fn get_immutable_record_or_create(&self) -> std::cell::RefMut<'_, Option<ImmutableRecord>> {
         if self.reusable_immutable_record.borrow().is_none() {
             let record = ImmutableRecord::new(4096, 10);
             self.reusable_immutable_record.replace(Some(record));
