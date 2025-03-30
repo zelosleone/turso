@@ -260,7 +260,7 @@ pub struct BTreeCursor {
     stack: PageStack,
     /// Reusable immutable record, used to allow better allocation strategy.
     reusable_immutable_record: RefCell<Option<ImmutableRecord>>,
-    empty_record: RefCell<bool>,
+    empty_record: Cell<bool>,
 }
 
 /// Stack of pages representing the tree traversal order.
@@ -308,7 +308,7 @@ impl BTreeCursor {
                 stack: RefCell::new([const { None }; BTCURSOR_MAX_DEPTH + 1]),
             },
             reusable_immutable_record: RefCell::new(None),
-            empty_record: RefCell::new(true),
+            empty_record: Cell::new(true),
         }
     }
 
@@ -1912,7 +1912,7 @@ impl BTreeCursor {
     }
 
     pub fn is_empty(&self) -> bool {
-        *self.empty_record.borrow()
+        self.empty_record.get()
     }
 
     pub fn root_page(&self) -> usize {
@@ -2000,7 +2000,7 @@ impl BTreeCursor {
             Some(mv_cursor) => {
                 let row_id =
                     crate::mvcc::database::RowID::new(self.table_id() as u64, *int_key as u64);
-                let record_buf = record.payload.to_vec();
+                let record_buf = record.get_payload().to_vec();
                 let row = crate::mvcc::database::Row::new(row_id, record_buf);
                 mv_cursor.borrow_mut().insert(row).unwrap();
             }
@@ -2739,10 +2739,7 @@ impl BTreeCursor {
 
     fn get_lazy_immutable_record(&self) -> std::cell::RefMut<'_, Option<ImmutableRecord>> {
         if self.reusable_immutable_record.borrow().is_none() {
-            let record = ImmutableRecord {
-                payload: Vec::with_capacity(4096),
-                values: Vec::with_capacity(10),
-            };
+            let record = ImmutableRecord::new(4096, 10);
             self.reusable_immutable_record.replace(Some(record));
         }
         self.reusable_immutable_record.borrow_mut()
@@ -3423,7 +3420,7 @@ fn fill_cell_payload(
         PageType::TableLeaf | PageType::IndexLeaf
     ));
     // TODO: make record raw from start, having to serialize is not good
-    let record_buf = record.payload.to_vec();
+    let record_buf = record.get_payload().to_vec();
 
     // fill in header
     if matches!(page_type, PageType::TableLeaf) {

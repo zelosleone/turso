@@ -8,7 +8,6 @@ use crate::storage::sqlite3_ondisk::write_varint;
 use crate::vdbe::sorter::Sorter;
 use crate::vdbe::{Register, VTabOpaqueCursor};
 use crate::Result;
-use std::cmp::Ordering;
 use std::fmt::Display;
 
 const MAX_REAL_SIZE: u8 = 15;
@@ -631,8 +630,9 @@ pub struct ImmutableRecord {
     // We have to be super careful with this buffer since we make values point to the payload we need to take care reallocations
     // happen in a controlled manner. If we realocate with values that should be correct, they will now point to undefined data.
     // We don't use pin here because it would make it imposible to reuse the buffer if we need to push a new record in the same struct.
-    pub payload: Vec<u8>,
+    payload: Vec<u8>,
     pub values: Vec<RefValue>,
+    recreating: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -699,6 +699,14 @@ impl<'a> AppendWriter<'a> {
 }
 
 impl ImmutableRecord {
+    pub fn new(payload_capacity: usize, value_capacity: usize) -> Self {
+        Self {
+            payload: Vec::with_capacity(payload_capacity),
+            values: Vec::with_capacity(value_capacity),
+            recreating: false,
+        }
+    }
+
     pub fn get<'a, T: FromValue<'a> + 'a>(&'a self, idx: usize) -> Result<T> {
         let value = self
             .values
@@ -835,7 +843,31 @@ impl ImmutableRecord {
         Self {
             payload: buf,
             values,
+            recreating: false,
         }
+    }
+
+    pub fn start_serialization(&mut self, payload: &[u8]) {
+        self.recreating = true;
+        self.payload.extend_from_slice(payload);
+    }
+    pub fn end_serialization(&mut self) {
+        assert!(self.recreating);
+        self.recreating = false;
+    }
+
+    pub fn add_value(&mut self, value: RefValue) {
+        assert!(self.recreating);
+        self.values.push(value);
+    }
+
+    pub fn invalidate(&mut self) {
+        self.payload.clear();
+        self.values.clear();
+    }
+
+    pub fn get_payload(&self) -> &[u8] {
+        &self.payload
     }
 }
 
@@ -872,6 +904,7 @@ impl Clone for ImmutableRecord {
         Self {
             payload: new_payload,
             values: new_values,
+            recreating: self.recreating,
         }
     }
 }
@@ -1090,45 +1123,8 @@ impl PartialEq<OwnedValue> for RefValue {
     }
 }
 
-pub fn compare_record_to_immutable(
-    record: &[OwnedValue],
-    immutable: &[RefValue],
-) -> std::cmp::Ordering {
-    for (a, b) in record.iter().zip(immutable.iter()) {
-        match a.partial_cmp(b).unwrap() {
-            Ordering::Equal => {}
-            order => {
-                return order;
-            }
-        }
-    }
-    Ordering::Equal
-}
-pub fn compare_immutable_to_record(
-    immutable: &[RefValue],
-    record: &[OwnedValue],
-) -> std::cmp::Ordering {
-    for (a, b) in immutable.iter().zip(record.iter()) {
-        match a.partial_cmp(b).unwrap() {
-            Ordering::Equal => {}
-            order => {
-                return order;
-            }
-        }
-    }
-    Ordering::Equal
-}
-
 pub fn compare_immutable(l: &[RefValue], r: &[RefValue]) -> std::cmp::Ordering {
-    for (a, b) in l.iter().zip(r.iter()) {
-        match a.partial_cmp(b).unwrap() {
-            Ordering::Equal => {}
-            order => {
-                return order;
-            }
-        }
-    }
-    Ordering::Equal
+    l.partial_cmp(r).unwrap()
 }
 
 const I8_LOW: i64 = -128;

@@ -1085,11 +1085,10 @@ impl<T: Default + Copy> SmallVec<T> {
 
 pub fn read_record(payload: &[u8], reuse_immutable: &mut ImmutableRecord) -> Result<()> {
     // Let's clear previous use
-    reuse_immutable.payload.clear();
-    reuse_immutable.values.clear();
+    reuse_immutable.invalidate();
     // Copy payload to ImmutableRecord in order to make RefValue that point to this new buffer.
     // By reusing this immutable record we make it less allocation expensive.
-    reuse_immutable.payload.extend_from_slice(payload);
+    reuse_immutable.start_serialization(payload);
 
     let mut pos = 0;
     let (header_size, nr) = read_varint(payload)?;
@@ -1099,7 +1098,7 @@ pub fn read_record(payload: &[u8], reuse_immutable: &mut ImmutableRecord) -> Res
 
     let mut serial_types = SmallVec::new();
     while header_size > 0 {
-        let (serial_type, nr) = read_varint(&reuse_immutable.payload[pos..])?;
+        let (serial_type, nr) = read_varint(&reuse_immutable.get_payload()[pos..])?;
         let serial_type = validate_serial_type(serial_type)?;
         serial_types.push(serial_type);
         pos += nr;
@@ -1108,17 +1107,17 @@ pub fn read_record(payload: &[u8], reuse_immutable: &mut ImmutableRecord) -> Res
     }
 
     for &serial_type in &serial_types.data[..serial_types.len.min(serial_types.data.len())] {
-        let (value, n) = read_value(&reuse_immutable.payload[pos..], unsafe {
+        let (value, n) = read_value(&reuse_immutable.get_payload()[pos..], unsafe {
             *serial_type.as_ptr()
         })?;
         pos += n;
-        reuse_immutable.values.push(value);
+        reuse_immutable.add_value(value);
     }
     if let Some(extra) = serial_types.extra_data.as_ref() {
         for serial_type in extra {
-            let (value, n) = read_value(&reuse_immutable.payload[pos..], *serial_type)?;
+            let (value, n) = read_value(&reuse_immutable.get_payload()[pos..], *serial_type)?;
             pos += n;
-            reuse_immutable.values.push(value);
+            reuse_immutable.add_value(value);
         }
     }
 
