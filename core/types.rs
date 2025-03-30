@@ -766,7 +766,8 @@ impl ImmutableRecord {
             size_values += value_size;
         }
         let mut header_size = size_header;
-        if header_size <= 126 {
+        const MIN_HEADER_SIZE: usize = 126;
+        if header_size <= MIN_HEADER_SIZE {
             // common case
             // This case means the header size can be contained by a single byte, therefore
             // header_size == size of serial types + 1 byte from the header size
