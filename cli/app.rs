@@ -512,7 +512,7 @@ impl<'a> Limbo<'a> {
                 }
                 Command::OutputMode(args) => {
                     if let Err(e) = self.set_mode(args.mode) {
-                        let _ = self.write_fmt(format_args!("{}", e));
+                        let _ = self.write_fmt(format_args!("Error: {}", e));
                     }
                 }
                 Command::SetOutput(args) => {
