@@ -72,10 +72,14 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
     let Some(btree_table) = table.btree() else {
         bail_parse_error!("Error: {} is not a btree table", table_name);
     };
-    let iter_dir: Option<IterationDirection> = body
-        .order_by
-        .as_ref()
-        .and_then(|order_by| order_by.first().and_then(|ob| ob.order.map(|o| o.into())));
+    let iter_dir: Option<IterationDirection> = body.order_by.as_ref().and_then(|order_by| {
+        order_by.first().and_then(|ob| {
+            ob.order.map(|o| match o {
+                SortOrder::Asc => IterationDirection::Forwards,
+                SortOrder::Desc => IterationDirection::Backwards,
+            })
+        })
+    });
     let table_references = vec![TableReference {
         table: Table::BTree(btree_table.clone()),
         identifier: table_name.0.clone(),
