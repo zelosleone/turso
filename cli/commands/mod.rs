@@ -73,7 +73,7 @@ pub enum Command {
     /// Dump the current database as a list of SQL statements
     Dump,
     /// List vfs modules available
-    #[command(name = "listvfs", subcommand_value_name = ".dump")]
+    #[command(name = "listvfs", subcommand_value_name = ".listvfs")]
     ListVfs,
 }
 

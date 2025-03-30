@@ -1,7 +1,7 @@
 use crate::{
     commands::{args::EchoMode, import::ImportFile, Command, CommandParser},
     helper::LimboHelper,
-    input::{get_io, get_writer, DbLocation, Io, OutputMode, Settings},
+    input::{get_io, get_writer, DbLocation, OutputMode, Settings},
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
 };
 use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Row, Table};
