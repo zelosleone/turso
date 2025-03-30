@@ -15,7 +15,10 @@ fn test_statement_reset_bind() -> anyhow::Result<()> {
         match stmt.step()? {
             StepResult::Row => {
                 let row = stmt.row().unwrap();
-                assert_eq!(*row.get_value(0), limbo_core::OwnedValue::Integer(1));
+                assert_eq!(
+                    *row.get::<&OwnedValue>(0).unwrap(),
+                    limbo_core::OwnedValue::Integer(1)
+                );
             }
             StepResult::IO => tmp_db.io.run_once()?,
             _ => break,
@@ -30,7 +33,10 @@ fn test_statement_reset_bind() -> anyhow::Result<()> {
         match stmt.step()? {
             StepResult::Row => {
                 let row = stmt.row().unwrap();
-                assert_eq!(*row.get_value(0), limbo_core::OwnedValue::Integer(2));
+                assert_eq!(
+                    *row.get::<&OwnedValue>(0).unwrap(),
+                    limbo_core::OwnedValue::Integer(2)
+                );
             }
             StepResult::IO => tmp_db.io.run_once()?,
             _ => break,
@@ -63,23 +69,23 @@ fn test_statement_bind() -> anyhow::Result<()> {
         match stmt.step()? {
             StepResult::Row => {
                 let row = stmt.row().unwrap();
-                if let limbo_core::OwnedValue::Text(s) = row.get_value(0) {
+                if let limbo_core::OwnedValue::Text(s) = row.get::<&OwnedValue>(0).unwrap() {
                     assert_eq!(s.as_str(), "hello")
                 }
 
-                if let limbo_core::OwnedValue::Text(s) = row.get_value(1) {
+                if let limbo_core::OwnedValue::Text(s) = row.get::<&OwnedValue>(1).unwrap() {
                     assert_eq!(s.as_str(), "hello")
                 }
 
-                if let limbo_core::OwnedValue::Integer(i) = row.get_value(2) {
+                if let limbo_core::OwnedValue::Integer(i) = row.get::<&OwnedValue>(2).unwrap() {
                     assert_eq!(*i, 42)
                 }
 
-                if let limbo_core::OwnedValue::Blob(v) = row.get_value(3) {
-                    assert_eq!(v.as_ref(), &vec![0x1 as u8, 0x2, 0x3])
+                if let limbo_core::OwnedValue::Blob(v) = row.get::<&OwnedValue>(3).unwrap() {
+                    assert_eq!(v.as_slice(), &vec![0x1 as u8, 0x2, 0x3])
                 }
 
-                if let limbo_core::OwnedValue::Float(f) = row.get_value(4) {
+                if let limbo_core::OwnedValue::Float(f) = row.get::<&OwnedValue>(4).unwrap() {
                     assert_eq!(*f, 0.5)
                 }
             }

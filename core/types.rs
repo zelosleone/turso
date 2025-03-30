@@ -6,12 +6,9 @@ use crate::pseudo::PseudoCursor;
 use crate::storage::btree::BTreeCursor;
 use crate::storage::sqlite3_ondisk::write_varint;
 use crate::vdbe::sorter::Sorter;
-use crate::vdbe::VTabOpaqueCursor;
+use crate::vdbe::{Register, VTabOpaqueCursor};
 use crate::Result;
-use std::cmp::Ordering;
 use std::fmt::Display;
-use std::pin::Pin;
-use std::rc::Rc;
 
 const MAX_REAL_SIZE: u8 = 15;
 
@@ -33,7 +30,7 @@ pub enum TextSubtype {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Text {
-    pub value: Rc<Vec<u8>>,
+    pub value: Vec<u8>,
     pub subtype: TextSubtype,
 }
 
@@ -50,14 +47,14 @@ impl Text {
 
     pub fn new(value: &str) -> Self {
         Self {
-            value: Rc::new(value.as_bytes().to_vec()),
+            value: value.as_bytes().to_vec(),
             subtype: TextSubtype::Text,
         }
     }
 
     pub fn json(value: String) -> Self {
         Self {
-            value: Rc::new(value.into_bytes()),
+            value: value.into_bytes(),
             subtype: TextSubtype::Json,
         }
     }
@@ -71,13 +68,23 @@ impl Text {
     }
 }
 
+impl TextRef {
+    pub fn as_str(&self) -> &str {
+        unsafe { std::str::from_utf8_unchecked(self.value.to_slice()) }
+    }
+
+    pub fn to_string(&self) -> String {
+        self.as_str().to_string()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum OwnedValue {
     Null,
     Integer(i64),
     Float(f64),
     Text(Text),
-    Blob(Rc<Vec<u8>>),
+    Blob(Vec<u8>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -86,7 +93,7 @@ pub struct RawSlice {
     len: usize,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum RefValue {
     Null,
     Integer(i64),
@@ -109,7 +116,7 @@ impl OwnedValue {
     }
 
     pub fn from_blob(data: Vec<u8>) -> Self {
-        OwnedValue::Blob(std::rc::Rc::new(data))
+        OwnedValue::Blob(data)
     }
 
     pub fn to_text(&self) -> Option<&str> {
@@ -131,6 +138,26 @@ impl OwnedValue {
             OwnedValue::Text(_) => OwnedValueType::Text,
             OwnedValue::Blob(_) => OwnedValueType::Blob,
         }
+    }
+    pub fn serialize_serial(&self, out: &mut Vec<u8>) {
+        match self {
+            OwnedValue::Null => {}
+            OwnedValue::Integer(i) => {
+                let serial_type = SerialType::from(self);
+                match serial_type {
+                    SerialType::I8 => out.extend_from_slice(&(*i as i8).to_be_bytes()),
+                    SerialType::I16 => out.extend_from_slice(&(*i as i16).to_be_bytes()),
+                    SerialType::I24 => out.extend_from_slice(&(*i as i32).to_be_bytes()[1..]), // remove most significant byte
+                    SerialType::I32 => out.extend_from_slice(&(*i as i32).to_be_bytes()),
+                    SerialType::I48 => out.extend_from_slice(&i.to_be_bytes()[2..]), // remove 2 most significant bytes
+                    SerialType::I64 => out.extend_from_slice(&i.to_be_bytes()),
+                    _ => unreachable!(),
+                }
+            }
+            OwnedValue::Float(f) => out.extend_from_slice(&f.to_be_bytes()),
+            OwnedValue::Text(t) => out.extend_from_slice(&t.value),
+            OwnedValue::Blob(b) => out.extend_from_slice(b),
+        };
     }
 }
 
@@ -310,7 +337,7 @@ impl OwnedValue {
                 let Some(blob) = v.to_blob() else {
                     return Ok(OwnedValue::Null);
                 };
-                Ok(OwnedValue::Blob(Rc::new(blob)))
+                Ok(OwnedValue::Blob(blob))
             }
             ExtValueType::Error => {
                 let Some(err) = v.to_error_details() else {
@@ -562,33 +589,33 @@ impl std::ops::DivAssign<OwnedValue> for OwnedValue {
 }
 
 pub trait FromValue<'a> {
-    fn from_value(value: &'a OwnedValue) -> Result<Self>
+    fn from_value(value: &'a RefValue) -> Result<Self>
     where
         Self: Sized + 'a;
 }
 
 impl<'a> FromValue<'a> for i64 {
-    fn from_value(value: &'a OwnedValue) -> Result<Self> {
+    fn from_value(value: &'a RefValue) -> Result<Self> {
         match value {
-            OwnedValue::Integer(i) => Ok(*i),
+            RefValue::Integer(i) => Ok(*i),
             _ => Err(LimboError::ConversionError("Expected integer value".into())),
         }
     }
 }
 
 impl<'a> FromValue<'a> for String {
-    fn from_value(value: &'a OwnedValue) -> Result<Self> {
+    fn from_value(value: &'a RefValue) -> Result<Self> {
         match value {
-            OwnedValue::Text(s) => Ok(s.as_str().to_string()),
+            RefValue::Text(s) => Ok(s.as_str().to_string()),
             _ => Err(LimboError::ConversionError("Expected text value".into())),
         }
     }
 }
 
 impl<'a> FromValue<'a> for &'a str {
-    fn from_value(value: &'a OwnedValue) -> Result<Self> {
+    fn from_value(value: &'a RefValue) -> Result<Self> {
         match value {
-            OwnedValue::Text(s) => Ok(s.as_str()),
+            RefValue::Text(s) => Ok(s.as_str()),
             _ => Err(LimboError::ConversionError("Expected text value".into())),
         }
     }
@@ -597,10 +624,15 @@ impl<'a> FromValue<'a> for &'a str {
 /// This struct serves the purpose of not allocating multiple vectors of bytes if not needed.
 /// A value in a record that has already been serialized can stay serialized and what this struct offsers
 /// is easy acces to each value which point to the payload.
+/// The name might be contradictory as it is immutable in the sense that you cannot modify the values without modifying the payload.
 #[derive(Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ImmutableRecord {
-    pub payload: Pin<Vec<u8>>, // << point to this
+    // We have to be super careful with this buffer since we make values point to the payload we need to take care reallocations
+    // happen in a controlled manner. If we realocate with values that should be correct, they will now point to undefined data.
+    // We don't use pin here because it would make it imposible to reuse the buffer if we need to push a new record in the same struct.
+    payload: Vec<u8>,
     pub values: Vec<RefValue>,
+    recreating: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -609,10 +641,10 @@ pub struct Record {
 }
 
 impl Record {
-    pub fn get<'a, T: FromValue<'a> + 'a>(&'a self, idx: usize) -> Result<T> {
-        let value = &self.values[idx];
-        T::from_value(value)
-    }
+    // pub fn get<'a, T: FromValue<'a> + 'a>(&'a self, idx: usize) -> Result<T> {
+    //     let value = &self.values[idx];
+    //     T::from_value(value)
+    // }
 
     pub fn count(&self) -> usize {
         self.values.len()
@@ -634,12 +666,54 @@ impl Record {
         self.values.len()
     }
 }
+struct AppendWriter<'a> {
+    buf: &'a mut Vec<u8>,
+    pos: usize,
+    buf_capacity_start: usize,
+    buf_ptr_start: *const u8,
+}
+
+impl<'a> AppendWriter<'a> {
+    pub fn new(buf: &'a mut Vec<u8>, pos: usize) -> Self {
+        let buf_ptr_start = buf.as_ptr();
+        let buf_capacity_start = buf.capacity();
+        Self {
+            buf,
+            pos,
+            buf_capacity_start,
+            buf_ptr_start,
+        }
+    }
+
+    #[inline]
+    pub fn extend_from_slice(&mut self, slice: &[u8]) {
+        self.buf[self.pos..self.pos + slice.len()].copy_from_slice(slice);
+        self.pos += slice.len();
+    }
+
+    fn assert_finish_capacity(&self) {
+        // let's make sure we didn't reallocate anywhere else
+        assert_eq!(self.buf_capacity_start, self.buf.capacity());
+        assert_eq!(self.buf_ptr_start, self.buf.as_ptr());
+    }
+}
 
 impl ImmutableRecord {
-    // pub fn get<'a, T: FromValue<'a> + 'a>(&'a self, idx: usize) -> Result<T> {
-    //     let value = &self.values[idx];
-    //     T::from_value(value)
-    // }
+    pub fn new(payload_capacity: usize, value_capacity: usize) -> Self {
+        Self {
+            payload: Vec::with_capacity(payload_capacity),
+            values: Vec::with_capacity(value_capacity),
+            recreating: false,
+        }
+    }
+
+    pub fn get<'a, T: FromValue<'a> + 'a>(&'a self, idx: usize) -> Result<T> {
+        let value = self
+            .values
+            .get(idx)
+            .ok_or(LimboError::InternalError("Index out of bounds".into()))?;
+        T::from_value(value)
+    }
 
     pub fn count(&self) -> usize {
         self.values.len()
@@ -660,19 +734,229 @@ impl ImmutableRecord {
     pub fn len(&self) -> usize {
         self.values.len()
     }
+
+    pub fn from_registers(registers: &[Register]) -> Self {
+        let mut values = Vec::with_capacity(registers.len());
+        let mut serials = Vec::with_capacity(registers.len());
+        let mut size_header = 0;
+        let mut size_values = 0;
+
+        let mut serial_type_buf = [0; 9];
+        // write serial types
+        for value in registers {
+            let value = value.get_owned_value();
+            let serial_type = SerialType::from(value);
+            let n = write_varint(&mut serial_type_buf[0..], serial_type.into());
+            serials.push((serial_type_buf, n));
+
+            let value_size = match serial_type {
+                SerialType::Null => 0,
+                SerialType::I8 => 1,
+                SerialType::I16 => 2,
+                SerialType::I24 => 3,
+                SerialType::I32 => 4,
+                SerialType::I48 => 6,
+                SerialType::I64 => 8,
+                SerialType::F64 => 8,
+                SerialType::Text { content_size } => content_size,
+                SerialType::Blob { content_size } => content_size,
+            };
+
+            size_header += n;
+            size_values += value_size;
+        }
+        let mut header_size = size_header;
+        const MIN_HEADER_SIZE: usize = 126;
+        if header_size <= MIN_HEADER_SIZE {
+            // common case
+            // This case means the header size can be contained by a single byte, therefore
+            // header_size == size of serial types + 1 byte from the header size
+            // Since header_size is a varint, and a varint the first bit is used to represent we have more bytes to read,
+            // header size here will be 126 == (2^7 - 1)
+            header_size += 1;
+        } else {
+            todo!("calculate big header size extra bytes");
+            // get header varint len
+            // header_size += n;
+            // if( nVarint<sqlite3VarintLen(nHdr) ) nHdr++;
+        }
+        // 1. write header size
+        let mut buf = Vec::new();
+        buf.reserve_exact(header_size + size_values);
+        assert_eq!(buf.capacity(), header_size + size_values);
+        assert!(header_size <= 126);
+        let n = write_varint(&mut serial_type_buf, header_size as u64);
+
+        buf.resize(buf.capacity(), 0);
+        let mut writer = AppendWriter::new(&mut buf, 0);
+        writer.extend_from_slice(&serial_type_buf[..n]);
+
+        // 2. Write serial
+        for (value, n) in serials {
+            writer.extend_from_slice(&value[..n]);
+        }
+
+        // write content
+        for value in registers {
+            let value = value.get_owned_value();
+            let start_offset = writer.pos;
+            match value {
+                OwnedValue::Null => {
+                    values.push(RefValue::Null);
+                }
+                OwnedValue::Integer(i) => {
+                    values.push(RefValue::Integer(*i));
+                    let serial_type = SerialType::from(value);
+                    match serial_type {
+                        SerialType::I8 => writer.extend_from_slice(&(*i as i8).to_be_bytes()),
+                        SerialType::I16 => writer.extend_from_slice(&(*i as i16).to_be_bytes()),
+                        SerialType::I24 => {
+                            writer.extend_from_slice(&(*i as i32).to_be_bytes()[1..])
+                        } // remove most significant byte
+                        SerialType::I32 => writer.extend_from_slice(&(*i as i32).to_be_bytes()),
+                        SerialType::I48 => writer.extend_from_slice(&i.to_be_bytes()[2..]), // remove 2 most significant bytes
+                        SerialType::I64 => writer.extend_from_slice(&i.to_be_bytes()),
+                        _ => unreachable!(),
+                    }
+                }
+                OwnedValue::Float(f) => {
+                    values.push(RefValue::Float(*f));
+                    writer.extend_from_slice(&f.to_be_bytes())
+                }
+                OwnedValue::Text(t) => {
+                    writer.extend_from_slice(&t.value);
+                    let end_offset = writer.pos;
+                    let len = end_offset - start_offset;
+                    let ptr = unsafe { writer.buf.as_ptr().add(start_offset) };
+                    let value = RefValue::Text(TextRef {
+                        value: RawSlice::new(ptr, len),
+                        subtype: t.subtype.clone(),
+                    });
+                    values.push(value);
+                }
+                OwnedValue::Blob(b) => {
+                    writer.extend_from_slice(b);
+                    let end_offset = writer.pos;
+                    let len = end_offset - start_offset;
+                    let ptr = unsafe { writer.buf.as_ptr().add(start_offset) };
+                    values.push(RefValue::Blob(RawSlice::new(ptr, len)));
+                }
+            };
+        }
+
+        writer.assert_finish_capacity();
+        Self {
+            payload: buf,
+            values,
+            recreating: false,
+        }
+    }
+
+    pub fn start_serialization(&mut self, payload: &[u8]) {
+        self.recreating = true;
+        self.payload.extend_from_slice(payload);
+    }
+    pub fn end_serialization(&mut self) {
+        assert!(self.recreating);
+        self.recreating = false;
+    }
+
+    pub fn add_value(&mut self, value: RefValue) {
+        assert!(self.recreating);
+        self.values.push(value);
+    }
+
+    pub fn invalidate(&mut self) {
+        self.payload.clear();
+        self.values.clear();
+    }
+
+    pub fn get_payload(&self) -> &[u8] {
+        &self.payload
+    }
+}
+
+impl Clone for ImmutableRecord {
+    fn clone(&self) -> Self {
+        let mut new_values = Vec::new();
+        let new_payload = self.payload.clone();
+        for value in &self.values {
+            let value = match value {
+                RefValue::Null => RefValue::Null,
+                RefValue::Integer(i) => RefValue::Integer(*i),
+                RefValue::Float(f) => RefValue::Float(*f),
+                RefValue::Text(text_ref) => {
+                    // let's update pointer
+                    let ptr_start = self.payload.as_ptr() as usize;
+                    let ptr_end = text_ref.value.data as usize;
+                    let len = ptr_end - ptr_start;
+                    let new_ptr = unsafe { new_payload.as_ptr().add(len) };
+                    RefValue::Text(TextRef {
+                        value: RawSlice::new(new_ptr, text_ref.value.len),
+                        subtype: text_ref.subtype.clone(),
+                    })
+                }
+                RefValue::Blob(raw_slice) => {
+                    let ptr_start = self.payload.as_ptr() as usize;
+                    let ptr_end = raw_slice.data as usize;
+                    let len = ptr_end - ptr_start;
+                    let new_ptr = unsafe { new_payload.as_ptr().add(len) };
+                    RefValue::Blob(RawSlice::new(new_ptr, raw_slice.len))
+                }
+            };
+            new_values.push(value);
+        }
+        Self {
+            payload: new_payload,
+            values: new_values,
+            recreating: self.recreating,
+        }
+    }
 }
 
 impl RefValue {
+    pub fn to_ffi(&self) -> ExtValue {
+        match self {
+            Self::Null => ExtValue::null(),
+            Self::Integer(i) => ExtValue::from_integer(*i),
+            Self::Float(fl) => ExtValue::from_float(*fl),
+            Self::Text(text) => ExtValue::from_text(
+                std::str::from_utf8(text.value.to_slice())
+                    .unwrap()
+                    .to_string(),
+            ),
+            Self::Blob(blob) => ExtValue::from_blob(blob.to_slice().to_vec()),
+        }
+    }
+
     pub fn to_owned(&self) -> OwnedValue {
         match self {
             RefValue::Null => OwnedValue::Null,
             RefValue::Integer(i) => OwnedValue::Integer(*i),
             RefValue::Float(f) => OwnedValue::Float(*f),
             RefValue::Text(text_ref) => OwnedValue::Text(Text {
-                value: Rc::new(text_ref.value.to_slice().to_vec()),
+                value: text_ref.value.to_slice().to_vec(),
                 subtype: text_ref.subtype.clone(),
             }),
-            RefValue::Blob(b) => OwnedValue::Blob(Rc::new(b.to_slice().to_vec())),
+            RefValue::Blob(b) => OwnedValue::Blob(b.to_slice().to_vec()),
+        }
+    }
+    pub fn to_blob(&self) -> Option<&[u8]> {
+        match self {
+            Self::Blob(blob) => Some(blob.to_slice()),
+            _ => None,
+        }
+    }
+}
+
+impl Display for RefValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Null => write!(f, "NULL"),
+            Self::Integer(i) => write!(f, "{}", i),
+            Self::Float(fl) => write!(f, "{:?}", fl),
+            Self::Text(s) => write!(f, "{}", s.as_str()),
+            Self::Blob(b) => write!(f, "{}", String::from_utf8_lossy(b.to_slice())),
         }
     }
 }
@@ -724,153 +1008,8 @@ impl PartialOrd<RefValue> for RefValue {
     }
 }
 
-#[allow(clippy::non_canonical_partial_ord_impl)]
-impl PartialOrd<OwnedValue> for RefValue {
-    fn partial_cmp(&self, other: &OwnedValue) -> Option<std::cmp::Ordering> {
-        match (self, other) {
-            (Self::Integer(int_left), OwnedValue::Integer(int_right)) => {
-                int_left.partial_cmp(int_right)
-            }
-            (Self::Integer(int_left), OwnedValue::Float(float_right)) => {
-                (*int_left as f64).partial_cmp(float_right)
-            }
-            (Self::Float(float_left), OwnedValue::Integer(int_right)) => {
-                float_left.partial_cmp(&(*int_right as f64))
-            }
-            (Self::Float(float_left), OwnedValue::Float(float_right)) => {
-                float_left.partial_cmp(float_right)
-            }
-            // Numeric vs Text/Blob
-            (Self::Integer(_) | Self::Float(_), OwnedValue::Text(_) | OwnedValue::Blob(_)) => {
-                Some(std::cmp::Ordering::Less)
-            }
-            (Self::Text(_) | Self::Blob(_), OwnedValue::Integer(_) | OwnedValue::Float(_)) => {
-                Some(std::cmp::Ordering::Greater)
-            }
-
-            (Self::Text(text_left), OwnedValue::Text(text_right)) => {
-                let text_left = text_left.value.to_slice();
-                text_left.partial_cmp(&text_right.value)
-            }
-            // Text vs Blob
-            (Self::Text(_), OwnedValue::Blob(_)) => Some(std::cmp::Ordering::Less),
-            (Self::Blob(_), OwnedValue::Text(_)) => Some(std::cmp::Ordering::Greater),
-
-            (Self::Blob(blob_left), OwnedValue::Blob(blob_right)) => {
-                let blob_left = blob_left.to_slice();
-                blob_left.partial_cmp(blob_right)
-            }
-            (Self::Null, OwnedValue::Null) => Some(std::cmp::Ordering::Equal),
-            (Self::Null, _) => Some(std::cmp::Ordering::Less),
-            (_, OwnedValue::Null) => Some(std::cmp::Ordering::Greater),
-        }
-    }
-}
-
-#[allow(clippy::non_canonical_partial_ord_impl)]
-impl PartialOrd<RefValue> for OwnedValue {
-    fn partial_cmp(&self, other: &RefValue) -> Option<std::cmp::Ordering> {
-        match (self, other) {
-            (Self::Integer(int_left), RefValue::Integer(int_right)) => {
-                int_left.partial_cmp(int_right)
-            }
-            (Self::Integer(int_left), RefValue::Float(float_right)) => {
-                (*int_left as f64).partial_cmp(float_right)
-            }
-            (Self::Float(float_left), RefValue::Integer(int_right)) => {
-                float_left.partial_cmp(&(*int_right as f64))
-            }
-            (Self::Float(float_left), RefValue::Float(float_right)) => {
-                float_left.partial_cmp(float_right)
-            }
-            // Numeric vs Text/Blob
-            (Self::Integer(_) | Self::Float(_), RefValue::Text(_) | RefValue::Blob(_)) => {
-                Some(std::cmp::Ordering::Less)
-            }
-            (Self::Text(_) | Self::Blob(_), RefValue::Integer(_) | RefValue::Float(_)) => {
-                Some(std::cmp::Ordering::Greater)
-            }
-
-            (Self::Text(text_left), RefValue::Text(text_right)) => {
-                let text_right = text_right.value.to_slice();
-                text_left.value.as_slice().partial_cmp(text_right)
-            }
-            // Text vs Blob
-            (Self::Text(_), RefValue::Blob(_)) => Some(std::cmp::Ordering::Less),
-            (Self::Blob(_), RefValue::Text(_)) => Some(std::cmp::Ordering::Greater),
-
-            (Self::Blob(blob_left), RefValue::Blob(blob_right)) => {
-                let blob_right = blob_right.to_slice();
-                blob_left.as_slice().partial_cmp(blob_right)
-            }
-            (Self::Null, RefValue::Null) => Some(std::cmp::Ordering::Equal),
-            (Self::Null, _) => Some(std::cmp::Ordering::Less),
-            (_, RefValue::Null) => Some(std::cmp::Ordering::Greater),
-        }
-    }
-}
-
-impl PartialEq<RefValue> for OwnedValue {
-    fn eq(&self, other: &RefValue) -> bool {
-        match (self, other) {
-            (Self::Integer(int_left), RefValue::Integer(int_right)) => int_left == int_right,
-            (Self::Float(float_left), RefValue::Float(float_right)) => float_left == float_right,
-            (Self::Text(text_left), RefValue::Text(text_right)) => {
-                text_left.value.as_slice() == text_right.value.to_slice()
-            }
-            (Self::Blob(blob_left), RefValue::Blob(blob_right)) => {
-                blob_left.as_slice() == blob_right.to_slice()
-            }
-            (Self::Null, RefValue::Null) => true,
-            _ => false,
-        }
-    }
-}
-
-impl PartialEq<OwnedValue> for RefValue {
-    fn eq(&self, other: &OwnedValue) -> bool {
-        match (self, other) {
-            (Self::Integer(int_left), OwnedValue::Integer(int_right)) => int_left == int_right,
-            (Self::Float(float_left), OwnedValue::Float(float_right)) => float_left == float_right,
-            (Self::Text(text_left), OwnedValue::Text(text_right)) => {
-                text_left.value.to_slice() == text_right.value.as_slice()
-            }
-            (Self::Blob(blob_left), OwnedValue::Blob(blob_right)) => {
-                blob_left.to_slice() == blob_right.as_slice()
-            }
-            (Self::Null, OwnedValue::Null) => true,
-            _ => false,
-        }
-    }
-}
-
-pub fn compare_record_to_immutable(
-    record: &[OwnedValue],
-    immutable: &[RefValue],
-) -> std::cmp::Ordering {
-    for (a, b) in record.iter().zip(immutable.iter()) {
-        match a.partial_cmp(b).unwrap() {
-            Ordering::Equal => {}
-            order => {
-                return order;
-            }
-        }
-    }
-    Ordering::Equal
-}
-pub fn compare_immutable_to_record(
-    immutable: &[RefValue],
-    record: &[OwnedValue],
-) -> std::cmp::Ordering {
-    for (a, b) in immutable.iter().zip(record.iter()) {
-        match a.partial_cmp(b).unwrap() {
-            Ordering::Equal => {}
-            order => {
-                return order;
-            }
-        }
-    }
-    Ordering::Equal
+pub fn compare_immutable(l: &[RefValue], r: &[RefValue]) -> std::cmp::Ordering {
+    l.partial_cmp(r).unwrap()
 }
 
 const I8_LOW: i64 = -128;
@@ -1063,7 +1202,7 @@ pub enum SeekOp {
 #[derive(Clone, PartialEq, Debug)]
 pub enum SeekKey<'a> {
     TableRowId(u64),
-    IndexKey(&'a Record),
+    IndexKey(&'a ImmutableRecord),
 }
 
 impl RawSlice {
@@ -1082,7 +1221,6 @@ impl RawSlice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::rc::Rc;
 
     #[test]
     fn test_serialize_null() {
@@ -1217,7 +1355,7 @@ mod tests {
 
     #[test]
     fn test_serialize_blob() {
-        let blob = Rc::new(vec![1, 2, 3, 4, 5]);
+        let blob = vec![1, 2, 3, 4, 5];
         let record = Record::new(vec![OwnedValue::Blob(blob.clone())]);
         let mut buf = Vec::new();
         record.serialize(&mut buf);

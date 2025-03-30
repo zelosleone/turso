@@ -81,11 +81,7 @@ fn test_wal_1_writer_1_reader() -> Result<()> {
                     match rows.step().unwrap() {
                         StepResult::Row => {
                             let row = rows.row().unwrap();
-                            let first_value = row.get_value(0);
-                            let id = match first_value {
-                                limbo_core::OwnedValue::Integer(i) => *i as i32,
-                                _ => unreachable!(),
-                            };
+                            let id = row.get::<i64>(0).unwrap();
                             assert_eq!(id, i);
                             i += 1;
                         }
