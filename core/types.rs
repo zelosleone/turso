@@ -673,29 +673,28 @@ struct AppendWriter<'a> {
     buf_ptr_start: *const u8,
 }
 
-impl Drop for AppendWriter {
-    fn drop(&mut self) {
-        // let's make sure we didn't reallocate anywhere else
-        assert_eq!(self.buf_capacity_start, self.buf.capacity());
-        assert_eq!(self.buf_ptr_start, self.buf.as_ptr());
-    }
-}
-
 impl<'a> AppendWriter<'a> {
     pub fn new(buf: &'a mut Vec<u8>, pos: usize) -> Self {
+        let buf_ptr_start = buf.as_ptr();
+        let buf_capacity_start = buf.capacity();
         Self {
             buf,
             pos,
-            buf_capacity_start: buf.capacity(),
-            buf_ptr_start: buf.as_ptr(),
+            buf_capacity_start,
+            buf_ptr_start,
         }
     }
 
     #[inline]
     pub fn extend_from_slice(&mut self, slice: &[u8]) {
-        dbg!(self.pos, slice);
         self.buf[self.pos..self.pos + slice.len()].copy_from_slice(slice);
         self.pos += slice.len();
+    }
+
+    fn assert_finish_capacity(&self) {
+        // let's make sure we didn't reallocate anywhere else
+        assert_eq!(self.buf_capacity_start, self.buf.capacity());
+        assert_eq!(self.buf_ptr_start, self.buf.as_ptr());
     }
 }
 
@@ -832,7 +831,7 @@ impl ImmutableRecord {
             };
         }
 
-        assert_eq!(writer.pos, buf.len());
+        writer.assert_finish_capacity();
         Self {
             payload: buf,
             values,
