@@ -21,7 +21,7 @@ use crate::util::{
     checked_cast_text_to_numeric, parse_schema_rows, RoundToPrecision,
 };
 use crate::vdbe::builder::CursorType;
-use crate::vdbe::insn::Insn;
+use crate::vdbe::insn::{IdxInsertFlags, Insn};
 use crate::vector::{vector32, vector64, vector_distance_cos, vector_extract};
 
 use crate::{info, MvCursor, RefValue, Row, StepResult, TransactionState};
@@ -2049,6 +2049,24 @@ pub fn op_idx_ge(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_seek_end(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    if let Insn::SeekEnd { cursor_id } = *insn {
+        let mut cursor = state.get_cursor(cursor_id);
+        let cursor = cursor.as_btree_mut();
+        return_if_io!(cursor.seek_end());
+    } else {
+        unreachable!("unexpected Insn {:?}", insn)
+    }
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 pub fn op_idx_le(
     program: &Program,
     state: &mut ProgramState,
@@ -3706,6 +3724,73 @@ pub fn op_delete_async(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_idx_insert_async(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    if let Insn::IdxInsertAsync {
+        cursor_id,
+        record_reg,
+        flags,
+        ..
+    } = *insn
+    {
+        let (_, cursor_type) = program.cursor_ref.get(cursor_id).unwrap();
+        let CursorType::BTreeIndex(index_meta) = cursor_type else {
+            panic!("IdxInsert: not a BTree index cursor");
+        };
+        {
+            let mut cursor = state.get_cursor(cursor_id);
+            let cursor = cursor.as_btree_mut();
+            let record = match &state.registers[record_reg] {
+                Register::Record(ref r) => r,
+                _ => return Err(LimboError::InternalError("expected record".into())),
+            };
+            let moved_before = if index_meta.unique {
+                // check for uniqueness violation
+                match cursor.key_exists_in_index(record)? {
+                    CursorResult::Ok(true) => {
+                        return Err(LimboError::Constraint(
+                            "UNIQUE constraint failed: duplicate key".into(),
+                        ))
+                    }
+                    CursorResult::IO => return Ok(InsnFunctionStepResult::IO),
+                    CursorResult::Ok(false) => {}
+                };
+                false
+            } else {
+                flags.has(IdxInsertFlags::USE_SEEK)
+            };
+            // insert record as key
+            return_if_io!(cursor.insert_index_key(record));
+        }
+        state.pc += 1;
+    }
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_idx_insert_await(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    if let Insn::IdxInsertAwait { cursor_id } = *insn {
+        {
+            let mut cursor = state.get_cursor(cursor_id);
+            let cursor = cursor.as_btree_mut();
+            cursor.wait_for_completion()?;
+        }
+        // TODO: flag optimizations, update n_change if OPFLAG_NCHANGE
+        state.pc += 1;
+    }
+    Ok(InsnFunctionStepResult::Step)
+}
+
 pub fn op_delete_await(
     program: &Program,
     state: &mut ProgramState,
@@ -3889,6 +3974,7 @@ pub fn op_open_write_async(
     let Insn::OpenWriteAsync {
         cursor_id,
         root_page,
+        ..
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
