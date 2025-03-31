@@ -1842,7 +1842,7 @@ impl BTreeCursor {
         let new_root_page_type = match root_contents.page_type() {
             PageType::IndexLeaf => PageType::IndexInterior,
             PageType::TableLeaf => PageType::TableInterior,
-            _ => unreachable!("invalid root non leaf page type"),
+            other => other,
         } as u8;
         // set new page type
         root_contents.write_u8(PAGE_HEADER_OFFSET_PAGE_TYPE, new_root_page_type);
