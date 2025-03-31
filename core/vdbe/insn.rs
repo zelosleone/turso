@@ -926,6 +926,13 @@ pub fn exec_remainder(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
                 OwnedValue::Float((lhs % rhs_int) as f64)
             }
         }
+        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_remainder(
+            &cast_text_to_numeric(lhs.as_str()),
+            &cast_text_to_numeric(rhs.as_str()),
+        ),
+        (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
+            exec_remainder(&cast_text_to_numeric(text.as_str()), other)
+        }
         other => todo!("remainder not implemented for: {:?} {:?}", lhs, other),
     }
 }
@@ -1140,6 +1147,360 @@ mod tests {
         vdbe::insn::exec_or,
     };
 
+    use super::exec_add;
+
+    #[test]
+    fn test_exec_add() {
+        let inputs = vec![
+            (OwnedValue::Integer(3), OwnedValue::Integer(1)),
+            (OwnedValue::Float(3.0), OwnedValue::Float(1.0)),
+            (OwnedValue::Float(3.0), OwnedValue::Integer(1)),
+            (OwnedValue::Integer(3), OwnedValue::Float(1.0)),
+            (OwnedValue::Null, OwnedValue::Null),
+            (OwnedValue::Null, OwnedValue::Integer(1)),
+            (OwnedValue::Null, OwnedValue::Float(1.0)),
+            (OwnedValue::Null, OwnedValue::Text(Text::from_str("2"))),
+            (OwnedValue::Integer(1), OwnedValue::Null),
+            (OwnedValue::Float(1.0), OwnedValue::Null),
+            (OwnedValue::Text(Text::from_str("1")), OwnedValue::Null),
+            (
+                OwnedValue::Text(Text::from_str("1")),
+                OwnedValue::Text(Text::from_str("3")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("1.0")),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("1.0")),
+                OwnedValue::Float(3.0),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("1.0")),
+                OwnedValue::Integer(3),
+            ),
+            (
+                OwnedValue::Float(1.0),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+            (
+                OwnedValue::Integer(1),
+                OwnedValue::Text(Text::from_str("3")),
+            ),
+        ];
+
+        let outputs = [
+            OwnedValue::Integer(4),
+            OwnedValue::Float(4.0),
+            OwnedValue::Float(4.0),
+            OwnedValue::Float(4.0),
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Integer(4),
+            OwnedValue::Float(4.0),
+            OwnedValue::Float(4.0),
+            OwnedValue::Float(4.0),
+            OwnedValue::Float(4.0),
+            OwnedValue::Float(4.0),
+        ];
+
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "Inputs and Outputs should have same size"
+        );
+        for (i, (lhs, rhs)) in inputs.iter().enumerate() {
+            assert_eq!(
+                exec_add(lhs, rhs),
+                outputs[i],
+                "Wrong ADD for lhs: {}, rhs: {}",
+                lhs,
+                rhs
+            );
+        }
+    }
+
+    use super::exec_subtract;
+
+    #[test]
+    fn test_exec_subtract() {
+        let inputs = vec![
+            (OwnedValue::Integer(3), OwnedValue::Integer(1)),
+            (OwnedValue::Float(3.0), OwnedValue::Float(1.0)),
+            (OwnedValue::Float(3.0), OwnedValue::Integer(1)),
+            (OwnedValue::Integer(3), OwnedValue::Float(1.0)),
+            (OwnedValue::Null, OwnedValue::Null),
+            (OwnedValue::Null, OwnedValue::Integer(1)),
+            (OwnedValue::Null, OwnedValue::Float(1.0)),
+            (OwnedValue::Null, OwnedValue::Text(Text::from_str("1"))),
+            (OwnedValue::Integer(1), OwnedValue::Null),
+            (OwnedValue::Float(1.0), OwnedValue::Null),
+            (OwnedValue::Text(Text::from_str("4")), OwnedValue::Null),
+            (
+                OwnedValue::Text(Text::from_str("1")),
+                OwnedValue::Text(Text::from_str("3")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("1.0")),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("1.0")),
+                OwnedValue::Float(3.0),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("1.0")),
+                OwnedValue::Integer(3),
+            ),
+            (
+                OwnedValue::Float(1.0),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+            (
+                OwnedValue::Integer(1),
+                OwnedValue::Text(Text::from_str("3")),
+            ),
+        ];
+
+        let outputs = [
+            OwnedValue::Integer(2),
+            OwnedValue::Float(2.0),
+            OwnedValue::Float(2.0),
+            OwnedValue::Float(2.0),
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Integer(-2),
+            OwnedValue::Float(-2.0),
+            OwnedValue::Float(-2.0),
+            OwnedValue::Float(-2.0),
+            OwnedValue::Float(-2.0),
+            OwnedValue::Float(-2.0),
+        ];
+
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "Inputs and Outputs should have same size"
+        );
+        for (i, (lhs, rhs)) in inputs.iter().enumerate() {
+            assert_eq!(
+                exec_subtract(lhs, rhs),
+                outputs[i],
+                "Wrong subtract for lhs: {}, rhs: {}",
+                lhs,
+                rhs
+            );
+        }
+    }
+    use super::exec_multiply;
+
+    #[test]
+    fn test_exec_multiply() {
+        let inputs = vec![
+            (OwnedValue::Integer(3), OwnedValue::Integer(2)),
+            (OwnedValue::Float(3.0), OwnedValue::Float(2.0)),
+            (OwnedValue::Float(3.0), OwnedValue::Integer(2)),
+            (OwnedValue::Integer(3), OwnedValue::Float(2.0)),
+            (OwnedValue::Null, OwnedValue::Null),
+            (OwnedValue::Null, OwnedValue::Integer(1)),
+            (OwnedValue::Null, OwnedValue::Float(1.0)),
+            (OwnedValue::Null, OwnedValue::Text(Text::from_str("1"))),
+            (OwnedValue::Integer(1), OwnedValue::Null),
+            (OwnedValue::Float(1.0), OwnedValue::Null),
+            (OwnedValue::Text(Text::from_str("4")), OwnedValue::Null),
+            (
+                OwnedValue::Text(Text::from_str("2")),
+                OwnedValue::Text(Text::from_str("3")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("2.0")),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("2.0")),
+                OwnedValue::Float(3.0),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("2.0")),
+                OwnedValue::Integer(3),
+            ),
+            (
+                OwnedValue::Float(2.0),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+            (
+                OwnedValue::Integer(2),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+        ];
+
+        let outputs = [
+            OwnedValue::Integer(6),
+            OwnedValue::Float(6.0),
+            OwnedValue::Float(6.0),
+            OwnedValue::Float(6.0),
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Integer(6),
+            OwnedValue::Float(6.0),
+            OwnedValue::Float(6.0),
+            OwnedValue::Float(6.0),
+            OwnedValue::Float(6.0),
+            OwnedValue::Float(6.0),
+        ];
+
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "Inputs and Outputs should have same size"
+        );
+        for (i, (lhs, rhs)) in inputs.iter().enumerate() {
+            assert_eq!(
+                exec_multiply(lhs, rhs),
+                outputs[i],
+                "Wrong multiply for lhs: {}, rhs: {}",
+                lhs,
+                rhs
+            );
+        }
+    }
+    use super::exec_divide;
+
+    #[test]
+    fn test_exec_divide() {
+        let inputs = vec![
+            (OwnedValue::Integer(1), OwnedValue::Integer(0)),
+            (OwnedValue::Float(1.0), OwnedValue::Float(0.0)),
+            (OwnedValue::Integer(i64::MIN), OwnedValue::Integer(-1)),
+            (OwnedValue::Float(6.0), OwnedValue::Float(2.0)),
+            (OwnedValue::Float(6.0), OwnedValue::Integer(2)),
+            (OwnedValue::Integer(6), OwnedValue::Integer(2)),
+            (OwnedValue::Null, OwnedValue::Integer(2)),
+            (OwnedValue::Integer(2), OwnedValue::Null),
+            (OwnedValue::Null, OwnedValue::Null),
+            (
+                OwnedValue::Text(Text::from_str("6")),
+                OwnedValue::Text(Text::from_str("2")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("6")),
+                OwnedValue::Integer(2),
+            ),
+        ];
+
+        let outputs = [
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Float(9.223372036854776e18),
+            OwnedValue::Float(3.0),
+            OwnedValue::Float(3.0),
+            OwnedValue::Float(3.0),
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Float(3.0),
+            OwnedValue::Float(3.0),
+        ];
+
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "Inputs and Outputs should have same size"
+        );
+        for (i, (lhs, rhs)) in inputs.iter().enumerate() {
+            assert_eq!(
+                exec_divide(lhs, rhs),
+                outputs[i],
+                "Wrong divide for lhs: {}, rhs: {}",
+                lhs,
+                rhs
+            );
+        }
+    }
+
+    use super::exec_remainder;
+    #[test]
+    fn test_exec_remainder() {
+        let inputs = vec![
+            (OwnedValue::Null, OwnedValue::Null),
+            (OwnedValue::Null, OwnedValue::Float(1.0)),
+            (OwnedValue::Null, OwnedValue::Integer(1)),
+            (OwnedValue::Null, OwnedValue::Text(Text::from_str("1"))),
+            (OwnedValue::Float(1.0), OwnedValue::Null),
+            (OwnedValue::Integer(1), OwnedValue::Null),
+            (OwnedValue::Integer(12), OwnedValue::Integer(0)),
+            (OwnedValue::Float(12.0), OwnedValue::Float(0.0)),
+            (OwnedValue::Float(12.0), OwnedValue::Integer(0)),
+            (OwnedValue::Integer(12), OwnedValue::Float(0.0)),
+            (OwnedValue::Integer(12), OwnedValue::Integer(3)),
+            (OwnedValue::Float(12.0), OwnedValue::Float(3.0)),
+            (OwnedValue::Float(12.0), OwnedValue::Integer(3)),
+            (OwnedValue::Integer(12), OwnedValue::Float(3.0)),
+            (
+                OwnedValue::Text(Text::from_str("12.0")),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("12.0")),
+                OwnedValue::Float(3.0),
+            ),
+            (
+                OwnedValue::Float(12.0),
+                OwnedValue::Text(Text::from_str("12.0")),
+            ),
+        ];
+        let outputs = vec![
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Integer(0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Float(0.0),
+        ];
+
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "Inputs and Outputs should have same size"
+        );
+
+        for (i, (lhs, rhs)) in inputs.iter().enumerate() {
+            assert_eq!(
+                exec_remainder(lhs, rhs),
+                outputs[i],
+                "Wrong remainder for lhs: {}, rhs: {}",
+                lhs,
+                rhs
+            );
+        }
+    }
+
     use super::exec_and;
 
     #[test]
@@ -1163,7 +1524,7 @@ mod tests {
                 OwnedValue::Text(Text::from_str("1")),
             ),
         ];
-        let outpus = [
+        let outputs = [
             OwnedValue::Integer(0),
             OwnedValue::Null,
             OwnedValue::Null,
@@ -1176,13 +1537,13 @@ mod tests {
 
         assert_eq!(
             inputs.len(),
-            outpus.len(),
+            outputs.len(),
             "Inputs and Outputs should have same size"
         );
         for (i, (lhs, rhs)) in inputs.iter().enumerate() {
             assert_eq!(
                 exec_and(lhs, rhs),
-                outpus[i],
+                outputs[i],
                 "Wrong AND for lhs: {}, rhs: {}",
                 lhs,
                 rhs
