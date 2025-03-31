@@ -2,7 +2,7 @@ use tracing::debug;
 
 use crate::storage::pager::Pager;
 use crate::storage::sqlite3_ondisk::{
-    read_varint, BTreeCell, PageContent, PageType, TableInteriorCell, TableLeafCell,
+    read_u32, read_varint, BTreeCell, PageContent, PageType, TableInteriorCell, TableLeafCell,
 };
 use crate::MvCursor;
 
@@ -1697,8 +1697,12 @@ impl BTreeCursor {
                     let mut new_divider_cell = Vec::new();
                     if !is_leaf_page {
                         // Interior
+                        // Make this page's rightmost pointer point to pointer of divider cell before modification
+                        let previous_pointer_divider = read_u32(&divider_cell, 0);
                         page.get_contents()
-                            .write_u32(PAGE_HEADER_OFFSET_RIGHTMOST_PTR, page.get().id as u32);
+                            .write_u32(PAGE_HEADER_OFFSET_RIGHTMOST_PTR, previous_pointer_divider);
+                        // divider cell now points to this page
+                        divider_cell[0..4].copy_from_slice(&(page.get().id as u32).to_be_bytes());
                         new_divider_cell.extend_from_slice(divider_cell);
                     } else if leaf_data {
                         // Leaf table
