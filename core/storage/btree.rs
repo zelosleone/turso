@@ -4036,14 +4036,11 @@ mod tests {
             }
             for key in keys.iter() {
                 let seek_key = SeekKey::TableRowId(*key as u64);
-                assert!(
-                    matches!(
-                        cursor.seek(seek_key, SeekOp::EQ).unwrap(),
-                        CursorResult::Ok(true)
-                    ),
-                    "key {} is not found",
-                    key
-                );
+                tracing::debug!("seeking key: {}", key);
+                let found =
+                    run_until_done(|| cursor.seek(seek_key.clone(), SeekOp::EQ), pager.deref())
+                        .unwrap();
+                assert!(found, "key {} is not found", key);
             }
         }
     }
