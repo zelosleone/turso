@@ -1,34 +1,23 @@
-#[cfg(feature = "json")]
-mod error;
-#[cfg(feature = "json")]
 mod cache;
-#[cfg(feature = "json")]
-mod ops;
-#[cfg(feature = "json")]
-mod path;
-#[cfg(feature = "json")]
+mod error;
 mod jsonb;
+mod ops;
+mod path;
 
-#[cfg(feature = "json")]
 use crate::json::error::Error as JsonError;
-#[cfg(feature = "json")]
 pub use crate::json::ops::{
     json_insert, json_patch, json_remove, json_replace, jsonb_insert, jsonb_patch, jsonb_remove,
     jsonb_replace,
 };
-#[cfg(feature = "json")]
 use crate::json::path::{json_path, JsonPath, PathElement};
 use crate::types::{OwnedValue, OwnedValueType, Text, TextSubtype};
 use crate::vdbe::Register;
 use crate::{bail_constraint_error, bail_parse_error, LimboError};
-#[cfg(feature = "json")]
 pub use cache::JsonCacheCell;
-#[cfg(feature = "json")]
 use jsonb::{ElementType, Jsonb, JsonbHeader, PathOperationMode, SearchOperation, SetOperation};
 use std::borrow::Cow;
 use std::str::FromStr;
 
-#[cfg(feature = "json")]
 #[derive(Debug, Clone, Copy)]
 pub enum Conv {
     Strict,
