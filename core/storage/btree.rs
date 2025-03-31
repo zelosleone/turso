@@ -3597,6 +3597,7 @@ mod tests {
     use crate::Connection;
     use crate::{BufferPool, DatabaseStorage, WalFile, WalFileShared, WriteCompletion};
     use std::cell::RefCell;
+    use std::collections::HashSet;
     use std::mem::transmute;
     use std::ops::Deref;
     use std::panic;
@@ -3991,6 +3992,7 @@ mod tests {
         size: impl Fn(&mut ChaCha8Rng) -> usize,
     ) {
         let (mut rng, seed) = rng_from_time();
+        let mut seen = HashSet::new();
         tracing::info!("super seed: {}", seed);
         for _ in 0..attempts {
             let (pager, root_page) = empty_btree();
@@ -4002,6 +4004,7 @@ mod tests {
             for insert_id in 0..inserts {
                 let size = size(&mut rng);
                 let key = (rng.next_u64() % (1 << 30)) as i64;
+                assert!(seen.insert(key));
                 keys.push(key);
                 tracing::info!(
                     "INSERT INTO t VALUES ({}, randomblob({})); -- {}",
