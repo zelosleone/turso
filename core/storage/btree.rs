@@ -4007,8 +4007,20 @@ mod tests {
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             for insert_id in 0..inserts {
                 let size = size(&mut rng);
-                let key = (rng.next_u64() % (1 << 30)) as i64;
-                assert!(seen.insert(key));
+                let key = {
+                    let mut result = None;
+                    loop {
+                        let key = (rng.next_u64() % (1 << 30)) as i64;
+                        if seen.contains(&key) {
+                            continue;
+                        } else {
+                            seen.insert(key);
+                        }
+                        result = Some(key);
+                        break;
+                    }
+                    result.unwrap()
+                };
                 keys.push(key);
                 tracing::info!(
                     "INSERT INTO t VALUES ({}, randomblob({})); -- {}",
