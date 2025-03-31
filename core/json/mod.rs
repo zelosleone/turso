@@ -5,7 +5,7 @@ mod cache;
 #[cfg(feature = "json")]
 mod ops;
 #[cfg(feature = "json")]
-mod json_path;
+mod path;
 #[cfg(feature = "json")]
 mod jsonb;
 
@@ -17,7 +17,7 @@ pub use crate::json::ops::{
     jsonb_replace,
 };
 #[cfg(feature = "json")]
-use crate::json::json_path::{json_path, JsonPath, PathElement};
+use crate::json::path::{json_path, JsonPath, PathElement};
 use crate::types::{OwnedValue, OwnedValueType, Text, TextSubtype};
 use crate::vdbe::Register;
 use crate::{bail_constraint_error, bail_parse_error, LimboError};
