@@ -4008,7 +4008,7 @@ mod tests {
             for insert_id in 0..inserts {
                 let size = size(&mut rng);
                 let key = {
-                    let mut result = None;
+                    let result;
                     loop {
                         let key = (rng.next_u64() % (1 << 30)) as i64;
                         if seen.contains(&key) {
@@ -4016,10 +4016,10 @@ mod tests {
                         } else {
                             seen.insert(key);
                         }
-                        result = Some(key);
+                        result = key;
                         break;
                     }
-                    result.unwrap()
+                    result
                 };
                 keys.push(key);
                 tracing::info!(
