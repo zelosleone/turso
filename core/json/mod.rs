@@ -1,7 +1,7 @@
 #[cfg(feature = "json")]
 mod error;
 #[cfg(feature = "json")]
-mod json_cache;
+mod cache;
 #[cfg(feature = "json")]
 mod json_operations;
 #[cfg(feature = "json")]
@@ -22,7 +22,7 @@ use crate::types::{OwnedValue, OwnedValueType, Text, TextSubtype};
 use crate::vdbe::Register;
 use crate::{bail_constraint_error, bail_parse_error, LimboError};
 #[cfg(feature = "json")]
-pub use json_cache::JsonCacheCell;
+pub use cache::JsonCacheCell;
 #[cfg(feature = "json")]
 use jsonb::{ElementType, Jsonb, JsonbHeader, PathOperationMode, SearchOperation, SetOperation};
 use std::borrow::Cow;
