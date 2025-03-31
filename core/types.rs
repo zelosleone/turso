@@ -25,6 +25,7 @@ pub enum OwnedValueType {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TextSubtype {
     Text,
+    #[cfg(feature = "json")]
     Json,
 }
 
@@ -51,7 +52,7 @@ impl Text {
             subtype: TextSubtype::Text,
         }
     }
-
+    #[cfg(feature = "json")]
     pub fn json(value: String) -> Self {
         Self {
             value: value.into_bytes(),
@@ -327,11 +328,11 @@ impl OwnedValue {
                 let Some(text) = v.to_text() else {
                     return Ok(OwnedValue::Null);
                 };
+                #[cfg(feature = "json")]
                 if v.is_json() {
-                    Ok(OwnedValue::Text(Text::json(text.to_string())))
-                } else {
-                    Ok(OwnedValue::build_text(text))
+                    return Ok(OwnedValue::Text(Text::json(text.to_string())));
                 }
+                Ok(OwnedValue::build_text(text))
             }
             ExtValueType::Blob => {
                 let Some(blob) = v.to_blob() else {
