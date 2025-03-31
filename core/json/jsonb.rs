@@ -7,7 +7,7 @@ use std::{
     str::{from_utf8, from_utf8_unchecked},
 };
 
-use super::json_path::{JsonPath, PathElement};
+use super::path::{JsonPath, PathElement};
 
 const SIZE_MARKER_8BIT: u8 = 12;
 const SIZE_MARKER_16BIT: u8 = 13;
@@ -3607,7 +3607,7 @@ world""#,
 #[cfg(test)]
 mod path_operations_tests {
     use super::*;
-    use crate::json::json_path::{JsonPath, PathElement};
+    use crate::json::path::{JsonPath, PathElement};
     use std::borrow::Cow;
 
     // Helper function to create a simple JsonPath
