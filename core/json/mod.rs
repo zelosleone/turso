@@ -3,7 +3,7 @@ mod error;
 #[cfg(feature = "json")]
 mod cache;
 #[cfg(feature = "json")]
-mod json_operations;
+mod ops;
 #[cfg(feature = "json")]
 mod json_path;
 #[cfg(feature = "json")]
@@ -12,7 +12,7 @@ mod jsonb;
 #[cfg(feature = "json")]
 use crate::json::error::Error as JsonError;
 #[cfg(feature = "json")]
-pub use crate::json::json_operations::{
+pub use crate::json::ops::{
     json_insert, json_patch, json_remove, json_replace, jsonb_insert, jsonb_patch, jsonb_remove,
     jsonb_replace,
 };
