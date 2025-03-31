@@ -3597,6 +3597,7 @@ mod tests {
     use crate::Connection;
     use crate::{BufferPool, DatabaseStorage, WalFile, WalFileShared, WriteCompletion};
     use std::cell::RefCell;
+    use std::collections::HashSet;
     use std::mem::transmute;
     use std::ops::Deref;
     use std::panic;
@@ -3991,6 +3992,7 @@ mod tests {
         size: impl Fn(&mut ChaCha8Rng) -> usize,
     ) {
         let (mut rng, seed) = rng_from_time();
+        let mut seen = HashSet::new();
         tracing::info!("super seed: {}", seed);
         for _ in 0..attempts {
             let (pager, root_page) = empty_btree();
@@ -4002,6 +4004,7 @@ mod tests {
             for insert_id in 0..inserts {
                 let size = size(&mut rng);
                 let key = (rng.next_u64() % (1 << 30)) as i64;
+                assert!(seen.insert(key));
                 keys.push(key);
                 tracing::info!(
                     "INSERT INTO t VALUES ({}, randomblob({})); -- {}",
@@ -4033,14 +4036,11 @@ mod tests {
             }
             for key in keys.iter() {
                 let seek_key = SeekKey::TableRowId(*key as u64);
-                assert!(
-                    matches!(
-                        cursor.seek(seek_key, SeekOp::EQ).unwrap(),
-                        CursorResult::Ok(true)
-                    ),
-                    "key {} is not found",
-                    key
-                );
+                tracing::debug!("seeking key: {}", key);
+                let found =
+                    run_until_done(|| cursor.seek(seek_key.clone(), SeekOp::EQ), pager.deref())
+                        .unwrap();
+                assert!(found, "key {} is not found", key);
             }
         }
     }
@@ -4098,25 +4098,21 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     pub fn btree_insert_fuzz_run_random() {
         btree_insert_fuzz_run(128, 16, |rng| (rng.next_u32() % 4096) as usize);
     }
 
     #[test]
-    #[ignore]
     pub fn btree_insert_fuzz_run_small() {
         btree_insert_fuzz_run(1, 1024, |rng| (rng.next_u32() % 128) as usize);
     }
 
     #[test]
-    #[ignore]
     pub fn btree_insert_fuzz_run_big() {
         btree_insert_fuzz_run(64, 32, |rng| 3 * 1024 + (rng.next_u32() % 1024) as usize);
     }
 
     #[test]
-    #[ignore]
     pub fn btree_insert_fuzz_run_overflow() {
         btree_insert_fuzz_run(64, 32, |rng| (rng.next_u32() % 32 * 1024) as usize);
     }
