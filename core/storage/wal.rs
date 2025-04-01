@@ -381,6 +381,7 @@ impl Wal for WalFile {
     }
 
     /// End a read transaction.
+    #[inline(always)]
     fn end_read_tx(&self) -> Result<LimboResult> {
         tracing::debug!("end_read_tx");
         let read_lock = &mut self.get_shared().read_locks[self.max_frame_read_lock_index];

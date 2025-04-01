@@ -240,10 +240,12 @@ impl Pager {
         (db_header.page_size - db_header.reserved_space as u16) as usize
     }
 
+    #[inline(always)]
     pub fn begin_read_tx(&self) -> Result<LimboResult> {
         self.wal.borrow_mut().begin_read_tx()
     }
 
+    #[inline(always)]
     pub fn begin_write_tx(&self) -> Result<LimboResult> {
         self.wal.borrow_mut().begin_write_tx()
     }
