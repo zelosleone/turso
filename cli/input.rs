@@ -168,30 +168,13 @@ pub fn get_io(db_location: DbLocation, io_choice: &str) -> anyhow::Result<Arc<dy
     })
 }
 
-pub const HELP_MSG: &str = r#"
+pub const BEFORE_HELP_MSG: &str = r#"
+
 Limbo SQL Shell Help
 ==============
 Welcome to the Limbo SQL Shell! You can execute any standard SQL command here.
-In addition to standard SQL commands, the following special commands are available:
-
-Special Commands:
------------------
-.quit                      Stop interpreting input stream and exit
-.show                      Display current settings
-.open <database_file>      Open and connect to a database file
-.mode <mode>               Change the output mode. Available modes are 'list' and 'pretty'
-.schema <table_name>       Show the schema of the specified table
-.tables <pattern>          List names of tables matching LIKE pattern TABLE
-.opcodes                   Display all the opcodes defined by the virtual machine
-.cd <directory>            Change the current working directory
-.nullvalue <string>        Set the value to be displayed for null values
-.echo on|off               Toggle echo mode to repeat commands before execution
-.import --csv FILE TABLE   Import csv data from FILE into TABLE
-.dump                      Output database contents as SQL
-.load                      Load an extension library
-.help                      Display this help message
-
-Usage Examples:
+In addition to standard SQL commands, the following special commands are available:"#;
+pub const AFTER_HELP_MSG: &str = r#"Usage Examples:
 ---------------
 1. To quit the Limbo SQL Shell:
    .quit
@@ -229,6 +212,9 @@ Usage Examples:
 12. To load an extension library:
    .load /target/debug/liblimbo_regexp
 
+13. To list all available VFS:
+   .listvfs
+
 Note:
 - All SQL commands must end with a semicolon (;).
-- Special commands do not require a semicolon."#;
+- Special commands start with a dot (.) and are not required to end with a semicolon."#;
