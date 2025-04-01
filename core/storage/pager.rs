@@ -223,6 +223,11 @@ impl Pager {
     pub fn do_allocate_page(&self, page_type: PageType, offset: usize) -> PageRef {
         let page = self.allocate_page().unwrap();
         crate::btree_init_page(&page, page_type, offset, self.usable_space() as u16);
+        tracing::debug!(
+            "do_allocate_page(id={}, page_type={:?})",
+            page.get().id,
+            page.get_contents().page_type()
+        );
         page
     }
 
@@ -262,11 +267,11 @@ impl Pager {
 
     /// Reads a page from the database.
     pub fn read_page(&self, page_idx: usize) -> Result<PageRef> {
-        tracing::debug!("read_page(page_idx = {})", page_idx);
+        tracing::trace!("read_page(page_idx = {})", page_idx);
         let mut page_cache = self.page_cache.write();
         let page_key = PageCacheKey::new(page_idx, Some(self.wal.borrow().get_max_frame()));
         if let Some(page) = page_cache.get(&page_key) {
-            tracing::debug!("read_page(page_idx = {}) = cached", page_idx);
+            tracing::trace!("read_page(page_idx = {}) = cached", page_idx);
             return Ok(page.clone());
         }
         let page = Arc::new(Page::new(page_idx));
