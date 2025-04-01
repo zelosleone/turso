@@ -733,6 +733,7 @@ impl WalFile {
         offset as usize
     }
 
+    #[allow(clippy::mut_from_ref)]
     fn get_shared(&self) -> &mut WalFileShared {
         unsafe { self.shared.get().as_mut().unwrap() }
     }
