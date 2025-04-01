@@ -1513,7 +1513,6 @@ impl BTreeCursor {
                 }
                 // calculate how many pages to allocate
                 let mut new_page_sizes = Vec::new();
-                let mut k = 0;
                 let leaf_correction = if leaf { 4 } else { 0 };
                 // number of bytes beyond header, different from global usableSapce which inccludes
                 // header
@@ -1526,23 +1525,12 @@ impl BTreeCursor {
                     let page_contents = page.get_contents();
                     let free_space = compute_free_space(page_contents, self.usable_space() as u16);
 
-                    // If we have an empty page of cells, we ignore it
-                    if k > 0
-                        && cell_array.number_of_cells_per_page[k - 1]
-                            == cell_array.number_of_cells_per_page[k]
-                    {
-                        k -= 1;
-                    }
-                    if !leaf_data {
-                        k += 1;
-                    }
                     new_page_sizes.push(usable_space as u16 - free_space);
                     for overflow in &page_contents.overflow_cells {
                         let size = new_page_sizes.last_mut().unwrap();
                         // 2 to account of pointer
                         *size += 2 + overflow.payload.len() as u16;
                     }
-                    k += 1;
                 }
 
                 // Try to pack as many cells to the left
@@ -4142,6 +4130,9 @@ mod tests {
                     OwnedValue::Blob(vec![0; size]),
                 )]);
                 run_until_done(|| cursor.insert(&key, &value, true), pager.deref()).unwrap();
+                if matches!(validate_btree(pager.clone(), root_page), (_, false)) {
+                    panic!("invalid btree");
+                }
             }
             tracing::info!(
                 "=========== btree ===========\n{}\n\n",
