@@ -3338,8 +3338,7 @@ impl Program {
                         let mut cursor = state.get_cursor(*cursor);
                         let cursor = cursor.as_btree_mut();
                         // TODO: make io handle rng
-                        let rowid = return_if_io!(get_new_rowid(cursor, thread_rng()));
-                        rowid
+                        return_if_io!(get_new_rowid(cursor, thread_rng()))
                     };
                     state.registers[*rowid_reg] = Register::OwnedValue(OwnedValue::Integer(rowid));
                     state.pc += 1;
@@ -3391,10 +3390,7 @@ impl Program {
                         let mut cursor =
                             must_be_btree_cursor!(*cursor, self.cursor_ref, state, "NotExists");
                         let cursor = cursor.as_btree_mut();
-                        let exists = return_if_io!(
-                            cursor.exists(state.registers[*rowid_reg].get_owned_value())
-                        );
-                        exists
+                        return_if_io!(cursor.exists(state.registers[*rowid_reg].get_owned_value()))
                     };
                     if exists {
                         state.pc += 1;
