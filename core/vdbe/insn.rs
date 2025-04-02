@@ -1,6 +1,8 @@
 use std::num::NonZero;
 
-use super::{cast_text_to_numeric, AggFunc, BranchOffset, CursorID, FuncCtx, PageIdx};
+use super::{
+    cast_text_to_numeric, execute, AggFunc, BranchOffset, CursorID, FuncCtx, InsnFunction, PageIdx,
+};
 use crate::storage::wal::CheckpointMode;
 use crate::types::{OwnedValue, Record};
 use limbo_macros::Description;
@@ -1137,6 +1139,171 @@ pub fn exec_or(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
             exec_or(&cast_text_to_numeric(text.as_str()), other)
         }
         _ => OwnedValue::Integer(1),
+    }
+}
+
+impl Insn {
+    pub fn to_function(&self) -> InsnFunction {
+        match self {
+            Insn::Init { .. } => execute::execute_insn_init,
+
+            Insn::Null { .. } => execute::execute_insn_null,
+
+            Insn::NullRow { .. } => execute::execute_insn_null_row,
+
+            Insn::Add { .. } => execute::execute_insn_add,
+
+            Insn::Subtract { .. } => execute::execute_insn_subtract,
+
+            Insn::Multiply { .. } => execute::execute_insn_multiply,
+
+            Insn::Divide { .. } => execute::execute_insn_divide,
+
+            Insn::Compare { .. } => execute::execute_insn_compare,
+            Insn::BitAnd { .. } => execute::execute_insn_bit_and,
+
+            Insn::BitOr { .. } => execute::execute_insn_bit_or,
+
+            Insn::BitNot { .. } => execute::execute_insn_bit_not,
+
+            Insn::Checkpoint { .. } => execute::execute_insn_checkpoint,
+            Insn::Remainder { .. } => execute::execute_insn_remainder,
+
+            Insn::Jump { .. } => execute::execute_insn_jump,
+            Insn::Move { .. } => execute::execute_insn_move,
+            Insn::IfPos { .. } => execute::execute_insn_if_pos,
+            Insn::NotNull { .. } => execute::execute_insn_not_null,
+
+            Insn::Eq { .. } => execute::execute_insn_eq,
+            Insn::Ne { .. } => execute::execute_insn_ne,
+            Insn::Lt { .. } => execute::execute_insn_lt,
+            Insn::Le { .. } => execute::execute_insn_le,
+            Insn::Gt { .. } => execute::execute_insn_gt,
+            Insn::Ge { .. } => execute::execute_insn_ge,
+            Insn::If { .. } => execute::execute_insn_if,
+            Insn::IfNot { .. } => execute::execute_insn_if_not,
+            Insn::OpenReadAsync { .. } => execute::execute_insn_open_read_async,
+            Insn::OpenReadAwait => execute::execute_insn_open_read_await,
+
+            Insn::VOpenAsync { .. } => execute::execute_insn_vopen_async,
+
+            Insn::VOpenAwait => execute::execute_insn_vopen_await,
+
+            Insn::VCreate { .. } => execute::execute_insn_vcreate,
+            Insn::VFilter { .. } => execute::execute_insn_vfilter,
+            Insn::VColumn { .. } => execute::execute_insn_vcolumn,
+            Insn::VUpdate { .. } => execute::execute_insn_vupdate,
+            Insn::VNext { .. } => execute::execute_insn_vnext,
+            Insn::OpenPseudo { .. } => execute::execute_insn_open_pseudo,
+            Insn::RewindAsync { .. } => execute::execute_insn_rewind_async,
+
+            Insn::RewindAwait { .. } => execute::execute_insn_rewind_await,
+            Insn::LastAsync { .. } => execute::execute_insn_last_async,
+
+            Insn::LastAwait { .. } => execute::execute_insn_last_await,
+            Insn::Column { .. } => execute::execute_insn_column,
+            Insn::MakeRecord { .. } => execute::execute_insn_make_record,
+            Insn::ResultRow { .. } => execute::execute_insn_result_row,
+
+            Insn::NextAsync { .. } => execute::execute_insn_next_async,
+
+            Insn::NextAwait { .. } => execute::execute_insn_next_await,
+            Insn::PrevAsync { .. } => execute::execute_insn_prev_async,
+
+            Insn::PrevAwait { .. } => execute::execute_insn_prev_await,
+            Insn::Halt { .. } => execute::execute_insn_halt,
+            Insn::Transaction { .. } => execute::execute_insn_transaction,
+
+            Insn::AutoCommit { .. } => execute::execute_insn_auto_commit,
+            Insn::Goto { .. } => execute::execute_insn_goto,
+
+            Insn::Gosub { .. } => execute::execute_insn_gosub,
+            Insn::Return { .. } => execute::execute_insn_return,
+
+            Insn::Integer { .. } => execute::execute_insn_integer,
+
+            Insn::Real { .. } => execute::execute_insn_real,
+
+            Insn::RealAffinity { .. } => execute::execute_insn_real_affinity,
+
+            Insn::String8 { .. } => execute::execute_insn_string8,
+
+            Insn::Blob { .. } => execute::execute_insn_blob,
+
+            Insn::RowId { .. } => execute::execute_insn_row_id,
+
+            Insn::SeekRowid { .. } => execute::execute_insn_seek_rowid,
+            Insn::DeferredSeek { .. } => execute::execute_insn_deferred_seek,
+            Insn::SeekGE { .. } => execute::execute_insn_seek_ge,
+            Insn::SeekGT { .. } => execute::execute_insn_seek_gt,
+            Insn::IdxGE { .. } => execute::execute_insn_idx_ge,
+            Insn::IdxGT { .. } => execute::execute_insn_idx_gt,
+            Insn::IdxLE { .. } => execute::execute_insn_idx_le,
+            Insn::IdxLT { .. } => execute::execute_insn_idx_lt,
+            Insn::DecrJumpZero { .. } => execute::execute_insn_decr_jump_zero,
+
+            Insn::AggStep { .. } => execute::execute_insn_agg_step,
+            Insn::AggFinal { .. } => execute::execute_insn_agg_final,
+
+            Insn::SorterOpen { .. } => execute::execute_insn_sorter_open,
+            Insn::SorterInsert { .. } => execute::execute_insn_sorter_insert,
+            Insn::SorterSort { .. } => execute::execute_insn_sorter_sort,
+            Insn::SorterData { .. } => execute::execute_insn_sorter_data,
+            Insn::SorterNext { .. } => execute::execute_insn_sorter_next,
+            Insn::Function { .. } => execute::execute_insn_function,
+            Insn::InitCoroutine { .. } => execute::execute_insn_init_coroutine,
+            Insn::EndCoroutine { .. } => execute::execute_insn_end_coroutine,
+
+            Insn::Yield { .. } => execute::execute_insn_yield,
+            Insn::InsertAsync { .. } => execute::execute_insn_insert_async,
+            Insn::InsertAwait { .. } => execute::execute_insn_insert_await,
+
+            Insn::DeleteAsync { .. } => execute::execute_insn_delete_async,
+
+            Insn::DeleteAwait { .. } => execute::execute_insn_delete_await,
+
+            Insn::NewRowid { .. } => execute::execute_insn_new_rowid,
+            Insn::MustBeInt { .. } => execute::execute_insn_must_be_int,
+
+            Insn::SoftNull { .. } => execute::execute_insn_soft_null,
+
+            Insn::NotExists { .. } => execute::execute_insn_not_exists,
+            Insn::OffsetLimit { .. } => execute::execute_insn_offset_limit,
+            Insn::OpenWriteAsync { .. } => execute::execute_insn_open_write_async,
+            Insn::OpenWriteAwait { .. } => execute::execute_insn_open_write_await,
+
+            Insn::Copy { .. } => execute::execute_insn_copy,
+            Insn::CreateBtree { .. } => execute::execute_insn_create_btree,
+
+            Insn::Destroy { .. } => execute::execute_insn_destroy,
+            Insn::DropTable { .. } => execute::execute_insn_drop_table,
+            Insn::Close { .. } => execute::execute_insn_close,
+
+            Insn::IsNull { .. } => execute::execute_insn_is_null,
+
+            Insn::ParseSchema { .. } => execute::execute_insn_parse_schema,
+
+            Insn::ShiftRight { .. } => execute::execute_insn_shift_right,
+
+            Insn::ShiftLeft { .. } => execute::execute_insn_shift_left,
+
+            Insn::Variable { .. } => execute::execute_insn_variable,
+
+            Insn::ZeroOrNull { .. } => execute::execute_insn_zero_or_null,
+
+            Insn::Not { .. } => execute::execute_insn_not,
+
+            Insn::Concat { .. } => execute::execute_insn_concat,
+
+            Insn::And { .. } => execute::execute_insn_and,
+
+            Insn::Or { .. } => execute::execute_insn_or,
+
+            Insn::Noop => execute::execute_insn_noop,
+            Insn::PageCount { .. } => execute::execute_insn_page_count,
+
+            Insn::ReadCookie { .. } => execute::execute_insn_read_cookie,
+        }
     }
 }
 
