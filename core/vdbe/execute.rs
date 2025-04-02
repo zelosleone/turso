@@ -8,7 +8,6 @@ use crate::functions::datetime::{
 use crate::functions::printf::exec_printf;
 use std::{borrow::BorrowMut, rc::Rc};
 
-#[cfg(feature = "json")]
 use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
 use crate::schema::{affinity, Affinity};
