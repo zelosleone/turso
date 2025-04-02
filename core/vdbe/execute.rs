@@ -89,7 +89,9 @@ pub fn execute_insn_init(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Init { target_pc } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Init { target_pc } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     state.pc = target_pc.to_offset_int();
     Ok(InsnFunctionStepResult::Step)
@@ -101,7 +103,9 @@ pub fn execute_insn_add(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Add { lhs, rhs, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Add { lhs, rhs, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(exec_add(
         state.registers[*lhs].get_owned_value(),
         state.registers[*rhs].get_owned_value(),
@@ -116,7 +120,9 @@ pub fn execute_insn_subtract(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Subtract { lhs, rhs, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Subtract { lhs, rhs, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(exec_subtract(
         state.registers[*lhs].get_owned_value(),
         state.registers[*rhs].get_owned_value(),
@@ -131,7 +137,9 @@ pub fn execute_insn_multiply(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Multiply { lhs, rhs, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Multiply { lhs, rhs, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(exec_multiply(
         state.registers[*lhs].get_owned_value(),
         state.registers[*rhs].get_owned_value(),
@@ -146,7 +154,9 @@ pub fn execute_insn_divide(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Divide { lhs, rhs, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Divide { lhs, rhs, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(exec_divide(
         state.registers[*lhs].get_owned_value(),
         state.registers[*rhs].get_owned_value(),
@@ -161,7 +171,9 @@ pub fn execute_insn_remainder(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Remainder { lhs, rhs, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Remainder { lhs, rhs, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(exec_remainder(
         state.registers[*lhs].get_owned_value(),
         state.registers[*rhs].get_owned_value(),
@@ -176,7 +188,9 @@ pub fn execute_insn_bit_and(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::BitAnd { lhs, rhs, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::BitAnd { lhs, rhs, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(exec_bit_and(
         state.registers[*lhs].get_owned_value(),
         state.registers[*rhs].get_owned_value(),
@@ -191,7 +205,9 @@ pub fn execute_insn_bit_or(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::BitOr { lhs, rhs, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::BitOr { lhs, rhs, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(exec_bit_or(
         state.registers[*lhs].get_owned_value(),
         state.registers[*rhs].get_owned_value(),
@@ -206,7 +222,9 @@ pub fn execute_insn_bit_not(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::BitNot { reg, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::BitNot { reg, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] =
         Register::OwnedValue(exec_bit_not(state.registers[*reg].get_owned_value()));
     state.pc += 1;
@@ -220,10 +238,13 @@ pub fn execute_insn_checkpoint(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Checkpoint {
-    database: _,
-    checkpoint_mode: _,
-    dest,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        database: _,
+        checkpoint_mode: _,
+        dest,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let result = program.connection.upgrade().unwrap().checkpoint();
     match result {
         Ok(CheckpointResult {
@@ -253,7 +274,9 @@ pub fn execute_insn_null(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Null { dest, dest_end } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Null { dest, dest_end } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if let Some(dest_end) = dest_end {
         for i in *dest..=*dest_end {
             state.registers[i] = Register::OwnedValue(OwnedValue::Null);
@@ -271,7 +294,9 @@ pub fn execute_insn_null_row(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::NullRow { cursor_id } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::NullRow { cursor_id } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     {
         let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "NullRow");
         let cursor = cursor.as_btree_mut();
@@ -288,10 +313,13 @@ pub fn execute_insn_compare(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Compare {
-    start_reg_a,
-    start_reg_b,
-    count,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        start_reg_a,
+        start_reg_b,
+        count,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let start_reg_a = *start_reg_a;
     let start_reg_b = *start_reg_b;
     let count = *count;
@@ -323,10 +351,13 @@ pub fn execute_insn_jump(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Jump {
-    target_pc_lt,
-    target_pc_eq,
-    target_pc_gt,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        target_pc_lt,
+        target_pc_eq,
+        target_pc_gt,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc_lt.is_offset());
     assert!(target_pc_eq.is_offset());
     assert!(target_pc_gt.is_offset());
@@ -352,10 +383,13 @@ pub fn execute_insn_move(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Move {
-    source_reg,
-    dest_reg,
-    count,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        source_reg,
+        dest_reg,
+        count,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let source_reg = *source_reg;
     let dest_reg = *dest_reg;
     let count = *count;
@@ -376,10 +410,13 @@ pub fn execute_insn_if_pos(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IfPos {
-    reg,
-    target_pc,
-    decrement_by,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        reg,
+        target_pc,
+        decrement_by,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     let reg = *reg;
     let target_pc = *target_pc;
@@ -407,7 +444,9 @@ pub fn execute_insn_not_null(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::NotNull { reg, target_pc } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::NotNull { reg, target_pc } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     let reg = *reg;
     let target_pc = *target_pc;
@@ -430,11 +469,14 @@ pub fn execute_insn_eq(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Eq {
-    lhs,
-    rhs,
-    target_pc,
-    flags,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        lhs,
+        rhs,
+        target_pc,
+        flags,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     let lhs = *lhs;
     let rhs = *rhs;
@@ -471,11 +513,14 @@ pub fn execute_insn_ne(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Ne {
-    lhs,
-    rhs,
-    target_pc,
-    flags,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        lhs,
+        rhs,
+        target_pc,
+        flags,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     let lhs = *lhs;
     let rhs = *rhs;
@@ -512,11 +557,14 @@ pub fn execute_insn_lt(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Lt {
-    lhs,
-    rhs,
-    target_pc,
-    flags,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        lhs,
+        rhs,
+        target_pc,
+        flags,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     let lhs = *lhs;
     let rhs = *rhs;
@@ -551,11 +599,14 @@ pub fn execute_insn_le(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Le {
-    lhs,
-    rhs,
-    target_pc,
-    flags,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        lhs,
+        rhs,
+        target_pc,
+        flags,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     let lhs = *lhs;
     let rhs = *rhs;
@@ -590,11 +641,14 @@ pub fn execute_insn_gt(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Gt {
-    lhs,
-    rhs,
-    target_pc,
-    flags,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        lhs,
+        rhs,
+        target_pc,
+        flags,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     let lhs = *lhs;
     let rhs = *rhs;
@@ -629,11 +683,14 @@ pub fn execute_insn_ge(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Ge {
-    lhs,
-    rhs,
-    target_pc,
-    flags,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        lhs,
+        rhs,
+        target_pc,
+        flags,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     let lhs = *lhs;
     let rhs = *rhs;
@@ -668,10 +725,13 @@ pub fn execute_insn_if(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::If {
-    reg,
-    target_pc,
-    jump_if_null,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        reg,
+        target_pc,
+        jump_if_null,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     if exec_if(
         &state.registers[*reg].get_owned_value(),
@@ -692,10 +752,13 @@ pub fn execute_insn_if_not(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IfNot {
-    reg,
-    target_pc,
-    jump_if_null,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        reg,
+        target_pc,
+        jump_if_null,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     if exec_if(
         &state.registers[*reg].get_owned_value(),
@@ -716,9 +779,12 @@ pub fn execute_insn_open_read_async(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::OpenReadAsync {
-    cursor_id,
-    root_page,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        root_page,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let mv_cursor = match state.mv_tx_id {
         Some(tx_id) => {
@@ -776,7 +842,9 @@ pub fn execute_insn_vopen_async(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::VOpenAsync { cursor_id } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::VOpenAsync { cursor_id } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let CursorType::VirtualTable(virtual_table) = cursor_type else {
         panic!("VOpenAsync on non-virtual table cursor");
@@ -797,10 +865,13 @@ pub fn execute_insn_vcreate(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::VCreate {
-    module_name,
-    table_name,
-    args_reg,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        module_name,
+        table_name,
+        args_reg,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let module_name = state.registers[*module_name].get_owned_value().to_string();
     let table_name = state.registers[*table_name].get_owned_value().to_string();
     let args = if let Some(args_reg) = args_reg {
@@ -854,11 +925,14 @@ pub fn execute_insn_vfilter(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::VFilter {
-    cursor_id,
-    pc_if_empty,
-    arg_count,
-    args_reg,
-    } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        pc_if_empty,
+        arg_count,
+        args_reg,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let CursorType::VirtualTable(virtual_table) = cursor_type else {
         panic!("VFilter on non-virtual table cursor");
@@ -887,10 +961,13 @@ pub fn execute_insn_vcolumn(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::VColumn {
-    cursor_id,
-    column,
-    dest,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        column,
+        dest,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let CursorType::VirtualTable(virtual_table) = cursor_type else {
         panic!("VColumn on non-virtual table cursor");
@@ -912,12 +989,15 @@ pub fn execute_insn_vupdate(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::VUpdate {
-    cursor_id,
-    arg_count,
-    start_reg,
-    conflict_action,
-    ..
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        arg_count,
+        start_reg,
+        conflict_action,
+        ..
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let CursorType::VirtualTable(virtual_table) = cursor_type else {
         panic!("VUpdate on non-virtual table cursor");
@@ -972,9 +1052,12 @@ pub fn execute_insn_vnext(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::VNext {
-    cursor_id,
-    pc_if_next,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        pc_if_next,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let CursorType::VirtualTable(virtual_table) = cursor_type else {
         panic!("VNextAsync on non-virtual table cursor");
@@ -999,10 +1082,13 @@ pub fn execute_insn_open_pseudo(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::OpenPseudo {
-    cursor_id,
-    content_reg: _,
-    num_fields: _,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        content_reg: _,
+        num_fields: _,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     {
         let mut cursors = state.cursors.borrow_mut();
         let cursor = PseudoCursor::new();
@@ -1021,7 +1107,9 @@ pub fn execute_insn_rewind_async(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::RewindAsync { cursor_id } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::RewindAsync { cursor_id } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     {
         let mut cursor =
             must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "RewindAsync");
@@ -1038,7 +1126,9 @@ pub fn execute_insn_last_async(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::LastAsync { cursor_id } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::LastAsync { cursor_id } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     {
         let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "LastAsync");
         let cursor = cursor.as_btree_mut();
@@ -1055,9 +1145,12 @@ pub fn execute_insn_last_await(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::LastAwait {
-    cursor_id,
-    pc_if_empty,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        pc_if_empty,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(pc_if_empty.is_offset());
     let is_empty = {
         let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "LastAwait");
@@ -1080,9 +1173,12 @@ pub fn execute_insn_rewind_await(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::RewindAwait {
-    cursor_id,
-    pc_if_empty,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        pc_if_empty,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(pc_if_empty.is_offset());
     let is_empty = {
         let mut cursor =
@@ -1106,10 +1202,13 @@ pub fn execute_insn_column(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Column {
-    cursor_id,
-    column,
-    dest,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        column,
+        dest,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if let Some((index_cursor_id, table_cursor_id)) = state.deferred_seek.take() {
         let deferred_seek = {
             let rowid = {
@@ -1204,10 +1303,13 @@ pub fn execute_insn_make_record(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::MakeRecord {
-    start_reg,
-    count,
-    dest_reg,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        start_reg,
+        count,
+        dest_reg,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let record = make_record(&state.registers, start_reg, count);
     state.registers[*dest_reg] = Register::Record(record);
     state.pc += 1;
@@ -1220,7 +1322,9 @@ pub fn execute_insn_result_row(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::ResultRow { start_reg, count } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::ResultRow { start_reg, count } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let row = Row {
         values: &state.registers[*start_reg] as *const Register,
         count: *count,
@@ -1237,7 +1341,9 @@ pub fn execute_insn_next_async(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::NextAsync { cursor_id } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::NextAsync { cursor_id } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     {
         let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "NextAsync");
         let cursor = cursor.as_btree_mut();
@@ -1254,7 +1360,9 @@ pub fn execute_insn_prev_async(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::PrevAsync { cursor_id } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::PrevAsync { cursor_id } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     {
         let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "PrevAsync");
         let cursor = cursor.as_btree_mut();
@@ -1272,9 +1380,12 @@ pub fn execute_insn_prev_await(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::PrevAwait {
-    cursor_id,
-    pc_if_next,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        pc_if_next,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(pc_if_next.is_offset());
     let is_empty = {
         let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "PrevAwait");
@@ -1297,9 +1408,12 @@ pub fn execute_insn_next_await(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::NextAwait {
-    cursor_id,
-    pc_if_next,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        pc_if_next,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(pc_if_next.is_offset());
     let is_empty = {
         let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "NextAwait");
@@ -1322,9 +1436,12 @@ pub fn execute_insn_halt(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Halt {
-    err_code,
-    description,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        err_code,
+        description,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     match *err_code {
         0 => {}
         SQLITE_CONSTRAINT_PRIMARYKEY => {
@@ -1355,7 +1472,9 @@ pub fn execute_insn_transaction(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Transaction { write } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Transaction { write } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if let Some(mv_store) = &mv_store {
         if state.mv_tx_id.is_none() {
             let tx_id = mv_store.begin_tx();
@@ -1407,9 +1526,12 @@ pub fn execute_insn_auto_commit(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::AutoCommit {
-    auto_commit,
-    rollback,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        auto_commit,
+        rollback,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let conn = program.connection.upgrade().unwrap();
     if matches!(state.halt_state, Some(HaltState::Checkpointing)) {
         return match program.halt(pager.clone(), state, mv_store.clone())? {
@@ -1455,7 +1577,9 @@ pub fn execute_insn_goto(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Goto { target_pc } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Goto { target_pc } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     state.pc = target_pc.to_offset_int();
     Ok(InsnFunctionStepResult::Step)
@@ -1468,9 +1592,12 @@ pub fn execute_insn_gosub(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Gosub {
-    target_pc,
-    return_reg,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        target_pc,
+        return_reg,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     state.registers[*return_reg] = Register::OwnedValue(OwnedValue::Integer((state.pc + 1) as i64));
     state.pc = target_pc.to_offset_int();
@@ -1483,7 +1610,9 @@ pub fn execute_insn_return(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Return { return_reg } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Return { return_reg } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if let OwnedValue::Integer(pc) = state.registers[*return_reg].get_owned_value() {
         let pc: u32 = (*pc)
             .try_into()
@@ -1503,7 +1632,9 @@ pub fn execute_insn_integer(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Integer { value, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Integer { value, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(OwnedValue::Integer(*value));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -1515,7 +1646,9 @@ pub fn execute_insn_real(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Real { value, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Real { value, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(OwnedValue::Float(*value));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -1527,7 +1660,9 @@ pub fn execute_insn_real_affinity(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::RealAffinity { register } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::RealAffinity { register } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if let OwnedValue::Integer(i) = &state.registers[*register].get_owned_value() {
         state.registers[*register] = Register::OwnedValue(OwnedValue::Float(*i as f64));
     };
@@ -1541,7 +1676,9 @@ pub fn execute_insn_string8(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::String8 { value, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::String8 { value, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(OwnedValue::build_text(value));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -1553,7 +1690,9 @@ pub fn execute_insn_blob(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Blob { value, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Blob { value, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(OwnedValue::Blob(value.clone()));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -1565,7 +1704,9 @@ pub fn execute_insn_row_id(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::RowId { cursor_id, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::RowId { cursor_id, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if let Some((index_cursor_id, table_cursor_id)) = state.deferred_seek.take() {
         let deferred_seek = {
             let rowid = {
@@ -1622,10 +1763,13 @@ pub fn execute_insn_seek_rowid(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SeekRowid {
-    cursor_id,
-    src_reg,
-    target_pc,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        src_reg,
+        target_pc,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     let pc = {
         let mut cursor = state.get_cursor(*cursor_id);
@@ -1663,9 +1807,12 @@ pub fn execute_insn_deferred_seek(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::DeferredSeek {
-    index_cursor_id,
-    table_cursor_id,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        index_cursor_id,
+        table_cursor_id,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.deferred_seek = Some((*index_cursor_id, *table_cursor_id));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -1678,12 +1825,15 @@ pub fn execute_insn_seek_ge(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SeekGE {
-    cursor_id,
-    start_reg,
-    num_regs,
-    target_pc,
-    is_index,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        start_reg,
+        num_regs,
+        target_pc,
+        is_index,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     if *is_index {
         let found = {
@@ -1740,12 +1890,15 @@ pub fn execute_insn_seek_gt(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SeekGT {
-    cursor_id,
-    start_reg,
-    num_regs,
-    target_pc,
-    is_index,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        start_reg,
+        num_regs,
+        target_pc,
+        is_index,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     if *is_index {
         let found = {
@@ -1803,11 +1956,14 @@ pub fn execute_insn_idx_ge(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IdxGE {
-    cursor_id,
-    start_reg,
-    num_regs,
-    target_pc,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        start_reg,
+        num_regs,
+        target_pc,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     let pc = {
         let mut cursor = state.get_cursor(*cursor_id);
@@ -1839,11 +1995,14 @@ pub fn execute_insn_idx_le(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IdxLE {
-    cursor_id,
-    start_reg,
-    num_regs,
-    target_pc,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        start_reg,
+        num_regs,
+        target_pc,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     let pc = {
         let mut cursor = state.get_cursor(*cursor_id);
@@ -1875,11 +2034,14 @@ pub fn execute_insn_idx_gt(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IdxGT {
-    cursor_id,
-    start_reg,
-    num_regs,
-    target_pc,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        start_reg,
+        num_regs,
+        target_pc,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     let pc = {
         let mut cursor = state.get_cursor(*cursor_id);
@@ -1911,11 +2073,14 @@ pub fn execute_insn_idx_lt(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IdxLT {
-    cursor_id,
-    start_reg,
-    num_regs,
-    target_pc,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        start_reg,
+        num_regs,
+        target_pc,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     let pc = {
         let mut cursor = state.get_cursor(*cursor_id);
@@ -1946,7 +2111,9 @@ pub fn execute_insn_decr_jump_zero(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::DecrJumpZero { reg, target_pc } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::DecrJumpZero { reg, target_pc } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(target_pc.is_offset());
     match state.registers[*reg].get_owned_value() {
         OwnedValue::Integer(n) => {
@@ -1970,11 +2137,14 @@ pub fn execute_insn_agg_step(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::AggStep {
-    acc_reg,
-    col,
-    delimiter,
-    func,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        acc_reg,
+        col,
+        delimiter,
+        func,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if let Register::OwnedValue(OwnedValue::Null) = state.registers[*acc_reg] {
         state.registers[*acc_reg] = match func {
             AggFunc::Avg => Register::Aggregate(AggContext::Avg(
@@ -2044,8 +2214,7 @@ pub fn execute_insn_agg_step(
     match func {
         AggFunc::Avg => {
             let col = state.registers[*col].clone();
-            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut()
-            else {
+            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut() else {
                 unreachable!();
             };
             let AggContext::Avg(acc, count) = agg.borrow_mut() else {
@@ -2056,8 +2225,7 @@ pub fn execute_insn_agg_step(
         }
         AggFunc::Sum | AggFunc::Total => {
             let col = state.registers[*col].clone();
-            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut()
-            else {
+            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut() else {
                 unreachable!();
             };
             let AggContext::Sum(acc) = agg.borrow_mut() else {
@@ -2079,8 +2247,7 @@ pub fn execute_insn_agg_step(
                 state.registers[*acc_reg] =
                     Register::Aggregate(AggContext::Count(OwnedValue::Integer(0)));
             }
-            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut()
-            else {
+            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut() else {
                 unreachable!();
             };
             let AggContext::Count(count) = agg.borrow_mut() else {
@@ -2093,8 +2260,7 @@ pub fn execute_insn_agg_step(
         }
         AggFunc::Max => {
             let col = state.registers[*col].clone();
-            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut()
-            else {
+            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut() else {
                 unreachable!();
             };
             let AggContext::Max(acc) = agg.borrow_mut() else {
@@ -2127,8 +2293,7 @@ pub fn execute_insn_agg_step(
         }
         AggFunc::Min => {
             let col = state.registers[*col].clone();
-            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut()
-            else {
+            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut() else {
                 unreachable!();
             };
             let AggContext::Min(acc) = agg.borrow_mut() else {
@@ -2162,8 +2327,7 @@ pub fn execute_insn_agg_step(
         AggFunc::GroupConcat | AggFunc::StringAgg => {
             let col = state.registers[*col].get_owned_value().clone();
             let delimiter = state.registers[*delimiter].clone();
-            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut()
-            else {
+            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut() else {
                 unreachable!();
             };
             let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
@@ -2185,8 +2349,7 @@ pub fn execute_insn_agg_step(
         AggFunc::JsonGroupObject | AggFunc::JsonbGroupObject => {
             let key = state.registers[*col].clone();
             let value = state.registers[*delimiter].clone();
-            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut()
-            else {
+            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut() else {
                 unreachable!();
             };
             let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
@@ -2214,8 +2377,7 @@ pub fn execute_insn_agg_step(
         #[cfg(feature = "json")]
         AggFunc::JsonGroupArray | AggFunc::JsonbGroupArray => {
             let col = state.registers[*col].clone();
-            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut()
-            else {
+            let Register::Aggregate(agg) = state.registers[*acc_reg].borrow_mut() else {
                 unreachable!();
             };
             let AggContext::GroupConcat(acc) = agg.borrow_mut() else {
@@ -2271,7 +2433,9 @@ pub fn execute_insn_agg_final(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::AggFinal { register, func } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::AggFinal { register, func } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     match state.registers[*register].borrow_mut() {
         Register::Aggregate(agg) => match func {
             AggFunc::Avg => {
@@ -2396,10 +2560,13 @@ pub fn execute_insn_sorter_open(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SorterOpen {
-    cursor_id,
-    columns: _,
-    order,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        columns: _,
+        order,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let order = order
         .get_values()
         .iter()
@@ -2425,10 +2592,13 @@ pub fn execute_insn_sorter_data(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SorterData {
-    cursor_id,
-    dest_reg,
-    pseudo_cursor,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        dest_reg,
+        pseudo_cursor,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let record = {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_sorter_mut();
@@ -2457,9 +2627,12 @@ pub fn execute_insn_sorter_insert(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SorterInsert {
-    cursor_id,
-    record_reg,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        record_reg,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_sorter_mut();
@@ -2480,9 +2653,12 @@ pub fn execute_insn_sorter_sort(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SorterSort {
-    cursor_id,
-    pc_if_empty,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        pc_if_empty,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let is_empty = {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_sorter_mut();
@@ -2507,9 +2683,12 @@ pub fn execute_insn_sorter_next(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SorterNext {
-    cursor_id,
-    pc_if_next,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        pc_if_next,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(pc_if_next.is_offset());
     let has_more = {
         let mut cursor = state.get_cursor(*cursor_id);
@@ -2532,11 +2711,14 @@ pub fn execute_insn_function(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Function {
-    constant_mask,
-    func,
-    start_reg,
-    dest,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        constant_mask,
+        func,
+        start_reg,
+        dest,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let arg_count = func.arg_count;
 
     match &func.func {
@@ -3290,10 +3472,13 @@ pub fn execute_insn_init_coroutine(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::InitCoroutine {
-    yield_reg,
-    jump_on_definition,
-    start_offset,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        yield_reg,
+        jump_on_definition,
+        start_offset,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     assert!(jump_on_definition.is_offset());
     let start_offset = start_offset.to_offset_int();
     state.registers[*yield_reg] = Register::OwnedValue(OwnedValue::Integer(start_offset as i64));
@@ -3313,7 +3498,9 @@ pub fn execute_insn_end_coroutine(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::EndCoroutine { yield_reg } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::EndCoroutine { yield_reg } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if let OwnedValue::Integer(pc) = state.registers[*yield_reg].get_owned_value() {
         state.ended_coroutine.set(*yield_reg);
         let pc: u32 = (*pc)
@@ -3333,9 +3520,12 @@ pub fn execute_insn_yield(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Yield {
-    yield_reg,
-    end_offset,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        yield_reg,
+        end_offset,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if let OwnedValue::Integer(pc) = state.registers[*yield_reg].get_owned_value() {
         if state.ended_coroutine.get(*yield_reg) {
             state.pc = end_offset.to_offset_int();
@@ -3366,11 +3556,14 @@ pub fn execute_insn_insert_async(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::InsertAsync {
-    cursor,
-    key_reg,
-    record_reg,
-    flag: _,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor,
+        key_reg,
+        record_reg,
+        flag: _,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     {
         let mut cursor = state.get_cursor(*cursor);
         let cursor = cursor.as_btree_mut();
@@ -3394,7 +3587,9 @@ pub fn execute_insn_insert_await(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::InsertAwait { cursor_id } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::InsertAwait { cursor_id } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_btree_mut();
@@ -3420,7 +3615,9 @@ pub fn execute_insn_delete_async(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::DeleteAsync { cursor_id } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::DeleteAsync { cursor_id } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_btree_mut();
@@ -3436,7 +3633,9 @@ pub fn execute_insn_delete_await(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::DeleteAwait { cursor_id } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::DeleteAwait { cursor_id } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_btree_mut();
@@ -3455,8 +3654,11 @@ pub fn execute_insn_new_rowid(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::NewRowid {
-    cursor, rowid_reg, ..
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor, rowid_reg, ..
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let rowid = {
         let mut cursor = state.get_cursor(*cursor);
         let cursor = cursor.as_btree_mut();
@@ -3475,7 +3677,9 @@ pub fn execute_insn_must_be_int(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::MustBeInt { reg } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::MustBeInt { reg } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     match &state.registers[*reg].get_owned_value() {
         OwnedValue::Integer(_) => {}
         OwnedValue::Float(f) => match cast_real_to_integer(*f) {
@@ -3509,7 +3713,9 @@ pub fn execute_insn_soft_null(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::SoftNull { reg } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::SoftNull { reg } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*reg] = Register::OwnedValue(OwnedValue::Null);
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -3522,10 +3728,13 @@ pub fn execute_insn_not_exists(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::NotExists {
-    cursor,
-    rowid_reg,
-    target_pc,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor,
+        rowid_reg,
+        target_pc,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let exists = {
         let mut cursor = must_be_btree_cursor!(*cursor, program.cursor_ref, state, "NotExists");
         let cursor = cursor.as_btree_mut();
@@ -3547,10 +3756,13 @@ pub fn execute_insn_offset_limit(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::OffsetLimit {
-    limit_reg,
-    combined_reg,
-    offset_reg,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        limit_reg,
+        combined_reg,
+        offset_reg,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let limit_val = match state.registers[*limit_reg].get_owned_value() {
         OwnedValue::Integer(val) => val,
         _ => {
@@ -3590,9 +3802,12 @@ pub fn execute_insn_open_write_async(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::OpenWriteAsync {
-    cursor_id,
-    root_page,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        cursor_id,
+        root_page,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let mut cursors = state.cursors.borrow_mut();
     let is_index = cursor_type.is_index();
@@ -3629,7 +3844,9 @@ pub fn execute_insn_open_write_await(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::OpenWriteAwait {} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::OpenWriteAwait {} = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -3641,10 +3858,13 @@ pub fn execute_insn_copy(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Copy {
-    src_reg,
-    dst_reg,
-    amount,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        src_reg,
+        dst_reg,
+        amount,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     for i in 0..=*amount {
         state.registers[*dst_reg + i] = state.registers[*src_reg + i].clone();
     }
@@ -3658,7 +3878,9 @@ pub fn execute_insn_create_btree(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::CreateBtree { db, root, flags } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::CreateBtree { db, root, flags } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if *db > 0 {
         // TODO: implement temp databases
         todo!("temp databases not implemented yet");
@@ -3676,10 +3898,13 @@ pub fn execute_insn_destroy(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Destroy {
-    root,
-    former_root_reg: _,
-    is_temp,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        root,
+        former_root_reg: _,
+        is_temp,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if *is_temp == 1 {
         todo!("temp databases not implemented yet.");
     }
@@ -3696,11 +3921,14 @@ pub fn execute_insn_drop_table(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::DropTable {
-    db,
-    _p2,
-    _p3,
-    table_name,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        db,
+        _p2,
+        _p3,
+        table_name,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if *db > 0 {
         todo!("temp databases not implemented yet");
     }
@@ -3719,7 +3947,9 @@ pub fn execute_insn_close(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Close { cursor_id } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Close { cursor_id } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let mut cursors = state.cursors.borrow_mut();
     cursors.get_mut(*cursor_id).unwrap().take();
     state.pc += 1;
@@ -3732,7 +3962,9 @@ pub fn execute_insn_is_null(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::IsNull { reg, target_pc } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::IsNull { reg, target_pc } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if matches!(
         state.registers[*reg],
         Register::OwnedValue(OwnedValue::Null)
@@ -3750,7 +3982,9 @@ pub fn execute_insn_page_count(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::PageCount { db, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::PageCount { db, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if *db > 0 {
         // TODO: implement temp databases
         todo!("temp databases not implemented yet");
@@ -3773,9 +4007,12 @@ pub fn execute_insn_parse_schema(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::ParseSchema {
-    db: _,
-    where_clause,
-} = insn else { unreachable!("unexpected Insn {:?}", insn)};
+        db: _,
+        where_clause,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     let conn = program.connection.upgrade();
     let conn = conn.as_ref().unwrap();
     let stmt = conn.prepare(format!(
@@ -3801,7 +4038,9 @@ pub fn execute_insn_read_cookie(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::ReadCookie { db, dest, cookie } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::ReadCookie { db, dest, cookie } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if *db > 0 {
         // TODO: implement temp databases
         todo!("temp databases not implemented yet");
@@ -3821,7 +4060,9 @@ pub fn execute_insn_shift_right(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::ShiftRight { lhs, rhs, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::ShiftRight { lhs, rhs, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(exec_shift_right(
         state.registers[*lhs].get_owned_value(),
         state.registers[*rhs].get_owned_value(),
@@ -3837,7 +4078,9 @@ pub fn execute_insn_shift_left(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::ShiftLeft { lhs, rhs, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::ShiftLeft { lhs, rhs, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(exec_shift_left(
         state.registers[*lhs].get_owned_value(),
         state.registers[*rhs].get_owned_value(),
@@ -3852,7 +4095,9 @@ pub fn execute_insn_variable(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Variable { index, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Variable { index, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(
         state
             .get_parameter(*index)
@@ -3869,7 +4114,9 @@ pub fn execute_insn_zero_or_null(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::ZeroOrNull { rg1, rg2, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::ZeroOrNull { rg1, rg2, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     if *state.registers[*rg1].get_owned_value() == OwnedValue::Null
         || *state.registers[*rg2].get_owned_value() == OwnedValue::Null
     {
@@ -3887,7 +4134,9 @@ pub fn execute_insn_not(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Not { reg, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Not { reg, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] =
         Register::OwnedValue(exec_boolean_not(state.registers[*reg].get_owned_value()));
     state.pc += 1;
@@ -3900,7 +4149,9 @@ pub fn execute_insn_concat(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Concat { lhs, rhs, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Concat { lhs, rhs, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(exec_concat(
         &state.registers[*lhs].get_owned_value(),
         &state.registers[*rhs].get_owned_value(),
@@ -3915,7 +4166,9 @@ pub fn execute_insn_and(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::And { lhs, rhs, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::And { lhs, rhs, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(exec_and(
         &state.registers[*lhs].get_owned_value(),
         &state.registers[*rhs].get_owned_value(),
@@ -3930,7 +4183,9 @@ pub fn execute_insn_or(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Or { lhs, rhs, dest } = insn else { unreachable!("unexpected Insn {:?}", insn)};
+    let Insn::Or { lhs, rhs, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
     state.registers[*dest] = Register::OwnedValue(exec_or(
         &state.registers[*lhs].get_owned_value(),
         &state.registers[*rhs].get_owned_value(),
