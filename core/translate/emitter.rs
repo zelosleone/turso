@@ -130,6 +130,12 @@ fn prologue<'a>(
     Ok((t_ctx, init_label, start_offset))
 }
 
+pub enum TransactionMode {
+    None,
+    Read,
+    Write,
+}
+
 /// Clean up and finalize the program, resolving any remaining labels
 /// Note that although these are the final instructions, typically an SQLite
 /// query will jump to the Transaction instruction via init_label.
@@ -137,7 +143,7 @@ fn epilogue(
     program: &mut ProgramBuilder,
     init_label: BranchOffset,
     start_offset: BranchOffset,
-    write: bool,
+    txn_mode: TransactionMode,
 ) -> Result<()> {
     program.emit_insn(Insn::Halt {
         err_code: 0,
@@ -145,7 +151,12 @@ fn epilogue(
     });
 
     program.resolve_label(init_label, program.offset());
-    program.emit_insn(Insn::Transaction { write });
+
+    match txn_mode {
+        TransactionMode::Read => program.emit_insn(Insn::Transaction { write: false }),
+        TransactionMode::Write => program.emit_insn(Insn::Transaction { write: true }),
+        TransactionMode::None => {}
+    }
 
     program.emit_constant_insns();
     program.emit_insn(Insn::Goto {
@@ -180,7 +191,7 @@ fn emit_program_for_select(
     // Trivial exit on LIMIT 0
     if let Some(limit) = plan.limit {
         if limit == 0 {
-            epilogue(program, init_label, start_offset, false)?;
+            epilogue(program, init_label, start_offset, TransactionMode::Read)?;
             program.result_columns = plan.result_columns;
             program.table_references = plan.table_references;
             return Ok(());
@@ -188,8 +199,14 @@ fn emit_program_for_select(
     }
     // Emit main parts of query
     emit_query(program, &mut plan, &mut t_ctx)?;
+
     // Finalize program
-    epilogue(program, init_label, start_offset, false)?;
+    if plan.table_references.is_empty() {
+        epilogue(program, init_label, start_offset, TransactionMode::None)?;
+    } else {
+        epilogue(program, init_label, start_offset, TransactionMode::Read)?;
+    }
+
     program.result_columns = plan.result_columns;
     program.table_references = plan.table_references;
     Ok(())
@@ -306,7 +323,7 @@ fn emit_program_for_delete(
 
     // exit early if LIMIT 0
     if let Some(0) = plan.limit {
-        epilogue(program, init_label, start_offset, true)?;
+        epilogue(program, init_label, start_offset, TransactionMode::Write)?;
         program.result_columns = plan.result_columns;
         program.table_references = plan.table_references;
         return Ok(());
@@ -344,7 +361,7 @@ fn emit_program_for_delete(
     program.resolve_label(after_main_loop_label, program.offset());
 
     // Finalize program
-    epilogue(program, init_label, start_offset, true)?;
+    epilogue(program, init_label, start_offset, TransactionMode::Write)?;
     program.result_columns = plan.result_columns;
     program.table_references = plan.table_references;
     Ok(())
@@ -425,7 +442,7 @@ fn emit_program_for_update(
 
     // Exit on LIMIT 0
     if let Some(0) = plan.limit {
-        epilogue(program, init_label, start_offset, false)?;
+        epilogue(program, init_label, start_offset, TransactionMode::Read)?;
         program.result_columns = plan.returning.unwrap_or_default();
         program.table_references = plan.table_references;
         return Ok(());
@@ -466,7 +483,7 @@ fn emit_program_for_update(
     program.resolve_label(after_main_loop_label, program.offset());
 
     // Finalize program
-    epilogue(program, init_label, start_offset, true)?;
+    epilogue(program, init_label, start_offset, TransactionMode::Write)?;
     program.result_columns = plan.returning.unwrap_or_default();
     program.table_references = plan.table_references;
     Ok(())
