@@ -1145,164 +1145,164 @@ pub fn exec_or(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
 impl Insn {
     pub fn to_function(&self) -> InsnFunction {
         match self {
-            Insn::Init { .. } => execute::execute_insn_init,
+            Insn::Init { .. } => execute::op_init,
 
-            Insn::Null { .. } => execute::execute_insn_null,
+            Insn::Null { .. } => execute::op_null,
 
-            Insn::NullRow { .. } => execute::execute_insn_null_row,
+            Insn::NullRow { .. } => execute::op_null_row,
 
-            Insn::Add { .. } => execute::execute_insn_add,
+            Insn::Add { .. } => execute::op_add,
 
-            Insn::Subtract { .. } => execute::execute_insn_subtract,
+            Insn::Subtract { .. } => execute::op_subtract,
 
-            Insn::Multiply { .. } => execute::execute_insn_multiply,
+            Insn::Multiply { .. } => execute::op_multiply,
 
-            Insn::Divide { .. } => execute::execute_insn_divide,
+            Insn::Divide { .. } => execute::op_divide,
 
-            Insn::Compare { .. } => execute::execute_insn_compare,
-            Insn::BitAnd { .. } => execute::execute_insn_bit_and,
+            Insn::Compare { .. } => execute::op_compare,
+            Insn::BitAnd { .. } => execute::op_bit_and,
 
-            Insn::BitOr { .. } => execute::execute_insn_bit_or,
+            Insn::BitOr { .. } => execute::op_bit_or,
 
-            Insn::BitNot { .. } => execute::execute_insn_bit_not,
+            Insn::BitNot { .. } => execute::op_bit_not,
 
-            Insn::Checkpoint { .. } => execute::execute_insn_checkpoint,
-            Insn::Remainder { .. } => execute::execute_insn_remainder,
+            Insn::Checkpoint { .. } => execute::op_checkpoint,
+            Insn::Remainder { .. } => execute::op_remainder,
 
-            Insn::Jump { .. } => execute::execute_insn_jump,
-            Insn::Move { .. } => execute::execute_insn_move,
-            Insn::IfPos { .. } => execute::execute_insn_if_pos,
-            Insn::NotNull { .. } => execute::execute_insn_not_null,
+            Insn::Jump { .. } => execute::op_jump,
+            Insn::Move { .. } => execute::op_move,
+            Insn::IfPos { .. } => execute::op_if_pos,
+            Insn::NotNull { .. } => execute::op_not_null,
 
-            Insn::Eq { .. } => execute::execute_insn_eq,
-            Insn::Ne { .. } => execute::execute_insn_ne,
-            Insn::Lt { .. } => execute::execute_insn_lt,
-            Insn::Le { .. } => execute::execute_insn_le,
-            Insn::Gt { .. } => execute::execute_insn_gt,
-            Insn::Ge { .. } => execute::execute_insn_ge,
-            Insn::If { .. } => execute::execute_insn_if,
-            Insn::IfNot { .. } => execute::execute_insn_if_not,
-            Insn::OpenReadAsync { .. } => execute::execute_insn_open_read_async,
-            Insn::OpenReadAwait => execute::execute_insn_open_read_await,
+            Insn::Eq { .. } => execute::op_eq,
+            Insn::Ne { .. } => execute::op_ne,
+            Insn::Lt { .. } => execute::op_lt,
+            Insn::Le { .. } => execute::op_le,
+            Insn::Gt { .. } => execute::op_gt,
+            Insn::Ge { .. } => execute::op_ge,
+            Insn::If { .. } => execute::op_if,
+            Insn::IfNot { .. } => execute::op_if_not,
+            Insn::OpenReadAsync { .. } => execute::op_open_read_async,
+            Insn::OpenReadAwait => execute::op_open_read_await,
 
-            Insn::VOpenAsync { .. } => execute::execute_insn_vopen_async,
+            Insn::VOpenAsync { .. } => execute::op_vopen_async,
 
-            Insn::VOpenAwait => execute::execute_insn_vopen_await,
+            Insn::VOpenAwait => execute::op_vopen_await,
 
-            Insn::VCreate { .. } => execute::execute_insn_vcreate,
-            Insn::VFilter { .. } => execute::execute_insn_vfilter,
-            Insn::VColumn { .. } => execute::execute_insn_vcolumn,
-            Insn::VUpdate { .. } => execute::execute_insn_vupdate,
-            Insn::VNext { .. } => execute::execute_insn_vnext,
-            Insn::OpenPseudo { .. } => execute::execute_insn_open_pseudo,
-            Insn::RewindAsync { .. } => execute::execute_insn_rewind_async,
+            Insn::VCreate { .. } => execute::op_vcreate,
+            Insn::VFilter { .. } => execute::op_vfilter,
+            Insn::VColumn { .. } => execute::op_vcolumn,
+            Insn::VUpdate { .. } => execute::op_vupdate,
+            Insn::VNext { .. } => execute::op_vnext,
+            Insn::OpenPseudo { .. } => execute::op_open_pseudo,
+            Insn::RewindAsync { .. } => execute::op_rewind_async,
 
-            Insn::RewindAwait { .. } => execute::execute_insn_rewind_await,
-            Insn::LastAsync { .. } => execute::execute_insn_last_async,
+            Insn::RewindAwait { .. } => execute::op_rewind_await,
+            Insn::LastAsync { .. } => execute::op_last_async,
 
-            Insn::LastAwait { .. } => execute::execute_insn_last_await,
-            Insn::Column { .. } => execute::execute_insn_column,
-            Insn::MakeRecord { .. } => execute::execute_insn_make_record,
-            Insn::ResultRow { .. } => execute::execute_insn_result_row,
+            Insn::LastAwait { .. } => execute::op_last_await,
+            Insn::Column { .. } => execute::op_column,
+            Insn::MakeRecord { .. } => execute::op_make_record,
+            Insn::ResultRow { .. } => execute::op_result_row,
 
-            Insn::NextAsync { .. } => execute::execute_insn_next_async,
+            Insn::NextAsync { .. } => execute::op_next_async,
 
-            Insn::NextAwait { .. } => execute::execute_insn_next_await,
-            Insn::PrevAsync { .. } => execute::execute_insn_prev_async,
+            Insn::NextAwait { .. } => execute::op_next_await,
+            Insn::PrevAsync { .. } => execute::op_prev_async,
 
-            Insn::PrevAwait { .. } => execute::execute_insn_prev_await,
-            Insn::Halt { .. } => execute::execute_insn_halt,
-            Insn::Transaction { .. } => execute::execute_insn_transaction,
+            Insn::PrevAwait { .. } => execute::op_prev_await,
+            Insn::Halt { .. } => execute::op_halt,
+            Insn::Transaction { .. } => execute::op_transaction,
 
-            Insn::AutoCommit { .. } => execute::execute_insn_auto_commit,
-            Insn::Goto { .. } => execute::execute_insn_goto,
+            Insn::AutoCommit { .. } => execute::op_auto_commit,
+            Insn::Goto { .. } => execute::op_goto,
 
-            Insn::Gosub { .. } => execute::execute_insn_gosub,
-            Insn::Return { .. } => execute::execute_insn_return,
+            Insn::Gosub { .. } => execute::op_gosub,
+            Insn::Return { .. } => execute::op_return,
 
-            Insn::Integer { .. } => execute::execute_insn_integer,
+            Insn::Integer { .. } => execute::op_integer,
 
-            Insn::Real { .. } => execute::execute_insn_real,
+            Insn::Real { .. } => execute::op_real,
 
-            Insn::RealAffinity { .. } => execute::execute_insn_real_affinity,
+            Insn::RealAffinity { .. } => execute::op_real_affinity,
 
-            Insn::String8 { .. } => execute::execute_insn_string8,
+            Insn::String8 { .. } => execute::op_string8,
 
-            Insn::Blob { .. } => execute::execute_insn_blob,
+            Insn::Blob { .. } => execute::op_blob,
 
-            Insn::RowId { .. } => execute::execute_insn_row_id,
+            Insn::RowId { .. } => execute::op_row_id,
 
-            Insn::SeekRowid { .. } => execute::execute_insn_seek_rowid,
-            Insn::DeferredSeek { .. } => execute::execute_insn_deferred_seek,
-            Insn::SeekGE { .. } => execute::execute_insn_seek_ge,
-            Insn::SeekGT { .. } => execute::execute_insn_seek_gt,
-            Insn::IdxGE { .. } => execute::execute_insn_idx_ge,
-            Insn::IdxGT { .. } => execute::execute_insn_idx_gt,
-            Insn::IdxLE { .. } => execute::execute_insn_idx_le,
-            Insn::IdxLT { .. } => execute::execute_insn_idx_lt,
-            Insn::DecrJumpZero { .. } => execute::execute_insn_decr_jump_zero,
+            Insn::SeekRowid { .. } => execute::op_seek_rowid,
+            Insn::DeferredSeek { .. } => execute::op_deferred_seek,
+            Insn::SeekGE { .. } => execute::op_seek_ge,
+            Insn::SeekGT { .. } => execute::op_seek_gt,
+            Insn::IdxGE { .. } => execute::op_idx_ge,
+            Insn::IdxGT { .. } => execute::op_idx_gt,
+            Insn::IdxLE { .. } => execute::op_idx_le,
+            Insn::IdxLT { .. } => execute::op_idx_lt,
+            Insn::DecrJumpZero { .. } => execute::op_decr_jump_zero,
 
-            Insn::AggStep { .. } => execute::execute_insn_agg_step,
-            Insn::AggFinal { .. } => execute::execute_insn_agg_final,
+            Insn::AggStep { .. } => execute::op_agg_step,
+            Insn::AggFinal { .. } => execute::op_agg_final,
 
-            Insn::SorterOpen { .. } => execute::execute_insn_sorter_open,
-            Insn::SorterInsert { .. } => execute::execute_insn_sorter_insert,
-            Insn::SorterSort { .. } => execute::execute_insn_sorter_sort,
-            Insn::SorterData { .. } => execute::execute_insn_sorter_data,
-            Insn::SorterNext { .. } => execute::execute_insn_sorter_next,
-            Insn::Function { .. } => execute::execute_insn_function,
-            Insn::InitCoroutine { .. } => execute::execute_insn_init_coroutine,
-            Insn::EndCoroutine { .. } => execute::execute_insn_end_coroutine,
+            Insn::SorterOpen { .. } => execute::op_sorter_open,
+            Insn::SorterInsert { .. } => execute::op_sorter_insert,
+            Insn::SorterSort { .. } => execute::op_sorter_sort,
+            Insn::SorterData { .. } => execute::op_sorter_data,
+            Insn::SorterNext { .. } => execute::op_sorter_next,
+            Insn::Function { .. } => execute::op_function,
+            Insn::InitCoroutine { .. } => execute::op_init_coroutine,
+            Insn::EndCoroutine { .. } => execute::op_end_coroutine,
 
-            Insn::Yield { .. } => execute::execute_insn_yield,
-            Insn::InsertAsync { .. } => execute::execute_insn_insert_async,
-            Insn::InsertAwait { .. } => execute::execute_insn_insert_await,
+            Insn::Yield { .. } => execute::op_yield,
+            Insn::InsertAsync { .. } => execute::op_insert_async,
+            Insn::InsertAwait { .. } => execute::op_insert_await,
 
-            Insn::DeleteAsync { .. } => execute::execute_insn_delete_async,
+            Insn::DeleteAsync { .. } => execute::op_delete_async,
 
-            Insn::DeleteAwait { .. } => execute::execute_insn_delete_await,
+            Insn::DeleteAwait { .. } => execute::op_delete_await,
 
-            Insn::NewRowid { .. } => execute::execute_insn_new_rowid,
-            Insn::MustBeInt { .. } => execute::execute_insn_must_be_int,
+            Insn::NewRowid { .. } => execute::op_new_rowid,
+            Insn::MustBeInt { .. } => execute::op_must_be_int,
 
-            Insn::SoftNull { .. } => execute::execute_insn_soft_null,
+            Insn::SoftNull { .. } => execute::op_soft_null,
 
-            Insn::NotExists { .. } => execute::execute_insn_not_exists,
-            Insn::OffsetLimit { .. } => execute::execute_insn_offset_limit,
-            Insn::OpenWriteAsync { .. } => execute::execute_insn_open_write_async,
-            Insn::OpenWriteAwait { .. } => execute::execute_insn_open_write_await,
+            Insn::NotExists { .. } => execute::op_not_exists,
+            Insn::OffsetLimit { .. } => execute::op_offset_limit,
+            Insn::OpenWriteAsync { .. } => execute::op_open_write_async,
+            Insn::OpenWriteAwait { .. } => execute::op_open_write_await,
 
-            Insn::Copy { .. } => execute::execute_insn_copy,
-            Insn::CreateBtree { .. } => execute::execute_insn_create_btree,
+            Insn::Copy { .. } => execute::op_copy,
+            Insn::CreateBtree { .. } => execute::op_create_btree,
 
-            Insn::Destroy { .. } => execute::execute_insn_destroy,
-            Insn::DropTable { .. } => execute::execute_insn_drop_table,
-            Insn::Close { .. } => execute::execute_insn_close,
+            Insn::Destroy { .. } => execute::op_destroy,
+            Insn::DropTable { .. } => execute::op_drop_table,
+            Insn::Close { .. } => execute::op_close,
 
-            Insn::IsNull { .. } => execute::execute_insn_is_null,
+            Insn::IsNull { .. } => execute::op_is_null,
 
-            Insn::ParseSchema { .. } => execute::execute_insn_parse_schema,
+            Insn::ParseSchema { .. } => execute::op_parse_schema,
 
-            Insn::ShiftRight { .. } => execute::execute_insn_shift_right,
+            Insn::ShiftRight { .. } => execute::op_shift_right,
 
-            Insn::ShiftLeft { .. } => execute::execute_insn_shift_left,
+            Insn::ShiftLeft { .. } => execute::op_shift_left,
 
-            Insn::Variable { .. } => execute::execute_insn_variable,
+            Insn::Variable { .. } => execute::op_variable,
 
-            Insn::ZeroOrNull { .. } => execute::execute_insn_zero_or_null,
+            Insn::ZeroOrNull { .. } => execute::op_zero_or_null,
 
-            Insn::Not { .. } => execute::execute_insn_not,
+            Insn::Not { .. } => execute::op_not,
 
-            Insn::Concat { .. } => execute::execute_insn_concat,
+            Insn::Concat { .. } => execute::op_concat,
 
-            Insn::And { .. } => execute::execute_insn_and,
+            Insn::And { .. } => execute::op_and,
 
-            Insn::Or { .. } => execute::execute_insn_or,
+            Insn::Or { .. } => execute::op_or,
 
-            Insn::Noop => execute::execute_insn_noop,
-            Insn::PageCount { .. } => execute::execute_insn_page_count,
+            Insn::Noop => execute::op_noop,
+            Insn::PageCount { .. } => execute::op_page_count,
 
-            Insn::ReadCookie { .. } => execute::execute_insn_read_cookie,
+            Insn::ReadCookie { .. } => execute::op_read_cookie,
         }
     }
 }

@@ -82,7 +82,7 @@ pub enum InsnFunctionStepResult {
     Step,
 }
 
-pub fn execute_insn_init(
+pub fn op_init(
     _program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -96,7 +96,7 @@ pub fn execute_insn_init(
     state.pc = target_pc.to_offset_int();
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_add(
+pub fn op_add(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -113,7 +113,7 @@ pub fn execute_insn_add(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_subtract(
+pub fn op_subtract(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -130,7 +130,7 @@ pub fn execute_insn_subtract(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_multiply(
+pub fn op_multiply(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -147,7 +147,7 @@ pub fn execute_insn_multiply(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_divide(
+pub fn op_divide(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -164,7 +164,7 @@ pub fn execute_insn_divide(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_remainder(
+pub fn op_remainder(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -181,7 +181,7 @@ pub fn execute_insn_remainder(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_bit_and(
+pub fn op_bit_and(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -198,7 +198,7 @@ pub fn execute_insn_bit_and(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_bit_or(
+pub fn op_bit_or(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -215,7 +215,7 @@ pub fn execute_insn_bit_or(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_bit_not(
+pub fn op_bit_not(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -230,7 +230,7 @@ pub fn execute_insn_bit_not(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_checkpoint(
+pub fn op_checkpoint(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -267,7 +267,7 @@ pub fn execute_insn_checkpoint(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_null(
+pub fn op_null(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -287,7 +287,7 @@ pub fn execute_insn_null(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_null_row(
+pub fn op_null_row(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -305,7 +305,7 @@ pub fn execute_insn_null_row(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_compare(
+pub fn op_compare(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -343,7 +343,7 @@ pub fn execute_insn_compare(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_jump(
+pub fn op_jump(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -375,7 +375,7 @@ pub fn execute_insn_jump(
     state.pc = target_pc.to_offset_int();
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_move(
+pub fn op_move(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -402,7 +402,7 @@ pub fn execute_insn_move(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_if_pos(
+pub fn op_if_pos(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -437,7 +437,7 @@ pub fn execute_insn_if_pos(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_not_null(
+pub fn op_not_null(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -461,7 +461,7 @@ pub fn execute_insn_not_null(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn execute_insn_eq(
+pub fn op_eq(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -505,7 +505,7 @@ pub fn execute_insn_eq(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_ne(
+pub fn op_ne(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -549,7 +549,7 @@ pub fn execute_insn_ne(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_lt(
+pub fn op_lt(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -591,7 +591,7 @@ pub fn execute_insn_lt(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_le(
+pub fn op_le(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -633,7 +633,7 @@ pub fn execute_insn_le(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_gt(
+pub fn op_gt(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -675,7 +675,7 @@ pub fn execute_insn_gt(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_ge(
+pub fn op_ge(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -717,7 +717,7 @@ pub fn execute_insn_ge(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_if(
+pub fn op_if(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -744,7 +744,7 @@ pub fn execute_insn_if(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_if_not(
+pub fn op_if_not(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -771,7 +771,7 @@ pub fn execute_insn_if_not(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_open_read_async(
+pub fn op_open_read_async(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -825,7 +825,7 @@ pub fn execute_insn_open_read_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_open_read_await(
+pub fn op_open_read_await(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -835,7 +835,7 @@ pub fn execute_insn_open_read_await(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_vopen_async(
+pub fn op_vopen_async(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -857,7 +857,7 @@ pub fn execute_insn_vopen_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_vcreate(
+pub fn op_vcreate(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -907,7 +907,7 @@ pub fn execute_insn_vcreate(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_vopen_await(
+pub fn op_vopen_await(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -917,7 +917,7 @@ pub fn execute_insn_vopen_await(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_vfilter(
+pub fn op_vfilter(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -953,7 +953,7 @@ pub fn execute_insn_vfilter(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_vcolumn(
+pub fn op_vcolumn(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -981,7 +981,7 @@ pub fn execute_insn_vcolumn(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_vupdate(
+pub fn op_vupdate(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1044,7 +1044,7 @@ pub fn execute_insn_vupdate(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_vnext(
+pub fn op_vnext(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1074,7 +1074,7 @@ pub fn execute_insn_vnext(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_open_pseudo(
+pub fn op_open_pseudo(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1100,7 +1100,7 @@ pub fn execute_insn_open_pseudo(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_rewind_async(
+pub fn op_rewind_async(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1119,7 +1119,7 @@ pub fn execute_insn_rewind_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_last_async(
+pub fn op_last_async(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1137,7 +1137,7 @@ pub fn execute_insn_last_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_last_await(
+pub fn op_last_await(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1165,7 +1165,7 @@ pub fn execute_insn_last_await(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_rewind_await(
+pub fn op_rewind_await(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1194,7 +1194,7 @@ pub fn execute_insn_rewind_await(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_column(
+pub fn op_column(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1295,7 +1295,7 @@ pub fn execute_insn_column(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_make_record(
+pub fn op_make_record(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1315,7 +1315,7 @@ pub fn execute_insn_make_record(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_result_row(
+pub fn op_result_row(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1334,7 +1334,7 @@ pub fn execute_insn_result_row(
     state.pc += 1;
     return Ok(InsnFunctionStepResult::Row);
 }
-pub fn execute_insn_next_async(
+pub fn op_next_async(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1353,7 +1353,7 @@ pub fn execute_insn_next_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_prev_async(
+pub fn op_prev_async(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1372,7 +1372,7 @@ pub fn execute_insn_prev_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_prev_await(
+pub fn op_prev_await(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1400,7 +1400,7 @@ pub fn execute_insn_prev_await(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_next_await(
+pub fn op_next_await(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1428,7 +1428,7 @@ pub fn execute_insn_next_await(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_halt(
+pub fn op_halt(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1465,7 +1465,7 @@ pub fn execute_insn_halt(
         StepResult::Busy => Ok(InsnFunctionStepResult::Busy),
     }
 }
-pub fn execute_insn_transaction(
+pub fn op_transaction(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1518,7 +1518,7 @@ pub fn execute_insn_transaction(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_auto_commit(
+pub fn op_auto_commit(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1570,7 +1570,7 @@ pub fn execute_insn_auto_commit(
         super::StepResult::Busy => Ok(InsnFunctionStepResult::Busy),
     };
 }
-pub fn execute_insn_goto(
+pub fn op_goto(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1584,7 +1584,7 @@ pub fn execute_insn_goto(
     state.pc = target_pc.to_offset_int();
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_gosub(
+pub fn op_gosub(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1603,7 +1603,7 @@ pub fn execute_insn_gosub(
     state.pc = target_pc.to_offset_int();
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_return(
+pub fn op_return(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1625,7 +1625,7 @@ pub fn execute_insn_return(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_integer(
+pub fn op_integer(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1639,7 +1639,7 @@ pub fn execute_insn_integer(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_real(
+pub fn op_real(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1653,7 +1653,7 @@ pub fn execute_insn_real(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_real_affinity(
+pub fn op_real_affinity(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1669,7 +1669,7 @@ pub fn execute_insn_real_affinity(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_string8(
+pub fn op_string8(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1683,7 +1683,7 @@ pub fn execute_insn_string8(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_blob(
+pub fn op_blob(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1697,7 +1697,7 @@ pub fn execute_insn_blob(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_row_id(
+pub fn op_row_id(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1755,7 +1755,7 @@ pub fn execute_insn_row_id(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_seek_rowid(
+pub fn op_seek_rowid(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1799,7 +1799,7 @@ pub fn execute_insn_seek_rowid(
     state.pc = pc;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_deferred_seek(
+pub fn op_deferred_seek(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1817,7 +1817,7 @@ pub fn execute_insn_deferred_seek(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_seek_ge(
+pub fn op_seek_ge(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1882,7 +1882,7 @@ pub fn execute_insn_seek_ge(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_seek_gt(
+pub fn op_seek_gt(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1948,7 +1948,7 @@ pub fn execute_insn_seek_gt(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_idx_ge(
+pub fn op_idx_ge(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -1987,7 +1987,7 @@ pub fn execute_insn_idx_ge(
     state.pc = pc;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_idx_le(
+pub fn op_idx_le(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -2026,7 +2026,7 @@ pub fn execute_insn_idx_le(
     state.pc = pc;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_idx_gt(
+pub fn op_idx_gt(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -2065,7 +2065,7 @@ pub fn execute_insn_idx_gt(
     state.pc = pc;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_idx_lt(
+pub fn op_idx_lt(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -2104,7 +2104,7 @@ pub fn execute_insn_idx_lt(
     state.pc = pc;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_decr_jump_zero(
+pub fn op_decr_jump_zero(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -2129,7 +2129,7 @@ pub fn execute_insn_decr_jump_zero(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_agg_step(
+pub fn op_agg_step(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -2426,7 +2426,7 @@ pub fn execute_insn_agg_step(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_agg_final(
+pub fn op_agg_final(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -2552,7 +2552,7 @@ pub fn execute_insn_agg_final(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_sorter_open(
+pub fn op_sorter_open(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -2584,7 +2584,7 @@ pub fn execute_insn_sorter_open(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_sorter_data(
+pub fn op_sorter_data(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -2619,7 +2619,7 @@ pub fn execute_insn_sorter_data(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_sorter_insert(
+pub fn op_sorter_insert(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -2645,7 +2645,7 @@ pub fn execute_insn_sorter_insert(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_sorter_sort(
+pub fn op_sorter_sort(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -2675,7 +2675,7 @@ pub fn execute_insn_sorter_sort(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_sorter_next(
+pub fn op_sorter_next(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -2703,7 +2703,7 @@ pub fn execute_insn_sorter_next(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_function(
+pub fn op_function(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3464,7 +3464,7 @@ pub fn execute_insn_function(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_init_coroutine(
+pub fn op_init_coroutine(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3491,7 +3491,7 @@ pub fn execute_insn_init_coroutine(
     };
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_end_coroutine(
+pub fn op_end_coroutine(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3512,7 +3512,7 @@ pub fn execute_insn_end_coroutine(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_yield(
+pub fn op_yield(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3548,7 +3548,7 @@ pub fn execute_insn_yield(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_insert_async(
+pub fn op_insert_async(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3580,7 +3580,7 @@ pub fn execute_insn_insert_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_insert_await(
+pub fn op_insert_await(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3608,7 +3608,7 @@ pub fn execute_insn_insert_await(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_delete_async(
+pub fn op_delete_async(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3626,7 +3626,7 @@ pub fn execute_insn_delete_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_delete_await(
+pub fn op_delete_await(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3646,7 +3646,7 @@ pub fn execute_insn_delete_await(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_new_rowid(
+pub fn op_new_rowid(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3670,7 +3670,7 @@ pub fn execute_insn_new_rowid(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_must_be_int(
+pub fn op_must_be_int(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3706,7 +3706,7 @@ pub fn execute_insn_must_be_int(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_soft_null(
+pub fn op_soft_null(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3720,7 +3720,7 @@ pub fn execute_insn_soft_null(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_not_exists(
+pub fn op_not_exists(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3748,7 +3748,7 @@ pub fn execute_insn_not_exists(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_offset_limit(
+pub fn op_offset_limit(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3794,7 +3794,7 @@ pub fn execute_insn_offset_limit(
 // this cursor may be reused for next insert
 // Update: tablemoveto is used to travers on not exists, on insert depending on flags if nonseek it traverses again.
 // If not there might be some optimizations obviously.
-pub fn execute_insn_open_write_async(
+pub fn op_open_write_async(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3837,7 +3837,7 @@ pub fn execute_insn_open_write_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_open_write_await(
+pub fn op_open_write_await(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3850,7 +3850,7 @@ pub fn execute_insn_open_write_await(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_copy(
+pub fn op_copy(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3871,7 +3871,7 @@ pub fn execute_insn_copy(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_create_btree(
+pub fn op_create_btree(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3890,7 +3890,7 @@ pub fn execute_insn_create_btree(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_destroy(
+pub fn op_destroy(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3913,7 +3913,7 @@ pub fn execute_insn_destroy(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_drop_table(
+pub fn op_drop_table(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3940,7 +3940,7 @@ pub fn execute_insn_drop_table(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_close(
+pub fn op_close(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3955,7 +3955,7 @@ pub fn execute_insn_close(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_is_null(
+pub fn op_is_null(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3975,7 +3975,7 @@ pub fn execute_insn_is_null(
     }
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_page_count(
+pub fn op_page_count(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -3999,7 +3999,7 @@ pub fn execute_insn_page_count(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_parse_schema(
+pub fn op_parse_schema(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -4031,7 +4031,7 @@ pub fn execute_insn_parse_schema(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_read_cookie(
+pub fn op_read_cookie(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -4053,7 +4053,7 @@ pub fn execute_insn_read_cookie(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_shift_right(
+pub fn op_shift_right(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -4071,7 +4071,7 @@ pub fn execute_insn_shift_right(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn execute_insn_shift_left(
+pub fn op_shift_left(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -4088,7 +4088,7 @@ pub fn execute_insn_shift_left(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_variable(
+pub fn op_variable(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -4107,7 +4107,7 @@ pub fn execute_insn_variable(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_zero_or_null(
+pub fn op_zero_or_null(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -4127,7 +4127,7 @@ pub fn execute_insn_zero_or_null(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_not(
+pub fn op_not(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -4142,7 +4142,7 @@ pub fn execute_insn_not(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_concat(
+pub fn op_concat(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -4159,7 +4159,7 @@ pub fn execute_insn_concat(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_and(
+pub fn op_and(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -4176,7 +4176,7 @@ pub fn execute_insn_and(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
-pub fn execute_insn_or(
+pub fn op_or(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -4194,7 +4194,7 @@ pub fn execute_insn_or(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn execute_insn_noop(
+pub fn op_noop(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
