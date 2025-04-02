@@ -1,8 +1,10 @@
 use std::num::NonZero;
+use std::rc::Rc;
 
 use super::{
     cast_text_to_numeric, execute, AggFunc, BranchOffset, CursorID, FuncCtx, InsnFunction, PageIdx,
 };
+use crate::schema::BTreeTable;
 use crate::storage::wal::CheckpointMode;
 use crate::types::{OwnedValue, Record};
 use limbo_macros::Description;
@@ -344,7 +346,16 @@ pub enum Insn {
         dest: usize,
     },
 
-    /// Make a record and write it to destination register.
+    TypeCheck {
+        start_reg: usize, // P1
+        count: usize,     // P2
+        /// GENERATED ALWAYS AS ... STATIC columns are only checked if P3 is zero.
+        /// When P3 is non-zero, no type checking occurs for static generated columns.
+        check_generated: bool, // P3
+        table_reference: Rc<BTreeTable>, // P4
+    },
+
+    // Make a record and write it to destination register.
     MakeRecord {
         start_reg: usize, // P1
         count: usize,     // P2
@@ -427,7 +438,7 @@ pub enum Insn {
         register: usize,
     },
 
-    /// Write a string value into a register.
+    // Write a string value into a register.
     String8 {
         value: String,
         dest: usize,
@@ -1271,6 +1282,7 @@ impl Insn {
 
             Insn::LastAwait { .. } => execute::op_last_await,
             Insn::Column { .. } => execute::op_column,
+            Insn::TypeCheck { .. } => execute::op_type_check,
             Insn::MakeRecord { .. } => execute::op_make_record,
             Insn::ResultRow { .. } => execute::op_result_row,
 

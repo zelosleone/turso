@@ -251,6 +251,17 @@ pub fn translate_insert(
         program.resolve_label(make_record_label, program.offset());
     }
 
+    match table.btree() {
+        Some(t) if t.is_strict => {
+            program.emit_insn(Insn::TypeCheck {
+                start_reg: column_registers_start,
+                count: num_cols,
+                check_generated: true,
+                table_reference: Rc::clone(&t),
+            });
+        }
+        _ => (),
+    }
     // Create and insert the record
     program.emit_insn(Insn::MakeRecord {
         start_reg: column_registers_start,
