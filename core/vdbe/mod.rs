@@ -352,29 +352,6 @@ pub struct Program {
 }
 
 impl Program {
-    #[rustfmt::skip]
-    pub fn explain(&self) -> String {
-        let mut buff = String::with_capacity(1024);
-        buff.push_str("addr  opcode             p1    p2    p3    p4             p5  comment\n");
-        buff.push_str("----  -----------------  ----  ----  ----  -------------  --  -------\n");
-        let mut indent_count: usize = 0;
-        let indent = "  ";
-        let mut prev_insn: Option<&Insn> = None;
-        for (addr, (insn, _)) in self.insns.iter().enumerate() {
-            indent_count = get_indent_count(indent_count, insn, prev_insn);
-            print_insn(
-                self,
-                addr as InsnReference,
-                insn,
-                indent.repeat(indent_count),
-                &mut buff,
-            );
-            buff.push('\n');
-            prev_insn = Some(insn);
-        }
-        buff
-    }
-
     pub fn step(
         &self,
         state: &mut ProgramState,
@@ -483,6 +460,29 @@ impl Program {
             }
         }
         Ok(StepResult::Done)
+    }
+
+    #[rustfmt::skip]
+    pub fn explain(&self) -> String {
+        let mut buff = String::with_capacity(1024);
+        buff.push_str("addr  opcode             p1    p2    p3    p4             p5  comment\n");
+        buff.push_str("----  -----------------  ----  ----  ----  -------------  --  -------\n");
+        let mut indent_count: usize = 0;
+        let indent = "  ";
+        let mut prev_insn: Option<&Insn> = None;
+        for (addr, (insn, _)) in self.insns.iter().enumerate() {
+            indent_count = get_indent_count(indent_count, insn, prev_insn);
+            print_insn(
+                self,
+                addr as InsnReference,
+                insn,
+                indent.repeat(indent_count),
+                &mut buff,
+            );
+            buff.push('\n');
+            prev_insn = Some(insn);
+        }
+        buff
     }
 }
 
