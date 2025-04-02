@@ -96,6 +96,7 @@ pub fn op_init(
     state.pc = target_pc.to_offset_int();
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_add(
     program: &Program,
     state: &mut ProgramState,
@@ -113,6 +114,7 @@ pub fn op_add(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_subtract(
     program: &Program,
     state: &mut ProgramState,
@@ -130,6 +132,7 @@ pub fn op_subtract(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_multiply(
     program: &Program,
     state: &mut ProgramState,
@@ -147,6 +150,7 @@ pub fn op_multiply(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_divide(
     program: &Program,
     state: &mut ProgramState,
@@ -164,6 +168,7 @@ pub fn op_divide(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_remainder(
     program: &Program,
     state: &mut ProgramState,
@@ -181,6 +186,7 @@ pub fn op_remainder(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_bit_and(
     program: &Program,
     state: &mut ProgramState,
@@ -198,6 +204,7 @@ pub fn op_bit_and(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_bit_or(
     program: &Program,
     state: &mut ProgramState,
@@ -215,6 +222,7 @@ pub fn op_bit_or(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_bit_not(
     program: &Program,
     state: &mut ProgramState,
@@ -230,6 +238,7 @@ pub fn op_bit_not(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_checkpoint(
     program: &Program,
     state: &mut ProgramState,
@@ -267,6 +276,7 @@ pub fn op_checkpoint(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_null(
     program: &Program,
     state: &mut ProgramState,
@@ -287,6 +297,7 @@ pub fn op_null(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_null_row(
     program: &Program,
     state: &mut ProgramState,
@@ -305,6 +316,7 @@ pub fn op_null_row(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_compare(
     program: &Program,
     state: &mut ProgramState,
@@ -343,6 +355,7 @@ pub fn op_compare(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_jump(
     program: &Program,
     state: &mut ProgramState,
@@ -375,6 +388,7 @@ pub fn op_jump(
     state.pc = target_pc.to_offset_int();
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_move(
     program: &Program,
     state: &mut ProgramState,
@@ -402,6 +416,7 @@ pub fn op_move(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_if_pos(
     program: &Program,
     state: &mut ProgramState,
@@ -437,6 +452,7 @@ pub fn op_if_pos(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_not_null(
     program: &Program,
     state: &mut ProgramState,
@@ -505,6 +521,7 @@ pub fn op_eq(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_ne(
     program: &Program,
     state: &mut ProgramState,
@@ -549,6 +566,7 @@ pub fn op_ne(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_lt(
     program: &Program,
     state: &mut ProgramState,
@@ -591,6 +609,7 @@ pub fn op_lt(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_le(
     program: &Program,
     state: &mut ProgramState,
@@ -633,6 +652,7 @@ pub fn op_le(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_gt(
     program: &Program,
     state: &mut ProgramState,
@@ -675,6 +695,7 @@ pub fn op_gt(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_ge(
     program: &Program,
     state: &mut ProgramState,
@@ -717,6 +738,7 @@ pub fn op_ge(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_if(
     program: &Program,
     state: &mut ProgramState,
@@ -744,6 +766,7 @@ pub fn op_if(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_if_not(
     program: &Program,
     state: &mut ProgramState,
@@ -771,6 +794,7 @@ pub fn op_if_not(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_open_read_async(
     program: &Program,
     state: &mut ProgramState,
@@ -825,6 +849,7 @@ pub fn op_open_read_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_open_read_await(
     program: &Program,
     state: &mut ProgramState,
@@ -835,6 +860,7 @@ pub fn op_open_read_await(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_vopen_async(
     program: &Program,
     state: &mut ProgramState,
@@ -857,6 +883,7 @@ pub fn op_vopen_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_vcreate(
     program: &Program,
     state: &mut ProgramState,
@@ -907,6 +934,7 @@ pub fn op_vcreate(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_vopen_await(
     program: &Program,
     state: &mut ProgramState,
@@ -917,6 +945,7 @@ pub fn op_vopen_await(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_vfilter(
     program: &Program,
     state: &mut ProgramState,
@@ -953,6 +982,7 @@ pub fn op_vfilter(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_vcolumn(
     program: &Program,
     state: &mut ProgramState,
@@ -981,6 +1011,7 @@ pub fn op_vcolumn(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_vupdate(
     program: &Program,
     state: &mut ProgramState,
@@ -1044,6 +1075,7 @@ pub fn op_vupdate(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_vnext(
     program: &Program,
     state: &mut ProgramState,
@@ -1074,6 +1106,7 @@ pub fn op_vnext(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_open_pseudo(
     program: &Program,
     state: &mut ProgramState,
@@ -1100,6 +1133,7 @@ pub fn op_open_pseudo(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_rewind_async(
     program: &Program,
     state: &mut ProgramState,
@@ -1119,6 +1153,7 @@ pub fn op_rewind_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_last_async(
     program: &Program,
     state: &mut ProgramState,
@@ -1137,6 +1172,7 @@ pub fn op_last_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_last_await(
     program: &Program,
     state: &mut ProgramState,
@@ -1165,6 +1201,7 @@ pub fn op_last_await(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_rewind_await(
     program: &Program,
     state: &mut ProgramState,
@@ -1194,6 +1231,7 @@ pub fn op_rewind_await(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_column(
     program: &Program,
     state: &mut ProgramState,
@@ -1295,6 +1333,7 @@ pub fn op_column(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_make_record(
     program: &Program,
     state: &mut ProgramState,
@@ -1315,6 +1354,7 @@ pub fn op_make_record(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_result_row(
     program: &Program,
     state: &mut ProgramState,
@@ -1334,6 +1374,7 @@ pub fn op_result_row(
     state.pc += 1;
     return Ok(InsnFunctionStepResult::Row);
 }
+
 pub fn op_next_async(
     program: &Program,
     state: &mut ProgramState,
@@ -1353,6 +1394,7 @@ pub fn op_next_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_prev_async(
     program: &Program,
     state: &mut ProgramState,
@@ -1372,6 +1414,7 @@ pub fn op_prev_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_prev_await(
     program: &Program,
     state: &mut ProgramState,
@@ -1400,6 +1443,7 @@ pub fn op_prev_await(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_next_await(
     program: &Program,
     state: &mut ProgramState,
@@ -1428,6 +1472,7 @@ pub fn op_next_await(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_halt(
     program: &Program,
     state: &mut ProgramState,
@@ -1465,6 +1510,7 @@ pub fn op_halt(
         StepResult::Busy => Ok(InsnFunctionStepResult::Busy),
     }
 }
+
 pub fn op_transaction(
     program: &Program,
     state: &mut ProgramState,
@@ -1518,6 +1564,7 @@ pub fn op_transaction(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_auto_commit(
     program: &Program,
     state: &mut ProgramState,
@@ -1570,6 +1617,7 @@ pub fn op_auto_commit(
         super::StepResult::Busy => Ok(InsnFunctionStepResult::Busy),
     };
 }
+
 pub fn op_goto(
     program: &Program,
     state: &mut ProgramState,
@@ -1584,6 +1632,7 @@ pub fn op_goto(
     state.pc = target_pc.to_offset_int();
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_gosub(
     program: &Program,
     state: &mut ProgramState,
@@ -1603,6 +1652,7 @@ pub fn op_gosub(
     state.pc = target_pc.to_offset_int();
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_return(
     program: &Program,
     state: &mut ProgramState,
@@ -1625,6 +1675,7 @@ pub fn op_return(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_integer(
     program: &Program,
     state: &mut ProgramState,
@@ -1639,6 +1690,7 @@ pub fn op_integer(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_real(
     program: &Program,
     state: &mut ProgramState,
@@ -1653,6 +1705,7 @@ pub fn op_real(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_real_affinity(
     program: &Program,
     state: &mut ProgramState,
@@ -1669,6 +1722,7 @@ pub fn op_real_affinity(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_string8(
     program: &Program,
     state: &mut ProgramState,
@@ -1683,6 +1737,7 @@ pub fn op_string8(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_blob(
     program: &Program,
     state: &mut ProgramState,
@@ -1697,6 +1752,7 @@ pub fn op_blob(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_row_id(
     program: &Program,
     state: &mut ProgramState,
@@ -1755,6 +1811,7 @@ pub fn op_row_id(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_seek_rowid(
     program: &Program,
     state: &mut ProgramState,
@@ -1799,6 +1856,7 @@ pub fn op_seek_rowid(
     state.pc = pc;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_deferred_seek(
     program: &Program,
     state: &mut ProgramState,
@@ -1817,6 +1875,7 @@ pub fn op_deferred_seek(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_seek_ge(
     program: &Program,
     state: &mut ProgramState,
@@ -1882,6 +1941,7 @@ pub fn op_seek_ge(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_seek_gt(
     program: &Program,
     state: &mut ProgramState,
@@ -1948,6 +2008,7 @@ pub fn op_seek_gt(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_idx_ge(
     program: &Program,
     state: &mut ProgramState,
@@ -1987,6 +2048,7 @@ pub fn op_idx_ge(
     state.pc = pc;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_idx_le(
     program: &Program,
     state: &mut ProgramState,
@@ -2026,6 +2088,7 @@ pub fn op_idx_le(
     state.pc = pc;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_idx_gt(
     program: &Program,
     state: &mut ProgramState,
@@ -2065,6 +2128,7 @@ pub fn op_idx_gt(
     state.pc = pc;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_idx_lt(
     program: &Program,
     state: &mut ProgramState,
@@ -2104,6 +2168,7 @@ pub fn op_idx_lt(
     state.pc = pc;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_decr_jump_zero(
     program: &Program,
     state: &mut ProgramState,
@@ -2129,6 +2194,7 @@ pub fn op_decr_jump_zero(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_agg_step(
     program: &Program,
     state: &mut ProgramState,
@@ -2426,6 +2492,7 @@ pub fn op_agg_step(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_agg_final(
     program: &Program,
     state: &mut ProgramState,
@@ -2552,6 +2619,7 @@ pub fn op_agg_final(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_sorter_open(
     program: &Program,
     state: &mut ProgramState,
@@ -2584,6 +2652,7 @@ pub fn op_sorter_open(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_sorter_data(
     program: &Program,
     state: &mut ProgramState,
@@ -2619,6 +2688,7 @@ pub fn op_sorter_data(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_sorter_insert(
     program: &Program,
     state: &mut ProgramState,
@@ -2645,6 +2715,7 @@ pub fn op_sorter_insert(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_sorter_sort(
     program: &Program,
     state: &mut ProgramState,
@@ -2675,6 +2746,7 @@ pub fn op_sorter_sort(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_sorter_next(
     program: &Program,
     state: &mut ProgramState,
@@ -2703,6 +2775,7 @@ pub fn op_sorter_next(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_function(
     program: &Program,
     state: &mut ProgramState,
@@ -3464,6 +3537,7 @@ pub fn op_function(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_init_coroutine(
     program: &Program,
     state: &mut ProgramState,
@@ -3491,6 +3565,7 @@ pub fn op_init_coroutine(
     };
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_end_coroutine(
     program: &Program,
     state: &mut ProgramState,
@@ -3512,6 +3587,7 @@ pub fn op_end_coroutine(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_yield(
     program: &Program,
     state: &mut ProgramState,
@@ -3548,6 +3624,7 @@ pub fn op_yield(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_insert_async(
     program: &Program,
     state: &mut ProgramState,
@@ -3580,6 +3657,7 @@ pub fn op_insert_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_insert_await(
     program: &Program,
     state: &mut ProgramState,
@@ -3608,6 +3686,7 @@ pub fn op_insert_await(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_delete_async(
     program: &Program,
     state: &mut ProgramState,
@@ -3626,6 +3705,7 @@ pub fn op_delete_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_delete_await(
     program: &Program,
     state: &mut ProgramState,
@@ -3646,6 +3726,7 @@ pub fn op_delete_await(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_new_rowid(
     program: &Program,
     state: &mut ProgramState,
@@ -3670,6 +3751,7 @@ pub fn op_new_rowid(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_must_be_int(
     program: &Program,
     state: &mut ProgramState,
@@ -3706,6 +3788,7 @@ pub fn op_must_be_int(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_soft_null(
     program: &Program,
     state: &mut ProgramState,
@@ -3720,6 +3803,7 @@ pub fn op_soft_null(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_not_exists(
     program: &Program,
     state: &mut ProgramState,
@@ -3748,6 +3832,7 @@ pub fn op_not_exists(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_offset_limit(
     program: &Program,
     state: &mut ProgramState,
@@ -3837,6 +3922,7 @@ pub fn op_open_write_async(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_open_write_await(
     program: &Program,
     state: &mut ProgramState,
@@ -3850,6 +3936,7 @@ pub fn op_open_write_await(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_copy(
     program: &Program,
     state: &mut ProgramState,
@@ -3871,6 +3958,7 @@ pub fn op_copy(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_create_btree(
     program: &Program,
     state: &mut ProgramState,
@@ -3890,6 +3978,7 @@ pub fn op_create_btree(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_destroy(
     program: &Program,
     state: &mut ProgramState,
@@ -3913,6 +4002,7 @@ pub fn op_destroy(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_drop_table(
     program: &Program,
     state: &mut ProgramState,
@@ -3940,6 +4030,7 @@ pub fn op_drop_table(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_close(
     program: &Program,
     state: &mut ProgramState,
@@ -3955,6 +4046,7 @@ pub fn op_close(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_is_null(
     program: &Program,
     state: &mut ProgramState,
@@ -3975,6 +4067,7 @@ pub fn op_is_null(
     }
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_page_count(
     program: &Program,
     state: &mut ProgramState,
@@ -3999,6 +4092,7 @@ pub fn op_page_count(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_parse_schema(
     program: &Program,
     state: &mut ProgramState,
@@ -4031,6 +4125,7 @@ pub fn op_parse_schema(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_read_cookie(
     program: &Program,
     state: &mut ProgramState,
@@ -4053,6 +4148,7 @@ pub fn op_read_cookie(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_shift_right(
     program: &Program,
     state: &mut ProgramState,
@@ -4088,6 +4184,7 @@ pub fn op_shift_left(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_variable(
     program: &Program,
     state: &mut ProgramState,
@@ -4107,6 +4204,7 @@ pub fn op_variable(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_zero_or_null(
     program: &Program,
     state: &mut ProgramState,
@@ -4127,6 +4225,7 @@ pub fn op_zero_or_null(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_not(
     program: &Program,
     state: &mut ProgramState,
@@ -4142,6 +4241,7 @@ pub fn op_not(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_concat(
     program: &Program,
     state: &mut ProgramState,
@@ -4159,6 +4259,7 @@ pub fn op_concat(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_and(
     program: &Program,
     state: &mut ProgramState,
@@ -4176,6 +4277,7 @@ pub fn op_and(
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
+
 pub fn op_or(
     program: &Program,
     state: &mut ProgramState,
