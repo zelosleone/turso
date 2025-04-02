@@ -14,7 +14,6 @@ use crate::{return_corrupt, LimboError, Result};
 use std::cell::{Cell, Ref, RefCell};
 use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use super::pager::PageRef;
 use super::sqlite3_ondisk::{
