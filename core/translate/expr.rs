@@ -494,6 +494,15 @@ pub fn translate_expr(
     match expr {
         ast::Expr::Between { .. } => todo!(),
         ast::Expr::Binary(e1, op, e2) => {
+            // Check if both sides of the expression are identical and reuse the same register if so
+            if e1 == e2 {
+                let shared_reg = program.alloc_register();
+                translate_expr(program, referenced_tables, e1, shared_reg, resolver)?;
+
+                emit_binary_insn(program, op, shared_reg, shared_reg, target_register)?;
+                return Ok(target_register);
+            }
+
             let e1_reg = program.alloc_registers(2);
             let e2_reg = e1_reg + 1;
 
