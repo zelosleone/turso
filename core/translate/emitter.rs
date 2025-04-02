@@ -130,7 +130,11 @@ fn prologue<'a>(
     Ok((t_ctx, init_label, start_offset))
 }
 
-pub enum TransactionMode { None, Read, Write }
+pub enum TransactionMode {
+    None,
+    Read,
+    Write,
+}
 
 /// Clean up and finalize the program, resolving any remaining labels
 /// Note that although these are the final instructions, typically an SQLite
@@ -139,7 +143,7 @@ fn epilogue(
     program: &mut ProgramBuilder,
     init_label: BranchOffset,
     start_offset: BranchOffset,
-    txn_mode: TransactionMode
+    txn_mode: TransactionMode,
 ) -> Result<()> {
     program.emit_insn(Insn::Halt {
         err_code: 0,
@@ -149,12 +153,8 @@ fn epilogue(
     program.resolve_label(init_label, program.offset());
 
     match txn_mode {
-        TransactionMode::Read => program.emit_insn(Insn::Transaction {
-            write: false,
-        }),
-        TransactionMode::Write => program.emit_insn(Insn::Transaction {
-            write: true,
-        }),
+        TransactionMode::Read => program.emit_insn(Insn::Transaction { write: false }),
+        TransactionMode::Write => program.emit_insn(Insn::Transaction { write: true }),
         TransactionMode::None => {}
     }
 
@@ -199,8 +199,14 @@ fn emit_program_for_select(
     }
     // Emit main parts of query
     emit_query(program, &mut plan, &mut t_ctx)?;
+
     // Finalize program
-    epilogue(program, init_label, start_offset, TransactionMode::Read)?;
+    if plan.table_references.is_empty() {
+        epilogue(program, init_label, start_offset, TransactionMode::None)?;
+    } else {
+        epilogue(program, init_label, start_offset, TransactionMode::Read)?;
+    }
+
     program.result_columns = plan.result_columns;
     program.table_references = plan.table_references;
     Ok(())
