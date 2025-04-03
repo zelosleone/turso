@@ -332,7 +332,7 @@ pub fn begin_write_database_header(header: &DatabaseHeader, pager: &Pager) -> Re
     });
 
     let c = Completion::Write(WriteCompletion::new(write_complete));
-    page_source.write_page(0, buffer_to_copy, c)?;
+    page_source.write_page(1, buffer_to_copy, c)?;
 
     Ok(())
 }
