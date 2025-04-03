@@ -6,7 +6,6 @@ use std::rc::Rc;
 use limbo_sqlite3_parser::ast::{self};
 
 use crate::function::Func;
-use crate::schema::Table;
 use crate::translate::plan::{DeletePlan, Plan, Search};
 use crate::util::exprs_are_equivalent;
 use crate::vdbe::builder::ProgramBuilder;
@@ -531,29 +530,67 @@ fn emit_update_insns(
 ) -> crate::Result<()> {
     let table_ref = &plan.table_references.first().unwrap();
     let loop_labels = t_ctx.labels_main_loop.first().unwrap();
-    let (cursor_id, index) = match &table_ref.op {
-        Operation::Scan { .. } => (program.resolve_cursor_id(&table_ref.identifier), None),
+    let (cursor_id, index, is_virtual) = match &table_ref.op {
+        Operation::Scan { .. } => (
+            program.resolve_cursor_id(&table_ref.identifier),
+            None,
+            table_ref.virtual_table().is_some(),
+        ),
         Operation::Search(search) => match search {
-            &Search::RowidEq { .. } | Search::RowidSearch { .. } => {
-                (program.resolve_cursor_id(&table_ref.identifier), None)
-            }
+            &Search::RowidEq { .. } | Search::RowidSearch { .. } => (
+                program.resolve_cursor_id(&table_ref.identifier),
+                None,
+                false,
+            ),
             Search::IndexSearch { index, .. } => (
                 program.resolve_cursor_id(&table_ref.identifier),
                 Some((index.clone(), program.resolve_cursor_id(&index.name))),
+                false,
             ),
         },
         _ => return Ok(()),
     };
-    let rowid_reg = program.alloc_register();
+
+    for cond in plan.where_clause.iter().filter(|c| c.is_constant()) {
+        let jump_target = program.allocate_label();
+        let meta = ConditionMetadata {
+            jump_if_condition_is_true: false,
+            jump_target_when_true: jump_target,
+            jump_target_when_false: t_ctx.label_main_loop_end.unwrap(),
+        };
+        translate_condition_expr(
+            program,
+            &plan.table_references,
+            &cond.expr,
+            meta,
+            &t_ctx.resolver,
+        )?;
+        program.resolve_label(jump_target, program.offset());
+    }
+    let mut beg = program.alloc_registers(
+        table_ref.table.columns().len()
+            + if is_virtual {
+                2 // two args before the relevant columns for VUpdate
+            } else {
+                1 // rowid reg
+            },
+    );
     program.emit_insn(Insn::RowId {
         cursor_id,
-        dest: rowid_reg,
+        dest: beg,
     });
     // if no rowid, we're done
     program.emit_insn(Insn::IsNull {
-        reg: rowid_reg,
+        reg: beg,
         target_pc: t_ctx.label_main_loop_end.unwrap(),
     });
+    if is_virtual {
+        program.emit_insn(Insn::Copy {
+            src_reg: beg,
+            dst_reg: beg + 1,
+            amount: 0,
+        })
+    }
 
     if let Some(offset) = t_ctx.reg_offset {
         program.emit_insn(Insn::IfPos {
@@ -577,12 +614,13 @@ fn emit_update_insns(
             &t_ctx.resolver,
         )?;
     }
-    let first_col_reg = program.alloc_registers(table_ref.table.columns().len());
+
     // we scan a column at a time, loading either the column's values, or the new value
     // from the Set expression, into registers so we can emit a MakeRecord and update the row.
+    let start = if is_virtual { beg + 2 } else { beg + 1 };
     for idx in 0..table_ref.columns().len() {
-        if let Some((idx, expr)) = plan.set_clauses.iter().find(|(i, _)| *i == idx) {
-            let target_reg = first_col_reg + idx;
+        let target_reg = start + idx;
+        if let Some((_, expr)) = plan.set_clauses.iter().find(|(i, _)| *i == idx) {
             translate_expr(
                 program,
                 Some(&plan.table_references),
@@ -597,91 +635,66 @@ fn emit_update_insns(
                     .iter()
                     .position(|c| Some(&c.name) == table_column.name.as_ref())
             });
-            let dest = first_col_reg + idx;
-            if table_column.primary_key {
-                program.emit_null(dest, None);
+
+            // don't emit null for pkey of virtual tables. they require first two args
+            // before the 'record' to be explicitly non-null
+            if table_column.primary_key && !is_virtual {
+                program.emit_null(target_reg, None);
+            } else if is_virtual {
+                program.emit_insn(Insn::VColumn {
+                    cursor_id,
+                    column: idx,
+                    dest: target_reg,
+                });
             } else {
-                match &table_ref.table {
-                    Table::BTree(_) => {
-                        program.emit_insn(Insn::Column {
-                            cursor_id: *index
-                                .as_ref()
-                                .and_then(|(_, id)| {
-                                    if column_idx_in_index.is_some() {
-                                        Some(id)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or(&cursor_id),
-                            column: column_idx_in_index.unwrap_or(idx),
-                            dest,
-                        });
-                    }
-                    Table::Virtual(_) => {
-                        program.emit_insn(Insn::VColumn {
-                            cursor_id: *index
-                                .as_ref()
-                                .and_then(|(_, id)| {
-                                    if column_idx_in_index.is_some() {
-                                        Some(id)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or(&cursor_id),
-                            column: column_idx_in_index.unwrap_or(idx),
-                            dest,
-                        });
-                    }
-                    typ => unreachable!("query plan generated on unexpected table type {:?}", typ),
-                }
+                program.emit_insn(Insn::Column {
+                    cursor_id: *index
+                        .as_ref()
+                        .and_then(|(_, id)| {
+                            if column_idx_in_index.is_some() {
+                                Some(id)
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(&cursor_id),
+                    column: column_idx_in_index.unwrap_or(idx),
+                    dest: target_reg,
+                });
             }
         }
     }
     if let Some(btree_table) = table_ref.btree() {
         if btree_table.is_strict {
             program.emit_insn(Insn::TypeCheck {
-                start_reg: first_col_reg,
+                start_reg: start,
                 count: table_ref.columns().len(),
                 check_generated: true,
                 table_reference: Rc::clone(&btree_table),
             });
         }
-    }
-    let record_reg = program.alloc_register();
-    program.emit_insn(Insn::MakeRecord {
-        start_reg: first_col_reg,
-        count: table_ref.columns().len(),
-        dest_reg: record_reg,
-    });
-    match &table_ref.table {
-        Table::BTree(_) => {
-            program.emit_insn(Insn::InsertAsync {
-                cursor: cursor_id,
-                key_reg: rowid_reg,
-                record_reg,
-                flag: 0,
-            });
-            program.emit_insn(Insn::InsertAwait { cursor_id });
-        }
-        Table::Virtual(vtab) => {
-            let new_rowid = program.alloc_register();
-            program.emit_insn(Insn::Copy {
-                src_reg: rowid_reg,
-                dst_reg: new_rowid,
-                amount: 0,
-            });
-            let arg_count = table_ref.columns().len() + 2;
-            program.emit_insn(Insn::VUpdate {
-                cursor_id,
-                arg_count,
-                start_reg: record_reg,
-                vtab_ptr: vtab.implementation.as_ref().ctx as usize,
-                conflict_action: 0u16,
-            });
-        }
-        _ => unreachable!("unexpected table type"),
+        let record_reg = program.alloc_register();
+        program.emit_insn(Insn::MakeRecord {
+            start_reg: start,
+            count: table_ref.columns().len(),
+            dest_reg: record_reg,
+        });
+        program.emit_insn(Insn::InsertAsync {
+            cursor: cursor_id,
+            key_reg: beg,
+            record_reg,
+            flag: 0,
+        });
+        program.emit_insn(Insn::InsertAwait { cursor_id });
+    } else if let Some(vtab) = table_ref.virtual_table() {
+        let arg_count = table_ref.columns().len() + 2;
+        program.emit_insn(Insn::VUpdate {
+            cursor_id,
+            arg_count,
+            start_reg: beg,
+            vtab_ptr: vtab.implementation.as_ref().ctx as usize,
+            conflict_action: 0u16,
+        });
     }
 
     if let Some(limit_reg) = t_ctx.reg_limit {
