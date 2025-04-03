@@ -258,23 +258,23 @@ impl Pager {
     }
 
     pub fn end_tx(&self) -> Result<CheckpointStatus> {
-    if let Some(wal) = &self.wal {
-        let checkpoint_status = self.cacheflush()?;
-       return match checkpoint_status {
-            CheckpointStatus::IO => Ok(checkpoint_status),
-            CheckpointStatus::Done(_) => {
-                wal.borrow().end_write_tx()?;
-                wal.borrow().end_read_tx()?;
-                Ok(checkpoint_status)
-            }
+        if let Some(wal) = &self.wal {
+            let checkpoint_status = self.cacheflush()?;
+            return match checkpoint_status {
+                CheckpointStatus::IO => Ok(checkpoint_status),
+                CheckpointStatus::Done(_) => {
+                    wal.borrow().end_write_tx()?;
+                    wal.borrow().end_read_tx()?;
+                    Ok(checkpoint_status)
+                }
+            };
         }
-    }
 
-    Ok(CheckpointStatus::Done(CheckpointResult::default()))
+        Ok(CheckpointStatus::Done(CheckpointResult::default()))
     }
 
     pub fn end_read_tx(&self) -> Result<()> {
-       if let Some(wal) = &self.wal {
+        if let Some(wal) = &self.wal {
             wal.borrow().end_read_tx()?;
         }
         Ok(())
@@ -297,19 +297,18 @@ impl Pager {
         page.set_locked();
 
         if let Some(wal) = &self.wal {
-        if let Some(frame_id) = wal.borrow().find_frame(page_idx as u64)? {
-            wal
-                .borrow()
-                .read_frame(frame_id, page.clone(), self.buffer_pool.clone())?;
-            {
-                page.set_uptodate();
+            if let Some(frame_id) = wal.borrow().find_frame(page_idx as u64)? {
+                wal.borrow()
+                    .read_frame(frame_id, page.clone(), self.buffer_pool.clone())?;
+                {
+                    page.set_uptodate();
+                }
+                // TODO(pere) ensure page is inserted, we should probably first insert to page cache
+                // and if successful, read frame or page
+                page_cache.insert(page_key, page.clone());
+                return Ok(page);
             }
-            // TODO(pere) ensure page is inserted, we should probably first insert to page cache
-            // and if successful, read frame or page
-            page_cache.insert(page_key, page.clone());
-            return Ok(page);
         }
-    }
         sqlite3_ondisk::begin_read_page(
             self.db_file.clone(),
             self.buffer_pool.clone(),
@@ -327,7 +326,7 @@ impl Pager {
         trace!("load_page(page_idx = {})", id);
         let mut page_cache = self.page_cache.write();
         page.set_locked();
-               if let Some(wal) = &self.wal {
+        if let Some(wal) = &self.wal {
             let page_key = PageCacheKey::new(id, Some(wal.borrow().get_max_frame()));
             if let Some(frame_id) = wal.borrow().find_frame(id as u64)? {
                 wal.borrow()
@@ -340,8 +339,8 @@ impl Pager {
                     page_cache.insert(page_key, page.clone());
                 }
                 return Ok(());
+            }
         }
-    }
         sqlite3_ondisk::begin_read_page(
             self.db_file.clone(),
             self.buffer_pool.clone(),
@@ -350,7 +349,7 @@ impl Pager {
         )?;
 
         Ok(())
-}
+    }
 
     /// Writes the database header.
     pub fn write_database_header(&self, header: &DatabaseHeader) {
@@ -379,7 +378,7 @@ impl Pager {
                     let db_size = self.db_header.lock().database_size;
                     for page_id in self.dirty_pages.borrow().iter() {
                         let mut cache = self.page_cache.write();
-                            if let Some(wal) = &self.wal {
+                        if let Some(wal) = &self.wal {
                             let page_key =
                                 PageCacheKey::new(*page_id, Some(wal.borrow().get_max_frame()));
                             let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
@@ -412,7 +411,7 @@ impl Pager {
                     let wal = self.wal.clone().ok_or(LimboError::InternalError(
                         "SyncWal was called without a existing wal".to_string(),
                     ))?;
-                    match wal.borrow_mut().sync() {      
+                    match wal.borrow_mut().sync() {
                         Ok(CheckpointStatus::IO) => return Ok(CheckpointStatus::IO),
                         Ok(CheckpointStatus::Done(res)) => checkpoint_result = res,
                         Err(e) => return Err(e),
@@ -628,7 +627,7 @@ impl Pager {
             page.set_dirty();
             self.add_dirty(page.get().id);
             let mut cache = self.page_cache.write();
-                        let max_frame = match &self.wal {
+            let max_frame = match &self.wal {
                 Some(wal) => wal.borrow().get_max_frame(),
                 None => 0,
             };
