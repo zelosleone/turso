@@ -1,6 +1,6 @@
 {
   "name": "@tursodatabase/limbo",
-  "version": "0.0.19-pre.2",
+  "version": "0.0.19-pre.3",
   "description": "The Limbo database library",
   "main": "index.js",
   "types": "index.d.ts",
