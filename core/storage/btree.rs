@@ -1833,6 +1833,15 @@ impl BTreeCursor {
                         // Leaf index
                         new_divider_cell.extend_from_slice(divider_cell);
                     }
+
+                    let left_pointer = read_u32(&new_divider_cell[..4], 0);
+                    assert_eq!(left_pointer, page.get().id as u32);
+                    // FIXME: remove this lock
+                    assert!(
+                        left_pointer <= self.pager.db_header.lock().database_size,
+                        "invalid page number divider left pointer {} > database number of pages",
+                        left_pointer,
+                    );
                     // FIXME: defragment shouldn't be needed
                     defragment_page(parent_contents, self.usable_space() as u16);
                     insert_into_cell(
