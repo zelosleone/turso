@@ -2,7 +2,8 @@ use tracing::debug;
 
 use crate::storage::pager::Pager;
 use crate::storage::sqlite3_ondisk::{
-    read_u32, read_varint, BTreeCell, PageContent, PageType, TableInteriorCell, TableLeafCell,
+    read_btree_cell, read_u32, read_varint, BTreeCell, PageContent, PageType, TableInteriorCell,
+    TableLeafCell,
 };
 use crate::MvCursor;
 
@@ -607,7 +608,7 @@ impl BTreeCursor {
                     }
                     None => {
                         if has_parent {
-                            debug!("moving simple upwards");
+                            tracing::trace!("moving simple upwards");
                             self.going_upwards = true;
                             self.stack.pop();
                             continue;
@@ -955,7 +956,7 @@ impl BTreeCursor {
 
     pub fn move_to(&mut self, key: SeekKey<'_>, cmp: SeekOp) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
-        tracing::debug!("move_to(key={:?} cmp={:?})", key, cmp);
+        tracing::trace!("move_to(key={:?} cmp={:?})", key, cmp);
         // For a table with N rows, we can find any row by row id in O(log(N)) time by starting at the root page and following the B-tree pointers.
         // B-trees consist of interior pages and leaf pages. Interior pages contain pointers to other pages, while leaf pages contain the actual row data.
         //
@@ -4288,11 +4289,24 @@ mod tests {
                 let value = ImmutableRecord::from_registers(&[Register::OwnedValue(
                     OwnedValue::Blob(vec![0; size]),
                 )]);
+                let btree_before = format_btree(pager.clone(), root_page, 0);
                 run_until_done(
                     || cursor.insert(&BTreeKey::new_table_rowid(key as u64, Some(&value)), true),
                     pager.deref(),
                 )
                 .unwrap();
+                keys.sort();
+                cursor.move_to_root();
+                for key in keys.iter() {
+                    tracing::trace!("seeking key: {}", key);
+                    run_until_done(|| cursor.next(), pager.deref()).unwrap();
+                    let cursor_rowid = cursor.rowid().unwrap().unwrap();
+                    assert_eq!(
+                        *key as u64, cursor_rowid,
+                        "key {} is not found, got {}",
+                        key, cursor_rowid
+                    );
+                }
                 if matches!(validate_btree(pager.clone(), root_page), (_, false)) {
                     panic!("invalid btree");
                 }
@@ -4304,13 +4318,18 @@ mod tests {
             if matches!(validate_btree(pager.clone(), root_page), (_, false)) {
                 panic!("invalid btree");
             }
+            keys.sort();
+            cursor.move_to_root();
             for key in keys.iter() {
                 let seek_key = SeekKey::TableRowId(*key as u64);
-                tracing::debug!("seeking key: {}", key);
-                let found =
-                    run_until_done(|| cursor.seek(seek_key.clone(), SeekOp::EQ), pager.deref())
-                        .unwrap();
-                assert!(found, "key {} is not found", key);
+                tracing::trace!("seeking key: {}", key);
+                run_until_done(|| cursor.next(), pager.deref()).unwrap();
+                let cursor_rowid = cursor.rowid().unwrap().unwrap();
+                assert_eq!(
+                    *key as u64, cursor_rowid,
+                    "key {} is not found, got {}",
+                    key, cursor_rowid
+                );
             }
         }
     }
