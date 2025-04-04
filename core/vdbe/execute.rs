@@ -1582,7 +1582,7 @@ pub fn op_halt(
             )));
         }
     }
-    match program.halt(pager.clone(), state, mv_store.clone())? {
+    match program.halt(pager.clone(), state, mv_store)? {
         StepResult::Done => Ok(InsnFunctionStepResult::Done),
         StepResult::IO => Ok(InsnFunctionStepResult::IO),
         StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1661,7 +1661,7 @@ pub fn op_auto_commit(
     };
     let conn = program.connection.upgrade().unwrap();
     if matches!(state.halt_state, Some(HaltState::Checkpointing)) {
-        return match program.halt(pager.clone(), state, mv_store.clone())? {
+        return match program.halt(pager.clone(), state, mv_store)? {
             super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
             super::StepResult::IO => Ok(InsnFunctionStepResult::IO),
             super::StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1689,7 +1689,7 @@ pub fn op_auto_commit(
             "cannot commit - no transaction is active".to_string(),
         ));
     }
-    return match program.halt(pager.clone(), state, mv_store.clone())? {
+    return match program.halt(pager.clone(), state, mv_store)? {
         super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
         super::StepResult::IO => Ok(InsnFunctionStepResult::IO),
         super::StepResult::Row => Ok(InsnFunctionStepResult::Row),
