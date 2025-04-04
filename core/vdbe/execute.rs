@@ -4236,13 +4236,15 @@ pub fn op_parse_schema(
     ))?;
     let mut schema = conn.schema.write();
     // TODO: This function below is synchronous, make it async
-    parse_schema_rows(
-        Some(stmt),
-        &mut schema,
-        conn.pager.io.clone(),
-        conn.syms.borrow_mut(),
-        state.mv_tx_id,
-    )?;
+    {
+        parse_schema_rows(
+            Some(stmt),
+            &mut schema,
+            conn.pager.io.clone(),
+            &conn.syms.borrow(),
+            state.mv_tx_id,
+        )?;
+    }
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
