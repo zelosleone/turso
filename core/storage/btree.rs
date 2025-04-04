@@ -1817,8 +1817,15 @@ impl BTreeCursor {
                         page.get_contents()
                             .write_u32(PAGE_HEADER_OFFSET_RIGHTMOST_PTR, previous_pointer_divider);
                         // divider cell now points to this page
-                        divider_cell[0..4].copy_from_slice(&(page.get().id as u32).to_be_bytes());
-                        new_divider_cell.extend_from_slice(divider_cell);
+                        new_divider_cell.extend_from_slice(&(page.get().id as u32).to_be_bytes());
+                        // now copy the rest of the divider cell:
+                        // Table Interior page:
+                        //   * varint rowid
+                        // Index Interior page:
+                        //   * varint payload size
+                        //   * payload
+                        //   * first overflow page (u32 optional)
+                        new_divider_cell.extend_from_slice(&divider_cell[4..]);
                     } else if leaf_data {
                         // Leaf table
                         // FIXME: not needed conversion
