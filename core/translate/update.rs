@@ -76,9 +76,6 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         Some(table) => table,
         None => bail_parse_error!("Parse error: no such table: {}", table_name),
     };
-    let Some(btree_table) = table.btree() else {
-        bail_parse_error!("Error: {} is not a btree table", table_name);
-    };
     let iter_dir = body
         .order_by
         .as_ref()

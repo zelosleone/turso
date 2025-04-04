@@ -109,7 +109,7 @@ pub fn init_loop(
                             program.emit_insn(Insn::OpenReadAwait {});
                         }
                     }
-                    (OperationMode::DELETE | OperationMode::UPDATE, Table::BTree(btree)) => {
+                    (OperationMode::DELETE, Table::BTree(btree)) => {
                         let root_page = btree.root_page;
                         program.emit_insn(Insn::OpenWriteAsync {
                             cursor_id,
@@ -183,7 +183,7 @@ pub fn init_loop(
                         OperationMode::UPDATE | OperationMode::DELETE => {
                             program.emit_insn(Insn::OpenWriteAsync {
                                 cursor_id: index_cursor_id,
-                                root_page: index.root_page,
+                                root_page: index.root_page.into(),
                             });
                             program.emit_insn(Insn::OpenWriteAwait {});
                         }
