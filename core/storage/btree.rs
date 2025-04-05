@@ -14,6 +14,7 @@ use crate::{return_corrupt, LimboError, Result};
 
 use std::cell::{Cell, Ref, RefCell};
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::rc::Rc;
 
@@ -1503,6 +1504,13 @@ impl BTreeCursor {
                     let cell_buf = &buf[cell_start..cell_start + cell_len];
                     max_cells += 1;
 
+                    tracing::debug!(
+                        "balance_non_root(drop_divider_cell, first_divider_cell={}, divider_cell={}, left_pointer={})",
+                        balance_info.first_divider_cell,
+                        i,
+                        read_u32(cell_buf, 0)
+                    );
+
                     // TODO(pere): make this reference and not copy
                     balance_info.divider_cells.push(cell_buf.to_vec());
                     tracing::trace!(
@@ -1589,6 +1597,17 @@ impl BTreeCursor {
                     cells_capacity_start,
                     "calculation of max cells was wrong"
                 );
+
+                // Let's copy all cells for later checks
+                #[cfg(debug_assertions)]
+                let mut cells_debug = Vec::new();
+                #[cfg(debug_assertions)]
+                {
+                    for cell in &cell_array.cells {
+                        cells_debug.push(cell.to_vec());
+                    }
+                }
+
                 #[cfg(debug_assertions)]
                 {
                     for cell in &cell_array.cells {
@@ -1602,7 +1621,7 @@ impl BTreeCursor {
                 // calculate how many pages to allocate
                 let mut new_page_sizes = Vec::new();
                 let leaf_correction = if leaf { 4 } else { 0 };
-                // number of bytes beyond header, different from global usableSapce which inccludes
+                // number of bytes beyond header, different from global usableSapce which includes
                 // header
                 let usable_space = self.usable_space() - 12 + leaf_correction;
                 for i in 0..balance_info.sibling_count {
@@ -1782,7 +1801,19 @@ impl BTreeCursor {
                     }
                 }
 
-                // Write right pointer in parent page to point to new rightmost page
+                #[cfg(debug_assertions)]
+                {
+                    tracing::debug!("balance_non_root(parent page_id={})", parent_page.get().id);
+                    for page in &pages_to_balance_new {
+                        tracing::debug!("balance_non_root(new_sibling page_id={})", page.get().id);
+                    }
+                }
+
+                // pages_pointed_to helps us debug we did in fact create divider cells to all the new pages and the rightmost pointer,
+                // also points to the last page.
+                #[cfg(debug_assertions)]
+                let mut pages_pointed_to = HashSet::new();
+
                 // Write right pointer in parent page to point to new rightmost page. keep in mind
                 // we update rightmost pointer first because inserting cells could defragment parent page,
                 // therfore invalidating the pointer.
@@ -1791,6 +1822,13 @@ impl BTreeCursor {
                 let rightmost_pointer =
                     unsafe { std::slice::from_raw_parts_mut(rightmost_pointer, 4) };
                 rightmost_pointer[0..4].copy_from_slice(&right_page_id.to_be_bytes());
+
+                #[cfg(debug_assertions)]
+                pages_pointed_to.insert(right_page_id);
+                tracing::debug!(
+                    "balance_non_root(rightmost_pointer_update, rightmost_pointer={})",
+                    right_page_id
+                );
 
                 // Ensure right-child pointer of the right-most new sibling pge points to the page
                 // that was originally on that place.
@@ -1847,6 +1885,14 @@ impl BTreeCursor {
                     }
 
                     let left_pointer = read_u32(&new_divider_cell[..4], 0);
+                    #[cfg(debug_assertions)]
+                    pages_pointed_to.insert(left_pointer);
+                    tracing::debug!(
+                        "balance_non_root(insert_divider_cell, first_divider_cell={}, divider_cell={}, left_pointer={})",
+                        balance_info.first_divider_cell,
+                        i,
+                        left_pointer
+                    );
                     assert_eq!(left_pointer, page.get().id as u32);
                     // FIXME: remove this lock
                     assert!(
@@ -1863,6 +1909,57 @@ impl BTreeCursor {
                         self.usable_space() as u16,
                     )
                     .unwrap();
+                    #[cfg(debug_assertions)]
+                    {
+                        let left_pointer = if parent_contents.overflow_cells.len() == 0 {
+                            let (cell_start, cell_len) = parent_contents.cell_get_raw_region(
+                                balance_info.first_divider_cell + i,
+                                payload_overflow_threshold_max(
+                                    parent_contents.page_type(),
+                                    self.usable_space() as u16,
+                                ),
+                                payload_overflow_threshold_min(
+                                    parent_contents.page_type(),
+                                    self.usable_space() as u16,
+                                ),
+                                self.usable_space(),
+                            );
+                            tracing::debug!(
+                                "balance_non_root(cell_start={}, cell_len={})",
+                                cell_start,
+                                cell_len
+                            );
+
+                            let left_pointer = read_u32(
+                                &parent_contents.as_ptr()[cell_start..cell_start + cell_len],
+                                0,
+                            );
+                            left_pointer
+                        } else {
+                            let cell = &parent_contents.overflow_cells[0];
+                            assert_eq!(cell.index, balance_info.first_divider_cell + i);
+                            read_u32(&cell.payload, 0)
+                        };
+                        assert_eq!(left_pointer, page.get().id as u32, "the cell we just inserted doesn't point to the correct page. points to {}, should point to {}",
+                           left_pointer,
+                            page.get().id as u32
+                         );
+                    }
+                }
+                tracing::debug!(
+                    "balance_non_root(parent_overflow={})",
+                    parent_contents.overflow_cells.len()
+                );
+
+                #[cfg(debug_assertions)]
+                {
+                    for page in &pages_to_balance_new {
+                        assert!(
+                            pages_pointed_to.contains(&(page.get().id as u32)),
+                            "page {} not pointed to by divider cell or rightmost pointer",
+                            page.get().id
+                        );
+                    }
                 }
                 // TODO: update pages
                 let mut done = vec![false; sibling_count_new];
@@ -1917,6 +2014,18 @@ impl BTreeCursor {
                         done[page_idx] = true;
                     }
                 }
+
+                #[cfg(debug_assertions)]
+                self.post_balance_non_root_validation(
+                    balance_info,
+                    parent_contents,
+                    pages_to_balance_new,
+                    page_type,
+                    leaf_data,
+                    cells_debug,
+                    sibling_count_new,
+                    rightmost_pointer,
+                );
                 // TODO: balance root
                 // TODO: free pages
                 (WriteState::BalanceStart, Ok(CursorResult::Ok(())))
@@ -1930,6 +2039,240 @@ impl BTreeCursor {
         let write_info = self.state.mut_write_info().unwrap();
         write_info.state = next_write_state;
         result
+    }
+
+    fn post_balance_non_root_validation(
+        &self,
+        balance_info: &mut BalanceInfo,
+        parent_contents: &mut PageContent,
+        pages_to_balance_new: Vec<Arc<crate::Page>>,
+        page_type: PageType,
+        leaf_data: bool,
+        mut cells_debug: Vec<Vec<u8>>,
+        sibling_count_new: usize,
+        rightmost_pointer: &mut [u8],
+    ) {
+        let mut valid = true;
+        let mut current_index_cell = 0;
+        // Let's now make a in depth check that we in fact added all possible cells somewhere and they are not lost
+        for (page_idx, page) in pages_to_balance_new.iter().enumerate() {
+            let contents = page.get_contents();
+            // Cells are distributed in order
+            for cell_idx in 0..contents.cell_count() {
+                let (cell_start, cell_len) = contents.cell_get_raw_region(
+                    cell_idx,
+                    payload_overflow_threshold_max(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    payload_overflow_threshold_min(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    self.usable_space(),
+                );
+                let buf = contents.as_ptr();
+                let cell_buf = &buf[cell_start..cell_start + cell_len];
+                let cell_buf_in_array = &cells_debug[current_index_cell];
+                if cell_buf != cell_buf_in_array {
+                    tracing::error!("balance_non_root(cell_not_found_debug, page_id={}, cell_in_cell_array_idx={})",
+                        page.get().id,
+                        current_index_cell,
+                    );
+                    valid = false;
+                }
+                current_index_cell += 1;
+            }
+            // Now check divider cells and their pointers.
+            let parent_buf = parent_contents.as_ptr();
+            let cell_divider_idx = balance_info.first_divider_cell + page_idx;
+            if page_idx == sibling_count_new - 1 {
+                // We will only validate rightmost pointer of parent page, we will not validate rightmost if it's a cell and not the last pointer because,
+                // insert cell could've defragmented the page and invalidated the pointer.
+                // right pointer, we just check right pointer points to this page.
+                if cell_divider_idx == parent_contents.cell_count() {
+                    let rightmost = read_u32(rightmost_pointer, 0);
+                    if rightmost != page.get().id as u32 {
+                        tracing::error!("balance_non_root(cell_divider_right_pointer, should point to {}, but points to {})",
+                        page.get().id,
+                        rightmost
+                    );
+                        valid = false;
+                    }
+                }
+            } else {
+                // divider cell might be an overflow cell
+                let mut was_overflow = false;
+                for overflow_cell in &parent_contents.overflow_cells {
+                    if overflow_cell.index == cell_divider_idx {
+                        let left_pointer = read_u32(&overflow_cell.payload, 0);
+                        if left_pointer != page.get().id as u32 {
+                            tracing::error!("balance_non_root(cell_divider_left_pointer_overflow, should point to page_id={}, but points to {}, divider_cell={}, overflow_cells_parent={})",
+                        page.get().id,
+                        left_pointer,
+                        page_idx,
+                        parent_contents.overflow_cells.len()
+                    );
+                            valid = false;
+                        }
+                        was_overflow = true;
+                        break;
+                    }
+                }
+                if was_overflow {
+                    continue;
+                }
+                // check if overflow
+                // check if right pointer, this is the last page. Do we update rightmost pointer and defragment moves it?
+                let (cell_start, cell_len) = parent_contents.cell_get_raw_region(
+                    cell_divider_idx,
+                    payload_overflow_threshold_max(
+                        parent_contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    payload_overflow_threshold_min(
+                        parent_contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    self.usable_space(),
+                );
+                let cell_left_pointer = read_u32(&parent_buf[cell_start..cell_start + cell_len], 0);
+                if cell_left_pointer != page.get().id as u32 {
+                    tracing::error!("balance_non_root(cell_divider_left_pointer, should point to page_id={}, but points to {}, divider_cell={}, overflow_cells_parent={})",
+                        page.get().id,
+                        cell_left_pointer,
+                        page_idx,
+                        parent_contents.overflow_cells.len()
+                    );
+                    valid = false;
+                }
+                if leaf_data {
+                    // If we are in a table leaf page, we just need to check that this cell that should be a divider cell is in the parent
+                    // This means we already check cell in leaf pages but not on parent so we don't advance current_index_cell
+                    if page_idx >= balance_info.sibling_count - 1 {
+                        // This means we are in the last page and we don't need to check anything
+                        continue;
+                    }
+                    let cell_buf: &'static mut [u8] =
+                        to_static_buf(&mut cells_debug[current_index_cell - 1]);
+                    let cell = read_btree_cell(
+                        cell_buf,
+                        &page_type,
+                        0,
+                        payload_overflow_threshold_max(
+                            parent_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        payload_overflow_threshold_min(
+                            parent_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        self.usable_space(),
+                    )
+                    .unwrap();
+                    let parent_cell = parent_contents
+                        .cell_get(
+                            cell_divider_idx,
+                            payload_overflow_threshold_max(
+                                parent_contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            payload_overflow_threshold_min(
+                                parent_contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            self.usable_space(),
+                        )
+                        .unwrap();
+                    let rowid = match cell {
+                        BTreeCell::TableLeafCell(table_leaf_cell) => table_leaf_cell._rowid,
+                        _ => unreachable!(),
+                    };
+                    let rowid_parent = match parent_cell {
+                        BTreeCell::TableInteriorCell(table_interior_cell) => {
+                            table_interior_cell._rowid
+                        }
+                        _ => unreachable!(),
+                    };
+                    if rowid_parent != rowid {
+                        tracing::error!("balance_non_root(cell_divider_rowid, page_id={}, cell_divider_idx={}, rowid_parent={}, rowid={})",
+                            page.get().id,
+                            cell_divider_idx,
+                            rowid_parent,
+                            rowid
+                        );
+                        valid = false;
+                    }
+                } else {
+                    // In any other case, we need to check that this cell was moved to parent as divider cell
+                    let mut was_overflow = false;
+                    for overflow_cell in &parent_contents.overflow_cells {
+                        if overflow_cell.index == cell_divider_idx {
+                            let left_pointer = read_u32(&overflow_cell.payload, 0);
+                            if left_pointer != page.get().id as u32 {
+                                tracing::error!("balance_non_root(cell_divider_divider_cell_overflow should point to page_id={}, but points to {}, divider_cell={}, overflow_cells_parent={})",
+                                    page.get().id,
+                                    left_pointer,
+                                    page_idx,
+                                    parent_contents.overflow_cells.len()
+                                );
+                                valid = false;
+                            }
+                            was_overflow = true;
+                            break;
+                        }
+                    }
+                    if was_overflow {
+                        continue;
+                    }
+                    let (parent_cell_start, parent_cell_len) = parent_contents.cell_get_raw_region(
+                        cell_divider_idx,
+                        payload_overflow_threshold_max(
+                            parent_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        payload_overflow_threshold_min(
+                            parent_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        self.usable_space(),
+                    );
+                    let cell_buf_in_array = &cells_debug[current_index_cell];
+                    let left_pointer = read_u32(
+                        &parent_buf[parent_cell_start..parent_cell_start + parent_cell_len],
+                        0,
+                    );
+                    if left_pointer != page.get().id as u32 {
+                        tracing::error!("balance_non_root(divider_cell_left_pointer_interior should point to page_id={}, but points to {}, divider_cell={}, overflow_cells_parent={})",
+                                    page.get().id,
+                                    left_pointer,
+                                    page_idx,
+                                    parent_contents.overflow_cells.len()
+                                );
+                        valid = false;
+                    }
+                    match page_type {
+                        PageType::TableInterior | PageType::IndexInterior => {
+                            let parent_cell_buf =
+                                &parent_buf[parent_cell_start..parent_cell_start + parent_cell_len];
+                            if parent_cell_buf[4..] != cell_buf_in_array[4..] {
+                                tracing::error!("balance_non_root(cell_divider_cell, page_id={}, cell_divider_idx={})",
+                                    page.get().id,
+                                    cell_divider_idx,
+                                );
+                                valid = false;
+                            }
+                        }
+                        PageType::IndexLeaf => todo!(),
+                        _ => {
+                            unreachable!()
+                        }
+                    }
+                    current_index_cell += 1;
+                }
+            }
+        }
+        assert!(valid, "corrupted database, cells were to balanced properly");
     }
 
     /// Balance the root page.
@@ -3156,7 +3499,7 @@ fn edit_page(
     cell_array: &CellArray,
     usable_space: u16,
 ) -> Result<()> {
-    tracing::trace!(
+    tracing::debug!(
         "edit_page start_old_cells={} start_new_cells={} number_new_cells={} cell_array={}",
         start_old_cells,
         start_new_cells,
@@ -3466,7 +3809,6 @@ fn defragment_page(page: &PageContent, usable_space: u16) {
 /// Only enabled in debug mode, where we ensure that all cells are valid.
 fn debug_validate_cells_core(page: &PageContent, usable_space: u16) {
     for i in 0..page.cell_count() {
-        // println!("Debug function: i={}", i);
         let (offset, size) = page.cell_get_raw_region(
             i,
             payload_overflow_threshold_max(page.page_type(), usable_space),
@@ -3510,7 +3852,7 @@ fn insert_into_cell(
     }
 
     let new_cell_data_pointer = allocate_cell_space(page, payload.len() as u16, usable_space)?;
-    tracing::trace!(
+    tracing::debug!(
         "insert_into_cell(idx={}, pc={})",
         cell_idx,
         new_cell_data_pointer
@@ -3838,6 +4180,8 @@ fn shift_pointers_left(page: &mut PageContent, cell_idx: usize) {
 
 #[cfg(test)]
 mod tests {
+    use rand::thread_rng;
+    use rand::Rng;
     use rand_chacha::rand_core::RngCore;
     use rand_chacha::rand_core::SeedableRng;
     use rand_chacha::ChaCha8Rng;
@@ -4032,6 +4376,14 @@ mod tests {
                     _left_child_page, ..
                 }) => {
                     child_pages.push(pager.read_page(_left_child_page as usize).unwrap());
+                    if _left_child_page == page.id as u32 {
+                        valid = false;
+                        tracing::error!(
+                            "left child page is the same as parent {}",
+                            _left_child_page
+                        );
+                        continue;
+                    }
                     let (child_depth, child_valid) =
                         validate_btree(pager.clone(), _left_child_page as usize);
                     valid &= child_valid;
@@ -4039,6 +4391,10 @@ mod tests {
                 }
                 _ => panic!("unsupported btree cell: {:?}", cell),
             };
+            if current_depth >= 100 {
+                tracing::error!("depth is too big");
+                return (100, false);
+            }
             depth = Some(depth.unwrap_or(current_depth + 1));
             if depth != Some(current_depth + 1) {
                 tracing::error!("depth is different for child of page {}", page_idx);
@@ -4275,6 +4631,7 @@ mod tests {
             let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
             let mut keys = Vec::new();
             let seed = rng.next_u64();
+            let seed = 1743883058;
             tracing::info!("seed: {}", seed);
             let mut rng = ChaCha8Rng::seed_from_u64(seed);
             for insert_id in 0..inserts {
@@ -4319,17 +4676,22 @@ mod tests {
                 .unwrap();
                 keys.sort();
                 cursor.move_to_root();
+                let mut valid = true;
                 for key in keys.iter() {
                     tracing::trace!("seeking key: {}", key);
                     run_until_done(|| cursor.next(), pager.deref()).unwrap();
                     let cursor_rowid = cursor.rowid().unwrap().unwrap();
-                    assert_eq!(
-                        *key as u64, cursor_rowid,
-                        "key {} is not found, got {}",
-                        key, cursor_rowid
-                    );
+                    if *key as u64 != cursor_rowid {
+                        valid = false;
+                        println!("key {} is not found, got {}", key, cursor_rowid);
+                        break;
+                    }
                 }
-                if matches!(validate_btree(pager.clone(), root_page), (_, false)) {
+                // let's validate btree too so that we undertsand where the btree failed
+                if matches!(validate_btree(pager.clone(), root_page), (_, false)) || !valid {
+                    let btree_after = format_btree(pager.clone(), root_page, 0);
+                    println!("btree before:\n{}", btree_before);
+                    println!("btree after:\n{}", btree_after);
                     panic!("invalid btree");
                 }
             }
@@ -4417,7 +4779,7 @@ mod tests {
     #[test]
     #[ignore]
     pub fn btree_insert_fuzz_run_small() {
-        btree_insert_fuzz_run(1, 1024, |rng| (rng.next_u32() % 128) as usize);
+        btree_insert_fuzz_run(1, 100_000, |rng| (rng.next_u32() % 128) as usize);
     }
 
     #[test]
@@ -4816,15 +5178,13 @@ mod tests {
         let mut total_size = 0;
         let mut cells = Vec::new();
         let usable_space = 4096;
-        let mut i = 1000;
-        // let seed = thread_rng().gen();
-        // let seed = 15292777653676891381;
-        let seed = 9261043168681395159;
+        let mut i = 100000;
+        let seed = thread_rng().gen();
         tracing::info!("seed {}", seed);
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         while i > 0 {
             i -= 1;
-            match rng.next_u64() % 3 {
+            match rng.next_u64() % 4 {
                 0 => {
                     // allow appends with extra place to insert
                     let cell_idx = rng.next_u64() as usize % (page.cell_count() + 1);
@@ -4841,14 +5201,14 @@ mod tests {
                         4096,
                         conn.pager.clone(),
                     );
-                    if (free as usize) < payload.len() - 2 {
+                    if (free as usize) < payload.len() + 2 {
                         // do not try to insert overflow pages because they require balancing
                         continue;
                     }
                     insert_into_cell(page, &payload, cell_idx, 4096).unwrap();
                     assert!(page.overflow_cells.is_empty());
                     total_size += payload.len() as u16 + 2;
-                    cells.push(Cell { pos: i, payload });
+                    cells.insert(cell_idx, Cell { pos: i, payload });
                 }
                 1 => {
                     if page.cell_count() == 0 {
@@ -4867,6 +5227,13 @@ mod tests {
                 }
                 2 => {
                     defragment_page(page, usable_space);
+                }
+                3 => {
+                    // check cells
+                    for (i, cell) in cells.iter().enumerate() {
+                        ensure_cell(page, i, &cell.payload);
+                    }
+                    assert_eq!(page.cell_count(), cells.len());
                 }
                 _ => unreachable!(),
             }
