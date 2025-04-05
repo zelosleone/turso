@@ -1479,12 +1479,14 @@ impl BTreeCursor {
                     self.pager.add_dirty(sibling_page.get().id);
                     max_cells += sibling_contents.cell_count();
                     max_cells += sibling_contents.overflow_cells.len();
-                    if i == 0 {
-                        // we don't have left sibling from this one so we break
-                        break;
+
+                    // Right pointer is not dropped, we simply update it at the end. This could be a divider cell that points
+                    // to the last page in the list of pages to balance or this could be the rightmost pointer that points to a page.
+                    if i == balance_info.sibling_count - 1 {
+                        continue;
                     }
                     // Since we know we have a left sibling, take the divider that points to left sibling of this page
-                    let cell_idx = balance_info.first_divider_cell + i - 1;
+                    let cell_idx = balance_info.first_divider_cell + i;
                     let (cell_start, cell_len) = parent_contents.cell_get_raw_region(
                         cell_idx,
                         payload_overflow_threshold_max(
@@ -1781,6 +1783,9 @@ impl BTreeCursor {
                 }
 
                 // Write right pointer in parent page to point to new rightmost page
+                // Write right pointer in parent page to point to new rightmost page. keep in mind
+                // we update rightmost pointer first because inserting cells could defragment parent page,
+                // therfore invalidating the pointer.
                 let right_page_id = pages_to_balance_new.last().unwrap().get().id as u32;
                 let rightmost_pointer = balance_info.rightmost_pointer;
                 let rightmost_pointer =
@@ -1850,7 +1855,7 @@ impl BTreeCursor {
                         left_pointer,
                     );
                     // FIXME: defragment shouldn't be needed
-                    defragment_page(parent_contents, self.usable_space() as u16);
+                    // defragment_page(parent_contents, self.usable_space() as u16);
                     insert_into_cell(
                         parent_contents,
                         &new_divider_cell,
@@ -1875,6 +1880,7 @@ impl BTreeCursor {
                             (0, 0, cell_array.cell_count(0))
                         } else {
                             let this_was_old_page = page_idx < balance_info.sibling_count;
+                            // We add !leaf_data because we want to skip 1 in case of divider cell which is encountared between pages assigned
                             let start_old_cells = if this_was_old_page {
                                 count_cells_in_old_pages[page_idx - 1] as usize
                                     + (!leaf_data) as usize
