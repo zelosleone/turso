@@ -85,6 +85,19 @@ impl Schema {
         let name = normalize_ident(table_name);
         self.indexes.remove(&name);
     }
+
+    pub fn get_index_for_column(&self, table_name: &str, column_name: &str) -> Option<Arc<Index>> {
+        if let Some(indexes) = self.indexes.get(table_name) {
+            for index in indexes {
+                for column in &index.columns {
+                    if column.name.eq_ignore_ascii_case(column_name) {
+                        return Some(index.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
 }
 
 #[derive(Clone, Debug)]
