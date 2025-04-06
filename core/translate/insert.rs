@@ -9,6 +9,7 @@ use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
 use crate::schema::Table;
 use crate::util::normalize_ident;
 use crate::vdbe::builder::{ProgramBuilderOpts, QueryMode};
+use crate::vdbe::insn::RegisterOrLiteral;
 use crate::vdbe::BranchOffset;
 use crate::{
     schema::{Column, Schema},
@@ -84,11 +85,11 @@ pub fn translate_insert(
     );
     let root_page = btree_table.root_page;
     let values = match body {
-        InsertBody::Select(select, None) => match &select.body.select.deref() {
+        InsertBody::Select(select, _) => match &select.body.select.deref() {
             OneSelect::Values(values) => values,
             _ => todo!(),
         },
-        _ => todo!(),
+        InsertBody::DefaultValues => &vec![vec![]],
     };
 
     let column_mappings = resolve_columns_for_insert(&table, columns, values)?;
@@ -152,7 +153,7 @@ pub fn translate_insert(
 
         program.emit_insn(Insn::OpenWriteAsync {
             cursor_id,
-            root_page,
+            root_page: RegisterOrLiteral::Literal(root_page),
         });
         program.emit_insn(Insn::OpenWriteAwait {});
 
@@ -168,7 +169,7 @@ pub fn translate_insert(
         // Single row - populate registers directly
         program.emit_insn(Insn::OpenWriteAsync {
             cursor_id,
-            root_page,
+            root_page: RegisterOrLiteral::Literal(root_page),
         });
         program.emit_insn(Insn::OpenWriteAwait {});
 
