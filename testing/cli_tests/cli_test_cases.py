@@ -264,6 +264,16 @@ def test_update_with_limit():
     limbo.quit()
 
 
+def test_insert_default_values():
+    limbo = TestLimboShell(
+        "CREATE TABLE t (a integer default(42),b integer default (43),c integer default(44));"
+    )
+    for _ in range(1, 10):
+        limbo.execute_dot("INSERT INTO t DEFAULT VALUES;")
+    limbo.run_test("insert-default-values", "SELECT * FROM t;", "42|43|44\n" * 9)
+    limbo.quit()
+
+
 if __name__ == "__main__":
     print("Running all Limbo CLI tests...")
     test_basic_queries()
