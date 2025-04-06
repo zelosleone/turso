@@ -34,7 +34,6 @@ impl OpenFlags {
     }
 }
 
-
 pub trait IO: Clock + Send + Sync {
     fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>>;
 
@@ -215,6 +214,6 @@ mod memory;
 #[cfg(feature = "fs")]
 mod vfs;
 pub use memory::MemoryIO;
-mod common;
 pub mod clock;
+mod common;
 pub use clock::Clock;
