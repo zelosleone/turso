@@ -1,5 +1,5 @@
 use core::fmt;
-use limbo_ext::{ConstraintInfo, ConstraintOp, IndexInfo};
+use limbo_ext::{ConstraintInfo, ConstraintOp};
 use limbo_sqlite3_parser::ast::{self, SortOrder};
 use std::{
     cmp::Ordering,
@@ -17,6 +17,7 @@ use crate::{
 use crate::{
     schema::{PseudoTable, Type},
     types::SeekOp,
+    util::can_pushdown_predicate,
 };
 
 #[derive(Debug, Clone)]
@@ -74,23 +75,9 @@ impl WhereTerm {
     pub fn should_eval_at_loop(&self, loop_idx: usize) -> bool {
         self.eval_at == EvalAt::Loop(loop_idx)
     }
-
-    pub fn applies_to_table(&self, table: &Table, tables: &[TableReference]) -> bool {
-        match &self.expr {
-            ast::Expr::Column {
-                table: table_idx, ..
-            } => {
-                let table_ref = &tables[*table_idx];
-                table_ref.table == *table
-            }
-            _ => false,
-        }
-    }
 }
 
 use crate::ast::{Expr, Operator};
-
-use super::optimizer::{ConstantPredicate, Optimizable};
 
 fn reverse_operator(op: &Operator) -> Option<Operator> {
     match op {
@@ -106,9 +93,19 @@ fn reverse_operator(op: &Operator) -> Option<Operator> {
     }
 }
 
+/// This function takes a WhereTerm for a select involving a VTab at index 'table_index'.
+/// It determines whether or not it involves the given table and whether or not it can
+/// be converted into a ConstraintInfo which can be passed to the vtab module's xBestIndex
+/// method, which will possibly calculate some information to improve the query plan, that we can send
+/// back to it as arguments for the VFilter operation. Perhaps we should save the exact Expr for which a relevant column
+/// is going to be filtered against: e.g:
+/// 'SELECT key, value FROM vtab WHERE key = 'some_key';
+/// we need to send the OwnedValue('some_key') as an argument to VFilter, and possibly omit it from
+/// the filtration in the vdbe layer.
 pub fn try_convert_to_constraint_info(
     term: &WhereTerm,
     table_index: usize,
+    pred_idx: usize,
 ) -> Option<ConstraintInfo> {
     if term.from_outer_join {
         return None;
@@ -119,31 +116,26 @@ pub fn try_convert_to_constraint_info(
     };
 
     let (col_expr, _, op) = match (&**lhs, &**rhs) {
-        (Expr::Column { .. }, rhs)
-            if rhs.check_constant().ok()? == Some(ConstantPredicate::AlwaysTrue) =>
-        {
+        (Expr::Column { table, .. }, rhs) if can_pushdown_predicate(rhs) => {
+            if table != &table_index {
+                return None;
+            }
             (lhs, rhs, op)
         }
-        (lhs, Expr::Column { .. })
-            if lhs.check_constant().ok()? == Some(ConstantPredicate::AlwaysTrue) =>
-        {
+        (lhs, Expr::Column { table, .. }) if can_pushdown_predicate(lhs) => {
+            if table != &table_index {
+                return None;
+            }
             (rhs, lhs, &reverse_operator(op).unwrap_or(*op))
         }
-        _ => return None,
+        _ => {
+            return None;
+        }
     };
 
-    let Expr::Column {
-        table: tbl_idx,
-        column,
-        ..
-    } = **col_expr
-    else {
+    let Expr::Column { column, .. } = **col_expr else {
         return None;
     };
-
-    if tbl_idx != table_index {
-        return None;
-    }
 
     let column_index = column as u32;
     let constraint_op = match op {
@@ -162,6 +154,7 @@ pub fn try_convert_to_constraint_info(
         column_index,
         op: constraint_op,
         usable: true,
+        pred_idx,
     })
 }
 /// The loop index where to evaluate the condition.
