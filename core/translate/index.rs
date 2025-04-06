@@ -172,11 +172,6 @@ pub fn translate_create_index(
         cursor_id: table_cursor_id,
         dest: rowid_reg,
     });
-    // if the rowid is null, skip the insert
-    program.emit_insn(Insn::IsNull {
-        reg: rowid_reg,
-        target_pc: loop_end_label,
-    });
     let record_reg = program.alloc_register();
     program.emit_insn(Insn::MakeRecord {
         start_reg,
