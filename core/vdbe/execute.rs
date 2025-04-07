@@ -1375,10 +1375,10 @@ pub fn op_type_check(
                     col.name.as_ref().map(|s| s.as_str()).unwrap_or(""),
                     SQLITE_CONSTRAINT
                 )
-            } else if col.is_rowid_alias {
-                // If it is INTEGER PRIMARY KEY we let sqlite assign row_id
+            } else if col.is_rowid_alias && matches!(reg.get_owned_value(), OwnedValue::Null) {
+                // Handle INTEGER PRIMARY KEY for null as usual (Rowid will be auto-assigned)
                 return Ok(());
-            };
+            }
             let col_affinity = col.affinity();
             let ty_str = col.ty_str.as_str();
             let applied = apply_affinity_char(reg, col_affinity);

@@ -1,6 +1,8 @@
 // This module contains code for emitting bytecode instructions for SQL query execution.
 // It handles translating high-level SQL operations into low-level bytecode that can be executed by the virtual machine.
 
+use std::rc::Rc;
+
 use limbo_sqlite3_parser::ast::{self};
 
 use crate::function::Func;
@@ -612,6 +614,16 @@ fn emit_update_insns(
                     dest,
                 });
             }
+        }
+    }
+    if let Some(btree_table) = table_ref.btree() {
+        if btree_table.is_strict {
+            program.emit_insn(Insn::TypeCheck {
+                start_reg: first_col_reg,
+                count: table_ref.columns().len(),
+                check_generated: true,
+                table_reference: Rc::clone(&btree_table),
+            });
         }
     }
     let record_reg = program.alloc_register();
