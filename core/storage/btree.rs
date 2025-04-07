@@ -2054,7 +2054,7 @@ impl BTreeCursor {
         parent_page: &PageRef,
         balance_info: &mut BalanceInfo,
         parent_contents: &mut PageContent,
-        pages_to_balance_new: Vec<Arc<crate::Page>>,
+        pages_to_balance_new: Vec<std::sync::Arc<crate::Page>>,
         page_type: PageType,
         leaf_data: bool,
         mut cells_debug: Vec<Vec<u8>>,
@@ -2260,7 +2260,7 @@ impl BTreeCursor {
                     }
                     let cell_buf: &'static mut [u8] =
                         to_static_buf(&mut cells_debug[current_index_cell - 1]);
-                    let cell = read_btree_cell(
+                    let cell = crate::storage::sqlite3_ondisk::read_btree_cell(
                         cell_buf,
                         &page_type,
                         0,
