@@ -208,3 +208,13 @@ proc do_execsql_test_any_error {test_name sql_statements} {
         run_test_expecting_any_error $::sqlite_exec $db $combined_sql
     }
 }
+
+proc do_execsql_test_in_memory_any_error {test_name sql_statements} {
+    puts [format "(in-memory) %s Running any-error test: %s" [string repeat " " 31] $test_name]
+
+    # Use ":memory:" special filename for in-memory database
+    set db_name ":memory:"
+
+    set combined_sql [string trim $sql_statements]
+    run_test_expecting_any_error $::sqlite_exec $db_name $combined_sql
+}
