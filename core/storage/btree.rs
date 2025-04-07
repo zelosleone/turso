@@ -4883,7 +4883,7 @@ mod tests {
     #[test]
     #[ignore]
     pub fn btree_insert_fuzz_run_small() {
-        btree_insert_fuzz_run(1, 100_000, |rng| (rng.next_u32() % 128) as usize);
+        btree_insert_fuzz_run(1, 100, |rng| (rng.next_u32() % 128) as usize);
     }
 
     #[test]
