@@ -195,6 +195,22 @@ do_execsql_test hex-null {
   select hex(null)
 } {}
 
+do_execsql_test likely {
+    select likely('limbo')
+} {limbo}
+
+do_execsql_test likely-int {
+    select likely(100)
+} {100}
+
+do_execsql_test likely-decimal {
+    select likely(12.34)
+} {12.34}
+
+do_execsql_test likely-null {
+    select likely(NULL)
+} {}
+
 do_execsql_test unhex-str-ab {
   SELECT unhex('6162');
 } {ab}
