@@ -304,6 +304,7 @@ pub fn translate_insert(
         // copy each index column from the table's column registers into these scratch regs
         for (i, col) in index_col_mapping.columns.iter().enumerate() {
             // copy from the table's column register over to the index's scratch register
+
             program.emit_insn(Insn::Copy {
                 src_reg: column_registers_start + col.0,
                 dst_reg: idx_start_reg + i,
@@ -490,47 +491,38 @@ impl IndexColMapping {
 /// Insert (a, c): (2, 3)
 /// Record: (2, NULL, 3)
 /// IndexColMapping: (a, b) = (2, NULL)
-fn resolve_indicies_for_insert<'a>(
+fn resolve_indicies_for_insert(
     schema: &Schema,
     table: &Table,
-    columns: &[ColumnMapping],
+    columns: &[ColumnMapping<'_>],
 ) -> Result<Vec<IndexColMapping>> {
     let mut index_col_mappings = Vec::new();
-    for col in columns {
-        // check if any of the inserted columns are part of an index
-        if let Some(index) =
-            schema.get_index_for_column(table.get_name(), col.column.name.as_ref().unwrap())
-        {
-            // check if the index is already in the list
-            if index_col_mappings
-                .iter()
-                .any(|i: &IndexColMapping| i.idx_name.eq_ignore_ascii_case(&index.name))
-            {
-                continue;
+    // Iterate over all indices for this table
+    for index in schema.get_indices(table.get_name()) {
+        let mut idx_map = IndexColMapping::new(index.name.clone());
+        // For each column in the index (in the order defined by the index),
+        // try to find the corresponding column in the insert’s column mapping.
+        for idx_col in &index.columns {
+            let target_name = normalize_ident(idx_col.name.as_str());
+            if let Some((i, col_mapping)) = columns.iter().enumerate().find(|(_, mapping)| {
+                mapping
+                    .column
+                    .name
+                    .as_ref()
+                    .map_or(false, |name| name.eq_ignore_ascii_case(&target_name))
+            }) {
+                idx_map.columns.push((i, idx_col.clone()));
+                idx_map.value_indicies.push(col_mapping.value_index);
+            } else {
+                return Err(crate::LimboError::ParseError(format!(
+                    "Column {} not found in index {}",
+                    target_name, index.name
+                )));
             }
-            let mut idx_col_map = IndexColMapping::new(index.name.clone()); //todo: rm clone -_-
-            for column in &index.columns {
-                let column_name = normalize_ident(column.name.as_str());
-                // find the other columns in the index that are not part of the insert
-                if let Some((i, index_column)) = columns.iter().enumerate().find(|(_, c)| {
-                    c.column
-                        .name
-                        .as_ref()
-                        .is_some_and(|c| c.eq_ignore_ascii_case(&column_name))
-                }) {
-                    // the column is also part of the insert
-                    idx_col_map.columns.push((i, column.clone()));
-                    // store the value index (which may be null if not part of the insert)
-                    idx_col_map.value_indicies.push(index_column.value_index);
-                } else {
-                    // column not found, meaning the ColumnMapping failed, thus we bail
-                    return Err(crate::LimboError::ParseError(format!(
-                        "Column {} not found in index {}",
-                        column_name, index.name
-                    )));
-                }
-            }
-            index_col_mappings.push(idx_col_map);
+        }
+        // Add the mapping if at least one column was found.
+        if !idx_map.columns.is_empty() {
+            index_col_mappings.push(idx_map);
         }
     }
     Ok(index_col_mappings)
