@@ -1001,8 +1001,11 @@ pub fn exec_remainder(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
             &cast_text_to_numeric(lhs.as_str()),
             &cast_text_to_numeric(rhs.as_str()),
         ),
-        (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
+        (OwnedValue::Text(text), other) => {
             exec_remainder(&cast_text_to_numeric(text.as_str()), other)
+        }
+(other, OwnedValue::Text(text)) => {
+            exec_remainder(other, &cast_text_to_numeric(text.as_str()))
         }
         other => todo!("remainder not implemented for: {:?} {:?}", lhs, other),
     }
@@ -1699,7 +1702,7 @@ mod tests {
             ),
             (
                 OwnedValue::Float(12.0),
-                OwnedValue::Text(Text::from_str("12.0")),
+                OwnedValue::Text(Text::from_str("3.0")),
             ),
         ];
         let outputs = vec![

@@ -1357,6 +1357,19 @@ do_execsql_test mod-agg-float {
     SELECT count(*) % 2.43 from users
 } { 0.0 }
 
+foreach {testnum lhs rhs ans} {
+   1   'a'    'a'   {}
+   2   'a'    10    0
+   3   10     'a'   {}
+   4   'a'    11.0  0.0
+   5   11.0   'a'   {}
+   7   '10'   '3'   1
+   8   '10.0' '3'   1.0
+   9   '10.0' -3    1.0
+} {
+  do_execsql_test mod-text-$testnum "SELECT $lhs % $rhs" $::ans
+}
+
 do_execsql_test comp-float-float {
     SELECT 0.0 = 0.0
 } { 1 }
