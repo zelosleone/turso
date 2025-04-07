@@ -971,7 +971,7 @@ pub fn exec_remainder(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
             if rhs == &0 {
                 OwnedValue::Null
             } else {
-                OwnedValue::Integer(lhs % rhs)
+                OwnedValue::Integer(lhs % rhs.abs())
             }
         }
         (OwnedValue::Float(lhs), OwnedValue::Float(rhs)) => {
@@ -979,14 +979,14 @@ pub fn exec_remainder(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
             if rhs_int == 0 {
                 OwnedValue::Null
             } else {
-                OwnedValue::Float(((*lhs as i64) % rhs_int) as f64)
+                OwnedValue::Float(((*lhs as i64) % rhs_int.abs()) as f64)
             }
         }
         (OwnedValue::Float(lhs), OwnedValue::Integer(rhs)) => {
             if rhs == &0 {
                 OwnedValue::Null
             } else {
-                OwnedValue::Float(((*lhs as i64) % rhs) as f64)
+                OwnedValue::Float(((*lhs as i64) % rhs.abs()) as f64)
             }
         }
         (OwnedValue::Integer(lhs), OwnedValue::Float(rhs)) => {
@@ -994,7 +994,7 @@ pub fn exec_remainder(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
             if rhs_int == 0 {
                 OwnedValue::Null
             } else {
-                OwnedValue::Float((lhs % rhs_int) as f64)
+                OwnedValue::Float((lhs % rhs_int.abs()) as f64)
             }
         }
         (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_remainder(
@@ -1004,7 +1004,7 @@ pub fn exec_remainder(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
         (OwnedValue::Text(text), other) => {
             exec_remainder(&cast_text_to_numeric(text.as_str()), other)
         }
-(other, OwnedValue::Text(text)) => {
+        (other, OwnedValue::Text(text)) => {
             exec_remainder(other, &cast_text_to_numeric(text.as_str()))
         }
         other => todo!("remainder not implemented for: {:?} {:?}", lhs, other),
@@ -1688,10 +1688,15 @@ mod tests {
             (OwnedValue::Float(12.0), OwnedValue::Float(0.0)),
             (OwnedValue::Float(12.0), OwnedValue::Integer(0)),
             (OwnedValue::Integer(12), OwnedValue::Float(0.0)),
+            (OwnedValue::Integer(i64::MIN), OwnedValue::Integer(-1)),
             (OwnedValue::Integer(12), OwnedValue::Integer(3)),
             (OwnedValue::Float(12.0), OwnedValue::Float(3.0)),
             (OwnedValue::Float(12.0), OwnedValue::Integer(3)),
             (OwnedValue::Integer(12), OwnedValue::Float(3.0)),
+            (OwnedValue::Integer(12), OwnedValue::Integer(-3)),
+            (OwnedValue::Float(12.0), OwnedValue::Float(-3.0)),
+            (OwnedValue::Float(12.0), OwnedValue::Integer(-3)),
+            (OwnedValue::Integer(12), OwnedValue::Float(-3.0)),
             (
                 OwnedValue::Text(Text::from_str("12.0")),
                 OwnedValue::Text(Text::from_str("3.0")),
@@ -1716,6 +1721,11 @@ mod tests {
             OwnedValue::Null,
             OwnedValue::Null,
             OwnedValue::Null,
+            OwnedValue::Float(0.0),
+            OwnedValue::Integer(0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Float(0.0),
             OwnedValue::Integer(0),
             OwnedValue::Float(0.0),
             OwnedValue::Float(0.0),
