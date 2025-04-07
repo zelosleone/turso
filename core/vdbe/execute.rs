@@ -3448,6 +3448,11 @@ pub fn op_function(
                 let result = exec_printf(&state.registers[*start_reg..*start_reg + arg_count])?;
                 state.registers[*dest] = Register::OwnedValue(result);
             }
+            ScalarFunc::Likely => {
+                let value = &state.registers[*start_reg].borrow_mut();
+                let result = exec_likely(value.get_owned_value());
+                state.registers[*dest] = Register::OwnedValue(result);
+            }
         },
         crate::function::Func::Vector(vector_func) => match vector_func {
             VectorFunc::Vector => {
@@ -5220,9 +5225,16 @@ fn exec_math_log(arg: &OwnedValue, base: Option<&OwnedValue>) -> OwnedValue {
     OwnedValue::Float(result)
 }
 
+fn exec_likely(reg: &OwnedValue) -> OwnedValue {
+    reg.clone()
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::vdbe::{execute::exec_replace, Bitfield, Register};
+    use crate::vdbe::{
+        execute::{exec_likely, exec_replace},
+        Bitfield, Register,
+    };
 
     use super::{
         exec_abs, exec_char, exec_hex, exec_if, exec_instr, exec_length, exec_like, exec_lower,
@@ -6112,6 +6124,29 @@ mod tests {
             exec_replace(&input_str, &pattern_str, &replace_str),
             expected_str
         );
+    }
+
+    #[test]
+    fn test_likely() {
+        let input = OwnedValue::build_text("limbo");
+        let expected = OwnedValue::build_text("limbo");
+        assert_eq!(exec_likely(&input), expected);
+
+        let input = OwnedValue::Integer(100);
+        let expected = OwnedValue::Integer(100);
+        assert_eq!(exec_likely(&input), expected);
+
+        let input = OwnedValue::Float(12.34);
+        let expected = OwnedValue::Float(12.34);
+        assert_eq!(exec_likely(&input), expected);
+
+        let input = OwnedValue::Null;
+        let expected = OwnedValue::Null;
+        assert_eq!(exec_likely(&input), expected);
+
+        let input = OwnedValue::Blob(vec![1, 2, 3, 4]);
+        let expected = OwnedValue::Blob(vec![1, 2, 3, 4]);
+        assert_eq!(exec_likely(&input), expected);
     }
 
     #[test]

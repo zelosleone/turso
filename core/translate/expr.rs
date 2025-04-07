@@ -1571,6 +1571,33 @@ pub fn translate_expr(
                             target_register,
                             func_ctx,
                         ),
+                        ScalarFunc::Likely => {
+                            let args = if let Some(args) = args {
+                                if args.len() != 1 {
+                                    crate::bail_parse_error!(
+                                        "likely function must have exactly 1 argument",
+                                    );
+                                }
+                                args
+                            } else {
+                                crate::bail_parse_error!("likely function with no arguments",);
+                            };
+                            let start_reg = program.alloc_register();
+                            translate_and_mark(
+                                program,
+                                referenced_tables,
+                                &args[0],
+                                start_reg,
+                                resolver,
+                            )?;
+                            program.emit_insn(Insn::Function {
+                                constant_mask: 0,
+                                start_reg,
+                                dest: target_register,
+                                func: func_ctx,
+                            });
+                            Ok(target_register)
+                        }
                     }
                 }
                 Func::Math(math_func) => match math_func.arity() {
