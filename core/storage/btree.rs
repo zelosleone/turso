@@ -1587,6 +1587,11 @@ impl BTreeCursor {
                         // TODO(pere): in case of old pages are leaf pages, so index leaf page, we need to strip page pointers
                         // from divider cells in index interior pages (parent) because those should not be included.
                         cells_inserted += 1;
+                        if !leaf {
+                            // This divider cell needs to be updated with new left pointer,
+                            let right_pointer = old_page_contents.rightmost_pointer().unwrap();
+                            divider_cell[..4].copy_from_slice(&right_pointer.to_be_bytes());
+                        }
                         cell_array.cells.push(to_static_buf(divider_cell.as_mut()));
                     }
                     total_cells_inserted += cells_inserted;
@@ -1885,6 +1890,7 @@ impl BTreeCursor {
                     }
 
                     let left_pointer = read_u32(&new_divider_cell[..4], 0);
+                    assert!(left_pointer != parent_page.get().id as u32);
                     #[cfg(debug_assertions)]
                     pages_pointed_to.insert(left_pointer);
                     tracing::debug!(
