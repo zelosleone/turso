@@ -1642,6 +1642,10 @@ impl BTreeCursor {
                         let size = new_page_sizes.last_mut().unwrap();
                         // 2 to account of pointer
                         *size += 2 + overflow.payload.len() as u16;
+                    if !leaf && i < balance_info.sibling_count - 1 {
+                        // Account for divider cell which is included in this page.
+                        let size = new_page_sizes.last_mut().unwrap();
+                        *size += cell_array.cells[cell_array.cell_count(i)].len() as i64;
                     }
                 }
 
