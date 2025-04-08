@@ -431,8 +431,7 @@ impl BTreeCursor {
             // todo: find a better way to flag moved to end or begin of page
             if self.stack.current_cell_index_less_than_min() {
                 loop {
-                    if self.stack.current_cell_index() > 0 {
-                        self.stack.retreat();
+                    if self.stack.current_cell_index() >= 0 {
                         break;
                     }
                     if self.stack.has_parent() {
@@ -448,11 +447,6 @@ impl BTreeCursor {
             }
 
             let cell_idx = cell_idx as usize;
-            tracing::trace!(
-                "get_prev_record current id={} cell={}",
-                page.get().id,
-                cell_idx
-            );
             return_if_locked!(page);
             if !page.is_loaded() {
                 self.pager.load_page(page.clone())?;
@@ -468,8 +462,7 @@ impl BTreeCursor {
                 let rightmost_pointer = contents.rightmost_pointer();
                 if let Some(rightmost_pointer) = rightmost_pointer {
                     self.stack
-                        .push(self.pager.read_page(rightmost_pointer as usize)?);
-                    self.stack.set_cell_index(i32::MAX);
+                        .push_backwards(self.pager.read_page(rightmost_pointer as usize)?);
                     continue;
                 }
             }
@@ -480,7 +473,6 @@ impl BTreeCursor {
             } else {
                 cell_idx
             };
-
             let cell = contents.cell_get(
                 cell_idx,
                 payload_overflow_threshold_max(contents.page_type(), self.usable_space() as u16),
@@ -494,9 +486,7 @@ impl BTreeCursor {
                     _rowid,
                 }) => {
                     let mem_page = self.pager.read_page(_left_child_page as usize)?;
-                    self.stack.push(mem_page);
-                    // use cell_index = i32::MAX to tell next loop to go to the end of the current page
-                    self.stack.set_cell_index(i32::MAX);
+                    self.stack.push_backwards(mem_page);
                     continue;
                 }
                 BTreeCell::TableLeafCell(TableLeafCell {
@@ -523,6 +513,14 @@ impl BTreeCursor {
                     payload_size,
                 }) => {
                     if !self.going_upwards {
+                        // In backwards iteration, if we haven't just moved to this interior node from the
+                        // right child, but instead are about to move to the left child, we need to retreat
+                        // so that we don't come back to this node again.
+                        // For example:
+                        // this parent: key 666
+                        // left child has: key 663, key 664, key 665
+                        // we need to move to the previous parent (with e.g. key 662) when iterating backwards.
+                        self.stack.retreat();
                         let mem_page = self.pager.read_page(left_child_page as usize)?;
                         self.stack.push(mem_page);
                         // use cell_index = i32::MAX to tell next loop to go to the end of the current page
@@ -538,7 +536,7 @@ impl BTreeCursor {
                         )?
                     };
 
-                    // Going upwards = we just moved to an interior cell from a leaf.
+                    // Going upwards = we just moved to an interior cell from the right child.
                     // On the first pass we must take the record from the interior cell (since unlike table btrees, index interior cells have payloads)
                     // We then mark going_upwards=false so that we go back down the tree on the next invocation.
                     self.going_upwards = false;
@@ -1206,6 +1204,13 @@ impl BTreeCursor {
         // 6. If we find the cell, we return the record. Otherwise, we return an empty result.
         self.move_to_root();
 
+        let iter_dir = match self.iteration_state {
+            IterationState::Iterating(IterationDirection::Backwards) => {
+                IterationDirection::Backwards
+            }
+            _ => IterationDirection::Forwards,
+        };
+
         loop {
             let page = self.stack.top();
             return_if_locked!(page);
@@ -1284,12 +1289,22 @@ impl BTreeCursor {
                                 cmp, self.iteration_state
                             ),
                         };
-                        self.stack.advance();
                         if target_leaf_page_is_in_left_subtree {
+                            // If we found our target rowid in the left subtree,
+                            // we need to move the parent cell pointer forwards or backwards depending on the iteration direction.
+                            // For example: since the internal node contains the max rowid of the left subtree, we need to move the
+                            // parent pointer backwards in backwards iteration so that we don't come back to the parent again.
+                            // E.g.
+                            // this parent: rowid 666
+                            // left child has: 664,665,666
+                            // we need to move to the previous parent (with e.g. rowid 663) when iterating backwards.
+                            self.stack.next(iter_dir);
                             let mem_page = self.pager.read_page(*_left_child_page as usize)?;
                             self.stack.push(mem_page);
                             found_cell = true;
                             break;
+                        } else {
+                            self.stack.advance();
                         }
                     }
                     BTreeCell::TableLeafCell(TableLeafCell {
@@ -1392,7 +1407,15 @@ impl BTreeCursor {
                             ),
                         };
                         if target_leaf_page_is_in_left_subtree {
-                            // we don't advance in case of index tree internal nodes because we will visit this node going up
+                            // we don't advance in case of forward iteration and index tree internal nodes because we will visit this node going up.
+                            // in backwards iteration, we must retreat because otherwise we would unnecessarily visit this node again.
+                            // Example:
+                            // this parent: key 666, and we found the target key in the left child.
+                            // left child has: key 663, key 664, key 665
+                            // we need to move to the previous parent (with e.g. key 662) when iterating backwards so that we don't end up back here again.
+                            if iter_dir == IterationDirection::Backwards {
+                                self.stack.retreat();
+                            }
                             let mem_page = self.pager.read_page(*left_child_page as usize)?;
                             self.stack.push(mem_page);
                             found_cell = true;
@@ -3816,7 +3839,7 @@ impl PageStack {
     }
     /// Push a new page onto the stack.
     /// This effectively means traversing to a child page.
-    fn push(&self, page: PageRef) {
+    fn _push(&self, page: PageRef, starting_cell_idx: i32) {
         tracing::trace!(
             "pagestack::push(current={}, new_page_id={})",
             self.current_page.get(),
@@ -3829,7 +3852,15 @@ impl PageStack {
             "corrupted database, stack is bigger than expected"
         );
         self.stack.borrow_mut()[current as usize] = Some(page);
-        self.cell_indices.borrow_mut()[current as usize] = 0;
+        self.cell_indices.borrow_mut()[current as usize] = starting_cell_idx;
+    }
+
+    fn push(&self, page: PageRef) {
+        self._push(page, 0);
+    }
+
+    fn push_backwards(&self, page: PageRef) {
+        self._push(page, i32::MAX);
     }
 
     /// Pop a page off the stack.
