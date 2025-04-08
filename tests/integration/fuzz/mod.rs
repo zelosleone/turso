@@ -108,6 +108,53 @@ mod tests {
     }
 
     #[test]
+    pub fn rowid_seek_fuzz() {
+        let db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x INTEGER PRIMARY KEY)"); // INTEGER PRIMARY KEY is a rowid alias, so an index is not created
+        let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
+
+        let insert = format!(
+            "INSERT INTO t VALUES {}",
+            (1..10000)
+                .map(|x| format!("({})", x))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        sqlite_conn.execute(&insert, params![]).unwrap();
+        sqlite_conn.close().unwrap();
+        let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
+        let limbo_conn = db.connect_limbo();
+
+        const COMPARISONS: [&str; 4] = ["<", "<=", ">", ">="];
+        const ORDER_BY: [Option<&str>; 4] = [
+            None,
+            Some("ORDER BY x"),
+            Some("ORDER BY x DESC"),
+            Some("ORDER BY x ASC"),
+        ];
+
+        for comp in COMPARISONS.iter() {
+            for order_by in ORDER_BY.iter() {
+                for max in 0..=10000 {
+                    let query = format!(
+                        "SELECT * FROM t WHERE x {} {} {} LIMIT 3",
+                        comp,
+                        max,
+                        order_by.unwrap_or("")
+                    );
+                    log::trace!("query: {}", query);
+                    let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
+                    let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
+                    assert_eq!(
+                        limbo, sqlite,
+                        "query: {}, limbo: {:?}, sqlite: {:?}",
+                        query, limbo, sqlite
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     pub fn index_scan_fuzz() {
         let db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x PRIMARY KEY)");
         let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
