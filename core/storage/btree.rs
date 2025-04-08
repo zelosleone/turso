@@ -1470,7 +1470,7 @@ impl BTreeCursor {
                     "overflow parent not yet implemented"
                 );
 
-                // Get divider cells and max_cells
+                /* 1. Get divider cells and max_cells */
                 let mut max_cells = 0;
                 let mut pages_to_balance_new = Vec::new();
                 for i in (0..balance_info.sibling_count).rev() {
@@ -1528,6 +1528,7 @@ impl BTreeCursor {
                 // Reverse divider cells to be in order
                 balance_info.divider_cells.reverse();
 
+                /* 2. Initialize CellArray with all the cells used for distribution, this includes divider cells if !leaf. */
                 let mut cell_array = CellArray {
                     cells: Vec::with_capacity(max_cells),
                     number_of_cells_per_page: Vec::new(),
@@ -1614,16 +1615,9 @@ impl BTreeCursor {
                 }
 
                 #[cfg(debug_assertions)]
-                {
-                    for cell in &cell_array.cells {
-                        assert!(cell.len() >= 4);
+                validate_cells_after_insertion(&cell_array, leaf_data);
 
-                        if leaf_data {
-                            assert!(cell[0] != 0, "payload is {:?}", cell);
-                        }
-                    }
-                }
-                // calculate how many pages to allocate
+                /* 3. Initiliaze current size of every page including overflow cells and divider cells that might be included. */
                 let mut new_page_sizes: Vec<usize> = Vec::new();
                 let leaf_correction = if leaf { 4 } else { 0 };
                 // number of bytes beyond header, different from global usableSapce which includes
@@ -1650,6 +1644,15 @@ impl BTreeCursor {
                     }
                 }
 
+                /* 4. Now let's try to move cells to the left trying to stack them without exceeding the maximum size of a page.
+                     There are two cases:
+                       * If current page has too many cells, it will move them to the next page.
+                       * If it still has space, and it can take a cell from the right it will take them.
+                         Here there is a caveat. Taking a cell from the right might take cells from page i+1, i+2, i+3, so not necessarily
+                         adjacent. But we decrease the size of the adjacent page if we move from the right. This might cause a intermitent state
+                         where page can have size <0.
+                    This will also calculate how many pages are required to balance the cells and store in sibling_count_new.
+                */
                 // Try to pack as many cells to the left
                 let mut sibling_count_new = balance_info.sibling_count;
                 let mut i = 0;
@@ -1658,6 +1661,7 @@ impl BTreeCursor {
                     while new_page_sizes[i] > usable_space as usize {
                         let needs_new_page = i + 1 >= sibling_count_new;
                         if needs_new_page {
+                            // FIXME: this doesn't remove pages if not needed
                             sibling_count_new += 1;
                             new_page_sizes.push(0);
                             cell_array
@@ -1732,6 +1736,10 @@ impl BTreeCursor {
                     cell_array.cells.len()
                 );
 
+                /* 5. Balance pages starting from a left stacked cell state and move them to right trying to maintain a balanced state
+                where we only move from left to right if it will not unbalance both pages, meaning moving left to right won't make
+                right page bigger than left page.
+                */
                 // Comment borrowed from SQLite src/btree.c
                 // The packing computed by the previous block is biased toward the siblings
                 // on the left side (siblings with smaller keys). The left siblings are
@@ -1840,6 +1848,7 @@ impl BTreeCursor {
                     right_page_id
                 );
 
+                /* 6. Update parent pointers. Update right pointer and insert divider cells with newly created distribution of cells */
                 // Ensure right-child pointer of the right-most new sibling pge points to the page
                 // that was originally on that place.
                 let is_leaf_page = matches!(page_type, PageType::TableLeaf | PageType::IndexLeaf);
@@ -1921,41 +1930,12 @@ impl BTreeCursor {
                     )
                     .unwrap();
                     #[cfg(debug_assertions)]
-                    {
-                        let left_pointer = if parent_contents.overflow_cells.len() == 0 {
-                            let (cell_start, cell_len) = parent_contents.cell_get_raw_region(
-                                balance_info.first_divider_cell + i,
-                                payload_overflow_threshold_max(
-                                    parent_contents.page_type(),
-                                    self.usable_space() as u16,
-                                ),
-                                payload_overflow_threshold_min(
-                                    parent_contents.page_type(),
-                                    self.usable_space() as u16,
-                                ),
-                                self.usable_space(),
-                            );
-                            tracing::debug!(
-                                "balance_non_root(cell_start={}, cell_len={})",
-                                cell_start,
-                                cell_len
-                            );
-
-                            let left_pointer = read_u32(
-                                &parent_contents.as_ptr()[cell_start..cell_start + cell_len],
-                                0,
-                            );
-                            left_pointer
-                        } else {
-                            let cell = &parent_contents.overflow_cells[0];
-                            assert_eq!(cell.index, balance_info.first_divider_cell + i);
-                            read_u32(&cell.payload, 0)
-                        };
-                        assert_eq!(left_pointer, page.get().id as u32, "the cell we just inserted doesn't point to the correct page. points to {}, should point to {}",
-                           left_pointer,
-                            page.get().id as u32
-                         );
-                    }
+                    self.validate_balance_non_root_divider_cell_insertion(
+                        balance_info,
+                        parent_contents,
+                        i,
+                        page,
+                    );
                 }
                 tracing::debug!(
                     "balance_non_root(parent_overflow={})",
@@ -1964,6 +1944,7 @@ impl BTreeCursor {
 
                 #[cfg(debug_assertions)]
                 {
+                    // Let's ensure every page is pointed to by the divider cell or the rightmost pointer.
                     for page in &pages_to_balance_new {
                         assert!(
                             pages_pointed_to.contains(&(page.get().id as u32)),
@@ -1972,7 +1953,29 @@ impl BTreeCursor {
                         );
                     }
                 }
-                // TODO: update pages
+                /* 7. Start real movement of cells. Next comment is borrowed from SQLite: */
+                /* Now update the actual sibling pages. The order in which they are updated
+                 ** is important, as this code needs to avoid disrupting any page from which
+                 ** cells may still to be read. In practice, this means:
+                 **
+                 **  (1) If cells are moving left (from apNew[iPg] to apNew[iPg-1])
+                 **      then it is not safe to update page apNew[iPg] until after
+                 **      the left-hand sibling apNew[iPg-1] has been updated.
+                 **
+                 **  (2) If cells are moving right (from apNew[iPg] to apNew[iPg+1])
+                 **      then it is not safe to update page apNew[iPg] until after
+                 **      the right-hand sibling apNew[iPg+1] has been updated.
+                 **
+                 ** If neither of the above apply, the page is safe to update.
+                 **
+                 ** The iPg value in the following loop starts at nNew-1 goes down
+                 ** to 0, then back up to nNew-1 again, thus making two passes over
+                 ** the pages.  On the initial downward pass, only condition (1) above
+                 ** needs to be tested because (2) will always be true from the previous
+                 ** step.  On the upward pass, both conditions are always true, so the
+                 ** upwards pass simply processes pages that were missed on the downward
+                 ** pass.
+                 */
                 let mut done = vec![false; sibling_count_new];
                 for i in (1 - sibling_count_new as i64)..sibling_count_new as i64 {
                     let page_idx = i.unsigned_abs() as usize;
@@ -2051,6 +2054,53 @@ impl BTreeCursor {
         let write_info = self.state.mut_write_info().unwrap();
         write_info.state = next_write_state;
         result
+    }
+
+    #[cfg(debug_assertions)]
+    fn validate_balance_non_root_divider_cell_insertion(
+        &self,
+        balance_info: &mut BalanceInfo,
+        parent_contents: &mut PageContent,
+        i: usize,
+        page: &std::sync::Arc<crate::Page>,
+    ) {
+        let left_pointer = if parent_contents.overflow_cells.len() == 0 {
+            let (cell_start, cell_len) = parent_contents.cell_get_raw_region(
+                balance_info.first_divider_cell + i,
+                payload_overflow_threshold_max(
+                    parent_contents.page_type(),
+                    self.usable_space() as u16,
+                ),
+                payload_overflow_threshold_min(
+                    parent_contents.page_type(),
+                    self.usable_space() as u16,
+                ),
+                self.usable_space(),
+            );
+            tracing::debug!(
+                "balance_non_root(cell_start={}, cell_len={})",
+                cell_start,
+                cell_len
+            );
+
+            let left_pointer = read_u32(
+                &parent_contents.as_ptr()[cell_start..cell_start + cell_len],
+                0,
+            );
+            left_pointer
+        } else {
+            let mut left_pointer = None;
+            for cell in parent_contents.overflow_cells.iter() {
+                if cell.index == balance_info.first_divider_cell + i {
+                    left_pointer = Some(read_u32(&cell.payload, 0))
+                }
+            }
+            left_pointer.expect("overflow cell with divider cell was not found")
+        };
+        assert_eq!(left_pointer, page.get().id as u32, "the cell we just inserted doesn't point to the correct page. points to {}, should point to {}",
+           left_pointer,
+            page.get().id as u32
+         );
     }
 
     #[cfg(debug_assertions)]
@@ -3416,6 +3466,17 @@ impl BTreeCursor {
 
     fn get_immutable_record(&self) -> std::cell::RefMut<'_, Option<ImmutableRecord>> {
         self.reusable_immutable_record.borrow_mut()
+    }
+}
+
+#[cfg(debug_assertions)]
+fn validate_cells_after_insertion(cell_array: &CellArray, leaf_data: bool) {
+    for cell in &cell_array.cells {
+        assert!(cell.len() >= 4);
+
+        if leaf_data {
+            assert!(cell[0] != 0, "payload is {:?}", cell);
+        }
     }
 }
 
