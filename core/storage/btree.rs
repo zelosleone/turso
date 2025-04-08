@@ -318,7 +318,7 @@ enum OverflowState {
 /// Similarly, once a SeekLT or SeekLE is performed, the cursor must iterate backwards and calling next() is an error.
 /// When a SeekEQ or SeekRowid is performed, the cursor is NOT allowed to iterate further.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum IterationState {
+pub enum IterationState {
     Unset,
     Iterating(IterationDirection),
     IterationNotAllowed,
@@ -350,7 +350,7 @@ pub struct BTreeCursor {
     reusable_immutable_record: RefCell<Option<ImmutableRecord>>,
     empty_record: Cell<bool>,
 
-    iteration_state: IterationState,
+    pub iteration_state: IterationState,
 }
 
 /// Stack of pages representing the tree traversal order.
@@ -2930,7 +2930,8 @@ impl BTreeCursor {
                 self.iteration_state,
                 IterationState::Iterating(IterationDirection::Forwards)
             ),
-            "iteration state must be Iterating(Forwards) when next() is called"
+            "iteration state must be Iterating(Forwards) when next() is called, but it was {:?}",
+            self.iteration_state
         );
         let rowid = return_if_io!(self.get_next_record(None));
         self.rowid.replace(rowid);
@@ -5183,6 +5184,8 @@ mod tests {
                 // FIXME: add sorted vector instead, should be okay for small amounts of keys for now :P, too lazy to fix right now
                 keys.sort();
                 cursor.move_to_root();
+                // hack to allow bypassing our internal invariant of not allowing cursor iteration after SeekOp::EQ
+                cursor.iteration_state = IterationState::Iterating(IterationDirection::Forwards);
                 let mut valid = true;
                 for key in keys.iter() {
                     tracing::trace!("seeking key: {}", key);
@@ -5194,6 +5197,7 @@ mod tests {
                         break;
                     }
                 }
+                cursor.iteration_state = IterationState::Unset;
                 // let's validate btree too so that we undertsand where the btree failed
                 if matches!(validate_btree(pager.clone(), root_page), (_, false)) || !valid {
                     let btree_after = format_btree(pager.clone(), root_page, 0);
@@ -5211,6 +5215,8 @@ mod tests {
             }
             keys.sort();
             cursor.move_to_root();
+            // hack to allow bypassing our internal invariant of not allowing cursor iteration after SeekOp::EQ
+            cursor.iteration_state = IterationState::Iterating(IterationDirection::Forwards);
             for key in keys.iter() {
                 tracing::trace!("seeking key: {}", key);
                 run_until_done(|| cursor.next(), pager.deref()).unwrap();
