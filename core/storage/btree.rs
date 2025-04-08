@@ -1624,7 +1624,7 @@ impl BTreeCursor {
                     }
                 }
                 // calculate how many pages to allocate
-                let mut new_page_sizes = Vec::new();
+                let mut new_page_sizes: Vec<usize> = Vec::new();
                 let leaf_correction = if leaf { 4 } else { 0 };
                 // number of bytes beyond header, different from global usableSapce which includes
                 // header
@@ -1637,11 +1637,16 @@ impl BTreeCursor {
                     let page_contents = page.get_contents();
                     let free_space = compute_free_space(page_contents, self.usable_space() as u16);
 
-                    new_page_sizes.push(usable_space as u16 - free_space);
+                    new_page_sizes.push(usable_space as usize - free_space as usize);
                     for overflow in &page_contents.overflow_cells {
                         let size = new_page_sizes.last_mut().unwrap();
                         // 2 to account of pointer
-                        *size += 2 + overflow.payload.len() as u16;
+                        *size += 2 + overflow.payload.len() as usize;
+                    }
+                    if !leaf && i < balance_info.sibling_count - 1 {
+                        // Account for divider cell which is included in this page.
+                        let size = new_page_sizes.last_mut().unwrap();
+                        *size += cell_array.cells[cell_array.cell_count(i)].len() as usize;
                     }
                 }
 
@@ -1650,7 +1655,7 @@ impl BTreeCursor {
                 let mut i = 0;
                 while i < sibling_count_new {
                     // First try to move cells to the right if they do not fit
-                    while new_page_sizes[i] > usable_space as u16 {
+                    while new_page_sizes[i] > usable_space as usize {
                         let needs_new_page = i + 1 >= sibling_count_new;
                         if needs_new_page {
                             sibling_count_new += 1;
@@ -1664,7 +1669,7 @@ impl BTreeCursor {
                             );
                         }
                         let size_of_cell_to_remove_from_left =
-                            2 + cell_array.cells[cell_array.cell_count(i) - 1].len() as u16;
+                            2 + cell_array.cells[cell_array.cell_count(i) - 1].len() as usize;
                         new_page_sizes[i] -= size_of_cell_to_remove_from_left;
                         let size_of_cell_to_move_right = if !leaf_data {
                             if cell_array.number_of_cells_per_page[i]
@@ -1672,23 +1677,23 @@ impl BTreeCursor {
                             {
                                 // This means we move to the right page the divider cell and we
                                 // promote left cell to divider
-                                2 + cell_array.cells[cell_array.cell_count(i)].len() as u16
+                                2 + cell_array.cells[cell_array.cell_count(i)].len() as usize
                             } else {
                                 0
                             }
                         } else {
                             size_of_cell_to_remove_from_left
                         };
-                        new_page_sizes[i + 1] += size_of_cell_to_move_right;
+                        new_page_sizes[i + 1] += size_of_cell_to_move_right as usize;
                         cell_array.number_of_cells_per_page[i] -= 1;
                     }
 
                     // Now try to take from the right if we didn't have enough
                     while cell_array.number_of_cells_per_page[i] < cell_array.cells.len() as u16 {
                         let size_of_cell_to_remove_from_right =
-                            2 + cell_array.cells[cell_array.cell_count(i)].len() as u16;
+                            2 + cell_array.cells[cell_array.cell_count(i)].len() as usize;
                         let can_take = new_page_sizes[i] + size_of_cell_to_remove_from_right
-                            > usable_space as u16;
+                            > usable_space as usize;
                         if can_take {
                             break;
                         }
@@ -1699,7 +1704,7 @@ impl BTreeCursor {
                             if cell_array.number_of_cells_per_page[i]
                                 < cell_array.cells.len() as u16
                             {
-                                2 + cell_array.cells[cell_array.cell_count(i)].len() as u16
+                                2 + cell_array.cells[cell_array.cell_count(i)].len() as usize
                             } else {
                                 0
                             }
@@ -1745,8 +1750,8 @@ impl BTreeCursor {
                     // the same we add to right (we don't add divider to right).
                     let mut cell_right = cell_left + 1 - leaf_data as u16;
                     loop {
-                        let cell_left_size = cell_array.cell_size(cell_left as usize);
-                        let cell_right_size = cell_array.cell_size(cell_right as usize);
+                        let cell_left_size = cell_array.cell_size(cell_left as usize) as usize;
+                        let cell_right_size = cell_array.cell_size(cell_right as usize) as usize;
                         // TODO: add assert nMaxCells
 
                         let pointer_size = if i == sibling_count_new - 1 { 0 } else { 2 };
@@ -4735,9 +4740,7 @@ mod tests {
             let (pager, root_page) = empty_btree();
             let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
             let mut keys = Vec::new();
-            let seed = rng.next_u64();
             tracing::info!("seed: {}", seed);
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
             for insert_id in 0..inserts {
                 let size = size(&mut rng);
                 let key = {
@@ -4875,25 +4878,21 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     pub fn btree_insert_fuzz_run_random() {
         btree_insert_fuzz_run(128, 16, |rng| (rng.next_u32() % 4096) as usize);
     }
 
     #[test]
-    #[ignore]
     pub fn btree_insert_fuzz_run_small() {
         btree_insert_fuzz_run(1, 100, |rng| (rng.next_u32() % 128) as usize);
     }
 
     #[test]
-    #[ignore]
     pub fn btree_insert_fuzz_run_big() {
         btree_insert_fuzz_run(64, 32, |rng| 3 * 1024 + (rng.next_u32() % 1024) as usize);
     }
 
     #[test]
-    #[ignore]
     pub fn btree_insert_fuzz_run_overflow() {
         btree_insert_fuzz_run(64, 32, |rng| (rng.next_u32() % 32 * 1024) as usize);
     }
