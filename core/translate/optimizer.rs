@@ -307,7 +307,7 @@ fn use_indexes(
                     table_index,
                     table_reference,
                     available_indexes,
-                    iter_dir.clone(),
+                    *iter_dir,
                 )? {
                     where_clause.remove(i);
                     table_reference.op = Operation::Search(index_search);
