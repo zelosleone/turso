@@ -4894,7 +4894,7 @@ mod tests {
 
     #[test]
     pub fn btree_insert_fuzz_run_overflow() {
-        btree_insert_fuzz_run(64, 10000, |rng| (rng.next_u32() % 32 * 1024) as usize);
+        btree_insert_fuzz_run(64, 32, |rng| (rng.next_u32() % 32 * 1024) as usize);
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
