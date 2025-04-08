@@ -197,6 +197,12 @@ impl Display for OwnedValue {
             }
             Self::Float(fl) => {
                 let fl = *fl;
+                if fl == f64::INFINITY {
+                    return write!(f, "Inf");
+                }
+                if fl == f64::NEG_INFINITY {
+                    return write!(f, "-Inf");
+                }
                 if fl.is_nan() {
                     return write!(f, "");
                 }
