@@ -1255,7 +1255,7 @@ impl BTreeCursor {
                         // LE  | > or =                     | go left  | Last <= key is in left subtree
                         // LE  | <                          | go right | Last <= key is in right subtree
                         // LT  | > or =                     | go left  | Last < key is in left subtree
-                        // LT  | <                          | go right | Last < key is in right subtree
+                        // LT  | <                          | go right?| Last < key is in right subtree, except if cell rowid is exactly 1 less
                         //
                         // No iteration (point query):
                         // EQ  | > or =                     | go left  | Last = key is in left subtree
@@ -1277,7 +1277,7 @@ impl BTreeCursor {
                             (
                                 IterationState::Iterating(IterationDirection::Backwards),
                                 SeekOp::LT,
-                            ) => *cell_rowid >= rowid_key,
+                            ) => *cell_rowid >= rowid_key || *cell_rowid == rowid_key - 1,
                             (_any, SeekOp::EQ) => *cell_rowid >= rowid_key,
                             _ => unreachable!(
                                 "invalid combination of seek op and iteration state: {:?} {:?}",
