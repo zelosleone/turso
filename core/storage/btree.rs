@@ -1041,10 +1041,10 @@ impl BTreeCursor {
                                     self.get_immutable_record_or_create().as_mut().unwrap(),
                                 )?
                             };
-                            self.stack.next(cell_iter_dir);
+                            self.stack.next_cell_in_direction(cell_iter_dir);
                             return Ok(CursorResult::Ok(Some(*cell_rowid)));
                         } else {
-                            self.stack.next(cell_iter_dir);
+                            self.stack.next_cell_in_direction(cell_iter_dir);
                         }
                     }
                     BTreeCell::IndexLeafCell(IndexLeafCell {
@@ -1079,7 +1079,7 @@ impl BTreeCursor {
                             SeekOp::LE => order.is_le(),
                             SeekOp::LT => order.is_lt(),
                         };
-                        self.stack.next(cell_iter_dir);
+                        self.stack.next_cell_in_direction(cell_iter_dir);
                         if found {
                             let rowid = match record.last_value() {
                                 Some(RefValue::Integer(rowid)) => *rowid as u64,
@@ -1298,7 +1298,7 @@ impl BTreeCursor {
                             // this parent: rowid 666
                             // left child has: 664,665,666
                             // we need to move to the previous parent (with e.g. rowid 663) when iterating backwards.
-                            self.stack.next(iter_dir);
+                            self.stack.next_cell_in_direction(iter_dir);
                             let mem_page = self.pager.read_page(*_left_child_page as usize)?;
                             self.stack.push(mem_page);
                             found_cell = true;
@@ -3921,7 +3921,7 @@ impl PageStack {
     }
 
     /// Move the cursor to the next cell in the current page according to the iteration direction.
-    fn next(&self, iteration_direction: IterationDirection) {
+    fn next_cell_in_direction(&self, iteration_direction: IterationDirection) {
         match iteration_direction {
             IterationDirection::Forwards => {
                 self.advance();
