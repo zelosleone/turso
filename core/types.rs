@@ -1203,11 +1203,13 @@ pub enum CursorResult<T> {
     IO,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SeekOp {
     EQ,
     GE,
     GT,
+    LE,
+    LT,
 }
 
 #[derive(Clone, PartialEq, Debug)]

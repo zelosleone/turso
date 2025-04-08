@@ -1892,97 +1892,69 @@ pub fn op_deferred_seek(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_seek_ge(
+pub fn op_seek(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::SeekGE {
+    let (Insn::SeekGE {
         cursor_id,
         start_reg,
         num_regs,
         target_pc,
         is_index,
-    } = insn
-    else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    assert!(target_pc.is_offset());
-    if *is_index {
-        let found = {
-            let mut cursor = state.get_cursor(*cursor_id);
-            let cursor = cursor.as_btree_mut();
-            let record_from_regs = make_record(&state.registers, start_reg, num_regs);
-            let found =
-                return_if_io!(cursor.seek(SeekKey::IndexKey(&record_from_regs), SeekOp::GE));
-            found
-        };
-        if !found {
-            state.pc = target_pc.to_offset_int();
-        } else {
-            state.pc += 1;
-        }
-    } else {
-        let pc = {
-            let mut cursor = state.get_cursor(*cursor_id);
-            let cursor = cursor.as_btree_mut();
-            let rowid = match state.registers[*start_reg].get_owned_value() {
-                OwnedValue::Null => {
-                    // All integer values are greater than null so we just rewind the cursor
-                    return_if_io!(cursor.rewind());
-                    None
-                }
-                OwnedValue::Integer(rowid) => Some(*rowid as u64),
-                _ => {
-                    return Err(LimboError::InternalError(
-                        "SeekGE: the value in the register is not an integer".into(),
-                    ));
-                }
-            };
-            match rowid {
-                Some(rowid) => {
-                    let found = return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GE));
-                    if !found {
-                        target_pc.to_offset_int()
-                    } else {
-                        state.pc + 1
-                    }
-                }
-                None => state.pc + 1,
-            }
-        };
-        state.pc = pc;
     }
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_seek_gt(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::SeekGT {
+    | Insn::SeekGT {
         cursor_id,
         start_reg,
         num_regs,
         target_pc,
         is_index,
-    } = insn
+    }
+    | Insn::SeekLE {
+        cursor_id,
+        start_reg,
+        num_regs,
+        target_pc,
+        is_index,
+    }
+    | Insn::SeekLT {
+        cursor_id,
+        start_reg,
+        num_regs,
+        target_pc,
+        is_index,
+    }) = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    assert!(target_pc.is_offset());
+    assert!(
+        target_pc.is_offset(),
+        "target_pc should be an offset, is: {:?}",
+        target_pc
+    );
+    let op = match insn {
+        Insn::SeekGE { .. } => SeekOp::GE,
+        Insn::SeekGT { .. } => SeekOp::GT,
+        Insn::SeekLE { .. } => SeekOp::LE,
+        Insn::SeekLT { .. } => SeekOp::LT,
+        _ => unreachable!("unexpected Insn {:?}", insn),
+    };
+    let op_name = match op {
+        SeekOp::GE => "SeekGE",
+        SeekOp::GT => "SeekGT",
+        SeekOp::LE => "SeekLE",
+        SeekOp::LT => "SeekLT",
+        _ => unreachable!("unexpected SeekOp {:?}", op),
+    };
     if *is_index {
         let found = {
             let mut cursor = state.get_cursor(*cursor_id);
             let cursor = cursor.as_btree_mut();
             let record_from_regs = make_record(&state.registers, start_reg, num_regs);
-            let found =
-                return_if_io!(cursor.seek(SeekKey::IndexKey(&record_from_regs), SeekOp::GT));
+            let found = return_if_io!(cursor.seek(SeekKey::IndexKey(&record_from_regs), op));
             found
         };
         if !found {
@@ -2002,14 +1974,15 @@ pub fn op_seek_gt(
                 }
                 OwnedValue::Integer(rowid) => Some(*rowid as u64),
                 _ => {
-                    return Err(LimboError::InternalError(
-                        "SeekGT: the value in the register is not an integer".into(),
-                    ));
+                    return Err(LimboError::InternalError(format!(
+                        "{}: the value in the register is not an integer",
+                        op_name
+                    )));
                 }
             };
             let found = match rowid {
                 Some(rowid) => {
-                    let found = return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GT));
+                    let found = return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), op));
                     if !found {
                         target_pc.to_offset_int()
                     } else {
