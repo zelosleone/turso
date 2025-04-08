@@ -2,9 +2,9 @@ pub mod grammar_generator;
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
+    use std::{collections::HashSet, rc::Rc};
 
-    use rand::SeedableRng;
+    use rand::{Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
     use rusqlite::params;
 
@@ -104,6 +104,160 @@ mod tests {
                 "query: {}, limbo: {:?}, sqlite: {:?}",
                 query, limbo, sqlite
             );
+        }
+    }
+
+    #[test]
+    pub fn index_scan_fuzz() {
+        let db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x PRIMARY KEY)");
+        let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
+
+        let insert = format!(
+            "INSERT INTO t VALUES {}",
+            (0..10000)
+                .map(|x| format!("({})", x))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        sqlite_conn.execute(&insert, params![]).unwrap();
+        sqlite_conn.close().unwrap();
+        let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
+        let limbo_conn = db.connect_limbo();
+
+        const COMPARISONS: [&str; 5] = ["=", "<", "<=", ">", ">="];
+
+        const ORDER_BY: [Option<&str>; 4] = [
+            None,
+            Some("ORDER BY x"),
+            Some("ORDER BY x DESC"),
+            Some("ORDER BY x ASC"),
+        ];
+
+        for comp in COMPARISONS.iter() {
+            for order_by in ORDER_BY.iter() {
+                for max in 0..=10000 {
+                    let query = format!(
+                        "SELECT * FROM t WHERE x {} {} {} LIMIT 3",
+                        comp,
+                        max,
+                        order_by.unwrap_or(""),
+                    );
+                    let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
+                    let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
+                    assert_eq!(
+                        limbo, sqlite,
+                        "query: {}, limbo: {:?}, sqlite: {:?}",
+                        query, limbo, sqlite
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    pub fn index_scan_compound_key_fuzz() {
+        let (mut rng, seed) = if std::env::var("SEED").is_ok() {
+            let seed = std::env::var("SEED").unwrap().parse::<u64>().unwrap();
+            (ChaCha8Rng::seed_from_u64(seed), seed)
+        } else {
+            rng_from_time()
+        };
+        let db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x, y, z, PRIMARY KEY (x, y))");
+        let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
+        let mut pk_tuples = HashSet::new();
+        while pk_tuples.len() < 100000 {
+            pk_tuples.insert((rng.random_range(0..3000), rng.random_range(0..3000)));
+        }
+        let mut tuples = Vec::new();
+        for pk_tuple in pk_tuples {
+            tuples.push(format!(
+                "({}, {}, {})",
+                pk_tuple.0,
+                pk_tuple.1,
+                rng.random_range(0..2000)
+            ));
+        }
+        let insert = format!("INSERT INTO t VALUES {}", tuples.join(", "));
+        sqlite_conn.execute(&insert, params![]).unwrap();
+        sqlite_conn.close().unwrap();
+        let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
+        let limbo_conn = db.connect_limbo();
+
+        const COMPARISONS: [&str; 5] = ["=", "<", "<=", ">", ">="];
+
+        const ORDER_BY: [Option<&str>; 4] = [
+            None,
+            Some("ORDER BY x"),
+            Some("ORDER BY x DESC"),
+            Some("ORDER BY x ASC"),
+        ];
+
+        let print_dump_on_fail = |insert: &str, seed: u64| {
+            let comment = format!("-- seed: {}; dump for manual debugging:", seed);
+            let pragma_journal_mode = "PRAGMA journal_mode = wal;";
+            let create_table = "CREATE TABLE t(x, y, z, PRIMARY KEY (x, y));";
+            let dump = format!(
+                "{}\n{}\n{}\n{}\n{}",
+                comment, pragma_journal_mode, create_table, comment, insert
+            );
+            println!("{}", dump);
+        };
+
+        for comp in COMPARISONS.iter() {
+            for order_by in ORDER_BY.iter() {
+                for max in 0..=3000 {
+                    // see comment below about ordering and the '=' comparison operator; omitting LIMIT for that reason
+                    // we mainly have LIMIT here for performance reasons but for = we want to get all the rows to ensure
+                    // correctness in the = case
+                    let limit = if *comp == "=" { "" } else { "LIMIT 5" };
+                    let query = format!(
+                        "SELECT * FROM t WHERE x {} {} {} {}",
+                        comp,
+                        max,
+                        order_by.unwrap_or(""),
+                        limit
+                    );
+                    log::trace!("query: {}", query);
+                    let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
+                    let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
+                    let is_equal = limbo == sqlite;
+                    if !is_equal {
+                        // if the condition is = and the same rows are present but in different order, then we accept that
+                        // e.g. sqlite doesn't bother iterating in reverse order if "WHERE X = 3 ORDER BY X DESC", but we currently do.
+                        if *comp == "=" {
+                            let limbo_row_count = limbo.len();
+                            let sqlite_row_count = sqlite.len();
+                            if limbo_row_count == sqlite_row_count {
+                                for limbo_row in limbo.iter() {
+                                    if !sqlite.contains(limbo_row) {
+                                        // save insert to file and print the filename for debugging
+                                        let error_msg = format!("row not found in sqlite: query: {}, limbo: {:?}, sqlite: {:?}, seed: {}", query, limbo, sqlite, seed);
+                                        print_dump_on_fail(&insert, seed);
+                                        panic!("{}", error_msg);
+                                    }
+                                }
+                                for sqlite_row in sqlite.iter() {
+                                    if !limbo.contains(sqlite_row) {
+                                        let error_msg = format!("row not found in limbo: query: {}, limbo: {:?}, sqlite: {:?}, seed: {}", query, limbo, sqlite, seed);
+                                        print_dump_on_fail(&insert, seed);
+                                        panic!("{}", error_msg);
+                                    }
+                                }
+                                continue;
+                            } else {
+                                print_dump_on_fail(&insert, seed);
+                                let error_msg = format!("row count mismatch (limbo: {}, sqlite: {}): query: {}, limbo: {:?}, sqlite: {:?}, seed: {}", limbo_row_count, sqlite_row_count, query, limbo, sqlite, seed);
+                                panic!("{}", error_msg);
+                            }
+                        }
+                        print_dump_on_fail(&insert, seed);
+                        panic!(
+                            "query: {}, limbo: {:?}, sqlite: {:?}, seed: {}",
+                            query, limbo, sqlite, seed
+                        );
+                    }
+                }
+            }
         }
     }
 
