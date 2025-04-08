@@ -1565,10 +1565,6 @@ impl BTreeCursor {
                     }
                     // Insert overflow cells into correct place
                     let offset = total_cells_inserted;
-                    assert!(
-                        old_page_contents.overflow_cells.len() <= 1,
-                        "todo: check this works for more than one overflow cell"
-                    );
                     for overflow_cell in old_page_contents.overflow_cells.iter_mut() {
                         cell_array.cells.insert(
                             offset + overflow_cell.index,
@@ -4005,7 +4001,7 @@ fn insert_into_cell(
     usable_space: u16,
 ) -> Result<()> {
     assert!(
-        cell_idx <= page.cell_count(),
+        cell_idx <= page.cell_count() + page.overflow_cells.len(),
         "attempting to add cell to an incorrect place cell_idx={} cell_count={}",
         cell_idx,
         page.cell_count()
