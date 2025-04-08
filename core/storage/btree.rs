@@ -1670,8 +1670,6 @@ impl BTreeCursor {
                         }
                         let size_of_cell_to_remove_from_left =
                             2 + cell_array.cells[cell_array.cell_count(i) - 1].len() as usize;
-                        // removing a page from the right might include removing from a page that is not directly adjacent, therefore, it could be possible we set page+1
-                        // to a negative number until we move the cell to the right page again.
                         new_page_sizes[i] -= size_of_cell_to_remove_from_left;
                         let size_of_cell_to_move_right = if !leaf_data {
                             if cell_array.number_of_cells_per_page[i]
