@@ -1614,7 +1614,7 @@ impl BTreeCursor {
                 validate_cells_after_insertion(&cell_array, leaf_data);
 
                 /* 3. Initiliaze current size of every page including overflow cells and divider cells that might be included. */
-                let mut new_page_sizes: Vec<usize> = Vec::new();
+                let mut new_page_sizes: Vec<i64> = Vec::new();
                 let leaf_correction = if leaf { 4 } else { 0 };
                 // number of bytes beyond header, different from global usableSapce which includes
                 // header
@@ -1627,16 +1627,16 @@ impl BTreeCursor {
                     let page_contents = page.get_contents();
                     let free_space = compute_free_space(page_contents, self.usable_space() as u16);
 
-                    new_page_sizes.push(usable_space as usize - free_space as usize);
+                    new_page_sizes.push(usable_space as i64 - free_space as i64);
                     for overflow in &page_contents.overflow_cells {
                         let size = new_page_sizes.last_mut().unwrap();
                         // 2 to account of pointer
-                        *size += 2 + overflow.payload.len() as usize;
+                        *size += 2 + overflow.payload.len() as i64;
                     }
                     if !leaf && i < balance_info.sibling_count - 1 {
                         // Account for divider cell which is included in this page.
                         let size = new_page_sizes.last_mut().unwrap();
-                        *size += cell_array.cells[cell_array.cell_count(i)].len() as usize;
+                        *size += cell_array.cells[cell_array.cell_count(i)].len() as i64;
                     }
                 }
 
@@ -1654,7 +1654,7 @@ impl BTreeCursor {
                 let mut i = 0;
                 while i < sibling_count_new {
                     // First try to move cells to the right if they do not fit
-                    while new_page_sizes[i] > usable_space as usize {
+                    while new_page_sizes[i] > usable_space as i64 {
                         let needs_new_page = i + 1 >= sibling_count_new;
                         if needs_new_page {
                             // FIXME: this doesn't remove pages if not needed
@@ -1669,7 +1669,7 @@ impl BTreeCursor {
                             );
                         }
                         let size_of_cell_to_remove_from_left =
-                            2 + cell_array.cells[cell_array.cell_count(i) - 1].len() as usize;
+                            2 + cell_array.cells[cell_array.cell_count(i) - 1].len() as i64;
                         new_page_sizes[i] -= size_of_cell_to_remove_from_left;
                         let size_of_cell_to_move_right = if !leaf_data {
                             if cell_array.number_of_cells_per_page[i]
@@ -1677,23 +1677,23 @@ impl BTreeCursor {
                             {
                                 // This means we move to the right page the divider cell and we
                                 // promote left cell to divider
-                                2 + cell_array.cells[cell_array.cell_count(i)].len() as usize
+                                2 + cell_array.cells[cell_array.cell_count(i)].len() as i64
                             } else {
                                 0
                             }
                         } else {
                             size_of_cell_to_remove_from_left
                         };
-                        new_page_sizes[i + 1] += size_of_cell_to_move_right as usize;
+                        new_page_sizes[i + 1] += size_of_cell_to_move_right as i64;
                         cell_array.number_of_cells_per_page[i] -= 1;
                     }
 
                     // Now try to take from the right if we didn't have enough
                     while cell_array.number_of_cells_per_page[i] < cell_array.cells.len() as u16 {
                         let size_of_cell_to_remove_from_right =
-                            2 + cell_array.cells[cell_array.cell_count(i)].len() as usize;
+                            2 + cell_array.cells[cell_array.cell_count(i)].len() as i64;
                         let can_take = new_page_sizes[i] + size_of_cell_to_remove_from_right
-                            > usable_space as usize;
+                            > usable_space as i64;
                         if can_take {
                             break;
                         }
@@ -1704,7 +1704,7 @@ impl BTreeCursor {
                             if cell_array.number_of_cells_per_page[i]
                                 < cell_array.cells.len() as u16
                             {
-                                2 + cell_array.cells[cell_array.cell_count(i)].len() as usize
+                                2 + cell_array.cells[cell_array.cell_count(i)].len() as i64
                             } else {
                                 0
                             }
@@ -1754,8 +1754,8 @@ impl BTreeCursor {
                     // the same we add to right (we don't add divider to right).
                     let mut cell_right = cell_left + 1 - leaf_data as u16;
                     loop {
-                        let cell_left_size = cell_array.cell_size(cell_left as usize) as usize;
-                        let cell_right_size = cell_array.cell_size(cell_right as usize) as usize;
+                        let cell_left_size = cell_array.cell_size(cell_left as usize) as i64;
+                        let cell_right_size = cell_array.cell_size(cell_right as usize) as i64;
                         // TODO: add assert nMaxCells
 
                         let pointer_size = if i == sibling_count_new - 1 { 0 } else { 2 };
