@@ -81,28 +81,30 @@ pub struct Settings {
     pub echo: bool,
     pub is_stdout: bool,
     pub io: Io,
+    pub tracing_output: Option<String>,
 }
 
-impl From<&Opts> for Settings {
-    fn from(opts: &Opts) -> Self {
+impl From<Opts> for Settings {
+    fn from(opts: Opts) -> Self {
         Self {
             null_value: String::new(),
             output_mode: opts.output_mode,
             echo: false,
             is_stdout: opts.output.is_empty(),
-            output_filename: opts.output.clone(),
+            output_filename: opts.output,
             db_file: opts
                 .database
                 .as_ref()
                 .map_or(":memory:".to_string(), |p| p.to_string_lossy().to_string()),
             io: match opts.vfs.as_ref().unwrap_or(&String::new()).as_str() {
-                "memory" => Io::Memory,
+                "memory" | ":memory:" => Io::Memory,
                 "syscall" => Io::Syscall,
                 #[cfg(all(target_os = "linux", feature = "io_uring"))]
                 "io_uring" => Io::IoUring,
                 "" => Io::default(),
                 vfs => Io::External(vfs.to_string()),
             },
+            tracing_output: opts.tracing_output,
         }
     }
 }

@@ -11,7 +11,7 @@ PIPE_BUF = 4096
 
 
 class ShellConfig:
-    def __init__(self, exe_name, flags: str = "-q"):
+    def __init__(self, exe_name, flags: str = "-q -t testing/trace.log"):
         self.sqlite_exec: str = exe_name
         self.sqlite_flags: List[str] = flags.split()
         self.cwd = os.getcwd()

@@ -6,6 +6,8 @@ use crate::{
 };
 use comfy_table::{Attribute, Cell, CellAlignment, Color, ContentArrangement, Row, Table};
 use limbo_core::{Database, LimboError, OwnedValue, Statement, StepResult};
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use clap::Parser;
 use rustyline::{history::DefaultHistory, Editor};
@@ -49,6 +51,8 @@ pub struct Opts {
     pub vfs: Option<String>,
     #[clap(long, help = "Enable experimental MVCC feature")]
     pub experimental_mvcc: bool,
+    #[clap(short = 't', long, help = "specify output file for log traces")]
+    pub tracing_output: Option<String>,
 }
 
 const PROMPT: &str = "limbo> ";
@@ -130,6 +134,8 @@ impl<'a> Limbo<'a> {
             })
             .expect("Error setting Ctrl-C handler");
         }
+        let sql = opts.sql.clone();
+        let quiet = opts.quiet;
         let mut app = Self {
             prompt: PROMPT.to_string(),
             io,
@@ -137,19 +143,23 @@ impl<'a> Limbo<'a> {
             conn,
             interrupt_count,
             input_buff: String::new(),
-            opts: Settings::from(&opts),
+            opts: Settings::from(opts),
             rl,
         };
-
-        if opts.sql.is_some() {
-            app.handle_first_input(opts.sql.as_ref().unwrap());
-        }
-        if !opts.quiet {
-            app.write_fmt(format_args!("Limbo v{}", env!("CARGO_PKG_VERSION")))?;
-            app.writeln("Enter \".help\" for usage hints.")?;
-            app.display_in_memory()?;
-        }
+        app.first_run(sql, quiet)?;
         Ok(app)
+    }
+
+    fn first_run(&mut self, sql: Option<String>, quiet: bool) -> io::Result<()> {
+        if let Some(sql) = sql {
+            self.handle_first_input(&sql);
+        }
+        if !quiet {
+            self.write_fmt(format_args!("Limbo v{}", env!("CARGO_PKG_VERSION")))?;
+            self.writeln("Enter \".help\" for usage hints.")?;
+            self.display_in_memory()?;
+        }
+        Ok(())
     }
 
     fn handle_first_input(&mut self, cmd: &str) {
@@ -693,6 +703,32 @@ impl<'a> Limbo<'a> {
         // for now let's cache flush always
         self.conn.cacheflush()?;
         Ok(())
+    }
+
+    pub fn init_tracing(&mut self) -> Result<WorkerGuard, std::io::Error> {
+        let (non_blocking, guard) = if let Some(file) = &self.opts.tracing_output {
+            tracing_appender::non_blocking(
+                std::fs::File::options()
+                    .append(true)
+                    .create(true)
+                    .open(file)?,
+            )
+        } else {
+            tracing_appender::non_blocking(std::io::stderr())
+        };
+        if let Err(e) = tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(non_blocking)
+                    .with_line_number(true)
+                    .with_thread_ids(true),
+            )
+            .with(EnvFilter::from_default_env())
+            .try_init()
+        {
+            println!("Unable to setup tracing appender: {:?}", e);
+        }
+        Ok(guard)
     }
 
     fn display_schema(&mut self, table: Option<&str>) -> anyhow::Result<()> {
