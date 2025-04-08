@@ -4742,9 +4742,7 @@ mod tests {
             let (pager, root_page) = empty_btree();
             let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
             let mut keys = Vec::new();
-            let seed = 3206743363843416341;
             tracing::info!("seed: {}", seed);
-            let mut rng = ChaCha8Rng::seed_from_u64(seed);
             for insert_id in 0..inserts {
                 let size = size(&mut rng);
                 let key = {
