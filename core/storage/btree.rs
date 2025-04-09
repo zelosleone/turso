@@ -2893,9 +2893,6 @@ impl BTreeCursor {
         self.root_page = root.get().id;
         self.stack.clear();
         self.stack.push(root.clone());
-        if matches!(root_contents.page_type(), PageType::TableInterior) {
-            self.stack.advance();
-        }
         self.stack.push(child.clone());
     }
 
@@ -5324,7 +5321,7 @@ mod tests {
                 run_until_done(
                     || {
                         let key = SeekKey::TableRowId(key as u64);
-                        cursor.seek(key, SeekOp::EQ)
+                        cursor.move_to(key, SeekOp::EQ)
                     },
                     pager.deref(),
                 )
