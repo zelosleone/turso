@@ -1928,7 +1928,7 @@ impl BTreeCursor {
                     if i < balance_info.pages_to_balance.len() - 1 && !leaf_data {
                         // If we are a index page or a interior table page we need to take the divider cell too.
                         // But we don't need the last divider as it will remain the same.
-                        let divider_cell = &mut balance_info.divider_cells[i];
+                        let mut divider_cell = balance_info.divider_cells[i].as_mut_slice();
                         // TODO(pere): in case of old pages are leaf pages, so index leaf page, we need to strip page pointers
                         // from divider cells in index interior pages (parent) because those should not be included.
                         cells_inserted += 1;
@@ -1936,8 +1936,13 @@ impl BTreeCursor {
                             // This divider cell needs to be updated with new left pointer,
                             let right_pointer = old_page_contents.rightmost_pointer().unwrap();
                             divider_cell[..4].copy_from_slice(&right_pointer.to_be_bytes());
+                        } else {
+                            // index leaf
+                            assert!(divider_cell.len() >= 4);
+                            // let's strip the page pointer
+                            divider_cell = &mut divider_cell[4..];
                         }
-                        cell_array.cells.push(to_static_buf(divider_cell.as_mut()));
+                        cell_array.cells.push(to_static_buf(divider_cell));
                     }
                     total_cells_inserted += cells_inserted;
                 }
@@ -1955,6 +1960,9 @@ impl BTreeCursor {
                 {
                     for cell in &cell_array.cells {
                         cells_debug.push(cell.to_vec());
+                        if leaf {
+                            assert!(cell[0] != 0)
+                        }
                     }
                 }
 
@@ -2778,7 +2786,17 @@ impl BTreeCursor {
                                 valid = false;
                             }
                         }
-                        PageType::IndexLeaf => todo!(),
+                        PageType::IndexLeaf => {
+                            let parent_cell_buf =
+                                &parent_buf[parent_cell_start..parent_cell_start + parent_cell_len];
+                            if parent_cell_buf[4..] != cell_buf_in_array[..] {
+                                tracing::error!("balance_non_root(cell_divider_cell_index_leaf, page_id={}, cell_divider_idx={})",
+                                    page.get().id,
+                                    cell_divider_idx,
+                                );
+                                valid = false;
+                            }
+                        }
                         _ => {
                             unreachable!()
                         }
