@@ -818,22 +818,27 @@ impl<'a> Limbo<'a> {
     }
 
     pub fn init_tracing(&mut self) -> Result<WorkerGuard, std::io::Error> {
-        let (non_blocking, guard) = if let Some(file) = &self.opts.tracing_output {
-            tracing_appender::non_blocking(
-                std::fs::File::options()
-                    .append(true)
-                    .create(true)
-                    .open(file)?,
-            )
-        } else {
-            tracing_appender::non_blocking(std::io::stderr())
-        };
+        let ((non_blocking, guard), should_emit_ansi) =
+            if let Some(file) = &self.opts.tracing_output {
+                (
+                    tracing_appender::non_blocking(
+                        std::fs::File::options()
+                            .append(true)
+                            .create(true)
+                            .open(file)?,
+                    ),
+                    false,
+                )
+            } else {
+                (tracing_appender::non_blocking(std::io::stderr()), true)
+            };
         if let Err(e) = tracing_subscriber::registry()
             .with(
                 tracing_subscriber::fmt::layer()
                     .with_writer(non_blocking)
                     .with_line_number(true)
-                    .with_thread_ids(true),
+                    .with_thread_ids(true)
+                    .with_ansi(should_emit_ansi),
             )
             .with(EnvFilter::from_default_env())
             .try_init()
