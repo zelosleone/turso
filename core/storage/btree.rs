@@ -2005,7 +2005,6 @@ impl BTreeCursor {
                     while new_page_sizes[i] > usable_space as i64 {
                         let needs_new_page = i + 1 >= sibling_count_new;
                         if needs_new_page {
-                            // FIXME: this doesn't remove pages if not needed
                             sibling_count_new += 1;
                             new_page_sizes.push(0);
                             cell_array
@@ -2063,16 +2062,24 @@ impl BTreeCursor {
                         new_page_sizes[i + 1] -= size_of_cell_to_remove_from_right;
                     }
 
-                    let we_still_need_another_page =
+                    // Check if this page contains up to the last cell. If this happens it means we really just need up to this page.
+                    // Let's update the number of new pages to be up to this page (i+1)
+                    let page_completes_all_cells =
                         cell_array.number_of_cells_per_page[i] >= cell_array.cells.len() as u16;
-                    if we_still_need_another_page {
+                    if page_completes_all_cells {
                         sibling_count_new = i + 1;
+                        break;
                     }
                     i += 1;
                     if i >= sibling_count_new {
                         break;
                     }
                 }
+                new_page_sizes.truncate(sibling_count_new);
+                cell_array
+                    .number_of_cells_per_page
+                    .truncate(sibling_count_new);
+
                 tracing::debug!(
                     "balance_non_root(sibling_count={}, sibling_count_new={}, cells={})",
                     balance_info.sibling_count,
@@ -2386,7 +2393,11 @@ impl BTreeCursor {
                     rightmost_pointer,
                 );
                 // TODO: balance root
-                // TODO: free pages
+                // We have to free pages that are not used anymore
+                for i in sibling_count_new..balance_info.sibling_count {
+                    let page = &balance_info.pages_to_balance[i];
+                    self.pager.free_page(Some(page.clone()), page.get().id)?;
+                }
                 (WriteState::BalanceStart, Ok(CursorResult::Ok(())))
             }
             WriteState::Finish => todo!(),
