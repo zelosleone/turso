@@ -386,7 +386,7 @@ impl Program {
     ) -> Result<StepResult> {
         if let Some(mv_store) = mv_store {
             let conn = self.connection.upgrade().unwrap();
-            let auto_commit = *conn.auto_commit.borrow();
+            let auto_commit = conn.auto_commit.get();
             if auto_commit {
                 let mut mv_transactions = conn.mv_transactions.borrow_mut();
                 for tx_id in mv_transactions.iter() {
@@ -400,7 +400,7 @@ impl Program {
                 .connection
                 .upgrade()
                 .expect("only weak ref to connection?");
-            let auto_commit = *connection.auto_commit.borrow();
+            let auto_commit = connection.auto_commit.get();
             tracing::trace!("Halt auto_commit {}", auto_commit);
             assert!(
                 program_state.halt_state.is_none()
@@ -409,7 +409,7 @@ impl Program {
             if program_state.halt_state.is_some() {
                 self.step_end_write_txn(&pager, &mut program_state.halt_state, connection.deref())
             } else if auto_commit {
-                let current_state = connection.transaction_state.borrow().clone();
+                let current_state = connection.transaction_state.get();
                 match current_state {
                     TransactionState::Write => self.step_end_write_txn(
                         &pager,
@@ -561,7 +561,10 @@ fn get_indent_count(indent_count: usize, curr_insn: &Insn, prev_insn: Option<&In
             | Insn::LastAwait { .. }
             | Insn::SorterSort { .. }
             | Insn::SeekGE { .. }
-            | Insn::SeekGT { .. } => indent_count + 1,
+            | Insn::SeekGT { .. }
+            | Insn::SeekLE { .. }
+            | Insn::SeekLT { .. } => indent_count + 1,
+
             _ => indent_count,
         }
     } else {
@@ -627,11 +630,10 @@ impl Row {
 
     pub fn get_value<'a>(&'a self, idx: usize) -> &'a OwnedValue {
         let value = unsafe { self.values.add(idx).as_ref().unwrap() };
-        let value = match value {
+        match value {
             Register::OwnedValue(owned_value) => owned_value,
             _ => unreachable!("a row should be formed of values only"),
-        };
-        value
+        }
     }
 
     pub fn get_values(&self) -> impl Iterator<Item = &OwnedValue> {

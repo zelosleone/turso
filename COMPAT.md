@@ -41,7 +41,6 @@ Limbo aims to be fully compatible with SQLite, with opt-in features not supporte
 * ⛔️ Concurrent access from multiple processes is not supported.
 * ⛔️ Savepoints are not supported.
 * ⛔️ Triggers are not supported.
-* ⛔️ Indexes are not supported.
 * ⛔️ Views are not supported.
 * ⛔️ Vacuum is not supported.
 
@@ -58,13 +57,14 @@ Limbo aims to be fully compatible with SQLite, with opt-in features not supporte
 | COMMIT TRANSACTION        | Partial | Transaction names are not supported.                                              |
 | CREATE INDEX              | Yes     |                                                                                   |
 | CREATE TABLE              | Partial |                                                                                   |
+| CREATE TABLE ... STRICT   | Yes     |                                                                                   |
 | CREATE TRIGGER            | No      |                                                                                   |
 | CREATE VIEW               | No      |                                                                                   |
-| CREATE VIRTUAL TABLE      | No      |                                                                                   |
+| CREATE VIRTUAL TABLE      | Yes     |                                                                                   |
 | DELETE                    | Yes     |                                                                                   |
 | DETACH DATABASE           | No      |                                                                                   |
 | DROP INDEX                | No      |                                                                                   |
-| DROP TABLE                | No      |                                                                                   |
+| DROP TABLE                | Yes     |                                                                                   |
 | DROP TRIGGER              | No      |                                                                                   |
 | DROP VIEW                 | No      |                                                                                   |
 | END TRANSACTION           | Partial | Alias for `COMMIT TRANSACTION`                                                    |

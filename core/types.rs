@@ -22,6 +22,20 @@ pub enum OwnedValueType {
     Error,
 }
 
+impl Display for OwnedValueType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            Self::Null => "NULL",
+            Self::Integer => "INT",
+            Self::Float => "REAL",
+            Self::Blob => "BLOB",
+            Self::Text => "TEXT",
+            Self::Error => "ERROR",
+        };
+        write!(f, "{}", value)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TextSubtype {
     Text,
@@ -66,6 +80,15 @@ impl Text {
 
     pub fn as_str(&self) -> &str {
         unsafe { std::str::from_utf8_unchecked(self.value.as_ref()) }
+    }
+}
+
+impl From<String> for Text {
+    fn from(value: String) -> Self {
+        Text {
+            value: value.into_bytes(),
+            subtype: TextSubtype::Text,
+        }
     }
 }
 
@@ -1203,11 +1226,13 @@ pub enum CursorResult<T> {
     IO,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SeekOp {
     EQ,
     GE,
     GT,
+    LE,
+    LT,
 }
 
 #[derive(Clone, PartialEq, Debug)]

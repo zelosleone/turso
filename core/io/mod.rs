@@ -189,6 +189,7 @@ cfg_block! {
         mod unix;
         #[cfg(feature = "fs")]
         pub use unix::UnixIO;
+        pub use unix::UnixIO as SyscallIO;
         pub use io_uring::UringIO as PlatformIO;
     }
 
@@ -197,16 +198,19 @@ cfg_block! {
         #[cfg(feature = "fs")]
         pub use unix::UnixIO;
         pub use unix::UnixIO as PlatformIO;
+        pub use PlatformIO as SyscallIO;
     }
 
     #[cfg(target_os = "windows")] {
         mod windows;
         pub use windows::WindowsIO as PlatformIO;
+        pub use PlatformIO as SyscallIO;
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))] {
         mod generic;
         pub use generic::GenericIO as PlatformIO;
+        pub use PlatformIO as SyscallIO;
     }
 }
 

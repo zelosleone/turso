@@ -1,5 +1,5 @@
 #![allow(unused_variables)]
-use crate::error::{LimboError, SQLITE_CONSTRAINT_PRIMARYKEY};
+use crate::error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY};
 use crate::ext::ExtValue;
 use crate::function::{AggFunc, ExtFunc, MathFunc, MathFuncArity, ScalarFunc, VectorFunc};
 use crate::functions::datetime::{
@@ -10,11 +10,13 @@ use std::{borrow::BorrowMut, rc::Rc};
 
 use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
+
 use crate::schema::{affinity, Affinity};
 use crate::storage::btree::{BTreeCursor, BTreeKey};
+
 use crate::storage::wal::CheckpointResult;
 use crate::types::{
-    AggContext, Cursor, CursorResult, ExternalAggState, OwnedValue, SeekKey, SeekOp,
+    AggContext, Cursor, CursorResult, ExternalAggState, OwnedValue, OwnedValueType, SeekKey, SeekOp,
 };
 use crate::util::{
     cast_real_to_integer, cast_text_to_integer, cast_text_to_numeric, cast_text_to_real,
@@ -917,12 +919,21 @@ pub fn op_vcreate(
             "Failed to upgrade Connection".to_string(),
         ));
     };
+    let mod_type = conn
+        .syms
+        .borrow()
+        .vtab_modules
+        .get(&module_name)
+        .ok_or_else(|| {
+            crate::LimboError::ExtensionError(format!("Module {} not found", module_name))
+        })?
+        .module_kind;
     let table = crate::VirtualTable::from_args(
         Some(&table_name),
         &module_name,
         args,
         &conn.syms.borrow(),
-        limbo_ext::VTabKind::VirtualTable,
+        mod_type,
         None,
     )?;
     {
@@ -1341,6 +1352,68 @@ pub fn op_column(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_type_check(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::TypeCheck {
+        start_reg,
+        count,
+        check_generated,
+        table_reference,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    assert_eq!(table_reference.is_strict, true);
+    state.registers[*start_reg..*start_reg + *count]
+        .iter_mut()
+        .zip(table_reference.columns.iter())
+        .try_for_each(|(reg, col)| {
+            // INT PRIMARY KEY is not row_id_alias so we throw error if this col is NULL
+            if !col.is_rowid_alias
+                && col.primary_key
+                && matches!(reg.get_owned_value(), OwnedValue::Null)
+            {
+                bail_constraint_error!(
+                    "NOT NULL constraint failed: {}.{} ({})",
+                    &table_reference.name,
+                    col.name.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                    SQLITE_CONSTRAINT
+                )
+            } else if col.is_rowid_alias && matches!(reg.get_owned_value(), OwnedValue::Null) {
+                // Handle INTEGER PRIMARY KEY for null as usual (Rowid will be auto-assigned)
+                return Ok(());
+            }
+            let col_affinity = col.affinity();
+            let ty_str = col.ty_str.as_str();
+            let applied = apply_affinity_char(reg, col_affinity);
+            let value_type = reg.get_owned_value().value_type();
+            match (ty_str, value_type) {
+                ("INTEGER" | "INT", OwnedValueType::Integer) => {}
+                ("REAL", OwnedValueType::Float) => {}
+                ("BLOB", OwnedValueType::Blob) => {}
+                ("TEXT", OwnedValueType::Text) => {}
+                ("ANY", _) => {}
+                (t, v) => bail_constraint_error!(
+                    "cannot store {} value in {} column {}.{} ({})",
+                    v,
+                    t,
+                    &table_reference.name,
+                    col.name.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                    SQLITE_CONSTRAINT
+                ),
+            };
+            Ok(())
+        })?;
+
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 pub fn op_make_record(
     program: &Program,
     state: &mut ProgramState,
@@ -1509,7 +1582,7 @@ pub fn op_halt(
             )));
         }
     }
-    match program.halt(pager.clone(), state, mv_store.clone())? {
+    match program.halt(pager.clone(), state, mv_store)? {
         StepResult::Done => Ok(InsnFunctionStepResult::Done),
         StepResult::IO => Ok(InsnFunctionStepResult::IO),
         StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1542,8 +1615,8 @@ pub fn op_transaction(
         }
     } else {
         let connection = program.connection.upgrade().unwrap();
-        let current_state = connection.transaction_state.borrow().clone();
-        let (new_transaction_state, updated) = match (&current_state, write) {
+        let current_state = connection.transaction_state.get();
+        let (new_transaction_state, updated) = match (current_state, write) {
             (TransactionState::Write, true) => (TransactionState::Write, false),
             (TransactionState::Write, false) => (TransactionState::Write, false),
             (TransactionState::Read, true) => (TransactionState::Write, true),
@@ -1588,7 +1661,7 @@ pub fn op_auto_commit(
     };
     let conn = program.connection.upgrade().unwrap();
     if matches!(state.halt_state, Some(HaltState::Checkpointing)) {
-        return match program.halt(pager.clone(), state, mv_store.clone())? {
+        return match program.halt(pager.clone(), state, mv_store)? {
             super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
             super::StepResult::IO => Ok(InsnFunctionStepResult::IO),
             super::StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1597,7 +1670,7 @@ pub fn op_auto_commit(
         };
     }
 
-    if *auto_commit != *conn.auto_commit.borrow() {
+    if *auto_commit != conn.auto_commit.get() {
         if *rollback {
             todo!("Rollback is not implemented");
         } else {
@@ -1616,7 +1689,7 @@ pub fn op_auto_commit(
             "cannot commit - no transaction is active".to_string(),
         ));
     }
-    return match program.halt(pager.clone(), state, mv_store.clone())? {
+    return match program.halt(pager.clone(), state, mv_store)? {
         super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
         super::StepResult::IO => Ok(InsnFunctionStepResult::IO),
         super::StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1775,17 +1848,14 @@ pub fn op_row_id(
             let rowid = {
                 let mut index_cursor = state.get_cursor(index_cursor_id);
                 let index_cursor = index_cursor.as_btree_mut();
-                let rowid = index_cursor.rowid()?;
-                rowid
+                index_cursor.rowid()?
             };
             let mut table_cursor = state.get_cursor(table_cursor_id);
             let table_cursor = table_cursor.as_btree_mut();
-            let deferred_seek =
-                match table_cursor.seek(SeekKey::TableRowId(rowid.unwrap()), SeekOp::EQ)? {
-                    CursorResult::Ok(_) => None,
-                    CursorResult::IO => Some((index_cursor_id, table_cursor_id)),
-                };
-            deferred_seek
+            match table_cursor.seek(SeekKey::TableRowId(rowid.unwrap()), SeekOp::EQ)? {
+                CursorResult::Ok(_) => None,
+                CursorResult::IO => Some((index_cursor_id, table_cursor_id)),
+            }
         };
         if let Some(deferred_seek) = deferred_seek {
             state.deferred_seek = Some(deferred_seek);
@@ -1883,97 +1953,69 @@ pub fn op_deferred_seek(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_seek_ge(
+pub fn op_seek(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::SeekGE {
+    let (Insn::SeekGE {
         cursor_id,
         start_reg,
         num_regs,
         target_pc,
         is_index,
-    } = insn
-    else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    assert!(target_pc.is_offset());
-    if *is_index {
-        let found = {
-            let mut cursor = state.get_cursor(*cursor_id);
-            let cursor = cursor.as_btree_mut();
-            let record_from_regs = make_record(&state.registers, start_reg, num_regs);
-            let found =
-                return_if_io!(cursor.seek(SeekKey::IndexKey(&record_from_regs), SeekOp::GE));
-            found
-        };
-        if !found {
-            state.pc = target_pc.to_offset_int();
-        } else {
-            state.pc += 1;
-        }
-    } else {
-        let pc = {
-            let mut cursor = state.get_cursor(*cursor_id);
-            let cursor = cursor.as_btree_mut();
-            let rowid = match state.registers[*start_reg].get_owned_value() {
-                OwnedValue::Null => {
-                    // All integer values are greater than null so we just rewind the cursor
-                    return_if_io!(cursor.rewind());
-                    None
-                }
-                OwnedValue::Integer(rowid) => Some(*rowid as u64),
-                _ => {
-                    return Err(LimboError::InternalError(
-                        "SeekGE: the value in the register is not an integer".into(),
-                    ));
-                }
-            };
-            match rowid {
-                Some(rowid) => {
-                    let found = return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GE));
-                    if !found {
-                        target_pc.to_offset_int()
-                    } else {
-                        state.pc + 1
-                    }
-                }
-                None => state.pc + 1,
-            }
-        };
-        state.pc = pc;
     }
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_seek_gt(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::SeekGT {
+    | Insn::SeekGT {
         cursor_id,
         start_reg,
         num_regs,
         target_pc,
         is_index,
-    } = insn
+    }
+    | Insn::SeekLE {
+        cursor_id,
+        start_reg,
+        num_regs,
+        target_pc,
+        is_index,
+    }
+    | Insn::SeekLT {
+        cursor_id,
+        start_reg,
+        num_regs,
+        target_pc,
+        is_index,
+    }) = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    assert!(target_pc.is_offset());
+    assert!(
+        target_pc.is_offset(),
+        "target_pc should be an offset, is: {:?}",
+        target_pc
+    );
+    let op = match insn {
+        Insn::SeekGE { .. } => SeekOp::GE,
+        Insn::SeekGT { .. } => SeekOp::GT,
+        Insn::SeekLE { .. } => SeekOp::LE,
+        Insn::SeekLT { .. } => SeekOp::LT,
+        _ => unreachable!("unexpected Insn {:?}", insn),
+    };
+    let op_name = match op {
+        SeekOp::GE => "SeekGE",
+        SeekOp::GT => "SeekGT",
+        SeekOp::LE => "SeekLE",
+        SeekOp::LT => "SeekLT",
+        _ => unreachable!("unexpected SeekOp {:?}", op),
+    };
     if *is_index {
         let found = {
             let mut cursor = state.get_cursor(*cursor_id);
             let cursor = cursor.as_btree_mut();
             let record_from_regs = make_record(&state.registers, start_reg, num_regs);
-            let found =
-                return_if_io!(cursor.seek(SeekKey::IndexKey(&record_from_regs), SeekOp::GT));
+            let found = return_if_io!(cursor.seek(SeekKey::IndexKey(&record_from_regs), op));
             found
         };
         if !found {
@@ -1993,14 +2035,15 @@ pub fn op_seek_gt(
                 }
                 OwnedValue::Integer(rowid) => Some(*rowid as u64),
                 _ => {
-                    return Err(LimboError::InternalError(
-                        "SeekGT: the value in the register is not an integer".into(),
-                    ));
+                    return Err(LimboError::InternalError(format!(
+                        "{}: the value in the register is not an integer",
+                        op_name
+                    )));
                 }
             };
             let found = match rowid {
                 Some(rowid) => {
-                    let found = return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GT));
+                    let found = return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), op));
                     if !found {
                         target_pc.to_offset_int()
                     } else {
@@ -3779,7 +3822,17 @@ pub fn op_idx_insert_async(
             } else {
                 flags.has(IdxInsertFlags::USE_SEEK)
             };
-            // insert record as key
+
+            // To make this reentrant in case of `moved_before` = false, we need to check if the previous cursor.insert started
+            // a write/balancing operation. If it did, it means we already moved to the place we wanted.
+            let moved_before = if cursor.is_write_in_progress() {
+                true
+            } else {
+                moved_before
+            };
+            // Start insertion of row. This might trigger a balance procedure which will take care of moving to different pages,
+            // therefore, we don't want to seek again if that happens, meaning we don't want to return on io without moving to `Await` opcode
+            // because it could trigger a movement to child page after a balance root which will leave the current page as the root page.
             return_if_io!(cursor.insert(&BTreeKey::new_index_key(record), moved_before));
         }
         state.pc += 1;
@@ -4227,13 +4280,15 @@ pub fn op_parse_schema(
     ))?;
     let mut schema = conn.schema.write();
     // TODO: This function below is synchronous, make it async
-    parse_schema_rows(
-        Some(stmt),
-        &mut schema,
-        conn.pager.io.clone(),
-        &conn.syms.borrow(),
-        state.mv_tx_id,
-    )?;
+    {
+        parse_schema_rows(
+            Some(stmt),
+            &mut schema,
+            conn.pager.io.clone(),
+            &conn.syms.borrow(),
+            state.mv_tx_id,
+        )?;
+    }
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -5010,6 +5065,77 @@ fn exec_if(reg: &OwnedValue, jump_if_null: bool, not: bool) -> bool {
         OwnedValue::Null => jump_if_null,
         _ => false,
     }
+}
+
+fn apply_affinity_char(target: &mut Register, affinity: Affinity) -> bool {
+    if let Register::OwnedValue(value) = target {
+        if matches!(value, OwnedValue::Blob(_)) {
+            return true;
+        }
+        match affinity {
+            Affinity::Blob => return true,
+            Affinity::Text => {
+                if matches!(value, OwnedValue::Text(_) | OwnedValue::Null) {
+                    return true;
+                }
+                let text = value.to_string();
+                *value = OwnedValue::Text(text.into());
+                return true;
+            }
+            Affinity::Integer | Affinity::Numeric => {
+                if matches!(value, OwnedValue::Integer(_)) {
+                    return true;
+                }
+                if !matches!(value, OwnedValue::Text(_) | OwnedValue::Float(_)) {
+                    return true;
+                }
+
+                if let OwnedValue::Float(fl) = *value {
+                    if let Ok(int) = cast_real_to_integer(fl).map(OwnedValue::Integer) {
+                        *value = int;
+                        return true;
+                    }
+                    return false;
+                }
+
+                let text = value.to_text().unwrap();
+                let Ok(num) = checked_cast_text_to_numeric(&text) else {
+                    return false;
+                };
+
+                *value = match &num {
+                    OwnedValue::Float(fl) => {
+                        cast_real_to_integer(*fl)
+                            .map(OwnedValue::Integer)
+                            .unwrap_or(num);
+                        return true;
+                    }
+                    OwnedValue::Integer(_) if text.starts_with("0x") => {
+                        return false;
+                    }
+                    _ => num,
+                };
+            }
+
+            Affinity::Real => {
+                if let OwnedValue::Integer(i) = value {
+                    *value = OwnedValue::Float(*i as f64);
+                    return true;
+                } else if let OwnedValue::Text(t) = value {
+                    if t.as_str().starts_with("0x") {
+                        return false;
+                    }
+                    if let Ok(num) = checked_cast_text_to_numeric(t.as_str()) {
+                        *value = num;
+                        return true;
+                    } else {
+                        return false;
+                    }
+                }
+            }
+        };
+    }
+    return true;
 }
 
 fn exec_cast(value: &OwnedValue, datatype: &str) -> OwnedValue {

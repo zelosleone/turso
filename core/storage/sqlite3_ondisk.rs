@@ -626,9 +626,9 @@ impl PageContent {
                     usable_size,
                 );
                 if overflows {
-                    4 + to_read + n_payload + 4
+                    4 + to_read + n_payload
                 } else {
-                    4 + len_payload as usize + n_payload + 4
+                    4 + len_payload as usize + n_payload
                 }
             }
             PageType::TableInterior => {
@@ -644,9 +644,9 @@ impl PageContent {
                     usable_size,
                 );
                 if overflows {
-                    to_read + n_payload + 4
+                    to_read + n_payload
                 } else {
-                    len_payload as usize + n_payload + 4
+                    len_payload as usize + n_payload
                 }
             }
             PageType::TableLeaf => {
