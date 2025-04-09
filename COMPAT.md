@@ -58,6 +58,7 @@ Limbo aims to be fully compatible with SQLite, with opt-in features not supporte
 | COMMIT TRANSACTION        | Partial | Transaction names are not supported.                                              |
 | CREATE INDEX              | Yes     |                                                                                   |
 | CREATE TABLE              | Partial |                                                                                   |
+| CREATE TABLE ... STRICT   | Yes     |                                                                                   |
 | CREATE TRIGGER            | No      |                                                                                   |
 | CREATE VIEW               | No      |                                                                                   |
 | CREATE VIRTUAL TABLE      | No      |                                                                                   |
