@@ -100,6 +100,12 @@ pub enum Insn {
         dest: usize,
         dest_end: Option<usize>,
     },
+    /// Mark the beginning of a subroutine tha can be entered in-line. This opcode is identical to Null
+    /// it has a different name only to make the byte code easier to read and verify
+    BeginSubrtn {
+        dest: usize,
+        dest_end: Option<usize>,
+    },
     /// Move the cursor P1 to a null row. Any Column operations that occur while the cursor is on the null row will always write a NULL.
     NullRow {
         cursor_id: CursorID,
@@ -803,6 +809,7 @@ impl Insn {
         match self {
             Insn::Init { .. } => execute::op_init,
             Insn::Null { .. } => execute::op_null,
+            Insn::BeginSubrtn { .. } => execute::op_null,
             Insn::NullRow { .. } => execute::op_null_row,
             Insn::Add { .. } => execute::op_add,
             Insn::Subtract { .. } => execute::op_subtract,

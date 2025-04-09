@@ -1350,6 +1350,17 @@ pub fn insn_to_str(
                 0,
                 format!("goto {}", target_pc_when_reentered.to_debug_int()),
             ),
+            Insn::BeginSubrtn { dest, dest_end } => (
+                "BeginSubrtn",
+                *dest as i32,
+                dest_end.map_or(0, |end| end as i32),
+                0,
+                OwnedValue::build_text(""),
+                0,
+                dest_end.map_or(format!("r[{}]=NULL", dest), |end| {
+                    format!("r[{}..{}]=NULL", dest, end)
+                }),
+            ),
         };
     format!(
         "{:<4}  {:<17}  {:<4}  {:<4}  {:<4}  {:<13}  {:<2}  {}",
