@@ -1630,7 +1630,12 @@ impl BTreeCursor {
                     let write_info = self.state.mut_write_info().unwrap();
                     write_info.state = WriteState::BalanceNonRoot;
                     self.stack.pop();
-                    self.stack.retreat();
+                    // with `move_to` we advance the current cell idx of TableInterior once we move to left subtree.
+                    // On the other hand, with IndexInterior, we do not because we tranver in-order. In the latter case
+                    // since we haven't consumed the cell we can avoid retreating the current cell index.
+                    if matches!(current_page.get_contents().page_type(), PageType::TableLeaf) {
+                        self.stack.retreat();
+                    }
                     return_if_io!(self.balance_non_root());
                 }
                 WriteState::BalanceNonRoot | WriteState::BalanceNonRootWaitLoadPages => {
@@ -1682,7 +1687,12 @@ impl BTreeCursor {
                     parent_contents.overflow_cells.is_empty(),
                     "balancing child page with overflowed parent not yet implemented"
                 );
-                assert!(page_to_balance_idx <= parent_contents.cell_count());
+                assert!(
+                    page_to_balance_idx <= parent_contents.cell_count(),
+                    "page_to_balance_idx={} is out of bounds for parent cell count {}",
+                    page_to_balance_idx,
+                    number_of_cells_in_parent
+                );
                 // As there will be at maximum 3 pages used to balance:
                 // sibling_pointer is the index represeneting one of those 3 pages, and we initialize it to the last possible page.
                 // next_divider is the first divider that contains the first page of the 3 pages.
@@ -1813,6 +1823,7 @@ impl BTreeCursor {
                 // Now do real balancing
                 let parent_page = self.stack.top();
                 let parent_contents = parent_page.get_contents();
+
                 assert!(
                     parent_contents.overflow_cells.is_empty(),
                     "overflow parent not yet implemented"
@@ -1928,7 +1939,7 @@ impl BTreeCursor {
                     if i < balance_info.pages_to_balance.len() - 1 && !leaf_data {
                         // If we are a index page or a interior table page we need to take the divider cell too.
                         // But we don't need the last divider as it will remain the same.
-                        let divider_cell = &mut balance_info.divider_cells[i];
+                        let mut divider_cell = balance_info.divider_cells[i].as_mut_slice();
                         // TODO(pere): in case of old pages are leaf pages, so index leaf page, we need to strip page pointers
                         // from divider cells in index interior pages (parent) because those should not be included.
                         cells_inserted += 1;
@@ -1936,8 +1947,13 @@ impl BTreeCursor {
                             // This divider cell needs to be updated with new left pointer,
                             let right_pointer = old_page_contents.rightmost_pointer().unwrap();
                             divider_cell[..4].copy_from_slice(&right_pointer.to_be_bytes());
+                        } else {
+                            // index leaf
+                            assert!(divider_cell.len() >= 4);
+                            // let's strip the page pointer
+                            divider_cell = &mut divider_cell[4..];
                         }
-                        cell_array.cells.push(to_static_buf(divider_cell.as_mut()));
+                        cell_array.cells.push(to_static_buf(divider_cell));
                     }
                     total_cells_inserted += cells_inserted;
                 }
@@ -1955,6 +1971,9 @@ impl BTreeCursor {
                 {
                     for cell in &cell_array.cells {
                         cells_debug.push(cell.to_vec());
+                        if leaf {
+                            assert!(cell[0] != 0)
+                        }
                     }
                 }
 
@@ -2251,6 +2270,7 @@ impl BTreeCursor {
                         write_varint_to_vec(rowid, &mut new_divider_cell);
                     } else {
                         // Leaf index
+                        new_divider_cell.extend_from_slice(&(page.get().id as u32).to_be_bytes());
                         new_divider_cell.extend_from_slice(divider_cell);
                     }
 
@@ -2778,7 +2798,17 @@ impl BTreeCursor {
                                 valid = false;
                             }
                         }
-                        PageType::IndexLeaf => todo!(),
+                        PageType::IndexLeaf => {
+                            let parent_cell_buf =
+                                &parent_buf[parent_cell_start..parent_cell_start + parent_cell_len];
+                            if parent_cell_buf[4..] != cell_buf_in_array[..] {
+                                tracing::error!("balance_non_root(cell_divider_cell_index_leaf, page_id={}, cell_divider_idx={})",
+                                    page.get().id,
+                                    cell_divider_idx,
+                                );
+                                valid = false;
+                            }
+                        }
                         _ => {
                             unreachable!()
                         }
@@ -2837,7 +2867,10 @@ impl BTreeCursor {
         child_buf[0..root_contents.header_size()]
             .copy_from_slice(&root_buf[offset..offset + root_contents.header_size()]);
         // Copy overflow cells
-        child_contents.overflow_cells = root_contents.overflow_cells.clone();
+        std::mem::swap(
+            &mut child_contents.overflow_cells,
+            &mut root_contents.overflow_cells,
+        );
 
         // 2. Modify root
         let new_root_page_type = match root_contents.page_type() {
@@ -2860,7 +2893,6 @@ impl BTreeCursor {
         self.root_page = root.get().id;
         self.stack.clear();
         self.stack.push(root.clone());
-        self.stack.advance();
         self.stack.push(child.clone());
     }
 
@@ -2915,6 +2947,7 @@ impl BTreeCursor {
             }
             cell_idx += 1;
         }
+        assert!(cell_idx <= cell_count);
         cell_idx
     }
 
@@ -3112,6 +3145,7 @@ impl BTreeCursor {
             },
             None => {
                 if !moved_before {
+                    self.iteration_state = IterationState::Iterating(IterationDirection::Forwards);
                     match key {
                         BTreeKey::IndexKey(_) => {
                             return_if_io!(self
@@ -3885,6 +3919,13 @@ impl BTreeCursor {
     fn get_immutable_record(&self) -> std::cell::RefMut<'_, Option<ImmutableRecord>> {
         self.reusable_immutable_record.borrow_mut()
     }
+
+    pub fn is_write_in_progress(&self) -> bool {
+        match self.state {
+            CursorState::Write(_) => true,
+            _ => false,
+        }
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -4424,10 +4465,21 @@ fn debug_validate_cells_core(page: &PageContent, usable_space: u16) {
             payload_overflow_threshold_min(page.page_type(), usable_space),
             usable_space as usize,
         );
+        let buf = &page.as_ptr()[offset..offset + size];
+        assert!(
+            size >= 4,
+            "cell size should be at least 4 bytes idx={}, cell={:?}, offset={}",
+            i,
+            buf,
+            offset
+        );
         if page.is_leaf() {
             assert!(page.as_ptr()[offset] != 0);
         }
-        assert!(size >= 4, "cell size should be at least 4 bytes idx={}", i);
+        assert!(
+            offset + size <= usable_space as usize,
+            "cell spans out of usable space"
+        );
     }
 }
 
@@ -4442,6 +4494,7 @@ fn insert_into_cell(
     cell_idx: usize,
     usable_space: u16,
 ) -> Result<()> {
+    debug_validate_cells!(page, usable_space);
     assert!(
         cell_idx <= page.cell_count() + page.overflow_cells.len(),
         "attempting to add cell to an incorrect place cell_idx={} cell_count={}",
@@ -4462,10 +4515,12 @@ fn insert_into_cell(
 
     let new_cell_data_pointer = allocate_cell_space(page, payload.len() as u16, usable_space)?;
     tracing::debug!(
-        "insert_into_cell(idx={}, pc={})",
+        "insert_into_cell(idx={}, pc={}, size={})",
         cell_idx,
-        new_cell_data_pointer
+        new_cell_data_pointer,
+        payload.len()
     );
+    assert!(new_cell_data_pointer + payload.len() as u16 <= usable_space);
     let buf = page.as_ptr();
 
     // copy data
@@ -5266,7 +5321,7 @@ mod tests {
                 run_until_done(
                     || {
                         let key = SeekKey::TableRowId(key as u64);
-                        cursor.seek(key, SeekOp::EQ)
+                        cursor.move_to(key, SeekOp::EQ)
                     },
                     pager.deref(),
                 )
