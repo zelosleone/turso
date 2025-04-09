@@ -32,7 +32,9 @@ pub use io::clock::{Clock, Instant};
 pub use io::UnixIO;
 #[cfg(all(feature = "fs", target_os = "linux", feature = "io_uring"))]
 pub use io::UringIO;
-pub use io::{Buffer, Completion, File, MemoryIO, OpenFlags, PlatformIO, WriteCompletion, IO};
+pub use io::{
+    Buffer, Completion, File, MemoryIO, OpenFlags, PlatformIO, SyscallIO, WriteCompletion, IO,
+};
 use limbo_ext::{ResultCode, VTabKind, VTabModuleImpl};
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
@@ -215,7 +217,7 @@ impl Database {
             Some(vfs) => vfs,
             None => match vfs.trim() {
                 "memory" => Arc::new(MemoryIO::new()),
-                "syscall" => Arc::new(PlatformIO::new()?),
+                "syscall" => Arc::new(SyscallIO::new()?),
                 #[cfg(all(target_os = "linux", feature = "io_uring"))]
                 "io_uring" => Arc::new(UringIO::new()?),
                 other => {
