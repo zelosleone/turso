@@ -1,5 +1,9 @@
 use crate::{
-    commands::{args::EchoMode, import::ImportFile, Command, CommandParser},
+    commands::{
+        args::{EchoMode, TimerMode},
+        import::ImportFile,
+        Command, CommandParser,
+    },
     helper::LimboHelper,
     input::{get_io, get_writer, DbLocation, OutputMode, Settings},
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
@@ -20,6 +24,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::{Duration, Instant},
 };
 
 #[derive(Parser)]
@@ -66,6 +71,11 @@ pub struct Limbo<'a> {
     input_buff: String,
     opts: Settings,
     pub rl: &'a mut Editor<LimboHelper, DefaultHistory>,
+}
+
+struct QueryStatistics {
+    io_time_elapsed_samples: Vec<Duration>,
+    execute_time_elapsed_samples: Vec<Duration>,
 }
 
 macro_rules! query_internal {
@@ -391,6 +401,11 @@ impl<'a> Limbo<'a> {
             let _ = self.writeln(input);
         }
 
+        let start = Instant::now();
+        let mut stats = QueryStatistics {
+            io_time_elapsed_samples: vec![],
+            execute_time_elapsed_samples: vec![],
+        };
         if input.trim_start().starts_with("explain") {
             if let Ok(Some(stmt)) = self.conn.query(input) {
                 let _ = self.writeln(stmt.explain().as_bytes());
@@ -399,12 +414,57 @@ impl<'a> Limbo<'a> {
             let conn = self.conn.clone();
             let runner = conn.query_runner(input.as_bytes());
             for output in runner {
-                if self.print_query_result(input, output).is_err() {
+                if self
+                    .print_query_result(input, output, Some(&mut stats))
+                    .is_err()
+                {
                     break;
                 }
             }
         }
+        self.print_query_performance_stats(start, stats);
         self.reset_input();
+    }
+
+    fn print_query_performance_stats(&mut self, start: Instant, stats: QueryStatistics) {
+        let elapsed_as_str = |duration: Duration| {
+            if duration.as_secs() >= 1 {
+                format!("{} s", duration.as_secs_f64())
+            } else if duration.as_millis() >= 1 {
+                format!("{} ms", duration.as_millis() as f64)
+            } else if duration.as_micros() >= 1 {
+                format!("{} us", duration.as_micros() as f64)
+            } else {
+                format!("{} ns", duration.as_nanos())
+            }
+        };
+        let sample_stats_as_str = |name: &str, samples: Vec<Duration>| {
+            if samples.is_empty() {
+                return format!("{}: No samples available", name);
+            }
+            let avg_time_spent = samples.iter().sum::<Duration>() / samples.len() as u32;
+            let total_time = samples.iter().fold(Duration::ZERO, |acc, x| acc + *x);
+            format!(
+                "{}: avg={}, total={}",
+                name,
+                elapsed_as_str(avg_time_spent),
+                elapsed_as_str(total_time),
+            )
+        };
+        if self.opts.timer {
+            let _ = self.writeln("Command stats:\n----------------------------");
+            let _ = self.writeln(format!(
+                "total: {} (this includes parsing/coloring of cli app)\n",
+                elapsed_as_str(start.elapsed())
+            ));
+
+            let _ = self.writeln("query execution stats:\n----------------------------");
+            let _ = self.writeln(sample_stats_as_str(
+                "Execution",
+                stats.execute_time_elapsed_samples,
+            ));
+            let _ = self.writeln(sample_stats_as_str("I/O", stats.io_time_elapsed_samples));
+        }
     }
 
     fn reset_line(&mut self, line: &str) -> rustyline::Result<()> {
@@ -436,7 +496,7 @@ impl<'a> Limbo<'a> {
                         let conn = self.conn.clone();
                         let runner = conn.query_runner(after_comment.as_bytes());
                         for output in runner {
-                            if let Err(e) = self.print_query_result(after_comment, output) {
+                            if let Err(e) = self.print_query_result(after_comment, output, None) {
                                 let _ = self.writeln(e.to_string());
                             }
                         }
@@ -565,6 +625,12 @@ impl<'a> Limbo<'a> {
                         let _ = self.writeln(v);
                     });
                 }
+                Command::Timer(timer_mode) => {
+                    self.opts.timer = match timer_mode.mode {
+                        TimerMode::On => true,
+                        TimerMode::Off => false,
+                    };
+                }
             },
         }
     }
@@ -573,6 +639,7 @@ impl<'a> Limbo<'a> {
         &mut self,
         sql: &str,
         mut output: Result<Option<Statement>, LimboError>,
+        mut statistics: Option<&mut QueryStatistics>,
     ) -> anyhow::Result<()> {
         match output {
             Ok(Some(ref mut rows)) => match self.opts.output_mode {
@@ -582,8 +649,13 @@ impl<'a> Limbo<'a> {
                         return Ok(());
                     }
 
+                    let start = Instant::now();
+
                     match rows.step() {
                         Ok(StepResult::Row) => {
+                            if let Some(ref mut stats) = statistics {
+                                stats.execute_time_elapsed_samples.push(start.elapsed());
+                            }
                             let row = rows.row().unwrap();
                             for (i, value) in row.get_values().enumerate() {
                                 if i > 0 {
@@ -598,17 +670,30 @@ impl<'a> Limbo<'a> {
                             let _ = self.writeln("");
                         }
                         Ok(StepResult::IO) => {
+                            let start = Instant::now();
                             self.io.run_once()?;
+                            if let Some(ref mut stats) = statistics {
+                                stats.io_time_elapsed_samples.push(start.elapsed());
+                            }
                         }
                         Ok(StepResult::Interrupt) => break,
                         Ok(StepResult::Done) => {
+                            if let Some(ref mut stats) = statistics {
+                                stats.execute_time_elapsed_samples.push(start.elapsed());
+                            }
                             break;
                         }
                         Ok(StepResult::Busy) => {
+                            if let Some(ref mut stats) = statistics {
+                                stats.execute_time_elapsed_samples.push(start.elapsed());
+                            }
                             let _ = self.writeln("database is busy");
                             break;
                         }
                         Err(err) => {
+                            if let Some(ref mut stats) = statistics {
+                                stats.execute_time_elapsed_samples.push(start.elapsed());
+                            }
                             let _ = self.writeln(err.to_string());
                             break;
                         }
@@ -636,8 +721,12 @@ impl<'a> Limbo<'a> {
                         table.set_header(header);
                     }
                     loop {
+                        let start = Instant::now();
                         match rows.step() {
                             Ok(StepResult::Row) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
                                 let record = rows.row().unwrap();
                                 let mut row = Row::new();
                                 row.max_height(1);
@@ -668,15 +757,35 @@ impl<'a> Limbo<'a> {
                                 table.add_row(row);
                             }
                             Ok(StepResult::IO) => {
+                                let start = Instant::now();
                                 self.io.run_once()?;
+                                if let Some(ref mut stats) = statistics {
+                                    stats.io_time_elapsed_samples.push(start.elapsed());
+                                }
                             }
-                            Ok(StepResult::Interrupt) => break,
-                            Ok(StepResult::Done) => break,
+                            Ok(StepResult::Interrupt) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                break;
+                            }
+                            Ok(StepResult::Done) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                break;
+                            }
                             Ok(StepResult::Busy) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
                                 let _ = self.writeln("database is busy");
                                 break;
                             }
                             Err(err) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
                                 let _ = self.write_fmt(format_args!(
                                     "{:?}",
                                     miette::Error::from(err).with_source_code(sql.to_owned())
