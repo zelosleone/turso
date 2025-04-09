@@ -3885,6 +3885,13 @@ impl BTreeCursor {
     fn get_immutable_record(&self) -> std::cell::RefMut<'_, Option<ImmutableRecord>> {
         self.reusable_immutable_record.borrow_mut()
     }
+
+    pub fn is_write_in_progress(&self) -> bool {
+        match self.state {
+            CursorState::Write(_) => true,
+            _ => false,
+        }
+    }
 }
 
 #[cfg(debug_assertions)]

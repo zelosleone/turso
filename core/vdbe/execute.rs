@@ -3761,7 +3761,17 @@ pub fn op_idx_insert_async(
             } else {
                 flags.has(IdxInsertFlags::USE_SEEK)
             };
-            // insert record as key
+
+            // To make this reentrant in case of `moved_before` = false, we need to check if the previous cursor.insert started
+            // a write/balancing operation. If it did, it means we already moved to the place we wanted.
+            let moved_before = if cursor.is_write_in_progress() {
+                true
+            } else {
+                moved_before
+            };
+            // Start insertion of row. This might trigger a balance procedure which will take care of moving to different pages,
+            // therefore, we don't want to seek again if that happens, meaning we don't want to return on io without moving to `Await` opcode
+            // because it could trigger a movement to child page after a balance root which will leave the current page as the root page.
             return_if_io!(cursor.insert(&BTreeKey::new_index_key(record), moved_before));
         }
         state.pc += 1;
