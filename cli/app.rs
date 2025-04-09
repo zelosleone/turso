@@ -406,7 +406,10 @@ impl<'a> Limbo<'a> {
             io_time_elapsed_samples: vec![],
             execute_time_elapsed_samples: vec![],
         };
-        if input.trim_start().starts_with("explain") {
+        // TODO this is a quickfix. Some ideas to do case insensitive comparisons is to use
+        // Uncased or Unicase.
+        let temp = input.to_lowercase();
+        if temp.trim_start().starts_with("explain") {
             if let Ok(Some(stmt)) = self.conn.query(input) {
                 let _ = self.writeln(stmt.explain().as_bytes());
             }
