@@ -528,6 +528,20 @@ pub fn insn_to_str(
                     ),
                 )
             }
+            Insn::TypeCheck {
+                start_reg,
+                count,
+                check_generated,
+                ..
+            } => (
+                "TypeCheck",
+                *start_reg as i32,
+                *count as i32,
+                *check_generated as i32,
+                OwnedValue::build_text(""),
+                0,
+                String::from(""),
+            ),
             Insn::MakeRecord {
                 start_reg,
                 count,

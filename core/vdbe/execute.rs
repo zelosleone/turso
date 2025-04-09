@@ -1,5 +1,5 @@
 #![allow(unused_variables)]
-use crate::error::{LimboError, SQLITE_CONSTRAINT_PRIMARYKEY};
+use crate::error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY};
 use crate::ext::ExtValue;
 use crate::function::{AggFunc, ExtFunc, MathFunc, MathFuncArity, ScalarFunc, VectorFunc};
 use crate::functions::datetime::{
@@ -10,11 +10,13 @@ use std::{borrow::BorrowMut, rc::Rc};
 
 use crate::pseudo::PseudoCursor;
 use crate::result::LimboResult;
+
 use crate::schema::{affinity, Affinity};
 use crate::storage::btree::{BTreeCursor, BTreeKey};
+
 use crate::storage::wal::CheckpointResult;
 use crate::types::{
-    AggContext, Cursor, CursorResult, ExternalAggState, OwnedValue, SeekKey, SeekOp,
+    AggContext, Cursor, CursorResult, ExternalAggState, OwnedValue, OwnedValueType, SeekKey, SeekOp,
 };
 use crate::util::{
     cast_real_to_integer, cast_text_to_integer, cast_text_to_numeric, cast_text_to_real,
@@ -1345,6 +1347,68 @@ pub fn op_column(
             panic!("Insn:Column on virtual table cursor, use Insn:VColumn instead");
         }
     }
+
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_type_check(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::TypeCheck {
+        start_reg,
+        count,
+        check_generated,
+        table_reference,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    assert_eq!(table_reference.is_strict, true);
+    state.registers[*start_reg..*start_reg + *count]
+        .iter_mut()
+        .zip(table_reference.columns.iter())
+        .try_for_each(|(reg, col)| {
+            // INT PRIMARY KEY is not row_id_alias so we throw error if this col is NULL
+            if !col.is_rowid_alias
+                && col.primary_key
+                && matches!(reg.get_owned_value(), OwnedValue::Null)
+            {
+                bail_constraint_error!(
+                    "NOT NULL constraint failed: {}.{} ({})",
+                    &table_reference.name,
+                    col.name.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                    SQLITE_CONSTRAINT
+                )
+            } else if col.is_rowid_alias && matches!(reg.get_owned_value(), OwnedValue::Null) {
+                // Handle INTEGER PRIMARY KEY for null as usual (Rowid will be auto-assigned)
+                return Ok(());
+            }
+            let col_affinity = col.affinity();
+            let ty_str = col.ty_str.as_str();
+            let applied = apply_affinity_char(reg, col_affinity);
+            let value_type = reg.get_owned_value().value_type();
+            match (ty_str, value_type) {
+                ("INTEGER" | "INT", OwnedValueType::Integer) => {}
+                ("REAL", OwnedValueType::Float) => {}
+                ("BLOB", OwnedValueType::Blob) => {}
+                ("TEXT", OwnedValueType::Text) => {}
+                ("ANY", _) => {}
+                (t, v) => bail_constraint_error!(
+                    "cannot store {} value in {} column {}.{} ({})",
+                    v,
+                    t,
+                    &table_reference.name,
+                    col.name.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                    SQLITE_CONSTRAINT
+                ),
+            };
+            Ok(())
+        })?;
 
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -4994,6 +5058,77 @@ fn exec_if(reg: &OwnedValue, jump_if_null: bool, not: bool) -> bool {
         OwnedValue::Null => jump_if_null,
         _ => false,
     }
+}
+
+fn apply_affinity_char(target: &mut Register, affinity: Affinity) -> bool {
+    if let Register::OwnedValue(value) = target {
+        if matches!(value, OwnedValue::Blob(_)) {
+            return true;
+        }
+        match affinity {
+            Affinity::Blob => return true,
+            Affinity::Text => {
+                if matches!(value, OwnedValue::Text(_) | OwnedValue::Null) {
+                    return true;
+                }
+                let text = value.to_string();
+                *value = OwnedValue::Text(text.into());
+                return true;
+            }
+            Affinity::Integer | Affinity::Numeric => {
+                if matches!(value, OwnedValue::Integer(_)) {
+                    return true;
+                }
+                if !matches!(value, OwnedValue::Text(_) | OwnedValue::Float(_)) {
+                    return true;
+                }
+
+                if let OwnedValue::Float(fl) = *value {
+                    if let Ok(int) = cast_real_to_integer(fl).map(OwnedValue::Integer) {
+                        *value = int;
+                        return true;
+                    }
+                    return false;
+                }
+
+                let text = value.to_text().unwrap();
+                let Ok(num) = checked_cast_text_to_numeric(&text) else {
+                    return false;
+                };
+
+                *value = match &num {
+                    OwnedValue::Float(fl) => {
+                        cast_real_to_integer(*fl)
+                            .map(OwnedValue::Integer)
+                            .unwrap_or(num);
+                        return true;
+                    }
+                    OwnedValue::Integer(_) if text.starts_with("0x") => {
+                        return false;
+                    }
+                    _ => num,
+                };
+            }
+
+            Affinity::Real => {
+                if let OwnedValue::Integer(i) = value {
+                    *value = OwnedValue::Float(*i as f64);
+                    return true;
+                } else if let OwnedValue::Text(t) = value {
+                    if t.as_str().starts_with("0x") {
+                        return false;
+                    }
+                    if let Ok(num) = checked_cast_text_to_numeric(t.as_str()) {
+                        *value = num;
+                        return true;
+                    } else {
+                        return false;
+                    }
+                }
+            }
+        };
+    }
+    return true;
 }
 
 fn exec_cast(value: &OwnedValue, datatype: &str) -> OwnedValue {
