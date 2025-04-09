@@ -3148,6 +3148,7 @@ impl BTreeCursor {
             },
             None => {
                 if !moved_before {
+                    self.iteration_state = IterationState::Iterating(IterationDirection::Forwards);
                     match key {
                         BTreeKey::IndexKey(_) => {
                             return_if_io!(self
