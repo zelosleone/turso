@@ -13,7 +13,8 @@ use super::optimizer::optimize_plan;
 use super::plan::{
     Direction, IterationDirection, Plan, ResultSetColumn, TableReference, UpdatePlan,
 };
-use super::planner::{bind_column_references, parse_limit, parse_where};
+use super::planner::bind_column_references;
+use super::planner::{parse_limit, parse_where};
 
 /*
 * Update is simple. By default we scan the table, and for each row, we check the WHERE
@@ -72,18 +73,25 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
     let Some(btree_table) = table.btree() else {
         bail_parse_error!("Error: {} is not a btree table", table_name);
     };
-    let iter_dir: Option<IterationDirection> = body.order_by.as_ref().and_then(|order_by| {
-        order_by.first().and_then(|ob| {
-            ob.order.map(|o| match o {
-                SortOrder::Asc => IterationDirection::Forwards,
-                SortOrder::Desc => IterationDirection::Backwards,
+    let iter_dir = body
+        .order_by
+        .as_ref()
+        .and_then(|order_by| {
+            order_by.first().and_then(|ob| {
+                ob.order.map(|o| match o {
+                    SortOrder::Asc => IterationDirection::Forwards,
+                    SortOrder::Desc => IterationDirection::Backwards,
+                })
             })
         })
-    });
+        .unwrap_or(IterationDirection::Forwards);
     let table_references = vec![TableReference {
         table: Table::BTree(btree_table.clone()),
         identifier: table_name.0.clone(),
-        op: Operation::Scan { iter_dir },
+        op: Operation::Scan {
+            iter_dir,
+            index: None,
+        },
         join_info: None,
     }];
     let set_clauses = body

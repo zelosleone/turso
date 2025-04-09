@@ -501,6 +501,30 @@ pub enum Insn {
 
     /// The P4 register values beginning with P3 form an unpacked index key that omits the PRIMARY KEY. Compare this key value against the index that P1 is currently pointing to, ignoring the PRIMARY KEY or ROWID fields at the end.
     /// If the P1 index entry is greater or equal than the key value then jump to P2. Otherwise fall through to the next instruction.
+    // If cursor_id refers to an SQL table (B-Tree that uses integer keys), use the value in start_reg as the key.
+    // If cursor_id refers to an SQL index, then start_reg is the first in an array of num_regs registers that are used as an unpacked index key.
+    // Seek to the first index entry that is less than or equal to the given key. If not found, jump to the given PC. Otherwise, continue to the next instruction.
+    SeekLE {
+        is_index: bool,
+        cursor_id: CursorID,
+        start_reg: usize,
+        num_regs: usize,
+        target_pc: BranchOffset,
+    },
+
+    // If cursor_id refers to an SQL table (B-Tree that uses integer keys), use the value in start_reg as the key.
+    // If cursor_id refers to an SQL index, then start_reg is the first in an array of num_regs registers that are used as an unpacked index key.
+    // Seek to the first index entry that is less than the given key. If not found, jump to the given PC. Otherwise, continue to the next instruction.
+    SeekLT {
+        is_index: bool,
+        cursor_id: CursorID,
+        start_reg: usize,
+        num_regs: usize,
+        target_pc: BranchOffset,
+    },
+
+    // The P4 register values beginning with P3 form an unpacked index key that omits the PRIMARY KEY. Compare this key value against the index that P1 is currently pointing to, ignoring the PRIMARY KEY or ROWID fields at the end.
+    // If the P1 index entry is greater or equal than the key value then jump to P2. Otherwise fall through to the next instruction.
     IdxGE {
         cursor_id: CursorID,
         start_reg: usize,
@@ -1306,8 +1330,10 @@ impl Insn {
 
             Insn::SeekRowid { .. } => execute::op_seek_rowid,
             Insn::DeferredSeek { .. } => execute::op_deferred_seek,
-            Insn::SeekGE { .. } => execute::op_seek_ge,
-            Insn::SeekGT { .. } => execute::op_seek_gt,
+            Insn::SeekGE { .. } => execute::op_seek,
+            Insn::SeekGT { .. } => execute::op_seek,
+            Insn::SeekLE { .. } => execute::op_seek,
+            Insn::SeekLT { .. } => execute::op_seek,
             Insn::SeekEnd { .. } => execute::op_seek_end,
             Insn::IdxGE { .. } => execute::op_idx_ge,
             Insn::IdxGT { .. } => execute::op_idx_gt,

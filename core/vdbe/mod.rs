@@ -561,7 +561,10 @@ fn get_indent_count(indent_count: usize, curr_insn: &Insn, prev_insn: Option<&In
             | Insn::LastAwait { .. }
             | Insn::SorterSort { .. }
             | Insn::SeekGE { .. }
-            | Insn::SeekGT { .. } => indent_count + 1,
+            | Insn::SeekGT { .. }
+            | Insn::SeekLE { .. }
+            | Insn::SeekLT { .. } => indent_count + 1,
+
             _ => indent_count,
         }
     } else {
