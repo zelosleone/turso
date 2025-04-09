@@ -51,7 +51,7 @@ impl Connection {
             extensions
                 .lock()
                 .map_err(|_| {
-                    LimboError::ExtensionError("Error unlocking extension libraries".to_string())
+                    LimboError::ExtensionError("Error locking extension libraries".to_string())
                 })?
                 .push((Arc::new(lib), api_ref));
             {
