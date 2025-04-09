@@ -2045,7 +2045,11 @@ impl BTreeCursor {
                     rightmost_pointer,
                 );
                 // TODO: balance root
-                // TODO: free pages
+                // We have to free pages that are not used anymore
+                for i in sibling_count_new..balance_info.sibling_count {
+                    let page = &balance_info.pages_to_balance[i];
+                    self.pager.free_page(Some(page.clone()), page.get().id)?;
+                }
                 (WriteState::BalanceStart, Ok(CursorResult::Ok(())))
             }
             WriteState::Finish => todo!(),
