@@ -61,7 +61,7 @@ Limbo aims to be fully compatible with SQLite, with opt-in features not supporte
 | CREATE TABLE ... STRICT   | Yes     |                                                                                   |
 | CREATE TRIGGER            | No      |                                                                                   |
 | CREATE VIEW               | No      |                                                                                   |
-| CREATE VIRTUAL TABLE      | No      |                                                                                   |
+| CREATE VIRTUAL TABLE      | Yes     |                                                                                   |
 | DELETE                    | Yes     |                                                                                   |
 | DETACH DATABASE           | No      |                                                                                   |
 | DROP INDEX                | No      |                                                                                   |
