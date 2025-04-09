@@ -291,8 +291,7 @@ pub fn open_loop(
                         });
                     }
                 } else if let Some(vtab) = table.virtual_table() {
-                    // Collect usable constraints and track which predicate each came from
-                    // Virtual tables may be used either as VTab or TVF, distinguished by vtab.name.
+                    // Virtual tables may be used either as VTab or TVF
                     let (start_reg, count, maybe_idx_str, maybe_idx_int) = if vtab
                         .kind
                         .eq(&VTabKind::VirtualTable)
@@ -308,13 +307,14 @@ pub fn open_loop(
                         }
                         let constraints: Vec<_> =
                             converted_constraints.iter().map(|(c, _)| *c).collect();
-                        let order_by = vec![OrderByInfo {
+                        let order_by = [OrderByInfo {
                             column_index: *t_ctx
                                 .result_column_indexes_in_orderby_sorter
                                 .first()
                                 .unwrap_or(&0) as u32,
                             desc: matches!(iter_dir, IterationDirection::Backwards),
                         }];
+                        // Call xBestIndex method on the underlying vtable.
                         let index_info = vtab.best_index(&constraints, &order_by);
 
                         // Determine the number of VFilter arguments (constraints with an argv_index).
@@ -330,7 +330,7 @@ pub fn open_loop(
                             if let Some(argv_index) = usage.argv_index {
                                 if let Some((_, pred)) = converted_constraints.get(i) {
                                     if let ast::Expr::Binary(lhs, _, rhs) = &pred.expr {
-                                        let literal_expr = match (&**lhs, &**rhs) {
+                                        let expr = match (&**lhs, &**rhs) {
                                             (ast::Expr::Column { .. }, lit) => lit,
                                             (lit, ast::Expr::Column { .. }) => lit,
                                             _ => continue,
@@ -340,7 +340,7 @@ pub fn open_loop(
                                         translate_expr(
                                             program,
                                             Some(tables),
-                                            literal_expr,
+                                            expr,
                                             target_reg,
                                             &t_ctx.resolver,
                                         )?;
@@ -359,7 +359,6 @@ pub fn open_loop(
                         } else {
                             None
                         };
-
                         // Record (in t_ctx) the indices of predicates that best_index tells us to omit.
                         // Here we insert directly into t_ctx.omit_predicates
                         for (j, usage) in index_info.constraint_usages.iter().enumerate() {
