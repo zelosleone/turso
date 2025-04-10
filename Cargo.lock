@@ -1901,6 +1901,9 @@ dependencies = [
  "limbo",
  "serde_json",
  "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]
