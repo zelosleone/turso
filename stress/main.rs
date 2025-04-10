@@ -12,6 +12,10 @@ use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::sync::Arc;
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::EnvFilter;
 
 pub struct Plan {
     pub ddl_statements: Vec<String>,
@@ -364,8 +368,27 @@ fn read_plan_from_log_file(opts: &Opts) -> Result<Plan, Box<dyn std::error::Erro
     Ok(plan)
 }
 
+pub fn init_tracing() -> Result<WorkerGuard, std::io::Error> {
+    let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stderr());
+    if let Err(e) = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(non_blocking)
+                .with_ansi(false)
+                .with_line_number(true)
+                .with_thread_ids(true),
+        )
+        .with(EnvFilter::from_default_env())
+        .try_init()
+    {
+        println!("Unable to setup tracing appender: {:?}", e);
+    }
+    Ok(guard)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let _g = init_tracing()?;
     let (num_nodes, main_id) = (1, "n-001");
     let startup_data = json!({
         "num_nodes": num_nodes,
