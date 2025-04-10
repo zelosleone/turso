@@ -3798,6 +3798,7 @@ pub fn op_idx_insert_async(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
+    dbg!("op_idx_insert_async");
     if let Insn::IdxInsertAsync {
         cursor_id,
         record_reg,
@@ -3816,29 +3817,29 @@ pub fn op_idx_insert_async(
                 Register::Record(ref r) => r,
                 _ => return Err(LimboError::InternalError("expected record".into())),
             };
-            let moved_before = if index_meta.unique {
-                // check for uniqueness violation
-                match cursor.key_exists_in_index(record)? {
-                    CursorResult::Ok(true) => {
-                        return Err(LimboError::Constraint(
-                            "UNIQUE constraint failed: duplicate key".into(),
-                        ))
-                    }
-                    CursorResult::IO => return Ok(InsnFunctionStepResult::IO),
-                    CursorResult::Ok(false) => {}
-                };
-                false
-            } else {
-                flags.has(IdxInsertFlags::USE_SEEK)
-            };
-
             // To make this reentrant in case of `moved_before` = false, we need to check if the previous cursor.insert started
             // a write/balancing operation. If it did, it means we already moved to the place we wanted.
             let moved_before = if cursor.is_write_in_progress() {
                 true
             } else {
-                moved_before
+                if index_meta.unique {
+                    // check for uniqueness violation
+                    match cursor.key_exists_in_index(record)? {
+                        CursorResult::Ok(true) => {
+                            return Err(LimboError::Constraint(
+                                "UNIQUE constraint failed: duplicate key".into(),
+                            ))
+                        }
+                        CursorResult::IO => return Ok(InsnFunctionStepResult::IO),
+                        CursorResult::Ok(false) => {}
+                    };
+                    false
+                } else {
+                    flags.has(IdxInsertFlags::USE_SEEK)
+                }
             };
+
+            dbg!(moved_before);
             // Start insertion of row. This might trigger a balance procedure which will take care of moving to different pages,
             // therefore, we don't want to seek again if that happens, meaning we don't want to return on io without moving to `Await` opcode
             // because it could trigger a movement to child page after a balance root which will leave the current page as the root page.
