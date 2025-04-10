@@ -1924,6 +1924,7 @@ impl BTreeCursor {
                 let mut count_cells_in_old_pages = Vec::new();
 
                 let page_type = balance_info.pages_to_balance[0].get_contents().page_type();
+                tracing::debug!("balance_non_root(page_type={:?})", page_type);
                 let leaf_data = matches!(page_type, PageType::TableLeaf);
                 let leaf = matches!(page_type, PageType::TableLeaf | PageType::IndexLeaf);
                 for (i, old_page) in balance_info.pages_to_balance.iter().enumerate() {
@@ -3859,25 +3860,8 @@ impl BTreeCursor {
         };
 
         // if it all fits in local space and old_local_size is enough, do an in-place overwrite
-        if new_payload.len() <= old_local_size {
-            self.overwrite_content(
-                page_ref.clone(),
-                old_offset,
-                &new_payload,
-                0,
-                new_payload.len(),
-            )?;
-            let remaining = old_local_size - new_payload.len();
-            if remaining > 0 {
-                // fill the rest with zeros
-                self.overwrite_content(
-                    page_ref.clone(),
-                    old_offset + new_payload.len(),
-                    &[0; 1],
-                    0,
-                    remaining,
-                )?;
-            }
+        if new_payload.len() == old_local_size {
+            self.overwrite_content(page_ref.clone(), old_offset, &new_payload)?;
             Ok(CursorResult::Ok(()))
         } else {
             // doesn't fit, drop it and insert a new one
@@ -3901,36 +3885,13 @@ impl BTreeCursor {
         page_ref: PageRef,
         dest_offset: usize,
         new_payload: &[u8],
-        src_offset: usize,
-        amount: usize,
     ) -> Result<CursorResult<()>> {
         return_if_locked!(page_ref);
         page_ref.set_dirty();
         self.pager.add_dirty(page_ref.get().id);
         let buf = page_ref.get().contents.as_mut().unwrap().as_ptr();
+        buf[dest_offset..dest_offset + new_payload.len()].copy_from_slice(&new_payload);
 
-        // if new_payload doesn't have enough data, we fill with zeros
-        let n_data = new_payload.len().saturating_sub(src_offset);
-        if n_data == 0 {
-            // everything is zeros
-            for i in 0..amount {
-                if buf[dest_offset + i] != 0 {
-                    buf[dest_offset + i] = 0;
-                }
-            }
-        } else {
-            let copy_len = n_data.min(amount);
-            // copy the overlapping portion
-            buf[dest_offset..dest_offset + copy_len]
-                .copy_from_slice(&new_payload[src_offset..src_offset + copy_len]);
-
-            // if copy_len < amount => fill remainder with 0
-            if copy_len < amount {
-                for i in copy_len..amount {
-                    buf[dest_offset + i] = 0;
-                }
-            }
-        }
         Ok(CursorResult::Ok(()))
     }
 
