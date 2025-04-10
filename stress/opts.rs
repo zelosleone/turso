@@ -26,6 +26,15 @@ pub struct Opts {
     )]
     pub log_file: String,
 
+    /// Load log file instead of creating a new one
+    #[clap(
+        short = 'L',
+        long = "load-log",
+        help = "load log file instead of creating a new one",
+        default_value_t = false
+    )]
+    pub load_log: bool,
+
     /// Database file
     #[clap(
         short = 'd',
