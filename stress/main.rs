@@ -137,32 +137,29 @@ pub fn gen_schema() -> ArbitrarySchema {
 }
 
 impl ArbitrarySchema {
-    pub fn to_sql(&self) -> String {
-        let mut sql = String::new();
+    /// Convert the schema to a vector of SQL DDL statements
+    pub fn to_sql(&self) -> Vec<String> {
+        self.tables
+            .iter()
+            .map(|table| {
+                let columns = table
+                    .columns
+                    .iter()
+                    .map(|col| {
+                        let mut col_def =
+                            format!("  {} {}", col.name, data_type_to_sql(&col.data_type));
+                        for constraint in &col.constraints {
+                            col_def.push(' ');
+                            col_def.push_str(&constraint_to_sql(constraint));
+                        }
+                        col_def
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",\n");
 
-        for table in &self.tables {
-            sql.push_str(&format!("CREATE TABLE {} (\n", table.name));
-
-            for (i, column) in table.columns.iter().enumerate() {
-                if i > 0 {
-                    sql.push_str(",\n");
-                }
-
-                sql.push_str(&format!(
-                    "  {} {}",
-                    column.name,
-                    data_type_to_sql(&column.data_type)
-                ));
-
-                for constraint in &column.constraints {
-                    sql.push_str(&format!(" {}", constraint_to_sql(constraint)));
-                }
-            }
-
-            sql.push_str("\n);\n\n");
-        }
-
-        sql
+                format!("CREATE TABLE {} (\n{}\n);", table.name, columns)
+            })
+            .collect()
     }
 }
 
@@ -299,8 +296,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     antithesis_init();
 
     let schema = gen_schema();
-    let schema_sql = schema.to_sql();
-    println!("{}", schema_sql);
+    let ddl_statements = schema.to_sql();
+    for stmt in &ddl_statements {
+        println!("{}", stmt);
+    }
 
     let opts = Opts::parse();
     let mut handles = Vec::with_capacity(opts.nr_threads);
@@ -308,7 +307,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     for _ in 0..opts.nr_threads {
         let db = Arc::new(Builder::new_local(":memory:").build().await?);
         let conn = db.connect()?;
-        conn.execute(&schema_sql, ()).await?;
+
+        // Apply each DDL statement individually
+        for stmt in &ddl_statements {
+            if let Err(e) = conn.execute(stmt, ()).await {
+                println!("Error creating table: {}", e);
+            }
+        }
+
         let nr_iterations = opts.nr_iterations;
         let db = db.clone();
         let schema = schema.clone();
