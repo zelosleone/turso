@@ -10,7 +10,7 @@ pub struct Opts {
         short = 'i',
         long,
         help = "the number of iterations",
-        default_value_t = 1000
+        default_value_t = 100000
     )]
     pub nr_iterations: usize,
 }
