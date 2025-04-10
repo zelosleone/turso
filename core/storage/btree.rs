@@ -1,56 +1,82 @@
-use tracing::debug;
-
-use crate::storage::pager::Pager;
-use crate::storage::sqlite3_ondisk::{
-    read_u32, read_varint, BTreeCell, PageContent, PageType, TableInteriorCell, TableLeafCell,
+use crate::{
+    storage::{
+        pager::Pager,
+        sqlite3_ondisk::{
+            read_u32, read_varint, BTreeCell, PageContent, PageType, TableInteriorCell,
+            TableLeafCell,
+        },
+    },
+    translate::plan::IterationDirection,
+    MvCursor,
 };
-use crate::translate::plan::IterationDirection;
-use crate::MvCursor;
 
-use crate::types::{
-    compare_immutable, CursorResult, ImmutableRecord, OwnedValue, RefValue, SeekKey, SeekOp,
+use crate::{
+    return_corrupt,
+    types::{
+        compare_immutable, CursorResult, ImmutableRecord, OwnedValue, RefValue, SeekKey, SeekOp,
+    },
+    LimboError, Result,
 };
-use crate::{return_corrupt, LimboError, Result};
 
-use std::cell::{Cell, Ref, RefCell};
-use std::cmp::Ordering;
 #[cfg(debug_assertions)]
 use std::collections::HashSet;
-use std::pin::Pin;
-use std::rc::Rc;
-
-use super::pager::PageRef;
-use super::sqlite3_ondisk::{
-    read_record, write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell,
-    DATABASE_HEADER_SIZE,
+use std::{
+    cell::{Cell, Ref, RefCell},
+    cmp::Ordering,
+    pin::Pin,
+    rc::Rc,
 };
 
-/*
-    These are offsets of fields in the header of a b-tree page.
-*/
+use super::{
+    pager::PageRef,
+    sqlite3_ondisk::{
+        read_record, write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell,
+        DATABASE_HEADER_SIZE,
+    },
+};
 
-/// type of btree page -> u8
-const PAGE_HEADER_OFFSET_PAGE_TYPE: usize = 0;
-/// pointer to first freeblock -> u16
-/// The second field of the b-tree page header is the offset of the first freeblock, or zero if there are no freeblocks on the page.
-/// A freeblock is a structure used to identify unallocated space within a b-tree page.
-/// Freeblocks are organized as a chain.
+/// The B-Tree page header is 12 bytes for interior pages and 8 bytes for leaf pages.
 ///
-/// To be clear, freeblocks do not mean the regular unallocated free space to the left of the cell content area pointer, but instead
-/// blocks of at least 4 bytes WITHIN the cell content area that are not in use due to e.g. deletions.
-const PAGE_HEADER_OFFSET_FIRST_FREEBLOCK: usize = 1;
-/// number of cells in the page -> u16
-const PAGE_HEADER_OFFSET_CELL_COUNT: usize = 3;
-/// pointer to first byte of cell allocated content from top -> u16
-/// SQLite strives to place cells as far toward the end of the b-tree page as it can,
-/// in order to leave space for future growth of the cell pointer array.
-/// = the cell content area pointer moves leftward as cells are added to the page
-const PAGE_HEADER_OFFSET_CELL_CONTENT_AREA: usize = 5;
-/// number of fragmented bytes -> u8
-/// Fragments are isolated groups of 1, 2, or 3 unused bytes within the cell content area.
-const PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT: usize = 7;
-/// if internalnode, pointer right most pointer (saved separately from cells) -> u32
-const PAGE_HEADER_OFFSET_RIGHTMOST_PTR: usize = 8;
+/// +--------+-----------------+-----------------+-----------------+--------+----- ..... ----+
+/// | Page   | First Freeblock | Cell Count      | Cell Content    | Frag.  | Right-most     |
+/// | Type   | Offset          |                 | Area Start      | Bytes  | pointer        |
+/// +--------+-----------------+-----------------+-----------------+--------+----- ..... ----+
+///     0        1        2        3        4        5        6        7        8       11
+///
+pub mod offset {
+    /// Type of the B-Tree page (u8).
+    pub const BTREE_PAGE_TYPE: usize = 0;
+
+    /// A pointer to the first freeblock (u16).
+    ///
+    /// This field of the B-Tree page header is an offset to the first freeblock, or zero if
+    /// there are no freeblocks on the page.  A freeblock is a structure used to identify
+    /// unallocated space within a B-Tree page, organized as a chain.
+    ///
+    /// Please note that freeblocks do not mean the regular unallocated free space to the left
+    /// of the cell content area pointer, but instead blocks of at least 4
+    /// bytes WITHIN the cell content area that are not in use due to e.g.
+    /// deletions.
+    pub const BTREE_FIRST_FREEBLOCK: usize = 1;
+
+    /// The number of cells in the page (u16).
+    pub const BTREE_CELL_COUNT: usize = 3;
+
+    /// A pointer to first byte of cell allocated content from top (u16).
+    ///
+    /// SQLite strives to place cells as far toward the end of the b-tree page as it can, in
+    /// order to leave space for future growth of the cell pointer array. This means that the
+    /// cell content area pointer moves leftward as cells are added to the page.
+    pub const BTREE_CELL_CONTENT_AREA: usize = 5;
+
+    /// The number of fragmented bytes (u8).
+    ///
+    /// Fragments are isolated groups of 1, 2, or 3 unused bytes within the cell content area.
+    pub const BTREE_FRAGMENTED_BYTES_COUNT: usize = 7;
+
+    /// The right-most pointer (saved separately from cells) (u32)
+    pub const BTREE_RIGHTMOST_PTR: usize = 8;
+}
 
 /// Maximum depth of an SQLite B-Tree structure. Any B-Tree deeper than
 /// this will be declared corrupt. This value is calculated based on a
@@ -229,7 +255,7 @@ impl BTreeKey<'_> {
 struct BalanceInfo {
     /// Old pages being balanced.
     pages_to_balance: Vec<PageRef>,
-    /// Bookkeeping of the rightmost pointer so the PAGE_HEADER_OFFSET_RIGHTMOST_PTR can be updated.
+    /// Bookkeeping of the rightmost pointer so the offset::BTREE_RIGHTMOST_PTR can be updated.
     rightmost_pointer: *mut u8,
     /// Divider cells of old pages
     divider_cells: Vec<Vec<u8>>,
@@ -773,7 +799,7 @@ impl BTreeCursor {
                 // end
                 let has_parent = self.stack.current() > 0;
                 if has_parent {
-                    debug!("moving upwards");
+                    tracing::debug!("moving upwards");
                     self.going_upwards = true;
                     self.stack.pop();
                     continue;
@@ -1550,7 +1576,7 @@ impl BTreeCursor {
                     // insert
                     let overflow = {
                         let contents = page.get().contents.as_mut().unwrap();
-                        debug!(
+                        tracing::debug!(
                             "insert_into_page(overflow, cell_count={})",
                             contents.cell_count()
                         );
@@ -1668,7 +1694,7 @@ impl BTreeCursor {
                 let parent_contents = parent_page.get().contents.as_ref().unwrap();
                 let page_to_balance_idx = self.stack.current_cell_index() as usize;
 
-                debug!(
+                tracing::debug!(
                     "balance_non_root(parent_id={} page_to_balance_idx={})",
                     parent_page.get().id,
                     page_to_balance_idx
@@ -2227,7 +2253,7 @@ impl BTreeCursor {
                     let new_last_page = pages_to_balance_new.last().unwrap();
                     new_last_page
                         .get_contents()
-                        .write_u32(PAGE_HEADER_OFFSET_RIGHTMOST_PTR, right_pointer);
+                        .write_u32(offset::BTREE_RIGHTMOST_PTR, right_pointer);
                 }
                 // TODO: pointer map update (vacuum support)
                 // Update divider cells in parent
@@ -2246,7 +2272,7 @@ impl BTreeCursor {
                         // Make this page's rightmost pointer point to pointer of divider cell before modification
                         let previous_pointer_divider = read_u32(&divider_cell, 0);
                         page.get_contents()
-                            .write_u32(PAGE_HEADER_OFFSET_RIGHTMOST_PTR, previous_pointer_divider);
+                            .write_u32(offset::BTREE_RIGHTMOST_PTR, previous_pointer_divider);
                         // divider cell now points to this page
                         new_divider_cell.extend_from_slice(&(page.get().id as u32).to_be_bytes());
                         // now copy the rest of the divider cell:
@@ -2880,16 +2906,13 @@ impl BTreeCursor {
             other => other,
         } as u8;
         // set new page type
-        root_contents.write_u8(PAGE_HEADER_OFFSET_PAGE_TYPE, new_root_page_type);
-        root_contents.write_u32(PAGE_HEADER_OFFSET_RIGHTMOST_PTR, child.get().id as u32);
-        root_contents.write_u16(
-            PAGE_HEADER_OFFSET_CELL_CONTENT_AREA,
-            self.usable_space() as u16,
-        );
-        root_contents.write_u16(PAGE_HEADER_OFFSET_CELL_COUNT, 0);
-        root_contents.write_u16(PAGE_HEADER_OFFSET_FIRST_FREEBLOCK, 0);
+        root_contents.write_u8(offset::BTREE_PAGE_TYPE, new_root_page_type);
+        root_contents.write_u32(offset::BTREE_RIGHTMOST_PTR, child.get().id as u32);
+        root_contents.write_u16(offset::BTREE_CELL_CONTENT_AREA, self.usable_space() as u16);
+        root_contents.write_u16(offset::BTREE_CELL_COUNT, 0);
+        root_contents.write_u16(offset::BTREE_FIRST_FREEBLOCK, 0);
 
-        root_contents.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, 0);
+        root_contents.write_u8(offset::BTREE_FRAGMENTED_BYTES_COUNT, 0);
         root_contents.overflow_cells.clear();
         self.root_page = root.get().id;
         self.stack.clear();
@@ -4072,7 +4095,7 @@ impl CellArray {
 fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> Result<usize> {
     // NOTE: freelist is in ascending order of keys and pc
     // unuse_space is reserved bytes at the end of page, therefore we must substract from maxpc
-    let mut prev_pc = page_ref.offset + PAGE_HEADER_OFFSET_FIRST_FREEBLOCK;
+    let mut prev_pc = page_ref.offset + offset::BTREE_FIRST_FREEBLOCK;
     let mut pc = page_ref.first_freeblock() as usize;
     let maxpc = usable_space as usize - amount;
 
@@ -4096,7 +4119,7 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> R
                 // Delete the slot from freelist and update the page's fragment count.
                 page_ref.write_u16(prev_pc, next);
                 let frag = page_ref.num_frag_free_bytes() + new_size as u8;
-                page_ref.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, frag);
+                page_ref.write_u8(offset::BTREE_FRAGMENTED_BYTES_COUNT, frag);
                 return Ok(pc);
             } else if new_size + pc > maxpc {
                 return_corrupt!("Free block extends beyond page end");
@@ -4126,18 +4149,18 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> R
 pub fn btree_init_page(page: &PageRef, page_type: PageType, offset: usize, usable_space: u16) {
     // setup btree page
     let contents = page.get();
-    debug!("btree_init_page(id={}, offset={})", contents.id, offset);
+    tracing::debug!("btree_init_page(id={}, offset={})", contents.id, offset);
     let contents = contents.contents.as_mut().unwrap();
     contents.offset = offset;
     let id = page_type as u8;
-    contents.write_u8(PAGE_HEADER_OFFSET_PAGE_TYPE, id);
-    contents.write_u16(PAGE_HEADER_OFFSET_FIRST_FREEBLOCK, 0);
-    contents.write_u16(PAGE_HEADER_OFFSET_CELL_COUNT, 0);
+    contents.write_u8(offset::BTREE_PAGE_TYPE, id);
+    contents.write_u16(offset::BTREE_FIRST_FREEBLOCK, 0);
+    contents.write_u16(offset::BTREE_CELL_COUNT, 0);
 
-    contents.write_u16(PAGE_HEADER_OFFSET_CELL_CONTENT_AREA, usable_space);
+    contents.write_u16(offset::BTREE_CELL_CONTENT_AREA, usable_space);
 
-    contents.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, 0);
-    contents.write_u32(PAGE_HEADER_OFFSET_RIGHTMOST_PTR, 0);
+    contents.write_u8(offset::BTREE_FRAGMENTED_BYTES_COUNT, 0);
+    contents.write_u32(offset::BTREE_RIGHTMOST_PTR, 0);
 }
 
 fn to_static_buf(buf: &mut [u8]) -> &'static mut [u8] {
@@ -4234,7 +4257,7 @@ fn edit_page(
     )?;
     debug_validate_cells!(page, usable_space);
     // TODO: noverflow
-    page.write_u16(PAGE_HEADER_OFFSET_CELL_COUNT, number_new_cells as u16);
+    page.write_u16(offset::BTREE_CELL_COUNT, number_new_cells as u16);
     Ok(())
 }
 
@@ -4264,7 +4287,7 @@ fn page_free_array(
             let offset = (cell_pointer.start as usize - buf_range.start as usize) as u16;
             let len = (cell_pointer.end as usize - cell_pointer.start as usize) as u16;
             free_cell_range(page, offset, len, usable_space)?;
-            page.write_u16(PAGE_HEADER_OFFSET_CELL_COUNT, page.cell_count() as u16 - 1);
+            page.write_u16(offset::BTREE_CELL_COUNT, page.cell_count() as u16 - 1);
             number_of_cells_removed += 1;
         }
     }
@@ -4378,7 +4401,7 @@ fn free_cell_range(
             ));
         }
         let frag = page.num_frag_free_bytes() - removed_fragmentation;
-        page.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, frag);
+        page.write_u8(offset::BTREE_FRAGMENTED_BYTES_COUNT, frag);
         pc
     };
 
@@ -4386,11 +4409,11 @@ fn free_cell_range(
         if offset < page.cell_content_area() {
             return_corrupt!("Free block before content area");
         }
-        if pointer_to_pc != page.offset as u16 + PAGE_HEADER_OFFSET_FIRST_FREEBLOCK as u16 {
+        if pointer_to_pc != page.offset as u16 + offset::BTREE_FIRST_FREEBLOCK as u16 {
             return_corrupt!("Invalid content area merge");
         }
-        page.write_u16(PAGE_HEADER_OFFSET_FIRST_FREEBLOCK, pc);
-        page.write_u16(PAGE_HEADER_OFFSET_CELL_CONTENT_AREA, end);
+        page.write_u16(offset::BTREE_FIRST_FREEBLOCK, pc);
+        page.write_u16(offset::BTREE_CELL_CONTENT_AREA, end);
     } else {
         page.write_u16_no_offset(pointer_to_pc as usize, offset);
         page.write_u16_no_offset(offset as usize, pc);
@@ -4455,10 +4478,10 @@ fn defragment_page(page: &PageContent, usable_space: u16) {
     assert!(cbrk >= first_cell);
 
     // set new first byte of cell content
-    page.write_u16(PAGE_HEADER_OFFSET_CELL_CONTENT_AREA, cbrk);
+    page.write_u16(offset::BTREE_CELL_CONTENT_AREA, cbrk);
     // set free block to 0, unused spaced can be retrieved from gap between cell pointer end and content start
-    page.write_u16(PAGE_HEADER_OFFSET_FIRST_FREEBLOCK, 0);
-    page.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, 0);
+    page.write_u16(offset::BTREE_FIRST_FREEBLOCK, 0);
+    page.write_u8(offset::BTREE_FRAGMENTED_BYTES_COUNT, 0);
     debug_validate_cells!(page, usable_space);
 }
 
@@ -4551,7 +4574,7 @@ fn insert_into_cell(
 
     // update cell count
     let new_n_cells = (page.cell_count() + 1) as u16;
-    page.write_u16(PAGE_HEADER_OFFSET_CELL_COUNT, new_n_cells);
+    page.write_u16(offset::BTREE_CELL_COUNT, new_n_cells);
     debug_validate_cells!(page, usable_space);
     Ok(())
 }
@@ -4663,12 +4686,12 @@ fn allocate_cell_space(page_ref: &PageContent, amount: u16, usable_space: u16) -
     if gap + 2 + amount > top {
         // defragment
         defragment_page(page_ref, usable_space);
-        top = page_ref.read_u16(PAGE_HEADER_OFFSET_CELL_CONTENT_AREA) as usize;
+        top = page_ref.read_u16(offset::BTREE_CELL_CONTENT_AREA) as usize;
     }
 
     top -= amount;
 
-    page_ref.write_u16(PAGE_HEADER_OFFSET_CELL_CONTENT_AREA, top as u16);
+    page_ref.write_u16(offset::BTREE_CELL_CONTENT_AREA, top as u16);
 
     assert!(top + amount <= usable_space as usize);
     Ok(top as u16)
@@ -4701,7 +4724,7 @@ fn fill_cell_payload(
     }
 
     let payload_overflow_threshold_max = payload_overflow_threshold_max(page_type, usable_space);
-    debug!(
+    tracing::debug!(
         "fill_cell_payload(record_size={}, payload_overflow_threshold_max={})",
         record_buf.len(),
         payload_overflow_threshold_max
@@ -4827,11 +4850,11 @@ fn drop_cell(page: &mut PageContent, cell_idx: usize, usable_space: u16) -> Resu
     if page.cell_count() > 1 {
         shift_pointers_left(page, cell_idx);
     } else {
-        page.write_u16(PAGE_HEADER_OFFSET_CELL_CONTENT_AREA, usable_space);
-        page.write_u16(PAGE_HEADER_OFFSET_FIRST_FREEBLOCK, 0);
-        page.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, 0);
+        page.write_u16(offset::BTREE_CELL_CONTENT_AREA, usable_space);
+        page.write_u16(offset::BTREE_FIRST_FREEBLOCK, 0);
+        page.write_u8(offset::BTREE_FRAGMENTED_BYTES_COUNT, 0);
     }
-    page.write_u16(PAGE_HEADER_OFFSET_CELL_COUNT, page.cell_count() as u16 - 1);
+    page.write_u16(offset::BTREE_CELL_COUNT, page.cell_count() as u16 - 1);
     debug_validate_cells!(page, usable_space);
     Ok(())
 }
@@ -4851,31 +4874,28 @@ fn shift_pointers_left(page: &mut PageContent, cell_idx: usize) {
 
 #[cfg(test)]
 mod tests {
-    use rand::thread_rng;
-    use rand::Rng;
-    use rand_chacha::rand_core::RngCore;
-    use rand_chacha::rand_core::SeedableRng;
-    use rand_chacha::ChaCha8Rng;
+    use rand::{thread_rng, Rng};
+    use rand_chacha::{
+        rand_core::{RngCore, SeedableRng},
+        ChaCha8Rng,
+    };
     use test_log::test;
 
     use super::*;
-    use crate::fast_lock::SpinLock;
-    use crate::io::{Buffer, Completion, MemoryIO, OpenFlags, IO};
-    use crate::storage::database::DatabaseFile;
-    use crate::storage::page_cache::DumbLruPageCache;
-    use crate::storage::sqlite3_ondisk;
-    use crate::storage::sqlite3_ondisk::DatabaseHeader;
-    use crate::types::Text;
-    use crate::vdbe::Register;
-    use crate::Connection;
-    use crate::{BufferPool, DatabaseStorage, WalFile, WalFileShared, WriteCompletion};
-    use std::cell::RefCell;
-    use std::collections::HashSet;
-    use std::mem::transmute;
-    use std::ops::Deref;
-    use std::panic;
-    use std::rc::Rc;
-    use std::sync::Arc;
+    use crate::{
+        fast_lock::SpinLock,
+        io::{Buffer, Completion, MemoryIO, OpenFlags, IO},
+        storage::{
+            database::DatabaseFile, page_cache::DumbLruPageCache, sqlite3_ondisk,
+            sqlite3_ondisk::DatabaseHeader,
+        },
+        types::Text,
+        vdbe::Register,
+        BufferPool, Connection, DatabaseStorage, WalFile, WalFileShared, WriteCompletion,
+    };
+    use std::{
+        cell::RefCell, collections::HashSet, mem::transmute, ops::Deref, panic, rc::Rc, sync::Arc,
+    };
 
     use tempfile::TempDir;
 
@@ -5693,7 +5713,7 @@ mod tests {
             let contents = root_page.get().contents.as_mut().unwrap();
 
             // Set rightmost pointer to page4
-            contents.write_u32(PAGE_HEADER_OFFSET_RIGHTMOST_PTR, page4.get().id as u32);
+            contents.write_u32(offset::BTREE_RIGHTMOST_PTR, page4.get().id as u32);
 
             // Create a cell with pointer to page3
             let cell_content = vec![
