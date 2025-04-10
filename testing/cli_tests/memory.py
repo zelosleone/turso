@@ -2,8 +2,6 @@
 import os
 from test_limbo_cli import TestLimboShell
 
-
-sqlite_exec = "./target/debug/limbo"
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
 
 
