@@ -4117,7 +4117,7 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> R
                     return Ok(0);
                 }
                 // Delete the slot from freelist and update the page's fragment count.
-                page_ref.write_u16(prev_pc, next);
+                page_ref.write_u16_no_offset(prev_pc, next);
                 let frag = page_ref.num_frag_free_bytes() + new_size as u8;
                 page_ref.write_u8(offset::BTREE_FRAGMENTED_BYTES_COUNT, frag);
                 return Ok(pc);
@@ -4126,7 +4126,7 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> R
             } else {
                 // Requested amount fits inside the current free slot so we reduce its size
                 // to account for newly allocated space.
-                page_ref.write_u16(pc + 2, new_size as u16);
+                page_ref.write_u16_no_offset(pc + 2, new_size as u16);
                 return Ok(pc + new_size);
             }
         }
