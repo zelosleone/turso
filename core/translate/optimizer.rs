@@ -301,10 +301,12 @@ fn use_indexes(
 
     // Try to use indexes for WHERE conditions
     for (table_index, table_reference) in table_references.iter_mut().enumerate() {
-        if let Operation::Scan {
-            iter_dir, index, ..
-        } = &table_reference.op
-        {
+        if matches!(table_reference.op, Operation::Scan { .. }) {
+            let index = if let Operation::Scan { index, .. } = &table_reference.op {
+                Option::clone(index)
+            } else {
+                None
+            };
             match index {
                 // If we decided to eliminate ORDER BY using an index, let's constrain our search to only that index
                 Some(index) => {
@@ -319,7 +321,6 @@ fn use_indexes(
                         table_index,
                         table_reference,
                         &available_indexes,
-                        *iter_dir,
                     )? {
                         table_reference.op = Operation::Search(search);
                     }
@@ -328,13 +329,18 @@ fn use_indexes(
                     let table_name = table_reference.table.get_name();
 
                     // If we can utilize the rowid alias of the table, let's preferentially always use it for now.
-                    for (i, term) in where_clause.iter_mut().enumerate() {
-                        if let Some(search) =
-                            try_extract_rowid_search_expression(term, table_index, *iter_dir)?
-                        {
+                    let mut i = 0;
+                    while i < where_clause.len() {
+                        if let Some(search) = try_extract_rowid_search_expression(
+                            &mut where_clause[i],
+                            table_index,
+                            table_reference,
+                        )? {
                             where_clause.remove(i);
                             table_reference.op = Operation::Search(search);
-                            return Ok(());
+                            continue;
+                        } else {
+                            i += 1;
                         }
                     }
                     if let Some(indexes) = available_indexes.get(table_name) {
@@ -343,7 +349,6 @@ fn use_indexes(
                             table_index,
                             table_reference,
                             indexes,
-                            *iter_dir,
                         )? {
                             table_reference.op = Operation::Search(search);
                         }
@@ -624,7 +629,6 @@ pub fn try_extract_index_search_from_where_clause(
     table_index: usize,
     table_reference: &TableReference,
     table_indexes: &[Arc<Index>],
-    iter_dir: IterationDirection,
 ) -> Result<Option<Search>> {
     // If there are no WHERE terms, we can't extract a search
     if where_clause.is_empty() {
@@ -634,6 +638,12 @@ pub fn try_extract_index_search_from_where_clause(
     if table_indexes.is_empty() {
         return Ok(None);
     }
+
+    let iter_dir = if let Operation::Scan { iter_dir, .. } = &table_reference.op {
+        *iter_dir
+    } else {
+        return Ok(None);
+    };
 
     // Find all potential index constraints
     // For WHERE terms to be used to constrain an index scan, they must:
@@ -1096,8 +1106,13 @@ fn build_seek_def(
 pub fn try_extract_rowid_search_expression(
     cond: &mut WhereTerm,
     table_index: usize,
-    iter_dir: IterationDirection,
+    table_reference: &TableReference,
 ) -> Result<Option<Search>> {
+    let iter_dir = if let Operation::Scan { iter_dir, .. } = &table_reference.op {
+        *iter_dir
+    } else {
+        return Ok(None);
+    };
     if !cond.should_eval_at_loop(table_index) {
         return Ok(None);
     }
