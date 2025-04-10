@@ -21,3 +21,4 @@ limbo = { path = "../bindings/rust" }
 serde_json = "1.0.139"
 tokio = { version = "1.29.1", features = ["full"] }
 anarchist-readable-name-generator-lib = "0.1.0"
+hex = "0.4"

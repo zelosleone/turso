@@ -4,7 +4,8 @@ use anarchist_readable_name_generator_lib::readable_name_custom;
 use antithesis_sdk::random::{get_random, AntithesisRng};
 use antithesis_sdk::*;
 use clap::Parser;
-use limbo::{Builder, Value};
+use hex;
+use limbo::Builder;
 use opts::Opts;
 use serde_json::json;
 use std::collections::HashSet;
@@ -29,7 +30,7 @@ pub enum DataType {
 }
 
 /// Represents column constraints
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Constraint {
     PrimaryKey,
     NotNull,
@@ -183,8 +184,112 @@ fn constraint_to_sql(constraint: &Constraint) -> String {
     }
 }
 
+/// Generate a random value for a given data type
+fn generate_random_value(data_type: &DataType) -> String {
+    match data_type {
+        DataType::Integer => (get_random() % 1000).to_string(),
+        DataType::Real => format!("{:.2}", (get_random() % 1000) as f64 / 100.0),
+        DataType::Text => format!("'{}'", generate_random_identifier()),
+        DataType::Blob => format!("x'{}'", hex::encode(generate_random_identifier())),
+        DataType::Numeric => (get_random() % 1000).to_string(),
+    }
+}
+
+/// Generate a random INSERT statement for a table
+fn generate_insert(table: &Table) -> String {
+    let columns = table
+        .columns
+        .iter()
+        .map(|col| col.name.clone())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let values = table
+        .columns
+        .iter()
+        .map(|col| generate_random_value(&col.data_type))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    format!(
+        "INSERT INTO {} ({}) VALUES ({});",
+        table.name, columns, values
+    )
+}
+
+/// Generate a random UPDATE statement for a table
+fn generate_update(table: &Table) -> String {
+    // Find the primary key column
+    let pk_column = table
+        .columns
+        .iter()
+        .find(|col| col.constraints.contains(&Constraint::PrimaryKey))
+        .expect("Table should have a primary key");
+
+    // Get all non-primary key columns
+    let non_pk_columns: Vec<_> = table
+        .columns
+        .iter()
+        .filter(|col| col.name != pk_column.name)
+        .collect();
+
+    // If we have no non-PK columns, just update the primary key itself
+    let set_clause = if non_pk_columns.is_empty() {
+        format!(
+            "{} = {}",
+            pk_column.name,
+            generate_random_value(&pk_column.data_type)
+        )
+    } else {
+        non_pk_columns
+            .iter()
+            .map(|col| format!("{} = {}", col.name, generate_random_value(&col.data_type)))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    let where_clause = format!(
+        "{} = {}",
+        pk_column.name,
+        generate_random_value(&pk_column.data_type)
+    );
+
+    format!(
+        "UPDATE {} SET {} WHERE {};",
+        table.name, set_clause, where_clause
+    )
+}
+
+/// Generate a random DELETE statement for a table
+fn generate_delete(table: &Table) -> String {
+    // Find the primary key column
+    let pk_column = table
+        .columns
+        .iter()
+        .find(|col| col.constraints.contains(&Constraint::PrimaryKey))
+        .expect("Table should have a primary key");
+
+    let where_clause = format!(
+        "{} = {}",
+        pk_column.name,
+        generate_random_value(&pk_column.data_type)
+    );
+
+    format!("DELETE FROM {} WHERE {};", table.name, where_clause)
+}
+
+/// Generate a random SQL statement for a schema
+fn generate_random_statement(schema: &ArbitrarySchema) -> String {
+    let table = &schema.tables[get_random() as usize % schema.tables.len()];
+    match get_random() % 3 {
+        0 => generate_insert(table),
+        1 => generate_update(table),
+        _ => generate_delete(table),
+    }
+}
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (num_nodes, main_id) = (1, "n-001");
     let startup_data = json!({
         "num_nodes": num_nodes,
@@ -194,34 +299,37 @@ async fn main() {
     antithesis_init();
 
     let schema = gen_schema();
-
     let schema_sql = schema.to_sql();
-
     println!("{}", schema_sql);
+
     let opts = Opts::parse();
-    let mut handles = Vec::new();
+    let mut handles = Vec::with_capacity(opts.nr_threads);
 
     for _ in 0..opts.nr_threads {
-        // TODO: share the database between threads
-        let db = Arc::new(Builder::new_local(":memory:").build().await.unwrap());
-        let conn = db.connect().unwrap();
-        conn.execute(&schema_sql, ()).await.unwrap();
+        let db = Arc::new(Builder::new_local(":memory:").build().await?);
+        let conn = db.connect()?;
+        conn.execute(&schema_sql, ()).await?;
         let nr_iterations = opts.nr_iterations;
         let db = db.clone();
-        let handle = tokio::spawn(async move {
-            let conn = db.connect().unwrap();
+        let schema = schema.clone();
 
+        let handle = tokio::spawn(async move {
+            let conn = db.connect()?;
             for _ in 0..nr_iterations {
-                let mut rows = conn.query("select 1", ()).await.unwrap();
-                let row = rows.next().await.unwrap().unwrap();
-                let value = row.get_value(0).unwrap();
-                assert_always!(matches!(value, Value::Integer(1)), "value is incorrect");
+                let sql = generate_random_statement(&schema);
+                println!("{}", sql);
+                if let Err(e) = conn.execute(&sql, ()).await {
+                    println!("Error: {}", e);
+                }
             }
+            Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
         });
         handles.push(handle);
     }
+
     for handle in handles {
-        handle.await.unwrap();
+        handle.await??;
     }
     println!("Done.");
+    Ok(())
 }

@@ -1897,6 +1897,7 @@ dependencies = [
  "anarchist-readable-name-generator-lib",
  "antithesis_sdk",
  "clap",
+ "hex",
  "limbo",
  "serde_json",
  "tokio",
