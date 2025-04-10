@@ -413,6 +413,14 @@ impl Clone for PageContent {
 }
 
 impl PageContent {
+    pub fn new(offset: usize, buffer: Arc<RefCell<Buffer>>) -> Self {
+        Self {
+            offset,
+            buffer,
+            overflow_cells: Vec::new(),
+        }
+    }
+
     pub fn page_type(&self) -> PageType {
         self.read_u8(0).try_into().unwrap()
     }
@@ -741,11 +749,7 @@ fn finish_read_page(
     } else {
         0
     };
-    let inner = PageContent {
-        offset: pos,
-        buffer: buffer_ref.clone(),
-        overflow_cells: Vec::new(),
-    };
+    let inner = PageContent::new(pos, buffer_ref.clone());
     {
         page.get().contents.replace(inner);
         page.set_uptodate();
