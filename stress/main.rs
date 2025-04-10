@@ -319,6 +319,7 @@ fn generate_plan(opts: &Opts) -> Result<Plan, Box<dyn std::error::Error + Send +
             writeln!(log_file, "{}", sql)?;
             queries.push(sql);
         }
+        plan.queries_per_thread.push(queries);
     }
     Ok(plan)
 }
