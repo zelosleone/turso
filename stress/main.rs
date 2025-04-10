@@ -11,7 +11,7 @@ use serde_json::json;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 pub struct Plan {
     pub ddl_statements: Vec<String>,
@@ -349,13 +349,13 @@ fn read_plan_from_log_file(opts: &Opts) -> Result<Plan, Box<dyn std::error::Erro
         plan.ddl_statements
             .push(lines.next().expect("expected ddl statement").to_string());
     }
-    for i in 0..plan.nr_threads {
+    for _ in 0..plan.nr_threads {
         let mut queries = vec![];
         for _ in 0..plan.nr_iterations {
             queries.push(
                 lines
                     .next()
-                    .expect(format!("missing query for thread {}", i).as_str())
+                    .expect("missing query for thread {}")
                     .to_string(),
             );
         }
