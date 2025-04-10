@@ -3887,8 +3887,6 @@ impl BTreeCursor {
         new_payload: &[u8],
     ) -> Result<CursorResult<()>> {
         return_if_locked!(page_ref);
-        page_ref.set_dirty();
-        self.pager.add_dirty(page_ref.get().id);
         let buf = page_ref.get().contents.as_mut().unwrap().as_ptr();
         buf[dest_offset..dest_offset + new_payload.len()].copy_from_slice(&new_payload);
 
