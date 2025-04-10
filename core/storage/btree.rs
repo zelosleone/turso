@@ -2534,6 +2534,7 @@ impl BTreeCursor {
         // Let's now make a in depth check that we in fact added all possible cells somewhere and they are not lost
         for (page_idx, page) in pages_to_balance_new.iter().enumerate() {
             let contents = page.get_contents();
+            debug_validate_cells!(contents, self.usable_space() as u16);
             // Cells are distributed in order
             for cell_idx in 0..contents.cell_count() {
                 let (cell_start, cell_len) = contents.cell_get_raw_region(
@@ -4370,7 +4371,11 @@ fn free_cell_range(
             }
         }
         if removed_fragmentation > page.num_frag_free_bytes() {
-            return_corrupt!("Invalid fragmentation count");
+            return_corrupt!(format!(
+                "Invalid fragmentation count. Had {} and removed {}",
+                page.num_frag_free_bytes(),
+                removed_fragmentation
+            ));
         }
         let frag = page.num_frag_free_bytes() - removed_fragmentation;
         page.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, frag);

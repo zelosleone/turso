@@ -4,6 +4,7 @@ use anarchist_readable_name_generator_lib::readable_name_custom;
 use antithesis_sdk::random::{get_random, AntithesisRng};
 use antithesis_sdk::*;
 use clap::Parser;
+use core::panic;
 use hex;
 use limbo::Builder;
 use opts::Opts;
@@ -417,7 +418,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         for stmt in &plan.ddl_statements {
             println!("executing ddl {}", stmt);
             if let Err(e) = conn.execute(stmt, ()).await {
-                println!("Error creating table: {}", e);
+                match e {
+                    limbo::Error::SqlExecutionFailure(e) => {
+                        if e.contains("Corrupt database") {
+                            panic!("Error creating table: {}", e);
+                        } else {
+                            println!("Error creating table: {}", e);
+                        }
+                    }
+                    _ => panic!("Error creating table: {}", e),
+                }
             }
         }
 
@@ -430,7 +440,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let sql = &plan.queries_per_thread[thread][query_index];
                 println!("executing: {}", sql);
                 if let Err(e) = conn.execute(&sql, ()).await {
-                    println!("Error: {}", e);
+                    match e {
+                        limbo::Error::SqlExecutionFailure(e) => {
+                            if e.contains("Corrupt database") {
+                                panic!("Error executing query: {}", e);
+                            } else {
+                                println!("Error executing query: {}", e);
+                            }
+                        }
+                        _ => panic!("Error executing query: {}", e),
+                    }
                 }
             }
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
