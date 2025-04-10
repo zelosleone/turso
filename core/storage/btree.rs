@@ -46,32 +46,37 @@ use super::{
 ///     0        1        2        3        4        5        6        7        8       11
 ///
 pub mod offset {
-    /// type of btree page -> u8
+    /// Type of the B-Tree page (u8).
     pub const BTREE_PAGE_TYPE: usize = 0;
 
-    /// pointer to first freeblock -> u16
-    /// The second field of the b-tree page header is the offset of the first freeblock, or zero if there are no freeblocks on the page.
-    /// A freeblock is a structure used to identify unallocated space within a b-tree page.
-    /// Freeblocks are organized as a chain.
+    /// A pointer to the first freeblock (u16).
     ///
-    /// To be clear, freeblocks do not mean the regular unallocated free space to the left of the cell content area pointer, but instead
-    /// blocks of at least 4 bytes WITHIN the cell content area that are not in use due to e.g. deletions.
+    /// This field of the B-Tree page header is an offset to the first freeblock, or zero if
+    /// there are no freeblocks on the page.  A freeblock is a structure used to identify
+    /// unallocated space within a B-Tree page, organized as a chain.
+    ///
+    /// Please note that freeblocks do not mean the regular unallocated free space to the left
+    /// of the cell content area pointer, but instead blocks of at least 4
+    /// bytes WITHIN the cell content area that are not in use due to e.g.
+    /// deletions.
     pub const BTREE_FIRST_FREEBLOCK: usize = 1;
 
-    /// number of cells in the page -> u16
+    /// The number of cells in the page (u16).
     pub const BTREE_CELL_COUNT: usize = 3;
 
-    /// pointer to first byte of cell allocated content from top -> u16
-    /// SQLite strives to place cells as far toward the end of the b-tree page as it can,
-    /// in order to leave space for future growth of the cell pointer array.
-    /// = the cell content area pointer moves leftward as cells are added to the page
+    /// A pointer to first byte of cell allocated content from top (u16).
+    ///
+    /// SQLite strives to place cells as far toward the end of the b-tree page as it can, in
+    /// order to leave space for future growth of the cell pointer array. This means that the
+    /// cell content area pointer moves leftward as cells are added to the page.
     pub const BTREE_CELL_CONTENT_AREA: usize = 5;
 
-    /// number of fragmented bytes -> u8
+    /// The number of fragmented bytes (u8).
+    ///
     /// Fragments are isolated groups of 1, 2, or 3 unused bytes within the cell content area.
     pub const BTREE_FRAGMENTED_BYTES_COUNT: usize = 7;
 
-    /// if internalnode, pointer right most pointer (saved separately from cells) -> u32
+    /// The right-most pointer (saved separately from cells) (u32)
     pub const BTREE_RIGHTMOST_PTR: usize = 8;
 }
 
@@ -2904,10 +2909,7 @@ impl BTreeCursor {
         // set new page type
         root_contents.write_u8(offset::BTREE_PAGE_TYPE, new_root_page_type);
         root_contents.write_u32(offset::BTREE_RIGHTMOST_PTR, child.get().id as u32);
-        root_contents.write_u16(
-            offset::BTREE_CELL_CONTENT_AREA,
-            self.usable_space() as u16,
-        );
+        root_contents.write_u16(offset::BTREE_CELL_CONTENT_AREA, self.usable_space() as u16);
         root_contents.write_u16(offset::BTREE_CELL_COUNT, 0);
         root_contents.write_u16(offset::BTREE_FIRST_FREEBLOCK, 0);
 
