@@ -1,12 +1,13 @@
-use std::num::NonZero;
-use std::rc::Rc;
+use std::{num::NonZero, rc::Rc};
 
 use super::{
     cast_text_to_numeric, execute, AggFunc, BranchOffset, CursorID, FuncCtx, InsnFunction, PageIdx,
 };
-use crate::schema::BTreeTable;
-use crate::storage::wal::CheckpointMode;
-use crate::types::{OwnedValue, Record};
+use crate::{
+    schema::BTreeTable,
+    storage::wal::CheckpointMode,
+    types::{OwnedValue, Record},
+};
 use limbo_macros::Description;
 
 /// Flags provided to comparison instructions (e.g. Eq, Ne) which determine behavior related to NULL values.

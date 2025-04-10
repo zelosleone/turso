@@ -24,19 +24,19 @@ pub mod insn;
 pub mod likeop;
 pub mod sorter;
 
-use crate::error::LimboError;
-use crate::fast_lock::SpinLock;
-use crate::function::{AggFunc, FuncCtx};
-
-use crate::storage::sqlite3_ondisk::DatabaseHeader;
-use crate::storage::{btree::BTreeCursor, pager::Pager};
-use crate::translate::plan::{ResultSetColumn, TableReference};
-use crate::types::{
-    AggContext, Cursor, CursorResult, ImmutableRecord, OwnedValue, SeekKey, SeekOp,
+use crate::{
+    error::LimboError,
+    fast_lock::SpinLock,
+    function::{AggFunc, FuncCtx},
 };
-use crate::util::cast_text_to_numeric;
-use crate::vdbe::builder::CursorType;
-use crate::vdbe::insn::Insn;
+
+use crate::{
+    storage::{btree::BTreeCursor, pager::Pager, sqlite3_ondisk::DatabaseHeader},
+    translate::plan::{ResultSetColumn, TableReference},
+    types::{AggContext, Cursor, CursorResult, ImmutableRecord, OwnedValue, SeekKey, SeekOp},
+    util::cast_text_to_numeric,
+    vdbe::{builder::CursorType, insn::Insn},
+};
 
 use crate::CheckpointStatus;
 
@@ -45,16 +45,20 @@ use crate::json::JsonCacheCell;
 use crate::{Connection, MvStore, Result, TransactionState};
 use execute::{InsnFunction, InsnFunctionStepResult};
 
-use rand::distributions::{Distribution, Uniform};
-use rand::Rng;
+use rand::{
+    distributions::{Distribution, Uniform},
+    Rng,
+};
 use regex::Regex;
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
-use std::ffi::c_void;
-use std::num::NonZero;
-use std::ops::Deref;
-use std::rc::{Rc, Weak};
-use std::sync::Arc;
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    ffi::c_void,
+    num::NonZero,
+    ops::Deref,
+    rc::{Rc, Weak},
+    sync::Arc,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Represents a target for a jump instruction.

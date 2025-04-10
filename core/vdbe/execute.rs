@@ -1,46 +1,59 @@
 #![allow(unused_variables)]
-use crate::error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY};
-use crate::ext::ExtValue;
-use crate::function::{AggFunc, ExtFunc, MathFunc, MathFuncArity, ScalarFunc, VectorFunc};
-use crate::functions::datetime::{
-    exec_date, exec_datetime_full, exec_julianday, exec_strftime, exec_time, exec_unixepoch,
+use crate::{
+    error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY},
+    ext::ExtValue,
+    function::{AggFunc, ExtFunc, MathFunc, MathFuncArity, ScalarFunc, VectorFunc},
+    functions::{
+        datetime::{
+            exec_date, exec_datetime_full, exec_julianday, exec_strftime, exec_time, exec_unixepoch,
+        },
+        printf::exec_printf,
+    },
 };
-use crate::functions::printf::exec_printf;
 use std::{borrow::BorrowMut, rc::Rc};
 
-use crate::pseudo::PseudoCursor;
-use crate::result::LimboResult;
+use crate::{pseudo::PseudoCursor, result::LimboResult};
 
-use crate::schema::{affinity, Affinity};
-use crate::storage::btree::{BTreeCursor, BTreeKey};
+use crate::{
+    schema::{affinity, Affinity},
+    storage::btree::{BTreeCursor, BTreeKey},
+};
 
-use crate::storage::wal::CheckpointResult;
-use crate::types::{
-    AggContext, Cursor, CursorResult, ExternalAggState, OwnedValue, OwnedValueType, SeekKey, SeekOp,
+use crate::{
+    storage::wal::CheckpointResult,
+    types::{
+        AggContext, Cursor, CursorResult, ExternalAggState, OwnedValue, OwnedValueType, SeekKey,
+        SeekOp,
+    },
+    util::{
+        cast_real_to_integer, cast_text_to_integer, cast_text_to_numeric, cast_text_to_real,
+        checked_cast_text_to_numeric, parse_schema_rows, RoundToPrecision,
+    },
+    vdbe::{
+        builder::CursorType,
+        insn::{IdxInsertFlags, Insn},
+    },
+    vector::{vector32, vector64, vector_distance_cos, vector_extract},
 };
-use crate::util::{
-    cast_real_to_integer, cast_text_to_integer, cast_text_to_numeric, cast_text_to_real,
-    checked_cast_text_to_numeric, parse_schema_rows, RoundToPrecision,
-};
-use crate::vdbe::builder::CursorType;
-use crate::vdbe::insn::{IdxInsertFlags, Insn};
-use crate::vector::{vector32, vector64, vector_distance_cos, vector_extract};
 
 use crate::{info, MvCursor, RefValue, Row, StepResult, TransactionState};
 
-use super::insn::{
-    exec_add, exec_and, exec_bit_and, exec_bit_not, exec_bit_or, exec_boolean_not, exec_concat,
-    exec_divide, exec_multiply, exec_or, exec_remainder, exec_shift_left, exec_shift_right,
-    exec_subtract, Cookie, RegisterOrLiteral,
+use super::{
+    insn::{
+        exec_add, exec_and, exec_bit_and, exec_bit_not, exec_bit_or, exec_boolean_not, exec_concat,
+        exec_divide, exec_multiply, exec_or, exec_remainder, exec_shift_left, exec_shift_right,
+        exec_subtract, Cookie, RegisterOrLiteral,
+    },
+    HaltState,
 };
-use super::HaltState;
 use rand::thread_rng;
 
-use super::likeop::{construct_like_escape_arg, exec_glob, exec_like_with_escape};
-use super::sorter::Sorter;
+use super::{
+    likeop::{construct_like_escape_arg, exec_glob, exec_like_with_escape},
+    sorter::Sorter,
+};
 use regex::{Regex, RegexBuilder};
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap};
 
 #[cfg(feature = "json")]
 use crate::{
