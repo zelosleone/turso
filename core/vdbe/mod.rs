@@ -34,7 +34,6 @@ use crate::{
     storage::{btree::BTreeCursor, pager::Pager, sqlite3_ondisk::DatabaseHeader},
     translate::plan::{ResultSetColumn, TableReference},
     types::{AggContext, Cursor, CursorResult, ImmutableRecord, OwnedValue, SeekKey, SeekOp},
-    util::cast_text_to_numeric,
     vdbe::{builder::CursorType, insn::Insn},
 };
 
