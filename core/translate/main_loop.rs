@@ -1,8 +1,7 @@
-use limbo_sqlite3_parser::ast;
-
 use crate::{
     schema::Table,
     translate::result_row::emit_select_result,
+    types::SeekOp,
     vdbe::{
         builder::{CursorType, ProgramBuilder},
         insn::{CmpInsFlags, Insn},
@@ -18,8 +17,8 @@ use super::{
     group_by::is_column_in_group_by,
     order_by::{order_by_sorter_insert, sorter_insert},
     plan::{
-        IterationDirection, Operation, Search, SelectPlan, SelectQueryType, TableReference,
-        WhereTerm,
+        IterationDirection, Operation, Search, SeekDef, SelectPlan, SelectQueryType,
+        TableReference, WhereTerm,
     },
 };
 
@@ -166,7 +165,10 @@ pub fn init_loop(
                     }
                 }
 
-                if let Search::IndexSearch { index, .. } = search {
+                if let Search::Seek {
+                    index: Some(index), ..
+                } = search
+                {
                     let index_cursor_id = program.alloc_cursor_id(
                         Some(index.name.clone()),
                         CursorType::BTreeIndex(index.clone()),
@@ -381,268 +383,42 @@ pub fn open_loop(
                     });
                 } else {
                     // Otherwise, it's an index/rowid scan, i.e. first a seek is performed and then a scan until the comparison expression is not satisfied anymore.
-                    let index_cursor_id = if let Search::IndexSearch { index, .. } = search {
+                    let index_cursor_id = if let Search::Seek {
+                        index: Some(index), ..
+                    } = search
+                    {
                         Some(program.resolve_cursor_id(&index.name))
                     } else {
                         None
                     };
-                    let (cmp_expr, cmp_op, iter_dir) = match search {
-                        Search::IndexSearch {
-                            cmp_expr,
-                            cmp_op,
-                            iter_dir,
-                            ..
-                        } => (cmp_expr, cmp_op, iter_dir),
-                        Search::RowidSearch {
-                            cmp_expr,
-                            cmp_op,
-                            iter_dir,
-                        } => (cmp_expr, cmp_op, iter_dir),
-                        Search::RowidEq { .. } => unreachable!(),
+                    let is_index = index_cursor_id.is_some();
+                    let seek_cursor_id = index_cursor_id.unwrap_or(table_cursor_id);
+                    let Search::Seek { seek_def, .. } = search else {
+                        unreachable!("Rowid equality point lookup should have been handled above");
                     };
 
-                    // There are a few steps in an index seek:
-                    // 1. Emit the comparison expression for the rowid/index seek. For example, if we a clause 'WHERE index_key >= 10', we emit the comparison expression 10 into cmp_reg.
-                    //
-                    // 2. Emit the seek instruction. SeekGE and SeekGT are used in forwards iteration, SeekLT and SeekLE are used in backwards iteration.
-                    //    All of the examples below assume an ascending index, because we do not support descending indexes yet.
-                    //    If we are scanning the ascending index:
-                    //    - Forwards, and have a GT/GE/EQ comparison, the comparison expression from step 1 is used as the value to seek to, because that is the lowest possible value that satisfies the clause.
-                    //    - Forwards, and have a LT/LE comparison, NULL is used as the comparison expression because we actually want to start scanning from the beginning of the index.
-                    //    - Backwards, and have a GT/GE comparison, no Seek instruction is emitted and we emit LastAsync instead, because we want to start scanning from the end of the index.
-                    //    - Backwards, and have a LT/LE/EQ comparison, we emit a Seek instruction with the comparison expression from step 1 as the value to seek to, since that is the highest possible
-                    //      value that satisfies the clause.
-                    let seek_cmp_reg = program.alloc_register();
-                    let mut comparison_expr_translated = false;
-                    match (cmp_op, iter_dir) {
-                        // Forwards, GT/GE/EQ -> use the comparison expression (i.e. seek to the first key where the cmp expr is satisfied, and then scan forwards)
-                        (
-                            ast::Operator::Equals
-                            | ast::Operator::Greater
-                            | ast::Operator::GreaterEquals,
-                            IterationDirection::Forwards,
-                        ) => {
-                            translate_expr(
-                                program,
-                                Some(tables),
-                                &cmp_expr.expr,
-                                seek_cmp_reg,
-                                &t_ctx.resolver,
-                            )?;
-                            comparison_expr_translated = true;
-                            match cmp_op {
-                                ast::Operator::Equals | ast::Operator::GreaterEquals => {
-                                    program.emit_insn(Insn::SeekGE {
-                                        is_index: index_cursor_id.is_some(),
-                                        cursor_id: index_cursor_id.unwrap_or(table_cursor_id),
-                                        start_reg: seek_cmp_reg,
-                                        num_regs: 1,
-                                        target_pc: loop_end,
-                                    });
-                                }
-                                ast::Operator::Greater => {
-                                    program.emit_insn(Insn::SeekGT {
-                                        is_index: index_cursor_id.is_some(),
-                                        cursor_id: index_cursor_id.unwrap_or(table_cursor_id),
-                                        start_reg: seek_cmp_reg,
-                                        num_regs: 1,
-                                        target_pc: loop_end,
-                                    });
-                                }
-                                _ => unreachable!(),
-                            }
-                        }
-                        // Forwards, LT/LE -> use NULL (i.e. start from the beginning of the index)
-                        (
-                            ast::Operator::Less | ast::Operator::LessEquals,
-                            IterationDirection::Forwards,
-                        ) => {
-                            program.emit_insn(Insn::Null {
-                                dest: seek_cmp_reg,
-                                dest_end: None,
-                            });
-                            program.emit_insn(Insn::SeekGT {
-                                is_index: index_cursor_id.is_some(),
-                                cursor_id: index_cursor_id.unwrap_or(table_cursor_id),
-                                start_reg: seek_cmp_reg,
-                                num_regs: 1,
-                                target_pc: loop_end,
-                            });
-                        }
-                        // Backwards, GT/GE -> no seek, emit LastAsync (i.e. start from the end of the index)
-                        (
-                            ast::Operator::Greater | ast::Operator::GreaterEquals,
-                            IterationDirection::Backwards,
-                        ) => {
-                            program.emit_insn(Insn::LastAsync {
-                                cursor_id: index_cursor_id.unwrap_or(table_cursor_id),
-                            });
-                            program.emit_insn(Insn::LastAwait {
-                                cursor_id: index_cursor_id.unwrap_or(table_cursor_id),
-                                pc_if_empty: loop_end,
-                            });
-                        }
-                        // Backwards, LT/LE/EQ -> use the comparison expression (i.e. seek from the end of the index until the cmp expr is satisfied, and then scan backwards)
-                        (
-                            ast::Operator::Less | ast::Operator::LessEquals | ast::Operator::Equals,
-                            IterationDirection::Backwards,
-                        ) => {
-                            translate_expr(
-                                program,
-                                Some(tables),
-                                &cmp_expr.expr,
-                                seek_cmp_reg,
-                                &t_ctx.resolver,
-                            )?;
-                            comparison_expr_translated = true;
-                            match cmp_op {
-                                ast::Operator::Less => {
-                                    program.emit_insn(Insn::SeekLT {
-                                        is_index: index_cursor_id.is_some(),
-                                        cursor_id: index_cursor_id.unwrap_or(table_cursor_id),
-                                        start_reg: seek_cmp_reg,
-                                        num_regs: 1,
-                                        target_pc: loop_end,
-                                    });
-                                }
-                                ast::Operator::LessEquals | ast::Operator::Equals => {
-                                    program.emit_insn(Insn::SeekLE {
-                                        is_index: index_cursor_id.is_some(),
-                                        cursor_id: index_cursor_id.unwrap_or(table_cursor_id),
-                                        start_reg: seek_cmp_reg,
-                                        num_regs: 1,
-                                        target_pc: loop_end,
-                                    });
-                                }
-                                _ => unreachable!(),
-                            }
-                        }
-                        _ => unreachable!(),
-                    };
-
-                    program.resolve_label(loop_start, program.offset());
-
-                    let scan_terminating_cmp_reg = if comparison_expr_translated {
-                        seek_cmp_reg
-                    } else {
-                        let reg = program.alloc_register();
-                        translate_expr(
-                            program,
-                            Some(tables),
-                            &cmp_expr.expr,
-                            reg,
-                            &t_ctx.resolver,
-                        )?;
-                        reg
-                    };
-
-                    // 3. Emit a scan-terminating comparison instruction (IdxGT, IdxGE, IdxLT, IdxLE if index; GT, GE, LT, LE if btree rowid scan).
-                    //    Here the comparison expression from step 1 is compared to the current index key and the loop is exited if the comparison is true.
-                    //    The comparison operator used in the Idx__ instruction is the inverse of the WHERE clause comparison operator.
-                    //    For example, if we are scanning forwards and have a clause 'WHERE index_key < 10', we emit IdxGE(10) since >=10 is the first key where our condition is not satisfied anymore.
-                    match (cmp_op, iter_dir) {
-                        // Forwards, <= -> terminate if >
-                        (
-                            ast::Operator::Equals | ast::Operator::LessEquals,
-                            IterationDirection::Forwards,
-                        ) => {
-                            if let Some(index_cursor_id) = index_cursor_id {
-                                program.emit_insn(Insn::IdxGT {
-                                    cursor_id: index_cursor_id,
-                                    start_reg: scan_terminating_cmp_reg,
-                                    num_regs: 1,
-                                    target_pc: loop_end,
-                                });
-                            } else {
-                                let rowid_reg = program.alloc_register();
-                                program.emit_insn(Insn::RowId {
-                                    cursor_id: table_cursor_id,
-                                    dest: rowid_reg,
-                                });
-                                program.emit_insn(Insn::Gt {
-                                    lhs: rowid_reg,
-                                    rhs: scan_terminating_cmp_reg,
-                                    target_pc: loop_end,
-                                    flags: CmpInsFlags::default(),
-                                });
-                            }
-                        }
-                        // Forwards, < -> terminate if >=
-                        (ast::Operator::Less, IterationDirection::Forwards) => {
-                            if let Some(index_cursor_id) = index_cursor_id {
-                                program.emit_insn(Insn::IdxGE {
-                                    cursor_id: index_cursor_id,
-                                    start_reg: scan_terminating_cmp_reg,
-                                    num_regs: 1,
-                                    target_pc: loop_end,
-                                });
-                            } else {
-                                let rowid_reg = program.alloc_register();
-                                program.emit_insn(Insn::RowId {
-                                    cursor_id: table_cursor_id,
-                                    dest: rowid_reg,
-                                });
-                                program.emit_insn(Insn::Ge {
-                                    lhs: rowid_reg,
-                                    rhs: scan_terminating_cmp_reg,
-                                    target_pc: loop_end,
-                                    flags: CmpInsFlags::default(),
-                                });
-                            }
-                        }
-                        // Backwards, >= -> terminate if <
-                        (
-                            ast::Operator::Equals | ast::Operator::GreaterEquals,
-                            IterationDirection::Backwards,
-                        ) => {
-                            if let Some(index_cursor_id) = index_cursor_id {
-                                program.emit_insn(Insn::IdxLT {
-                                    cursor_id: index_cursor_id,
-                                    start_reg: scan_terminating_cmp_reg,
-                                    num_regs: 1,
-                                    target_pc: loop_end,
-                                });
-                            } else {
-                                let rowid_reg = program.alloc_register();
-                                program.emit_insn(Insn::RowId {
-                                    cursor_id: table_cursor_id,
-                                    dest: rowid_reg,
-                                });
-                                program.emit_insn(Insn::Lt {
-                                    lhs: rowid_reg,
-                                    rhs: scan_terminating_cmp_reg,
-                                    target_pc: loop_end,
-                                    flags: CmpInsFlags::default(),
-                                });
-                            }
-                        }
-                        // Backwards, > -> terminate if <=
-                        (ast::Operator::Greater, IterationDirection::Backwards) => {
-                            if let Some(index_cursor_id) = index_cursor_id {
-                                program.emit_insn(Insn::IdxLE {
-                                    cursor_id: index_cursor_id,
-                                    start_reg: scan_terminating_cmp_reg,
-                                    num_regs: 1,
-                                    target_pc: loop_end,
-                                });
-                            } else {
-                                let rowid_reg = program.alloc_register();
-                                program.emit_insn(Insn::RowId {
-                                    cursor_id: table_cursor_id,
-                                    dest: rowid_reg,
-                                });
-                                program.emit_insn(Insn::Le {
-                                    lhs: rowid_reg,
-                                    rhs: scan_terminating_cmp_reg,
-                                    target_pc: loop_end,
-                                    flags: CmpInsFlags::default(),
-                                });
-                            }
-                        }
-                        // Forwards, > and >= -> we already did a seek to the first key where the cmp expr is satisfied, so we dont have a terminating condition
-                        // Backwards, < and <= -> we already did a seek to the last key where the cmp expr is satisfied, so we dont have a terminating condition
-                        _ => {}
-                    }
+                    let start_reg = program.alloc_registers(seek_def.key.len());
+                    emit_seek(
+                        program,
+                        tables,
+                        seek_def,
+                        t_ctx,
+                        seek_cursor_id,
+                        start_reg,
+                        loop_end,
+                        is_index,
+                    )?;
+                    emit_seek_termination(
+                        program,
+                        tables,
+                        seek_def,
+                        t_ctx,
+                        seek_cursor_id,
+                        start_reg,
+                        loop_start,
+                        loop_end,
+                        is_index,
+                    )?;
 
                     if let Some(index_cursor_id) = index_cursor_id {
                         // Don't do a btree table seek until it's actually necessary to read from the table.
@@ -1002,12 +778,19 @@ pub fn close_loop(
                 // Rowid equality point lookups are handled with a SeekRowid instruction which does not loop, so there is no need to emit a NextAsync instruction.
                 if !matches!(search, Search::RowidEq { .. }) {
                     let (cursor_id, iter_dir) = match search {
-                        Search::IndexSearch {
-                            index, iter_dir, ..
-                        } => (program.resolve_cursor_id(&index.name), *iter_dir),
-                        Search::RowidSearch { iter_dir, .. } => {
-                            (program.resolve_cursor_id(&table.identifier), *iter_dir)
-                        }
+                        Search::Seek {
+                            index: Some(index),
+                            seek_def,
+                            ..
+                        } => (program.resolve_cursor_id(&index.name), seek_def.iter_dir),
+                        Search::Seek {
+                            index: None,
+                            seek_def,
+                            ..
+                        } => (
+                            program.resolve_cursor_id(&table.identifier),
+                            seek_def.iter_dir,
+                        ),
                         Search::RowidEq { .. } => unreachable!(),
                     };
 
@@ -1072,5 +855,203 @@ pub fn close_loop(
             }
         }
     }
+    Ok(())
+}
+
+/// Emits instructions for an index seek. See e.g. [crate::translate::plan::SeekDef]
+/// for more details about the seek definition.
+///
+/// Index seeks always position the cursor to the first row that matches the seek key,
+/// and then continue to emit rows until the termination condition is reached,
+/// see [emit_seek_termination] below.
+///
+/// If either 1. the seek finds no rows or 2. the termination condition is reached,
+/// the loop for that given table/index is fully exited.
+#[allow(clippy::too_many_arguments)]
+fn emit_seek(
+    program: &mut ProgramBuilder,
+    tables: &[TableReference],
+    seek_def: &SeekDef,
+    t_ctx: &mut TranslateCtx,
+    seek_cursor_id: usize,
+    start_reg: usize,
+    loop_end: BranchOffset,
+    is_index: bool,
+) -> Result<()> {
+    let Some(seek) = seek_def.seek.as_ref() else {
+        assert!(seek_def.iter_dir == IterationDirection::Backwards, "A SeekDef without a seek operation should only be used in backwards iteration direction");
+        program.emit_insn(Insn::LastAsync {
+            cursor_id: seek_cursor_id,
+        });
+        program.emit_insn(Insn::LastAwait {
+            cursor_id: seek_cursor_id,
+            pc_if_empty: loop_end,
+        });
+        return Ok(());
+    };
+    // We allocated registers for the full index key, but our seek key might not use the full index key.
+    // Later on for the termination condition we will overwrite the NULL registers.
+    // See [crate::translate::optimizer::build_seek_def] for more details about in which cases we do and don't use the full index key.
+    for i in 0..seek_def.key.len() {
+        let reg = start_reg + i;
+        if i >= seek.len {
+            if seek_def.null_pad_unset_cols() {
+                program.emit_insn(Insn::Null {
+                    dest: reg,
+                    dest_end: None,
+                });
+            }
+        } else {
+            translate_expr(
+                program,
+                Some(tables),
+                &seek_def.key[i],
+                reg,
+                &t_ctx.resolver,
+            )?;
+        }
+    }
+    let num_regs = if seek_def.null_pad_unset_cols() {
+        seek_def.key.len()
+    } else {
+        seek.len
+    };
+    match seek.op {
+        SeekOp::GE => program.emit_insn(Insn::SeekGE {
+            is_index,
+            cursor_id: seek_cursor_id,
+            start_reg,
+            num_regs,
+            target_pc: loop_end,
+        }),
+        SeekOp::GT => program.emit_insn(Insn::SeekGT {
+            is_index,
+            cursor_id: seek_cursor_id,
+            start_reg,
+            num_regs,
+            target_pc: loop_end,
+        }),
+        SeekOp::LE => program.emit_insn(Insn::SeekLE {
+            is_index,
+            cursor_id: seek_cursor_id,
+            start_reg,
+            num_regs,
+            target_pc: loop_end,
+        }),
+        SeekOp::LT => program.emit_insn(Insn::SeekLT {
+            is_index,
+            cursor_id: seek_cursor_id,
+            start_reg,
+            num_regs,
+            target_pc: loop_end,
+        }),
+        SeekOp::EQ => panic!("An index seek is never EQ"),
+    };
+
+    Ok(())
+}
+
+/// Emits instructions for an index seek termination. See e.g. [crate::translate::plan::SeekDef]
+/// for more details about the seek definition.
+///
+/// Index seeks always position the cursor to the first row that matches the seek key
+/// (see [emit_seek] above), and then continue to emit rows until the termination condition
+/// (if any) is reached.
+///
+/// If the termination condition is not present, the cursor is fully scanned to the end.
+#[allow(clippy::too_many_arguments)]
+fn emit_seek_termination(
+    program: &mut ProgramBuilder,
+    tables: &[TableReference],
+    seek_def: &SeekDef,
+    t_ctx: &mut TranslateCtx,
+    seek_cursor_id: usize,
+    start_reg: usize,
+    loop_start: BranchOffset,
+    loop_end: BranchOffset,
+    is_index: bool,
+) -> Result<()> {
+    let Some(termination) = seek_def.termination.as_ref() else {
+        program.resolve_label(loop_start, program.offset());
+        return Ok(());
+    };
+    let num_regs = termination.len;
+    // If the seek termination was preceded by a seek (which happens in most cases),
+    // we can re-use the registers that were allocated for the full index key.
+    let start_idx = seek_def.seek.as_ref().map_or(0, |seek| seek.len);
+    for i in start_idx..termination.len {
+        let reg = start_reg + i;
+        translate_expr(
+            program,
+            Some(tables),
+            &seek_def.key[i],
+            reg,
+            &t_ctx.resolver,
+        )?;
+    }
+    program.resolve_label(loop_start, program.offset());
+    let mut rowid_reg = None;
+    if !is_index {
+        rowid_reg = Some(program.alloc_register());
+        program.emit_insn(Insn::RowId {
+            cursor_id: seek_cursor_id,
+            dest: rowid_reg.unwrap(),
+        });
+    }
+
+    match (is_index, termination.op) {
+        (true, SeekOp::GE) => program.emit_insn(Insn::IdxGE {
+            cursor_id: seek_cursor_id,
+            start_reg,
+            num_regs,
+            target_pc: loop_end,
+        }),
+        (true, SeekOp::GT) => program.emit_insn(Insn::IdxGT {
+            cursor_id: seek_cursor_id,
+            start_reg,
+            num_regs,
+            target_pc: loop_end,
+        }),
+        (true, SeekOp::LE) => program.emit_insn(Insn::IdxLE {
+            cursor_id: seek_cursor_id,
+            start_reg,
+            num_regs,
+            target_pc: loop_end,
+        }),
+        (true, SeekOp::LT) => program.emit_insn(Insn::IdxLT {
+            cursor_id: seek_cursor_id,
+            start_reg,
+            num_regs,
+            target_pc: loop_end,
+        }),
+        (false, SeekOp::GE) => program.emit_insn(Insn::Ge {
+            lhs: rowid_reg.unwrap(),
+            rhs: start_reg,
+            target_pc: loop_end,
+            flags: CmpInsFlags::default(),
+        }),
+        (false, SeekOp::GT) => program.emit_insn(Insn::Gt {
+            lhs: rowid_reg.unwrap(),
+            rhs: start_reg,
+            target_pc: loop_end,
+            flags: CmpInsFlags::default(),
+        }),
+        (false, SeekOp::LE) => program.emit_insn(Insn::Le {
+            lhs: rowid_reg.unwrap(),
+            rhs: start_reg,
+            target_pc: loop_end,
+            flags: CmpInsFlags::default(),
+        }),
+        (false, SeekOp::LT) => program.emit_insn(Insn::Lt {
+            lhs: rowid_reg.unwrap(),
+            rhs: start_reg,
+            target_pc: loop_end,
+            flags: CmpInsFlags::default(),
+        }),
+        (_, SeekOp::EQ) => {
+            panic!("An index termination condition is never EQ")
+        }
+    };
+
     Ok(())
 }
