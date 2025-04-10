@@ -1,5 +1,3 @@
-use tracing::debug;
-
 use crate::{
     storage::{
         pager::Pager,
@@ -801,7 +799,7 @@ impl BTreeCursor {
                 // end
                 let has_parent = self.stack.current() > 0;
                 if has_parent {
-                    debug!("moving upwards");
+                    tracing::debug!("moving upwards");
                     self.going_upwards = true;
                     self.stack.pop();
                     continue;
@@ -1577,7 +1575,7 @@ impl BTreeCursor {
                     // insert
                     let overflow = {
                         let contents = page.get().contents.as_mut().unwrap();
-                        debug!(
+                        tracing::debug!(
                             "insert_into_page(overflow, cell_count={})",
                             contents.cell_count()
                         );
@@ -1697,7 +1695,7 @@ impl BTreeCursor {
                 let parent_contents = parent_page.get().contents.as_ref().unwrap();
                 let page_to_balance_idx = self.stack.current_cell_index() as usize;
 
-                debug!(
+                tracing::debug!(
                     "balance_non_root(parent_id={} page_to_balance_idx={})",
                     parent_page.get().id,
                     page_to_balance_idx
@@ -4148,7 +4146,7 @@ fn find_free_cell(page_ref: &PageContent, usable_space: u16, amount: usize) -> R
 pub fn btree_init_page(page: &PageRef, page_type: PageType, offset: usize, usable_space: u16) {
     // setup btree page
     let contents = page.get();
-    debug!("btree_init_page(id={}, offset={})", contents.id, offset);
+    tracing::debug!("btree_init_page(id={}, offset={})", contents.id, offset);
     let contents = contents.contents.as_mut().unwrap();
     contents.offset = offset;
     let id = page_type as u8;
@@ -4719,7 +4717,7 @@ fn fill_cell_payload(
     }
 
     let payload_overflow_threshold_max = payload_overflow_threshold_max(page_type, usable_space);
-    debug!(
+    tracing::debug!(
         "fill_cell_payload(record_size={}, payload_overflow_threshold_max={})",
         record_buf.len(),
         payload_overflow_threshold_max
