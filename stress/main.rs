@@ -9,7 +9,9 @@ use limbo::Builder;
 use opts::Opts;
 use serde_json::json;
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::fs::File;
+use std::io::Write;
+use std::sync::{Arc, Mutex};
 
 /// Represents a column in a SQLite table
 #[derive(Debug, Clone)]
@@ -297,11 +299,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let schema = gen_schema();
     let ddl_statements = schema.to_sql();
-    for stmt in &ddl_statements {
-        println!("{}", stmt);
-    }
 
     let opts = Opts::parse();
+    let log_file = File::create(&opts.log_file)?;
+    let log_file = Arc::new(Mutex::new(log_file));
+
+    // Write DDL statements to log file
+    {
+        let mut file = log_file.lock().unwrap();
+        for stmt in &ddl_statements {
+            writeln!(file, "{}", stmt)?;
+        }
+    }
+
     let mut handles = Vec::with_capacity(opts.nr_threads);
 
     for _ in 0..opts.nr_threads {
@@ -318,12 +328,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let nr_iterations = opts.nr_iterations;
         let db = db.clone();
         let schema = schema.clone();
+        let log_file = log_file.clone();
 
         let handle = tokio::spawn(async move {
             let conn = db.connect()?;
             for _ in 0..nr_iterations {
                 let sql = generate_random_statement(&schema);
-                println!("{}", sql);
+                {
+                    let mut file = log_file.lock().unwrap();
+                    writeln!(file, "{}", sql)?;
+                }
                 if let Err(e) = conn.execute(&sql, ()).await {
                     println!("Error: {}", e);
                 }
@@ -336,6 +350,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     for handle in handles {
         handle.await??;
     }
-    println!("Done.");
+    println!("Done. SQL statements written to {}", opts.log_file);
     Ok(())
 }
