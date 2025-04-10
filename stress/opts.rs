@@ -25,4 +25,13 @@ pub struct Opts {
         default_value = "limbostress.log"
     )]
     pub log_file: String,
+
+    /// Database file
+    #[clap(
+        short = 'd',
+        long,
+        help = "database file",
+        default_value = "limbostress.db"
+    )]
+    pub db_file: String,
 }

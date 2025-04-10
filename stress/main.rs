@@ -315,7 +315,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut handles = Vec::with_capacity(opts.nr_threads);
 
     for _ in 0..opts.nr_threads {
-        let db = Arc::new(Builder::new_local(":memory:").build().await?);
+        let db = Arc::new(Builder::new_local(&opts.db_file).build().await?);
         let conn = db.connect()?;
 
         // Apply each DDL statement individually
@@ -351,5 +351,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         handle.await??;
     }
     println!("Done. SQL statements written to {}", opts.log_file);
+    println!("Database file: {}", opts.db_file);
     Ok(())
 }
