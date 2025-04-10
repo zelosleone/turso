@@ -1894,8 +1894,10 @@ dependencies = [
 name = "limbo_stress"
 version = "0.0.19-pre.4"
 dependencies = [
+ "anarchist-readable-name-generator-lib",
  "antithesis_sdk",
  "clap",
+ "hex",
  "limbo",
  "serde_json",
  "tokio",
