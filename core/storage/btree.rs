@@ -1,28 +1,40 @@
 use tracing::debug;
 
-use crate::storage::pager::Pager;
-use crate::storage::sqlite3_ondisk::{
-    read_u32, read_varint, BTreeCell, PageContent, PageType, TableInteriorCell, TableLeafCell,
+use crate::{
+    storage::{
+        pager::Pager,
+        sqlite3_ondisk::{
+            read_u32, read_varint, BTreeCell, PageContent, PageType, TableInteriorCell,
+            TableLeafCell,
+        },
+    },
+    translate::plan::IterationDirection,
+    MvCursor,
 };
-use crate::translate::plan::IterationDirection;
-use crate::MvCursor;
 
-use crate::types::{
-    compare_immutable, CursorResult, ImmutableRecord, OwnedValue, RefValue, SeekKey, SeekOp,
+use crate::{
+    return_corrupt,
+    types::{
+        compare_immutable, CursorResult, ImmutableRecord, OwnedValue, RefValue, SeekKey, SeekOp,
+    },
+    LimboError, Result,
 };
-use crate::{return_corrupt, LimboError, Result};
 
-use std::cell::{Cell, Ref, RefCell};
-use std::cmp::Ordering;
 #[cfg(debug_assertions)]
 use std::collections::HashSet;
-use std::pin::Pin;
-use std::rc::Rc;
+use std::{
+    cell::{Cell, Ref, RefCell},
+    cmp::Ordering,
+    pin::Pin,
+    rc::Rc,
+};
 
-use super::pager::PageRef;
-use super::sqlite3_ondisk::{
-    read_record, write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell,
-    DATABASE_HEADER_SIZE,
+use super::{
+    pager::PageRef,
+    sqlite3_ondisk::{
+        read_record, write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell,
+        DATABASE_HEADER_SIZE,
+    },
 };
 
 /*
@@ -4844,31 +4856,28 @@ fn shift_pointers_left(page: &mut PageContent, cell_idx: usize) {
 
 #[cfg(test)]
 mod tests {
-    use rand::thread_rng;
-    use rand::Rng;
-    use rand_chacha::rand_core::RngCore;
-    use rand_chacha::rand_core::SeedableRng;
-    use rand_chacha::ChaCha8Rng;
+    use rand::{thread_rng, Rng};
+    use rand_chacha::{
+        rand_core::{RngCore, SeedableRng},
+        ChaCha8Rng,
+    };
     use test_log::test;
 
     use super::*;
-    use crate::fast_lock::SpinLock;
-    use crate::io::{Buffer, Completion, MemoryIO, OpenFlags, IO};
-    use crate::storage::database::DatabaseFile;
-    use crate::storage::page_cache::DumbLruPageCache;
-    use crate::storage::sqlite3_ondisk;
-    use crate::storage::sqlite3_ondisk::DatabaseHeader;
-    use crate::types::Text;
-    use crate::vdbe::Register;
-    use crate::Connection;
-    use crate::{BufferPool, DatabaseStorage, WalFile, WalFileShared, WriteCompletion};
-    use std::cell::RefCell;
-    use std::collections::HashSet;
-    use std::mem::transmute;
-    use std::ops::Deref;
-    use std::panic;
-    use std::rc::Rc;
-    use std::sync::Arc;
+    use crate::{
+        fast_lock::SpinLock,
+        io::{Buffer, Completion, MemoryIO, OpenFlags, IO},
+        storage::{
+            database::DatabaseFile, page_cache::DumbLruPageCache, sqlite3_ondisk,
+            sqlite3_ondisk::DatabaseHeader,
+        },
+        types::Text,
+        vdbe::Register,
+        BufferPool, Connection, DatabaseStorage, WalFile, WalFileShared, WriteCompletion,
+    };
+    use std::{
+        cell::RefCell, collections::HashSet, mem::transmute, ops::Deref, panic, rc::Rc, sync::Arc,
+    };
 
     use tempfile::TempDir;
 
