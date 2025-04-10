@@ -1179,6 +1179,7 @@ impl BTreeCursor {
     pub fn move_to(&mut self, key: SeekKey<'_>, cmp: SeekOp) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
         tracing::trace!("move_to(key={:?} cmp={:?})", key, cmp);
+        tracing::trace!("backtrace: {}", std::backtrace::Backtrace::force_capture());
         // For a table with N rows, we can find any row by row id in O(log(N)) time by starting at the root page and following the B-tree pointers.
         // B-trees consist of interior pages and leaf pages. Interior pages contain pointers to other pages, while leaf pages contain the actual row data.
         //
@@ -1630,12 +1631,6 @@ impl BTreeCursor {
                     let write_info = self.state.mut_write_info().unwrap();
                     write_info.state = WriteState::BalanceNonRoot;
                     self.stack.pop();
-                    // with `move_to` we advance the current cell idx of TableInterior once we move to left subtree.
-                    // On the other hand, with IndexInterior, we do not because we tranver in-order. In the latter case
-                    // since we haven't consumed the cell we can avoid retreating the current cell index.
-                    if matches!(current_page.get_contents().page_type(), PageType::TableLeaf) {
-                        self.stack.retreat();
-                    }
                     return_if_io!(self.balance_non_root());
                 }
                 WriteState::BalanceNonRoot | WriteState::BalanceNonRootWaitLoadPages => {
@@ -1660,10 +1655,14 @@ impl BTreeCursor {
             WriteState::BalanceStart => todo!(),
             WriteState::BalanceNonRoot => {
                 let parent_page = self.stack.top();
-                if parent_page.is_locked() {
-                    return Ok(CursorResult::IO);
-                }
                 return_if_locked_maybe_load!(self.pager, parent_page);
+                // If `move_to` moved to rightmost page, cell index will be out of bounds. Meaning cell_count+1.
+                // In any other case, `move_to` will stay in the correct index.
+                if self.stack.current_cell_index() as usize
+                    == parent_page.get_contents().cell_count() + 1
+                {
+                    self.stack.retreat();
+                }
                 parent_page.set_dirty();
                 self.pager.add_dirty(parent_page.get().id);
                 let parent_contents = parent_page.get().contents.as_ref().unwrap();
@@ -2535,6 +2534,7 @@ impl BTreeCursor {
         // Let's now make a in depth check that we in fact added all possible cells somewhere and they are not lost
         for (page_idx, page) in pages_to_balance_new.iter().enumerate() {
             let contents = page.get_contents();
+            debug_validate_cells!(contents, self.usable_space() as u16);
             // Cells are distributed in order
             for cell_idx in 0..contents.cell_count() {
                 let (cell_start, cell_len) = contents.cell_get_raw_region(
@@ -2871,6 +2871,7 @@ impl BTreeCursor {
             &mut child_contents.overflow_cells,
             &mut root_contents.overflow_cells,
         );
+        root_contents.overflow_cells.clear();
 
         // 2. Modify root
         let new_root_page_type = match root_contents.page_type() {
@@ -3133,6 +3134,7 @@ impl BTreeCursor {
         key: &BTreeKey,
         moved_before: bool, /* Indicate whether it's necessary to traverse to find the leaf page */
     ) -> Result<CursorResult<()>> {
+        tracing::trace!("insert");
         match &self.mv_cursor {
             Some(mv_cursor) => match key.maybe_rowid() {
                 Some(rowid) => {
@@ -3144,6 +3146,7 @@ impl BTreeCursor {
                 None => todo!("Support mvcc inserts with index btrees"),
             },
             None => {
+                tracing::trace!("moved {}", moved_before);
                 if !moved_before {
                     self.iteration_state = IterationState::Iterating(IterationDirection::Forwards);
                     match key {
@@ -4368,7 +4371,11 @@ fn free_cell_range(
             }
         }
         if removed_fragmentation > page.num_frag_free_bytes() {
-            return_corrupt!("Invalid fragmentation count");
+            return_corrupt!(format!(
+                "Invalid fragmentation count. Had {} and removed {}",
+                page.num_frag_free_bytes(),
+                removed_fragmentation
+            ));
         }
         let frag = page.num_frag_free_bytes() - removed_fragmentation;
         page.write_u8(PAGE_HEADER_OFFSET_FRAGMENTED_BYTES_COUNT, frag);
