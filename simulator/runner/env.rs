@@ -67,7 +67,7 @@ impl SimulatorEnv {
         };
 
         let opts = SimulatorOpts {
-            ticks: rng.gen_range(cli_opts.minimum_size..=cli_opts.maximum_size),
+            ticks: rng.gen_range(cli_opts.minimum_tests..=cli_opts.maximum_tests),
             max_connections: 1, // TODO: for now let's use one connection as we didn't implement
             // correct transactions processing
             max_tables: rng.gen_range(0..128),
@@ -77,7 +77,7 @@ impl SimulatorEnv {
             delete_percent,
             drop_percent,
             page_size: 4096, // TODO: randomize this too
-            max_interactions: rng.gen_range(cli_opts.minimum_size..=cli_opts.maximum_size),
+            max_interactions: rng.gen_range(cli_opts.minimum_tests..=cli_opts.maximum_tests),
             max_time_simulation: cli_opts.maximum_time,
         };
 

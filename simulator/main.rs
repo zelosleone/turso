@@ -48,7 +48,7 @@ impl Paths {
 
 fn main() -> Result<(), String> {
     init_logger();
-    let cli_opts = SimulatorCLI::parse();
+    let mut cli_opts = SimulatorCLI::parse();
     cli_opts.validate()?;
 
     match cli_opts.subcommand {

@@ -19,14 +19,14 @@ pub struct SimulatorCLI {
         help = "change the maximum size of the randomly generated sequence of interactions",
         default_value_t = 5000
     )]
-    pub maximum_size: usize,
+    pub maximum_tests: usize,
     #[clap(
         short = 'k',
         long,
         help = "change the minimum size of the randomly generated sequence of interactions",
         default_value_t = 1000
     )]
-    pub minimum_size: usize,
+    pub minimum_tests: usize,
     #[clap(
         short = 't',
         long,
@@ -81,16 +81,22 @@ pub enum SimulatorCommand {
 }
 
 impl SimulatorCLI {
-    pub fn validate(&self) -> Result<(), String> {
-        if self.minimum_size < 1 {
+    pub fn validate(&mut self) -> Result<(), String> {
+        if self.minimum_tests < 1 {
             return Err("minimum size must be at least 1".to_string());
         }
-        if self.maximum_size < 1 {
+        if self.maximum_tests < 1 {
             return Err("maximum size must be at least 1".to_string());
         }
-        // todo: fix an issue here where if minimum size is not defined, it prevents setting low maximum sizes.
-        if self.minimum_size > self.maximum_size {
-            return Err("Minimum size cannot be greater than maximum size".to_string());
+
+        if self.minimum_tests > self.maximum_tests {
+            log::warn!(
+                "minimum size '{}' is greater than '{}' maximum size, setting both to '{}'",
+                self.minimum_tests,
+                self.maximum_tests,
+                self.maximum_tests
+            );
+            self.minimum_tests = self.maximum_tests - 1;
         }
 
         if self.seed.is_some() && self.load.is_some() {
