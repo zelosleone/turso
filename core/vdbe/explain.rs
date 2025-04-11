@@ -748,28 +748,28 @@ pub fn insn_to_str(
                 is_index: _,
                 cursor_id,
                 start_reg,
-                num_regs: _,
+                num_regs,
                 target_pc,
             }
             | Insn::SeekGE {
                 is_index: _,
                 cursor_id,
                 start_reg,
-                num_regs: _,
+                num_regs,
                 target_pc,
             }
             | Insn::SeekLE {
                 is_index: _,
                 cursor_id,
                 start_reg,
-                num_regs: _,
+                num_regs,
                 target_pc,
             }
             | Insn::SeekLT {
                 is_index: _,
                 cursor_id,
                 start_reg,
-                num_regs: _,
+                num_regs,
                 target_pc,
             } => (
                 match insn {
@@ -784,7 +784,7 @@ pub fn insn_to_str(
                 *start_reg as i32,
                 OwnedValue::build_text(""),
                 0,
-                "".to_string(),
+                format!("key=[{}..{}]", start_reg, start_reg + num_regs - 1),
             ),
             Insn::SeekEnd { cursor_id } => (
                 "SeekEnd",
@@ -822,58 +822,40 @@ pub fn insn_to_str(
             Insn::IdxGT {
                 cursor_id,
                 start_reg,
-                num_regs: _,
+                num_regs,
                 target_pc,
-            } => (
-                "IdxGT",
-                *cursor_id as i32,
-                target_pc.to_debug_int(),
-                *start_reg as i32,
-                OwnedValue::build_text(""),
-                0,
-                "".to_string(),
-            ),
-            Insn::IdxGE {
+            }
+            | Insn::IdxGE {
                 cursor_id,
                 start_reg,
-                num_regs: _,
+                num_regs,
                 target_pc,
-            } => (
-                "IdxGE",
-                *cursor_id as i32,
-                target_pc.to_debug_int(),
-                *start_reg as i32,
-                OwnedValue::build_text(""),
-                0,
-                "".to_string(),
-            ),
-            Insn::IdxLT {
+            }
+            | Insn::IdxLE {
                 cursor_id,
                 start_reg,
-                num_regs: _,
+                num_regs,
                 target_pc,
-            } => (
-                "IdxLT",
-                *cursor_id as i32,
-                target_pc.to_debug_int(),
-                *start_reg as i32,
-                OwnedValue::build_text(""),
-                0,
-                "".to_string(),
-            ),
-            Insn::IdxLE {
+            }
+            | Insn::IdxLT {
                 cursor_id,
                 start_reg,
-                num_regs: _,
+                num_regs,
                 target_pc,
             } => (
-                "IdxLE",
+                match insn {
+                    Insn::IdxGT { .. } => "IdxGT",
+                    Insn::IdxGE { .. } => "IdxGE",
+                    Insn::IdxLE { .. } => "IdxLE",
+                    Insn::IdxLT { .. } => "IdxLT",
+                    _ => unreachable!(),
+                },
                 *cursor_id as i32,
                 target_pc.to_debug_int(),
                 *start_reg as i32,
                 OwnedValue::build_text(""),
                 0,
-                "".to_string(),
+                format!("key=[{}..{}]", start_reg, start_reg + num_regs - 1),
             ),
             Insn::DecrJumpZero { reg, target_pc } => (
                 "DecrJumpZero",

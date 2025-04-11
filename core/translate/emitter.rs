@@ -397,10 +397,12 @@ fn emit_delete_insns(
     let cursor_id = match &table_reference.op {
         Operation::Scan { .. } => program.resolve_cursor_id(&table_reference.identifier),
         Operation::Search(search) => match search {
-            Search::RowidEq { .. } | Search::RowidSearch { .. } => {
+            Search::RowidEq { .. } | Search::Seek { index: None, .. } => {
                 program.resolve_cursor_id(&table_reference.identifier)
             }
-            Search::IndexSearch { index, .. } => program.resolve_cursor_id(&index.name),
+            Search::Seek {
+                index: Some(index), ..
+            } => program.resolve_cursor_id(&index.name),
         },
         _ => return Ok(()),
     };
@@ -537,12 +539,14 @@ fn emit_update_insns(
             table_ref.virtual_table().is_some(),
         ),
         Operation::Search(search) => match search {
-            &Search::RowidEq { .. } | Search::RowidSearch { .. } => (
+            &Search::RowidEq { .. } | Search::Seek { index: None, .. } => (
                 program.resolve_cursor_id(&table_ref.identifier),
                 None,
                 false,
             ),
-            Search::IndexSearch { index, .. } => (
+            Search::Seek {
+                index: Some(index), ..
+            } => (
                 program.resolve_cursor_id(&table_ref.identifier),
                 Some((index.clone(), program.resolve_cursor_id(&index.name))),
                 false,

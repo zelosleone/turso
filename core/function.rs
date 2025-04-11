@@ -293,6 +293,8 @@ pub enum ScalarFunc {
     StrfTime,
     Printf,
     Likely,
+    TimeDiff,
+    Likelihood,
 }
 
 impl Display for ScalarFunc {
@@ -348,6 +350,8 @@ impl Display for ScalarFunc {
             Self::StrfTime => "strftime".to_string(),
             Self::Printf => "printf".to_string(),
             Self::Likely => "likely".to_string(),
+            Self::TimeDiff => "timediff".to_string(),
+            Self::Likelihood => "likelihood".to_string(),
         };
         write!(f, "{}", str)
     }
@@ -555,6 +559,12 @@ impl Func {
                 }
                 Ok(Self::Agg(AggFunc::Total))
             }
+            "timediff" => {
+                if arg_count != 2 {
+                    crate::bail_parse_error!("wrong number of arguments to function {}()", name)
+                }
+                Ok(Self::Scalar(ScalarFunc::TimeDiff))
+            }
             #[cfg(feature = "json")]
             "jsonb_group_array" => Ok(Self::Agg(AggFunc::JsonbGroupArray)),
             #[cfg(feature = "json")]
@@ -599,6 +609,7 @@ impl Func {
             "sqlite_source_id" => Ok(Self::Scalar(ScalarFunc::SqliteSourceId)),
             "replace" => Ok(Self::Scalar(ScalarFunc::Replace)),
             "likely" => Ok(Self::Scalar(ScalarFunc::Likely)),
+            "likelihood" => Ok(Self::Scalar(ScalarFunc::Likelihood)),
             #[cfg(feature = "json")]
             "json" => Ok(Self::Json(JsonFunc::Json)),
             #[cfg(feature = "json")]

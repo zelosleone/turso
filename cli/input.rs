@@ -43,7 +43,7 @@ impl Default for Io {
             true => {
                 #[cfg(all(target_os = "linux", feature = "io_uring"))]
                 {
-                    Io::IoUring
+                    Io::Syscall // FIXME: make io_uring faster so it can be the default
                 }
                 #[cfg(any(
                     not(target_os = "linux"),

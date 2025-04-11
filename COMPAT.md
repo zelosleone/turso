@@ -226,7 +226,7 @@ Feature support of [sqlite expr syntax](https://www.sqlite.org/lang_expr.html).
 | length(X)                    | Yes     |                                                      |
 | like(X,Y)                    | Yes     |                                                      |
 | like(X,Y,Z)                  | Yes     |                                                      |
-| likelihood(X,Y)              | No      |                                                      |
+| likelihood(X,Y)              | Yes     |                                                      |
 | likely(X)                    | Yes     |                                                      |
 | load_extension(X)            | Yes     | sqlite3 extensions not yet supported                 |
 | load_extension(X,Y)          | No      |                                                      |
@@ -328,7 +328,7 @@ Feature support of [sqlite expr syntax](https://www.sqlite.org/lang_expr.html).
 | julianday() | Partial | does not support modifiers   |
 | unixepoch() | Partial | does not support modifiers   |
 | strftime()  | Yes     | partially supports modifiers |
-| timediff()  | No      |                              |
+| timediff()  | Yes     | partially supports modifiers |
 
 Modifiers:
 
