@@ -3,15 +3,44 @@ use std::{
     io::{self, Write},
     path::PathBuf,
     process::Command,
+    time::SystemTime,
 };
 
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
 use crate::{InteractionPlan, Paths};
+
+use super::cli::SimulatorCLI;
 
 /// A bug is a run that has been identified as buggy.
 #[derive(Clone)]
 pub(crate) enum Bug {
     Unloaded { seed: u64 },
-    Loaded { seed: u64, plan: InteractionPlan },
+    Loaded(LoadedBug),
+}
+
+#[derive(Clone)]
+pub struct LoadedBug {
+    /// The seed of the bug.
+    pub seed: u64,
+    /// The plan of the bug.
+    pub plan: InteractionPlan,
+    /// The runs of the bug.
+    pub runs: Vec<BugRun>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub(crate) struct BugRun {
+    /// Commit hash of the current version of Limbo.
+    hash: String,
+    /// Timestamp of the run.
+    #[serde(with = "chrono::serde::ts_seconds")]
+    timestamp: DateTime<Utc>,
+    /// Error message of the run.
+    error: Option<String>,
+    /// Options
+    cli_options: SimulatorCLI,
 }
 
 impl Bug {
@@ -27,7 +56,7 @@ impl Bug {
     pub(crate) fn seed(&self) -> u64 {
         match self {
             Bug::Unloaded { seed } => *seed,
-            Bug::Loaded { seed, .. } => *seed,
+            Bug::Loaded(LoadedBug { seed, .. }) => *seed,
         }
     }
 }
@@ -67,6 +96,36 @@ impl BugBase {
 
     /// Load the bug base from one of the potential paths.
     pub(crate) fn load() -> Result<Self, String> {
+        let potential_paths = vec![
+            // limbo project directory
+            BugBase::get_limbo_project_dir()?,
+            // home directory
+            dirs::home_dir().ok_or("should be able to get home directory".to_string())?,
+            // current directory
+            std::env::current_dir()
+                .or(Err("should be able to get current directory".to_string()))?,
+        ];
+
+        for path in &potential_paths {
+            let path = path.join(".bugbase");
+            if path.exists() {
+                return BugBase::new(path);
+            }
+        }
+
+        for path in potential_paths {
+            let path = path.join(".bugbase");
+            if std::fs::create_dir_all(&path).is_ok() {
+                log::info!("bug base created at {}", path.display());
+                return BugBase::new(path);
+            }
+        }
+
+        Err("failed to create bug base".to_string())
+    }
+
+    /// Load the bug base from one of the potential paths.
+    pub(crate) fn interactive_load() -> Result<Self, String> {
         let potential_paths = vec![
             // limbo project directory
             BugBase::get_limbo_project_dir()?,
@@ -119,14 +178,41 @@ impl BugBase {
     }
 
     /// Add a new bug to the bug base.
-    pub(crate) fn add_bug(&mut self, seed: u64, plan: InteractionPlan) -> Result<(), String> {
+    pub(crate) fn add_bug(
+        &mut self,
+        seed: u64,
+        plan: InteractionPlan,
+        error: Option<String>,
+        cli_options: &SimulatorCLI,
+    ) -> Result<(), String> {
         log::debug!("adding bug with seed {}", seed);
-        if self.bugs.contains_key(&seed) {
-            return Err(format!("Bug with hash {} already exists", seed));
+        let bug = self.get_bug(seed);
+
+        if bug.is_some() {
+            let mut bug = self.load_bug(seed)?;
+            bug.plan = plan.clone();
+            bug.runs.push(BugRun {
+                hash: Self::get_current_commit_hash()?,
+                timestamp: SystemTime::now().into(),
+                error,
+                cli_options: cli_options.clone(),
+            });
+            self.bugs.insert(seed, Bug::Loaded(bug.clone()));
+        } else {
+            let bug = LoadedBug {
+                seed,
+                plan: plan.clone(),
+                runs: vec![BugRun {
+                    hash: Self::get_current_commit_hash()?,
+                    timestamp: SystemTime::now().into(),
+                    error,
+                    cli_options: cli_options.clone(),
+                }],
+            };
+            self.bugs.insert(seed, Bug::Loaded(bug.clone()));
         }
-        self.save_bug(seed, &plan)?;
-        self.bugs.insert(seed, Bug::Loaded { seed, plan });
-        Ok(())
+        // Save the bug to the bug base.
+        self.save_bug(seed)
     }
 
     /// Get a bug from the bug base.
@@ -135,36 +221,48 @@ impl BugBase {
     }
 
     /// Save a bug to the bug base.
-    pub(crate) fn save_bug(&self, seed: u64, plan: &InteractionPlan) -> Result<(), String> {
-        let bug_path = self.path.join(seed.to_string());
-        std::fs::create_dir_all(&bug_path)
-            .or(Err("should be able to create bug directory".to_string()))?;
+    fn save_bug(&self, seed: u64) -> Result<(), String> {
+        let bug = self.get_bug(seed);
 
-        let seed_path = bug_path.join("seed.txt");
-        std::fs::write(&seed_path, seed.to_string())
-            .or(Err("should be able to write seed file".to_string()))?;
+        match bug {
+            None | Some(Bug::Unloaded { .. }) => {
+                unreachable!("save should only be called within add_bug");
+            }
+            Some(Bug::Loaded(bug)) => {
+                let bug_path = self.path.join(seed.to_string());
+                std::fs::create_dir_all(&bug_path)
+                    .or(Err("should be able to create bug directory".to_string()))?;
 
-        // At some point we might want to save the commit hash of the current
-        // version of Limbo.
-        // let commit_hash = Self::get_current_commit_hash()?;
-        // let commit_hash_path = bug_path.join("commit_hash.txt");
-        // std::fs::write(&commit_hash_path, commit_hash)
-        //     .or(Err("should be able to write commit hash file".to_string()))?;
+                let seed_path = bug_path.join("seed.txt");
+                std::fs::write(&seed_path, seed.to_string())
+                    .or(Err("should be able to write seed file".to_string()))?;
 
-        let plan_path = bug_path.join("plan.json");
-        std::fs::write(
-            &plan_path,
-            serde_json::to_string(plan).or(Err("should be able to serialize plan".to_string()))?,
-        )
-        .or(Err("should be able to write plan file".to_string()))?;
+                let plan_path = bug_path.join("plan.json");
+                std::fs::write(
+                    &plan_path,
+                    serde_json::to_string_pretty(&bug.plan)
+                        .or(Err("should be able to serialize plan".to_string()))?,
+                )
+                .or(Err("should be able to write plan file".to_string()))?;
 
-        let readable_plan_path = bug_path.join("plan.sql");
-        std::fs::write(&readable_plan_path, plan.to_string())
-            .or(Err("should be able to write readable plan file".to_string()))?;
+                let readable_plan_path = bug_path.join("plan.sql");
+                std::fs::write(&readable_plan_path, bug.plan.to_string())
+                    .or(Err("should be able to write readable plan file".to_string()))?;
+
+                let runs_path = bug_path.join("runs.json");
+                std::fs::write(
+                    &runs_path,
+                    serde_json::to_string_pretty(&bug.runs)
+                        .or(Err("should be able to serialize runs".to_string()))?,
+                )
+                .or(Err("should be able to write runs file".to_string()))?;
+            }
+        }
+
         Ok(())
     }
 
-    pub(crate) fn load_bug(&mut self, seed: u64) -> Result<InteractionPlan, String> {
+    pub(crate) fn load_bug(&mut self, seed: u64) -> Result<LoadedBug, String> {
         let seed_match = self.bugs.get(&seed);
 
         match seed_match {
@@ -176,30 +274,60 @@ impl BugBase {
                 let plan: InteractionPlan = serde_json::from_str(&plan)
                     .or(Err("should be able to deserialize plan".to_string()))?;
 
-                let bug = Bug::Loaded {
+                let runs =
+                    std::fs::read_to_string(self.path.join(seed.to_string()).join("runs.json"))
+                        .or(Err("should be able to read runs file".to_string()))?;
+                let runs: Vec<BugRun> = serde_json::from_str(&runs)
+                    .or(Err("should be able to deserialize runs".to_string()))?;
+
+                let bug = LoadedBug {
                     seed,
                     plan: plan.clone(),
+                    runs,
                 };
-                self.bugs.insert(seed, bug);
+
+                self.bugs.insert(seed, Bug::Loaded(bug.clone()));
                 log::debug!("Loaded bug with seed {}", seed);
-                Ok(plan)
+                Ok(bug)
             }
-            Some(Bug::Loaded { plan, .. }) => {
+            Some(Bug::Loaded(bug)) => {
                 log::warn!(
                     "Bug with seed {} is already loaded, returning the existing plan",
                     seed
                 );
-                Ok(plan.clone())
+                Ok(bug.clone())
             }
         }
     }
 
-    pub(crate) fn remove_bug(&mut self, seed: u64) -> Result<(), String> {
-        self.bugs.remove(&seed);
-        std::fs::remove_dir_all(self.path.join(seed.to_string()))
-            .or(Err("should be able to remove bug directory".to_string()))?;
+    pub(crate) fn mark_successful_run(
+        &mut self,
+        seed: u64,
+        cli_options: &SimulatorCLI,
+    ) -> Result<(), String> {
+        let bug = self.get_bug(seed);
+        match bug {
+            None => {
+                log::debug!("removing bug base entry for {}", seed);
+                std::fs::remove_dir_all(self.path.join(seed.to_string()))
+                    .or(Err("should be able to remove bug directory".to_string()))?;
+            }
+            Some(_) => {
+                let mut bug = self.load_bug(seed)?;
+                bug.runs.push(BugRun {
+                    hash: Self::get_current_commit_hash()?,
+                    timestamp: SystemTime::now().into(),
+                    error: None,
+                    cli_options: cli_options.clone(),
+                });
+                self.bugs.insert(seed, Bug::Loaded(bug.clone()));
+                // Save the bug to the bug base.
+                self.save_bug(seed)
+                    .or(Err("should be able to save bug".to_string()))?;
+                log::debug!("Updated bug with seed {}", seed);
+            }
+        }
 
-        log::debug!("Removed bug with seed {}", seed);
         Ok(())
     }
 }
@@ -223,6 +351,18 @@ impl BugBase {
 }
 
 impl BugBase {
+    pub(crate) fn get_current_commit_hash() -> Result<String, String> {
+        let output = Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .or(Err("should be able to get the commit hash".to_string()))?;
+        let commit_hash = String::from_utf8(output.stdout)
+            .or(Err("commit hash should be valid utf8".to_string()))?
+            .trim()
+            .to_string();
+        Ok(commit_hash)
+    }
+
     pub(crate) fn get_limbo_project_dir() -> Result<PathBuf, String> {
         Ok(PathBuf::from(
             String::from_utf8(

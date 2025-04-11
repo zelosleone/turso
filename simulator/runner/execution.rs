@@ -122,8 +122,10 @@ fn execute_plan(
 
     if let SimConnection::Disconnected = connection {
         log::debug!("connecting {}", connection_index);
-        env.connections[connection_index] = SimConnection::Connected(env.db.connect().unwrap());
+        env.connections[connection_index] =
+            SimConnection::LimboConnection(env.db.connect().unwrap());
     } else {
+        log::debug!("connection {} already connected", connection_index);
         match execute_interaction(env, connection_index, interaction, &mut state.stack) {
             Ok(next_execution) => {
                 interaction.shadow(env);
@@ -163,7 +165,7 @@ fn execute_plan(
 /// `execute_interaction` uses this type in conjunction with a result, where
 /// the `Err` case indicates a full-stop due to a bug, and the `Ok` case
 /// indicates the next step in the plan.
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub(crate) enum ExecutionContinuation {
     /// Default continuation, execute the next interaction.
     NextInteraction,
@@ -185,7 +187,8 @@ pub(crate) fn execute_interaction(
     match interaction {
         Interaction::Query(_) => {
             let conn = match &mut env.connections[connection_index] {
-                SimConnection::Connected(conn) => conn,
+                SimConnection::LimboConnection(conn) => conn,
+                SimConnection::SQLiteConnection(_) => unreachable!(),
                 SimConnection::Disconnected => unreachable!(),
             };
 
