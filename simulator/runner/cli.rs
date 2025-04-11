@@ -1,6 +1,7 @@
 use clap::{command, Parser};
+use serde::{Deserialize, Serialize};
 
-#[derive(Parser)]
+#[derive(Parser, Clone, Serialize, Deserialize)]
 #[command(name = "limbo-simulator")]
 #[command(author, version, about, long_about = None)]
 pub struct SimulatorCLI {

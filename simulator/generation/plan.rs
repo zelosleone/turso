@@ -11,7 +11,7 @@ use crate::{
         },
         table::Value,
     },
-    runner::env::{SimConnection, SimulatorEnvTrait},
+    runner::env::SimConnection,
     SimulatorEnv,
 };
 
@@ -238,7 +238,7 @@ impl Display for Interaction {
     }
 }
 
-type AssertionFunc = dyn Fn(&Vec<ResultSet>, &dyn SimulatorEnvTrait) -> Result<bool>;
+type AssertionFunc = dyn Fn(&Vec<ResultSet>, &SimulatorEnv) -> Result<bool>;
 
 enum AssertionAST {
     Pick(),
@@ -523,7 +523,7 @@ impl Interaction {
     pub(crate) fn execute_assertion(
         &self,
         stack: &Vec<ResultSet>,
-        env: &impl SimulatorEnvTrait,
+        env: &SimulatorEnv,
     ) -> Result<()> {
         match self {
             Self::Query(_) => {
@@ -554,7 +554,7 @@ impl Interaction {
     pub(crate) fn execute_assumption(
         &self,
         stack: &Vec<ResultSet>,
-        env: &dyn SimulatorEnvTrait,
+        env: &SimulatorEnv,
     ) -> Result<()> {
         match self {
             Self::Query(_) => {
@@ -596,15 +596,12 @@ impl Interaction {
             Self::Fault(fault) => {
                 match fault {
                     Fault::Disconnect => {
-                        match env.connections[conn_index] {
-                            SimConnection::Connected(ref mut conn) => {
-                                conn.close()?;
-                            }
-                            SimConnection::Disconnected => {
-                                return Err(limbo_core::LimboError::InternalError(
-                                    "Tried to disconnect a disconnected connection".to_string(),
-                                ));
-                            }
+                        if env.connections[conn_index].is_connected() {
+                            env.connections[conn_index].disconnect();
+                        } else {
+                            return Err(limbo_core::LimboError::InternalError(
+                                "connection already disconnected".into(),
+                            ));
                         }
                         env.connections[conn_index] = SimConnection::Disconnected;
                     }

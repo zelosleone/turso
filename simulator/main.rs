@@ -5,7 +5,7 @@ use generation::ArbitraryFrom;
 use notify::event::{DataChange, ModifyKind};
 use notify::{EventKind, RecursiveMode, Watcher};
 use rand::prelude::*;
-use runner::bugbase::{Bug, BugBase};
+use runner::bugbase::{Bug, BugBase, LoadedBug};
 use runner::cli::SimulatorCLI;
 use runner::env::SimulatorEnv;
 use runner::execution::{execute_plans, Execution, ExecutionHistory, ExecutionResult};
@@ -28,6 +28,7 @@ struct Paths {
     history: PathBuf,
     doublecheck_db: PathBuf,
     shrunk_db: PathBuf,
+    diff_db: PathBuf,
 }
 
 impl Paths {
@@ -40,6 +41,7 @@ impl Paths {
             history: PathBuf::from(output_dir).join("history.txt"),
             doublecheck_db: PathBuf::from(output_dir).join("double.db"),
             shrunk_db: PathBuf::from(output_dir).join("shrunk.db"),
+            diff_db: PathBuf::from(output_dir).join("diff.db"),
         }
     }
 }
@@ -52,7 +54,6 @@ fn main() -> Result<(), String> {
 
     let mut bugbase = BugBase::load().map_err(|e| format!("{:?}", e))?;
     banner();
-    // let paths = Paths::new(&output_dir, cli_opts.doublecheck);
 
     let last_execution = Arc::new(Mutex::new(Execution::new(0, 0, 0)));
     let (seed, env, plans) = setup_simulation(&mut bugbase, &cli_opts, |p| &p.plan, |p| &p.db);
@@ -66,8 +67,18 @@ fn main() -> Result<(), String> {
 
     if cli_opts.watch {
         watch_mode(seed, &cli_opts, &paths, last_execution.clone()).unwrap();
-    } else if cli_opts.differential {
-        differential_testing(env, plans, last_execution.clone())
+        return Ok(());
+    }
+
+    let result = if cli_opts.differential {
+        differential_testing(
+            seed,
+            &mut bugbase,
+            &cli_opts,
+            &paths,
+            plans,
+            last_execution.clone(),
+        )
     } else {
         run_simulator(
             seed,
@@ -77,13 +88,14 @@ fn main() -> Result<(), String> {
             env,
             plans,
             last_execution.clone(),
-        );
-    }
+        )
+    };
 
     // Print the seed, the locations of the database and the plan file at the end again for easily accessing them.
     println!("seed: {}", seed);
+    println!("path: {}", paths.base.display());
 
-    Ok(())
+    result
 }
 
 fn watch_mode(
@@ -120,7 +132,7 @@ fn watch_mode(
                                     i.shadow(&mut env);
                                 });
                             });
-                            let env = Arc::new(Mutex::new(env.clone()));
+                            let env = Arc::new(Mutex::new(env.clone_without_connections()));
                             watch::run_simulation(env, &mut [plan], last_execution.clone())
                         }),
                         last_execution.clone(),
@@ -133,7 +145,6 @@ fn watch_mode(
                         SandboxedResult::Panicked { error, .. }
                         | SandboxedResult::FoundBug { error, .. } => {
                             log::error!("simulation failed: '{}'", error);
-                            println!("simulation failed: '{}'", error);
                         }
                     }
                 }
@@ -153,7 +164,7 @@ fn run_simulator(
     env: SimulatorEnv,
     plans: Vec<InteractionPlan>,
     last_execution: Arc<Mutex<Execution>>,
-) {
+) -> Result<(), String> {
     std::panic::set_hook(Box::new(move |info| {
         log::error!("panic occurred");
 
@@ -181,15 +192,15 @@ fn run_simulator(
     if cli_opts.doublecheck {
         let env = SimulatorEnv::new(seed, cli_opts, &paths.doublecheck_db);
         let env = Arc::new(Mutex::new(env));
-        doublecheck(env, paths, &plans, last_execution.clone(), result);
+        doublecheck(env, paths, &plans, last_execution.clone(), result)
     } else {
         // No doublecheck, run shrinking if panicking or found a bug.
         match &result {
             SandboxedResult::Correct => {
                 log::info!("simulation succeeded");
                 println!("simulation succeeded");
-                // remove the bugbase entry
-                bugbase.remove_bug(seed).unwrap();
+                bugbase.mark_successful_run(seed, cli_opts).unwrap();
+                Ok(())
             }
             SandboxedResult::Panicked {
                 error,
@@ -217,8 +228,6 @@ fn run_simulator(
                 }
 
                 log::error!("simulation failed: '{}'", error);
-                println!("simulation failed: '{}'", error);
-
                 log::info!("Starting to shrink");
 
                 let shrunk_plans = plans
@@ -260,12 +269,21 @@ fn run_simulator(
                     ) => {
                         if e1 != e2 {
                             log::error!("shrinking failed, the error was not properly reproduced");
-                            bugbase.add_bug(seed, plans[0].clone()).unwrap();
+                            bugbase
+                                .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
+                                .unwrap();
+                            Err(format!("failed with error: '{}'", error))
                         } else {
-                            log::info!("shrinking succeeded");
-                            println!("shrinking succeeded");
+                            log::info!(
+                                "shrinking succeeded, reduced the plan from {} to {}",
+                                plans[0].plan.len(),
+                                shrunk_plans[0].plan.len()
+                            );
                             // Save the shrunk database
-                            bugbase.add_bug(seed, shrunk_plans[0].clone()).unwrap();
+                            bugbase
+                                .add_bug(seed, shrunk_plans[0].clone(), Some(e1.clone()), cli_opts)
+                                .unwrap();
+                            Err(format!("failed with error: '{}'", e1))
                         }
                     }
                     (_, SandboxedResult::Correct) => {
@@ -273,7 +291,10 @@ fn run_simulator(
                     }
                     _ => {
                         log::error!("shrinking failed, the error was not properly reproduced");
-                        bugbase.add_bug(seed, plans[0].clone()).unwrap();
+                        bugbase
+                            .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
+                            .unwrap();
+                        Err(format!("failed with error: '{}'", error))
                     }
                 }
             }
@@ -287,7 +308,7 @@ fn doublecheck(
     plans: &[InteractionPlan],
     last_execution: Arc<Mutex<Execution>>,
     result: SandboxedResult,
-) {
+) -> Result<(), String> {
     // Run the simulation again
     let result2 = SandboxedResult::from(
         std::panic::catch_unwind(|| {
@@ -299,29 +320,47 @@ fn doublecheck(
     match (result, result2) {
         (SandboxedResult::Correct, SandboxedResult::Panicked { .. }) => {
             log::error!("doublecheck failed! first run succeeded, but second run panicked.");
+            Err("doublecheck failed! first run succeeded, but second run panicked.".to_string())
         }
         (SandboxedResult::FoundBug { .. }, SandboxedResult::Panicked { .. }) => {
             log::error!(
                 "doublecheck failed! first run failed an assertion, but second run panicked."
             );
+            Err(
+                "doublecheck failed! first run failed an assertion, but second run panicked."
+                    .to_string(),
+            )
         }
         (SandboxedResult::Panicked { .. }, SandboxedResult::Correct) => {
             log::error!("doublecheck failed! first run panicked, but second run succeeded.");
+            Err("doublecheck failed! first run panicked, but second run succeeded.".to_string())
         }
         (SandboxedResult::Panicked { .. }, SandboxedResult::FoundBug { .. }) => {
             log::error!(
                 "doublecheck failed! first run panicked, but second run failed an assertion."
             );
+            Err(
+                "doublecheck failed! first run panicked, but second run failed an assertion."
+                    .to_string(),
+            )
         }
         (SandboxedResult::Correct, SandboxedResult::FoundBug { .. }) => {
             log::error!(
                 "doublecheck failed! first run succeeded, but second run failed an assertion."
             );
+            Err(
+                "doublecheck failed! first run succeeded, but second run failed an assertion."
+                    .to_string(),
+            )
         }
         (SandboxedResult::FoundBug { .. }, SandboxedResult::Correct) => {
             log::error!(
                 "doublecheck failed! first run failed an assertion, but second run succeeded."
             );
+            Err(
+                "doublecheck failed! first run failed an assertion, but second run succeeded."
+                    .to_string(),
+            )
         }
         (SandboxedResult::Correct, SandboxedResult::Correct)
         | (SandboxedResult::FoundBug { .. }, SandboxedResult::FoundBug { .. })
@@ -331,33 +370,62 @@ fn doublecheck(
             let doublecheck_db_bytes = std::fs::read(&paths.doublecheck_db).unwrap();
             if db_bytes != doublecheck_db_bytes {
                 log::error!("doublecheck failed! database files are different.");
+                log::error!("current: {}", paths.db.display());
+                log::error!("doublecheck: {}", paths.doublecheck_db.display());
+                Err(
+                    "doublecheck failed! database files are different, check binary diffs for more details.".to_string()
+                )
             } else {
                 log::info!("doublecheck succeeded! database files are the same.");
+                println!("doublecheck succeeded! database files are the same.");
+                Ok(())
             }
         }
     }
 }
 
 fn differential_testing(
-    env: SimulatorEnv,
+    seed: u64,
+    bugbase: &mut BugBase,
+    cli_opts: &SimulatorCLI,
+    paths: &Paths,
     plans: Vec<InteractionPlan>,
     last_execution: Arc<Mutex<Execution>>,
-) {
-    let env = Arc::new(Mutex::new(env));
+) -> Result<(), String> {
+    let env = Arc::new(Mutex::new(SimulatorEnv::new(seed, cli_opts, &paths.db)));
+    let rusqlite_env = Arc::new(Mutex::new(SimulatorEnv::new(
+        seed,
+        cli_opts,
+        &paths.diff_db,
+    )));
+
     let result = SandboxedResult::from(
         std::panic::catch_unwind(|| {
             let plan = plans[0].clone();
-            differential::run_simulation(env, &mut [plan], last_execution.clone())
+            differential::run_simulation(
+                env,
+                rusqlite_env,
+                &|| rusqlite::Connection::open(paths.diff_db.clone()).unwrap(),
+                &mut [plan],
+                last_execution.clone(),
+            )
         }),
         last_execution.clone(),
     );
 
-    if let SandboxedResult::Correct = result {
-        log::info!("simulation succeeded");
-        println!("simulation succeeded");
-    } else {
-        log::error!("simulation failed");
-        println!("simulation failed");
+    match result {
+        SandboxedResult::Correct => {
+            log::info!("simulation succeeded, output of Limbo conforms to SQLite");
+            println!("simulation succeeded, output of Limbo conforms to SQLite");
+            Ok(())
+        }
+        SandboxedResult::Panicked { error, .. } | SandboxedResult::FoundBug { error, .. } => {
+            log::error!("simulation failed: '{}'", error);
+            bugbase
+                .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
+                .unwrap();
+            Err(format!("simulation failed: '{}'", error))
+        }
     }
 }
 
@@ -433,12 +501,14 @@ fn setup_simulation(
         let env = SimulatorEnv::new(bug.seed(), cli_opts, db_path(&paths));
 
         let plan = match bug {
-            Bug::Loaded { plan, .. } => plan.clone(),
+            Bug::Loaded(LoadedBug { plan, .. }) => plan.clone(),
             Bug::Unloaded { seed } => {
                 let seed = *seed;
                 bugbase
                     .load_bug(seed)
                     .unwrap_or_else(|_| panic!("could not load bug '{}' in bug base", seed))
+                    .plan
+                    .clone()
             }
         };
 
