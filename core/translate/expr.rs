@@ -1602,29 +1602,34 @@ pub fn translate_expr(
                             let args = if let Some(args) = args {
                                 if args.len() != 2 {
                                     crate::bail_parse_error!(
-                                        "likelihood function must have exactly 2 arguments",
+                                        "likelihood() function must have exactly 2 arguments",
                                     );
                                 }
                                 args
                             } else {
-                                crate::bail_parse_error!("likelihood function with no arguments",);
+                                crate::bail_parse_error!("likelihood() function with no arguments",);
                             };
 
                             if let ast::Expr::Literal(ast::Literal::Numeric(ref value)) = args[1] {
                                 if let Ok(probability) = value.parse::<f64>() {
-                                    if probability < 0.0 || probability > 1.0 {
+                                    if !(0.0..=1.0).contains(&probability) {
                                         crate::bail_parse_error!(
-                                            "likelihood second argument must be between 0.0 and 1.0",
+                                            "second argument of likelihood() must be between 0.0 and 1.0",
+                                        );
+                                    }
+                                    if !value.contains('.') {
+                                        crate::bail_parse_error!(
+                                            "second argument of likelihood() must be a floating point number with decimal point",
                                         );
                                     }
                                 } else {
                                     crate::bail_parse_error!(
-                                        "likelihood second argument must be a floating point constant",
+                                        "second argument of likelihood() must be a floating point constant",
                                     );
                                 }
                             } else {
                                 crate::bail_parse_error!(
-                                    "likelihood second argument must be a numeric literal",
+                                    "second argument of likelihood() must be a numeric literal",
                                 );
                             }
 

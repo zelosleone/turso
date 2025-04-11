@@ -7188,7 +7188,7 @@ mod tests {
         assert_eq!(exec_likelihood(&value, &prob), value);
 
         let value = OwnedValue::Integer(100);
-        let prob = OwnedValue::Float(0.0625);
+        let prob = OwnedValue::Float(1.0);
         assert_eq!(exec_likelihood(&value, &prob), value);
 
         let value = OwnedValue::Float(12.34);
@@ -7201,9 +7201,6 @@ mod tests {
 
         let value = OwnedValue::Blob(vec![1, 2, 3, 4]);
         let prob = OwnedValue::Float(0.5);
-        assert_eq!(exec_likelihood(&value, &prob), value);
-
-        let prob = OwnedValue::Integer(1);
         assert_eq!(exec_likelihood(&value, &prob), value);
 
         let prob = OwnedValue::build_text("0.5");
