@@ -3406,6 +3406,21 @@ pub fn op_function(
                 let result = exec_time(values);
                 state.registers[*dest] = Register::OwnedValue(result);
             }
+            ScalarFunc::TimeDiff => {
+                if arg_count != 2 {
+                    state.registers[*dest] = Register::OwnedValue(OwnedValue::Null);
+                } else {
+                    let start = state.registers[*start_reg].get_owned_value().clone();
+                    let end = state.registers[*start_reg + 1].get_owned_value().clone();
+
+                    let result = crate::functions::datetime::exec_timediff(&[
+                        Register::OwnedValue(start),
+                        Register::OwnedValue(end),
+                    ]);
+
+                    state.registers[*dest] = Register::OwnedValue(result);
+                }
+            }
             ScalarFunc::TotalChanges => {
                 let res = &program.connection.upgrade().unwrap().total_changes;
                 let total_changes = res.get();
