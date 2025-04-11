@@ -33,14 +33,14 @@ pub struct LoadedBug {
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct BugRun {
     /// Commit hash of the current version of Limbo.
-    hash: String,
+    pub(crate) hash: String,
     /// Timestamp of the run.
     #[serde(with = "chrono::serde::ts_seconds")]
-    timestamp: DateTime<Utc>,
+    pub(crate) timestamp: DateTime<Utc>,
     /// Error message of the run.
-    error: Option<String>,
+    pub(crate) error: Option<String>,
     /// Options
-    cli_options: SimulatorCLI,
+    pub(crate) cli_options: SimulatorCLI,
 }
 
 impl Bug {
@@ -270,7 +270,10 @@ impl BugBase {
             Some(Bug::Unloaded { .. }) => {
                 let plan =
                     std::fs::read_to_string(self.path.join(seed.to_string()).join("plan.json"))
-                        .or(Err("should be able to read plan file".to_string()))?;
+                        .or(Err(format!(
+                            "should be able to read plan file at {}",
+                            self.path.join(seed.to_string()).join("plan.json").display()
+                        )))?;
                 let plan: InteractionPlan = serde_json::from_str(&plan)
                     .or(Err("should be able to deserialize plan".to_string()))?;
 
@@ -326,6 +329,45 @@ impl BugBase {
                     .or(Err("should be able to save bug".to_string()))?;
                 log::debug!("Updated bug with seed {}", seed);
             }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) fn load_bugs(&mut self) -> Result<Vec<LoadedBug>, String> {
+        let seeds = self.bugs.keys().map(|seed| *seed).collect::<Vec<_>>();
+
+        seeds
+            .iter()
+            .map(|seed| self.load_bug(*seed))
+            .collect::<Result<Vec<_>, _>>()
+    }
+
+    pub(crate) fn list_bugs(&mut self) -> Result<(), String> {
+        let bugs = self.load_bugs()?;
+        for bug in bugs {
+            println!("seed: {}", bug.seed);
+            println!("plan: {}", bug.plan.stats());
+            println!("runs:");
+            println!("  ------------------");
+            for run in &bug.runs {
+                println!("  - hash: {}", run.hash);
+                println!("    timestamp: {}", run.timestamp);
+                println!(
+                    "    type: {}",
+                    if run.cli_options.differential {
+                        "differential"
+                    } else if run.cli_options.doublecheck {
+                        "doublecheck"
+                    } else {
+                        "default"
+                    }
+                );
+                if let Some(error) = &run.error {
+                    println!("    error: {}", error);
+                }
+            }
+            println!("  ------------------");
         }
 
         Ok(())

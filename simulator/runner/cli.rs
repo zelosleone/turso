@@ -1,7 +1,7 @@
 use clap::{command, Parser};
 use serde::{Deserialize, Serialize};
 
-#[derive(Parser, Clone, Serialize, Deserialize)]
+#[derive(Parser, Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord)]
 #[command(name = "limbo-simulator")]
 #[command(author, version, about, long_about = None)]
 pub struct SimulatorCLI {
@@ -44,6 +44,40 @@ pub struct SimulatorCLI {
     pub watch: bool,
     #[clap(long, help = "run differential testing between sqlite and Limbo")]
     pub differential: bool,
+    #[clap(subcommand)]
+    pub subcommand: Option<SimulatorCommand>,
+}
+
+#[derive(Parser, Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord)]
+pub enum SimulatorCommand {
+    #[clap(about = "run the simulator in a loop")]
+    Loop {
+        #[clap(
+            short = 'n',
+            long,
+            help = "number of iterations to run the simulator",
+            default_value_t = 5
+        )]
+        n: usize,
+        #[clap(
+            short = 's',
+            long,
+            help = "short circuit the simulator, stop on the first failure",
+            default_value_t = false
+        )]
+        short_circuit: bool,
+    },
+    #[clap(about = "list all the bugs in the base")]
+    List,
+    #[clap(about = "run the simulator against a specific bug")]
+    Test {
+        #[clap(
+            short = 'b',
+            long,
+            help = "run the simulator with previous buggy runs for the specific filter"
+        )]
+        filter: String,
+    },
 }
 
 impl SimulatorCLI {

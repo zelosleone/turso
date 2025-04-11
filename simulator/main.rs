@@ -6,7 +6,7 @@ use notify::event::{DataChange, ModifyKind};
 use notify::{EventKind, RecursiveMode, Watcher};
 use rand::prelude::*;
 use runner::bugbase::{Bug, BugBase, LoadedBug};
-use runner::cli::SimulatorCLI;
+use runner::cli::{SimulatorCLI, SimulatorCommand};
 use runner::env::SimulatorEnv;
 use runner::execution::{execute_plans, Execution, ExecutionHistory, ExecutionResult};
 use runner::{differential, watch};
@@ -48,15 +48,87 @@ impl Paths {
 
 fn main() -> Result<(), String> {
     init_logger();
-
     let cli_opts = SimulatorCLI::parse();
     cli_opts.validate()?;
 
+    match cli_opts.subcommand {
+        Some(SimulatorCommand::List) => {
+            let mut bugbase = BugBase::load().map_err(|e| format!("{:?}", e))?;
+            bugbase.list_bugs()
+        }
+        Some(SimulatorCommand::Loop { n, short_circuit }) => {
+            banner();
+            for i in 0..n {
+                println!("iteration {}", i);
+                let result = testing_main(&cli_opts);
+                if result.is_err() && short_circuit {
+                    println!("short circuiting after {} iterations", i);
+                    return result;
+                } else if result.is_err() {
+                    println!("iteration {} failed", i);
+                } else {
+                    println!("iteration {} succeeded", i);
+                }
+            }
+            Ok(())
+        }
+        Some(SimulatorCommand::Test { filter }) => {
+            let mut bugbase = BugBase::load().map_err(|e| format!("{:?}", e))?;
+            let bugs = bugbase.load_bugs()?;
+            let mut bugs = bugs
+                .into_iter()
+                .flat_map(|bug| {
+                    let runs = bug
+                        .runs
+                        .into_iter()
+                        .filter_map(|run| run.error.clone().map(|_| run))
+                        .filter(|run| run.error.as_ref().unwrap().contains(&filter))
+                        .map(|run| run.cli_options)
+                        .collect::<Vec<_>>();
+
+                    runs.into_iter()
+                        .map(|mut cli_opts| {
+                            cli_opts.seed = Some(bug.seed);
+                            cli_opts.load = None;
+                            cli_opts
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+
+            bugs.sort();
+            bugs.dedup_by(|a, b| a == b);
+
+            println!(
+                "found {} previously triggered configurations with {}",
+                bugs.len(),
+                filter
+            );
+
+            let results = bugs
+                .into_iter()
+                .map(|cli_opts| testing_main(&cli_opts))
+                .collect::<Vec<_>>();
+
+            let (successes, failures): (Vec<_>, Vec<_>) =
+                results.into_iter().partition(|result| result.is_ok());
+            println!("the results of the change are:");
+            println!("\t{} successful runs", successes.len());
+            println!("\t{} failed runs", failures.len());
+            Ok(())
+        }
+        None => {
+            banner();
+            testing_main(&cli_opts)
+        }
+    }
+}
+
+fn testing_main(cli_opts: &SimulatorCLI) -> Result<(), String> {
     let mut bugbase = BugBase::load().map_err(|e| format!("{:?}", e))?;
-    banner();
 
     let last_execution = Arc::new(Mutex::new(Execution::new(0, 0, 0)));
-    let (seed, env, plans) = setup_simulation(&mut bugbase, &cli_opts, |p| &p.plan, |p| &p.db);
+    let (seed, env, plans) = setup_simulation(&mut bugbase, cli_opts, |p| &p.plan, |p| &p.db);
 
     let paths = bugbase.paths(seed);
 
@@ -66,7 +138,7 @@ fn main() -> Result<(), String> {
     }
 
     if cli_opts.watch {
-        watch_mode(seed, &cli_opts, &paths, last_execution.clone()).unwrap();
+        watch_mode(seed, cli_opts, &paths, last_execution.clone()).unwrap();
         return Ok(());
     }
 
@@ -74,7 +146,7 @@ fn main() -> Result<(), String> {
         differential_testing(
             seed,
             &mut bugbase,
-            &cli_opts,
+            cli_opts,
             &paths,
             plans,
             last_execution.clone(),
@@ -83,7 +155,7 @@ fn main() -> Result<(), String> {
         run_simulator(
             seed,
             &mut bugbase,
-            &cli_opts,
+            cli_opts,
             &paths,
             env,
             plans,
@@ -190,9 +262,15 @@ fn run_simulator(
     );
 
     if cli_opts.doublecheck {
-        let env = SimulatorEnv::new(seed, cli_opts, &paths.doublecheck_db);
-        let env = Arc::new(Mutex::new(env));
-        doublecheck(env, paths, &plans, last_execution.clone(), result)
+        doublecheck(
+            seed,
+            bugbase,
+            cli_opts,
+            paths,
+            &plans,
+            last_execution.clone(),
+            result,
+        )
     } else {
         // No doublecheck, run shrinking if panicking or found a bug.
         match &result {
@@ -303,12 +381,17 @@ fn run_simulator(
 }
 
 fn doublecheck(
-    env: Arc<Mutex<SimulatorEnv>>,
+    seed: u64,
+    bugbase: &mut BugBase,
+    cli_opts: &SimulatorCLI,
     paths: &Paths,
     plans: &[InteractionPlan],
     last_execution: Arc<Mutex<Execution>>,
     result: SandboxedResult,
 ) -> Result<(), String> {
+    let env = SimulatorEnv::new(seed, cli_opts, &paths.doublecheck_db);
+    let env = Arc::new(Mutex::new(env));
+
     // Run the simulation again
     let result2 = SandboxedResult::from(
         std::panic::catch_unwind(|| {
@@ -317,50 +400,24 @@ fn doublecheck(
         last_execution.clone(),
     );
 
-    match (result, result2) {
+    let doublecheck_result = match (result, result2) {
         (SandboxedResult::Correct, SandboxedResult::Panicked { .. }) => {
-            log::error!("doublecheck failed! first run succeeded, but second run panicked.");
-            Err("doublecheck failed! first run succeeded, but second run panicked.".to_string())
+            Err("first run succeeded, but second run panicked.".to_string())
         }
         (SandboxedResult::FoundBug { .. }, SandboxedResult::Panicked { .. }) => {
-            log::error!(
-                "doublecheck failed! first run failed an assertion, but second run panicked."
-            );
-            Err(
-                "doublecheck failed! first run failed an assertion, but second run panicked."
-                    .to_string(),
-            )
+            Err("first run failed an assertion, but second run panicked.".to_string())
         }
         (SandboxedResult::Panicked { .. }, SandboxedResult::Correct) => {
-            log::error!("doublecheck failed! first run panicked, but second run succeeded.");
-            Err("doublecheck failed! first run panicked, but second run succeeded.".to_string())
+            Err("first run panicked, but second run succeeded.".to_string())
         }
         (SandboxedResult::Panicked { .. }, SandboxedResult::FoundBug { .. }) => {
-            log::error!(
-                "doublecheck failed! first run panicked, but second run failed an assertion."
-            );
-            Err(
-                "doublecheck failed! first run panicked, but second run failed an assertion."
-                    .to_string(),
-            )
+            Err("first run panicked, but second run failed an assertion.".to_string())
         }
         (SandboxedResult::Correct, SandboxedResult::FoundBug { .. }) => {
-            log::error!(
-                "doublecheck failed! first run succeeded, but second run failed an assertion."
-            );
-            Err(
-                "doublecheck failed! first run succeeded, but second run failed an assertion."
-                    .to_string(),
-            )
+            Err("first run succeeded, but second run failed an assertion.".to_string())
         }
         (SandboxedResult::FoundBug { .. }, SandboxedResult::Correct) => {
-            log::error!(
-                "doublecheck failed! first run failed an assertion, but second run succeeded."
-            );
-            Err(
-                "doublecheck failed! first run failed an assertion, but second run succeeded."
-                    .to_string(),
-            )
+            Err("first run failed an assertion, but second run succeeded.".to_string())
         }
         (SandboxedResult::Correct, SandboxedResult::Correct)
         | (SandboxedResult::FoundBug { .. }, SandboxedResult::FoundBug { .. })
@@ -369,17 +426,29 @@ fn doublecheck(
             let db_bytes = std::fs::read(&paths.db).unwrap();
             let doublecheck_db_bytes = std::fs::read(&paths.doublecheck_db).unwrap();
             if db_bytes != doublecheck_db_bytes {
-                log::error!("doublecheck failed! database files are different.");
-                log::error!("current: {}", paths.db.display());
-                log::error!("doublecheck: {}", paths.doublecheck_db.display());
                 Err(
-                    "doublecheck failed! database files are different, check binary diffs for more details.".to_string()
+                    "database files are different, check binary diffs for more details."
+                        .to_string(),
                 )
             } else {
-                log::info!("doublecheck succeeded! database files are the same.");
-                println!("doublecheck succeeded! database files are the same.");
                 Ok(())
             }
+        }
+    };
+
+    match doublecheck_result {
+        Ok(_) => {
+            log::info!("doublecheck succeeded");
+            println!("doublecheck succeeded");
+            bugbase.mark_successful_run(seed, cli_opts)?;
+            Ok(())
+        }
+        Err(e) => {
+            log::error!("doublecheck failed: '{}'", e);
+            bugbase
+                .add_bug(seed, plans[0].clone(), Some(e.clone()), cli_opts)
+                .unwrap();
+            Err(format!("doublecheck failed: '{}'", e))
         }
     }
 }
@@ -417,6 +486,7 @@ fn differential_testing(
         SandboxedResult::Correct => {
             log::info!("simulation succeeded, output of Limbo conforms to SQLite");
             println!("simulation succeeded, output of Limbo conforms to SQLite");
+            bugbase.mark_successful_run(seed, cli_opts).unwrap();
             Ok(())
         }
         SandboxedResult::Panicked { error, .. } | SandboxedResult::FoundBug { error, .. } => {
