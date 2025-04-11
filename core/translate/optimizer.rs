@@ -4,13 +4,15 @@ use limbo_sqlite3_parser::ast::{self, Expr, SortOrder};
 
 use crate::{
     schema::{Index, Schema},
+    translate::plan::TerminationKey,
+    types::SeekOp,
     util::exprs_are_equivalent,
     Result,
 };
 
 use super::plan::{
-    DeletePlan, Direction, GroupBy, IterationDirection, Operation, Plan, Search, SelectPlan,
-    TableReference, UpdatePlan, WhereTerm,
+    DeletePlan, Direction, GroupBy, IterationDirection, Operation, Plan, Search, SeekDef, SeekKey,
+    SelectPlan, TableReference, UpdatePlan, WhereTerm,
 };
 
 pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
@@ -296,24 +298,62 @@ fn use_indexes(
 ) -> Result<()> {
     // Try to use indexes for eliminating ORDER BY clauses
     eliminate_unnecessary_orderby(table_references, available_indexes, order_by, group_by)?;
+
     // Try to use indexes for WHERE conditions
-    'outer: for (table_index, table_reference) in table_references.iter_mut().enumerate() {
-        if let Operation::Scan { iter_dir, .. } = &table_reference.op {
-            let mut i = 0;
-            while i < where_clause.len() {
-                let cond = where_clause.get_mut(i).unwrap();
-                if let Some(index_search) = try_extract_index_search_expression(
-                    cond,
-                    table_index,
-                    table_reference,
-                    available_indexes,
-                    *iter_dir,
-                )? {
-                    where_clause.remove(i);
-                    table_reference.op = Operation::Search(index_search);
-                    continue 'outer;
+    for (table_index, table_reference) in table_references.iter_mut().enumerate() {
+        if matches!(table_reference.op, Operation::Scan { .. }) {
+            let index = if let Operation::Scan { index, .. } = &table_reference.op {
+                Option::clone(index)
+            } else {
+                None
+            };
+            match index {
+                // If we decided to eliminate ORDER BY using an index, let's constrain our search to only that index
+                Some(index) => {
+                    let available_indexes = available_indexes
+                        .values()
+                        .flatten()
+                        .filter(|i| i.name == index.name)
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if let Some(search) = try_extract_index_search_from_where_clause(
+                        where_clause,
+                        table_index,
+                        table_reference,
+                        &available_indexes,
+                    )? {
+                        table_reference.op = Operation::Search(search);
+                    }
                 }
-                i += 1;
+                None => {
+                    let table_name = table_reference.table.get_name();
+
+                    // If we can utilize the rowid alias of the table, let's preferentially always use it for now.
+                    let mut i = 0;
+                    while i < where_clause.len() {
+                        if let Some(search) = try_extract_rowid_search_expression(
+                            &mut where_clause[i],
+                            table_index,
+                            table_reference,
+                        )? {
+                            where_clause.remove(i);
+                            table_reference.op = Operation::Search(search);
+                            continue;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                    if let Some(indexes) = available_indexes.get(table_name) {
+                        if let Some(search) = try_extract_index_search_from_where_clause(
+                            where_clause,
+                            table_index,
+                            table_reference,
+                            indexes,
+                        )? {
+                            table_reference.op = Operation::Search(search);
+                        }
+                    }
+                }
             }
         }
     }
@@ -431,12 +471,6 @@ pub trait Optimizable {
             .map_or(false, |c| c == ConstantPredicate::AlwaysFalse))
     }
     fn is_rowid_alias_of(&self, table_index: usize) -> bool;
-    fn check_index_scan(
-        &mut self,
-        table_index: usize,
-        table_reference: &TableReference,
-        available_indexes: &HashMap<String, Vec<Arc<Index>>>,
-    ) -> Result<Option<Arc<Index>>>;
 }
 
 impl Optimizable for ast::Expr {
@@ -448,79 +482,6 @@ impl Optimizable for ast::Expr {
                 ..
             } => *is_rowid_alias && *table == table_index,
             _ => false,
-        }
-    }
-    fn check_index_scan(
-        &mut self,
-        table_index: usize,
-        table_reference: &TableReference,
-        available_indexes: &HashMap<String, Vec<Arc<Index>>>,
-    ) -> Result<Option<Arc<Index>>> {
-        match self {
-            Self::Column { table, column, .. } => {
-                if *table != table_index {
-                    return Ok(None);
-                }
-                let Some(available_indexes_for_table) =
-                    available_indexes.get(table_reference.table.get_name())
-                else {
-                    return Ok(None);
-                };
-                let Some(column) = table_reference.table.get_column_at(*column) else {
-                    return Ok(None);
-                };
-                for index in available_indexes_for_table.iter() {
-                    if let Some(name) = column.name.as_ref() {
-                        if &index.columns.first().unwrap().name == name {
-                            return Ok(Some(index.clone()));
-                        }
-                    }
-                }
-                Ok(None)
-            }
-            Self::Binary(lhs, op, rhs) => {
-                // Only consider index scans for binary ops that are comparisons.
-                // e.g. "t1.id = t2.id" is a valid index scan, but "t1.id + 1" is not.
-                //
-                // TODO/optimization: consider detecting index scan on e.g. table t1 in
-                // "WHERE t1.id + 1 = t2.id"
-                // here the Expr could be rewritten to "t1.id = t2.id - 1"
-                // and then t1.id could be used as an index key.
-                if !matches!(
-                    *op,
-                    ast::Operator::Equals
-                        | ast::Operator::Greater
-                        | ast::Operator::GreaterEquals
-                        | ast::Operator::Less
-                        | ast::Operator::LessEquals
-                ) {
-                    return Ok(None);
-                }
-                let lhs_index =
-                    lhs.check_index_scan(table_index, &table_reference, available_indexes)?;
-                if lhs_index.is_some() {
-                    return Ok(lhs_index);
-                }
-                let rhs_index =
-                    rhs.check_index_scan(table_index, &table_reference, available_indexes)?;
-                if rhs_index.is_some() {
-                    // swap lhs and rhs
-                    let swapped_operator = match *op {
-                        ast::Operator::Equals => ast::Operator::Equals,
-                        ast::Operator::Greater => ast::Operator::Less,
-                        ast::Operator::GreaterEquals => ast::Operator::LessEquals,
-                        ast::Operator::Less => ast::Operator::Greater,
-                        ast::Operator::LessEquals => ast::Operator::GreaterEquals,
-                        _ => unreachable!(),
-                    };
-                    let lhs_new = rhs.take_ownership();
-                    let rhs_new = lhs.take_ownership();
-                    *self = Self::Binary(Box::new(lhs_new), swapped_operator, Box::new(rhs_new));
-                    return Ok(rhs_index);
-                }
-                Ok(None)
-            }
-            _ => Ok(None),
         }
     }
     fn check_constant(&self) -> Result<Option<ConstantPredicate>> {
@@ -652,13 +613,506 @@ fn opposite_cmp_op(op: ast::Operator) -> ast::Operator {
     }
 }
 
-pub fn try_extract_index_search_expression(
+/// Struct used for scoring index scans
+/// Currently we just score by the number of index columns that can be utilized
+/// in the scan, i.e. no statistics are used.
+struct IndexScore {
+    index: Option<Arc<Index>>,
+    score: usize,
+    constraints: Vec<IndexConstraint>,
+}
+
+/// Try to extract an index search from the WHERE clause
+/// Returns an optional [Search] struct if an index search can be extracted, otherwise returns None.
+pub fn try_extract_index_search_from_where_clause(
+    where_clause: &mut Vec<WhereTerm>,
+    table_index: usize,
+    table_reference: &TableReference,
+    table_indexes: &[Arc<Index>],
+) -> Result<Option<Search>> {
+    // If there are no WHERE terms, we can't extract a search
+    if where_clause.is_empty() {
+        return Ok(None);
+    }
+    // If there are no indexes, we can't extract a search
+    if table_indexes.is_empty() {
+        return Ok(None);
+    }
+
+    let iter_dir = if let Operation::Scan { iter_dir, .. } = &table_reference.op {
+        *iter_dir
+    } else {
+        return Ok(None);
+    };
+
+    // Find all potential index constraints
+    // For WHERE terms to be used to constrain an index scan, they must:
+    // 1. refer to columns in the table that the index is on
+    // 2. be a binary comparison expression
+    // 3. constrain the index columns in the order that they appear in the index
+    //    - e.g. if the index is on (a,b,c) then we can use all of "a = 1 AND b = 2 AND c = 3" to constrain the index scan,
+    //    - but if the where clause is "a = 1 and c = 3" then we can only use "a = 1".
+    let mut constraints_cur = vec![];
+    let mut best_index = IndexScore {
+        index: None,
+        score: 0,
+        constraints: vec![],
+    };
+
+    for index in table_indexes {
+        // Check how many terms in the where clause constrain the index in column order
+        find_index_constraints(
+            where_clause,
+            table_index,
+            table_reference,
+            index,
+            &mut constraints_cur,
+        )?;
+        // naive scoring since we don't have statistics: prefer the index where we can use the most columns
+        // e.g. if we can use all columns of an index on (a,b), it's better than an index of (c,d,e) where we can only use c.
+        let score = constraints_cur.len();
+        if score > best_index.score {
+            best_index.index = Some(Arc::clone(index));
+            best_index.score = score;
+            best_index.constraints.clear();
+            best_index.constraints.append(&mut constraints_cur);
+        }
+    }
+
+    if best_index.index.is_none() {
+        return Ok(None);
+    }
+
+    // Build the seek definition
+    let seek_def =
+        build_seek_def_from_index_constraints(&best_index.constraints, iter_dir, where_clause)?;
+
+    // Remove the used terms from the where_clause since they are now part of the seek definition
+    // Sort terms by position in descending order to avoid shifting indices during removal
+    best_index.constraints.sort_by(|a, b| {
+        b.position_in_where_clause
+            .0
+            .cmp(&a.position_in_where_clause.0)
+    });
+
+    for constraint in best_index.constraints.iter() {
+        where_clause.remove(constraint.position_in_where_clause.0);
+    }
+
+    return Ok(Some(Search::Seek {
+        index: best_index.index,
+        seek_def,
+    }));
+}
+
+#[derive(Debug, Clone)]
+/// A representation of an expression in a [WhereTerm] that can potentially be used as part of an index seek key.
+/// For example, if there is an index on table T(x,y) and another index on table U(z), and the where clause is "WHERE x > 10 AND 20 = z",
+/// the index constraints are:
+/// - x > 10 ==> IndexConstraint { position_in_where_clause: (0, [BinaryExprSide::Rhs]), operator: [ast::Operator::Greater] }
+/// - 20 = z ==> IndexConstraint { position_in_where_clause: (1, [BinaryExprSide::Lhs]), operator: [ast::Operator::Equals] }
+pub struct IndexConstraint {
+    position_in_where_clause: (usize, BinaryExprSide),
+    operator: ast::Operator,
+}
+
+/// Helper enum for [IndexConstraint] to indicate which side of a binary comparison expression is being compared to the index column.
+/// For example, if the where clause is "WHERE x = 10" and there's an index on x,
+/// the [IndexConstraint] for the where clause term "x = 10" will have a [BinaryExprSide::Rhs]
+/// because the right hand side expression "10" is being compared to the index column "x".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BinaryExprSide {
+    Lhs,
+    Rhs,
+}
+
+/// Get the position of a column in an index
+/// For example, if there is an index on table T(x,y) then y's position in the index is 1.
+fn get_column_position_in_index(
+    expr: &ast::Expr,
+    table_index: usize,
+    table_reference: &TableReference,
+    index: &Arc<Index>,
+) -> Option<usize> {
+    let ast::Expr::Column { table, column, .. } = expr else {
+        return None;
+    };
+    if *table != table_index {
+        return None;
+    }
+    let Some(column) = table_reference.table.get_column_at(*column) else {
+        return None;
+    };
+    index
+        .columns
+        .iter()
+        .position(|col| Some(&col.name) == column.name.as_ref())
+}
+
+/// Find all [IndexConstraint]s for a given WHERE clause
+/// Constraints are appended as long as they constrain the index in column order.
+/// E.g. for index (a,b,c) to be fully used, there must be a [WhereTerm] for each of a, b, and c.
+/// If e.g. only a and c are present, then only the first column 'a' of the index will be used.
+fn find_index_constraints(
+    where_clause: &mut Vec<WhereTerm>,
+    table_index: usize,
+    table_reference: &TableReference,
+    index: &Arc<Index>,
+    out_constraints: &mut Vec<IndexConstraint>,
+) -> Result<()> {
+    for position_in_index in 0..index.columns.len() {
+        let mut found = false;
+        for (position_in_where_clause, term) in where_clause.iter().enumerate() {
+            // Skip terms that cannot be evaluated at this table's loop level
+            if !term.should_eval_at_loop(table_index) {
+                continue;
+            }
+            // Skip terms that are not binary comparisons
+            let ast::Expr::Binary(lhs, operator, rhs) = &term.expr else {
+                continue;
+            };
+            // Only consider index scans for binary ops that are comparisons
+            if !matches!(
+                *operator,
+                ast::Operator::Equals
+                    | ast::Operator::Greater
+                    | ast::Operator::GreaterEquals
+                    | ast::Operator::Less
+                    | ast::Operator::LessEquals
+            ) {
+                continue;
+            }
+
+            // Check if lhs is a column that is in the i'th position of the index
+            if Some(position_in_index)
+                == get_column_position_in_index(lhs, table_index, table_reference, index)
+            {
+                out_constraints.push(IndexConstraint {
+                    operator: *operator,
+                    position_in_where_clause: (position_in_where_clause, BinaryExprSide::Rhs),
+                });
+                found = true;
+                break;
+            }
+            // Check if rhs is a column that is in the i'th position of the index
+            if Some(position_in_index)
+                == get_column_position_in_index(rhs, table_index, table_reference, index)
+            {
+                out_constraints.push(IndexConstraint {
+                    operator: opposite_cmp_op(*operator), // swap the operator since e.g. if condition is 5 >= x, we want to use x <= 5
+                    position_in_where_clause: (position_in_where_clause, BinaryExprSide::Lhs),
+                });
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            // Expressions must constrain index columns in index definition order. If we didn't find a constraint for the i'th index column,
+            // then we stop here and return the constraints we have found so far.
+            break;
+        }
+    }
+
+    // In a multicolumn index, only the last term can have a nonequality expression.
+    // For example, imagine an index on (x,y) and the where clause is "WHERE x > 10 AND y > 20";
+    // We can't use GT(x: 10,y: 20) as the seek key, because the first row greater than (x: 10,y: 20)
+    // might be e.g. (x: 10,y: 21), which does not satisfy the where clause, but a row after that e.g. (x: 11,y: 21) does.
+    // So:
+    // - in this case only GT(x: 10) can be used as the seek key, and we must emit a regular condition expression for y > 20 while scanning.
+    // On the other hand, if the where clause is "WHERE x = 10 AND y > 20", we can use GT(x=10,y=20) as the seek key,
+    // because any rows where (x=10,y=20) < ROW < (x=11) will match the where clause.
+    for i in 0..out_constraints.len() {
+        if out_constraints[i].operator != ast::Operator::Equals {
+            out_constraints.truncate(i + 1);
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+/// Build a [SeekDef] for a given list of [IndexConstraint]s
+pub fn build_seek_def_from_index_constraints(
+    constraints: &[IndexConstraint],
+    iter_dir: IterationDirection,
+    where_clause: &mut Vec<WhereTerm>,
+) -> Result<SeekDef> {
+    assert!(
+        !constraints.is_empty(),
+        "cannot build seek def from empty list of index constraints"
+    );
+    // Extract the key values and operators
+    let mut key = Vec::with_capacity(constraints.len());
+
+    for constraint in constraints {
+        // Extract the other expression from the binary WhereTerm (i.e. the one being compared to the index column)
+        let (idx, side) = constraint.position_in_where_clause;
+        let where_term = &mut where_clause[idx];
+        let ast::Expr::Binary(lhs, _, rhs) = where_term.expr.take_ownership() else {
+            crate::bail_parse_error!("expected binary expression");
+        };
+        let cmp_expr = if side == BinaryExprSide::Lhs {
+            *lhs
+        } else {
+            *rhs
+        };
+        key.push(cmp_expr);
+    }
+
+    // We know all but potentially the last term is an equality, so we can use the operator of the last term
+    // to form the SeekOp
+    let op = constraints.last().unwrap().operator;
+
+    build_seek_def(op, iter_dir, key)
+}
+
+/// Build a [SeekDef] for a given comparison operator and index key.
+/// To be usable as a seek key, all but potentially the last term must be equalities.
+/// The last term can be a nonequality.
+/// The comparison operator referred to by `op` is the operator of the last term.
+///
+/// There are two parts to the seek definition:
+/// 1. The [SeekKey], which specifies the key that we will use to seek to the first row that matches the index key.
+/// 2. The [TerminationKey], which specifies the key that we will use to terminate the index scan that follows the seek.
+///
+/// There are some nuances to how, and which parts of, the index key can be used in the [SeekKey] and [TerminationKey],
+/// depending on the operator and iteration direction. This function explains those nuances inline when dealing with
+/// each case.
+///
+/// But to illustrate the general idea, consider the following examples:
+///
+/// 1. For example, having two conditions like (x>10 AND y>20) cannot be used as a valid [SeekKey] GT(x:10, y:20)
+/// because the first row greater than (x:10, y:20) might be (x:10, y:21), which does not satisfy the where clause.
+/// In this case, only GT(x:10) must be used as the [SeekKey], and rows with y <= 20 must be filtered as a regular condition expression for each value of x.
+///
+/// 2. In contrast, having (x=10 AND y>20) forms a valid index key GT(x:10, y:20) because after the seek, we can simply terminate as soon as x > 10,
+/// i.e. use GT(x:10, y:20) as the [SeekKey] and GT(x:10) as the [TerminationKey].
+///
+fn build_seek_def(
+    op: ast::Operator,
+    iter_dir: IterationDirection,
+    key: Vec<ast::Expr>,
+) -> Result<SeekDef> {
+    let key_len = key.len();
+    Ok(match (iter_dir, op) {
+        // Forwards, EQ:
+        // Example: (x=10 AND y=20)
+        // Seek key: GE(x:10, y:20)
+        // Termination key: GT(x:10, y:20)
+        (IterationDirection::Forwards, ast::Operator::Equals) => SeekDef {
+            key,
+            iter_dir,
+            seek: Some(SeekKey {
+                len: key_len,
+                op: SeekOp::GE,
+            }),
+            termination: Some(TerminationKey {
+                len: key_len,
+                op: SeekOp::GT,
+            }),
+        },
+        // Forwards, GT:
+        // Example: (x=10 AND y>20)
+        // Seek key: GT(x:10, y:20)
+        // Termination key: GT(x:10)
+        (IterationDirection::Forwards, ast::Operator::Greater) => {
+            let termination_key_len = key_len - 1;
+            SeekDef {
+                key,
+                iter_dir,
+                seek: Some(SeekKey {
+                    len: key_len,
+                    op: SeekOp::GT,
+                }),
+                termination: if termination_key_len > 0 {
+                    Some(TerminationKey {
+                        len: termination_key_len,
+                        op: SeekOp::GT,
+                    })
+                } else {
+                    None
+                },
+            }
+        }
+        // Forwards, GE:
+        // Example: (x=10 AND y>=20)
+        // Seek key: GE(x:10, y:20)
+        // Termination key: GT(x:10)
+        (IterationDirection::Forwards, ast::Operator::GreaterEquals) => {
+            let termination_key_len = key_len - 1;
+            SeekDef {
+                key,
+                iter_dir,
+                seek: Some(SeekKey {
+                    len: key_len,
+                    op: SeekOp::GE,
+                }),
+                termination: if termination_key_len > 0 {
+                    Some(TerminationKey {
+                        len: termination_key_len,
+                        op: SeekOp::GT,
+                    })
+                } else {
+                    None
+                },
+            }
+        }
+        // Forwards, LT:
+        // Example: (x=10 AND y<20)
+        // Seek key: GT(x:10, y: NULL) // NULL is always LT, indicating we only care about x
+        // Termination key: GE(x:10, y:20)
+        (IterationDirection::Forwards, ast::Operator::Less) => SeekDef {
+            key,
+            iter_dir,
+            seek: Some(SeekKey {
+                len: key_len - 1,
+                op: SeekOp::GT,
+            }),
+            termination: Some(TerminationKey {
+                len: key_len,
+                op: SeekOp::GE,
+            }),
+        },
+        // Forwards, LE:
+        // Example: (x=10 AND y<=20)
+        // Seek key: GE(x:10, y:NULL) // NULL is always LT, indicating we only care about x
+        // Termination key: GT(x:10, y:20)
+        (IterationDirection::Forwards, ast::Operator::LessEquals) => SeekDef {
+            key,
+            iter_dir,
+            seek: Some(SeekKey {
+                len: key_len - 1,
+                op: SeekOp::GE,
+            }),
+            termination: Some(TerminationKey {
+                len: key_len,
+                op: SeekOp::GT,
+            }),
+        },
+        // Backwards, EQ:
+        // Example: (x=10 AND y=20)
+        // Seek key: LE(x:10, y:20)
+        // Termination key: LT(x:10, y:20)
+        (IterationDirection::Backwards, ast::Operator::Equals) => SeekDef {
+            key,
+            iter_dir,
+            seek: Some(SeekKey {
+                len: key_len,
+                op: SeekOp::LE,
+            }),
+            termination: Some(TerminationKey {
+                len: key_len,
+                op: SeekOp::LT,
+            }),
+        },
+        // Backwards, LT:
+        // Example: (x=10 AND y<20)
+        // Seek key: LT(x:10, y:20)
+        // Termination key: LT(x:10)
+        (IterationDirection::Backwards, ast::Operator::Less) => {
+            let termination_key_len = key_len - 1;
+            SeekDef {
+                key,
+                iter_dir,
+                seek: Some(SeekKey {
+                    len: key_len,
+                    op: SeekOp::LT,
+                }),
+                termination: if termination_key_len > 0 {
+                    Some(TerminationKey {
+                        len: termination_key_len,
+                        op: SeekOp::LT,
+                    })
+                } else {
+                    None
+                },
+            }
+        }
+        // Backwards, LE:
+        // Example: (x=10 AND y<=20)
+        // Seek key: LE(x:10, y:20)
+        // Termination key: LT(x:10)
+        (IterationDirection::Backwards, ast::Operator::LessEquals) => {
+            let termination_key_len = key_len - 1;
+            SeekDef {
+                key,
+                iter_dir,
+                seek: Some(SeekKey {
+                    len: key_len,
+                    op: SeekOp::LE,
+                }),
+                termination: if termination_key_len > 0 {
+                    Some(TerminationKey {
+                        len: termination_key_len,
+                        op: SeekOp::LT,
+                    })
+                } else {
+                    None
+                },
+            }
+        }
+        // Backwards, GT:
+        // Example: (x=10 AND y>20)
+        // Seek key: LE(x:10) // try to find the last row where x = 10, not considering y at all.
+        // Termination key: LE(x:10, y:20)
+        (IterationDirection::Backwards, ast::Operator::Greater) => {
+            let seek_key_len = key_len - 1;
+            SeekDef {
+                key,
+                iter_dir,
+                seek: if seek_key_len > 0 {
+                    Some(SeekKey {
+                        len: seek_key_len,
+                        op: SeekOp::LE,
+                    })
+                } else {
+                    None
+                },
+                termination: Some(TerminationKey {
+                    len: key_len,
+                    op: SeekOp::LE,
+                }),
+            }
+        }
+        // Backwards, GE:
+        // Example: (x=10 AND y>=20)
+        // Seek key: LE(x:10) // try to find the last row where x = 10, not considering y at all.
+        // Termination key: LT(x:10, y:20)
+        (IterationDirection::Backwards, ast::Operator::GreaterEquals) => {
+            let seek_key_len = key_len - 1;
+            SeekDef {
+                key,
+                iter_dir,
+                seek: if seek_key_len > 0 {
+                    Some(SeekKey {
+                        len: seek_key_len,
+                        op: SeekOp::LE,
+                    })
+                } else {
+                    None
+                },
+                termination: Some(TerminationKey {
+                    len: key_len,
+                    op: SeekOp::LT,
+                }),
+            }
+        }
+        (_, op) => {
+            crate::bail_parse_error!("build_seek_def: invalid operator: {:?}", op,)
+        }
+    })
+}
+
+pub fn try_extract_rowid_search_expression(
     cond: &mut WhereTerm,
     table_index: usize,
     table_reference: &TableReference,
-    available_indexes: &HashMap<String, Vec<Arc<Index>>>,
-    iter_dir: IterationDirection,
 ) -> Result<Option<Search>> {
+    let iter_dir = if let Operation::Scan { iter_dir, .. } = &table_reference.op {
+        *iter_dir
+    } else {
+        return Ok(None);
+    };
     if !cond.should_eval_at_loop(table_index) {
         return Ok(None);
     }
@@ -681,14 +1135,10 @@ pub fn try_extract_index_search_expression(
                     | ast::Operator::Less
                     | ast::Operator::LessEquals => {
                         let rhs_owned = rhs.take_ownership();
-                        return Ok(Some(Search::RowidSearch {
-                            cmp_op: *operator,
-                            cmp_expr: WhereTerm {
-                                expr: rhs_owned,
-                                from_outer_join: cond.from_outer_join,
-                                eval_at: cond.eval_at,
-                            },
-                            iter_dir,
+                        let seek_def = build_seek_def(*operator, iter_dir, vec![rhs_owned])?;
+                        return Ok(Some(Search::Seek {
+                            index: None,
+                            seek_def,
                         }));
                     }
                     _ => {}
@@ -712,64 +1162,11 @@ pub fn try_extract_index_search_expression(
                     | ast::Operator::Less
                     | ast::Operator::LessEquals => {
                         let lhs_owned = lhs.take_ownership();
-                        return Ok(Some(Search::RowidSearch {
-                            cmp_op: opposite_cmp_op(*operator),
-                            cmp_expr: WhereTerm {
-                                expr: lhs_owned,
-                                from_outer_join: cond.from_outer_join,
-                                eval_at: cond.eval_at,
-                            },
-                            iter_dir,
-                        }));
-                    }
-                    _ => {}
-                }
-            }
-
-            if let Some(index_rc) =
-                lhs.check_index_scan(table_index, &table_reference, available_indexes)?
-            {
-                match operator {
-                    ast::Operator::Equals
-                    | ast::Operator::Greater
-                    | ast::Operator::GreaterEquals
-                    | ast::Operator::Less
-                    | ast::Operator::LessEquals => {
-                        let rhs_owned = rhs.take_ownership();
-                        return Ok(Some(Search::IndexSearch {
-                            index: index_rc,
-                            cmp_op: *operator,
-                            cmp_expr: WhereTerm {
-                                expr: rhs_owned,
-                                from_outer_join: cond.from_outer_join,
-                                eval_at: cond.eval_at,
-                            },
-                            iter_dir,
-                        }));
-                    }
-                    _ => {}
-                }
-            }
-
-            if let Some(index_rc) =
-                rhs.check_index_scan(table_index, &table_reference, available_indexes)?
-            {
-                match operator {
-                    ast::Operator::Equals
-                    | ast::Operator::Greater
-                    | ast::Operator::GreaterEquals
-                    | ast::Operator::Less
-                    | ast::Operator::LessEquals => {
-                        let lhs_owned = lhs.take_ownership();
-                        return Ok(Some(Search::IndexSearch {
-                            index: index_rc,
-                            cmp_op: opposite_cmp_op(*operator),
-                            cmp_expr: WhereTerm {
-                                expr: lhs_owned,
-                                from_outer_join: cond.from_outer_join,
-                                eval_at: cond.eval_at,
-                            },
-                            iter_dir,
+                        let op = opposite_cmp_op(*operator);
+                        let seek_def = build_seek_def(op, iter_dir, vec![lhs_owned])?;
+                        return Ok(Some(Search::Seek {
+                            index: None,
+                            seek_def,
                         }));
                     }
                     _ => {}
