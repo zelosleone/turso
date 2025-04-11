@@ -5,6 +5,7 @@ use crate::ext::{ExtValue, ExtValueType};
 use crate::pseudo::PseudoCursor;
 use crate::storage::btree::BTreeCursor;
 use crate::storage::sqlite3_ondisk::write_varint;
+use crate::translate::plan::IterationDirection;
 use crate::vdbe::sorter::Sorter;
 use crate::vdbe::{Register, VTabOpaqueCursor};
 use crate::Result;
@@ -1233,6 +1234,15 @@ pub enum SeekOp {
     GT,
     LE,
     LT,
+}
+
+impl SeekOp {
+    pub fn iteration_direction(&self) -> IterationDirection {
+        match self {
+            SeekOp::EQ | SeekOp::GE | SeekOp::GT => IterationDirection::Forwards,
+            SeekOp::LE | SeekOp::LT => IterationDirection::Backwards,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Debug)]
