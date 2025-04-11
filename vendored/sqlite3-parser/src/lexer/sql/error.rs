@@ -56,6 +56,8 @@ pub enum Error {
     MalformedHexInteger(
         Option<(u64, usize)>,
         #[label("here")] Option<miette::SourceSpan>,
+        Option<usize>,
+        #[help] Option<&'static str>,
     ),
     /// Grammar error
     ParserError(
@@ -87,7 +89,7 @@ impl fmt::Display for Error {
             Self::MalformedBlobLiteral(pos, _) => {
                 write!(f, "malformed blob literal at {:?}", pos.unwrap())
             }
-            Self::MalformedHexInteger(pos, _) => {
+            Self::MalformedHexInteger(pos, _, _, _) => {
                 write!(f, "malformed hex integer at {:?}", pos.unwrap())
             }
             Self::ParserError(ref msg, Some(pos), _) => write!(f, "{msg} at {pos:?}"),
@@ -111,18 +113,45 @@ impl From<ParserError> for Error {
 }
 
 impl ScanError for Error {
-    fn position(&mut self, line: u64, column: usize) {
+    fn position(&mut self, line: u64, column: usize, offset: usize) {
         match *self {
             Self::Io(_) => {}
-            Self::UnrecognizedToken(ref mut pos, _) => *pos = Some((line, column)),
-            Self::UnterminatedLiteral(ref mut pos, _) => *pos = Some((line, column)),
-            Self::UnterminatedBracket(ref mut pos, _) => *pos = Some((line, column)),
-            Self::UnterminatedBlockComment(ref mut pos, _) => *pos = Some((line, column)),
-            Self::BadVariableName(ref mut pos, _) => *pos = Some((line, column)),
-            Self::BadNumber(ref mut pos, _) => *pos = Some((line, column)),
-            Self::ExpectedEqualsSign(ref mut pos, _) => *pos = Some((line, column)),
-            Self::MalformedBlobLiteral(ref mut pos, _) => *pos = Some((line, column)),
-            Self::MalformedHexInteger(ref mut pos, _) => *pos = Some((line, column)),
+            Self::UnrecognizedToken(ref mut pos, ref mut src) => {
+                *pos = Some((line, column));
+                *src = Some((offset).into());
+            }
+            Self::UnterminatedLiteral(ref mut pos, ref mut src) => {
+                *pos = Some((line, column));
+                *src = Some((offset).into());
+            }
+            Self::UnterminatedBracket(ref mut pos, ref mut src) => {
+                *pos = Some((line, column));
+                *src = Some((offset).into());
+            }
+            Self::UnterminatedBlockComment(ref mut pos, ref mut src) => {
+                *pos = Some((line, column));
+                *src = Some((offset).into());
+            }
+            Self::BadVariableName(ref mut pos, ref mut src) => {
+                *pos = Some((line, column));
+                *src = Some((offset).into());
+            }
+            Self::BadNumber(ref mut pos, ref mut src) => {
+                *pos = Some((line, column));
+                *src = Some((offset).into());
+            }
+            Self::ExpectedEqualsSign(ref mut pos, ref mut src) => {
+                *pos = Some((line, column));
+                *src = Some((offset).into());
+            }
+            Self::MalformedBlobLiteral(ref mut pos, ref mut src) => {
+                *pos = Some((line, column));
+                *src = Some((offset).into());
+            }
+            Self::MalformedHexInteger(ref mut pos, ref mut src, len, _) => {
+                *pos = Some((line, column));
+                *src = Some((offset, len.unwrap_or(0)).into());
+            }
             Self::ParserError(_, ref mut pos, _) => *pos = Some((line, column)),
         }
     }

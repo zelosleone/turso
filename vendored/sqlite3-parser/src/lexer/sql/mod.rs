@@ -172,7 +172,7 @@ macro_rules! try_with_position {
             Ok(val) => val,
             Err(err) => {
                 let mut err = Error::from(err);
-                err.position($scanner.line(), $scanner.column());
+                err.position($scanner.line(), $scanner.column(), $scanner.offset() - 1);
                 return Err(err);
             }
         }
@@ -610,13 +610,28 @@ fn hex_integer(data: &[u8]) -> Result<(Option<Token<'_>>, usize), Error> {
     if let Some((i, b)) = find_end_of_number(data, 2, u8::is_ascii_hexdigit)? {
         // Must not be empty (Ox is invalid)
         if i == 2 || is_identifier_start(b) {
-            return Err(Error::MalformedHexInteger(None, None));
+            let (len, help) = if i == 2 && !is_identifier_start(b) {
+                (i, "Did you forget to add digits after '0x' or '0X'?")
+            } else {
+                (i + 1, "There are some invalid digits after '0x' or '0X'")
+            };
+            return Err(Error::MalformedHexInteger(
+                None,
+                None,
+                Some(len),  // Length of the malformed hex
+                Some(help), // Help Message
+            ));
         }
         Ok((Some((&data[..i], TK_INTEGER)), i))
     } else {
         // Must not be empty (Ox is invalid)
         if data.len() == 2 {
-            return Err(Error::MalformedHexInteger(None, None));
+            return Err(Error::MalformedHexInteger(
+                None,
+                None,
+                Some(2), // Length of the malformed hex
+                Some("Did you forget to add digits after '0x' or '0X'?"), // Help Message
+            ));
         }
         Ok((Some((data, TK_INTEGER)), data.len()))
     }
