@@ -1625,6 +1625,58 @@ pub fn translate_expr(
                             });
                             Ok(target_register)
                         }
+                        ScalarFunc::Likelihood => {
+                            let args = if let Some(args) = args {
+                                if args.len() != 2 {
+                                    crate::bail_parse_error!(
+                                        "likelihood() function must have exactly 2 arguments",
+                                    );
+                                }
+                                args
+                            } else {
+                                crate::bail_parse_error!("likelihood() function with no arguments",);
+                            };
+
+                            if let ast::Expr::Literal(ast::Literal::Numeric(ref value)) = args[1] {
+                                if let Ok(probability) = value.parse::<f64>() {
+                                    if !(0.0..=1.0).contains(&probability) {
+                                        crate::bail_parse_error!(
+                                            "second argument of likelihood() must be between 0.0 and 1.0",
+                                        );
+                                    }
+                                    if !value.contains('.') {
+                                        crate::bail_parse_error!(
+                                            "second argument of likelihood() must be a floating point number with decimal point",
+                                        );
+                                    }
+                                } else {
+                                    crate::bail_parse_error!(
+                                        "second argument of likelihood() must be a floating point constant",
+                                    );
+                                }
+                            } else {
+                                crate::bail_parse_error!(
+                                    "second argument of likelihood() must be a numeric literal",
+                                );
+                            }
+
+                            let start_reg = program.alloc_register();
+                            translate_and_mark(
+                                program,
+                                referenced_tables,
+                                &args[0],
+                                start_reg,
+                                resolver,
+                            )?;
+
+                            program.emit_insn(Insn::Copy {
+                                src_reg: start_reg,
+                                dst_reg: target_register,
+                                amount: 0,
+                            });
+
+                            Ok(target_register)
+                        }
                     }
                 }
                 Func::Math(math_func) => match math_func.arity() {

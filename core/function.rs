@@ -294,6 +294,7 @@ pub enum ScalarFunc {
     Printf,
     Likely,
     TimeDiff,
+    Likelihood,
 }
 
 impl Display for ScalarFunc {
@@ -350,6 +351,7 @@ impl Display for ScalarFunc {
             Self::Printf => "printf".to_string(),
             Self::Likely => "likely".to_string(),
             Self::TimeDiff => "timediff".to_string(),
+            Self::Likelihood => "likelihood".to_string(),
         };
         write!(f, "{}", str)
     }
@@ -607,6 +609,7 @@ impl Func {
             "sqlite_source_id" => Ok(Self::Scalar(ScalarFunc::SqliteSourceId)),
             "replace" => Ok(Self::Scalar(ScalarFunc::Replace)),
             "likely" => Ok(Self::Scalar(ScalarFunc::Likely)),
+            "likelihood" => Ok(Self::Scalar(ScalarFunc::Likelihood)),
             #[cfg(feature = "json")]
             "json" => Ok(Self::Json(JsonFunc::Json)),
             #[cfg(feature = "json")]
