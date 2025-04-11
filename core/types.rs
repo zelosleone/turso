@@ -1228,6 +1228,7 @@ pub enum CursorResult<T> {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// The match condition of a table/index seek.
 pub enum SeekOp {
     EQ,
     GE,
@@ -1237,6 +1238,15 @@ pub enum SeekOp {
 }
 
 impl SeekOp {
+    /// A given seek op implies an iteration direction.
+    ///
+    /// For example, a seek with SeekOp::GT implies:
+    /// Find the first table/index key that compares greater than the seek key
+    /// -> used in forwards iteration.
+    ///
+    /// A seek with SeekOp::LE implies:
+    /// Find the last table/index key that compares less than or equal to the seek key
+    /// -> used in backwards iteration.
     pub fn iteration_direction(&self) -> IterationDirection {
         match self {
             SeekOp::EQ | SeekOp::GE | SeekOp::GT => IterationDirection::Forwards,
