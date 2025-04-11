@@ -38,10 +38,12 @@ pub enum Error {
         #[label("here")] Option<miette::SourceSpan>,
     ),
     /// Invalid number format
+    #[diagnostic(help("Invalid digit in `{3}`"))]
     BadNumber(
         Option<(u64, usize)>,
         #[label("here")] Option<miette::SourceSpan>,
         Option<usize>,
+        String, // Holds the offending number as a string
     ),
     /// Invalid or missing sign after `!`
     ExpectedEqualsSign(
@@ -85,7 +87,7 @@ impl fmt::Display for Error {
                 write!(f, "non-terminated block comment at {:?}", pos.unwrap())
             }
             Self::BadVariableName(pos, _) => write!(f, "bad variable name at {:?}", pos.unwrap()),
-            Self::BadNumber(pos, _, _) => write!(f, "bad number at {:?}", pos.unwrap()),
+            Self::BadNumber(pos, _, _, _) => write!(f, "bad number at {:?}", pos.unwrap()),
             Self::ExpectedEqualsSign(pos, _) => write!(f, "expected = sign at {:?}", pos.unwrap()),
             Self::MalformedBlobLiteral(pos, _) => {
                 write!(f, "malformed blob literal at {:?}", pos.unwrap())
@@ -147,7 +149,7 @@ impl ScanError for Error {
             }
             // Exact same handling here
             Self::MalformedHexInteger(ref mut pos, ref mut src, len, _)
-            | Self::BadNumber(ref mut pos, ref mut src, len) => {
+            | Self::BadNumber(ref mut pos, ref mut src, len, _) => {
                 *pos = Some((line, column));
                 *src = Some((offset, len.unwrap_or(0)).into());
             }
