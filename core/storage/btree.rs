@@ -1644,9 +1644,9 @@ impl BTreeCursor {
                         // don't continue if:
                         // - current page is not overfull root
                         // OR
-                        // - current page is not overfull and the amount of free space on the page 
+                        // - current page is not overfull and the amount of free space on the page
                         // is less than 2/3rds of the total usable space on the page
-                        // 
+                        //
                         // https://github.com/sqlite/sqlite/blob/0aa95099f5003dc99f599ab77ac0004950b281ef/src/btree.c#L9064-L9071
                         let page = current_page.get().contents.as_mut().unwrap();
                         let usable_space = self.usable_space();
