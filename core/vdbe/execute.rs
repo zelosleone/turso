@@ -3505,6 +3505,14 @@ pub fn op_function(
                 let result = exec_likely(value.get_owned_value());
                 state.registers[*dest] = Register::OwnedValue(result);
             }
+            ScalarFunc::Likelihood => {
+                assert_eq!(arg_count, 2);
+                let value = &state.registers[*start_reg];
+                let probability = &state.registers[*start_reg + 1];
+                let result =
+                    exec_likelihood(value.get_owned_value(), probability.get_owned_value());
+                state.registers[*dest] = Register::OwnedValue(result);
+            }
         },
         crate::function::Func::Vector(vector_func) => match vector_func {
             VectorFunc::Vector => {
@@ -5365,6 +5373,10 @@ fn exec_likely(reg: &OwnedValue) -> OwnedValue {
     reg.clone()
 }
 
+fn exec_likelihood(reg: &OwnedValue, _probability: &OwnedValue) -> OwnedValue {
+    reg.clone()
+}
+
 pub fn exec_add(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
     let result = match (lhs, rhs) {
         (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
@@ -6248,7 +6260,7 @@ mod tests {
     }
 
     use crate::vdbe::{
-        execute::{exec_likely, exec_replace},
+        execute::{exec_likelihood, exec_likely, exec_replace},
         Bitfield, Register,
     };
 
@@ -7163,6 +7175,42 @@ mod tests {
         let input = OwnedValue::Blob(vec![1, 2, 3, 4]);
         let expected = OwnedValue::Blob(vec![1, 2, 3, 4]);
         assert_eq!(exec_likely(&input), expected);
+    }
+
+    #[test]
+    fn test_likelihood() {
+        let value = OwnedValue::build_text("limbo");
+        let prob = OwnedValue::Float(0.5);
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let value = OwnedValue::build_text("database");
+        let prob = OwnedValue::Float(0.9375);
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let value = OwnedValue::Integer(100);
+        let prob = OwnedValue::Float(0.0625);
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let value = OwnedValue::Float(12.34);
+        let prob = OwnedValue::Float(0.5);
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let value = OwnedValue::Null;
+        let prob = OwnedValue::Float(0.5);
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let value = OwnedValue::Blob(vec![1, 2, 3, 4]);
+        let prob = OwnedValue::Float(0.5);
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let prob = OwnedValue::Integer(1);
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let prob = OwnedValue::build_text("0.5");
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let prob = OwnedValue::Null;
+        assert_eq!(exec_likelihood(&value, &prob), value);
     }
 
     #[test]
