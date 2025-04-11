@@ -85,6 +85,7 @@ impl SimulatorEnv {
         // Remove existing database file if it exists
         if db_path.exists() {
             std::fs::remove_file(db_path).unwrap();
+            std::fs::remove_file(db_path.with_extension("db-wal")).unwrap();
         }
 
         let db = match Database::open_file(io.clone(), db_path.to_str().unwrap(), false) {

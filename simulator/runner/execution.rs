@@ -68,7 +68,12 @@ pub(crate) fn execute_plans(
         // Pick the connection to interact with
         let connection_index = pick_index(env.connections.len(), &mut env.rng);
         let state = &mut states[connection_index];
-
+        std::thread::sleep(std::time::Duration::from_millis(
+            std::env::var("TICK_SLEEP")
+                .unwrap_or("0".into())
+                .parse()
+                .unwrap_or(0),
+        ));
         history.history.push(Execution::new(
             connection_index,
             state.interaction_pointer,
@@ -121,6 +126,7 @@ fn execute_plan(
     } else {
         match execute_interaction(env, connection_index, interaction, &mut state.stack) {
             Ok(next_execution) => {
+                interaction.shadow(env);
                 log::debug!("connection {} processed", connection_index);
                 // Move to the next interaction or property
                 match next_execution {

@@ -38,7 +38,7 @@ impl InteractionPlan {
         let interactions = interactions.lines().collect::<Vec<_>>();
 
         let plan: InteractionPlan = serde_json::from_str(
-            std::fs::read_to_string(plan_path.with_extension("plan.json"))
+            std::fs::read_to_string(plan_path.with_extension("json"))
                 .unwrap()
                 .as_str(),
         )
@@ -71,7 +71,6 @@ impl InteractionPlan {
                     let _ = plan[j].split_off(k);
                     break;
                 }
-
                 if interactions[i].contains(plan[j][k].to_string().as_str()) {
                     i += 1;
                     k += 1;
@@ -86,7 +85,7 @@ impl InteractionPlan {
                 j += 1;
             }
         }
-
+        let _ = plan.split_off(j);
         plan
     }
 }

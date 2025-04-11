@@ -407,7 +407,7 @@ impl Property {
                         match (select_predicate, select_star) {
                             (Ok(rows1), Ok(rows2)) => {
                                 // If rows1 results have more than 1 column, there is a problem
-                                if rows1.iter().find(|vs| vs.len() > 1).is_some() {
+                                if rows1.iter().any(|vs| vs.len() > 1) {
                                     return Err(LimboError::InternalError(
                                         "Select query without the star should return only one column".to_string(),
                                     ));
