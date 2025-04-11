@@ -596,7 +596,7 @@ fn number(data: &[u8]) -> Result<(Option<Token<'_>>, usize), Error> {
         } else if b == b'e' || b == b'E' {
             return exponential_part(data, i);
         } else if is_identifier_start(b) {
-            return Err(Error::BadNumber(None, None));
+            return Err(Error::BadNumber(None, None, Some(i + 1)));
         }
         Ok((Some((&data[..i], TK_INTEGER)), i))
     } else {
@@ -643,7 +643,7 @@ fn fractional_part(data: &[u8], i: usize) -> Result<(Option<Token<'_>>, usize), 
         if b == b'e' || b == b'E' {
             return exponential_part(data, i);
         } else if is_identifier_start(b) {
-            return Err(Error::BadNumber(None, None));
+            return Err(Error::BadNumber(None, None, Some(i + 1)));
         }
         Ok((Some((&data[..i], TK_FLOAT)), i))
     } else {
@@ -658,17 +658,18 @@ fn exponential_part(data: &[u8], i: usize) -> Result<(Option<Token<'_>>, usize),
         let i = if *b == b'+' || *b == b'-' { i + 1 } else { i };
         if let Some((j, b)) = find_end_of_number(data, i + 1, u8::is_ascii_digit)? {
             if j == i + 1 || is_identifier_start(b) {
-                return Err(Error::BadNumber(None, None));
+                let len = if is_identifier_start(b) { j + 1 } else { j };
+                return Err(Error::BadNumber(None, None, Some(len)));
             }
             Ok((Some((&data[..j], TK_FLOAT)), j))
         } else {
             if data.len() == i + 1 {
-                return Err(Error::BadNumber(None, None));
+                return Err(Error::BadNumber(None, None, Some(i + 1)));
             }
             Ok((Some((data, TK_FLOAT)), data.len()))
         }
     } else {
-        Err(Error::BadNumber(None, None))
+        Err(Error::BadNumber(None, None, Some(data.len())))
     }
 }
 
@@ -685,7 +686,7 @@ fn find_end_of_number(
             {
                 continue;
             }
-            return Err(Error::BadNumber(None, None));
+            return Err(Error::BadNumber(None, None, Some(j)));
         } else {
             return Ok(Some((j, b)));
         }
@@ -739,7 +740,7 @@ mod tests {
         let mut s = Scanner::new(tokenizer);
         expect_token(&mut s, input, b"SELECT", TokenType::TK_SELECT)?;
         let err = s.scan(input).unwrap_err();
-        assert!(matches!(err, Error::BadNumber(_, _)));
+        assert!(matches!(err, Error::BadNumber(_, _, _)));
         Ok(())
     }
 

@@ -41,6 +41,7 @@ pub enum Error {
     BadNumber(
         Option<(u64, usize)>,
         #[label("here")] Option<miette::SourceSpan>,
+        Option<usize>,
     ),
     /// Invalid or missing sign after `!`
     ExpectedEqualsSign(
@@ -84,7 +85,7 @@ impl fmt::Display for Error {
                 write!(f, "non-terminated block comment at {:?}", pos.unwrap())
             }
             Self::BadVariableName(pos, _) => write!(f, "bad variable name at {:?}", pos.unwrap()),
-            Self::BadNumber(pos, _) => write!(f, "bad number at {:?}", pos.unwrap()),
+            Self::BadNumber(pos, _, _) => write!(f, "bad number at {:?}", pos.unwrap()),
             Self::ExpectedEqualsSign(pos, _) => write!(f, "expected = sign at {:?}", pos.unwrap()),
             Self::MalformedBlobLiteral(pos, _) => {
                 write!(f, "malformed blob literal at {:?}", pos.unwrap())
@@ -136,10 +137,6 @@ impl ScanError for Error {
                 *pos = Some((line, column));
                 *src = Some((offset).into());
             }
-            Self::BadNumber(ref mut pos, ref mut src) => {
-                *pos = Some((line, column));
-                *src = Some((offset).into());
-            }
             Self::ExpectedEqualsSign(ref mut pos, ref mut src) => {
                 *pos = Some((line, column));
                 *src = Some((offset).into());
@@ -148,7 +145,9 @@ impl ScanError for Error {
                 *pos = Some((line, column));
                 *src = Some((offset).into());
             }
-            Self::MalformedHexInteger(ref mut pos, ref mut src, len, _) => {
+            // Exact same handling here
+            Self::MalformedHexInteger(ref mut pos, ref mut src, len, _)
+            | Self::BadNumber(ref mut pos, ref mut src, len) => {
                 *pos = Some((line, column));
                 *src = Some((offset, len.unwrap_or(0)).into());
             }
