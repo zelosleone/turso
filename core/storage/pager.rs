@@ -326,8 +326,12 @@ impl Pager {
         trace!("load_page(page_idx = {})", id);
         let mut page_cache = self.page_cache.write();
         page.set_locked();
+        let max_frame = match &self.wal {
+            Some(wal) => wal.borrow().get_max_frame(),
+            None => 0,
+        };
+        let page_key = PageCacheKey::new(id, Some(max_frame));
         if let Some(wal) = &self.wal {
-            let page_key = PageCacheKey::new(id, Some(wal.borrow().get_max_frame()));
             if let Some(frame_id) = wal.borrow().find_frame(id as u64)? {
                 wal.borrow()
                     .read_frame(frame_id, page.clone(), self.buffer_pool.clone())?;
@@ -340,6 +344,11 @@ impl Pager {
                 }
                 return Ok(());
             }
+        }
+
+        // TODO(pere) ensure page is inserted
+        if !page_cache.contains_key(&page_key) {
+            page_cache.insert(page_key, page.clone());
         }
         sqlite3_ondisk::begin_read_page(
             self.db_file.clone(),
@@ -376,11 +385,14 @@ impl Pager {
             match state {
                 FlushState::Start => {
                     let db_size = self.db_header.lock().database_size;
+                    let max_frame = match &self.wal {
+                        Some(wal) => wal.borrow().get_max_frame(),
+                        None => 0,
+                    };
                     for page_id in self.dirty_pages.borrow().iter() {
                         let mut cache = self.page_cache.write();
+                        let page_key = PageCacheKey::new(*page_id, Some(max_frame));
                         if let Some(wal) = &self.wal {
-                            let page_key =
-                                PageCacheKey::new(*page_id, Some(wal.borrow().get_max_frame()));
                             let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
                             let page_type = page.get().contents.as_ref().unwrap().maybe_page_type();
                             trace!("cacheflush(page={}, page_type={:?}", page_id, page_type);
@@ -389,11 +401,11 @@ impl Pager {
                                 db_size,
                                 self.flush_info.borrow().in_flight_writes.clone(),
                             )?;
-                            // This page is no longer valid.
-                            // For example:
-                            // We took page with key (page_num, max_frame) -- this page is no longer valid for that max_frame so it must be invalidated.
-                            cache.delete(page_key);
                         }
+                        // This page is no longer valid.
+                        // For example:
+                        // We took page with key (page_num, max_frame) -- this page is no longer valid for that max_frame so it must be invalidated.
+                        cache.delete(page_key);
                     }
                     self.dirty_pages.borrow_mut().clear();
                     self.flush_info.borrow_mut().state = FlushState::WaitAppendFrames;
