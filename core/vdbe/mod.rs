@@ -285,7 +285,10 @@ impl ProgramState {
     }
 
     pub fn get_parameter(&self, index: NonZero<usize>) -> OwnedValue {
-        self.parameters.get(&index).cloned().unwrap_or(OwnedValue::Null)
+        self.parameters
+            .get(&index)
+            .cloned()
+            .unwrap_or(OwnedValue::Null)
     }
 
     pub fn reset(&mut self) {
