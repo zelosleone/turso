@@ -4395,12 +4395,7 @@ pub fn op_variable(
     let Insn::Variable { index, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::OwnedValue(
-        state
-            .get_parameter(*index)
-            .ok_or(LimboError::Unbound(*index))?
-            .clone(),
-    );
+    state.registers[*dest] = Register::OwnedValue(state.get_parameter(*index));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }

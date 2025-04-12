@@ -284,8 +284,8 @@ impl ProgramState {
         self.parameters.insert(index, value);
     }
 
-    pub fn get_parameter(&self, index: NonZero<usize>) -> Option<&OwnedValue> {
-        self.parameters.get(&index)
+    pub fn get_parameter(&self, index: NonZero<usize>) -> OwnedValue {
+        self.parameters.get(&index).cloned().unwrap_or(OwnedValue::Null)
     }
 
     pub fn reset(&mut self) {
