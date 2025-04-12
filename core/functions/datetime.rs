@@ -46,20 +46,13 @@ enum DateTimeOutput {
     DateTime,
     // Holds the format string
     StrfTime(String),
+    JuliaDay,
 }
 
 fn exec_datetime(values: &[Register], output_type: DateTimeOutput) -> OwnedValue {
     if values.is_empty() {
         let now = parse_naive_date_time(&OwnedValue::build_text("now")).unwrap();
-
-        let formatted_str = match output_type {
-            DateTimeOutput::DateTime => now.format("%Y-%m-%d %H:%M:%S").to_string(),
-            DateTimeOutput::Time => now.format("%H:%M:%S").to_string(),
-            DateTimeOutput::Date => now.format("%Y-%m-%d").to_string(),
-            DateTimeOutput::StrfTime(ref format_str) => strftime_format(&now, format_str),
-        };
-
-        // Parse here
+        let formatted_str = format_dt(now, output_type, false);
         return OwnedValue::build_text(&formatted_str);
     }
     if let Some(mut dt) = parse_naive_date_time(values[0].get_owned_value()) {
@@ -113,6 +106,7 @@ fn format_dt(dt: NaiveDateTime, output_type: DateTimeOutput, subsec: bool) -> St
             }
         }
         DateTimeOutput::StrfTime(format_str) => strftime_format(&dt, &format_str),
+        DateTimeOutput::JuliaDay => format_julian_day(to_julian_day_exact(&dt)),
     }
 }
 
@@ -325,14 +319,8 @@ fn last_day_in_month(year: i32, month: u32) -> u32 {
     28
 }
 
-pub fn exec_julianday(time_value: &OwnedValue) -> Result<String> {
-    let dt = parse_naive_date_time(time_value);
-    match dt {
-        // if we did something heinous like: parse::<f64>().unwrap().to_string()
-        // that would solve the precision issue, but dear lord...
-        Some(dt) => Ok(format!("{:.1$}", to_julian_day_exact(&dt), 8)),
-        None => Ok(String::new()),
-    }
+pub fn exec_julianday(values: &[Register]) -> OwnedValue {
+    exec_datetime(values, DateTimeOutput::JuliaDay)
 }
 
 fn to_julian_day_exact(dt: &NaiveDateTime) -> f64 {
@@ -360,6 +348,16 @@ fn to_julian_day_exact(dt: &NaiveDateTime) -> f64 {
 
     let jd_fraction = seconds / 86400.0;
     jd_days + jd_fraction
+}
+
+fn format_julian_day(days: f64) -> String {
+    let t = (days * 100_000_000.0).round() / 100_000_000.0;
+    let mut ret = format!("{}", t);
+    if !ret.contains('.') {
+        ret += ".0";
+    }
+
+    ret
 }
 
 pub fn exec_unixepoch(time_value: &OwnedValue) -> Result<String> {
