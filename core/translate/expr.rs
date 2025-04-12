@@ -4,7 +4,7 @@ use limbo_sqlite3_parser::ast::{self, UnaryOperator};
 use crate::function::JsonFunc;
 use crate::function::{Func, FuncCtx, MathFuncArity, ScalarFunc, VectorFunc};
 use crate::schema::{Table, Type};
-use crate::util::normalize_ident;
+use crate::util::{exprs_are_equivalent, normalize_ident};
 use crate::vdbe::{
     builder::ProgramBuilder,
     insn::{CmpInsFlags, Insn},
@@ -494,8 +494,8 @@ pub fn translate_expr(
     match expr {
         ast::Expr::Between { .. } => todo!(),
         ast::Expr::Binary(e1, op, e2) => {
-            // Check if both sides of the expression are identical and reuse the same register if so
-            if e1 == e2 {
+            // Check if both sides of the expression are equivalent and reuse the same register if so
+            if exprs_are_equivalent(e1, e2) {
                 let shared_reg = program.alloc_register();
                 translate_expr(program, referenced_tables, e1, shared_reg, resolver)?;
 
