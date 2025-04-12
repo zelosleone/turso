@@ -789,10 +789,9 @@ impl<'a> Limbo<'a> {
                                 if let Some(ref mut stats) = statistics {
                                     stats.execute_time_elapsed_samples.push(start.elapsed());
                                 }
-                                let _ = self.write_fmt(format_args!(
-                                    "{:?}",
-                                    miette::Error::from(err).with_source_code(sql.to_owned())
-                                ));
+                                let report =
+                                    miette::Error::from(err).with_source_code(sql.to_owned());
+                                let _ = self.write_fmt(format_args!("{:?}", report));
                                 break;
                             }
                         }
@@ -805,10 +804,8 @@ impl<'a> Limbo<'a> {
             },
             Ok(None) => {}
             Err(err) => {
-                let _ = self.write_fmt(format_args!(
-                    "{:?}",
-                    miette::Error::from(err).with_source_code(sql.to_owned())
-                ));
+                let report = miette::Error::from(err).with_source_code(sql.to_owned());
+                let _ = self.write_fmt(format_args!("{:?}", report));
                 anyhow::bail!("We have to throw here, even if we printed error");
             }
         }
