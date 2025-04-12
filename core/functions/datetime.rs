@@ -350,8 +350,11 @@ fn to_julian_day_exact(dt: &NaiveDateTime) -> f64 {
     jd_days + jd_fraction
 }
 
+// Format the Julian day to a maximum of 8 decimal places. if it's an integer,
+// append `.0` to the end to stay consistent with SQLite.
 fn format_julian_day(days: f64) -> String {
-    let t = (days * 100_000_000.0).round() / 100_000_000.0;
+    const DECIMAL_PRECISION: f64 = 100_000_000.0;
+    let t = (days * DECIMAL_PRECISION).round() / DECIMAL_PRECISION;
     let mut ret = format!("{}", t);
     if !ret.contains('.') {
         ret += ".0";
