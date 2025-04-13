@@ -845,27 +845,37 @@ fn emit_seek(
     is_index: bool,
 ) -> Result<()> {
     let Some(seek) = seek_def.seek.as_ref() else {
-        assert!(seek_def.iter_dir == IterationDirection::Backwards, "A SeekDef without a seek operation should only be used in backwards iteration direction");
-        program.emit_insn(Insn::Last {
-            cursor_id: seek_cursor_id,
-            pc_if_empty: loop_end,
-        });
+        // If there is no seek key, we start from the first or last row of the index,
+        // depending on the iteration direction.
+        match seek_def.iter_dir {
+            IterationDirection::Forwards => {
+                program.emit_insn(Insn::Rewind {
+                    cursor_id: seek_cursor_id,
+                    pc_if_empty: loop_end,
+                });
+            }
+            IterationDirection::Backwards => {
+                program.emit_insn(Insn::Last {
+                    cursor_id: seek_cursor_id,
+                    pc_if_empty: loop_end,
+                });
+            }
+        }
         return Ok(());
     };
     // We allocated registers for the full index key, but our seek key might not use the full index key.
-    // Later on for the termination condition we will overwrite the NULL registers.
     // See [crate::translate::optimizer::build_seek_def] for more details about in which cases we do and don't use the full index key.
     for i in 0..seek_def.key.len() {
         let reg = start_reg + i;
         if i >= seek.len {
-            if seek_def.null_pad_unset_cols() {
+            if seek.null_pad {
                 program.emit_insn(Insn::Null {
                     dest: reg,
                     dest_end: None,
                 });
             }
         } else {
-            let expr = &seek_def.key[i];
+            let expr = &seek_def.key[i].0;
             translate_expr(program, Some(tables), &expr, reg, &t_ctx.resolver)?;
             // If the seek key column is not verifiably non-NULL, we need check whether it is NULL,
             // and if so, jump to the loop end.
@@ -879,7 +889,7 @@ fn emit_seek(
             }
         }
     }
-    let num_regs = if seek_def.null_pad_unset_cols() {
+    let num_regs = if seek.null_pad {
         seek_def.key.len()
     } else {
         seek.len
@@ -943,19 +953,46 @@ fn emit_seek_termination(
         program.resolve_label(loop_start, program.offset());
         return Ok(());
     };
-    let num_regs = termination.len;
-    // If the seek termination was preceded by a seek (which happens in most cases),
-    // we can re-use the registers that were allocated for the full index key.
-    let start_idx = seek_def.seek.as_ref().map_or(0, |seek| seek.len);
-    for i in start_idx..termination.len {
+
+    // How many non-NULL values were used for seeking.
+    let seek_len = seek_def.seek.as_ref().map_or(0, |seek| seek.len);
+
+    // How many values will be used for the termination condition.
+    let num_regs = if termination.null_pad {
+        seek_def.key.len()
+    } else {
+        termination.len
+    };
+    for i in 0..seek_def.key.len() {
         let reg = start_reg + i;
-        translate_expr(
-            program,
-            Some(tables),
-            &seek_def.key[i],
-            reg,
-            &t_ctx.resolver,
-        )?;
+        let is_last = i == seek_def.key.len() - 1;
+
+        // For all index key values apart from the last one, we are guaranteed to use the same values
+        // as were used for the seek, so we don't need to emit them again.
+        if i < seek_len && !is_last {
+            continue;
+        }
+        // For the last index key value, we need to emit a NULL if the termination condition is NULL-padded.
+        // See [SeekKey::null_pad] and [crate::translate::optimizer::build_seek_def] for why this is the case.
+        if i >= termination.len && !termination.null_pad {
+            continue;
+        }
+        if is_last && termination.null_pad {
+            program.emit_insn(Insn::Null {
+                dest: reg,
+                dest_end: None,
+            });
+        // if the seek key is shorter than the termination key, we need to translate the remaining suffix of the termination key.
+        // if not, we just reuse what was emitted for the seek.
+        } else if seek_len < termination.len {
+            translate_expr(
+                program,
+                Some(tables),
+                &seek_def.key[i].0,
+                reg,
+                &t_ctx.resolver,
+            )?;
+        }
     }
     program.resolve_label(loop_start, program.offset());
     let mut rowid_reg = None;

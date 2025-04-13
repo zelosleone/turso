@@ -1,5 +1,5 @@
 use core::fmt;
-use limbo_sqlite3_parser::ast;
+use limbo_sqlite3_parser::ast::{self, SortOrder};
 use std::{
     cmp::Ordering,
     fmt::{Display, Formatter},
@@ -391,10 +391,10 @@ impl TableReference {
 pub struct SeekDef {
     /// The key to use when seeking and when terminating the scan that follows the seek.
     /// For example, given:
-    /// - CREATE INDEX i ON t (x, y)
+    /// - CREATE INDEX i ON t (x, y desc)
     /// - SELECT * FROM t WHERE x = 1 AND y >= 30
-    /// The key is [1, 30]
-    pub key: Vec<ast::Expr>,
+    /// The key is [(1, ASC), (30, DESC)]
+    pub key: Vec<(ast::Expr, SortOrder)>,
     /// The condition to use when seeking. See [SeekKey] for more details.
     pub seek: Option<SeekKey>,
     /// The condition to use when terminating the scan that follows the seek. See [TerminationKey] for more details.
@@ -403,35 +403,22 @@ pub struct SeekDef {
     pub iter_dir: IterationDirection,
 }
 
-impl SeekDef {
-    /// Whether we should null pad unset columns when seeking.
-    /// This is only done for forward seeks.
-    /// The reason it is done is that sometimes our full index key is not used in seeking.
-    /// See [SeekKey] for more details.
-    ///
-    /// For example, given:
-    /// - CREATE INDEX i ON t (x, y)
-    /// - SELECT * FROM t WHERE x = 1 AND y < 30
-    /// We want to seek to the first row where x = 1, and then iterate forwards.
-    /// In this case, the seek key is GT(1, NULL) since '30' cannot be used to seek (since we want y < 30),
-    /// and any value of y will be greater than NULL.
-    ///
-    /// In backwards iteration direction, we do not null pad because we want to seek to the last row that matches the seek key.
-    /// For example, given:
-    /// - CREATE INDEX i ON t (x, y)
-    /// - SELECT * FROM t WHERE x = 1 AND y > 30 ORDER BY y
-    /// We want to seek to the last row where x = 1, and then iterate backwards.
-    /// In this case, the seek key is just LE(1) so any row with x = 1 will be a match.
-    pub fn null_pad_unset_cols(&self) -> bool {
-        self.iter_dir == IterationDirection::Forwards
-    }
-}
-
 /// A condition to use when seeking.
 #[derive(Debug, Clone)]
 pub struct SeekKey {
     /// How many columns from [SeekDef::key] are used in seeking.
     pub len: usize,
+    /// Whether to NULL pad the last column of the seek key to match the length of [SeekDef::key].
+    /// The reason it is done is that sometimes our full index key is not used in seeking,
+    /// but we want to find the lowest value that matches the non-null prefix of the key.
+    /// For example, given:
+    /// - CREATE INDEX i ON t (x, y)
+    /// - SELECT * FROM t WHERE x = 1 AND y < 30
+    /// We want to seek to the first row where x = 1, and then iterate forwards.
+    /// In this case, the seek key is GT(1, NULL) since NULL is always LT in index key comparisons.
+    /// We can't use just GT(1) because in index key comparisons, only the given number of columns are compared,
+    /// so this means any index keys with (x=1) will compare equal, e.g. (x=1, y=usize::MAX) will compare equal to the seek key (x:1)
+    pub null_pad: bool,
     /// The comparison operator to use when seeking.
     pub op: SeekOp,
 }
@@ -441,6 +428,9 @@ pub struct SeekKey {
 pub struct TerminationKey {
     /// How many columns from [SeekDef::key] are used in terminating the scan that follows the seek.
     pub len: usize,
+    /// Whether to NULL pad the last column of the termination key to match the length of [SeekDef::key].
+    /// See [SeekKey::null_pad].
+    pub null_pad: bool,
     /// The comparison operator to use when terminating the scan that follows the seek.
     pub op: SeekOp,
 }
