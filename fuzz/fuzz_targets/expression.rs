@@ -195,7 +195,7 @@ fn do_fuzz(expr: Expr) -> Result<Corpus, Box<dyn Error>> {
                 StepResult::IO => io.run_once()?,
                 StepResult::Row => {
                     let row = stmt.row().unwrap();
-                    assert_eq!(row.count(), 1, "expr: {:?}", expr);
+                    assert_eq!(row.len(), 1, "expr: {:?}", expr);
                     break 'value row.get_value(0).clone();
                 }
                 _ => unreachable!(),
