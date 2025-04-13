@@ -206,14 +206,11 @@ impl Pager {
         })
     }
 
-    pub fn btree_create(&self, flags: usize) -> u32 {
+    pub fn btree_create(&self, flags: &CreateBTreeFlags) -> u32 {
         let page_type = match flags {
-            1 => PageType::TableLeaf,
-            2 => PageType::IndexLeaf,
-            _ => unreachable!(
-                "wrong create table flags, should be 1 for table and 2 for index, got {}",
-                flags,
-            ),
+            _ if flags.is_table() => PageType::TableLeaf,
+            _ if flags.is_index() => PageType::IndexLeaf,
+            _ => unreachable!("Invalid flags state"),
         };
         let page = self.do_allocate_page(page_type, 0);
         let id = page.get().id;
@@ -640,6 +637,33 @@ pub fn allocate_page(page_id: usize, buffer_pool: &Rc<BufferPool>, offset: usize
         page.get().contents = Some(PageContent::new(offset, buffer));
     }
     page
+}
+
+#[derive(Debug)]
+pub struct CreateBTreeFlags(pub u8);
+impl CreateBTreeFlags {
+    pub const TABLE: u8 = 0b0001;
+    pub const INDEX: u8 = 0b0010;
+
+    pub fn new_table() -> Self {
+        Self(CreateBTreeFlags::TABLE)
+    }
+
+    pub fn new_index() -> Self {
+        Self(CreateBTreeFlags::INDEX)
+    }
+
+    pub fn is_table(&self) -> bool {
+        (self.0 & CreateBTreeFlags::TABLE) != 0
+    }
+
+    pub fn is_index(&self) -> bool {
+        (self.0 & CreateBTreeFlags::INDEX) != 0
+    }
+
+    pub fn get_flags(&self) -> u8 {
+        self.0
+    }
 }
 
 #[cfg(test)]

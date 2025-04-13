@@ -4171,7 +4171,7 @@ pub fn op_create_btree(
         // TODO: implement temp databases
         todo!("temp databases not implemented yet");
     }
-    let root_page = pager.btree_create(*flags);
+    let root_page = pager.btree_create(flags);
     state.registers[*root] = Register::OwnedValue(OwnedValue::Integer(root_page as i64));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)

@@ -2,6 +2,7 @@ use std::fmt::Display;
 
 use crate::ast;
 use crate::schema::Schema;
+use crate::storage::pager::CreateBTreeFlags;
 use crate::translate::ProgramBuilder;
 use crate::translate::ProgramBuilderOpts;
 use crate::translate::QueryMode;
@@ -60,7 +61,7 @@ pub fn translate_create_table(
     program.emit_insn(Insn::CreateBtree {
         db: 0,
         root: table_root_reg,
-        flags: 1, // Table leaf page
+        flags: CreateBTreeFlags::new_table(),
     });
 
     // Create an automatic index B-tree if needed
@@ -92,7 +93,7 @@ pub fn translate_create_table(
         program.emit_insn(Insn::CreateBtree {
             db: 0,
             root: index_root_reg,
-            flags: 2, // Index leaf page
+            flags: CreateBTreeFlags::new_index(),
         });
     }
 

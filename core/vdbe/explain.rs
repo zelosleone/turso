@@ -1177,10 +1177,10 @@ pub fn insn_to_str(
                 "CreateBtree",
                 *db as i32,
                 *root as i32,
-                *flags as i32,
+                flags.get_flags() as i32,
                 OwnedValue::build_text(""),
                 0,
-                format!("r[{}]=root iDb={} flags={}", root, db, flags),
+                format!("r[{}]=root iDb={} flags={}", root, db, flags.get_flags()),
             ),
             Insn::Destroy {
                 root,
