@@ -627,6 +627,38 @@ do_execsql_test bitwise-not-zero {
 	SELECT ~0
 } {-1}
 
+do_execsql_test bitwise-not-empty-blob {
+	SELECT ~x''
+} {-1}
+
+do_execsql_test bitwise-not-cast-blob {
+	SELECT ~ CAST ('af' AS BLOB);
+} {-1}
+
+do_execsql_test bitwise-not-blob {
+	SELECT ~ x'0000';
+} {-1}
+
+do_execsql_test bitwise-not-blob-2 {
+	SELECT ~ x'0001';
+} {-1}
+
+do_execsql_test boolean-not-empty-blob {
+	SELECT NOT x''
+} {1}
+
+do_execsql_test boolean-not-cast-blob {
+	SELECT NOT CAST ('af' AS BLOB);
+} {1}
+
+do_execsql_test boolean-not-blob {
+	SELECT NOT x'0000';
+} {1}
+
+do_execsql_test boolean-not-blob-2 {
+	SELECT NOT x'0001';
+} {1}
+
 foreach {testname lhs ans} {
   int-1           1        0
   int-2           2        0

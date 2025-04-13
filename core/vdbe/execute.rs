@@ -5606,8 +5606,11 @@ pub fn exec_bit_not(reg: &OwnedValue) -> OwnedValue {
         OwnedValue::Null => OwnedValue::Null,
         OwnedValue::Integer(i) => OwnedValue::Integer(!i),
         OwnedValue::Float(f) => OwnedValue::Integer(!(*f as i64)),
-        OwnedValue::Text(text) => exec_bit_not(&cast_text_to_numeric(text.as_str())),
-        _ => todo!(),
+        OwnedValue::Text(text) => exec_bit_not(&cast_text_to_integer(text.as_str())),
+        OwnedValue::Blob(blob) => {
+            let text = String::from_utf8_lossy(blob);
+            exec_bit_not(&cast_text_to_integer(&text))
+        }
     }
 }
 
@@ -5724,8 +5727,11 @@ pub fn exec_boolean_not(reg: &OwnedValue) -> OwnedValue {
         OwnedValue::Null => OwnedValue::Null,
         OwnedValue::Integer(i) => OwnedValue::Integer((*i == 0) as i64),
         OwnedValue::Float(f) => OwnedValue::Integer((*f == 0.0) as i64),
-        OwnedValue::Text(text) => exec_boolean_not(&cast_text_to_numeric(text.as_str())),
-        _ => todo!(),
+        OwnedValue::Text(text) => exec_boolean_not(&&cast_text_to_real(text.as_str())),
+        OwnedValue::Blob(blob) => {
+            let text = String::from_utf8_lossy(blob);
+            exec_boolean_not(&cast_text_to_real(&text))
+        }
     }
 }
 pub fn exec_concat(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
