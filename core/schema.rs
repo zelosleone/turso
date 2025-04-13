@@ -158,7 +158,7 @@ impl PartialEq for Table {
 pub struct BTreeTable {
     pub root_page: usize,
     pub name: String,
-    pub primary_key_column_names: Vec<String>,
+    pub primary_key_columns: Vec<(String, SortOrder)>,
     pub columns: Vec<Column>,
     pub has_rowid: bool,
     pub is_strict: bool,
@@ -166,8 +166,8 @@ pub struct BTreeTable {
 
 impl BTreeTable {
     pub fn get_rowid_alias_column(&self) -> Option<(usize, &Column)> {
-        if self.primary_key_column_names.len() == 1 {
-            let (idx, col) = self.get_column(&self.primary_key_column_names[0]).unwrap();
+        if self.primary_key_columns.len() == 1 {
+            let (idx, col) = self.get_column(&self.primary_key_columns[0].0).unwrap();
             if self.column_is_rowid_alias(col) {
                 return Some((idx, col));
             }
@@ -265,7 +265,7 @@ fn create_table(
     let table_name = normalize_ident(&tbl_name.name.0);
     trace!("Creating table {}", table_name);
     let mut has_rowid = true;
-    let mut primary_key_column_names = vec![];
+    let mut primary_key_columns = vec![];
     let mut cols = vec![];
     let is_strict: bool;
     match body {
@@ -282,7 +282,7 @@ fn create_table(
                     } = c.constraint
                     {
                         for column in columns {
-                            primary_key_column_names.push(match column.expr {
+                            let col_name = match column.expr {
                                 Expr::Id(id) => normalize_ident(&id.0),
                                 Expr::Literal(Literal::String(value)) => {
                                     value.trim_matches('\'').to_owned()
@@ -290,7 +290,9 @@ fn create_table(
                                 _ => {
                                     todo!("Unsupported primary key expression");
                                 }
-                            });
+                            };
+                            primary_key_columns
+                                .push((col_name, column.order.unwrap_or(SortOrder::Asc)));
                         }
                     }
                 }
@@ -347,10 +349,17 @@ fn create_table(
                 let mut default = None;
                 let mut primary_key = false;
                 let mut notnull = false;
+                let mut order = SortOrder::Asc;
                 for c_def in &col_def.constraints {
                     match &c_def.constraint {
-                        limbo_sqlite3_parser::ast::ColumnConstraint::PrimaryKey { .. } => {
+                        limbo_sqlite3_parser::ast::ColumnConstraint::PrimaryKey {
+                            order: o,
+                            ..
+                        } => {
                             primary_key = true;
+                            if let Some(o) = o {
+                                order = o.clone();
+                            }
                         }
                         limbo_sqlite3_parser::ast::ColumnConstraint::NotNull { .. } => {
                             notnull = true;
@@ -363,8 +372,11 @@ fn create_table(
                 }
 
                 if primary_key {
-                    primary_key_column_names.push(name.clone());
-                } else if primary_key_column_names.contains(&name) {
+                    primary_key_columns.push((name.clone(), order));
+                } else if primary_key_columns
+                    .iter()
+                    .any(|(col_name, _)| col_name == &name)
+                {
                     primary_key = true;
                 }
 
@@ -386,7 +398,7 @@ fn create_table(
     };
     // flip is_rowid_alias back to false if the table has multiple primary keys
     // or if the table has no rowid
-    if !has_rowid || primary_key_column_names.len() > 1 {
+    if !has_rowid || primary_key_columns.len() > 1 {
         for col in cols.iter_mut() {
             col.is_rowid_alias = false;
         }
@@ -395,7 +407,7 @@ fn create_table(
         root_page,
         name: table_name,
         has_rowid,
-        primary_key_column_names,
+        primary_key_columns,
         columns: cols,
         is_strict,
     })
@@ -621,7 +633,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
         name: "sqlite_schema".to_string(),
         has_rowid: true,
         is_strict: false,
-        primary_key_column_names: vec![],
+        primary_key_columns: vec![],
         columns: vec![
             Column {
                 name: Some("type".to_string()),
@@ -740,16 +752,16 @@ impl Index {
         index_name: &str,
         root_page: usize,
     ) -> Result<Index> {
-        if table.primary_key_column_names.is_empty() {
+        if table.primary_key_columns.is_empty() {
             return Err(crate::LimboError::InternalError(
                 "Cannot create automatic index for table without primary key".to_string(),
             ));
         }
 
         let index_columns = table
-            .primary_key_column_names
+            .primary_key_columns
             .iter()
-            .map(|col_name| {
+            .map(|(col_name, order)| {
                 // Verify that each primary key column exists in the table
                 let Some((pos_in_table, _)) = table.get_column(col_name) else {
                     return Err(crate::LimboError::InternalError(format!(
@@ -759,7 +771,7 @@ impl Index {
                 };
                 Ok(IndexColumn {
                     name: normalize_ident(col_name),
-                    order: SortOrder::Asc, // Primary key indexes are always ascending
+                    order: order.clone(),
                     pos_in_table,
                 })
             })
@@ -905,8 +917,8 @@ mod tests {
         let column = table.get_column("c").unwrap().1;
         assert!(!column.primary_key, "column 'c' shouldn't be a primary key");
         assert_eq!(
-            vec!["a"],
-            table.primary_key_column_names,
+            vec![("a".to_string(), SortOrder::Asc)],
+            table.primary_key_columns,
             "primary key column names should be ['a']"
         );
         Ok(())
@@ -923,8 +935,11 @@ mod tests {
         let column = table.get_column("c").unwrap().1;
         assert!(!column.primary_key, "column 'c' shouldn't be a primary key");
         assert_eq!(
-            vec!["a", "b"],
-            table.primary_key_column_names,
+            vec![
+                ("a".to_string(), SortOrder::Asc),
+                ("b".to_string(), SortOrder::Asc)
+            ],
+            table.primary_key_columns,
             "primary key column names should be ['a', 'b']"
         );
         Ok(())
@@ -932,7 +947,7 @@ mod tests {
 
     #[test]
     pub fn test_primary_key_separate_single() -> Result<()> {
-        let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, c REAL, PRIMARY KEY(a));"#;
+        let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, c REAL, PRIMARY KEY(a desc));"#;
         let table = BTreeTable::from_sql(sql, 0)?;
         let column = table.get_column("a").unwrap().1;
         assert!(column.primary_key, "column 'a' should be a primary key");
@@ -941,8 +956,8 @@ mod tests {
         let column = table.get_column("c").unwrap().1;
         assert!(!column.primary_key, "column 'c' shouldn't be a primary key");
         assert_eq!(
-            vec!["a"],
-            table.primary_key_column_names,
+            vec![("a".to_string(), SortOrder::Desc)],
+            table.primary_key_columns,
             "primary key column names should be ['a']"
         );
         Ok(())
@@ -950,7 +965,7 @@ mod tests {
 
     #[test]
     pub fn test_primary_key_separate_multiple() -> Result<()> {
-        let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, c REAL, PRIMARY KEY(a, b));"#;
+        let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, c REAL, PRIMARY KEY(a, b desc));"#;
         let table = BTreeTable::from_sql(sql, 0)?;
         let column = table.get_column("a").unwrap().1;
         assert!(column.primary_key, "column 'a' should be a primary key");
@@ -959,8 +974,11 @@ mod tests {
         let column = table.get_column("c").unwrap().1;
         assert!(!column.primary_key, "column 'c' shouldn't be a primary key");
         assert_eq!(
-            vec!["a", "b"],
-            table.primary_key_column_names,
+            vec![
+                ("a".to_string(), SortOrder::Asc),
+                ("b".to_string(), SortOrder::Desc)
+            ],
+            table.primary_key_columns,
             "primary key column names should be ['a', 'b']"
         );
         Ok(())
@@ -977,8 +995,8 @@ mod tests {
         let column = table.get_column("c").unwrap().1;
         assert!(!column.primary_key, "column 'c' shouldn't be a primary key");
         assert_eq!(
-            vec!["a"],
-            table.primary_key_column_names,
+            vec![("a".to_string(), SortOrder::Asc)],
+            table.primary_key_columns,
             "primary key column names should be ['a']"
         );
         Ok(())
@@ -994,8 +1012,8 @@ mod tests {
         let column = table.get_column("c").unwrap().1;
         assert!(!column.primary_key, "column 'c' shouldn't be a primary key");
         assert_eq!(
-            vec!["a"],
-            table.primary_key_column_names,
+            vec![("a".to_string(), SortOrder::Asc)],
+            table.primary_key_columns,
             "primary key column names should be ['a']"
         );
         Ok(())
@@ -1143,7 +1161,7 @@ mod tests {
             name: "t1".to_string(),
             has_rowid: true,
             is_strict: false,
-            primary_key_column_names: vec!["nonexistent".to_string()],
+            primary_key_columns: vec![("nonexistent".to_string(), SortOrder::Asc)],
             columns: vec![Column {
                 name: Some("a".to_string()),
                 ty: Type::Integer,
