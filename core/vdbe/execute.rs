@@ -1,6 +1,7 @@
 #![allow(unused_variables)]
 use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
+use crate::storage::pager::CreateBTreeFlags;
 use crate::{
     error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY},
     ext::ExtValue,
@@ -4545,7 +4546,12 @@ pub fn op_open_ephemeral(
         buffer_pool,
     )?);
 
-    let flag = if *is_btree { 1 } else { 0 };
+    let flag = if *is_btree {
+        &CreateBTreeFlags::new_table()
+    } else {
+        &CreateBTreeFlags::new_index()
+    };
+
     let root_page = pager.btree_create(flag);
 
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
