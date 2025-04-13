@@ -541,7 +541,7 @@ def test_drop_virtual_table():
     )
     limbo.run_test_fn(
         "DROP TABLE t;",
-        null,
+        lambda res: "VDestroy called" in res,
         "can drop kv_store vtable",
     )
     limbo.run_test_fn(

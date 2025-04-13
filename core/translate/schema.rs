@@ -2,8 +2,8 @@ use std::fmt::Display;
 
 use crate::ast;
 use crate::schema::Schema;
-use crate::storage::pager::CreateBTreeFlags;
 use crate::schema::Table;
+use crate::storage::pager::CreateBTreeFlags;
 use crate::translate::ProgramBuilder;
 use crate::translate::ProgramBuilderOpts;
 use crate::translate::QueryMode;
