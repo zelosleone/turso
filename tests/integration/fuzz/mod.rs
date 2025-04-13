@@ -202,6 +202,8 @@ mod tests {
     }
 
     #[test]
+    /// A test for verifying that index seek+scan works correctly for compound keys
+    /// on indexes with various column orderings.
     pub fn index_scan_compound_key_fuzz() {
         let (mut rng, seed) = if std::env::var("SEED").is_ok() {
             let seed = std::env::var("SEED").unwrap().parse::<u64>().unwrap();
@@ -209,8 +211,25 @@ mod tests {
         } else {
             rng_from_time()
         };
-        let db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x, y, z, PRIMARY KEY (x, y))");
-        let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
+        // Create all different 3-column primary key permutations
+        let dbs = [
+            TempDatabase::new_with_rusqlite("CREATE TABLE t(x, y, z, PRIMARY KEY (x, y, z))"),
+            TempDatabase::new_with_rusqlite("CREATE TABLE t(x, y, z, PRIMARY KEY (x desc, y, z))"),
+            TempDatabase::new_with_rusqlite("CREATE TABLE t(x, y, z, PRIMARY KEY (x, y desc, z))"),
+            TempDatabase::new_with_rusqlite("CREATE TABLE t(x, y, z, PRIMARY KEY (x, y, z desc))"),
+            TempDatabase::new_with_rusqlite(
+                "CREATE TABLE t(x, y, z, PRIMARY KEY (x desc, y desc, z))",
+            ),
+            TempDatabase::new_with_rusqlite(
+                "CREATE TABLE t(x, y, z, PRIMARY KEY (x, y desc, z desc))",
+            ),
+            TempDatabase::new_with_rusqlite(
+                "CREATE TABLE t(x, y, z, PRIMARY KEY (x desc, y, z desc))",
+            ),
+            TempDatabase::new_with_rusqlite(
+                "CREATE TABLE t(x, y, z, PRIMARY KEY (x desc, y desc, z desc))",
+            ),
+        ];
         let mut pk_tuples = HashSet::new();
         while pk_tuples.len() < 100000 {
             pk_tuples.insert((rng.random_range(0..3000), rng.random_range(0..3000)));
@@ -225,125 +244,161 @@ mod tests {
             ));
         }
         let insert = format!("INSERT INTO t VALUES {}", tuples.join(", "));
-        sqlite_conn.execute(&insert, params![]).unwrap();
-        sqlite_conn.close().unwrap();
-        let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
-        let limbo_conn = db.connect_limbo();
+
+        // Insert all tuples into all databases
+        let sqlite_conns = dbs
+            .iter()
+            .map(|db| rusqlite::Connection::open(db.path.clone()).unwrap())
+            .collect::<Vec<_>>();
+        for sqlite_conn in sqlite_conns.into_iter() {
+            sqlite_conn.execute(&insert, params![]).unwrap();
+            sqlite_conn.close().unwrap();
+        }
+        let sqlite_conns = dbs
+            .iter()
+            .map(|db| rusqlite::Connection::open(db.path.clone()).unwrap())
+            .collect::<Vec<_>>();
+        let limbo_conns = dbs.iter().map(|db| db.connect_limbo()).collect::<Vec<_>>();
 
         const COMPARISONS: [&str; 5] = ["=", "<", "<=", ">", ">="];
 
-        const ORDER_BY: [Option<&str>; 3] = [None, Some("ORDER BY x DESC"), Some("ORDER BY x ASC")];
-        const SECONDARY_ORDER_BY: [Option<&str>; 3] = [None, Some(", y DESC"), Some(", y ASC")];
+        // For verifying index scans, we only care about cases where all but potentially the last column are constrained by an equality (=),
+        // because this is the only way to utilize an index efficiently for seeking. This is called the "left-prefix rule" of indexes.
+        // Hence we generate constraint combinations in this manner; as soon as a comparison is not an equality, we stop generating more constraints for the where clause.
+        // Examples:
+        // x = 1 AND y = 2 AND z > 3
+        // x = 1 AND y > 2
+        // x > 1
+        let col_comp_first = COMPARISONS
+            .iter()
+            .cloned()
+            .map(|x| (Some(x), None, None))
+            .collect::<Vec<_>>();
+        let col_comp_second = COMPARISONS
+            .iter()
+            .cloned()
+            .map(|x| (Some("="), Some(x), None))
+            .collect::<Vec<_>>();
+        let col_comp_third = COMPARISONS
+            .iter()
+            .cloned()
+            .map(|x| (Some("="), Some("="), Some(x)))
+            .collect::<Vec<_>>();
 
-        let print_dump_on_fail = |insert: &str, seed: u64| {
-            let comment = format!("-- seed: {}; dump for manual debugging:", seed);
-            let pragma_journal_mode = "PRAGMA journal_mode = wal;";
-            let create_table = "CREATE TABLE t(x, y, z, PRIMARY KEY (x, y));";
-            let dump = format!(
-                "{}\n{}\n{}\n{}\n{}",
-                comment, pragma_journal_mode, create_table, comment, insert
-            );
-            println!("{}", dump);
-        };
+        let all_comps = [col_comp_first, col_comp_second, col_comp_third].concat();
 
-        for comp in COMPARISONS.iter() {
-            for order_by in ORDER_BY.iter() {
-                // make it more likely that the full 2-column index is utilized for seeking
-                let iter_count_per_permutation = if *comp == "=" { 2000 } else { 500 };
+        const ORDER_BY: [Option<&str>; 3] = [None, Some("DESC"), Some("ASC")];
+
+        const ITERATIONS: usize = 10000;
+        for i in 0..ITERATIONS {
+            if i % (ITERATIONS / 100) == 0 {
                 println!(
-                    "fuzzing {} iterations with comp: {:?}, order_by: {:?}",
-                    iter_count_per_permutation, comp, order_by
+                    "index_scan_compound_key_fuzz: iteration {}/{}",
+                    i + 1,
+                    ITERATIONS
                 );
-                for _ in 0..iter_count_per_permutation {
-                    let first_col_val = rng.random_range(0..=3000);
-                    let mut limit = "LIMIT 5";
-                    let mut second_idx_col_cond = "".to_string();
-                    let mut second_idx_col_comp = "".to_string();
+            }
+            let (comp1, comp2, comp3) = all_comps[rng.random_range(0..all_comps.len())];
+            // Similarly as for the constraints, generate order by permutations so that the only columns involved in the index seek are potentially part of the ORDER BY.
+            let (order_by1, order_by2, order_by3) = {
+                if comp1.is_some() && comp2.is_some() && comp3.is_some() {
+                    (
+                        ORDER_BY[rng.random_range(0..ORDER_BY.len())],
+                        ORDER_BY[rng.random_range(0..ORDER_BY.len())],
+                        ORDER_BY[rng.random_range(0..ORDER_BY.len())],
+                    )
+                } else if comp1.is_some() && comp2.is_some() {
+                    (
+                        ORDER_BY[rng.random_range(0..ORDER_BY.len())],
+                        ORDER_BY[rng.random_range(0..ORDER_BY.len())],
+                        None,
+                    )
+                } else {
+                    (ORDER_BY[rng.random_range(0..ORDER_BY.len())], None, None)
+                }
+            };
 
-                    // somtetimes include the second index column in the where clause.
-                    // make it more probable when first column has '=' constraint since those queries are usually faster to run
-                    let second_col_prob = if *comp == "=" { 0.7 } else { 0.02 };
-                    if rng.random_bool(second_col_prob) {
-                        let second_idx_col = rng.random_range(0..3000);
+            // Generate random values for the WHERE clause constraints
+            let (col_val_first, col_val_second, col_val_third) = {
+                if comp1.is_some() && comp2.is_some() && comp3.is_some() {
+                    (
+                        Some(rng.random_range(0..=3000)),
+                        Some(rng.random_range(0..=3000)),
+                        Some(rng.random_range(0..=3000)),
+                    )
+                } else if comp1.is_some() && comp2.is_some() {
+                    (
+                        Some(rng.random_range(0..=3000)),
+                        Some(rng.random_range(0..=3000)),
+                        None,
+                    )
+                } else {
+                    (Some(rng.random_range(0..=3000)), None, None)
+                }
+            };
 
-                        second_idx_col_comp =
-                            COMPARISONS[rng.random_range(0..COMPARISONS.len())].to_string();
-                        second_idx_col_cond =
-                            format!(" AND y {} {}", second_idx_col_comp, second_idx_col);
+            // Use a small limit to make the test complete faster
+            let limit = 5;
+
+            // Generate WHERE clause string
+            let where_clause_components = vec![
+                comp1.map(|x| format!("x {} {}", x, col_val_first.unwrap())),
+                comp2.map(|x| format!("y {} {}", x, col_val_second.unwrap())),
+                comp3.map(|x| format!("z {} {}", x, col_val_third.unwrap())),
+            ]
+            .into_iter()
+            .filter_map(|x| x)
+            .collect::<Vec<_>>();
+            let where_clause = if where_clause_components.is_empty() {
+                "".to_string()
+            } else {
+                format!("WHERE {}", where_clause_components.join(" AND "))
+            };
+
+            // Generate ORDER BY string
+            let order_by_components = vec![
+                order_by1.map(|x| format!("x {}", x)),
+                order_by2.map(|x| format!("y {}", x)),
+                order_by3.map(|x| format!("z {}", x)),
+            ]
+            .into_iter()
+            .filter_map(|x| x)
+            .collect::<Vec<_>>();
+            let order_by = if order_by_components.is_empty() {
+                "".to_string()
+            } else {
+                format!("ORDER BY {}", order_by_components.join(", "))
+            };
+
+            // Generate final query string
+            let query = format!(
+                "SELECT * FROM t {} {} LIMIT {}",
+                where_clause, order_by, limit
+            );
+            log::debug!("query: {}", query);
+
+            // Execute the query on all databases and compare the results
+            for (i, sqlite_conn) in sqlite_conns.iter().enumerate() {
+                let limbo = limbo_exec_rows(&dbs[i], &limbo_conns[i], &query);
+                let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
+                if limbo != sqlite {
+                    // if the order by contains exclusively components that are constrained by an equality (=),
+                    // sqlite sometimes doesn't bother with ASC/DESC because it doesn't semantically matter
+                    // so we need to check that limbo and sqlite return the same results when the ordering is reversed.
+                    // because we are generally using LIMIT (to make the test complete faster), we need to rerun the query
+                    // without limit and then check that the results are the same if reversed.
+                    let query_no_limit =
+                        format!("SELECT * FROM t {} {} {}", where_clause, order_by, "");
+                    let limbo_no_limit = limbo_exec_rows(&dbs[i], &limbo_conns[i], &query_no_limit);
+                    let sqlite_no_limit = sqlite_exec_rows(&sqlite_conn, &query_no_limit);
+                    let limbo_rev = limbo_no_limit.iter().cloned().rev().collect::<Vec<_>>();
+                    if limbo_rev == sqlite_no_limit {
+                        continue;
                     }
-
-                    // if the first constraint is =, then half the time, use the second index column in the ORDER BY too
-                    let mut secondary_order_by = None;
-                    let use_secondary_order_by = order_by.is_some()
-                        && *comp == "="
-                        && second_idx_col_comp != ""
-                        && rng.random_bool(0.5);
-                    let full_order_by = if use_secondary_order_by {
-                        secondary_order_by =
-                            SECONDARY_ORDER_BY[rng.random_range(0..SECONDARY_ORDER_BY.len())];
-                        if let Some(secondary) = secondary_order_by {
-                            format!("{}{}", order_by.unwrap_or(""), secondary,)
-                        } else {
-                            order_by.unwrap_or("").to_string()
-                        }
-                    } else {
-                        order_by.unwrap_or("").to_string()
-                    };
-
-                    // There are certain cases where SQLite does not bother iterating in reverse order despite the ORDER BY.
-                    // These cases include e.g.
-                    // SELECT * FROM t WHERE x = 3 ORDER BY x DESC
-                    // SELECT * FROM t WHERE x = 3 and y < 100 ORDER BY x DESC
-                    //
-                    // The common thread being that the ORDER BY column is also constrained by an equality predicate, meaning
-                    // that it doesn't semantically matter what the ordering is.
-                    //
-                    // We do not currently replicate this "lazy" behavior, so in these cases we want the full result set and ensure
-                    // that if the result is not exactly equal, then the ordering must be the exact reverse.
-                    let allow_reverse_ordering = {
-                        if *comp != "=" {
-                            false
-                        } else if secondary_order_by.is_some() {
-                            second_idx_col_comp == "="
-                        } else {
-                            true
-                        }
-                    };
-                    if allow_reverse_ordering {
-                        // see comment above about ordering and the '=' comparison operator; omitting LIMIT for that reason
-                        // we mainly have LIMIT here for performance reasons but for = we want to get all the rows to ensure
-                        // correctness in the = case
-                        limit = "";
-                    }
-                    let query = format!(
-                        // e.g. SELECT * FROM t WHERE x = 1 AND y > 2 ORDER BY x DESC LIMIT 5
-                        "SELECT * FROM t WHERE x {} {} {} {} {}",
-                        comp, first_col_val, second_idx_col_cond, full_order_by, limit,
+                    panic!(
+                        "limbo: {:?}, sqlite: {:?}, seed: {}, query: {}",
+                        limbo, sqlite, seed, query
                     );
-                    log::debug!("query: {}", query);
-                    let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
-                    let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
-                    let is_equal = limbo == sqlite;
-                    if !is_equal {
-                        if allow_reverse_ordering {
-                            let limbo_row_count = limbo.len();
-                            let sqlite_row_count = sqlite.len();
-                            if limbo_row_count == sqlite_row_count {
-                                let limbo_rev = limbo.iter().cloned().rev().collect::<Vec<_>>();
-                                assert_eq!(limbo_rev, sqlite, "query: {}, limbo: {:?}, sqlite: {:?}, seed: {}, allow_reverse_ordering: {}", query, limbo, sqlite, seed, allow_reverse_ordering);
-                            } else {
-                                print_dump_on_fail(&insert, seed);
-                                let error_msg = format!("row count mismatch (limbo row count: {}, sqlite row count: {}): query: {}, limbo: {:?}, sqlite: {:?}, seed: {}, allow_reverse_ordering: {}", limbo_row_count, sqlite_row_count, query, limbo, sqlite, seed, allow_reverse_ordering);
-                                panic!("{}", error_msg);
-                            }
-                        } else {
-                            print_dump_on_fail(&insert, seed);
-                            panic!(
-                                "query: {}, limbo row count: {}, limbo: {:?}, sqlite row count: {}, sqlite: {:?}, seed: {}, allow_reverse_ordering: {}",
-                                query, limbo.len(), limbo, sqlite.len(), sqlite, seed, allow_reverse_ordering
-                            );
-                        }
-                    }
                 }
             }
         }
