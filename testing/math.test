@@ -95,6 +95,18 @@ do_execsql_test subtract-agg-float-agg-int {
   SELECT sum(3.5) - sum(1)
 } {2.5}
 
+do_execsql_test subtract-blob {
+  SELECT -x'11'
+} {0}
+
+do_execsql_test subtract-blob-empty {
+  SELECT -x''
+} {0}
+
+do_execsql_test subtract-blob-charcter {
+  SELECT -'hi';
+} {0}
+
 foreach {testnum lhs rhs ans} {
    1   'a'   'a'   0
    2   'a'   10    -10
