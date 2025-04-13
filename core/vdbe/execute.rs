@@ -4520,7 +4520,7 @@ pub fn op_open_ephemeral(
 ) -> Result<InsnFunctionStepResult> {
     let Insn::OpenEphemeral {
         cursor_id,
-        is_btree,
+        is_table,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -4546,7 +4546,7 @@ pub fn op_open_ephemeral(
         buffer_pool,
     )?);
 
-    let flag = if *is_btree {
+    let flag = if *is_table {
         &CreateBTreeFlags::new_table()
     } else {
         &CreateBTreeFlags::new_index()

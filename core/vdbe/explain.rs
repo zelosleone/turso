@@ -1391,18 +1391,18 @@ pub fn insn_to_str(
             ),
             Insn::OpenEphemeral {
                 cursor_id,
-                is_btree,
+                is_table,
             } => (
                 "OpenEphemeral",
                 *cursor_id as i32,
-                *is_btree as i32,
+                *is_table as i32,
                 0,
                 OwnedValue::build_text(""),
                 0,
                 format!(
-                    "cursor={} is_btree={}",
+                    "cursor={} is_table={}",
                     cursor_id,
-                    if *is_btree { "true" } else { "false" }
+                    if *is_table { "true" } else { "false" }
                 ),
             ),
         };
