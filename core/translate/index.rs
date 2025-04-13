@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::{
     schema::{BTreeTable, Column, Index, IndexColumn, PseudoTable, Schema},
+    storage::pager::CreateBTreeFlags,
     types::Record,
     util::normalize_ident,
     vdbe::{
@@ -91,7 +92,7 @@ pub fn translate_create_index(
     program.emit_insn(Insn::CreateBtree {
         db: 0,
         root: root_page_reg,
-        flags: 2, // index leaf
+        flags: CreateBTreeFlags::new_index(),
     });
 
     // open the sqlite schema table for writing and create a new entry for the index

@@ -1,7 +1,11 @@
 use std::{num::NonZero, rc::Rc};
 
 use super::{execute, AggFunc, BranchOffset, CursorID, FuncCtx, InsnFunction, PageIdx};
-use crate::{schema::BTreeTable, storage::wal::CheckpointMode, types::Record};
+use crate::{
+    schema::BTreeTable,
+    storage::{pager::CreateBTreeFlags, wal::CheckpointMode},
+    types::Record,
+};
 use limbo_macros::Description;
 
 /// Flags provided to comparison instructions (e.g. Eq, Ne) which determine behavior related to NULL values.
@@ -703,7 +707,7 @@ pub enum Insn {
         /// The root page of the new b-tree (P2).
         root: usize,
         /// Flags (P3).
-        flags: usize,
+        flags: CreateBTreeFlags,
     },
 
     /// Deletes an entire database table or index whose root page in the database file is given by P1.

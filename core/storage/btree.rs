@@ -3772,6 +3772,7 @@ impl PageStack {
         self.current_page.set(self.current_page.get() + 1);
     }
     fn decrement_current(&self) {
+        assert!(self.current_page.get() > 0);
         self.current_page.set(self.current_page.get() - 1);
     }
     /// Push a new page onto the stack.
@@ -3788,6 +3789,7 @@ impl PageStack {
             current < BTCURSOR_MAX_DEPTH as i32,
             "corrupted database, stack is bigger than expected"
         );
+        assert!(current >= 0);
         self.stack.borrow_mut()[current as usize] = Some(page);
         self.cell_indices.borrow_mut()[current as usize] = starting_cell_idx;
     }
@@ -3804,6 +3806,7 @@ impl PageStack {
     /// This effectively means traversing back up to a parent page.
     fn pop(&self) {
         let current = self.current_page.get();
+        assert!(current >= 0);
         tracing::trace!("pagestack::pop(current={})", current);
         self.cell_indices.borrow_mut()[current as usize] = 0;
         self.stack.borrow_mut()[current as usize] = None;
@@ -3827,7 +3830,9 @@ impl PageStack {
 
     /// Current page pointer being used
     fn current(&self) -> usize {
-        self.current_page.get() as usize
+        let current = self.current_page.get() as usize;
+        assert!(self.current_page.get() >= 0);
+        current
     }
 
     /// Cell index of the current page
@@ -3847,13 +3852,13 @@ impl PageStack {
     /// We usually advance after going traversing a new page
     fn advance(&self) {
         let current = self.current();
-        tracing::trace!("advance {}", self.cell_indices.borrow()[current],);
+        tracing::trace!("pagestack::advance {}", self.cell_indices.borrow()[current],);
         self.cell_indices.borrow_mut()[current] += 1;
     }
 
     fn retreat(&self) {
         let current = self.current();
-        tracing::trace!("retreat {}", self.cell_indices.borrow()[current]);
+        tracing::trace!("pagestack::retreat {}", self.cell_indices.borrow()[current]);
         self.cell_indices.borrow_mut()[current] -= 1;
     }
 
