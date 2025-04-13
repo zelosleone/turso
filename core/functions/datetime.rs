@@ -52,8 +52,7 @@ enum DateTimeOutput {
 fn exec_datetime(values: &[Register], output_type: DateTimeOutput) -> OwnedValue {
     if values.is_empty() {
         let now = parse_naive_date_time(&OwnedValue::build_text("now")).unwrap();
-        let formatted_str = format_dt(now, output_type, false);
-        return OwnedValue::build_text(&formatted_str);
+        return format_dt(now, output_type, false);
     }
     if let Some(mut dt) = parse_naive_date_time(values[0].get_owned_value()) {
         // if successful, treat subsequent entries as modifiers
@@ -84,29 +83,32 @@ fn modify_dt(dt: &mut NaiveDateTime, mods: &[Register], output_type: DateTimeOut
     if is_leap_second(dt) || *dt > get_max_datetime_exclusive() {
         return OwnedValue::build_text("");
     }
-    let formatted = format_dt(*dt, output_type, subsec_requested);
-    OwnedValue::build_text(&formatted)
+    format_dt(*dt, output_type, subsec_requested)
 }
 
-fn format_dt(dt: NaiveDateTime, output_type: DateTimeOutput, subsec: bool) -> String {
+fn format_dt(dt: NaiveDateTime, output_type: DateTimeOutput, subsec: bool) -> OwnedValue {
     match output_type {
-        DateTimeOutput::Date => dt.format("%Y-%m-%d").to_string(),
+        DateTimeOutput::Date => OwnedValue::from_text(dt.format("%Y-%m-%d").to_string().as_str()),
         DateTimeOutput::Time => {
-            if subsec {
+            let t = if subsec {
                 dt.format("%H:%M:%S%.3f").to_string()
             } else {
                 dt.format("%H:%M:%S").to_string()
-            }
+            };
+            OwnedValue::from_text(t.as_str())
         }
         DateTimeOutput::DateTime => {
-            if subsec {
+            let t = if subsec {
                 dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
             } else {
                 dt.format("%Y-%m-%d %H:%M:%S").to_string()
-            }
+            };
+            OwnedValue::from_text(t.as_str())
         }
-        DateTimeOutput::StrfTime(format_str) => strftime_format(&dt, &format_str),
-        DateTimeOutput::JuliaDay => format_julian_day(to_julian_day_exact(&dt)),
+        DateTimeOutput::StrfTime(format_str) => {
+            OwnedValue::from_text(strftime_format(&dt, &format_str).as_str())
+        }
+        DateTimeOutput::JuliaDay => OwnedValue::Float(to_julian_day_exact(&dt)),
     }
 }
 
@@ -348,19 +350,6 @@ fn to_julian_day_exact(dt: &NaiveDateTime) -> f64 {
 
     let jd_fraction = seconds / 86400.0;
     jd_days + jd_fraction
-}
-
-// Format the Julian day to a maximum of 8 decimal places. if it's an integer,
-// append `.0` to the end to stay consistent with SQLite.
-fn format_julian_day(days: f64) -> String {
-    const DECIMAL_PRECISION: f64 = 100_000_000.0;
-    let t = (days * DECIMAL_PRECISION).round() / DECIMAL_PRECISION;
-    let mut ret = format!("{}", t);
-    if !ret.contains('.') {
-        ret += ".0";
-    }
-
-    ret
 }
 
 pub fn exec_unixepoch(time_value: &OwnedValue) -> Result<String> {
