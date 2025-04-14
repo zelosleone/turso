@@ -2451,24 +2451,41 @@ impl BTreeCursor {
                     rightmost_pointer,
                 );
 
+                let first_child_page = &pages_to_balance_new[0];
+                let first_child_contents = first_child_page.get_contents();
+
                 // TODO: vacuum support
-                if parent_is_root && parent_contents.cell_count() == 0 {
+                if parent_is_root
+                    && parent_contents.cell_count() == 0
+
+                    // this check to make sure we are not having negative free space
+                    && parent_contents.offset
+                        <= compute_free_space(first_child_contents, self.usable_space() as u16)
+                            as usize
+                {
                     // From SQLite:
                     // The root page of the b-tree now contains no cells. The only sibling
                     // page is the right-child of the parent. Copy the contents of the
                     // child page into the parent, decreasing the overall height of the
                     // b-tree structure by one. This is described as the "balance-shallower"
+                    // sub-algorithm in some documentation.
                     assert!(sibling_count_new == 1);
                     let parent_offset = if parent_page.get().id == 1 {
                         DATABASE_HEADER_SIZE
                     } else {
                         0
                     };
-                    let child_page = &pages_to_balance_new[0];
-                    let child_contents = child_page.get_contents();
-                    let child_top = child_contents.cell_content_area() as usize;
+
+                    // From SQLite:
+                    // It is critical that the child page be defragmented before being
+                    // copied into the parent, because if the parent is page 1 then it will
+                    // by smaller than the child due to the database header, and so
+                    // all the free space needs to be up front.
+                    defragment_page(first_child_contents, self.usable_space() as u16);
+
+                    let child_top = first_child_contents.cell_content_area() as usize;
                     let parent_buf = parent_contents.as_ptr();
-                    let child_buf = child_contents.as_ptr();
+                    let child_buf = first_child_contents.as_ptr();
                     let content_size = self.usable_space() - child_top;
 
                     // Copy cell contents
@@ -2478,17 +2495,17 @@ impl BTreeCursor {
                     // Copy header and pointer
                     // NOTE: don't use .cell_pointer_array_offset_and_size() because of different
                     // header size
-                    let header_and_pointer_size =
-                        child_contents.header_size() + child_contents.cell_pointer_array_size();
+                    let header_and_pointer_size = first_child_contents.header_size()
+                        + first_child_contents.cell_pointer_array_size();
                     parent_buf[parent_offset..parent_offset + header_and_pointer_size]
                         .copy_from_slice(
-                            &child_buf[child_contents.offset
-                                ..child_contents.offset + header_and_pointer_size],
+                            &child_buf[first_child_contents.offset
+                                ..first_child_contents.offset + header_and_pointer_size],
                         );
 
                     self.stack.set_cell_index(0); // reset cell index, top is already parent
                     self.pager
-                        .free_page(Some(child_page.clone()), child_page.get().id)?;
+                        .free_page(Some(first_child_page.clone()), first_child_page.get().id)?;
                 }
 
                 // We have to free pages that are not used anymore
