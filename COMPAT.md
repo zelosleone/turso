@@ -501,9 +501,9 @@ Modifiers:
 | NotNull        | Yes    |         |
 | Null           | Yes    |         |
 | NullRow        | Yes    |         |
-| Once           | No     |         |
-| OpenAutoindex  | No     |         |
-| OpenEphemeral  | No     |         |
+| Once           | Yes     |         |
+| OpenAutoindex  | Yes     |         |
+| OpenEphemeral  | Yes     |         |
 | OpenPseudo     | Yes    |         |
 | OpenRead       | Yes    |         |
 | OpenWrite      | Yes     |         |

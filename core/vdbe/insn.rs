@@ -780,6 +780,14 @@ pub enum Insn {
         cursor_id: usize,
         is_table: bool,
     },
+    /// Works the same as OpenEphemeral, name just distinguishes its use; used for transient indexes in joins.
+    OpenAutoindex {
+        cursor_id: usize,
+    },
+    /// Fall through to the next instruction on the first invocation, otherwise jump to target_pc
+    Once {
+        target_pc_when_reentered: BranchOffset,
+    },
 }
 
 impl Insn {
@@ -888,7 +896,8 @@ impl Insn {
             Insn::Noop => execute::op_noop,
             Insn::PageCount { .. } => execute::op_page_count,
             Insn::ReadCookie { .. } => execute::op_read_cookie,
-            Insn::OpenEphemeral { .. } => execute::op_open_ephemeral,
+            Insn::OpenEphemeral { .. } | Insn::OpenAutoindex { .. } => execute::op_open_ephemeral,
+            Insn::Once { .. } => execute::op_once,
         }
     }
 }

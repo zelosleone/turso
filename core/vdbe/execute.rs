@@ -4350,12 +4350,13 @@ pub fn op_open_ephemeral(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::OpenEphemeral {
-        cursor_id,
-        is_table,
-    } = insn
-    else {
-        unreachable!("unexpected Insn {:?}", insn)
+    let (cursor_id, is_table) = match insn {
+        Insn::OpenEphemeral {
+            cursor_id,
+            is_table,
+        } => (*cursor_id, *is_table),
+        Insn::OpenAutoindex { cursor_id } => (*cursor_id, false),
+        _ => unreachable!("unexpected Insn {:?}", insn),
     };
 
     let conn = program.connection.upgrade().unwrap();
@@ -4378,7 +4379,7 @@ pub fn op_open_ephemeral(
         buffer_pool,
     )?);
 
-    let flag = if *is_table {
+    let flag = if is_table {
         &CreateBTreeFlags::new_table()
     } else {
         &CreateBTreeFlags::new_index()
@@ -4386,7 +4387,7 @@ pub fn op_open_ephemeral(
 
     let root_page = pager.btree_create(flag);
 
-    let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
+    let (_, cursor_type) = program.cursor_ref.get(cursor_id).unwrap();
     let mv_cursor = match state.mv_tx_id {
         Some(tx_id) => {
             let table_id = root_page as u64;
@@ -4407,13 +4408,13 @@ pub fn op_open_ephemeral(
     match cursor_type {
         CursorType::BTreeTable(_) => {
             cursors
-                .get_mut(*cursor_id)
+                .get_mut(cursor_id)
                 .unwrap()
                 .replace(Cursor::new_btree(cursor));
         }
         CursorType::BTreeIndex(_) => {
             cursors
-                .get_mut(*cursor_id)
+                .get_mut(cursor_id)
                 .unwrap()
                 .replace(Cursor::new_btree(cursor));
         }
@@ -4428,6 +4429,34 @@ pub fn op_open_ephemeral(
         }
     }
 
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+/// Execute the [Insn::Once] instruction.
+///
+/// This instruction is used to execute a block of code only once.
+/// If the instruction is executed again, it will jump to the target program counter.
+pub fn op_once(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::Once {
+        target_pc_when_reentered,
+    } = insn
+    else {
+        unreachable!("unexpected Insn: {:?}", insn)
+    };
+    assert!(target_pc_when_reentered.is_offset());
+    let offset = state.pc;
+    if state.once.iter().any(|o| o == offset) {
+        state.pc = target_pc_when_reentered.to_offset_int();
+        return Ok(InsnFunctionStepResult::Step);
+    }
+    state.once.push(offset);
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
