@@ -4567,7 +4567,7 @@ fn fill_cell_payload(
         }
 
         // we still have bytes to add, we will need to allocate new overflow page
-        let overflow_page = allocate_overflow_page(pager.clone());
+        let overflow_page = pager.allocate_overflow_page();
         overflow_pages.push(overflow_page.clone());
         {
             let id = overflow_page.get().id as u32;
@@ -4588,20 +4588,6 @@ fn fill_cell_payload(
     }
 
     assert_eq!(cell_size, cell_payload.len());
-}
-
-/// Allocate a new overflow page.
-/// This is done when a cell overflows and new space is needed.
-fn allocate_overflow_page(pager: Rc<Pager>) -> PageRef {
-    let page = pager.allocate_page().unwrap();
-    tracing::debug!("allocate_overflow_page(id={})", page.get().id);
-
-    // setup overflow page
-    let contents = page.get().contents.as_mut().unwrap();
-    let buf = contents.as_ptr();
-    buf.fill(0);
-
-    page
 }
 
 /// Returns the maximum payload size (X) that can be stored directly on a b-tree page without spilling to overflow pages.
