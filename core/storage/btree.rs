@@ -2761,6 +2761,16 @@ impl BTreeCursor {
                     }
                 }
 
+                if let Some(rm) = parent_contents.rightmost_pointer() {
+                    if rm != rightmost {
+                        tracing::error!("balance_non_root(balance_shallower_rightmost_pointer, parent_rightmost={}, rightmost={})",
+                            rm,
+                            rightmost,
+                        );
+                        valid = false;
+                    }
+                }
+
                 if parent_contents.page_type() != page_type {
                     tracing::error!("balance_non_root(balance_shallower_parent_page_type, page_type={:?}, parent_page_type={:?})",
                         page_type,
