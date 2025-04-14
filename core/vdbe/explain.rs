@@ -1361,6 +1361,24 @@ pub fn insn_to_str(
                     format!("r[{}..{}]=NULL", dest, end)
                 }),
             ),
+            Insn::NotFound {
+                cursor_id,
+                target_pc,
+                record_reg,
+                ..
+            } => (
+                "NotFound",
+                *cursor_id as i32,
+                target_pc.to_debug_int(),
+                *record_reg as i32,
+                OwnedValue::build_text(""),
+                0,
+                format!(
+                    "if (r[{}] != NULL) goto {}",
+                    record_reg,
+                    target_pc.to_debug_int()
+                ),
+            ),
         };
     format!(
         "{:<4}  {:<17}  {:<4}  {:<4}  {:<4}  {:<13}  {:<2}  {}",

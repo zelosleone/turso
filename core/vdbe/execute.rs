@@ -4472,6 +4472,53 @@ pub fn op_once(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_not_found(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::NotFound {
+        cursor_id,
+        target_pc,
+        record_reg,
+        num_regs,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+
+    let found = {
+        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = cursor.as_btree_mut();
+
+        if *num_regs == 0 {
+            let record = match &state.registers[*record_reg] {
+                Register::Record(r) => r,
+                _ => {
+                    return Err(LimboError::InternalError(
+                        "NotFound: exepected a record in the register".into(),
+                    ));
+                }
+            };
+
+            return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ))
+        } else {
+            let record = make_record(&state.registers, record_reg, num_regs);
+            return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ))
+        }
+    };
+    
+    if found {
+        state.pc += 1;
+    } else {
+        state.pc = target_pc.to_offset_int();
+    }
+
+    Ok(InsnFunctionStepResult::Step)
+}
+
 fn exec_lower(reg: &OwnedValue) -> Option<OwnedValue> {
     match reg {
         OwnedValue::Text(t) => Some(OwnedValue::build_text(&t.as_str().to_lowercase())),

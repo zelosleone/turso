@@ -802,6 +802,13 @@ pub enum Insn {
     Once {
         target_pc_when_reentered: BranchOffset,
     },
+    /// Search for record in the index cusor, if exists is a no-op otherwise go to target_pc
+    NotFound {
+        cursor_id: CursorID,
+        target_pc: BranchOffset,
+        record_reg: usize,
+        num_regs: usize,
+    },
 }
 
 impl Insn {
@@ -916,6 +923,7 @@ impl Insn {
             Insn::ReadCookie { .. } => execute::op_read_cookie,
             Insn::OpenEphemeral { .. } | Insn::OpenAutoindex { .. } => execute::op_open_ephemeral,
             Insn::Once { .. } => execute::op_once,
+            Insn::NotFound { .. } => execute::op_not_found,
         }
     }
 }
