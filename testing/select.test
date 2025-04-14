@@ -15,6 +15,10 @@ do_execsql_test select-const-3 {
   SELECT 0xDEAF
 } {57007}
 
+do_execsql_test select-const-4 {
+  SELECT -0xA
+} {-10}
+
 do_execsql_test select-true {
   SELECT true
 } {1}

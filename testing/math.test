@@ -612,9 +612,13 @@ do_execsql_test bitwise-not-text-float {
 	SELECT ~'823.34'
 } {-824}
 
-do_execsql_test bitwise-not-text-int {
+do_execsql_test bitwise-not-text-int-1 {
 	SELECT ~'1234'
 } {-1235}
+
+do_execsql_test bitwise-not-text-int-2 {
+	SELECT ~0xA
+} {-11}
 
 do_execsql_test bitwise-not-scalar-float {
 	SELECT ~abs(693.9)
