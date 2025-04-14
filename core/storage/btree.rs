@@ -366,12 +366,6 @@ pub struct BTreeCursor {
     empty_record: Cell<bool>,
 }
 
-struct CellArray {
-    cells: Vec<&'static mut [u8]>, // TODO(pere): make this with references
-
-    number_of_cells_per_page: Vec<u16>, // number of cells in each page
-}
-
 impl BTreeCursor {
     pub fn new(
         mv_cursor: Option<Rc<RefCell<MvCursor>>>,
@@ -3881,6 +3875,12 @@ impl PageStack {
     fn clear(&self) {
         self.current_page.set(-1);
     }
+}
+
+struct CellArray {
+    cells: Vec<&'static mut [u8]>, // TODO(pere): make this with references
+
+    number_of_cells_per_page: Vec<u16>, // number of cells in each page
 }
 
 impl CellArray {
