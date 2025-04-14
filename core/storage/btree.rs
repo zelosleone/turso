@@ -3877,6 +3877,7 @@ impl PageStack {
     }
 }
 
+/// Used for redistributing cells during a balance operation.
 struct CellArray {
     cells: Vec<&'static mut [u8]>, // TODO(pere): make this with references
 
