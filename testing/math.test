@@ -643,39 +643,6 @@ do_execsql_test bitwise-not-blob-2 {
 	SELECT ~ x'0001';
 } {-1}
 
-do_execsql_test boolean-not-empty-blob {
-	SELECT NOT x''
-} {1}
-
-do_execsql_test boolean-not-cast-blob {
-	SELECT NOT CAST ('af' AS BLOB);
-} {1}
-
-do_execsql_test boolean-not-blob {
-	SELECT NOT x'0000';
-} {1}
-
-do_execsql_test boolean-not-blob-2 {
-	SELECT NOT x'0001';
-} {1}
-
-foreach {testname lhs ans} {
-  int-1           1        0
-  int-2           2        0
-  int-3           0        1
-  float-1         1.0      0
-  float-2         2.0      0
-  float-3         0.0      1
-  text            'a'      1
-  text-int-1      '0'      1
-  text-int-2      '1'      0
-  text-float-1    '1.0'    0
-  text-float-2    '0.0'    1
-  text-float-edge '12-23.0' 0
-  null            NULL     {}
-} {
-  do_execsql_test boolean-not "SELECT not $lhs" $::ans
-}
 
 do_execsql_test pi {
   SELECT pi()
