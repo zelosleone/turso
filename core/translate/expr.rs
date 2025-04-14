@@ -1850,8 +1850,14 @@ pub fn translate_expr(
         }
         ast::Expr::Literal(lit) => match lit {
             ast::Literal::Numeric(val) => {
-                let maybe_int = val.parse::<i64>();
-                if let Ok(int_value) = maybe_int {
+                if val.starts_with("0x") {
+                    // must be a hex decimal
+                    let int_value = i64::from_str_radix(&val[2..], 16)?;
+                    program.emit_insn(Insn::Integer {
+                        value: int_value,
+                        dest: target_register,
+                    });
+                } else if let Ok(int_value) = val.parse::<i64>() {
                     program.emit_insn(Insn::Integer {
                         value: int_value,
                         dest: target_register,
