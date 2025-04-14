@@ -123,6 +123,13 @@ impl Page {
         tracing::debug!("clear loaded {}", self.get().id);
         self.get().flags.fetch_and(!PAGE_LOADED, Ordering::SeqCst);
     }
+
+    pub fn is_index(&self) -> bool {
+        match self.get_contents().page_type() {
+            PageType::IndexLeaf | PageType::IndexInterior => true,
+            PageType::TableLeaf | PageType::TableInterior => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
