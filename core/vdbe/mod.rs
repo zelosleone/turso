@@ -563,8 +563,8 @@ fn print_insn(program: &Program, addr: InsnReference, insn: &Insn, indent: Strin
 fn get_indent_count(indent_count: usize, curr_insn: &Insn, prev_insn: Option<&Insn>) -> usize {
     let indent_count = if let Some(insn) = prev_insn {
         match insn {
-            Insn::RewindAwait { .. }
-            | Insn::LastAwait { .. }
+            Insn::Rewind { .. }
+            | Insn::Last { .. }
             | Insn::SorterSort { .. }
             | Insn::SeekGE { .. }
             | Insn::SeekGT { .. }
@@ -578,9 +578,7 @@ fn get_indent_count(indent_count: usize, curr_insn: &Insn, prev_insn: Option<&In
     };
 
     match curr_insn {
-        Insn::NextAsync { .. } | Insn::SorterNext { .. } | Insn::PrevAsync { .. } => {
-            indent_count - 1
-        }
+        Insn::Next { .. } | Insn::SorterNext { .. } | Insn::Prev { .. } => indent_count - 1,
         _ => indent_count,
     }
 }

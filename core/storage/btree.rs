@@ -2972,11 +2972,6 @@ impl BTreeCursor {
         }
     }
 
-    pub fn wait_for_completion(&mut self) -> Result<()> {
-        // TODO: Wait for pager I/O to complete
-        Ok(())
-    }
-
     pub fn rowid(&self) -> Result<Option<u64>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             let mv_cursor = mv_cursor.borrow();
