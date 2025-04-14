@@ -2438,23 +2438,9 @@ impl BTreeCursor {
                     }
                 }
 
-                #[cfg(debug_assertions)]
-                self.post_balance_non_root_validation(
-                    &parent_page,
-                    balance_info,
-                    parent_contents,
-                    &pages_to_balance_new,
-                    page_type,
-                    leaf_data,
-                    cells_debug,
-                    sibling_count_new,
-                    rightmost_pointer,
-                );
-
+                // TODO: vacuum support
                 let first_child_page = &pages_to_balance_new[0];
                 let first_child_contents = first_child_page.get_contents();
-
-                // TODO: vacuum support
                 if parent_is_root
                     && parent_contents.cell_count() == 0
 
@@ -2504,9 +2490,22 @@ impl BTreeCursor {
                         );
 
                     self.stack.set_cell_index(0); // reset cell index, top is already parent
-                    self.pager
-                        .free_page(Some(first_child_page.clone()), first_child_page.get().id)?;
+                    sibling_count_new -= 1; // decrease sibling count for debugging and free at the end
+                    assert!(sibling_count_new < balance_info.sibling_count);
                 }
+
+                #[cfg(debug_assertions)]
+                self.post_balance_non_root_validation(
+                    &parent_page,
+                    balance_info,
+                    parent_contents,
+                    pages_to_balance_new,
+                    page_type,
+                    leaf_data,
+                    cells_debug,
+                    sibling_count_new,
+                    rightmost_pointer,
+                );
 
                 // We have to free pages that are not used anymore
                 for i in sibling_count_new..balance_info.sibling_count {
@@ -2579,7 +2578,7 @@ impl BTreeCursor {
         parent_page: &PageRef,
         balance_info: &mut BalanceInfo,
         parent_contents: &mut PageContent,
-        pages_to_balance_new: &Vec<std::sync::Arc<crate::Page>>,
+        pages_to_balance_new: Vec<std::sync::Arc<crate::Page>>,
         page_type: PageType,
         leaf_data: bool,
         mut cells_debug: Vec<Vec<u8>>,
@@ -2717,7 +2716,102 @@ impl BTreeCursor {
             // Now check divider cells and their pointers.
             let parent_buf = parent_contents.as_ptr();
             let cell_divider_idx = balance_info.first_divider_cell + page_idx;
-            if page_idx == sibling_count_new - 1 {
+            if sibling_count_new == 0 {
+                // Balance-shallower case
+                // We need to check data in parent page
+                let rightmost = read_u32(rightmost_pointer, 0);
+                debug_validate_cells!(parent_contents, self.usable_space() as u16);
+
+                if pages_to_balance_new.len() != 1 {
+                    tracing::error!("balance_non_root(balance_shallower_incorrect_pages_to_balance_new_len, pages_to_balance_new={})",
+                        pages_to_balance_new.len()
+                    );
+                    valid = false;
+                }
+
+                if current_index_cell != cells_debug.len()
+                    || cells_debug.len() != contents.cell_count()
+                    || contents.cell_count() != parent_contents.cell_count()
+                {
+                    tracing::error!("balance_non_root(balance_shallower_incorrect_cell_count, current_index_cell={}, cells_debug={}, cell_count={}, parent_cell_count={})",
+                        current_index_cell,
+                        cells_debug.len(),
+                        contents.cell_count(),
+                        parent_contents.cell_count()
+                    );
+                    valid = false;
+                }
+
+                if rightmost == page.get().id as u32 || rightmost == parent_page.get().id as u32 {
+                    tracing::error!("balance_non_root(balance_shallower_rightmost_pointer, page_id={}, parent_page_id={}, rightmost={})",
+                        page.get().id,
+                        parent_page.get().id,
+                        rightmost,
+                    );
+                    valid = false;
+                }
+
+                if let Some(rm) = contents.rightmost_pointer() {
+                    if rm != rightmost {
+                        tracing::error!("balance_non_root(balance_shallower_rightmost_pointer, page_rightmost={}, rightmost={})",
+                            rm,
+                            rightmost,
+                        );
+                        valid = false;
+                    }
+                }
+
+                if parent_contents.page_type() != page_type {
+                    tracing::error!("balance_non_root(balance_shallower_parent_page_type, page_type={:?}, parent_page_type={:?})",
+                        page_type,
+                        parent_contents.page_type()
+                    );
+                    valid = false
+                }
+
+                for parent_cell_idx in 0..contents.cell_count() {
+                    let (parent_cell_start, parent_cell_len) = parent_contents.cell_get_raw_region(
+                        parent_cell_idx,
+                        payload_overflow_threshold_max(
+                            parent_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        payload_overflow_threshold_min(
+                            parent_contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        self.usable_space(),
+                    );
+
+                    let (cell_start, cell_len) = contents.cell_get_raw_region(
+                        parent_cell_idx,
+                        payload_overflow_threshold_max(
+                            contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        payload_overflow_threshold_min(
+                            contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        self.usable_space(),
+                    );
+
+                    let buf = contents.as_ptr();
+                    let cell_buf = to_static_buf(&mut buf[cell_start..cell_start + cell_len]);
+                    let parent_cell_buf = to_static_buf(
+                        &mut parent_buf[parent_cell_start..parent_cell_start + parent_cell_len],
+                    );
+                    let cell_buf_in_array = &cells_debug[parent_cell_idx];
+
+                    if cell_buf != cell_buf_in_array || cell_buf != parent_cell_buf {
+                        tracing::error!("balance_non_root(balance_shallower_cell_not_found_debug, page_id={}, cell_in_cell_array_idx={})",
+                            page.get().id,
+                            parent_cell_idx,
+                        );
+                        valid = false;
+                    }
+                }
+            } else if page_idx == sibling_count_new - 1 {
                 // We will only validate rightmost pointer of parent page, we will not validate rightmost if it's a cell and not the last pointer because,
                 // insert cell could've defragmented the page and invalidated the pointer.
                 // right pointer, we just check right pointer points to this page.
