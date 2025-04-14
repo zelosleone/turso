@@ -1159,7 +1159,7 @@ pub fn translate_expr(
                             });
                             Ok(target_register)
                         }
-                        ScalarFunc::Date | ScalarFunc::DateTime => {
+                        ScalarFunc::Date | ScalarFunc::DateTime | ScalarFunc::JulianDay => {
                             let start_reg = program
                                 .alloc_registers(args.as_ref().map(|x| x.len()).unwrap_or(1));
                             if let Some(args) = args {
@@ -1259,11 +1259,11 @@ pub fn translate_expr(
                             });
                             Ok(target_register)
                         }
-                        ScalarFunc::UnixEpoch | ScalarFunc::JulianDay => {
+                        ScalarFunc::UnixEpoch => {
                             let mut start_reg = 0;
                             match args {
                                 Some(args) if args.len() > 1 => {
-                                    crate::bail_parse_error!("epoch or julianday function with > 1 arguments. Modifiers are not yet supported.");
+                                    crate::bail_parse_error!("epoch function with > 1 arguments. Modifiers are not yet supported.");
                                 }
                                 Some(args) if args.len() == 1 => {
                                     let arg_reg = program.alloc_register();

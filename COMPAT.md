@@ -325,7 +325,7 @@ Feature support of [sqlite expr syntax](https://www.sqlite.org/lang_expr.html).
 | date()      | Yes     | partially supports modifiers |
 | time()      | Yes     | partially supports modifiers |
 | datetime()  | Yes     | partially supports modifiers |
-| julianday() | Partial | does not support modifiers   |
+| julianday() | Yes     | partially support modifiers  |
 | unixepoch() | Partial | does not support modifiers   |
 | strftime()  | Yes     | partially supports modifiers |
 | timediff()  | Yes     | partially supports modifiers |

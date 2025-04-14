@@ -3341,26 +3341,8 @@ pub fn op_function(
                 state.registers[*dest] = Register::OwnedValue(result);
             }
             ScalarFunc::JulianDay => {
-                if *start_reg == 0 {
-                    let julianday: String = exec_julianday(&OwnedValue::build_text("now"))?;
-                    state.registers[*dest] =
-                        Register::OwnedValue(OwnedValue::build_text(&julianday));
-                } else {
-                    let datetime_value = &state.registers[*start_reg];
-                    let julianday = exec_julianday(datetime_value.get_owned_value());
-                    match julianday {
-                        Ok(time) => {
-                            state.registers[*dest] =
-                                Register::OwnedValue(OwnedValue::build_text(&time))
-                        }
-                        Err(e) => {
-                            return Err(LimboError::ParseError(format!(
-                                "Error encountered while parsing datetime value: {}",
-                                e
-                            )));
-                        }
-                    }
-                }
+                let result = exec_julianday(&state.registers[*start_reg..*start_reg + arg_count]);
+                state.registers[*dest] = Register::OwnedValue(result);
             }
             ScalarFunc::UnixEpoch => {
                 if *start_reg == 0 {
