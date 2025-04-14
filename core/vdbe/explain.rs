@@ -1321,6 +1321,15 @@ pub fn insn_to_str(
                     if *is_table { "true" } else { "false" }
                 ),
             ),
+            Insn::OpenAutoindex { cursor_id } => (
+                "OpenAutoindex",
+                *cursor_id as i32,
+                0,
+                0,
+                OwnedValue::build_text(""),
+                0,
+                format!("cursor={}", cursor_id),
+            ),
             Insn::Once {
                 target_pc_when_reentered,
             } => (

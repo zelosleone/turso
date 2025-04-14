@@ -502,8 +502,8 @@ Modifiers:
 | Null           | Yes    |         |
 | NullRow        | Yes    |         |
 | Once           | Yes     |         |
-| OpenAutoindex  | No     |         |
-| OpenEphemeral  | No     |         |
+| OpenAutoindex  | Yes     |         |
+| OpenEphemeral  | Yes     |         |
 | OpenPseudo     | Yes    |         |
 | OpenRead       | Yes    |         |
 | OpenWrite      | Yes     |         |
