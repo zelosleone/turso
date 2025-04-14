@@ -4432,6 +4432,34 @@ pub fn op_open_ephemeral(
     Ok(InsnFunctionStepResult::Step)
 }
 
+/// Execute the [Insn::Once] instruction.
+///
+/// This instruction is used to execute a block of code only once.
+/// If the instruction is executed again, it will jump to the target program counter.
+pub fn op_once(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::Once {
+        target_pc_when_reentered,
+    } = insn
+    else {
+        unreachable!("unexpected Insn: {:?}", insn)
+    };
+    assert!(target_pc_when_reentered.is_offset());
+    let offset = state.pc;
+    if state.once.iter().any(|o| o == offset) {
+        state.pc = target_pc_when_reentered.to_offset_int();
+        return Ok(InsnFunctionStepResult::Step);
+    }
+    state.once.push(offset);
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 fn exec_lower(reg: &OwnedValue) -> Option<OwnedValue> {
     match reg {
         OwnedValue::Text(t) => Some(OwnedValue::build_text(&t.as_str().to_lowercase())),

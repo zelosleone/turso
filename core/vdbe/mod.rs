@@ -28,6 +28,7 @@ use crate::{
     error::LimboError,
     fast_lock::SpinLock,
     function::{AggFunc, FuncCtx},
+    storage::sqlite3_ondisk::SmallVec,
 };
 
 use crate::{
@@ -232,6 +233,8 @@ pub struct ProgramState {
     last_compare: Option<std::cmp::Ordering>,
     deferred_seek: Option<(CursorID, CursorID)>,
     ended_coroutine: Bitfield<4>, // flag to indicate that a coroutine has ended (key is the yield register. currently we assume that the yield register is always between 0-255, YOLO)
+    /// Indicate whether an [Insn::Once] instruction at a given program counter position has already been executed, well, once.
+    once: SmallVec<u32, 4>,
     regex_cache: RegexCache,
     pub(crate) mv_tx_id: Option<crate::mvcc::database::TxID>,
     interrupted: bool,
@@ -254,6 +257,7 @@ impl ProgramState {
             last_compare: None,
             deferred_seek: None,
             ended_coroutine: Bitfield::new(),
+            once: SmallVec::<u32, 4>::new(),
             regex_cache: RegexCache::new(),
             mv_tx_id: None,
             interrupted: false,

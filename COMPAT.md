@@ -501,7 +501,7 @@ Modifiers:
 | NotNull        | Yes    |         |
 | Null           | Yes    |         |
 | NullRow        | Yes    |         |
-| Once           | No     |         |
+| Once           | Yes     |         |
 | OpenAutoindex  | No     |         |
 | OpenEphemeral  | No     |         |
 | OpenPseudo     | Yes    |         |

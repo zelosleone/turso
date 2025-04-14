@@ -1321,6 +1321,17 @@ pub fn insn_to_str(
                     if *is_table { "true" } else { "false" }
                 ),
             ),
+            Insn::Once {
+                target_pc_when_reentered,
+            } => (
+                "Once",
+                target_pc_when_reentered.to_debug_int(),
+                0,
+                0,
+                OwnedValue::build_text(""),
+                0,
+                format!("goto {}", target_pc_when_reentered.to_debug_int()),
+            ),
         };
     format!(
         "{:<4}  {:<17}  {:<4}  {:<4}  {:<4}  {:<13}  {:<2}  {}",
