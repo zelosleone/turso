@@ -366,24 +366,6 @@ pub struct BTreeCursor {
     empty_record: Cell<bool>,
 }
 
-/// Stack of pages representing the tree traversal order.
-/// current_page represents the current page being used in the tree and current_page - 1 would be
-/// the parent. Using current_page + 1 or higher is undefined behaviour.
-struct PageStack {
-    /// Pointer to the current page being consumed
-    current_page: Cell<i32>,
-    /// List of pages in the stack. Root page will be in index 0
-    stack: RefCell<[Option<PageRef>; BTCURSOR_MAX_DEPTH + 1]>,
-    /// List of cell indices in the stack.
-    /// cell_indices[current_page] is the current cell index being consumed. Similarly
-    /// cell_indices[current_page-1] is the cell index of the parent of the current page
-    /// that we save in case of going back up.
-    /// There are two points that need special attention:
-    ///  If cell_indices[current_page] = -1, it indicates that the current iteration has reached the start of the current_page
-    ///  If cell_indices[current_page] = `cell_count`, it means that the current iteration has reached the end of the current_page
-    cell_indices: RefCell<[i32; BTCURSOR_MAX_DEPTH + 1]>,
-}
-
 struct CellArray {
     cells: Vec<&'static mut [u8]>, // TODO(pere): make this with references
 
@@ -3760,6 +3742,24 @@ fn validate_cells_after_insertion(cell_array: &CellArray, leaf_data: bool) {
             assert!(cell[0] != 0, "payload is {:?}", cell);
         }
     }
+}
+
+/// Stack of pages representing the tree traversal order.
+/// current_page represents the current page being used in the tree and current_page - 1 would be
+/// the parent. Using current_page + 1 or higher is undefined behaviour.
+struct PageStack {
+    /// Pointer to the current page being consumed
+    current_page: Cell<i32>,
+    /// List of pages in the stack. Root page will be in index 0
+    stack: RefCell<[Option<PageRef>; BTCURSOR_MAX_DEPTH + 1]>,
+    /// List of cell indices in the stack.
+    /// cell_indices[current_page] is the current cell index being consumed. Similarly
+    /// cell_indices[current_page-1] is the cell index of the parent of the current page
+    /// that we save in case of going back up.
+    /// There are two points that need special attention:
+    ///  If cell_indices[current_page] = -1, it indicates that the current iteration has reached the start of the current_page
+    ///  If cell_indices[current_page] = `cell_count`, it means that the current iteration has reached the end of the current_page
+    cell_indices: RefCell<[i32; BTCURSOR_MAX_DEPTH + 1]>,
 }
 
 impl PageStack {
