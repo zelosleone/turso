@@ -1,5 +1,5 @@
-use crate::VirtualTable;
 use crate::{util::normalize_ident, Result};
+use crate::{LimboError, VirtualTable};
 use core::fmt;
 use fallible_iterator::FallibleIterator;
 use limbo_sqlite3_parser::ast::{Expr, Literal, SortOrder, TableOptions};
@@ -583,6 +583,20 @@ impl Affinity {
             Affinity::Blob => SQLITE_AFF_NONE,
             Affinity::Real => SQLITE_AFF_REAL,
             Affinity::Numeric => SQLITE_AFF_NUMERIC,
+        }
+    }
+
+    pub fn from_char(char: char) -> Result<Self> {
+        match char {
+            SQLITE_AFF_INTEGER => Ok(Affinity::Integer),
+            SQLITE_AFF_TEXT => Ok(Affinity::Text),
+            SQLITE_AFF_NONE => Ok(Affinity::Blob),
+            SQLITE_AFF_REAL => Ok(Affinity::Real),
+            SQLITE_AFF_NUMERIC => Ok(Affinity::Numeric),
+            _ => Err(LimboError::InternalError(format!(
+                "Invalid affinity character: {}",
+                char
+            ))),
         }
     }
 }

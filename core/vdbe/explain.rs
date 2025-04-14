@@ -1379,6 +1379,28 @@ pub fn insn_to_str(
                     target_pc.to_debug_int()
                 ),
             ),
+            Insn::Affinity {
+                start_reg,
+                count,
+                affinities,
+            } => (
+                "Affinity",
+                *start_reg as i32,
+                count.get() as i32,
+                0,
+                OwnedValue::build_text(""),
+                0,
+                format!(
+                    "r[{}..{}] = {}",
+                    start_reg,
+                    start_reg + count.get(),
+                    affinities
+                        .chars()
+                        .map(|a| a.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            ),
         };
     format!(
         "{:<4}  {:<17}  {:<4}  {:<4}  {:<4}  {:<13}  {:<2}  {}",

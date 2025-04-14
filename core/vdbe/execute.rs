@@ -4509,13 +4509,47 @@ pub fn op_not_found(
             return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ))
         }
     };
-    
+
     if found {
         state.pc += 1;
     } else {
         state.pc = target_pc.to_offset_int();
     }
 
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_affinity(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::Affinity {
+        start_reg,
+        count,
+        affinities,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+
+    if affinities.len() != count.get() {
+        return Err(LimboError::InternalError(
+            "Affinity: the length of affinities does not match the count".into(),
+        ));
+    }
+
+    for (i, affinity_char) in affinities.chars().enumerate().take(count.get()) {
+        let reg_index = *start_reg + i;
+
+        let affinity = Affinity::from_char(affinity_char)?;
+
+        apply_affinity_char(&mut state.registers[reg_index], affinity);
+    }
+
+    state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
 

@@ -1,4 +1,7 @@
-use std::{num::NonZero, rc::Rc};
+use std::{
+    num::{NonZero, NonZeroUsize},
+    rc::Rc,
+};
 
 use super::{execute, AggFunc, BranchOffset, CursorID, FuncCtx, InsnFunction, PageIdx};
 use crate::{
@@ -809,6 +812,12 @@ pub enum Insn {
         record_reg: usize,
         num_regs: usize,
     },
+    /// Apply affinities to a range of registers. Affinities must have the same size of count
+    Affinity {
+        start_reg: usize,
+        count: NonZeroUsize,
+        affinities: String,
+    },
 }
 
 impl Insn {
@@ -924,6 +933,7 @@ impl Insn {
             Insn::OpenEphemeral { .. } | Insn::OpenAutoindex { .. } => execute::op_open_ephemeral,
             Insn::Once { .. } => execute::op_once,
             Insn::NotFound { .. } => execute::op_not_found,
+            Insn::Affinity { .. } => execute::op_affinity,
         }
     }
 }
