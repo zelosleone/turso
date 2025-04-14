@@ -11,7 +11,8 @@ use limbo_sqlite3_parser::ast::{self, Expr, ResultColumn, SortOrder, Update};
 use super::emitter::emit_program;
 use super::optimizer::optimize_plan;
 use super::plan::{
-    Direction, IterationDirection, Plan, ResultSetColumn, TableReference, UpdatePlan,
+    ColumnUsedMask, Direction, IterationDirection, Plan, ResultSetColumn, TableReference,
+    UpdatePlan,
 };
 use super::planner::bind_column_references;
 use super::planner::{parse_limit, parse_where};
@@ -88,7 +89,7 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
             })
         })
         .unwrap_or(IterationDirection::Forwards);
-    let table_references = vec![TableReference {
+    let mut table_references = vec![TableReference {
         table: match table.as_ref() {
             Table::Virtual(vtab) => Table::Virtual(vtab.clone()),
             Table::BTree(btree_table) => Table::BTree(btree_table.clone()),
@@ -100,6 +101,7 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
             index: None,
         },
         join_info: None,
+        col_used_mask: ColumnUsedMask::new(),
     }];
     let set_clauses = body
         .sets
@@ -123,7 +125,7 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
                     ))
                 })?;
 
-            let _ = bind_column_references(&mut set.expr, &table_references, None);
+            let _ = bind_column_references(&mut set.expr, &mut table_references, None);
             Ok((col_index, set.expr.clone()))
         })
         .collect::<Result<Vec<(usize, Expr)>, crate::LimboError>>()?;
@@ -133,7 +135,7 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
     if let Some(returning) = &mut body.returning {
         for rc in returning.iter_mut() {
             if let ResultColumn::Expr(expr, alias) = rc {
-                bind_column_references(expr, &table_references, None)?;
+                bind_column_references(expr, &mut table_references, None)?;
                 result_columns.push(ResultSetColumn {
                     expr: expr.clone(),
                     alias: alias.as_ref().and_then(|a| {
@@ -169,7 +171,7 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
     // Parse the WHERE clause
     parse_where(
         body.where_clause.as_ref().map(|w| *w.clone()),
-        &table_references,
+        &mut table_references,
         Some(&result_columns),
         &mut where_clause,
     )?;
