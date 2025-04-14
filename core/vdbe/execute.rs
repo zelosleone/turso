@@ -813,14 +813,14 @@ pub fn op_if_not(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_open_read_async(
+pub fn op_open_read(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::OpenReadAsync {
+    let Insn::OpenRead {
         cursor_id,
         root_page,
     } = insn
@@ -855,43 +855,32 @@ pub fn op_open_read_async(
                 .replace(Cursor::new_btree(cursor));
         }
         CursorType::Pseudo(_) => {
-            panic!("OpenReadAsync on pseudo cursor");
+            panic!("OpenRead on pseudo cursor");
         }
         CursorType::Sorter => {
-            panic!("OpenReadAsync on sorter cursor");
+            panic!("OpenRead on sorter cursor");
         }
         CursorType::VirtualTable(_) => {
-            panic!("OpenReadAsync on virtual table cursor, use Insn:VOpenAsync instead");
+            panic!("OpenRead on virtual table cursor, use Insn:VOpen instead");
         }
     }
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_open_read_await(
+pub fn op_vopen(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_vopen_async(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::VOpenAsync { cursor_id } = insn else {
+    let Insn::VOpen { cursor_id } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let CursorType::VirtualTable(virtual_table) = cursor_type else {
-        panic!("VOpenAsync on non-virtual table cursor");
+        panic!("VOpen on non-virtual table cursor");
     };
     let cursor = virtual_table.open()?;
     state
@@ -958,17 +947,6 @@ pub fn op_vcreate(
             .vtabs
             .insert(table_name, table.clone());
     }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_vopen_await(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -1119,7 +1097,7 @@ pub fn op_vnext(
     };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let CursorType::VirtualTable(virtual_table) = cursor_type else {
-        panic!("VNextAsync on non-virtual table cursor");
+        panic!("VNext on non-virtual table cursor");
     };
     let has_more = {
         let mut cursor = state.get_cursor(*cursor_id);
@@ -1161,53 +1139,14 @@ pub fn op_open_pseudo(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_rewind_async(
+pub fn op_rewind(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::RewindAsync { cursor_id } = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    {
-        let mut cursor =
-            must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "RewindAsync");
-        let cursor = cursor.as_btree_mut();
-        return_if_io!(cursor.rewind());
-    }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_last_async(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::LastAsync { cursor_id } = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "LastAsync");
-        let cursor = cursor.as_btree_mut();
-        return_if_io!(cursor.last());
-    }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_last_await(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::LastAwait {
+    let Insn::Rewind {
         cursor_id,
         pc_if_empty,
     } = insn
@@ -1216,9 +1155,9 @@ pub fn op_last_await(
     };
     assert!(pc_if_empty.is_offset());
     let is_empty = {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "LastAwait");
+        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Rewind");
         let cursor = cursor.as_btree_mut();
-        cursor.wait_for_completion()?;
+        return_if_io!(cursor.rewind());
         cursor.is_empty()
     };
     if is_empty {
@@ -1229,14 +1168,14 @@ pub fn op_last_await(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_rewind_await(
+pub fn op_last(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::RewindAwait {
+    let Insn::Last {
         cursor_id,
         pc_if_empty,
     } = insn
@@ -1245,10 +1184,9 @@ pub fn op_rewind_await(
     };
     assert!(pc_if_empty.is_offset());
     let is_empty = {
-        let mut cursor =
-            must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "RewindAwait");
+        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Last");
         let cursor = cursor.as_btree_mut();
-        cursor.wait_for_completion()?;
+        return_if_io!(cursor.last());
         cursor.is_empty()
     };
     if is_empty {
@@ -1471,54 +1409,14 @@ pub fn op_result_row(
     return Ok(InsnFunctionStepResult::Row);
 }
 
-pub fn op_next_async(
+pub fn op_next(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::NextAsync { cursor_id } = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "NextAsync");
-        let cursor = cursor.as_btree_mut();
-        cursor.set_null_flag(false);
-        return_if_io!(cursor.next());
-    }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_prev_async(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::PrevAsync { cursor_id } = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "PrevAsync");
-        let cursor = cursor.as_btree_mut();
-        cursor.set_null_flag(false);
-        return_if_io!(cursor.prev());
-    }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_prev_await(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::PrevAwait {
+    let Insn::Next {
         cursor_id,
         pc_if_next,
     } = insn
@@ -1527,9 +1425,11 @@ pub fn op_prev_await(
     };
     assert!(pc_if_next.is_offset());
     let is_empty = {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "PrevAwait");
+        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Next");
         let cursor = cursor.as_btree_mut();
-        cursor.wait_for_completion()?;
+        cursor.set_null_flag(false);
+        return_if_io!(cursor.next());
+
         cursor.is_empty()
     };
     if !is_empty {
@@ -1540,29 +1440,31 @@ pub fn op_prev_await(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_next_await(
+pub fn op_prev(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::NextAwait {
+    let Insn::Prev {
         cursor_id,
-        pc_if_next,
+        pc_if_prev,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    assert!(pc_if_next.is_offset());
+    assert!(pc_if_prev.is_offset());
     let is_empty = {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "NextAwait");
+        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Prev");
         let cursor = cursor.as_btree_mut();
-        cursor.wait_for_completion()?;
+        cursor.set_null_flag(false);
+        return_if_io!(cursor.prev());
+
         cursor.is_empty()
     };
     if !is_empty {
-        state.pc = pc_if_next.to_offset_int();
+        state.pc = pc_if_prev.to_offset_int();
     } else {
         state.pc += 1;
     }
@@ -3737,14 +3639,14 @@ pub fn op_yield(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_insert_async(
+pub fn op_insert(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::InsertAsync {
+    let Insn::Insert {
         cursor,
         key_reg,
         record_reg,
@@ -3768,25 +3670,6 @@ pub fn op_insert_async(
         // if we were to set to false after starting a balance procedure, it might
         // leave undefined state.
         return_if_io!(cursor.insert(&BTreeKey::new_table_rowid(key as u64, Some(record)), true));
-    }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_insert_await(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::InsertAwait { cursor_id } = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    {
-        let mut cursor = state.get_cursor(*cursor_id);
-        let cursor = cursor.as_btree_mut();
-        cursor.wait_for_completion()?;
         // Only update last_insert_rowid for regular table inserts, not schema modifications
         if cursor.root_page() != 1 {
             if let Some(rowid) = cursor.rowid()? {
@@ -3802,14 +3685,14 @@ pub fn op_insert_await(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_delete_async(
+pub fn op_delete(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::DeleteAsync { cursor_id } = insn else {
+    let Insn::Delete { cursor_id } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
     {
@@ -3817,19 +3700,21 @@ pub fn op_delete_async(
         let cursor = cursor.as_btree_mut();
         return_if_io!(cursor.delete());
     }
+    let prev_changes = program.n_change.get();
+    program.n_change.set(prev_changes + 1);
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_idx_insert_async(
+pub fn op_idx_insert(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    dbg!("op_idx_insert_async");
-    if let Insn::IdxInsertAsync {
+    dbg!("op_idx_insert_");
+    if let Insn::IdxInsert {
         cursor_id,
         record_reg,
         flags,
@@ -3871,52 +3756,13 @@ pub fn op_idx_insert_async(
 
             dbg!(moved_before);
             // Start insertion of row. This might trigger a balance procedure which will take care of moving to different pages,
-            // therefore, we don't want to seek again if that happens, meaning we don't want to return on io without moving to `Await` opcode
+            // therefore, we don't want to seek again if that happens, meaning we don't want to return on io without moving to the following opcode
             // because it could trigger a movement to child page after a balance root which will leave the current page as the root page.
             return_if_io!(cursor.insert(&BTreeKey::new_index_key(record), moved_before));
-        }
-        state.pc += 1;
-    }
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_idx_insert_await(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    if let Insn::IdxInsertAwait { cursor_id } = *insn {
-        {
-            let mut cursor = state.get_cursor(cursor_id);
-            let cursor = cursor.as_btree_mut();
-            cursor.wait_for_completion()?;
         }
         // TODO: flag optimizations, update n_change if OPFLAG_NCHANGE
         state.pc += 1;
     }
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_delete_await(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::DeleteAwait { cursor_id } = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    {
-        let mut cursor = state.get_cursor(*cursor_id);
-        let cursor = cursor.as_btree_mut();
-        cursor.wait_for_completion()?;
-    }
-    let prev_changes = program.n_change.get();
-    program.n_change.set(prev_changes + 1);
-    state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
 
@@ -4072,14 +3918,14 @@ pub fn op_offset_limit(
 // this cursor may be reused for next insert
 // Update: tablemoveto is used to travers on not exists, on insert depending on flags if nonseek it traverses again.
 // If not there might be some optimizations obviously.
-pub fn op_open_write_async(
+pub fn op_open_write(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::OpenWriteAsync {
+    let Insn::OpenWrite {
         cursor_id,
         root_page,
         ..
@@ -4093,7 +3939,7 @@ pub fn op_open_write_async(
             OwnedValue::Integer(val) => *val as u64,
             _ => {
                 return Err(LimboError::InternalError(
-                    "OpenWriteAsync: the value in root_page is not an integer".into(),
+                    "OpenWrite: the value in root_page is not an integer".into(),
                 ));
             }
         },
@@ -4124,20 +3970,6 @@ pub fn op_open_write_async(
             .unwrap()
             .replace(Cursor::new_btree(cursor));
     }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_open_write_await(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::OpenWriteAwait {} = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -4592,7 +4424,7 @@ pub fn op_open_ephemeral(
             panic!("OpenEphemeral on sorter cursor");
         }
         CursorType::VirtualTable(_) => {
-            panic!("OpenEphemeral on virtual table cursor, use Insn::VOpenAsync instead");
+            panic!("OpenEphemeral on virtual table cursor, use Insn::VOpen instead");
         }
     }
 
