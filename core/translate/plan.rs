@@ -11,14 +11,19 @@ use std::{
 use crate::{
     function::AggFunc,
     schema::{BTreeTable, Column, Index, Table},
-    vdbe::BranchOffset,
-    VirtualTable,
+    vdbe::{
+        builder::{CursorType, ProgramBuilder},
+        BranchOffset, CursorID,
+    },
+    Result, VirtualTable,
 };
 use crate::{
     schema::{PseudoTable, Type},
     types::SeekOp,
     util::can_pushdown_predicate,
 };
+
+use super::emitter::OperationMode;
 
 #[derive(Debug, Clone)]
 pub struct ResultSetColumn {
@@ -491,6 +496,49 @@ impl TableReference {
     pub fn mark_column_used(&mut self, index: usize) {
         self.col_used_mask.set(index);
     }
+
+    /// Open the necessary cursors for this table reference.
+    /// Generally a table cursor is always opened unless a SELECT query can use a covering index.
+    /// An index cursor is opened if an index is used in any way for reading data from the table.
+    pub fn open_cursors(
+        &self,
+        program: &mut ProgramBuilder,
+        mode: OperationMode,
+    ) -> Result<(Option<CursorID>, Option<CursorID>)> {
+        let index = self.op.index();
+        match &self.table {
+            Table::BTree(btree) => {
+                let use_covering_index = self.utilizes_covering_index();
+                let table_cursor_id = if use_covering_index && mode == OperationMode::SELECT {
+                    None
+                } else {
+                    Some(program.alloc_cursor_id(
+                        Some(self.identifier.clone()),
+                        CursorType::BTreeTable(btree.clone()),
+                    ))
+                };
+                let index_cursor_id = if let Some(index) = index {
+                    Some(program.alloc_cursor_id(
+                        Some(index.name.clone()),
+                        CursorType::BTreeIndex(index.clone()),
+                    ))
+                } else {
+                    None
+                };
+                Ok((table_cursor_id, index_cursor_id))
+            }
+            Table::Virtual(virtual_table) => {
+                let table_cursor_id = Some(program.alloc_cursor_id(
+                    Some(self.identifier.clone()),
+                    CursorType::VirtualTable(virtual_table.clone()),
+                ));
+                let index_cursor_id = None;
+                Ok((table_cursor_id, index_cursor_id))
+            }
+            Table::Pseudo(_) => Ok((None, None)),
+        }
+    }
+
     /// Returns true if a given index is a covering index for this [TableReference].
     pub fn index_is_covering(&self, index: &Index) -> bool {
         let Table::BTree(btree) = &self.table else {
