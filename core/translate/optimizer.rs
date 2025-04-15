@@ -368,6 +368,22 @@ fn use_indexes(
                 }
             }
         }
+
+        // Finally, if there's no other reason to use an index, if an index covers the columns used in the query, let's use it.
+        if let Some(indexes) = available_indexes.get(table_reference.table.get_name()) {
+            for index_candidate in indexes.iter() {
+                let is_covering = table_reference.index_is_covering(index_candidate);
+                if let Operation::Scan { index, .. } = &mut table_reference.op {
+                    if index.is_some() {
+                        continue;
+                    }
+                    if is_covering {
+                        *index = Some(index_candidate.clone());
+                        break;
+                    }
+                }
+            }
+        }
     }
 
     Ok(())

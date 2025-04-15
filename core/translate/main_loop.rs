@@ -6,7 +6,7 @@ use crate::{
     translate::result_row::emit_select_result,
     types::SeekOp,
     vdbe::{
-        builder::{CursorType, ProgramBuilder},
+        builder::ProgramBuilder,
         insn::{CmpInsFlags, Insn},
         BranchOffset,
     },
@@ -81,77 +81,67 @@ pub fn init_loop(
                 t_ctx.meta_left_joins[table_index] = Some(lj_metadata);
             }
         }
+        let (table_cursor_id, index_cursor_id) = table.open_cursors(program, mode)?;
         match &table.op {
-            Operation::Scan { index, .. } => {
-                let cursor_id = program.alloc_cursor_id(
-                    Some(table.identifier.clone()),
-                    match &table.table {
-                        Table::BTree(_) => CursorType::BTreeTable(table.btree().unwrap().clone()),
-                        Table::Virtual(_) => {
-                            CursorType::VirtualTable(table.virtual_table().unwrap().clone())
-                        }
-                        other => panic!("Invalid table reference type in Scan: {:?}", other),
-                    },
-                );
-                let index_cursor_id = index.as_ref().map(|i| {
-                    program.alloc_cursor_id(Some(i.name.clone()), CursorType::BTreeIndex(i.clone()))
-                });
-                match (mode, &table.table) {
-                    (OperationMode::SELECT, Table::BTree(btree)) => {
-                        let root_page = btree.root_page;
+            Operation::Scan { index, .. } => match (mode, &table.table) {
+                (OperationMode::SELECT, Table::BTree(btree)) => {
+                    let root_page = btree.root_page;
+                    if let Some(cursor_id) = table_cursor_id {
                         program.emit_insn(Insn::OpenRead {
                             cursor_id,
                             root_page,
                         });
-                        if let Some(index_cursor_id) = index_cursor_id {
-                            program.emit_insn(Insn::OpenRead {
-                                cursor_id: index_cursor_id,
-                                root_page: index.as_ref().unwrap().root_page,
-                            });
-                        }
                     }
-                    (OperationMode::DELETE, Table::BTree(btree)) => {
-                        let root_page = btree.root_page;
-                        program.emit_insn(Insn::OpenWrite {
-                            cursor_id,
-                            root_page: root_page.into(),
+                    if let Some(index_cursor_id) = index_cursor_id {
+                        program.emit_insn(Insn::OpenRead {
+                            cursor_id: index_cursor_id,
+                            root_page: index.as_ref().unwrap().root_page,
                         });
-                    }
-                    (OperationMode::UPDATE, Table::BTree(btree)) => {
-                        let root_page = btree.root_page;
-                        program.emit_insn(Insn::OpenWrite {
-                            cursor_id,
-                            root_page: root_page.into(),
-                        });
-                        if let Some(index_cursor_id) = index_cursor_id {
-                            program.emit_insn(Insn::OpenWrite {
-                                cursor_id: index_cursor_id,
-                                root_page: index.as_ref().unwrap().root_page.into(),
-                            });
-                        }
-                    }
-                    (_, Table::Virtual(_)) => {
-                        program.emit_insn(Insn::VOpen { cursor_id });
-                    }
-                    _ => {
-                        unimplemented!()
                     }
                 }
-            }
-            Operation::Search(search) => {
-                let table_cursor_id = program.alloc_cursor_id(
-                    Some(table.identifier.clone()),
-                    CursorType::BTreeTable(table.btree().unwrap().clone()),
-                );
-
-                match mode {
-                    OperationMode::SELECT => {
-                        program.emit_insn(Insn::OpenRead {
-                            cursor_id: table_cursor_id,
-                            root_page: table.table.get_root_page(),
+                (OperationMode::DELETE, Table::BTree(btree)) => {
+                    let root_page = btree.root_page;
+                    program.emit_insn(Insn::OpenWrite {
+                        cursor_id: table_cursor_id
+                            .expect("table cursor is always opened in OperationMode::DELETE"),
+                        root_page: root_page.into(),
+                    });
+                }
+                (OperationMode::UPDATE, Table::BTree(btree)) => {
+                    let root_page = btree.root_page;
+                    program.emit_insn(Insn::OpenWrite {
+                        cursor_id: table_cursor_id
+                            .expect("table cursor is always opened in OperationMode::UPDATE"),
+                        root_page: root_page.into(),
+                    });
+                    if let Some(index_cursor_id) = index_cursor_id {
+                        program.emit_insn(Insn::OpenWrite {
+                            cursor_id: index_cursor_id,
+                            root_page: index.as_ref().unwrap().root_page.into(),
                         });
                     }
+                }
+                (_, Table::Virtual(_)) => {
+                    if let Some(cursor_id) = table_cursor_id {
+                        program.emit_insn(Insn::VOpen { cursor_id });
+                    }
+                }
+                _ => {
+                    unimplemented!()
+                }
+            },
+            Operation::Search(search) => {
+                match mode {
+                    OperationMode::SELECT => {
+                        if let Some(table_cursor_id) = table_cursor_id {
+                            program.emit_insn(Insn::OpenRead {
+                                cursor_id: table_cursor_id,
+                                root_page: table.table.get_root_page(),
+                            });
+                        }
+                    }
                     OperationMode::DELETE | OperationMode::UPDATE => {
+                        let table_cursor_id = table_cursor_id.expect("table cursor is always opened in OperationMode::DELETE or OperationMode::UPDATE");
                         program.emit_insn(Insn::OpenWrite {
                             cursor_id: table_cursor_id,
                             root_page: table.table.get_root_page().into(),
@@ -166,21 +156,18 @@ pub fn init_loop(
                     index: Some(index), ..
                 } = search
                 {
-                    let index_cursor_id = program.alloc_cursor_id(
-                        Some(index.name.clone()),
-                        CursorType::BTreeIndex(index.clone()),
-                    );
-
                     match mode {
                         OperationMode::SELECT => {
                             program.emit_insn(Insn::OpenRead {
-                                cursor_id: index_cursor_id,
+                                cursor_id: index_cursor_id
+                                    .expect("index cursor is always opened in Seek with index"),
                                 root_page: index.root_page,
                             });
                         }
                         OperationMode::UPDATE | OperationMode::DELETE => {
                             program.emit_insn(Insn::OpenWrite {
-                                cursor_id: index_cursor_id,
+                                cursor_id: index_cursor_id
+                                    .expect("index cursor is always opened in Seek with index"),
                                 root_page: index.root_page.into(),
                             });
                         }
@@ -229,6 +216,8 @@ pub fn open_loop(
             }
         }
 
+        let (table_cursor_id, index_cursor_id) = table.resolve_cursors(program)?;
+
         match &table.op {
             Operation::Subquery { plan, .. } => {
                 let (yield_reg, coroutine_implementation_start) = match &plan.query_type {
@@ -274,10 +263,10 @@ pub fn open_loop(
                     program.resolve_label(jump_target_when_true, program.offset());
                 }
             }
-            Operation::Scan { iter_dir, index } => {
-                let cursor_id = program.resolve_cursor_id(&table.identifier);
-                let index_cursor_id = index.as_ref().map(|i| program.resolve_cursor_id(&i.name));
-                let iteration_cursor_id = index_cursor_id.unwrap_or(cursor_id);
+            Operation::Scan { iter_dir, .. } => {
+                let iteration_cursor_id = index_cursor_id.unwrap_or_else(|| {
+                    table_cursor_id.expect("Either index or table cursor must be opened")
+                });
                 if !matches!(&table.table, Table::Virtual(_)) {
                     if *iter_dir == IterationDirection::Backwards {
                         program.emit_insn(Insn::Last {
@@ -389,7 +378,8 @@ pub fn open_loop(
 
                     // Emit VFilter with the computed arguments.
                     program.emit_insn(Insn::VFilter {
-                        cursor_id,
+                        cursor_id: table_cursor_id
+                            .expect("Virtual tables do not support covering indexes"),
                         arg_count: count,
                         args_reg: start_reg,
                         idx_str: maybe_idx_str,
@@ -399,11 +389,13 @@ pub fn open_loop(
                 }
                 program.resolve_label(loop_start, program.offset());
 
-                if let Some(index_cursor_id) = index_cursor_id {
-                    program.emit_insn(Insn::DeferredSeek {
-                        index_cursor_id,
-                        table_cursor_id: cursor_id,
-                    });
+                if let Some(table_cursor_id) = table_cursor_id {
+                    if let Some(index_cursor_id) = index_cursor_id {
+                        program.emit_insn(Insn::DeferredSeek {
+                            index_cursor_id,
+                            table_cursor_id,
+                        });
+                    }
                 }
 
                 for (_, cond) in predicates.iter().enumerate().filter(|(i, cond)| {
@@ -426,7 +418,6 @@ pub fn open_loop(
                 }
             }
             Operation::Search(search) => {
-                let table_cursor_id = program.resolve_cursor_id(&table.identifier);
                 // Open the loop for the index search.
                 // Rowid equality point lookups are handled with a SeekRowid instruction which does not loop, since it is a single row lookup.
                 if let Search::RowidEq { cmp_expr } = search {
@@ -439,22 +430,17 @@ pub fn open_loop(
                         &t_ctx.resolver,
                     )?;
                     program.emit_insn(Insn::SeekRowid {
-                        cursor_id: table_cursor_id,
+                        cursor_id: table_cursor_id
+                            .expect("Search::RowidEq requires a table cursor"),
                         src_reg,
                         target_pc: next,
                     });
                 } else {
                     // Otherwise, it's an index/rowid scan, i.e. first a seek is performed and then a scan until the comparison expression is not satisfied anymore.
-                    let index_cursor_id = if let Search::Seek {
-                        index: Some(index), ..
-                    } = search
-                    {
-                        Some(program.resolve_cursor_id(&index.name))
-                    } else {
-                        None
-                    };
                     let is_index = index_cursor_id.is_some();
-                    let seek_cursor_id = index_cursor_id.unwrap_or(table_cursor_id);
+                    let seek_cursor_id = index_cursor_id.unwrap_or_else(|| {
+                        table_cursor_id.expect("Either index or table cursor must be opened")
+                    });
                     let Search::Seek { seek_def, .. } = search else {
                         unreachable!("Rowid equality point lookup should have been handled above");
                     };
@@ -483,11 +469,13 @@ pub fn open_loop(
                     )?;
 
                     if let Some(index_cursor_id) = index_cursor_id {
-                        // Don't do a btree table seek until it's actually necessary to read from the table.
-                        program.emit_insn(Insn::DeferredSeek {
-                            index_cursor_id,
-                            table_cursor_id,
-                        });
+                        if let Some(table_cursor_id) = table_cursor_id {
+                            // Don't do a btree table seek until it's actually necessary to read from the table.
+                            program.emit_insn(Insn::DeferredSeek {
+                                index_cursor_id,
+                                table_cursor_id,
+                            });
+                        }
                     }
                 }
 
@@ -785,6 +773,8 @@ pub fn close_loop(
             .get(table_index)
             .expect("source has no loop labels");
 
+        let (table_cursor_id, index_cursor_id) = table.resolve_cursors(program)?;
+
         match &table.op {
             Operation::Subquery { .. } => {
                 program.resolve_label(loop_labels.next, program.offset());
@@ -795,14 +785,11 @@ pub fn close_loop(
                     target_pc: loop_labels.loop_start,
                 });
             }
-            Operation::Scan {
-                index, iter_dir, ..
-            } => {
+            Operation::Scan { iter_dir, .. } => {
                 program.resolve_label(loop_labels.next, program.offset());
-
-                let cursor_id = program.resolve_cursor_id(&table.identifier);
-                let index_cursor_id = index.as_ref().map(|i| program.resolve_cursor_id(&i.name));
-                let iteration_cursor_id = index_cursor_id.unwrap_or(cursor_id);
+                let iteration_cursor_id = index_cursor_id.unwrap_or_else(|| {
+                    table_cursor_id.expect("Either index or table cursor must be opened")
+                });
                 match &table.table {
                     Table::BTree(_) => {
                         if *iter_dir == IterationDirection::Backwards {
@@ -819,7 +806,8 @@ pub fn close_loop(
                     }
                     Table::Virtual(_) => {
                         program.emit_insn(Insn::VNext {
-                            cursor_id,
+                            cursor_id: table_cursor_id
+                                .expect("Virtual tables do not support covering indexes"),
                             pc_if_next: loop_labels.loop_start,
                         });
                     }
@@ -828,33 +816,24 @@ pub fn close_loop(
             }
             Operation::Search(search) => {
                 program.resolve_label(loop_labels.next, program.offset());
+                let iteration_cursor_id = index_cursor_id.unwrap_or_else(|| {
+                    table_cursor_id.expect("Either index or table cursor must be opened")
+                });
                 // Rowid equality point lookups are handled with a SeekRowid instruction which does not loop, so there is no need to emit a Next instruction.
                 if !matches!(search, Search::RowidEq { .. }) {
-                    let (cursor_id, iter_dir) = match search {
-                        Search::Seek {
-                            index: Some(index),
-                            seek_def,
-                            ..
-                        } => (program.resolve_cursor_id(&index.name), seek_def.iter_dir),
-                        Search::Seek {
-                            index: None,
-                            seek_def,
-                            ..
-                        } => (
-                            program.resolve_cursor_id(&table.identifier),
-                            seek_def.iter_dir,
-                        ),
+                    let iter_dir = match search {
+                        Search::Seek { seek_def, .. } => seek_def.iter_dir,
                         Search::RowidEq { .. } => unreachable!(),
                     };
 
                     if iter_dir == IterationDirection::Backwards {
                         program.emit_insn(Insn::Prev {
-                            cursor_id,
+                            cursor_id: iteration_cursor_id,
                             pc_if_prev: loop_labels.loop_start,
                         });
                     } else {
                         program.emit_insn(Insn::Next {
-                            cursor_id,
+                            cursor_id: iteration_cursor_id,
                             pc_if_next: loop_labels.loop_start,
                         });
                     }
