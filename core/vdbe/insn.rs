@@ -1,4 +1,7 @@
-use std::{num::NonZero, rc::Rc};
+use std::{
+    num::{NonZero, NonZeroUsize},
+    rc::Rc,
+};
 
 use super::{execute, AggFunc, BranchOffset, CursorID, FuncCtx, InsnFunction, PageIdx};
 use crate::{
@@ -97,6 +100,12 @@ pub enum Insn {
     },
     /// Write a NULL into register dest. If dest_end is Some, then also write NULL into register dest_end and every register in between dest and dest_end. If dest_end is not set, then only register dest is set to NULL.
     Null {
+        dest: usize,
+        dest_end: Option<usize>,
+    },
+    /// Mark the beginning of a subroutine tha can be entered in-line. This opcode is identical to Null
+    /// it has a different name only to make the byte code easier to read and verify
+    BeginSubrtn {
         dest: usize,
         dest_end: Option<usize>,
     },
@@ -801,6 +810,25 @@ pub enum Insn {
     Once {
         target_pc_when_reentered: BranchOffset,
     },
+    /// Search for record in the index cusor, if any entry for which the key is a prefix exists
+    /// is a no-op, otherwise go to target_pc
+    /// Example =>
+    /// For a index key (1,2,3):
+    /// NotFound((1,2,3)) => No-op
+    /// NotFound((1,2)) => No-op
+    /// NotFound((2,2, 1)) => Jump
+    NotFound {
+        cursor_id: CursorID,
+        target_pc: BranchOffset,
+        record_reg: usize,
+        num_regs: usize,
+    },
+    /// Apply affinities to a range of registers. Affinities must have the same size of count
+    Affinity {
+        start_reg: usize,
+        count: NonZeroUsize,
+        affinities: String,
+    },
 }
 
 impl Insn {
@@ -808,6 +836,7 @@ impl Insn {
         match self {
             Insn::Init { .. } => execute::op_init,
             Insn::Null { .. } => execute::op_null,
+            Insn::BeginSubrtn { .. } => execute::op_null,
             Insn::NullRow { .. } => execute::op_null_row,
             Insn::Add { .. } => execute::op_add,
             Insn::Subtract { .. } => execute::op_subtract,
@@ -915,6 +944,8 @@ impl Insn {
             Insn::ReadCookie { .. } => execute::op_read_cookie,
             Insn::OpenEphemeral { .. } | Insn::OpenAutoindex { .. } => execute::op_open_ephemeral,
             Insn::Once { .. } => execute::op_once,
+            Insn::NotFound { .. } => execute::op_not_found,
+            Insn::Affinity { .. } => execute::op_affinity,
         }
     }
 }

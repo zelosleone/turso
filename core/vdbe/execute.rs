@@ -4494,6 +4494,87 @@ pub fn op_once(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_not_found(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::NotFound {
+        cursor_id,
+        target_pc,
+        record_reg,
+        num_regs,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+
+    let found = {
+        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = cursor.as_btree_mut();
+
+        if *num_regs == 0 {
+            let record = match &state.registers[*record_reg] {
+                Register::Record(r) => r,
+                _ => {
+                    return Err(LimboError::InternalError(
+                        "NotFound: exepected a record in the register".into(),
+                    ));
+                }
+            };
+
+            return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ))
+        } else {
+            let record = make_record(&state.registers, record_reg, num_regs);
+            return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ))
+        }
+    };
+
+    if found {
+        state.pc += 1;
+    } else {
+        state.pc = target_pc.to_offset_int();
+    }
+
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_affinity(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::Affinity {
+        start_reg,
+        count,
+        affinities,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+
+    if affinities.len() != count.get() {
+        return Err(LimboError::InternalError(
+            "Affinity: the length of affinities does not match the count".into(),
+        ));
+    }
+
+    for (i, affinity_char) in affinities.chars().enumerate().take(count.get()) {
+        let reg_index = *start_reg + i;
+
+        let affinity = Affinity::from_char(affinity_char)?;
+
+        apply_affinity_char(&mut state.registers[reg_index], affinity);
+    }
+
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 fn exec_lower(reg: &OwnedValue) -> Option<OwnedValue> {
     match reg {
         OwnedValue::Text(t) => Some(OwnedValue::build_text(&t.as_str().to_lowercase())),
