@@ -5744,14 +5744,18 @@ pub fn exec_and(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
         | (OwnedValue::Integer(0), _)
         | (_, OwnedValue::Float(0.0))
         | (OwnedValue::Float(0.0), _) => OwnedValue::Integer(0),
-        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_and(
-            &cast_text_to_numeric(lhs.as_str()),
-            &cast_text_to_numeric(rhs.as_str()),
+            &cast_text_to_real(lhs.as_str()),
+            &cast_text_to_real(rhs.as_str()),
         ),
         (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_and(&cast_text_to_numeric(text.as_str()), other)
+            exec_and(&cast_text_to_real(text.as_str()), other)
         }
+        (OwnedValue::Blob(blob), other) | (other, OwnedValue::Blob(blob)) => {
+            let text = String::from_utf8_lossy(blob);
+            exec_and(&cast_text_to_real(&text), other)
+        }
+        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         _ => OwnedValue::Integer(1),
     }
 }
