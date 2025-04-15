@@ -3338,7 +3338,7 @@ impl BTreeCursor {
                             SeekKey::IndexKey(immutable_record)
                         }
                     };
-                    return_if_io!(self.move_to(key, SeekOp::EQ));
+                    return_if_io!(self.seek(key, SeekOp::EQ));
 
                     let delete_info = self.state.mut_delete_info().unwrap();
                     delete_info.state = DeleteState::Finish;
