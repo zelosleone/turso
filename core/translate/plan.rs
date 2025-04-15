@@ -491,6 +491,46 @@ impl TableReference {
     pub fn mark_column_used(&mut self, index: usize) {
         self.col_used_mask.set(index);
     }
+    /// Returns true if a given index is a covering index for this [TableReference].
+    pub fn index_is_covering(&self, index: &Index) -> bool {
+        let Table::BTree(btree) = &self.table else {
+            return false;
+        };
+        if self.col_used_mask.is_empty() {
+            return false;
+        }
+        let mut index_cols_mask = ColumnUsedMask::new();
+        for col in index.columns.iter() {
+            index_cols_mask.set(col.pos_in_table);
+        }
+
+        // If a table has a rowid (i.e. is not a WITHOUT ROWID table), the index is guaranteed to contain the rowid as well.
+        if btree.has_rowid {
+            if let Some(pos_of_rowid_alias_col) = btree.get_rowid_alias_column().map(|(pos, _)| pos)
+            {
+                let mut empty_mask = ColumnUsedMask::new();
+                empty_mask.set(pos_of_rowid_alias_col);
+                if self.col_used_mask == empty_mask {
+                    // However if the index would be ONLY used for the rowid, then let's not bother using it to cover the query.
+                    // Example: if the query is SELECT id FROM t, and id is a rowid alias, then let's rather just scan the table
+                    // instead of an index.
+                    return false;
+                }
+                index_cols_mask.set(pos_of_rowid_alias_col);
+            }
+        }
+
+        index_cols_mask.contains_all_set_bits_of(&self.col_used_mask)
+    }
+
+    /// Returns true if the index selected for use with this [TableReference] is a covering index,
+    /// meaning that it contains all the columns that are referenced in the query.
+    pub fn utilizes_covering_index(&self) -> bool {
+        let Some(index) = self.op.index() else {
+            return false;
+        };
+        self.index_is_covering(index.as_ref())
+    }
 }
 
 /// A definition of a rowid/index search.
