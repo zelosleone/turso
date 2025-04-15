@@ -1942,7 +1942,7 @@ pub fn translate_expr(
                 // If we don't do this -1 * 9223372036854775808 will overflow and parse will fail
                 // and trigger conversion to Real.
                 if numeric_value == "9223372036854775808"
-                    || numeric_value.to_lowercase() == "0x7fffffffffffffff"
+                    || numeric_value.eq_ignore_ascii_case("0x7fffffffffffffff")
                 {
                     program.emit_insn(Insn::Integer {
                         value: i64::MIN,
