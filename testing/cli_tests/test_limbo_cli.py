@@ -50,7 +50,8 @@ class LimboShell:
             return ""
         self._write_to_pipe(f"SELECT '{end_marker}';")
         output = ""
-        while True:
+        done = False
+        while not done:
             ready, _, errors = select.select(
                 [self.pipe.stdout, self.pipe.stderr],
                 [],
@@ -58,7 +59,7 @@ class LimboShell:
             )
             ready_or_errors = set(ready + errors)
             if self.pipe.stderr in ready_or_errors:
-                self._handle_error()
+                done = self._handle_error()
             if self.pipe.stdout in ready_or_errors:
                 fragment = self.pipe.stdout.read(PIPE_BUF).decode()
                 output += fragment
@@ -71,17 +72,14 @@ class LimboShell:
         self.pipe.stdin.write((command + "\n").encode())
         self.pipe.stdin.flush()
 
-    def _handle_error(self) -> None:
+    def _handle_error(self) -> bool:
         while True:
-            ready, _, errors = select.select(
-                [self.pipe.stderr], [], [self.pipe.stderr], 0
-            )
-            if not (ready + errors):
-                break
-            error_output = self.pipe.stderr.read(PIPE_BUF).decode()
-            print(error_output, end="")
-        raise RuntimeError("Error encountered in Limbo shell.")
-
+            error_output = self.pipe.stderr.read(PIPE_BUF)
+            if error_output == b"":
+                return True
+            print(error_output.decode(), end="")
+            return False
+        
     @staticmethod
     def _clean_output(output: str, marker: str) -> str:
         output = output.rstrip().removesuffix(marker)
