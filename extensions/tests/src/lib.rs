@@ -122,6 +122,11 @@ impl VTabModule for KVStoreVTab {
             Err("cursor out of range".into())
         }
     }
+
+    fn destroy(&mut self) -> Result<(), Self::Error> {
+        println!("VDestroy called");
+        Ok(())
+    }
 }
 
 fn hash_key(key: &str) -> i64 {
