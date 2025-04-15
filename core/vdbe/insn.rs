@@ -805,7 +805,13 @@ pub enum Insn {
     Once {
         target_pc_when_reentered: BranchOffset,
     },
-    /// Search for record in the index cusor, if exists is a no-op otherwise go to target_pc
+    /// Search for record in the index cusor, if any entry for which the key is a prefix exists
+    /// is a no-op, otherwise go to target_pc
+    /// Example =>
+    /// For a index key (1,2,3):
+    /// NotFound((1,2,3)) => No-op
+    /// NotFound((1,2)) => No-op
+    /// NotFound((2,2, 1)) => Jump
     NotFound {
         cursor_id: CursorID,
         target_pc: BranchOffset,
