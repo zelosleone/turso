@@ -167,32 +167,34 @@ fn eliminate_orderby_like_groupby(plan: &mut SelectPlan) -> Result<()> {
     Ok(())
 }
 
+/// Eliminate unnecessary ORDER BY clauses.
+/// Returns true if the ORDER BY clause was eliminated.
 fn eliminate_unnecessary_orderby(
     table_references: &mut [TableReference],
     available_indexes: &HashMap<String, Vec<Arc<Index>>>,
     order_by: &mut Option<Vec<(ast::Expr, Direction)>>,
     group_by: &Option<GroupBy>,
-) -> Result<()> {
+) -> Result<bool> {
     let Some(order) = order_by else {
-        return Ok(());
+        return Ok(false);
     };
     let Some(first_table_reference) = table_references.first_mut() else {
-        return Ok(());
+        return Ok(false);
     };
     let Some(btree_table) = first_table_reference.btree() else {
-        return Ok(());
+        return Ok(false);
     };
     // If GROUP BY clause is present, we can't rely on already ordered columns because GROUP BY reorders the data
     // This early return prevents the elimination of ORDER BY when GROUP BY exists, as sorting must be applied after grouping
     // And if ORDER BY clause duplicates GROUP BY we handle it later in fn eliminate_orderby_like_groupby
     if group_by.is_some() {
-        return Ok(());
+        return Ok(false);
     }
     let Operation::Scan {
         index, iter_dir, ..
     } = &mut first_table_reference.op
     else {
-        return Ok(());
+        return Ok(false);
     };
 
     assert!(
@@ -207,7 +209,7 @@ fn eliminate_unnecessary_orderby(
             Direction::Descending => IterationDirection::Backwards,
         };
         *order_by = None;
-        return Ok(());
+        return Ok(true);
     }
 
     // Find the best matching index for the ORDER BY columns
@@ -235,7 +237,7 @@ fn eliminate_unnecessary_orderby(
     }
 
     let Some(matching_index) = best_index.0 else {
-        return Ok(());
+        return Ok(false);
     };
     let match_count = best_index.1;
 
@@ -280,7 +282,7 @@ fn eliminate_unnecessary_orderby(
         }
     }
 
-    Ok(())
+    Ok(order_by.is_none())
 }
 
 /**
@@ -300,7 +302,8 @@ fn use_indexes(
     group_by: &Option<GroupBy>,
 ) -> Result<()> {
     // Try to use indexes for eliminating ORDER BY clauses
-    eliminate_unnecessary_orderby(table_references, available_indexes, order_by, group_by)?;
+    let did_eliminate_orderby =
+        eliminate_unnecessary_orderby(table_references, available_indexes, order_by, group_by)?;
 
     // Try to use indexes for WHERE conditions
     for (table_index, table_reference) in table_references.iter_mut().enumerate() {
@@ -345,6 +348,12 @@ fn use_indexes(
                         } else {
                             i += 1;
                         }
+                    }
+                    if did_eliminate_orderby && table_index == 0 {
+                        // If we already made the decision to remove ORDER BY based on the Rowid (e.g. ORDER BY id), then skip this.
+                        // It would be possible to analyze the index and see if the covering index would retain the ordering guarantee,
+                        // but we just don't do that yet.
+                        continue;
                     }
                     if let Some(indexes) = available_indexes.get(table_name) {
                         if let Some(search) = try_extract_index_search_from_where_clause(
