@@ -1836,6 +1836,28 @@ pub fn op_row_id(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_idx_row_id(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::IdxRowId { cursor_id, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    let mut cursors = state.cursors.borrow_mut();
+    let cursor = cursors.get_mut(*cursor_id).unwrap().as_mut().unwrap();
+    let cursor = cursor.as_btree_mut();
+    let rowid = cursor.rowid()?;
+    state.registers[*dest] = match rowid {
+        Some(rowid) => Register::OwnedValue(OwnedValue::Integer(rowid as i64)),
+        None => Register::OwnedValue(OwnedValue::Null),
+    };
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 pub fn op_seek_rowid(
     program: &Program,
     state: &mut ProgramState,

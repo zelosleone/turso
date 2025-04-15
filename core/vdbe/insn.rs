@@ -438,6 +438,11 @@ pub enum Insn {
         cursor_id: CursorID,
         dest: usize,
     },
+    /// Read the rowid of the current row from an index cursor.
+    IdxRowId {
+        cursor_id: CursorID,
+        dest: usize,
+    },
 
     /// Seek to a rowid in the cursor. If not found, jump to the given PC. Otherwise, continue to the next instruction.
     SeekRowid {
@@ -856,6 +861,7 @@ impl Insn {
             Insn::String8 { .. } => execute::op_string8,
             Insn::Blob { .. } => execute::op_blob,
             Insn::RowId { .. } => execute::op_row_id,
+            Insn::IdxRowId { .. } => execute::op_idx_row_id,
             Insn::SeekRowid { .. } => execute::op_seek_rowid,
             Insn::DeferredSeek { .. } => execute::op_deferred_seek,
             Insn::SeekGE { .. } => execute::op_seek,
