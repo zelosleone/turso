@@ -1964,7 +1964,7 @@ pub fn translate_expr(
                 Ok(target_register)
             }
             (UnaryOperator::Negative, _) => {
-                let value = -1;
+                let value = 0;
 
                 let reg = program.alloc_register();
                 translate_expr(program, referenced_tables, expr, reg, resolver)?;
@@ -1974,7 +1974,7 @@ pub fn translate_expr(
                     dest: zero_reg,
                 });
                 program.mark_last_insn_constant();
-                program.emit_insn(Insn::Multiply {
+                program.emit_insn(Insn::Subtract {
                     lhs: zero_reg,
                     rhs: reg,
                     dest: target_register,

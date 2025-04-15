@@ -5408,7 +5408,14 @@ pub fn exec_subtract(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
         (other, OwnedValue::Text(text)) => {
             exec_subtract(other, &cast_text_to_numeric(text.as_str()))
         }
-        _ => todo!(),
+        (other, OwnedValue::Blob(blob)) => {
+            let text = String::from_utf8_lossy(&blob);
+            exec_subtract(other, &cast_text_to_numeric(&text))
+        }
+        (OwnedValue::Blob(blob), other) => {
+            let text = String::from_utf8_lossy(&blob);
+            exec_subtract(&cast_text_to_numeric(&text), other)
+        }
     };
     match result {
         OwnedValue::Float(f) if f.is_nan() => OwnedValue::Null,
