@@ -732,13 +732,7 @@ pub fn try_extract_index_search_from_where_clause(
 
     for index in table_indexes {
         // Check how many terms in the where clause constrain the index in column order
-        find_index_constraints(
-            where_clause,
-            table_index,
-            table_reference,
-            index,
-            &mut constraints_cur,
-        )?;
+        find_index_constraints(where_clause, table_index, index, &mut constraints_cur)?;
         // naive scoring since we don't have statistics: prefer the index where we can use the most columns
         // e.g. if we can use all columns of an index on (a,b), it's better than an index of (c,d,e) where we can only use c.
         let score = constraints_cur.len();
@@ -843,7 +837,6 @@ impl UnwrapParens for ast::Expr {
 fn get_column_position_in_index(
     expr: &ast::Expr,
     table_index: usize,
-    table_reference: &TableReference,
     index: &Arc<Index>,
 ) -> Result<Option<usize>> {
     let ast::Expr::Column { table, column, .. } = unwrap_parens(expr)? else {
@@ -852,13 +845,7 @@ fn get_column_position_in_index(
     if *table != table_index {
         return Ok(None);
     }
-    let Some(column) = table_reference.table.get_column_at(*column) else {
-        return Ok(None);
-    };
-    Ok(index
-        .columns
-        .iter()
-        .position(|col| Some(&col.name) == column.name.as_ref()))
+    Ok(index.column_table_pos_to_index_pos(*column))
 }
 
 /// Find all [IndexConstraint]s for a given WHERE clause
@@ -868,7 +855,6 @@ fn get_column_position_in_index(
 fn find_index_constraints(
     where_clause: &mut Vec<WhereTerm>,
     table_index: usize,
-    table_reference: &TableReference,
     index: &Arc<Index>,
     out_constraints: &mut Vec<IndexConstraint>,
 ) -> Result<()> {
@@ -908,9 +894,7 @@ fn find_index_constraints(
             }
 
             // Check if lhs is a column that is in the i'th position of the index
-            if Some(position_in_index)
-                == get_column_position_in_index(lhs, table_index, table_reference, index)?
-            {
+            if Some(position_in_index) == get_column_position_in_index(lhs, table_index, index)? {
                 out_constraints.push(IndexConstraint {
                     operator: *operator,
                     position_in_where_clause: (position_in_where_clause, BinaryExprSide::Rhs),
@@ -919,9 +903,7 @@ fn find_index_constraints(
                 break;
             }
             // Check if rhs is a column that is in the i'th position of the index
-            if Some(position_in_index)
-                == get_column_position_in_index(rhs, table_index, table_reference, index)?
-            {
+            if Some(position_in_index) == get_column_position_in_index(rhs, table_index, index)? {
                 out_constraints.push(IndexConstraint {
                     operator: opposite_cmp_op(*operator), // swap the operator since e.g. if condition is 5 >= x, we want to use x <= 5
                     position_in_where_clause: (position_in_where_clause, BinaryExprSide::Lhs),
