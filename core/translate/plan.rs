@@ -539,6 +539,17 @@ impl TableReference {
         }
     }
 
+    /// Resolve the already opened cursors for this table reference.
+    pub fn resolve_cursors(
+        &self,
+        program: &mut ProgramBuilder,
+    ) -> Result<(Option<CursorID>, Option<CursorID>)> {
+        let index = self.op.index();
+        let table_cursor_id = program.resolve_cursor_id_safe(&self.identifier);
+        let index_cursor_id = index.map(|index| program.resolve_cursor_id(&index.name));
+        Ok((table_cursor_id, index_cursor_id))
+    }
+
     /// Returns true if a given index is a covering index for this [TableReference].
     pub fn index_is_covering(&self, index: &Index) -> bool {
         let Table::BTree(btree) = &self.table else {
