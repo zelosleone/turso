@@ -281,6 +281,17 @@ pub enum Operation {
     },
 }
 
+impl Operation {
+    pub fn index(&self) -> Option<&Arc<Index>> {
+        match self {
+            Operation::Scan { index, .. } => index.as_ref(),
+            Operation::Search(Search::RowidEq { .. }) => None,
+            Operation::Search(Search::Seek { index, .. }) => index.as_ref(),
+            Operation::Subquery { .. } => None,
+        }
+    }
+}
+
 impl TableReference {
     /// Returns the btree table for this table reference, if it is a BTreeTable.
     pub fn btree(&self) -> Option<Rc<BTreeTable>> {
