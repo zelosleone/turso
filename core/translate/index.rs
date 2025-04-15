@@ -55,9 +55,10 @@ pub fn translate_create_index(
         root_page: 0, //  we dont have access till its created, after we parse the schema table
         columns: columns
             .iter()
-            .map(|c| IndexColumn {
-                name: c.0 .1.name.as_ref().unwrap().clone(),
-                order: c.1,
+            .map(|((pos_in_table, col), order)| IndexColumn {
+                name: col.name.as_ref().unwrap().clone(),
+                order: *order,
+                pos_in_table: *pos_in_table,
             })
             .collect(),
         unique: unique_if_not_exists.0,
