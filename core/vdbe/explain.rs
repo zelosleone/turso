@@ -684,6 +684,22 @@ pub fn insn_to_str(
                         .unwrap_or(&format!("cursor {}", cursor_id))
                 ),
             ),
+            Insn::IdxRowId { cursor_id, dest } => (
+                "IdxRowId",
+                *cursor_id as i32,
+                *dest as i32,
+                0,
+                OwnedValue::build_text(""),
+                0,
+                format!(
+                    "r[{}]={}.rowid",
+                    dest,
+                    &program.cursor_ref[*cursor_id]
+                        .0
+                        .as_ref()
+                        .unwrap_or(&format!("cursor {}", cursor_id))
+                ),
+            ),
             Insn::SeekRowid {
                 cursor_id,
                 src_reg,

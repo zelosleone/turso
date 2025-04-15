@@ -7,7 +7,7 @@ use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
 use crate::{schema::Schema, Result, SymbolTable};
 use limbo_sqlite3_parser::ast::{Expr, Limit, QualifiedName};
 
-use super::plan::{IterationDirection, TableReference};
+use super::plan::{ColumnUsedMask, IterationDirection, TableReference};
 
 pub fn translate_delete(
     query_mode: QueryMode,
@@ -50,7 +50,7 @@ pub fn prepare_delete_plan(
         crate::bail_corrupt_error!("Table is neither a virtual table nor a btree table");
     };
     let name = tbl_name.name.0.as_str().to_string();
-    let table_references = vec![TableReference {
+    let mut table_references = vec![TableReference {
         table,
         identifier: name,
         op: Operation::Scan {
@@ -58,6 +58,7 @@ pub fn prepare_delete_plan(
             index: None,
         },
         join_info: None,
+        col_used_mask: ColumnUsedMask::new(),
     }];
 
     let mut where_predicates = vec![];
@@ -65,7 +66,7 @@ pub fn prepare_delete_plan(
     // Parse the WHERE clause
     parse_where(
         where_clause.map(|e| *e),
-        &table_references,
+        &mut table_references,
         None,
         &mut where_predicates,
     )?;

@@ -256,6 +256,43 @@ pub struct TableReference {
     pub identifier: String,
     /// The join info for this table reference, if it is the right side of a join (which all except the first table reference have)
     pub join_info: Option<JoinInfo>,
+    /// Bitmask of columns that are referenced in the query.
+    /// Used to decide whether a covering index can be used.
+    pub col_used_mask: ColumnUsedMask,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct ColumnUsedMask(u128);
+
+impl ColumnUsedMask {
+    pub fn new() -> Self {
+        Self(0)
+    }
+
+    pub fn set(&mut self, index: usize) {
+        assert!(
+            index < 128,
+            "ColumnUsedMask only supports up to 128 columns"
+        );
+        self.0 |= 1 << index;
+    }
+
+    pub fn get(&self, index: usize) -> bool {
+        assert!(
+            index < 128,
+            "ColumnUsedMask only supports up to 128 columns"
+        );
+        self.0 & (1 << index) != 0
+    }
+
+    pub fn contains_all_set_bits_of(&self, other: &Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -279,6 +316,17 @@ pub enum Operation {
         plan: Box<SelectPlan>,
         result_columns_start_reg: usize,
     },
+}
+
+impl Operation {
+    pub fn index(&self) -> Option<&Arc<Index>> {
+        match self {
+            Operation::Scan { index, .. } => index.as_ref(),
+            Operation::Search(Search::RowidEq { .. }) => None,
+            Operation::Search(Search::Seek { index, .. }) => index.as_ref(),
+            Operation::Subquery { .. } => None,
+        }
+    }
 }
 
 impl TableReference {
@@ -320,11 +368,18 @@ impl TableReference {
             table,
             identifier: identifier.clone(),
             join_info,
+            col_used_mask: ColumnUsedMask::new(),
         }
     }
 
     pub fn columns(&self) -> &[Column] {
         self.table.columns()
+    }
+
+    /// Mark a column as used in the query.
+    /// This is used to determine whether a covering index can be used.
+    pub fn mark_column_used(&mut self, index: usize) {
+        self.col_used_mask.set(index);
     }
 }
 
