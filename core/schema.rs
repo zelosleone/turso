@@ -759,6 +759,18 @@ impl Index {
             unique: true, // Primary key indexes are always unique
         })
     }
+
+    /// Given a column position in the table, return the position in the index.
+    /// Returns None if the column is not found in the index.
+    /// For example, given:
+    /// CREATE TABLE t(a, b, c)
+    /// CREATE INDEX idx ON t(b)
+    /// then column_table_pos_to_index_pos(1) returns Some(0)
+    pub fn column_table_pos_to_index_pos(&self, table_pos: usize) -> Option<usize> {
+        self.columns
+            .iter()
+            .position(|c| c.pos_in_table == table_pos)
+    }
 }
 
 #[cfg(test)]
