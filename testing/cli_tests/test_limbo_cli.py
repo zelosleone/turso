@@ -5,6 +5,7 @@ from time import sleep
 import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional
+from cli_tests import console
 
 
 PIPE_BUF = 4096
@@ -74,12 +75,15 @@ class LimboShell:
 
     def _handle_error(self) -> bool:
         while True:
-            error_output = self.pipe.stderr.read(PIPE_BUF)
-            if error_output == b"":
-                return True
-            print(error_output.decode(), end="")
-            return False
-        
+            ready, _, errors = select.select(
+                [self.pipe.stderr], [], [self.pipe.stderr], 0
+            )
+            if not (ready + errors):
+                break
+            error_output = self.pipe.stderr.read(PIPE_BUF).decode()
+            console.error(error_output, end="", _stack_offset=2)
+        raise RuntimeError("Error encountered in Limbo shell.")
+
     @staticmethod
     def _clean_output(output: str, marker: str) -> str:
         output = output.rstrip().removesuffix(marker)
@@ -128,7 +132,7 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
         self.shell.quit()
 
     def run_test(self, name: str, sql: str, expected: str) -> None:
-        print(f"Running test: {name}")
+        console.test(f"Running test: {name}", _stack_offset=2)
         actual = self.shell.execute(sql)
         assert actual == expected, (
             f"Test failed: {name}\n"
@@ -138,17 +142,26 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
         )
 
     def debug_print(self, sql: str):
-        print(f"debugging: {sql}")
+        console.debug(f"debugging: {sql}", _stack_offset=2)
         actual = self.shell.execute(sql)
-        print(f"OUTPUT:\n{repr(actual)}")
+        console.debug(f"OUTPUT:\n{repr(actual)}", _stack_offset=2)
 
     def run_test_fn(
         self, sql: str, validate: Callable[[str], bool], desc: str = ""
     ) -> None:
-        actual = self.shell.execute(sql)
+        # Print the test that is executing before executing the sql command
+        # Printing later confuses the user of the code what test has actually failed
         if desc:
-            print(f"Testing: {desc}")
+            console.test(f"Testing: {desc}", _stack_offset=2)
+        actual = self.shell.execute(sql)
         assert validate(actual), f"Test failed\nSQL: {sql}\nActual:\n{repr(actual)}"
 
     def execute_dot(self, dot_command: str) -> None:
         self.shell._write_to_pipe(dot_command)
+
+    # Enables the use of `with` syntax
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exception_type, exception_value, exception_traceback):
+        self.quit()
