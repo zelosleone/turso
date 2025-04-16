@@ -512,7 +512,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "core_tester"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1653,7 +1653,7 @@ dependencies = [
 
 [[package]]
 name = "limbo"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "limbo_core",
  "thiserror 2.0.12",
@@ -1662,14 +1662,14 @@ dependencies = [
 
 [[package]]
 name = "limbo-go"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "limbo_core",
 ]
 
 [[package]]
 name = "limbo-java"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "jni",
  "limbo_core",
@@ -1678,7 +1678,7 @@ dependencies = [
 
 [[package]]
 name = "limbo-wasm"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.2.15",
@@ -1691,7 +1691,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_cli"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -1715,7 +1715,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_completion"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "limbo_ext",
  "mimalloc",
@@ -1723,7 +1723,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_core"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "built",
  "cfg_block",
@@ -1776,7 +1776,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_crypto"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "blake3",
  "data-encoding",
@@ -1789,7 +1789,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_ext"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "chrono",
  "getrandom 0.3.2",
@@ -1798,7 +1798,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_ext_tests"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "env_logger 0.11.7",
  "lazy_static",
@@ -1809,7 +1809,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_ipaddr"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "ipnetwork",
  "limbo_ext",
@@ -1818,7 +1818,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_macros"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1827,7 +1827,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_node"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "limbo_core",
  "napi",
@@ -1837,7 +1837,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_percentile"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "limbo_ext",
  "mimalloc",
@@ -1845,7 +1845,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_regexp"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "limbo_ext",
  "mimalloc",
@@ -1854,7 +1854,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_series"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "limbo_ext",
  "mimalloc",
@@ -1864,7 +1864,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_sim"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "anarchist-readable-name-generator-lib",
  "chrono",
@@ -1885,7 +1885,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_sqlite3"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "env_logger 0.11.7",
  "libc",
@@ -1895,7 +1895,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_sqlite3_parser"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "bitflags 2.9.0",
  "cc",
@@ -1915,7 +1915,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_stress"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "anarchist-readable-name-generator-lib",
  "antithesis_sdk",
@@ -1931,7 +1931,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_time"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "chrono",
  "limbo_ext",
@@ -1943,7 +1943,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_uuid"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "limbo_ext",
  "mimalloc",
@@ -2582,7 +2582,7 @@ dependencies = [
 
 [[package]]
 name = "py-limbo"
-version = "0.0.19-pre.4"
+version = "0.0.19-pre.5"
 dependencies = [
  "anyhow",
  "limbo_core",
