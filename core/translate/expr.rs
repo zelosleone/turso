@@ -1850,7 +1850,7 @@ pub fn translate_expr(
         }
         ast::Expr::Literal(lit) => match lit {
             ast::Literal::Numeric(val) => {
-                if val.starts_with("0x") {
+                if val.starts_with("0x") || val.starts_with("0X") {
                     // must be a hex decimal
                     let int_value = i64::from_str_radix(&val[2..], 16)?;
                     program.emit_insn(Insn::Integer {
@@ -1941,14 +1941,22 @@ pub fn translate_expr(
                 // Special case: if we're negating "9223372036854775808", this is exactly MIN_INT64
                 // If we don't do this -1 * 9223372036854775808 will overflow and parse will fail
                 // and trigger conversion to Real.
-                if numeric_value == "9223372036854775808" {
+                if numeric_value == "9223372036854775808"
+                    || numeric_value.eq_ignore_ascii_case("0x7fffffffffffffff")
+                {
                     program.emit_insn(Insn::Integer {
                         value: i64::MIN,
                         dest: target_register,
                     });
                 } else {
-                    let maybe_int = numeric_value.parse::<i64>();
-                    if let Ok(value) = maybe_int {
+                    if numeric_value.starts_with("0x") || numeric_value.starts_with("0X") {
+                        // must be a hex decimal
+                        let int_value = i64::from_str_radix(&numeric_value[2..], 16)?;
+                        program.emit_insn(Insn::Integer {
+                            value: -int_value,
+                            dest: target_register,
+                        });
+                    } else if let Ok(value) = numeric_value.parse::<i64>() {
                         program.emit_insn(Insn::Integer {
                             value: value * -1,
                             dest: target_register,
@@ -1982,8 +1990,13 @@ pub fn translate_expr(
                 Ok(target_register)
             }
             (UnaryOperator::BitwiseNot, ast::Expr::Literal(ast::Literal::Numeric(num_val))) => {
-                let maybe_int = num_val.parse::<i64>();
-                if let Ok(val) = maybe_int {
+                if num_val.starts_with("0x") || num_val.starts_with("0X") {
+                    let int_value = i64::from_str_radix(&num_val[2..], 16)?;
+                    program.emit_insn(Insn::Integer {
+                        value: !int_value,
+                        dest: target_register,
+                    });
+                } else if let Ok(val) = num_val.parse::<i64>() {
                     program.emit_insn(Insn::Integer {
                         value: !val,
                         dest: target_register,
