@@ -1178,6 +1178,108 @@ impl BTreeCursor {
         }
     }
 
+    /// Specialized version of move_to() for table btrees that uses binary search instead
+    /// of iterating cells in order.
+    /// The only reason this is specialized for rowids is that Jussi didn't have the energy to implement
+    /// it for index btrees yet lol.
+    fn tablebtree_move_to_binsearch(
+        &mut self,
+        rowid: u64,
+        seek_op: SeekOp,
+        iter_dir: IterationDirection,
+    ) -> Result<CursorResult<()>> {
+        'outer: loop {
+            let page = self.stack.top();
+            return_if_locked!(page);
+            let contents = page.get().contents.as_ref().unwrap();
+            if contents.is_leaf() {
+                return Ok(CursorResult::Ok(()));
+            }
+
+            let cell_count = contents.cell_count();
+            let mut min: isize = 0;
+            let mut max: isize = cell_count as isize - 1;
+            let mut leftmost_matching_cell = None;
+            loop {
+                if min > max {
+                    if let Some(leftmost_matching_cell) = leftmost_matching_cell {
+                        self.stack.set_cell_index(leftmost_matching_cell as i32);
+                        let matching_cell = contents.cell_get(
+                            leftmost_matching_cell,
+                            payload_overflow_threshold_max(
+                                contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            payload_overflow_threshold_min(
+                                contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            self.usable_space(),
+                        )?;
+                        self.stack.next_cell_in_direction(iter_dir);
+                        let BTreeCell::TableInteriorCell(TableInteriorCell {
+                            _left_child_page,
+                            ..
+                        }) = matching_cell
+                        else {
+                            unreachable!("unexpected cell type: {:?}", matching_cell);
+                        };
+                        let mem_page = self.pager.read_page(_left_child_page as usize)?;
+                        self.stack.push(mem_page);
+                        continue 'outer;
+                    }
+                    self.stack.set_cell_index(contents.cell_count() as i32 + 1);
+                    match contents.rightmost_pointer() {
+                        Some(right_most_pointer) => {
+                            let mem_page = self.pager.read_page(right_most_pointer as usize)?;
+                            self.stack.push(mem_page);
+                            continue 'outer;
+                        }
+                        None => {
+                            unreachable!("we shall not go back up! The only way is down the slope");
+                        }
+                    }
+                }
+                let cur_cell_idx = (min + max) / 2;
+                self.stack.set_cell_index(cur_cell_idx as i32);
+                let cur_cell = contents.cell_get(
+                    cur_cell_idx as usize,
+                    payload_overflow_threshold_max(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    payload_overflow_threshold_min(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    self.usable_space(),
+                )?;
+
+                match &cur_cell {
+                    BTreeCell::TableInteriorCell(TableInteriorCell {
+                        _left_child_page,
+                        _rowid: cell_rowid,
+                    }) => {
+                        let is_on_left = match seek_op {
+                            SeekOp::GT => *cell_rowid > rowid,
+                            SeekOp::GE => *cell_rowid >= rowid,
+                            SeekOp::LE => *cell_rowid >= rowid,
+                            SeekOp::LT => *cell_rowid + 1 >= rowid,
+                            SeekOp::EQ => *cell_rowid >= rowid,
+                        };
+                        if is_on_left {
+                            leftmost_matching_cell = Some(cur_cell_idx as usize);
+                            max = cur_cell_idx - 1;
+                        } else {
+                            min = cur_cell_idx + 1;
+                        }
+                    }
+                    _ => unreachable!("unexpected cell type: {:?}", cur_cell),
+                }
+            }
+        }
+    }
+
     pub fn move_to(&mut self, key: SeekKey<'_>, cmp: SeekOp) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
         tracing::trace!("move_to(key={:?} cmp={:?})", key, cmp);
@@ -1207,6 +1309,10 @@ impl BTreeCursor {
         self.move_to_root();
 
         let iter_dir = cmp.iteration_direction();
+
+        if let SeekKey::TableRowId(rowid) = key {
+            return self.tablebtree_move_to_binsearch(rowid, cmp, iter_dir);
+        }
 
         loop {
             let page = self.stack.top();
