@@ -366,30 +366,6 @@ pub struct BTreeCursor {
     empty_record: Cell<bool>,
 }
 
-/// Stack of pages representing the tree traversal order.
-/// current_page represents the current page being used in the tree and current_page - 1 would be
-/// the parent. Using current_page + 1 or higher is undefined behaviour.
-struct PageStack {
-    /// Pointer to the current page being consumed
-    current_page: Cell<i32>,
-    /// List of pages in the stack. Root page will be in index 0
-    stack: RefCell<[Option<PageRef>; BTCURSOR_MAX_DEPTH + 1]>,
-    /// List of cell indices in the stack.
-    /// cell_indices[current_page] is the current cell index being consumed. Similarly
-    /// cell_indices[current_page-1] is the cell index of the parent of the current page
-    /// that we save in case of going back up.
-    /// There are two points that need special attention:
-    ///  If cell_indices[current_page] = -1, it indicates that the current iteration has reached the start of the current_page
-    ///  If cell_indices[current_page] = `cell_count`, it means that the current iteration has reached the end of the current_page
-    cell_indices: RefCell<[i32; BTCURSOR_MAX_DEPTH + 1]>,
-}
-
-struct CellArray {
-    cells: Vec<&'static mut [u8]>, // TODO(pere): make this with references
-
-    number_of_cells_per_page: Vec<u16>, // number of cells in each page
-}
-
 impl BTreeCursor {
     pub fn new(
         mv_cursor: Option<Rc<RefCell<MvCursor>>>,
@@ -3935,6 +3911,24 @@ fn validate_cells_after_insertion(cell_array: &CellArray, leaf_data: bool) {
     }
 }
 
+/// Stack of pages representing the tree traversal order.
+/// current_page represents the current page being used in the tree and current_page - 1 would be
+/// the parent. Using current_page + 1 or higher is undefined behaviour.
+struct PageStack {
+    /// Pointer to the current page being consumed
+    current_page: Cell<i32>,
+    /// List of pages in the stack. Root page will be in index 0
+    stack: RefCell<[Option<PageRef>; BTCURSOR_MAX_DEPTH + 1]>,
+    /// List of cell indices in the stack.
+    /// cell_indices[current_page] is the current cell index being consumed. Similarly
+    /// cell_indices[current_page-1] is the cell index of the parent of the current page
+    /// that we save in case of going back up.
+    /// There are two points that need special attention:
+    ///  If cell_indices[current_page] = -1, it indicates that the current iteration has reached the start of the current_page
+    ///  If cell_indices[current_page] = `cell_count`, it means that the current iteration has reached the end of the current_page
+    cell_indices: RefCell<[i32; BTCURSOR_MAX_DEPTH + 1]>,
+}
+
 impl PageStack {
     fn increment_current(&self) {
         self.current_page.set(self.current_page.get() + 1);
@@ -4054,6 +4048,13 @@ impl PageStack {
     fn clear(&self) {
         self.current_page.set(-1);
     }
+}
+
+/// Used for redistributing cells during a balance operation.
+struct CellArray {
+    cells: Vec<&'static mut [u8]>, // TODO(pere): make this with references
+
+    number_of_cells_per_page: Vec<u16>, // number of cells in each page
 }
 
 impl CellArray {
@@ -4739,7 +4740,7 @@ fn fill_cell_payload(
         }
 
         // we still have bytes to add, we will need to allocate new overflow page
-        let overflow_page = allocate_overflow_page(pager.clone());
+        let overflow_page = pager.allocate_overflow_page();
         overflow_pages.push(overflow_page.clone());
         {
             let id = overflow_page.get().id as u32;
@@ -4760,20 +4761,6 @@ fn fill_cell_payload(
     }
 
     assert_eq!(cell_size, cell_payload.len());
-}
-
-/// Allocate a new overflow page.
-/// This is done when a cell overflows and new space is needed.
-fn allocate_overflow_page(pager: Rc<Pager>) -> PageRef {
-    let page = pager.allocate_page().unwrap();
-    tracing::debug!("allocate_overflow_page(id={})", page.get().id);
-
-    // setup overflow page
-    let contents = page.get().contents.as_mut().unwrap();
-    let buf = contents.as_ptr();
-    buf.fill(0);
-
-    page
 }
 
 /// Returns the maximum payload size (X) that can be stored directly on a b-tree page without spilling to overflow pages.
