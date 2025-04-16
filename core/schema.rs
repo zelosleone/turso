@@ -1,5 +1,5 @@
-use crate::VirtualTable;
 use crate::{util::normalize_ident, Result};
+use crate::{LimboError, VirtualTable};
 use core::fmt;
 use fallible_iterator::FallibleIterator;
 use limbo_sqlite3_parser::ast::{Expr, Literal, SortOrder, TableOptions};
@@ -179,6 +179,10 @@ impl BTreeTable {
         col.is_rowid_alias
     }
 
+    /// Returns the column position and column for a given column name.
+    /// Returns None if the column name is not found.
+    /// E.g. if table is CREATE TABLE t(a, b, c)
+    /// then get_column("b") returns (1, &Column { .. })
     pub fn get_column(&self, name: &str) -> Option<(usize, &Column)> {
         let name = normalize_ident(name);
         for (i, column) in self.columns.iter().enumerate() {
@@ -581,6 +585,20 @@ impl Affinity {
             Affinity::Numeric => SQLITE_AFF_NUMERIC,
         }
     }
+
+    pub fn from_char(char: char) -> Result<Self> {
+        match char {
+            SQLITE_AFF_INTEGER => Ok(Affinity::Integer),
+            SQLITE_AFF_TEXT => Ok(Affinity::Text),
+            SQLITE_AFF_NONE => Ok(Affinity::Blob),
+            SQLITE_AFF_REAL => Ok(Affinity::Real),
+            SQLITE_AFF_NUMERIC => Ok(Affinity::Numeric),
+            _ => Err(LimboError::InternalError(format!(
+                "Invalid affinity character: {}",
+                char
+            ))),
+        }
+    }
 }
 
 impl fmt::Display for Type {
@@ -669,10 +687,16 @@ pub struct Index {
 pub struct IndexColumn {
     pub name: String,
     pub order: SortOrder,
+    /// the position of the column in the source table.
+    /// for example:
+    /// CREATE TABLE t(a,b,c)
+    /// CREATE INDEX idx ON t(b)
+    /// b.pos_in_table == 1
+    pub pos_in_table: usize,
 }
 
 impl Index {
-    pub fn from_sql(sql: &str, root_page: usize) -> Result<Index> {
+    pub fn from_sql(sql: &str, root_page: usize, table: &BTreeTable) -> Result<Index> {
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next()?;
         match cmd {
@@ -684,13 +708,21 @@ impl Index {
                 ..
             })) => {
                 let index_name = normalize_ident(&idx_name.name.0);
-                let index_columns = columns
-                    .into_iter()
-                    .map(|col| IndexColumn {
-                        name: normalize_ident(&col.expr.to_string()),
+                let mut index_columns = Vec::with_capacity(columns.len());
+                for col in columns.into_iter() {
+                    let name = normalize_ident(&col.expr.to_string());
+                    let Some((pos_in_table, _)) = table.get_column(&name) else {
+                        return Err(crate::LimboError::InternalError(format!(
+                            "Column {} is in index {} but not found in table {}",
+                            name, index_name, table.name
+                        )));
+                    };
+                    index_columns.push(IndexColumn {
+                        name,
                         order: col.order.unwrap_or(SortOrder::Asc),
-                    })
-                    .collect();
+                        pos_in_table,
+                    });
+                }
                 Ok(Index {
                     name: index_name,
                     table_name: normalize_ident(&tbl_name.0),
@@ -719,15 +751,16 @@ impl Index {
             .iter()
             .map(|col_name| {
                 // Verify that each primary key column exists in the table
-                if table.get_column(col_name).is_none() {
+                let Some((pos_in_table, _)) = table.get_column(col_name) else {
                     return Err(crate::LimboError::InternalError(format!(
-                        "Primary key column {} not found in table {}",
-                        col_name, table.name
+                        "Column {} is in index {} but not found in table {}",
+                        col_name, index_name, table.name
                     )));
-                }
+                };
                 Ok(IndexColumn {
                     name: normalize_ident(col_name),
                     order: SortOrder::Asc, // Primary key indexes are always ascending
+                    pos_in_table,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -739,6 +772,18 @@ impl Index {
             columns: index_columns,
             unique: true, // Primary key indexes are always unique
         })
+    }
+
+    /// Given a column position in the table, return the position in the index.
+    /// Returns None if the column is not found in the index.
+    /// For example, given:
+    /// CREATE TABLE t(a, b, c)
+    /// CREATE INDEX idx ON t(b)
+    /// then column_table_pos_to_index_pos(1) returns Some(0)
+    pub fn column_table_pos_to_index_pos(&self, table_pos: usize) -> Option<usize> {
+        self.columns
+            .iter()
+            .position(|c| c.pos_in_table == table_pos)
     }
 }
 

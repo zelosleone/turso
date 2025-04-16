@@ -1836,6 +1836,28 @@ pub fn op_row_id(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_idx_row_id(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::IdxRowId { cursor_id, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    let mut cursors = state.cursors.borrow_mut();
+    let cursor = cursors.get_mut(*cursor_id).unwrap().as_mut().unwrap();
+    let cursor = cursor.as_btree_mut();
+    let rowid = cursor.rowid()?;
+    state.registers[*dest] = match rowid {
+        Some(rowid) => Register::OwnedValue(OwnedValue::Integer(rowid as i64)),
+        None => Register::OwnedValue(OwnedValue::Null),
+    };
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 pub fn op_seek_rowid(
     program: &Program,
     state: &mut ProgramState,
@@ -4472,6 +4494,87 @@ pub fn op_once(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_not_found(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::NotFound {
+        cursor_id,
+        target_pc,
+        record_reg,
+        num_regs,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+
+    let found = {
+        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = cursor.as_btree_mut();
+
+        if *num_regs == 0 {
+            let record = match &state.registers[*record_reg] {
+                Register::Record(r) => r,
+                _ => {
+                    return Err(LimboError::InternalError(
+                        "NotFound: exepected a record in the register".into(),
+                    ));
+                }
+            };
+
+            return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ))
+        } else {
+            let record = make_record(&state.registers, record_reg, num_regs);
+            return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ))
+        }
+    };
+
+    if found {
+        state.pc += 1;
+    } else {
+        state.pc = target_pc.to_offset_int();
+    }
+
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_affinity(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::Affinity {
+        start_reg,
+        count,
+        affinities,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+
+    if affinities.len() != count.get() {
+        return Err(LimboError::InternalError(
+            "Affinity: the length of affinities does not match the count".into(),
+        ));
+    }
+
+    for (i, affinity_char) in affinities.chars().enumerate().take(count.get()) {
+        let reg_index = *start_reg + i;
+
+        let affinity = Affinity::from_char(affinity_char)?;
+
+        apply_affinity_char(&mut state.registers[reg_index], affinity);
+    }
+
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 fn exec_lower(reg: &OwnedValue) -> Option<OwnedValue> {
     match reg {
         OwnedValue::Text(t) => Some(OwnedValue::build_text(&t.as_str().to_lowercase())),
@@ -5408,7 +5511,14 @@ pub fn exec_subtract(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
         (other, OwnedValue::Text(text)) => {
             exec_subtract(other, &cast_text_to_numeric(text.as_str()))
         }
-        _ => todo!(),
+        (other, OwnedValue::Blob(blob)) => {
+            let text = String::from_utf8_lossy(&blob);
+            exec_subtract(other, &cast_text_to_numeric(&text))
+        }
+        (OwnedValue::Blob(blob), other) => {
+            let text = String::from_utf8_lossy(&blob);
+            exec_subtract(&cast_text_to_numeric(&text), other)
+        }
     };
     match result {
         OwnedValue::Float(f) if f.is_nan() => OwnedValue::Null,
@@ -5744,14 +5854,18 @@ pub fn exec_and(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
         | (OwnedValue::Integer(0), _)
         | (_, OwnedValue::Float(0.0))
         | (OwnedValue::Float(0.0), _) => OwnedValue::Integer(0),
-        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_and(
-            &cast_text_to_numeric(lhs.as_str()),
-            &cast_text_to_numeric(rhs.as_str()),
+            &cast_text_to_real(lhs.as_str()),
+            &cast_text_to_real(rhs.as_str()),
         ),
         (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_and(&cast_text_to_numeric(text.as_str()), other)
+            exec_and(&cast_text_to_real(text.as_str()), other)
         }
+        (OwnedValue::Blob(blob), other) | (other, OwnedValue::Blob(blob)) => {
+            let text = String::from_utf8_lossy(blob);
+            exec_and(&cast_text_to_real(&text), other)
+        }
+        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
         _ => OwnedValue::Integer(1),
     }
 }

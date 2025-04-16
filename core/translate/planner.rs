@@ -1,7 +1,7 @@
 use super::{
     plan::{
-        Aggregate, EvalAt, IterationDirection, JoinInfo, Operation, Plan, ResultSetColumn,
-        SelectPlan, SelectQueryType, TableReference, WhereTerm,
+        Aggregate, ColumnUsedMask, EvalAt, IterationDirection, JoinInfo, Operation, Plan,
+        ResultSetColumn, SelectPlan, SelectQueryType, TableReference, WhereTerm,
     },
     select::prepare_select_plan,
     SymbolTable,
@@ -85,7 +85,7 @@ pub fn resolve_aggregates(expr: &Expr, aggs: &mut Vec<Aggregate>) -> bool {
 
 pub fn bind_column_references(
     expr: &mut Expr,
-    referenced_tables: &[TableReference],
+    referenced_tables: &mut [TableReference],
     result_columns: Option<&[ResultSetColumn]>,
 ) -> Result<()> {
     match expr {
@@ -128,6 +128,7 @@ pub fn bind_column_references(
                     column: col_idx,
                     is_rowid_alias,
                 };
+                referenced_tables[tbl_idx].mark_column_used(col_idx);
                 return Ok(());
             }
 
@@ -178,6 +179,7 @@ pub fn bind_column_references(
                 column: col_idx.unwrap(),
                 is_rowid_alias: col.is_rowid_alias,
             };
+            referenced_tables[tbl_idx].mark_column_used(col_idx.unwrap());
             Ok(())
         }
         Expr::Between {
@@ -327,6 +329,7 @@ fn parse_from_clause_table<'a>(
                     table: tbl_ref,
                     identifier: alias.unwrap_or(normalized_qualified_name),
                     join_info: None,
+                    col_used_mask: ColumnUsedMask::new(),
                 });
                 return Ok(());
             };
@@ -409,6 +412,7 @@ fn parse_from_clause_table<'a>(
                 join_info: None,
                 table: Table::Virtual(vtab),
                 identifier: alias,
+                col_used_mask: ColumnUsedMask::new(),
             });
 
             Ok(())
@@ -539,7 +543,7 @@ pub fn parse_from<'a>(
 
 pub fn parse_where(
     where_clause: Option<Expr>,
-    table_references: &[TableReference],
+    table_references: &mut [TableReference],
     result_columns: Option<&[ResultSetColumn]>,
     out_where_clause: &mut Vec<WhereTerm>,
 ) -> Result<()> {
@@ -758,7 +762,7 @@ fn parse_join<'a>(
                 let mut preds = vec![];
                 break_predicate_at_and_boundaries(expr, &mut preds);
                 for predicate in preds.iter_mut() {
-                    bind_column_references(predicate, &scope.tables, None)?;
+                    bind_column_references(predicate, &mut scope.tables, None)?;
                 }
                 for pred in preds {
                     let cur_table_idx = scope.tables.len() - 1;
@@ -832,6 +836,11 @@ fn parse_join<'a>(
                             is_rowid_alias: right_col.is_rowid_alias,
                         }),
                     );
+
+                    let left_table = scope.tables.get_mut(left_table_idx).unwrap();
+                    left_table.mark_column_used(left_col_idx);
+                    let right_table = scope.tables.get_mut(cur_table_idx).unwrap();
+                    right_table.mark_column_used(right_col_idx);
                     let eval_at = if outer {
                         EvalAt::Loop(cur_table_idx)
                     } else {

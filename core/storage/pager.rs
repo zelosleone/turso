@@ -217,6 +217,20 @@ impl Pager {
         id as u32
     }
 
+    /// Allocate a new overflow page.
+    /// This is done when a cell overflows and new space is needed.
+    pub fn allocate_overflow_page(&self) -> PageRef {
+        let page = self.allocate_page().unwrap();
+        tracing::debug!("Pager::allocate_overflow_page(id={})", page.get().id);
+
+        // setup overflow page
+        let contents = page.get().contents.as_mut().unwrap();
+        let buf = contents.as_ptr();
+        buf.fill(0);
+
+        page
+    }
+
     /// Allocate a new page to the btree via the pager.
     /// This marks the page as dirty and writes the page header.
     pub fn do_allocate_page(&self, page_type: PageType, offset: usize) -> PageRef {

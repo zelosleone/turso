@@ -441,15 +441,17 @@ impl ProgramBuilder {
     }
 
     // translate table to cursor id
+    pub fn resolve_cursor_id_safe(&self, table_identifier: &str) -> Option<CursorID> {
+        self.cursor_ref.iter().position(|(t_ident, _)| {
+            t_ident
+                .as_ref()
+                .is_some_and(|ident| ident == table_identifier)
+        })
+    }
+
     pub fn resolve_cursor_id(&self, table_identifier: &str) -> CursorID {
-        self.cursor_ref
-            .iter()
-            .position(|(t_ident, _)| {
-                t_ident
-                    .as_ref()
-                    .is_some_and(|ident| ident == table_identifier)
-            })
-            .unwrap()
+        self.resolve_cursor_id_safe(table_identifier)
+            .unwrap_or_else(|| panic!("Cursor not found: {}", table_identifier))
     }
 
     pub fn build(

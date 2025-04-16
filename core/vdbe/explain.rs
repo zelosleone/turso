@@ -684,6 +684,22 @@ pub fn insn_to_str(
                         .unwrap_or(&format!("cursor {}", cursor_id))
                 ),
             ),
+            Insn::IdxRowId { cursor_id, dest } => (
+                "IdxRowId",
+                *cursor_id as i32,
+                *dest as i32,
+                0,
+                OwnedValue::build_text(""),
+                0,
+                format!(
+                    "r[{}]={}.rowid",
+                    dest,
+                    &program.cursor_ref[*cursor_id]
+                        .0
+                        .as_ref()
+                        .unwrap_or(&format!("cursor {}", cursor_id))
+                ),
+            ),
             Insn::SeekRowid {
                 cursor_id,
                 src_reg,
@@ -1349,6 +1365,57 @@ pub fn insn_to_str(
                 OwnedValue::build_text(""),
                 0,
                 format!("goto {}", target_pc_when_reentered.to_debug_int()),
+            ),
+            Insn::BeginSubrtn { dest, dest_end } => (
+                "BeginSubrtn",
+                *dest as i32,
+                dest_end.map_or(0, |end| end as i32),
+                0,
+                OwnedValue::build_text(""),
+                0,
+                dest_end.map_or(format!("r[{}]=NULL", dest), |end| {
+                    format!("r[{}..{}]=NULL", dest, end)
+                }),
+            ),
+            Insn::NotFound {
+                cursor_id,
+                target_pc,
+                record_reg,
+                ..
+            } => (
+                "NotFound",
+                *cursor_id as i32,
+                target_pc.to_debug_int(),
+                *record_reg as i32,
+                OwnedValue::build_text(""),
+                0,
+                format!(
+                    "if (r[{}] != NULL) goto {}",
+                    record_reg,
+                    target_pc.to_debug_int()
+                ),
+            ),
+            Insn::Affinity {
+                start_reg,
+                count,
+                affinities,
+            } => (
+                "Affinity",
+                *start_reg as i32,
+                count.get() as i32,
+                0,
+                OwnedValue::build_text(""),
+                0,
+                format!(
+                    "r[{}..{}] = {}",
+                    start_reg,
+                    start_reg + count.get(),
+                    affinities
+                        .chars()
+                        .map(|a| a.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
             ),
         };
     format!(

@@ -427,6 +427,7 @@ Modifiers:
 | BitNot         | Yes    |         |
 | BitOr          | Yes    |         |
 | Blob           | Yes    |         |
+| BeginSubrtn    | Yes    |         |
 | Checkpoint     | No     |         |
 | Clear          | No     |         |
 | Close          | No     |         |
