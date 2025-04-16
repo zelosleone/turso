@@ -1,8 +1,10 @@
 use limbo_ext::{AggCtx, FinalizeFunction, StepFunction};
+use limbo_sqlite3_parser::ast::SortOrder;
 
 use crate::error::LimboError;
 use crate::ext::{ExtValue, ExtValueType};
 use crate::pseudo::PseudoCursor;
+use crate::schema::Index;
 use crate::storage::btree::BTreeCursor;
 use crate::storage::sqlite3_ondisk::write_varint;
 use crate::translate::plan::IterationDirection;
@@ -1043,8 +1045,58 @@ impl PartialOrd<RefValue> for RefValue {
     }
 }
 
-pub fn compare_immutable(l: &[RefValue], r: &[RefValue]) -> std::cmp::Ordering {
-    l.partial_cmp(r).unwrap()
+/// A bitfield that represents the comparison spec for index keys.
+/// Since indexed columns can individually specify ASC/DESC, each key must
+/// be compared differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct IndexKeySortOrder(u64);
+
+impl IndexKeySortOrder {
+    pub fn get_sort_order_for_col(&self, column_idx: usize) -> SortOrder {
+        assert!(column_idx < 64, "column index out of range: {}", column_idx);
+        match self.0 & (1 << column_idx) {
+            0 => SortOrder::Asc,
+            _ => SortOrder::Desc,
+        }
+    }
+
+    pub fn from_index(index: &Index) -> Self {
+        let mut spec = 0;
+        for (i, column) in index.columns.iter().enumerate() {
+            spec |= ((column.order == SortOrder::Desc) as u64) << i;
+        }
+        IndexKeySortOrder(spec)
+    }
+
+    pub fn default() -> Self {
+        Self(0)
+    }
+}
+
+impl Default for IndexKeySortOrder {
+    fn default() -> Self {
+        Self::default()
+    }
+}
+
+pub fn compare_immutable(
+    l: &[RefValue],
+    r: &[RefValue],
+    index_key_sort_order: IndexKeySortOrder,
+) -> std::cmp::Ordering {
+    assert_eq!(l.len(), r.len());
+    for (i, (l, r)) in l.iter().zip(r).enumerate() {
+        let column_order = index_key_sort_order.get_sort_order_for_col(i);
+        let cmp = l.partial_cmp(r).unwrap();
+        if !cmp.is_eq() {
+            return match column_order {
+                SortOrder::Asc => cmp,
+                SortOrder::Desc => cmp.reverse(),
+            };
+        }
+    }
+    std::cmp::Ordering::Equal
 }
 
 const I8_LOW: i64 = -128;
@@ -1251,6 +1303,16 @@ impl SeekOp {
         match self {
             SeekOp::EQ | SeekOp::GE | SeekOp::GT => IterationDirection::Forwards,
             SeekOp::LE | SeekOp::LT => IterationDirection::Backwards,
+        }
+    }
+
+    pub fn reverse(&self) -> Self {
+        match self {
+            SeekOp::EQ => SeekOp::EQ,
+            SeekOp::GE => SeekOp::LE,
+            SeekOp::GT => SeekOp::LT,
+            SeekOp::LE => SeekOp::GE,
+            SeekOp::LT => SeekOp::GT,
         }
     }
 }

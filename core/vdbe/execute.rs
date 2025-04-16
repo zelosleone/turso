@@ -12,6 +12,7 @@ use crate::{
         },
         printf::exec_printf,
     },
+    types::compare_immutable,
 };
 use std::{borrow::BorrowMut, rc::Rc, sync::Arc};
 
@@ -839,16 +840,18 @@ pub fn op_open_read(
         }
         None => None,
     };
-    let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
     let mut cursors = state.cursors.borrow_mut();
     match cursor_type {
         CursorType::BTreeTable(_) => {
+            let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
             cursors
                 .get_mut(*cursor_id)
                 .unwrap()
                 .replace(Cursor::new_btree(cursor));
         }
-        CursorType::BTreeIndex(_) => {
+        CursorType::BTreeIndex(index) => {
+            let cursor =
+                BTreeCursor::new_index(mv_cursor, pager.clone(), *root_page, index.as_ref());
             cursors
                 .get_mut(*cursor_id)
                 .unwrap()
@@ -2051,9 +2054,11 @@ pub fn op_idx_ge(
         let record_from_regs = make_record(&state.registers, start_reg, num_regs);
         let pc = if let Some(ref idx_record) = *cursor.record() {
             // Compare against the same number of values
-            let ord = idx_record.get_values()[..record_from_regs.len()]
-                .partial_cmp(&record_from_regs.get_values()[..])
-                .unwrap();
+            let idx_values = idx_record.get_values();
+            let idx_values = &idx_values[..record_from_regs.len()];
+            let record_values = record_from_regs.get_values();
+            let record_values = &record_values[..idx_values.len()];
+            let ord = compare_immutable(&idx_values, &record_values, cursor.index_key_sort_order);
             if ord.is_ge() {
                 target_pc.to_offset_int()
             } else {
@@ -2109,9 +2114,10 @@ pub fn op_idx_le(
         let record_from_regs = make_record(&state.registers, start_reg, num_regs);
         let pc = if let Some(ref idx_record) = *cursor.record() {
             // Compare against the same number of values
-            let ord = idx_record.get_values()[..record_from_regs.len()]
-                .partial_cmp(&record_from_regs.get_values()[..])
-                .unwrap();
+            let idx_values = idx_record.get_values();
+            let idx_values = &idx_values[..record_from_regs.len()];
+            let record_values = record_from_regs.get_values();
+            let ord = compare_immutable(&idx_values, &record_values, cursor.index_key_sort_order);
             if ord.is_le() {
                 target_pc.to_offset_int()
             } else {
@@ -2149,9 +2155,10 @@ pub fn op_idx_gt(
         let record_from_regs = make_record(&state.registers, start_reg, num_regs);
         let pc = if let Some(ref idx_record) = *cursor.record() {
             // Compare against the same number of values
-            let ord = idx_record.get_values()[..record_from_regs.len()]
-                .partial_cmp(&record_from_regs.get_values()[..])
-                .unwrap();
+            let idx_values = idx_record.get_values();
+            let idx_values = &idx_values[..record_from_regs.len()];
+            let record_values = record_from_regs.get_values();
+            let ord = compare_immutable(&idx_values, &record_values, cursor.index_key_sort_order);
             if ord.is_gt() {
                 target_pc.to_offset_int()
             } else {
@@ -2189,9 +2196,10 @@ pub fn op_idx_lt(
         let record_from_regs = make_record(&state.registers, start_reg, num_regs);
         let pc = if let Some(ref idx_record) = *cursor.record() {
             // Compare against the same number of values
-            let ord = idx_record.get_values()[..record_from_regs.len()]
-                .partial_cmp(&record_from_regs.get_values()[..])
-                .unwrap();
+            let idx_values = idx_record.get_values();
+            let idx_values = &idx_values[..record_from_regs.len()];
+            let record_values = record_from_regs.get_values();
+            let ord = compare_immutable(&idx_values, &record_values, cursor.index_key_sort_order);
             if ord.is_lt() {
                 target_pc.to_offset_int()
             } else {
@@ -3979,7 +3987,10 @@ pub fn op_open_write(
     };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let mut cursors = state.cursors.borrow_mut();
-    let is_index = cursor_type.is_index();
+    let maybe_index = match cursor_type {
+        CursorType::BTreeIndex(index) => Some(index),
+        _ => None,
+    };
     let mv_cursor = match state.mv_tx_id {
         Some(tx_id) => {
             let table_id = root_page;
@@ -3991,13 +4002,15 @@ pub fn op_open_write(
         }
         None => None,
     };
-    let cursor = BTreeCursor::new(mv_cursor, pager.clone(), root_page as usize);
-    if is_index {
+    if let Some(index) = maybe_index {
+        let cursor =
+            BTreeCursor::new_index(mv_cursor, pager.clone(), root_page as usize, index.as_ref());
         cursors
             .get_mut(*cursor_id)
             .unwrap()
             .replace(Cursor::new_btree(cursor));
     } else {
+        let cursor = BTreeCursor::new(mv_cursor, pager.clone(), root_page as usize);
         cursors
             .get_mut(*cursor_id)
             .unwrap()

@@ -1,4 +1,5 @@
 use crate::{
+    schema::Index,
     storage::{
         pager::Pager,
         sqlite3_ondisk::{
@@ -7,6 +8,7 @@ use crate::{
         },
     },
     translate::plan::IterationDirection,
+    types::IndexKeySortOrder,
     MvCursor,
 };
 
@@ -364,6 +366,7 @@ pub struct BTreeCursor {
     /// Reusable immutable record, used to allow better allocation strategy.
     reusable_immutable_record: RefCell<Option<ImmutableRecord>>,
     empty_record: Cell<bool>,
+    pub index_key_sort_order: IndexKeySortOrder,
 }
 
 impl BTreeCursor {
@@ -388,7 +391,20 @@ impl BTreeCursor {
             },
             reusable_immutable_record: RefCell::new(None),
             empty_record: Cell::new(true),
+            index_key_sort_order: IndexKeySortOrder::default(),
         }
+    }
+
+    pub fn new_index(
+        mv_cursor: Option<Rc<RefCell<MvCursor>>>,
+        pager: Rc<Pager>,
+        root_page: usize,
+        index: &Index,
+    ) -> Self {
+        let index_key_sort_order = IndexKeySortOrder::from_index(index);
+        let mut cursor = Self::new(mv_cursor, pager, root_page);
+        cursor.index_key_sort_order = index_key_sort_order;
+        cursor
     }
 
     /// Check if the table is empty.
@@ -547,8 +563,11 @@ impl BTreeCursor {
                         let record_values = record.get_values();
                         let record_slice_same_num_cols =
                             &record_values[..index_key.get_values().len()];
-                        let order =
-                            compare_immutable(record_slice_same_num_cols, index_key.get_values());
+                        let order = compare_immutable(
+                            record_slice_same_num_cols,
+                            index_key.get_values(),
+                            self.index_key_sort_order,
+                        );
                         order
                     };
 
@@ -602,8 +621,11 @@ impl BTreeCursor {
                         let record_values = record.get_values();
                         let record_slice_same_num_cols =
                             &record_values[..index_key.get_values().len()];
-                        let order =
-                            compare_immutable(record_slice_same_num_cols, index_key.get_values());
+                        let order = compare_immutable(
+                            record_slice_same_num_cols,
+                            index_key.get_values(),
+                            self.index_key_sort_order,
+                        );
                         order
                     };
                     let found = match op {
@@ -849,10 +871,18 @@ impl BTreeCursor {
                     let SeekKey::IndexKey(index_key) = key else {
                         unreachable!("index seek key should be a record");
                     };
-                    let order = compare_immutable(
-                        &self.get_immutable_record().as_ref().unwrap().get_values(),
-                        index_key.get_values(),
-                    );
+                    let order = {
+                        let record = self.get_immutable_record();
+                        let record = record.as_ref().unwrap();
+                        let record_slice_same_num_cols =
+                            &record.get_values()[..index_key.get_values().len()];
+                        let order = compare_immutable(
+                            record_slice_same_num_cols,
+                            index_key.get_values(),
+                            self.index_key_sort_order,
+                        );
+                        order
+                    };
                     let found = match op {
                         SeekOp::GT => order.is_gt(),
                         SeekOp::GE => order.is_ge(),
@@ -901,10 +931,18 @@ impl BTreeCursor {
                     let SeekKey::IndexKey(index_key) = key else {
                         unreachable!("index seek key should be a record");
                     };
-                    let order = compare_immutable(
-                        &self.get_immutable_record().as_ref().unwrap().get_values(),
-                        index_key.get_values(),
-                    );
+                    let order = {
+                        let record = self.get_immutable_record();
+                        let record = record.as_ref().unwrap();
+                        let record_slice_same_num_cols =
+                            &record.get_values()[..index_key.get_values().len()];
+                        let order = compare_immutable(
+                            record_slice_same_num_cols,
+                            index_key.get_values(),
+                            self.index_key_sort_order,
+                        );
+                        order
+                    };
                     let found = match op {
                         SeekOp::GT => order.is_lt(),
                         SeekOp::GE => order.is_le(),
@@ -1031,7 +1069,11 @@ impl BTreeCursor {
                         let record = record.as_ref().unwrap();
                         let record_slice_equal_number_of_cols =
                             &record.get_values().as_slice()[..index_key.get_values().len()];
-                        let order = record_slice_equal_number_of_cols.cmp(index_key.get_values());
+                        let order = compare_immutable(
+                            record_slice_equal_number_of_cols,
+                            index_key.get_values(),
+                            self.index_key_sort_order,
+                        );
                         let found = match op {
                             SeekOp::GT => order.is_gt(),
                             SeekOp::GE => order.is_ge(),
@@ -1278,6 +1320,7 @@ impl BTreeCursor {
                         let interior_cell_vs_index_key = compare_immutable(
                             record_slice_equal_number_of_cols,
                             index_key.get_values(),
+                            self.index_key_sort_order,
                         );
                         // in sqlite btrees left child pages have <= keys.
                         // in general, in forwards iteration we want to find the first key that matches the seek condition.
@@ -1430,7 +1473,8 @@ impl BTreeCursor {
                                 self.get_immutable_record()
                                     .as_ref()
                                     .unwrap()
-                                    .get_values()
+                                    .get_values(),
+                        self.index_key_sort_order,
                         ) == Ordering::Equal {
 
                         tracing::debug!("insert_into_page: found exact match with cell_idx={cell_idx}, overwriting");
@@ -3017,6 +3061,7 @@ impl BTreeCursor {
                     let order = compare_immutable(
                         key.to_index_key_values(),
                         self.get_immutable_record().as_ref().unwrap().get_values(),
+                        self.index_key_sort_order,
                     );
                     match order {
                         Ordering::Less | Ordering::Equal => {
