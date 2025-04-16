@@ -387,13 +387,27 @@ mod tests {
                     // so we need to check that limbo and sqlite return the same results when the ordering is reversed.
                     // because we are generally using LIMIT (to make the test complete faster), we need to rerun the query
                     // without limit and then check that the results are the same if reversed.
-                    let query_no_limit =
-                        format!("SELECT * FROM t {} {} {}", where_clause, order_by, "");
-                    let limbo_no_limit = limbo_exec_rows(&dbs[i], &limbo_conns[i], &query_no_limit);
-                    let sqlite_no_limit = sqlite_exec_rows(&sqlite_conn, &query_no_limit);
-                    let limbo_rev = limbo_no_limit.iter().cloned().rev().collect::<Vec<_>>();
-                    if limbo_rev == sqlite_no_limit {
-                        continue;
+                    let order_by_only_equalities = !order_by_components.is_empty()
+                        && order_by_components.iter().all(|o: &String| {
+                            if o.starts_with("x ") {
+                                comp1.map_or(false, |c| c == "=")
+                            } else if o.starts_with("y ") {
+                                comp2.map_or(false, |c| c == "=")
+                            } else {
+                                comp3.map_or(false, |c| c == "=")
+                            }
+                        });
+
+                    if order_by_only_equalities {
+                        let query_no_limit =
+                            format!("SELECT * FROM t {} {} {}", where_clause, order_by, "");
+                        let limbo_no_limit =
+                            limbo_exec_rows(&dbs[i], &limbo_conns[i], &query_no_limit);
+                        let sqlite_no_limit = sqlite_exec_rows(&sqlite_conn, &query_no_limit);
+                        let limbo_rev = limbo_no_limit.iter().cloned().rev().collect::<Vec<_>>();
+                        if limbo_rev == sqlite_no_limit {
+                            continue;
+                        }
                     }
                     panic!(
                         "limbo: {:?}, sqlite: {:?}, seed: {}, query: {}",
