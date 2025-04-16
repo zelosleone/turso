@@ -1598,7 +1598,7 @@ impl BTreeCursor {
                     PageType::IndexInterior | PageType::TableInterior
                 ));
                 // Part 1: Find the sibling pages to balance
-                let mut pages_to_balance: [Option<PageRef>; 3] = [None, None, None];
+                let mut pages_to_balance: [Option<PageRef>; 3] = [const { None }; 3];
                 let number_of_cells_in_parent =
                     parent_contents.cell_count() + parent_contents.overflow_cells.len();
 
@@ -1721,7 +1721,7 @@ impl BTreeCursor {
                     .replace(Some(BalanceInfo {
                         pages_to_balance,
                         rightmost_pointer: right_pointer,
-                        divider_cells: [None, None],
+                        divider_cells: [const { None }; 2],
                         sibling_count,
                         first_divider_cell: first_cell_divider,
                     }));
@@ -1755,7 +1755,7 @@ impl BTreeCursor {
                 /* 1. Get divider cells and max_cells */
                 let mut max_cells = 0;
                 // we only need maximum 5 pages to balance 3 pages
-                let mut pages_to_balance_new: [Option<PageRef>; 5] = [None, None, None, None, None];
+                let mut pages_to_balance_new: [Option<PageRef>; 5] = [const { None }; 5];
                 for i in (0..balance_info.sibling_count).rev() {
                     let sibling_page = balance_info.pages_to_balance[i].as_ref().unwrap();
                     let sibling_contents = sibling_page.get_contents();
