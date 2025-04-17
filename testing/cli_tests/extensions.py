@@ -343,7 +343,6 @@ def test_kv():
     # first, create a normal table to ensure no issues
     limbo.execute_dot("CREATE TABLE other (a,b,c);")
     limbo.execute_dot("INSERT INTO other values (23,32,23);")
-    limbo = TestLimboShell()
     limbo.run_test_fn(
         "create virtual table t using kv_store;",
         lambda res: "Module kv_store not found" in res,
