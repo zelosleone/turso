@@ -1463,8 +1463,10 @@ impl BTreeCursor {
         //    This cell contains the actual data we are looking for.
         // 6. If we find the cell, we return the record. Otherwise, we return an empty result.
         self.move_to_root();
-
         let iter_dir = cmp.iteration_direction();
+        if let SeekKey::TableRowId(rowid_key) = key {
+            return self.tablebtree_move_to_binsearch(rowid_key, cmp, iter_dir);
+        }
 
         loop {
             let page = self.stack.top();
