@@ -2299,7 +2299,7 @@ impl BTreeCursor {
                  ** upwards pass simply processes pages that were missed on the downward
                  ** pass.
                  */
-                let mut done = vec![false; sibling_count_new];
+                let mut done = [false; 5];
                 for i in (1 - sibling_count_new as i64)..sibling_count_new as i64 {
                     let page_idx = i.unsigned_abs() as usize;
                     if done[page_idx] {
