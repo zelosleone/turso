@@ -97,6 +97,18 @@ fn reverse_operator(op: &Operator) -> Option<Operator> {
     }
 }
 
+fn to_ext_constraint_op(op: &Operator) -> Option<ConstraintOp> {
+    match op {
+        Operator::Equals => Some(ConstraintOp::Eq),
+        Operator::Less => Some(ConstraintOp::Lt),
+        Operator::LessEquals => Some(ConstraintOp::Le),
+        Operator::Greater => Some(ConstraintOp::Gt),
+        Operator::GreaterEquals => Some(ConstraintOp::Ge),
+        Operator::NotEquals => Some(ConstraintOp::Ne),
+        _ => None,
+    }
+}
+
 /// This function takes a WhereTerm for a select involving a VTab at index 'table_index'.
 /// It determines whether or not it involves the given table and whether or not it can
 /// be converted into a ConstraintInfo which can be passed to the vtab module's xBestIndex
@@ -106,7 +118,7 @@ fn reverse_operator(op: &Operator) -> Option<Operator> {
 /// 'SELECT key, value FROM vtab WHERE key = 'some_key';
 /// we need to send the OwnedValue('some_key') as an argument to VFilter, and possibly omit it from
 /// the filtration in the vdbe layer.
-pub fn try_convert_to_constraint_info(
+pub fn convert_where_to_vtab_constraint(
     term: &WhereTerm,
     table_index: usize,
     pred_idx: usize,
@@ -114,53 +126,63 @@ pub fn try_convert_to_constraint_info(
     if term.from_outer_join {
         return None;
     }
-
     let Expr::Binary(lhs, op, rhs) = &term.expr else {
         return None;
     };
-
-    let (col_expr, _, op) = match (&**lhs, &**rhs) {
-        (Expr::Column { table, .. }, rhs) if can_pushdown_predicate(rhs) => {
-            if table != &table_index {
-                return None;
+    let expr_is_ready = |e: &Expr| -> bool { can_pushdown_predicate(e, table_index) };
+    let (vcol_idx, op_for_vtab, usable, is_rhs) = match (&**lhs, &**rhs) {
+        (
+            Expr::Column {
+                table: tbl_l,
+                column: col_l,
+                ..
+            },
+            Expr::Column {
+                table: tbl_r,
+                column: col_r,
+                ..
+            },
+        ) => {
+            // one side must be the virtual table
+            let vtab_on_l = *tbl_l == table_index;
+            let vtab_on_r = *tbl_r == table_index;
+            if vtab_on_l == vtab_on_r {
+                return None; // either both or none -> not convertible
             }
-            (lhs, rhs, op)
-        }
-        (lhs, Expr::Column { table, .. }) if can_pushdown_predicate(lhs) => {
-            if table != &table_index {
-                return None;
+
+            if vtab_on_l {
+                // vtab on left side: operator unchanged
+                let usable = *tbl_r < table_index; // usable if the other table is already positioned
+                (col_l, op, usable, false)
+            } else {
+                // vtab on right side of the expr: reverse operator
+                let usable = *tbl_l < table_index;
+                (col_r, &reverse_operator(op).unwrap_or(*op), usable, true)
             }
-            // if the column is on the rhs, swap the operands and possibly
-            // the operator if it's a logical comparison.
-            (rhs, lhs, &reverse_operator(op).unwrap_or(*op))
         }
-        _ => {
-            return None;
+        (Expr::Column { table, column, .. }, other) if *table == table_index => {
+            (
+                column,
+                op,
+                expr_is_ready(other), // literal / earlier‑table / deterministic func ?
+                false,
+            )
         }
-    };
+        (other, Expr::Column { table, column, .. }) if *table == table_index => (
+            column,
+            &reverse_operator(op).unwrap_or(*op),
+            expr_is_ready(other),
+            true,
+        ),
 
-    let Expr::Column { column, .. } = **col_expr else {
-        return None;
-    };
-
-    let column_index = column as u32;
-    let constraint_op = match op {
-        Operator::Equals => ConstraintOp::Eq,
-        Operator::Less => ConstraintOp::Lt,
-        Operator::LessEquals => ConstraintOp::Le,
-        Operator::Greater => ConstraintOp::Gt,
-        Operator::GreaterEquals => ConstraintOp::Ge,
-        Operator::NotEquals => ConstraintOp::Ne,
-        Operator::Is => ConstraintOp::Is,
-        Operator::IsNot => ConstraintOp::IsNot,
-        _ => return None,
+        _ => return None, // does not involve the virtual table at all
     };
 
     Some(ConstraintInfo {
-        column_index,
-        op: constraint_op,
-        usable: true,
-        pred_idx,
+        column_index: *vcol_idx as u32,
+        op: to_ext_constraint_op(op_for_vtab)?,
+        usable,
+        plan_info: ConstraintInfo::pack_plan_info(pred_idx as u32, is_rhs),
     })
 }
 /// The loop index where to evaluate the condition.

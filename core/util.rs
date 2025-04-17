@@ -568,12 +568,15 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
 
 /// This function checks if a given expression is a constant value that can be pushed down to the database engine.
 /// It is expected to be called with the other half of a binary expression with an Expr::Column
-pub fn can_pushdown_predicate(expr: &Expr) -> bool {
+pub fn can_pushdown_predicate(expr: &Expr, table_idx: usize) -> bool {
     match expr {
         Expr::Literal(_) => true,
-        Expr::Binary(lhs, _, rhs) => can_pushdown_predicate(lhs) && can_pushdown_predicate(rhs),
-        Expr::Parenthesized(exprs) => can_pushdown_predicate(exprs.first().unwrap()),
-        Expr::Unary(_, expr) => can_pushdown_predicate(expr),
+        Expr::Column { table, .. } => *table <= table_idx,
+        Expr::Binary(lhs, _, rhs) => {
+            can_pushdown_predicate(lhs, table_idx) && can_pushdown_predicate(rhs, table_idx)
+        }
+        Expr::Parenthesized(exprs) => can_pushdown_predicate(exprs.first().unwrap(), table_idx),
+        Expr::Unary(_, expr) => can_pushdown_predicate(expr, table_idx),
         Expr::FunctionCall { args, name, .. } => {
             let function = crate::function::Func::resolve_function(
                 &name.0,
@@ -582,13 +585,15 @@ pub fn can_pushdown_predicate(expr: &Expr) -> bool {
             // is deterministic
             matches!(function, Ok(Func::Scalar(_)))
         }
-        Expr::Like { lhs, rhs, .. } => can_pushdown_predicate(lhs) && can_pushdown_predicate(rhs),
+        Expr::Like { lhs, rhs, .. } => {
+            can_pushdown_predicate(lhs, table_idx) && can_pushdown_predicate(rhs, table_idx)
+        }
         Expr::Between {
             lhs, start, end, ..
         } => {
-            can_pushdown_predicate(lhs)
-                && can_pushdown_predicate(start)
-                && can_pushdown_predicate(end)
+            can_pushdown_predicate(lhs, table_idx)
+                && can_pushdown_predicate(start, table_idx)
+                && can_pushdown_predicate(end, table_idx)
         }
         _ => false,
     }

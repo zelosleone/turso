@@ -21,8 +21,8 @@ use super::{
     optimizer::Optimizable,
     order_by::{order_by_sorter_insert, sorter_insert},
     plan::{
-        try_convert_to_constraint_info, IterationDirection, Operation, Search, SeekDef, SelectPlan,
-        SelectQueryType, TableReference, WhereTerm,
+        convert_where_to_vtab_constraint, IterationDirection, Operation, Search, SeekDef,
+        SelectPlan, SelectQueryType, TableReference, WhereTerm,
     },
 };
 
@@ -291,31 +291,33 @@ pub fn open_loop(
                         });
                     }
                 } else if let Some(vtab) = table.virtual_table() {
-                    // Virtual tables may be used either as VTab or TVF
                     let (start_reg, count, maybe_idx_str, maybe_idx_int) = if vtab
                         .kind
                         .eq(&VTabKind::VirtualTable)
                     {
-                        // Build converted constraints from the predicates.
-                        let mut converted_constraints = Vec::with_capacity(predicates.len());
-                        for (i, pred) in predicates.iter().enumerate() {
-                            if let Some(cinfo) =
-                                try_convert_to_constraint_info(pred, table_index, i)
-                            {
-                                converted_constraints.push((cinfo, pred));
-                            }
-                        }
-                        let constraints: Vec<_> =
-                            converted_constraints.iter().map(|(c, _)| *c).collect();
-                        let order_by = [OrderByInfo {
-                            column_index: *t_ctx
-                                .result_column_indexes_in_orderby_sorter
-                                .first()
-                                .unwrap_or(&0) as u32,
-                            desc: matches!(iter_dir, IterationDirection::Backwards),
-                        }];
-                        // Call xBestIndex method on the underlying vtable.
-                        let index_info = vtab.best_index(&constraints, &order_by);
+                        // Virtual‑table (non‑TVF) modules can receive constraints via xBestIndex.
+                        // They return information with which to pass to VFilter operation.
+                        // We forward every predicate that touches vtab columns.
+                        //
+                        // vtab.col = literal             (always usable)
+                        // vtab.col = outer_table.col     (usable, because outer_table is already positioned)
+                        // vtab.col = later_table.col     (forwarded with usable = false)
+                        //
+                        // xBestIndex decides which ones it wants by setting argvIndex and whether the
+                        // core layer may omit them (omit = true).
+                        // We then materialise the RHS/LHS into registers before issuing VFilter.
+                        let converted_constraints = predicates
+                            .iter()
+                            .filter(|p| p.should_eval_at_loop(table_index))
+                            .enumerate()
+                            .filter_map(|(i, p)| {
+                                // Build ConstraintInfo from the predicates
+                                convert_where_to_vtab_constraint(p, table_index, i)
+                            })
+                            .collect::<Vec<_>>();
+                        // TODO: get proper order_by information to pass to the vtab.
+                        // maybe encode more info on t_ctx? we need: [col_idx, is_descending]
+                        let index_info = vtab.best_index(&converted_constraints, &[]);
 
                         // Determine the number of VFilter arguments (constraints with an argv_index).
                         let args_needed = index_info
@@ -328,13 +330,12 @@ pub fn open_loop(
                         // For each constraint used by best_index, translate the opposite side.
                         for (i, usage) in index_info.constraint_usages.iter().enumerate() {
                             if let Some(argv_index) = usage.argv_index {
-                                if let Some((_, pred)) = converted_constraints.get(i) {
-                                    if let ast::Expr::Binary(lhs, _, rhs) = &pred.expr {
-                                        let expr = match (&**lhs, &**rhs) {
-                                            (ast::Expr::Column { .. }, lit) => lit,
-                                            (lit, ast::Expr::Column { .. }) => lit,
-                                            _ => continue,
-                                        };
+                                if let Some(cinfo) = converted_constraints.get(i) {
+                                    let (pred_idx, is_rhs) = cinfo.unpack_plan_info();
+                                    if let ast::Expr::Binary(lhs, _, rhs) =
+                                        &predicates[pred_idx].expr
+                                    {
+                                        let expr = if is_rhs { rhs } else { lhs };
                                         // argv_index is 1-based; adjust to get the proper register offset.
                                         let target_reg = start_reg + (argv_index - 1) as usize;
                                         translate_expr(
@@ -344,6 +345,9 @@ pub fn open_loop(
                                             target_reg,
                                             &t_ctx.resolver,
                                         )?;
+                                        if cinfo.usable && usage.omit {
+                                            t_ctx.omit_predicates.push(pred_idx)
+                                        }
                                     }
                                 }
                             }
@@ -359,15 +363,6 @@ pub fn open_loop(
                         } else {
                             None
                         };
-                        // Record (in t_ctx) the indices of predicates that best_index tells us to omit.
-                        // Here we insert directly into t_ctx.omit_predicates
-                        for (j, usage) in index_info.constraint_usages.iter().enumerate() {
-                            if usage.argv_index.is_some() && usage.omit {
-                                if let Some(constraint) = constraints.get(j) {
-                                    t_ctx.omit_predicates.push(constraint.pred_idx);
-                                }
-                            }
-                        }
                         (
                             start_reg,
                             args_needed,
