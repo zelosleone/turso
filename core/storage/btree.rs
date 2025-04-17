@@ -1181,10 +1181,7 @@ impl BTreeCursor {
         }
     }
 
-    /// Specialized version of move_to() for table btrees that uses binary search instead
-    /// of iterating cells in order.
-    /// The only reason this is specialized for rowids is that Jussi didn't have the energy to implement
-    /// it for index btrees yet lol.
+    /// Specialized version of move_to() for table btrees.
     fn tablebtree_move_to_binsearch(
         &mut self,
         rowid: u64,
@@ -1219,6 +1216,14 @@ impl BTreeCursor {
                             ),
                             self.usable_space(),
                         )?;
+                        // If we found our target rowid in the left subtree,
+                        // we need to move the parent cell pointer forwards or backwards depending on the iteration direction.
+                        // For example: since the internal node contains the max rowid of the left subtree, we need to move the
+                        // parent pointer backwards in backwards iteration so that we don't come back to the parent again.
+                        // E.g.
+                        // this parent: rowid 666
+                        // left child has: 664,665,666
+                        // we need to move to the previous parent (with e.g. rowid 663) when iterating backwards.
                         self.stack.next_cell_in_direction(iter_dir);
                         let BTreeCell::TableInteriorCell(TableInteriorCell {
                             _left_child_page,
@@ -1263,6 +1268,29 @@ impl BTreeCursor {
                         _left_child_page,
                         _rowid: cell_rowid,
                     }) => {
+                        // in sqlite btrees left child pages have <= keys.
+                        // table btrees can have a duplicate rowid in the interior cell, so for example if we are looking for rowid=10,
+                        // and we find an interior cell with rowid=10, we need to move to the left page since (due to the <= rule of sqlite btrees)
+                        // the left page may have a rowid=10.
+                        // Logic table for determining if target leaf page is in left subtree
+                        //
+                        // Forwards iteration (looking for first match in tree):
+                        // OP  | Current Cell vs Seek Key   | Action?  | Explanation
+                        // GT  | >                          | go left  | First > key is in left subtree
+                        // GT  | = or <                     | go right | First > key is in right subtree
+                        // GE  | > or =                     | go left  | First >= key is in left subtree
+                        // GE  | <                          | go right | First >= key is in right subtree
+                        //
+                        // Backwards iteration (looking for last match in tree):
+                        // OP  | Current Cell vs Seek Key   | Action?  | Explanation
+                        // LE  | > or =                     | go left  | Last <= key is in left subtree
+                        // LE  | <                          | go right | Last <= key is in right subtree
+                        // LT  | > or =                     | go left  | Last < key is in left subtree
+                        // LT  | <                          | go right?| Last < key is in right subtree, except if cell rowid is exactly 1 less
+                        //
+                        // No iteration (point query):
+                        // EQ  | > or =                     | go left  | Last = key is in left subtree
+                        // EQ  | <                          | go right | Last = key is in right subtree
                         let is_on_left = match seek_op {
                             SeekOp::GT => *cell_rowid > rowid,
                             SeekOp::GE => *cell_rowid >= rowid,
@@ -1278,6 +1306,136 @@ impl BTreeCursor {
                         }
                     }
                     _ => unreachable!("unexpected cell type: {:?}", cur_cell),
+                }
+            }
+        }
+    }
+
+    /// Specialized version of move_to() for index btrees.
+    /// TODO: refactor this to use binary search instead of iterating cells in order.
+    fn indexbtree_move_to<'a>(
+        &mut self,
+        index_key: &'a ImmutableRecord,
+        cmp: SeekOp,
+        iter_dir: IterationDirection,
+    ) -> Result<CursorResult<()>> {
+        loop {
+            let page = self.stack.top();
+            return_if_locked!(page);
+
+            let contents = page.get().contents.as_ref().unwrap();
+            if contents.is_leaf() {
+                return Ok(CursorResult::Ok(()));
+            }
+
+            let mut found_cell = false;
+            for cell_idx in 0..contents.cell_count() {
+                let cell = contents.cell_get(
+                    cell_idx,
+                    payload_overflow_threshold_max(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    payload_overflow_threshold_min(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    self.usable_space(),
+                )?;
+                let BTreeCell::IndexInteriorCell(IndexInteriorCell {
+                    left_child_page,
+                    payload,
+                    first_overflow_page,
+                    payload_size,
+                }) = &cell
+                else {
+                    unreachable!("unexpected cell type: {:?}", cell);
+                };
+
+                if let Some(next_page) = first_overflow_page {
+                    return_if_io!(self.process_overflow_read(payload, *next_page, *payload_size))
+                } else {
+                    crate::storage::sqlite3_ondisk::read_record(
+                        payload,
+                        self.get_immutable_record_or_create().as_mut().unwrap(),
+                    )?
+                };
+                let record = self.get_immutable_record();
+                let record = record.as_ref().unwrap();
+                let record_slice_equal_number_of_cols =
+                    &record.get_values().as_slice()[..index_key.get_values().len()];
+                let interior_cell_vs_index_key = compare_immutable(
+                    record_slice_equal_number_of_cols,
+                    index_key.get_values(),
+                    self.index_key_sort_order,
+                );
+                // in sqlite btrees left child pages have <= keys.
+                // in general, in forwards iteration we want to find the first key that matches the seek condition.
+                // in backwards iteration we want to find the last key that matches the seek condition.
+                //
+                // Logic table for determining if target leaf page is in left subtree.
+                // For index b-trees this is a bit more complicated since the interior cells contain payloads (the key is the payload).
+                // and for non-unique indexes there might be several cells with the same key.
+                //
+                // Forwards iteration (looking for first match in tree):
+                // OP  | Current Cell vs Seek Key  | Action?  | Explanation
+                // GT  | >                         | go left  | First > key could be exactly this one, or in left subtree
+                // GT  | = or <                    | go right | First > key must be in right subtree
+                // GE  | >                         | go left  | First >= key could be exactly this one, or in left subtree
+                // GE  | =                         | go left  | First >= key could be exactly this one, or in left subtree
+                // GE  | <                         | go right | First >= key must be in right subtree
+                //
+                // Backwards iteration (looking for last match in tree):
+                // OP  | Current Cell vs Seek Key  | Action?  | Explanation
+                // LE  | >                         | go left  | Last <= key must be in left subtree
+                // LE  | =                         | go right | Last <= key is either this one, or somewhere to the right of this one. So we need to go right to make sure
+                // LE  | <                         | go right | Last <= key must be in right subtree
+                // LT  | >                         | go left  | Last < key must be in left subtree
+                // LT  | =                         | go left  | Last < key must be in left subtree since we want strictly less than
+                // LT  | <                         | go right | Last < key could be exactly this one, or in right subtree
+                //
+                // No iteration (point query):
+                // EQ  | >                         | go left  | First = key must be in left subtree
+                // EQ  | =                         | go left  | First = key could be exactly this one, or in left subtree
+                // EQ  | <                         | go right | First = key must be in right subtree
+
+                let target_leaf_page_is_in_left_subtree = match cmp {
+                    SeekOp::GT => interior_cell_vs_index_key.is_gt(),
+                    SeekOp::GE => interior_cell_vs_index_key.is_ge(),
+                    SeekOp::EQ => interior_cell_vs_index_key.is_ge(),
+                    SeekOp::LE => interior_cell_vs_index_key.is_gt(),
+                    SeekOp::LT => interior_cell_vs_index_key.is_ge(),
+                };
+                if target_leaf_page_is_in_left_subtree {
+                    // we don't advance in case of forward iteration and index tree internal nodes because we will visit this node going up.
+                    // in backwards iteration, we must retreat because otherwise we would unnecessarily visit this node again.
+                    // Example:
+                    // this parent: key 666, and we found the target key in the left child.
+                    // left child has: key 663, key 664, key 665
+                    // we need to move to the previous parent (with e.g. key 662) when iterating backwards so that we don't end up back here again.
+                    if iter_dir == IterationDirection::Backwards {
+                        self.stack.retreat();
+                    }
+                    let mem_page = self.pager.read_page(*left_child_page as usize)?;
+                    self.stack.push(mem_page);
+                    found_cell = true;
+                    break;
+                } else {
+                    self.stack.advance();
+                }
+            }
+
+            if !found_cell {
+                match contents.rightmost_pointer() {
+                    Some(right_most_pointer) => {
+                        self.stack.advance();
+                        let mem_page = self.pager.read_page(right_most_pointer as usize)?;
+                        self.stack.push(mem_page);
+                        continue;
+                    }
+                    None => {
+                        unreachable!("we shall not go back up! The only way is down the slope");
+                    }
                 }
             }
         }
@@ -1463,205 +1621,14 @@ impl BTreeCursor {
         //    This cell contains the actual data we are looking for.
         // 6. If we find the cell, we return the record. Otherwise, we return an empty result.
         self.move_to_root();
+
         let iter_dir = cmp.iteration_direction();
-        if let SeekKey::TableRowId(rowid_key) = key {
-            return self.tablebtree_move_to_binsearch(rowid_key, cmp, iter_dir);
-        }
-
-        loop {
-            let page = self.stack.top();
-            return_if_locked!(page);
-
-            let contents = page.get().contents.as_ref().unwrap();
-            if contents.is_leaf() {
-                return Ok(CursorResult::Ok(()));
+        match key {
+            SeekKey::TableRowId(rowid_key) => {
+                return self.tablebtree_move_to_binsearch(rowid_key, cmp, iter_dir);
             }
-
-            let mut found_cell = false;
-            for cell_idx in 0..contents.cell_count() {
-                let cell = contents.cell_get(
-                    cell_idx,
-                    payload_overflow_threshold_max(
-                        contents.page_type(),
-                        self.usable_space() as u16,
-                    ),
-                    payload_overflow_threshold_min(
-                        contents.page_type(),
-                        self.usable_space() as u16,
-                    ),
-                    self.usable_space(),
-                )?;
-                match &cell {
-                    BTreeCell::TableInteriorCell(TableInteriorCell {
-                        _left_child_page,
-                        _rowid: cell_rowid,
-                    }) => {
-                        let SeekKey::TableRowId(rowid_key) = key else {
-                            unreachable!("table seek key should be a rowid");
-                        };
-                        // in sqlite btrees left child pages have <= keys.
-                        // table btrees can have a duplicate rowid in the interior cell, so for example if we are looking for rowid=10,
-                        // and we find an interior cell with rowid=10, we need to move to the left page since (due to the <= rule of sqlite btrees)
-                        // the left page may have a rowid=10.
-                        // Logic table for determining if target leaf page is in left subtree
-                        //
-                        // Forwards iteration (looking for first match in tree):
-                        // OP  | Current Cell vs Seek Key   | Action?  | Explanation
-                        // GT  | >                          | go left  | First > key is in left subtree
-                        // GT  | = or <                     | go right | First > key is in right subtree
-                        // GE  | > or =                     | go left  | First >= key is in left subtree
-                        // GE  | <                          | go right | First >= key is in right subtree
-                        //
-                        // Backwards iteration (looking for last match in tree):
-                        // OP  | Current Cell vs Seek Key   | Action?  | Explanation
-                        // LE  | > or =                     | go left  | Last <= key is in left subtree
-                        // LE  | <                          | go right | Last <= key is in right subtree
-                        // LT  | > or =                     | go left  | Last < key is in left subtree
-                        // LT  | <                          | go right?| Last < key is in right subtree, except if cell rowid is exactly 1 less
-                        //
-                        // No iteration (point query):
-                        // EQ  | > or =                     | go left  | Last = key is in left subtree
-                        // EQ  | <                          | go right | Last = key is in right subtree
-                        let target_leaf_page_is_in_left_subtree = match cmp {
-                            SeekOp::GT => *cell_rowid > rowid_key,
-                            SeekOp::GE => *cell_rowid >= rowid_key,
-                            SeekOp::LE => *cell_rowid >= rowid_key,
-                            SeekOp::LT => *cell_rowid + 1 >= rowid_key,
-                            SeekOp::EQ => *cell_rowid >= rowid_key,
-                        };
-                        if target_leaf_page_is_in_left_subtree {
-                            // If we found our target rowid in the left subtree,
-                            // we need to move the parent cell pointer forwards or backwards depending on the iteration direction.
-                            // For example: since the internal node contains the max rowid of the left subtree, we need to move the
-                            // parent pointer backwards in backwards iteration so that we don't come back to the parent again.
-                            // E.g.
-                            // this parent: rowid 666
-                            // left child has: 664,665,666
-                            // we need to move to the previous parent (with e.g. rowid 663) when iterating backwards.
-                            self.stack.next_cell_in_direction(iter_dir);
-                            let mem_page = self.pager.read_page(*_left_child_page as usize)?;
-                            self.stack.push(mem_page);
-                            found_cell = true;
-                            break;
-                        } else {
-                            self.stack.advance();
-                        }
-                    }
-                    BTreeCell::TableLeafCell(TableLeafCell {
-                        _rowid: _,
-                        _payload: _,
-                        first_overflow_page: _,
-                        ..
-                    }) => {
-                        unreachable!(
-                            "we don't iterate leaf cells while trying to move to a leaf cell"
-                        );
-                    }
-                    BTreeCell::IndexInteriorCell(IndexInteriorCell {
-                        left_child_page,
-                        payload,
-                        first_overflow_page,
-                        payload_size,
-                    }) => {
-                        let SeekKey::IndexKey(index_key) = key else {
-                            unreachable!("index seek key should be a record");
-                        };
-                        if let Some(next_page) = first_overflow_page {
-                            return_if_io!(self.process_overflow_read(
-                                payload,
-                                *next_page,
-                                *payload_size
-                            ))
-                        } else {
-                            crate::storage::sqlite3_ondisk::read_record(
-                                payload,
-                                self.get_immutable_record_or_create().as_mut().unwrap(),
-                            )?
-                        };
-                        let record = self.get_immutable_record();
-                        let record = record.as_ref().unwrap();
-                        let record_slice_equal_number_of_cols =
-                            &record.get_values().as_slice()[..index_key.get_values().len()];
-                        let interior_cell_vs_index_key = compare_immutable(
-                            record_slice_equal_number_of_cols,
-                            index_key.get_values(),
-                            self.index_key_sort_order,
-                        );
-                        // in sqlite btrees left child pages have <= keys.
-                        // in general, in forwards iteration we want to find the first key that matches the seek condition.
-                        // in backwards iteration we want to find the last key that matches the seek condition.
-                        //
-                        // Logic table for determining if target leaf page is in left subtree.
-                        // For index b-trees this is a bit more complicated since the interior cells contain payloads (the key is the payload).
-                        // and for non-unique indexes there might be several cells with the same key.
-                        //
-                        // Forwards iteration (looking for first match in tree):
-                        // OP  | Current Cell vs Seek Key  | Action?  | Explanation
-                        // GT  | >                         | go left  | First > key could be exactly this one, or in left subtree
-                        // GT  | = or <                    | go right | First > key must be in right subtree
-                        // GE  | >                         | go left  | First >= key could be exactly this one, or in left subtree
-                        // GE  | =                         | go left  | First >= key could be exactly this one, or in left subtree
-                        // GE  | <                         | go right | First >= key must be in right subtree
-                        //
-                        // Backwards iteration (looking for last match in tree):
-                        // OP  | Current Cell vs Seek Key  | Action?  | Explanation
-                        // LE  | >                         | go left  | Last <= key must be in left subtree
-                        // LE  | =                         | go right | Last <= key is either this one, or somewhere to the right of this one. So we need to go right to make sure
-                        // LE  | <                         | go right | Last <= key must be in right subtree
-                        // LT  | >                         | go left  | Last < key must be in left subtree
-                        // LT  | =                         | go left  | Last < key must be in left subtree since we want strictly less than
-                        // LT  | <                         | go right | Last < key could be exactly this one, or in right subtree
-                        //
-                        // No iteration (point query):
-                        // EQ  | >                         | go left  | First = key must be in left subtree
-                        // EQ  | =                         | go left  | First = key could be exactly this one, or in left subtree
-                        // EQ  | <                         | go right | First = key must be in right subtree
-
-                        let target_leaf_page_is_in_left_subtree = match cmp {
-                            SeekOp::GT => interior_cell_vs_index_key.is_gt(),
-                            SeekOp::GE => interior_cell_vs_index_key.is_ge(),
-                            SeekOp::EQ => interior_cell_vs_index_key.is_ge(),
-                            SeekOp::LE => interior_cell_vs_index_key.is_gt(),
-                            SeekOp::LT => interior_cell_vs_index_key.is_ge(),
-                        };
-                        if target_leaf_page_is_in_left_subtree {
-                            // we don't advance in case of forward iteration and index tree internal nodes because we will visit this node going up.
-                            // in backwards iteration, we must retreat because otherwise we would unnecessarily visit this node again.
-                            // Example:
-                            // this parent: key 666, and we found the target key in the left child.
-                            // left child has: key 663, key 664, key 665
-                            // we need to move to the previous parent (with e.g. key 662) when iterating backwards so that we don't end up back here again.
-                            if iter_dir == IterationDirection::Backwards {
-                                self.stack.retreat();
-                            }
-                            let mem_page = self.pager.read_page(*left_child_page as usize)?;
-                            self.stack.push(mem_page);
-                            found_cell = true;
-                            break;
-                        } else {
-                            self.stack.advance();
-                        }
-                    }
-                    BTreeCell::IndexLeafCell(_) => {
-                        unreachable!(
-                            "we don't iterate leaf cells while trying to move to a leaf cell"
-                        );
-                    }
-                }
-            }
-
-            if !found_cell {
-                match contents.rightmost_pointer() {
-                    Some(right_most_pointer) => {
-                        self.stack.advance();
-                        let mem_page = self.pager.read_page(right_most_pointer as usize)?;
-                        self.stack.push(mem_page);
-                        continue;
-                    }
-                    None => {
-                        unreachable!("we shall not go back up! The only way is down the slope");
-                    }
-                }
+            SeekKey::IndexKey(index_key) => {
+                return self.indexbtree_move_to(index_key, cmp, iter_dir);
             }
         }
     }
