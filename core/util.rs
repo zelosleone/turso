@@ -878,7 +878,10 @@ fn parse_numeric_str(text: &str) -> Result<(OwnedValueType, &str), ()> {
     let text = text.trim();
     let bytes = text.as_bytes();
 
-    if matches!(bytes, [b'e', ..] | [b'E', ..] | [b'.', b'e' | b'E', ..]) {
+    if matches!(
+        bytes,
+        [] | [b'e', ..] | [b'E', ..] | [b'.', b'e' | b'E', ..]
+    ) {
         return Err(());
     }
 
