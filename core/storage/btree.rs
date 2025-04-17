@@ -2782,6 +2782,10 @@ impl BTreeCursor {
                     }
                 }
                 if was_overflow {
+                    if !leaf_data {
+                        // remember to increase cell if this cell was moved to parent
+                        current_index_cell += 1;
+                    }
                     continue;
                 }
                 // check if overflow
@@ -2885,6 +2889,10 @@ impl BTreeCursor {
                         }
                     }
                     if was_overflow {
+                        if !leaf_data {
+                            // remember to increase cell if this cell was moved to parent
+                            current_index_cell += 1;
+                        }
                         continue;
                     }
                     let (parent_cell_start, parent_cell_len) = parent_contents.cell_get_raw_region(
