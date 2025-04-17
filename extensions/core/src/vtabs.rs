@@ -272,7 +272,7 @@ pub struct ExtIndexInfo {
 /// can use the constraints in the WHERE clause of a query.
 #[derive(Debug, Clone, Copy)]
 pub struct ConstraintUsage {
-    /// 1 based index of the argument in the WHERE clause.
+    /// 1 based index of the argument passed
     pub argv_index: Option<u32>,
     /// If true, core can omit this constraint in the vdbe layer.
     pub omit: bool,
@@ -289,6 +289,18 @@ pub struct ConstraintInfo {
     pub op: ConstraintOp,
     /// Whether or not constraint is garaunteed to be enforced.
     pub usable: bool,
-    ///
-    pub pred_idx: usize,
+    /// packed integer with the index of the constraint in the planner,
+    /// and the side of the binary expr that the relevant column is on.
+    pub plan_info: u32,
+}
+
+impl ConstraintInfo {
+    #[inline(always)]
+    pub fn pack_plan_info(pred_idx: u32, is_right_side: bool) -> u32 {
+        ((pred_idx) << 1) | (is_right_side as u32)
+    }
+    #[inline(always)]
+    pub fn unpack_plan_info(&self) -> (usize, bool) {
+        ((self.plan_info >> 1) as usize, (self.plan_info & 1) != 0)
+    }
 }
