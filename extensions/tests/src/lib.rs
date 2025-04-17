@@ -54,11 +54,19 @@ impl VTabModule for KVStoreVTab {
                 && constraint.op == ConstraintOp::Eq
                 && constraint.column_index == 0
             {
+                // this extension wouldn't support order by but for testing purposes,
+                // we will consume it if we find an ASC order by clause on the value column
+                let mut consumed = false;
+                if let Some(order) = _order_by.first() {
+                    if order.column_index == 1 && !order.desc {
+                        consumed = true;
+                    }
+                }
                 log::debug!("xBestIndex: constraint found for 'key = ?'");
                 return IndexInfo {
                     idx_num: 1,
                     idx_str: Some("key_eq".to_string()),
-                    order_by_consumed: false,
+                    order_by_consumed: consumed,
                     estimated_cost: 10.0,
                     estimated_rows: 4,
                     constraint_usages: vec![ConstraintUsage {

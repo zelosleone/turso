@@ -628,8 +628,8 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                 order_by: *const ::limbo_ext::OrderByInfo,
                 n_order_by: i32,
             ) -> ::limbo_ext::ExtIndexInfo {
-                let constraints = std::slice::from_raw_parts(constraints, n_constraints as usize);
-                let order_by = std::slice::from_raw_parts(order_by, n_order_by as usize);
+                let constraints = if n_constraints > 0 { std::slice::from_raw_parts(constraints, n_constraints as usize) } else { &[] };
+                let order_by = if n_order_by > 0 { std::slice::from_raw_parts(order_by, n_order_by as usize) } else { &[] };
                 <#struct_name as ::limbo_ext::VTabModule>::best_index(constraints, order_by).to_ffi()
             }
 
