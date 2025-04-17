@@ -966,6 +966,8 @@ pub fn op_vfilter(
         pc_if_empty,
         arg_count,
         args_reg,
+        idx_str,
+        idx_num,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -977,11 +979,21 @@ pub fn op_vfilter(
     let has_rows = {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_virtual_mut();
-        let mut args = Vec::new();
+        let mut args = Vec::with_capacity(*arg_count);
         for i in 0..*arg_count {
-            args.push(state.registers[args_reg + i].get_owned_value().clone());
+            args.push(
+                state.registers[args_reg + i]
+                    .get_owned_value()
+                    .clone()
+                    .to_ffi(),
+            );
         }
-        virtual_table.filter(cursor, *arg_count, args)?
+        let idx_str = if let Some(idx_str) = idx_str {
+            Some(state.registers[*idx_str].get_owned_value().to_string())
+        } else {
+            None
+        };
+        virtual_table.filter(cursor, *idx_num as i32, idx_str, *arg_count, args)?
     };
     if !has_rows {
         state.pc = pc_if_empty.to_offset_int();

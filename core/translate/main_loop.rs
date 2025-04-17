@@ -1,3 +1,6 @@
+use limbo_ext::VTabKind;
+use limbo_sqlite3_parser::ast;
+
 use crate::{
     schema::Table,
     translate::result_row::emit_select_result,
@@ -18,8 +21,8 @@ use super::{
     optimizer::Optimizable,
     order_by::{order_by_sorter_insert, sorter_insert},
     plan::{
-        IterationDirection, Operation, Search, SeekDef, SelectPlan, SelectQueryType,
-        TableReference, WhereTerm,
+        convert_where_to_vtab_constraint, IterationDirection, Operation, Search, SeekDef,
+        SelectPlan, SelectQueryType, TableReference, WhereTerm,
     },
 };
 
@@ -251,9 +254,6 @@ pub fn open_loop(
                     end_offset: loop_end,
                 });
 
-                // These are predicates evaluated outside of the subquery,
-                // so they are translated here.
-                // E.g. SELECT foo FROM (SELECT bar as foo FROM t1) sub WHERE sub.foo > 10
                 for cond in predicates
                     .iter()
                     .filter(|cond| cond.should_eval_at_loop(table_index))
@@ -290,25 +290,111 @@ pub fn open_loop(
                             pc_if_empty: loop_end,
                         });
                     }
-                }
-                if let Table::Virtual(ref table) = table.table {
-                    let start_reg =
-                        program.alloc_registers(table.args.as_ref().map(|a| a.len()).unwrap_or(0));
-                    let mut cur_reg = start_reg;
-                    let args = match table.args.as_ref() {
-                        Some(args) => args,
-                        None => &vec![],
+                } else if let Some(vtab) = table.virtual_table() {
+                    let (start_reg, count, maybe_idx_str, maybe_idx_int) = if vtab
+                        .kind
+                        .eq(&VTabKind::VirtualTable)
+                    {
+                        // Virtual‑table (non‑TVF) modules can receive constraints via xBestIndex.
+                        // They return information with which to pass to VFilter operation.
+                        // We forward every predicate that touches vtab columns.
+                        //
+                        // vtab.col = literal             (always usable)
+                        // vtab.col = outer_table.col     (usable, because outer_table is already positioned)
+                        // vtab.col = later_table.col     (forwarded with usable = false)
+                        //
+                        // xBestIndex decides which ones it wants by setting argvIndex and whether the
+                        // core layer may omit them (omit = true).
+                        // We then materialise the RHS/LHS into registers before issuing VFilter.
+                        let converted_constraints = predicates
+                            .iter()
+                            .filter(|p| p.should_eval_at_loop(table_index))
+                            .enumerate()
+                            .filter_map(|(i, p)| {
+                                // Build ConstraintInfo from the predicates
+                                convert_where_to_vtab_constraint(p, table_index, i)
+                            })
+                            .collect::<Vec<_>>();
+                        // TODO: get proper order_by information to pass to the vtab.
+                        // maybe encode more info on t_ctx? we need: [col_idx, is_descending]
+                        let index_info = vtab.best_index(&converted_constraints, &[]);
+
+                        // Determine the number of VFilter arguments (constraints with an argv_index).
+                        let args_needed = index_info
+                            .constraint_usages
+                            .iter()
+                            .filter(|u| u.argv_index.is_some())
+                            .count();
+                        let start_reg = program.alloc_registers(args_needed);
+
+                        // For each constraint used by best_index, translate the opposite side.
+                        for (i, usage) in index_info.constraint_usages.iter().enumerate() {
+                            if let Some(argv_index) = usage.argv_index {
+                                if let Some(cinfo) = converted_constraints.get(i) {
+                                    let (pred_idx, is_rhs) = cinfo.unpack_plan_info();
+                                    if let ast::Expr::Binary(lhs, _, rhs) =
+                                        &predicates[pred_idx].expr
+                                    {
+                                        // translate the opposite side of the referenced vtab column
+                                        let expr = if is_rhs { lhs } else { rhs };
+                                        // argv_index is 1-based; adjust to get the proper register offset.
+                                        let target_reg = start_reg + (argv_index - 1) as usize;
+                                        translate_expr(
+                                            program,
+                                            Some(tables),
+                                            expr,
+                                            target_reg,
+                                            &t_ctx.resolver,
+                                        )?;
+                                        if cinfo.usable && usage.omit {
+                                            t_ctx.omit_predicates.push(pred_idx)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // If best_index provided an idx_str, translate it.
+                        let maybe_idx_str = if let Some(idx_str) = index_info.idx_str {
+                            let reg = program.alloc_register();
+                            program.emit_insn(Insn::String8 {
+                                dest: reg,
+                                value: idx_str,
+                            });
+                            Some(reg)
+                        } else {
+                            None
+                        };
+                        (
+                            start_reg,
+                            args_needed,
+                            maybe_idx_str,
+                            Some(index_info.idx_num),
+                        )
+                    } else {
+                        // For table-valued functions: translate the table args.
+                        let args = match vtab.args.as_ref() {
+                            Some(args) => args,
+                            None => &vec![],
+                        };
+                        let start_reg = program.alloc_registers(args.len());
+                        let mut cur_reg = start_reg;
+                        for arg in args {
+                            let reg = cur_reg;
+                            cur_reg += 1;
+                            let _ =
+                                translate_expr(program, Some(tables), arg, reg, &t_ctx.resolver)?;
+                        }
+                        (start_reg, args.len(), None, None)
                     };
-                    for arg in args {
-                        let reg = cur_reg;
-                        cur_reg += 1;
-                        let _ = translate_expr(program, Some(tables), arg, reg, &t_ctx.resolver)?;
-                    }
+
+                    // Emit VFilter with the computed arguments.
                     program.emit_insn(Insn::VFilter {
                         cursor_id,
-                        pc_if_empty: loop_end,
-                        arg_count: table.args.as_ref().map_or(0, |args| args.len()),
+                        arg_count: count,
                         args_reg: start_reg,
+                        idx_str: maybe_idx_str,
+                        idx_num: maybe_idx_int.unwrap_or(0) as usize,
+                        pc_if_empty: loop_end,
                     });
                 }
                 program.resolve_label(loop_start, program.offset());
@@ -320,10 +406,9 @@ pub fn open_loop(
                     });
                 }
 
-                for cond in predicates
-                    .iter()
-                    .filter(|cond| cond.should_eval_at_loop(table_index))
-                {
+                for (_, cond) in predicates.iter().enumerate().filter(|(i, cond)| {
+                    cond.should_eval_at_loop(table_index) && !t_ctx.omit_predicates.contains(i)
+                }) {
                     let jump_target_when_true = program.allocate_label();
                     let condition_metadata = ConditionMetadata {
                         jump_if_condition_is_true: false,
