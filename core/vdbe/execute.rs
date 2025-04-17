@@ -979,9 +979,14 @@ pub fn op_vfilter(
     let has_rows = {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_virtual_mut();
-        let mut args = Vec::new();
+        let mut args = Vec::with_capacity(*arg_count);
         for i in 0..*arg_count {
-            args.push(state.registers[args_reg + i].get_owned_value().clone());
+            args.push(
+                state.registers[args_reg + i]
+                    .get_owned_value()
+                    .clone()
+                    .to_ffi(),
+            );
         }
         let idx_str = if let Some(idx_str) = idx_str {
             Some(state.registers[*idx_str].get_owned_value().to_string())

@@ -705,19 +705,16 @@ impl VirtualTable {
         VTabOpaqueCursor::new(cursor)
     }
 
+    #[tracing::instrument(skip(cursor))]
     pub fn filter(
         &self,
         cursor: &VTabOpaqueCursor,
         idx_num: i32,
         idx_str: Option<String>,
         arg_count: usize,
-        args: Vec<OwnedValue>,
+        args: Vec<limbo_ext::Value>,
     ) -> Result<bool> {
-        let mut filter_args = Vec::with_capacity(arg_count);
-        for i in 0..arg_count {
-            let ownedvalue_arg = args.get(i).unwrap();
-            filter_args.push(ownedvalue_arg.to_ffi());
-        }
+        tracing::trace!("xFilter");
         let c_idx_str = idx_str
             .map(|s| std::ffi::CString::new(s).unwrap())
             .map(|cstr| cstr.into_raw())
@@ -726,12 +723,12 @@ impl VirtualTable {
             (self.implementation.filter)(
                 cursor.as_ptr(),
                 arg_count as i32,
-                filter_args.as_ptr(),
+                args.as_ptr(),
                 c_idx_str,
                 idx_num,
             )
         };
-        for arg in filter_args {
+        for arg in args {
             unsafe {
                 arg.__free_internal_type();
             }
