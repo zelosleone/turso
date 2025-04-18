@@ -146,6 +146,12 @@ struct DestroyInfo {
 }
 
 #[derive(Debug, Clone)]
+enum DeleteSavepoint {
+    Rowid(u64),
+    Payload(ImmutableRecord),
+}
+
+#[derive(Debug, Clone)]
 enum DeleteState {
     Start,
     LoadPage,
@@ -164,13 +170,13 @@ enum DeleteState {
     },
     CheckNeedsBalancing,
     StartBalancing {
-        target_rowid: u64,
+        target_key: DeleteSavepoint,
     },
     WaitForBalancingToComplete {
-        target_rowid: u64,
+        target_key: DeleteSavepoint,
     },
     SeekAfterBalancing {
-        target_rowid: u64,
+        target_key: DeleteSavepoint,
     },
     StackRetreat,
     Finish,
@@ -1175,7 +1181,6 @@ impl BTreeCursor {
     pub fn move_to(&mut self, key: SeekKey<'_>, cmp: SeekOp) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
         tracing::trace!("move_to(key={:?} cmp={:?})", key, cmp);
-        tracing::trace!("backtrace: {}", std::backtrace::Backtrace::force_capture());
         // For a table with N rows, we can find any row by row id in O(log(N)) time by starting at the root page and following the B-tree pointers.
         // B-trees consist of interior pages and leaf pages. Interior pages contain pointers to other pages, while leaf pages contain the actual row data.
         //
@@ -3264,13 +3269,24 @@ impl BTreeCursor {
 
             match delete_state {
                 DeleteState::Start => {
-                    let _target_rowid = match self.rowid.get() {
-                        Some(rowid) => rowid,
-                        None => {
+                    let page = self.stack.top();
+                    if matches!(
+                        page.get_contents().page_type(),
+                        PageType::TableLeaf | PageType::TableInterior
+                    ) {
+                        let _target_rowid = match self.rowid.get() {
+                            Some(rowid) => rowid,
+                            None => {
+                                self.state = CursorState::None;
+                                return Ok(CursorResult::Ok(()));
+                            }
+                        };
+                    } else {
+                        if self.reusable_immutable_record.borrow().is_none() {
                             self.state = CursorState::None;
                             return Ok(CursorResult::Ok(()));
                         }
-                    };
+                    }
 
                     let delete_info = self.state.mut_delete_info().unwrap();
                     delete_info.state = DeleteState::LoadPage;
@@ -3313,6 +3329,7 @@ impl BTreeCursor {
 
                     let original_child_pointer = match &cell {
                         BTreeCell::TableInteriorCell(interior) => Some(interior._left_child_page),
+                        BTreeCell::IndexInteriorCell(interior) => Some(interior.left_child_page),
                         _ => None,
                     };
 
@@ -3359,27 +3376,21 @@ impl BTreeCursor {
                     return_if_io!(self.prev());
 
                     let leaf_page = self.stack.top();
-                    return_if_locked!(leaf_page);
+                    return_if_locked_maybe_load!(self.pager, leaf_page);
+                    assert!(
+                        matches!(
+                            leaf_page.get_contents().page_type(),
+                            PageType::TableLeaf | PageType::IndexLeaf
+                        ),
+                        "self.prev should have returned a leaf page"
+                    );
 
-                    if !leaf_page.is_loaded() {
-                        self.pager.load_page(leaf_page.clone())?;
-                        return Ok(CursorResult::IO);
-                    }
-
-                    let parent_page = {
-                        self.stack.pop();
-                        let parent = self.stack.top();
-                        self.stack.push(leaf_page.clone());
-                        parent
-                    };
-
-                    if !parent_page.is_loaded() {
-                        self.pager.load_page(parent_page.clone())?;
-                        return Ok(CursorResult::IO);
-                    }
+                    let parent_page = self.stack.parent_page().unwrap();
+                    assert!(parent_page.is_loaded(), "parent page");
 
                     let leaf_contents = leaf_page.get().contents.as_ref().unwrap();
-                    let leaf_cell_idx = self.stack.current_cell_index() as usize - 1;
+                    // The index of the cell to removed must be the last one.
+                    let leaf_cell_idx = leaf_contents.cell_count() - 1;
                     let predecessor_cell = leaf_contents.cell_get(
                         leaf_cell_idx,
                         payload_overflow_threshold_max(
@@ -3398,14 +3409,17 @@ impl BTreeCursor {
 
                     let parent_contents = parent_page.get().contents.as_mut().unwrap();
 
-                    // Create an interior cell from the leaf cell
+                    // Create an interior cell from a predecessor
                     let mut cell_payload: Vec<u8> = Vec::new();
+                    let child_pointer = original_child_pointer.expect("there should be a pointer");
                     match predecessor_cell {
                         BTreeCell::TableLeafCell(leaf_cell) => {
-                            if let Some(child_pointer) = original_child_pointer {
-                                cell_payload.extend_from_slice(&child_pointer.to_be_bytes());
-                                write_varint_to_vec(leaf_cell._rowid, &mut cell_payload);
-                            }
+                            cell_payload.extend_from_slice(&child_pointer.to_be_bytes());
+                            write_varint_to_vec(leaf_cell._rowid, &mut cell_payload);
+                        }
+                        BTreeCell::IndexLeafCell(leaf_cell) => {
+                            cell_payload.extend_from_slice(&child_pointer.to_be_bytes());
+                            cell_payload.extend_from_slice(leaf_cell.payload);
                         }
                         _ => unreachable!("Expected table leaf cell"),
                     }
@@ -3454,17 +3468,21 @@ impl BTreeCursor {
                     let free_space = compute_free_space(contents, self.usable_space() as u16);
                     let needs_balancing = free_space as usize * 3 > self.usable_space() * 2;
 
-                    let target_rowid = self.rowid.get().unwrap();
+                    let target_key = if page.is_index() {
+                        DeleteSavepoint::Payload(self.record().as_ref().unwrap().clone())
+                    } else {
+                        DeleteSavepoint::Rowid(self.rowid.get().unwrap())
+                    };
 
                     let delete_info = self.state.mut_delete_info().unwrap();
                     if needs_balancing {
-                        delete_info.state = DeleteState::StartBalancing { target_rowid };
+                        delete_info.state = DeleteState::StartBalancing { target_key };
                     } else {
                         delete_info.state = DeleteState::StackRetreat;
                     }
                 }
 
-                DeleteState::StartBalancing { target_rowid } => {
+                DeleteState::StartBalancing { target_key } => {
                     let delete_info = self.state.mut_delete_info().unwrap();
 
                     if delete_info.balance_write_info.is_none() {
@@ -3473,10 +3491,10 @@ impl BTreeCursor {
                         delete_info.balance_write_info = Some(write_info);
                     }
 
-                    delete_info.state = DeleteState::WaitForBalancingToComplete { target_rowid }
+                    delete_info.state = DeleteState::WaitForBalancingToComplete { target_key }
                 }
 
-                DeleteState::WaitForBalancingToComplete { target_rowid } => {
+                DeleteState::WaitForBalancingToComplete { target_key } => {
                     let delete_info = self.state.mut_delete_info().unwrap();
 
                     // Switch the CursorState to Write state for balancing
@@ -3494,7 +3512,7 @@ impl BTreeCursor {
 
                             // Move to seek state
                             self.state = CursorState::Delete(DeleteInfo {
-                                state: DeleteState::SeekAfterBalancing { target_rowid },
+                                state: DeleteState::SeekAfterBalancing { target_key },
                                 balance_write_info: Some(write_info),
                             });
                         }
@@ -3507,7 +3525,7 @@ impl BTreeCursor {
                             };
 
                             self.state = CursorState::Delete(DeleteInfo {
-                                state: DeleteState::WaitForBalancingToComplete { target_rowid },
+                                state: DeleteState::WaitForBalancingToComplete { target_key },
                                 balance_write_info: Some(write_info),
                             });
                             return Ok(CursorResult::IO);
@@ -3515,8 +3533,14 @@ impl BTreeCursor {
                     }
                 }
 
-                DeleteState::SeekAfterBalancing { target_rowid } => {
-                    return_if_io!(self.move_to(SeekKey::TableRowId(target_rowid), SeekOp::EQ));
+                DeleteState::SeekAfterBalancing { target_key } => {
+                    let key = match &target_key {
+                        DeleteSavepoint::Rowid(rowid) => SeekKey::TableRowId(*rowid),
+                        DeleteSavepoint::Payload(immutable_record) => {
+                            SeekKey::IndexKey(immutable_record)
+                        }
+                    };
+                    return_if_io!(self.seek(key, SeekOp::EQ));
 
                     let delete_info = self.state.mut_delete_info().unwrap();
                     delete_info.state = DeleteState::Finish;
@@ -4100,6 +4124,18 @@ impl PageStack {
 
     fn clear(&self) {
         self.current_page.set(-1);
+    }
+    pub fn parent_page(&self) -> Option<PageRef> {
+        if self.current_page.get() > 0 {
+            Some(
+                self.stack.borrow()[self.current() - 1]
+                    .as_ref()
+                    .unwrap()
+                    .clone(),
+            )
+        } else {
+            None
+        }
     }
 }
 
