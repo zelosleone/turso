@@ -95,7 +95,7 @@ pub struct TranslateCtx<'a> {
 
 /// Used to distinguish database operations
 #[allow(clippy::upper_case_acronyms, dead_code)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperationMode {
     SELECT,
     INSERT,

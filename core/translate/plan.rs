@@ -11,14 +11,19 @@ use std::{
 use crate::{
     function::AggFunc,
     schema::{BTreeTable, Column, Index, Table},
-    vdbe::BranchOffset,
-    VirtualTable,
+    vdbe::{
+        builder::{CursorType, ProgramBuilder},
+        BranchOffset, CursorID,
+    },
+    Result, VirtualTable,
 };
 use crate::{
     schema::{PseudoTable, Type},
     types::SeekOp,
     util::can_pushdown_predicate,
 };
+
+use super::emitter::OperationMode;
 
 #[derive(Debug, Clone)]
 pub struct ResultSetColumn {
@@ -490,6 +495,100 @@ impl TableReference {
     /// This is used to determine whether a covering index can be used.
     pub fn mark_column_used(&mut self, index: usize) {
         self.col_used_mask.set(index);
+    }
+
+    /// Open the necessary cursors for this table reference.
+    /// Generally a table cursor is always opened unless a SELECT query can use a covering index.
+    /// An index cursor is opened if an index is used in any way for reading data from the table.
+    pub fn open_cursors(
+        &self,
+        program: &mut ProgramBuilder,
+        mode: OperationMode,
+    ) -> Result<(Option<CursorID>, Option<CursorID>)> {
+        let index = self.op.index();
+        match &self.table {
+            Table::BTree(btree) => {
+                let use_covering_index = self.utilizes_covering_index();
+                let table_cursor_id = if use_covering_index && mode == OperationMode::SELECT {
+                    None
+                } else {
+                    Some(program.alloc_cursor_id(
+                        Some(self.identifier.clone()),
+                        CursorType::BTreeTable(btree.clone()),
+                    ))
+                };
+                let index_cursor_id = if let Some(index) = index {
+                    Some(program.alloc_cursor_id(
+                        Some(index.name.clone()),
+                        CursorType::BTreeIndex(index.clone()),
+                    ))
+                } else {
+                    None
+                };
+                Ok((table_cursor_id, index_cursor_id))
+            }
+            Table::Virtual(virtual_table) => {
+                let table_cursor_id = Some(program.alloc_cursor_id(
+                    Some(self.identifier.clone()),
+                    CursorType::VirtualTable(virtual_table.clone()),
+                ));
+                let index_cursor_id = None;
+                Ok((table_cursor_id, index_cursor_id))
+            }
+            Table::Pseudo(_) => Ok((None, None)),
+        }
+    }
+
+    /// Resolve the already opened cursors for this table reference.
+    pub fn resolve_cursors(
+        &self,
+        program: &mut ProgramBuilder,
+    ) -> Result<(Option<CursorID>, Option<CursorID>)> {
+        let index = self.op.index();
+        let table_cursor_id = program.resolve_cursor_id_safe(&self.identifier);
+        let index_cursor_id = index.map(|index| program.resolve_cursor_id(&index.name));
+        Ok((table_cursor_id, index_cursor_id))
+    }
+
+    /// Returns true if a given index is a covering index for this [TableReference].
+    pub fn index_is_covering(&self, index: &Index) -> bool {
+        let Table::BTree(btree) = &self.table else {
+            return false;
+        };
+        if self.col_used_mask.is_empty() {
+            return false;
+        }
+        let mut index_cols_mask = ColumnUsedMask::new();
+        for col in index.columns.iter() {
+            index_cols_mask.set(col.pos_in_table);
+        }
+
+        // If a table has a rowid (i.e. is not a WITHOUT ROWID table), the index is guaranteed to contain the rowid as well.
+        if btree.has_rowid {
+            if let Some(pos_of_rowid_alias_col) = btree.get_rowid_alias_column().map(|(pos, _)| pos)
+            {
+                let mut empty_mask = ColumnUsedMask::new();
+                empty_mask.set(pos_of_rowid_alias_col);
+                if self.col_used_mask == empty_mask {
+                    // However if the index would be ONLY used for the rowid, then let's not bother using it to cover the query.
+                    // Example: if the query is SELECT id FROM t, and id is a rowid alias, then let's rather just scan the table
+                    // instead of an index.
+                    return false;
+                }
+                index_cols_mask.set(pos_of_rowid_alias_col);
+            }
+        }
+
+        index_cols_mask.contains_all_set_bits_of(&self.col_used_mask)
+    }
+
+    /// Returns true if the index selected for use with this [TableReference] is a covering index,
+    /// meaning that it contains all the columns that are referenced in the query.
+    pub fn utilizes_covering_index(&self) -> bool {
+        let Some(index) = self.op.index() else {
+            return false;
+        };
+        self.index_is_covering(index.as_ref())
     }
 }
 
