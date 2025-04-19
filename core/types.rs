@@ -1069,6 +1069,14 @@ impl IndexKeySortOrder {
         IndexKeySortOrder(spec)
     }
 
+    pub fn from_bool_vec(order: Vec<bool>) -> Self {
+        let mut spec = 0;
+        for (i, &is_asc) in order.iter().enumerate() {
+            spec |= (!is_asc as u64) << i;
+        }
+        IndexKeySortOrder(spec)
+    }
+
     pub fn default() -> Self {
         Self(0)
     }

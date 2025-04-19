@@ -111,59 +111,36 @@ fn eliminate_orderby_like_groupby(plan: &mut SelectPlan) -> Result<()> {
     }
 
     let order_by_clauses = plan.order_by.as_mut().unwrap();
+    // TODO: let's make the group by sorter aware of the order by directions so we dont need to skip
+    // descending terms.
+    if order_by_clauses
+        .iter()
+        .any(|(_, dir)| matches!(dir, Direction::Descending))
+    {
+        return Ok(());
+    }
     let group_by_clauses = plan.group_by.as_mut().unwrap();
-
-    let mut group_by_insert_position = 0;
-    let mut order_index = 0;
-
-    // This function optimizes query execution by eliminating duplicate expressions between ORDER BY and GROUP BY clauses
-    // When the same column appears in both clauses, we can avoid redundant sorting operations
-    // The function reorders GROUP BY expressions and removes redundant ORDER BY expressions to ensure consistent ordering
-    while order_index < order_by_clauses.len() {
-        let (order_expr, direction) = &order_by_clauses[order_index];
-
-        // Skip descending orders as they require separate sorting
-        if matches!(direction, Direction::Descending) {
-            order_index += 1;
-            continue;
-        }
-
-        // Check if the current ORDER BY expression matches any expression in the GROUP BY clause
-        if let Some(group_expr_position) = group_by_clauses
+    // all order by terms must be in the group by clause for order by to be eliminated
+    if !order_by_clauses.iter().all(|(o_expr, _)| {
+        group_by_clauses
             .exprs
             .iter()
-            .position(|expr| exprs_are_equivalent(expr, order_expr))
-        {
-            // If we found a matching expression in GROUP BY, we need to ensure it's in the correct position
-            // to preserve the ordering specified by ORDER BY clauses
-
-            // Move the matching GROUP BY expression to the current insertion position
-            // This effectively "bubbles up" the expression to maintain proper ordering
-            if group_expr_position != group_by_insert_position {
-                let mut current_position = group_expr_position;
-
-                // Swap expressions to move the matching one to the correct position
-                while current_position > group_by_insert_position {
-                    group_by_clauses
-                        .exprs
-                        .swap(current_position, current_position - 1);
-                    current_position -= 1;
-                }
-            }
-
-            group_by_insert_position += 1;
-
-            // Remove this expression from ORDER BY since it's now handled by GROUP BY
-            order_by_clauses.remove(order_index);
-            // Note: We don't increment order_index here because removal shifts all elements
-        } else {
-            // If not found in GROUP BY, move to next ORDER BY expression
-            order_index += 1;
-        }
+            .any(|g_expr| exprs_are_equivalent(g_expr, o_expr))
+    }) {
+        return Ok(());
     }
-    if order_by_clauses.is_empty() {
-        plan.order_by = None
-    }
+
+    // reorder group by terms so that they match the order by terms
+    // this way the group by sorter will effectively do the order by sorter's job and
+    // we can remove the order by clause
+    group_by_clauses.exprs.sort_by_key(|g_expr| {
+        order_by_clauses
+            .iter()
+            .position(|(o_expr, _)| exprs_are_equivalent(o_expr, g_expr))
+            .unwrap_or(usize::MAX)
+    });
+
+    plan.order_by = None;
     Ok(())
 }
 
