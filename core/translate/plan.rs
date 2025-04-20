@@ -610,6 +610,7 @@ impl TableReference {
                     notnull: false,
                     default: None,
                     unique: false,
+                    collation: None,
                 })
                 .collect(),
         )));
