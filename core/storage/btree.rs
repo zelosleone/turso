@@ -2814,6 +2814,7 @@ impl BTreeCursor {
                         let page = page.as_ref().unwrap();
                         if *new_id != page.get().id {
                             page.get().id = *new_id;
+                            // FIXME: why would there be another page at this id/frame?
                             self.pager.put_loaded_page(*new_id, page.clone());
                         }
                     }
