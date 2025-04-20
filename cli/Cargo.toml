@@ -33,7 +33,6 @@ limbo_core = { path = "../core", default-features = true, features = [
     "completion",
 ] }
 miette = { version = "7.4.0", features = ["fancy"] }
-nix = "0.29.0"
 nu-ansi-term = "0.50.1"
 rustyline = { version = "15.0.0", default-features = true, features = [
     "derive",
@@ -44,6 +43,14 @@ tracing = "0.1.41"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
+[target.'cfg(target_family = "unix")'.dependencies]
+nix = "0.29.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59.0", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+] }
 
 [features]
 default = ["io_uring"]
