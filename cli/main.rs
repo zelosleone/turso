@@ -5,26 +5,41 @@ mod helper;
 mod input;
 mod opcodes_dictionary;
 
+use nix::unistd::isatty;
 use rustyline::{error::ReadlineError, Config, Editor};
-use std::sync::atomic::Ordering;
+use std::{
+    path::PathBuf,
+    sync::{atomic::Ordering, LazyLock},
+};
 
 fn rustyline_config() -> Config {
     Config::builder()
         .completion_type(rustyline::CompletionType::List)
+        .auto_add_history(true)
         .build()
 }
 
+pub static HOME_DIR: LazyLock<PathBuf> =
+    LazyLock::new(|| dirs::home_dir().expect("Could not determine home directory"));
+
+pub static HISTORY_FILE: LazyLock<PathBuf> = LazyLock::new(|| HOME_DIR.join(".limbo_history"));
+
 fn main() -> anyhow::Result<()> {
-    let mut rl = Editor::with_config(rustyline_config())?;
-    let mut app = app::Limbo::new(&mut rl)?;
+    let mut app = app::Limbo::new()?;
     let _guard = app.init_tracing()?;
-    let home = dirs::home_dir().expect("Could not determine home directory");
-    let history_file = home.join(".limbo_history");
-    if history_file.exists() {
-        app.rl.load_history(history_file.as_path())?;
+
+    if is_a_tty() {
+        let mut rl = Editor::with_config(rustyline_config())?;
+        if HISTORY_FILE.exists() {
+            rl.load_history(HISTORY_FILE.as_path())?;
+        }
+        app = app.with_readline(rl);
+    } else {
+        tracing::debug!("not in tty");
     }
+
     loop {
-        let readline = app.rl.readline(&app.prompt);
+        let readline = app.readline();
         match readline {
             Ok(line) => match app.handle_input_line(line.trim()) {
                 Ok(_) => {}
@@ -54,6 +69,10 @@ fn main() -> anyhow::Result<()> {
             }
         }
     }
-    rl.save_history(history_file.as_path())?;
     Ok(())
+}
+
+/// Return whether or not STDIN is a TTY
+fn is_a_tty() -> bool {
+    isatty(libc::STDIN_FILENO).unwrap_or(false)
 }
