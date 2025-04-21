@@ -591,7 +591,7 @@ impl Statement {
         self.program.result_columns.len()
     }
 
-    pub fn get_column_name(&self, idx: usize) -> Cow<String> {
+    pub fn get_column_name(&self, idx: usize) -> Cow<str> {
         let column = &self.program.result_columns[idx];
         match column.name(&self.program.table_references) {
             Some(name) => Cow::Borrowed(name),
