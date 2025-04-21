@@ -70,7 +70,6 @@ test: limbo uv-sync test-compat test-vector test-sqlite3 test-shell test-extensi
 .PHONY: test
 
 test-extensions: limbo uv-sync
-	cargo build --package limbo_regexp
 	uv run --project limbo_test test-extensions
 .PHONY: test-extensions
 
@@ -109,6 +108,9 @@ test-write: limbo uv-sync
 test-update: limbo uv-sync
 	SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-update
 .PHONY: test-update
+
+bench-vfs: uv-sync
+	uv run --project limbo_test bench-vfs "$(SQL)" "$(N)"
 
 clickbench:
 	./perf/clickbench/benchmark.sh
