@@ -1,11 +1,10 @@
 use std::rc::Rc;
 
-use limbo_sqlite3_parser::ast;
+use limbo_sqlite3_parser::ast::{self, SortOrder};
 
 use crate::{
     function::AggFunc,
     schema::{Column, PseudoTable},
-    types::{OwnedValue, Record},
     util::exprs_are_equivalent,
     vdbe::{
         builder::{CursorType, ProgramBuilder},
@@ -74,15 +73,10 @@ pub fn init_group_by(
 
     let label_subrtn_acc_clear = program.allocate_label();
 
-    let mut order = Vec::new();
-    const ASCENDING: i64 = 0;
-    for _ in group_by.exprs.iter() {
-        order.push(OwnedValue::Integer(ASCENDING));
-    }
     program.emit_insn(Insn::SorterOpen {
         cursor_id: sort_cursor,
         columns: non_aggregate_count + plan.aggregates.len(),
-        order: Record::new(order),
+        order: (0..group_by.exprs.len()).map(|_| SortOrder::Asc).collect(),
     });
 
     program.add_comment(program.offset(), "clear group by abort flag");

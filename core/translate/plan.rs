@@ -267,7 +267,7 @@ pub struct SelectPlan {
     /// group by clause
     pub group_by: Option<GroupBy>,
     /// order by clause
-    pub order_by: Option<Vec<(ast::Expr, Direction)>>,
+    pub order_by: Option<Vec<(ast::Expr, SortOrder)>>,
     /// all the aggregates collected from the result columns, order by, and (TODO) having clauses
     pub aggregates: Vec<Aggregate>,
     /// limit clause
@@ -290,7 +290,7 @@ pub struct DeletePlan {
     /// where clause split into a vec at 'AND' boundaries.
     pub where_clause: Vec<WhereTerm>,
     /// order by clause
-    pub order_by: Option<Vec<(ast::Expr, Direction)>>,
+    pub order_by: Option<Vec<(ast::Expr, SortOrder)>>,
     /// limit clause
     pub limit: Option<isize>,
     /// offset clause
@@ -306,7 +306,7 @@ pub struct UpdatePlan {
     // (colum index, new value) pairs
     pub set_clauses: Vec<(usize, ast::Expr)>,
     pub where_clause: Vec<WhereTerm>,
-    pub order_by: Option<Vec<(ast::Expr, Direction)>>,
+    pub order_by: Option<Vec<(ast::Expr, SortOrder)>>,
     pub limit: Option<isize>,
     pub offset: Option<isize>,
     // TODO: optional RETURNING clause
@@ -678,21 +678,6 @@ pub enum Search {
     },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Direction {
-    Ascending,
-    Descending,
-}
-
-impl Display for Direction {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            Direction::Ascending => write!(f, "ASC"),
-            Direction::Descending => write!(f, "DESC"),
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Aggregate {
     pub func: AggFunc,
@@ -870,7 +855,16 @@ impl fmt::Display for UpdatePlan {
         if let Some(order_by) = &self.order_by {
             writeln!(f, "ORDER BY:")?;
             for (expr, dir) in order_by {
-                writeln!(f, "  - {} {}", expr, dir)?;
+                writeln!(
+                    f,
+                    "  - {} {}",
+                    expr,
+                    if *dir == SortOrder::Asc {
+                        "ASC"
+                    } else {
+                        "DESC"
+                    }
+                )?;
             }
         }
         if let Some(limit) = self.limit {

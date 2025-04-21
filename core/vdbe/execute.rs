@@ -2693,14 +2693,6 @@ pub fn op_sorter_open(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let order = order
-        .get_values()
-        .iter()
-        .map(|v| match v {
-            OwnedValue::Integer(i) => *i == 0,
-            _ => unreachable!(),
-        })
-        .collect();
     let cursor = Sorter::new(order);
     let mut cursors = state.cursors.borrow_mut();
     cursors

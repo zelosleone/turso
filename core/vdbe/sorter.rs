@@ -1,3 +1,5 @@
+use limbo_sqlite3_parser::ast::SortOrder;
+
 use crate::types::{compare_immutable, ImmutableRecord, IndexKeySortOrder};
 
 pub struct Sorter {
@@ -8,12 +10,12 @@ pub struct Sorter {
 }
 
 impl Sorter {
-    pub fn new(order: Vec<bool>) -> Self {
+    pub fn new(order: &[SortOrder]) -> Self {
         Self {
             records: Vec::new(),
             current: None,
             key_len: order.len(),
-            order: IndexKeySortOrder::from_bool_vec(order),
+            order: IndexKeySortOrder::from_list(order),
         }
     }
     pub fn is_empty(&self) -> bool {

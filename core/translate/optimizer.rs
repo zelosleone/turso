@@ -12,8 +12,8 @@ use crate::{
 
 use super::{
     plan::{
-        DeletePlan, Direction, EvalAt, GroupBy, IterationDirection, Operation, Plan, Search,
-        SeekDef, SeekKey, SelectPlan, TableReference, UpdatePlan, WhereTerm,
+        DeletePlan, EvalAt, GroupBy, IterationDirection, Operation, Plan, Search, SeekDef, SeekKey,
+        SelectPlan, TableReference, UpdatePlan, WhereTerm,
     },
     planner::determine_where_to_eval_expr,
 };
@@ -115,7 +115,7 @@ fn eliminate_orderby_like_groupby(plan: &mut SelectPlan) -> Result<()> {
     // descending terms.
     if order_by_clauses
         .iter()
-        .any(|(_, dir)| matches!(dir, Direction::Descending))
+        .any(|(_, dir)| matches!(dir, SortOrder::Desc))
     {
         return Ok(());
     }
@@ -149,7 +149,7 @@ fn eliminate_orderby_like_groupby(plan: &mut SelectPlan) -> Result<()> {
 fn eliminate_unnecessary_orderby(
     table_references: &mut [TableReference],
     available_indexes: &HashMap<String, Vec<Arc<Index>>>,
-    order_by: &mut Option<Vec<(ast::Expr, Direction)>>,
+    order_by: &mut Option<Vec<(ast::Expr, SortOrder)>>,
     group_by: &Option<GroupBy>,
 ) -> Result<bool> {
     let Some(order) = order_by else {
@@ -182,8 +182,8 @@ fn eliminate_unnecessary_orderby(
     // Special case: if ordering by just the rowid, we can remove the ORDER BY clause
     if order.len() == 1 && order[0].0.is_rowid_alias_of(0) {
         *iter_dir = match order[0].1 {
-            Direction::Ascending => IterationDirection::Forwards,
-            Direction::Descending => IterationDirection::Backwards,
+            SortOrder::Asc => IterationDirection::Forwards,
+            SortOrder::Desc => IterationDirection::Backwards,
         };
         *order_by = None;
         return Ok(true);
@@ -224,10 +224,10 @@ fn eliminate_unnecessary_orderby(
     // If they don't, we must iterate the index in backwards order.
     let index_direction = &matching_index.columns.first().as_ref().unwrap().order;
     *iter_dir = match (index_direction, order[0].1) {
-        (SortOrder::Asc, Direction::Ascending) | (SortOrder::Desc, Direction::Descending) => {
+        (SortOrder::Asc, SortOrder::Asc) | (SortOrder::Desc, SortOrder::Desc) => {
             IterationDirection::Forwards
         }
-        (SortOrder::Asc, Direction::Descending) | (SortOrder::Desc, Direction::Ascending) => {
+        (SortOrder::Asc, SortOrder::Desc) | (SortOrder::Desc, SortOrder::Asc) => {
             IterationDirection::Backwards
         }
     };
@@ -242,12 +242,10 @@ fn eliminate_unnecessary_orderby(
             let mut all_match_reverse = true;
             for (i, (_, direction)) in order.iter().enumerate() {
                 match (&matching_index.columns[i].order, direction) {
-                    (SortOrder::Asc, Direction::Ascending)
-                    | (SortOrder::Desc, Direction::Descending) => {
+                    (SortOrder::Asc, SortOrder::Asc) | (SortOrder::Desc, SortOrder::Desc) => {
                         all_match_reverse = false;
                     }
-                    (SortOrder::Asc, Direction::Descending)
-                    | (SortOrder::Desc, Direction::Ascending) => {
+                    (SortOrder::Asc, SortOrder::Desc) | (SortOrder::Desc, SortOrder::Asc) => {
                         all_match_forward = false;
                     }
                 }
@@ -275,7 +273,7 @@ fn use_indexes(
     table_references: &mut [TableReference],
     available_indexes: &HashMap<String, Vec<Arc<Index>>>,
     where_clause: &mut Vec<WhereTerm>,
-    order_by: &mut Option<Vec<(ast::Expr, Direction)>>,
+    order_by: &mut Option<Vec<(ast::Expr, SortOrder)>>,
     group_by: &Option<GroupBy>,
 ) -> Result<()> {
     // Try to use indexes for eliminating ORDER BY clauses

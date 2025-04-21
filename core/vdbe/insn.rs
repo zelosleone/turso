@@ -7,9 +7,9 @@ use super::{execute, AggFunc, BranchOffset, CursorID, FuncCtx, InsnFunction, Pag
 use crate::{
     schema::BTreeTable,
     storage::{pager::CreateBTreeFlags, wal::CheckpointMode},
-    types::Record,
 };
 use limbo_macros::Description;
+use limbo_sqlite3_parser::ast::SortOrder;
 
 /// Flags provided to comparison instructions (e.g. Eq, Ne) which determine behavior related to NULL values.
 #[derive(Clone, Copy, Debug, Default)]
@@ -586,9 +586,9 @@ pub enum Insn {
 
     /// Open a sorter.
     SorterOpen {
-        cursor_id: CursorID, // P1
-        columns: usize,      // P2
-        order: Record,       // P4. 0 if ASC and 1 if DESC
+        cursor_id: CursorID,   // P1
+        columns: usize,        // P2
+        order: Vec<SortOrder>, // P4.
     },
 
     /// Insert a row into the sorter.

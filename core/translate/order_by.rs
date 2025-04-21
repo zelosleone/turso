@@ -1,10 +1,9 @@
 use std::rc::Rc;
 
-use limbo_sqlite3_parser::ast;
+use limbo_sqlite3_parser::ast::{self, SortOrder};
 
 use crate::{
     schema::{Column, PseudoTable},
-    types::{OwnedValue, Record},
     util::exprs_are_equivalent,
     vdbe::{
         builder::{CursorType, ProgramBuilder},
@@ -16,7 +15,7 @@ use crate::{
 use super::{
     emitter::TranslateCtx,
     expr::translate_expr,
-    plan::{Direction, ResultSetColumn, SelectPlan},
+    plan::{ResultSetColumn, SelectPlan},
     result_row::{emit_offset, emit_result_row_and_limit},
 };
 
@@ -33,21 +32,17 @@ pub struct SortMetadata {
 pub fn init_order_by(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx,
-    order_by: &[(ast::Expr, Direction)],
+    order_by: &[(ast::Expr, SortOrder)],
 ) -> Result<()> {
     let sort_cursor = program.alloc_cursor_id(None, CursorType::Sorter);
     t_ctx.meta_sort = Some(SortMetadata {
         sort_cursor,
         reg_sorter_data: program.alloc_register(),
     });
-    let mut order = Vec::new();
-    for (_, direction) in order_by.iter() {
-        order.push(OwnedValue::Integer(*direction as i64));
-    }
     program.emit_insn(Insn::SorterOpen {
         cursor_id: sort_cursor,
         columns: order_by.len(),
-        order: Record::new(order),
+        order: order_by.iter().map(|(_, direction)| *direction).collect(),
     });
     Ok(())
 }
@@ -258,7 +253,7 @@ pub fn sorter_insert(
 ///
 /// If any result columns can be skipped, this returns list of 2-tuples of (SkippedResultColumnIndex: usize, ResultColumnIndexInOrderBySorter: usize)
 pub fn order_by_deduplicate_result_columns(
-    order_by: &[(ast::Expr, Direction)],
+    order_by: &[(ast::Expr, SortOrder)],
     result_columns: &[ResultSetColumn],
 ) -> Option<Vec<(usize, usize)>> {
     let mut result_column_remapping: Option<Vec<(usize, usize)>> = None;

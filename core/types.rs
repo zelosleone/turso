@@ -1069,10 +1069,10 @@ impl IndexKeySortOrder {
         IndexKeySortOrder(spec)
     }
 
-    pub fn from_bool_vec(order: Vec<bool>) -> Self {
+    pub fn from_list(order: &[SortOrder]) -> Self {
         let mut spec = 0;
-        for (i, &is_asc) in order.iter().enumerate() {
-            spec |= (!is_asc as u64) << i;
+        for (i, order) in order.iter().enumerate() {
+            spec |= ((*order == SortOrder::Desc) as u64) << i;
         }
         IndexKeySortOrder(spec)
     }
