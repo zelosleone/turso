@@ -5,8 +5,6 @@ mod helper;
 mod input;
 mod opcodes_dictionary;
 
-#[cfg(unix)]
-use nix::unistd::isatty;
 use rustyline::{error::ReadlineError, Config, Editor};
 use std::{
     path::PathBuf,
@@ -29,7 +27,7 @@ fn main() -> anyhow::Result<()> {
     let mut app = app::Limbo::new()?;
     let _guard = app.init_tracing()?;
 
-    if is_a_tty() {
+    if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         let mut rl = Editor::with_config(rustyline_config())?;
         if HISTORY_FILE.exists() {
             rl.load_history(HISTORY_FILE.as_path())?;
@@ -71,62 +69,4 @@ fn main() -> anyhow::Result<()> {
         }
     }
     Ok(())
-}
-
-/// Return whether or not STDIN is a TTY
-fn is_a_tty() -> bool {
-    #[cfg(unix)]
-    {
-        isatty(libc::STDIN_FILENO).unwrap_or(false)
-    }
-    #[cfg(windows)]
-    {
-        let handle = windows::get_std_handle(windows::console::STD_INPUT_HANDLE);
-        match handle {
-            Ok(handle) => {
-                // If this function doesn't fail then fd is a TTY
-                windows::get_console_mode(handle).is_ok()
-            }
-            Err(_) => false,
-        }
-    }
-}
-
-// Code acquired from Rustyline
-#[cfg(windows)]
-mod windows {
-    use std::io;
-    use windows_sys::Win32::Foundation::{self as foundation, BOOL, FALSE, HANDLE};
-    pub use windows_sys::Win32::System::Console as console;
-
-    pub fn get_console_mode(handle: HANDLE) -> rustyline::Result<console::CONSOLE_MODE> {
-        let mut original_mode = 0;
-        check(unsafe { console::GetConsoleMode(handle, &mut original_mode) })?;
-        Ok(original_mode)
-    }
-
-    pub fn get_std_handle(fd: console::STD_HANDLE) -> rustyline::Result<HANDLE> {
-        let handle = unsafe { console::GetStdHandle(fd) };
-        check_handle(handle)
-    }
-
-    fn check_handle(handle: HANDLE) -> rustyline::Result<HANDLE> {
-        if handle == foundation::INVALID_HANDLE_VALUE {
-            Err(io::Error::last_os_error())?;
-        } else if handle.is_null() {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "no stdio handle available for this process",
-            ))?;
-        }
-        Ok(handle)
-    }
-
-    fn check(rc: BOOL) -> io::Result<()> {
-        if rc == FALSE {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
-    }
 }

@@ -43,15 +43,6 @@ tracing = "0.1.41"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 
-[target.'cfg(target_family = "unix")'.dependencies]
-nix = "0.29.0"
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59.0", features = [
-    "Win32_Foundation",
-    "Win32_System_Console",
-] }
-
 [features]
 default = ["io_uring"]
 io_uring = ["limbo_core/io_uring"]

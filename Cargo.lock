@@ -1705,7 +1705,6 @@ dependencies = [
  "libc",
  "limbo_core",
  "miette",
- "nix 0.29.0",
  "nu-ansi-term 0.50.1",
  "rustyline",
  "shlex",
@@ -1713,7 +1712,6 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
- "windows-sys 0.59.0",
 ]
 
 [[package]]
