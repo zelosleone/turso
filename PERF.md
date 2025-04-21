@@ -32,3 +32,13 @@ make clickbench
 
 This will build Limbo in release mode, create a database, and run the benchmarks with a small subset of the Clickbench dataset.
 It will run the queries for both Limbo and SQLite, and print the results.
+
+
+## Comparing VFS's/IO Back-ends (io_uring | syscall)
+
+```shell
+make bench-vfs SQL="select * from users;" N=500
+```
+
+The naive script will build and run limbo in release mode and execute the given SQL (against a copy of the `testing/testing.db` file)
+`N` times with each `vfs`. This is not meant to be a definitive or thorough performance benchmark but serves to compare the two.
