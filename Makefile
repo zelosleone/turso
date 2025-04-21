@@ -110,6 +110,7 @@ test-update: limbo uv-sync
 .PHONY: test-update
 
 bench-vfs: uv-sync
+	cargo build --release
 	uv run --project limbo_test bench-vfs "$(SQL)" "$(N)"
 
 clickbench:
