@@ -45,7 +45,7 @@ In the future, we will be also working on:
 <br>
 You can install the latest `limbo` release with:
 
-```shell 
+```shell
 curl --proto '=https' --tlsv1.2 -LsSf \
   https://github.com/tursodatabase/limbo/releases/latest/download/limbo_cli-installer.sh | sh
 ```
@@ -69,6 +69,24 @@ You can also build and run the latest development version with:
 
 ```shell
 cargo run
+```
+</details>
+
+<details>
+<summary>🦀 Rust</summary>
+<br>
+
+```console
+cargo add limbo
+```
+
+Example usage:
+
+```rust
+let db = Builder::new_local("sqlite.db").build().await?;
+let conn = db.connect()?;
+
+let res = conn.query("SELECT * FROM users", ()).await?;
 ```
 </details>
 
@@ -144,7 +162,7 @@ defer stmt.Close()
 
 rows, _ = stmt.Query()
 for rows.Next() {
-    var id int 
+    var id int
     var username string
     _ := rows.Scan(&id, &username)
     fmt.Printf("User: ID: %d, Username: %s\n", id, username)
@@ -153,7 +171,7 @@ for rows.Next() {
 </details>
 
 <details>
-  
+
 <summary>☕️ Java</summary>
 <br>
 
