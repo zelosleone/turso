@@ -200,7 +200,7 @@ Feature support of [sqlite expr syntax](https://www.sqlite.org/lang_expr.html).
 | (NOT) MATCH               | No      |                                          |
 | IS (NOT)                  | Yes     |                                          |
 | IS (NOT) DISTINCT FROM    | Yes     |                                          |
-| (NOT) BETWEEN ... AND ... | No      |                                          |
+| (NOT) BETWEEN ... AND ... | Yes     | Expression is rewritten in the optimizer |
 | (NOT) IN (subquery)       | No      |                                          |
 | (NOT) EXISTS (subquery)   | No      |                                          |
 | CASE WHEN THEN ELSE END   | Yes     |                                          |
