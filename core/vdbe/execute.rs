@@ -1,4 +1,5 @@
 #![allow(unused_variables)]
+use crate::numeric::{NullableInteger, Numeric};
 use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::CreateBTreeFlags;
@@ -5482,357 +5483,61 @@ fn exec_likelihood(reg: &OwnedValue, _probability: &OwnedValue) -> OwnedValue {
 }
 
 pub fn exec_add(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    let result = match (lhs, rhs) {
-        (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
-            let result = lhs.overflowing_add(*rhs);
-            if result.1 {
-                OwnedValue::Float(*lhs as f64 + *rhs as f64)
-            } else {
-                OwnedValue::Integer(result.0)
-            }
-        }
-        (OwnedValue::Float(lhs), OwnedValue::Float(rhs)) => OwnedValue::Float(lhs + rhs),
-        (OwnedValue::Float(f), OwnedValue::Integer(i))
-        | (OwnedValue::Integer(i), OwnedValue::Float(f)) => OwnedValue::Float(*f + *i as f64),
-        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_add(
-            &cast_text_to_numeric(lhs.as_str()),
-            &cast_text_to_numeric(rhs.as_str()),
-        ),
-        (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_add(&cast_text_to_numeric(text.as_str()), other)
-        }
-        _ => todo!(),
-    };
-    match result {
-        OwnedValue::Float(f) if f.is_nan() => OwnedValue::Null,
-        _ => result,
-    }
+    (Numeric::from(lhs) + Numeric::from(rhs)).into()
 }
 
 pub fn exec_subtract(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    let result = match (lhs, rhs) {
-        (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
-            let result = lhs.overflowing_sub(*rhs);
-            if result.1 {
-                OwnedValue::Float(*lhs as f64 - *rhs as f64)
-            } else {
-                OwnedValue::Integer(result.0)
-            }
-        }
-        (OwnedValue::Float(lhs), OwnedValue::Float(rhs)) => OwnedValue::Float(lhs - rhs),
-        (OwnedValue::Float(lhs), OwnedValue::Integer(rhs)) => OwnedValue::Float(lhs - *rhs as f64),
-        (OwnedValue::Integer(lhs), OwnedValue::Float(rhs)) => OwnedValue::Float(*lhs as f64 - rhs),
-        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_subtract(
-            &cast_text_to_numeric(lhs.as_str()),
-            &cast_text_to_numeric(rhs.as_str()),
-        ),
-        (OwnedValue::Text(text), other) => {
-            exec_subtract(&cast_text_to_numeric(text.as_str()), other)
-        }
-        (other, OwnedValue::Text(text)) => {
-            exec_subtract(other, &cast_text_to_numeric(text.as_str()))
-        }
-        (other, OwnedValue::Blob(blob)) => {
-            let text = String::from_utf8_lossy(&blob);
-            exec_subtract(other, &cast_text_to_numeric(&text))
-        }
-        (OwnedValue::Blob(blob), other) => {
-            let text = String::from_utf8_lossy(&blob);
-            exec_subtract(&cast_text_to_numeric(&text), other)
-        }
-    };
-    match result {
-        OwnedValue::Float(f) if f.is_nan() => OwnedValue::Null,
-        _ => result,
-    }
+    (Numeric::from(lhs) - Numeric::from(rhs)).into()
 }
 
 pub fn exec_multiply(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    let result = match (lhs, rhs) {
-        (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
-            let result = lhs.overflowing_mul(*rhs);
-            if result.1 {
-                OwnedValue::Float(*lhs as f64 * *rhs as f64)
-            } else {
-                OwnedValue::Integer(result.0)
-            }
-        }
-        (OwnedValue::Float(lhs), OwnedValue::Float(rhs)) => OwnedValue::Float(lhs * rhs),
-        (OwnedValue::Integer(i), OwnedValue::Float(f))
-        | (OwnedValue::Float(f), OwnedValue::Integer(i)) => OwnedValue::Float(*i as f64 * { *f }),
-        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_multiply(
-            &cast_text_to_numeric(lhs.as_str()),
-            &cast_text_to_numeric(rhs.as_str()),
-        ),
-        (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_multiply(&cast_text_to_numeric(text.as_str()), other)
-        }
-
-        _ => todo!(),
-    };
-    match result {
-        OwnedValue::Float(f) if f.is_nan() => OwnedValue::Null,
-        _ => result,
-    }
+    (Numeric::from(lhs) * Numeric::from(rhs)).into()
 }
 
 pub fn exec_divide(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    let result = match (lhs, rhs) {
-        (_, OwnedValue::Integer(0)) | (_, OwnedValue::Float(0.0)) => OwnedValue::Null,
-        (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
-            let result = lhs.overflowing_div(*rhs);
-            if result.1 {
-                OwnedValue::Float(*lhs as f64 / *rhs as f64)
-            } else {
-                OwnedValue::Integer(result.0)
-            }
-        }
-        (OwnedValue::Float(lhs), OwnedValue::Float(rhs)) => OwnedValue::Float(lhs / rhs),
-        (OwnedValue::Float(lhs), OwnedValue::Integer(rhs)) => OwnedValue::Float(lhs / *rhs as f64),
-        (OwnedValue::Integer(lhs), OwnedValue::Float(rhs)) => OwnedValue::Float(*lhs as f64 / rhs),
-        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_divide(
-            &cast_text_to_numeric(lhs.as_str()),
-            &cast_text_to_numeric(rhs.as_str()),
-        ),
-        (OwnedValue::Text(text), other) => exec_divide(&cast_text_to_numeric(text.as_str()), other),
-        (other, OwnedValue::Text(text)) => exec_divide(other, &cast_text_to_numeric(text.as_str())),
-        _ => todo!(),
-    };
-    match result {
-        OwnedValue::Float(f) if f.is_nan() => OwnedValue::Null,
-        _ => result,
-    }
+    (Numeric::from(lhs) / Numeric::from(rhs)).into()
 }
 
 pub fn exec_bit_and(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    match (lhs, rhs) {
-        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
-        (_, OwnedValue::Integer(0))
-        | (OwnedValue::Integer(0), _)
-        | (_, OwnedValue::Float(0.0))
-        | (OwnedValue::Float(0.0), _) => OwnedValue::Integer(0),
-        (OwnedValue::Integer(lh), OwnedValue::Integer(rh)) => OwnedValue::Integer(lh & rh),
-        (OwnedValue::Float(lh), OwnedValue::Float(rh)) => {
-            OwnedValue::Integer(*lh as i64 & *rh as i64)
-        }
-        (OwnedValue::Float(lh), OwnedValue::Integer(rh)) => OwnedValue::Integer(*lh as i64 & rh),
-        (OwnedValue::Integer(lh), OwnedValue::Float(rh)) => OwnedValue::Integer(lh & *rh as i64),
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_bit_and(
-            &cast_text_to_numeric(lhs.as_str()),
-            &cast_text_to_numeric(rhs.as_str()),
-        ),
-        (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_bit_and(&cast_text_to_numeric(text.as_str()), other)
-        }
-        _ => todo!(),
-    }
+    (NullableInteger::from(lhs) & NullableInteger::from(rhs)).into()
 }
 
 pub fn exec_bit_or(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    match (lhs, rhs) {
-        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
-        (OwnedValue::Integer(lh), OwnedValue::Integer(rh)) => OwnedValue::Integer(lh | rh),
-        (OwnedValue::Float(lh), OwnedValue::Integer(rh)) => OwnedValue::Integer(*lh as i64 | rh),
-        (OwnedValue::Integer(lh), OwnedValue::Float(rh)) => OwnedValue::Integer(lh | *rh as i64),
-        (OwnedValue::Float(lh), OwnedValue::Float(rh)) => {
-            OwnedValue::Integer(*lh as i64 | *rh as i64)
-        }
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_bit_or(
-            &cast_text_to_numeric(lhs.as_str()),
-            &cast_text_to_numeric(rhs.as_str()),
-        ),
-        (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_bit_or(&cast_text_to_numeric(text.as_str()), other)
-        }
-        _ => todo!(),
-    }
+    (NullableInteger::from(lhs) | NullableInteger::from(rhs)).into()
 }
 
 pub fn exec_remainder(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    match (lhs, rhs) {
-        (OwnedValue::Null, _)
-        | (_, OwnedValue::Null)
-        | (_, OwnedValue::Integer(0))
-        | (_, OwnedValue::Float(0.0)) => OwnedValue::Null,
-        (OwnedValue::Integer(lhs), OwnedValue::Integer(rhs)) => {
-            if rhs == &0 {
-                OwnedValue::Null
+    let convert_to_float = matches!(Numeric::from(lhs), Numeric::Float(_))
+        || matches!(Numeric::from(rhs), Numeric::Float(_));
+
+    match NullableInteger::from(lhs) % NullableInteger::from(rhs) {
+        NullableInteger::Null => OwnedValue::Null,
+        NullableInteger::Integer(v) => {
+            if convert_to_float {
+                OwnedValue::Float(v as f64)
             } else {
-                OwnedValue::Integer(lhs % rhs.abs())
+                OwnedValue::Integer(v)
             }
         }
-        (OwnedValue::Float(lhs), OwnedValue::Float(rhs)) => {
-            let rhs_int = *rhs as i64;
-            if rhs_int == 0 {
-                OwnedValue::Null
-            } else {
-                OwnedValue::Float(((*lhs as i64) % rhs_int.abs()) as f64)
-            }
-        }
-        (OwnedValue::Float(lhs), OwnedValue::Integer(rhs)) => {
-            if rhs == &0 {
-                OwnedValue::Null
-            } else {
-                OwnedValue::Float(((*lhs as i64) % rhs.abs()) as f64)
-            }
-        }
-        (OwnedValue::Integer(lhs), OwnedValue::Float(rhs)) => {
-            let rhs_int = *rhs as i64;
-            if rhs_int == 0 {
-                OwnedValue::Null
-            } else {
-                OwnedValue::Float((lhs % rhs_int.abs()) as f64)
-            }
-        }
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_remainder(
-            &cast_text_to_numeric(lhs.as_str()),
-            &cast_text_to_numeric(rhs.as_str()),
-        ),
-        (OwnedValue::Text(text), other) => {
-            exec_remainder(&cast_text_to_numeric(text.as_str()), other)
-        }
-        (other, OwnedValue::Text(text)) => {
-            exec_remainder(other, &cast_text_to_numeric(text.as_str()))
-        }
-        other => todo!("remainder not implemented for: {:?} {:?}", lhs, other),
     }
 }
 
 pub fn exec_bit_not(reg: &OwnedValue) -> OwnedValue {
-    match reg {
-        OwnedValue::Null => OwnedValue::Null,
-        OwnedValue::Integer(i) => OwnedValue::Integer(!i),
-        OwnedValue::Float(f) => OwnedValue::Integer(!(*f as i64)),
-        OwnedValue::Text(text) => exec_bit_not(&cast_text_to_integer(text.as_str())),
-        OwnedValue::Blob(blob) => {
-            let text = String::from_utf8_lossy(blob);
-            exec_bit_not(&cast_text_to_integer(&text))
-        }
-    }
+    (!NullableInteger::from(reg)).into()
 }
 
 pub fn exec_shift_left(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    match (lhs, rhs) {
-        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
-        (OwnedValue::Integer(lh), OwnedValue::Integer(rh)) => {
-            OwnedValue::Integer(compute_shl(*lh, *rh))
-        }
-        (OwnedValue::Float(lh), OwnedValue::Integer(rh)) => {
-            OwnedValue::Integer(compute_shl(*lh as i64, *rh))
-        }
-        (OwnedValue::Integer(lh), OwnedValue::Float(rh)) => {
-            OwnedValue::Integer(compute_shl(*lh, *rh as i64))
-        }
-        (OwnedValue::Float(lh), OwnedValue::Float(rh)) => {
-            OwnedValue::Integer(compute_shl(*lh as i64, *rh as i64))
-        }
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_shift_left(
-            &cast_text_to_numeric(lhs.as_str()),
-            &cast_text_to_numeric(rhs.as_str()),
-        ),
-        (OwnedValue::Text(text), other) => {
-            exec_shift_left(&cast_text_to_numeric(text.as_str()), other)
-        }
-        (other, OwnedValue::Text(text)) => {
-            exec_shift_left(other, &cast_text_to_numeric(text.as_str()))
-        }
-        _ => todo!(),
-    }
-}
-
-fn compute_shl(lhs: i64, rhs: i64) -> i64 {
-    if rhs == 0 {
-        lhs
-    } else if rhs > 0 {
-        // for positive shifts, if it's too large return 0
-        if rhs >= 64 {
-            0
-        } else {
-            lhs << rhs
-        }
-    } else {
-        // for negative shifts, check if it's i64::MIN to avoid overflow on negation
-        if rhs == i64::MIN || rhs <= -64 {
-            if lhs < 0 {
-                -1
-            } else {
-                0
-            }
-        } else {
-            lhs >> (-rhs)
-        }
-    }
+    (NullableInteger::from(lhs) << NullableInteger::from(rhs)).into()
 }
 
 pub fn exec_shift_right(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    match (lhs, rhs) {
-        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
-        (OwnedValue::Integer(lh), OwnedValue::Integer(rh)) => {
-            OwnedValue::Integer(compute_shr(*lh, *rh))
-        }
-        (OwnedValue::Float(lh), OwnedValue::Integer(rh)) => {
-            OwnedValue::Integer(compute_shr(*lh as i64, *rh))
-        }
-        (OwnedValue::Integer(lh), OwnedValue::Float(rh)) => {
-            OwnedValue::Integer(compute_shr(*lh, *rh as i64))
-        }
-        (OwnedValue::Float(lh), OwnedValue::Float(rh)) => {
-            OwnedValue::Integer(compute_shr(*lh as i64, *rh as i64))
-        }
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_shift_right(
-            &cast_text_to_numeric(lhs.as_str()),
-            &cast_text_to_numeric(rhs.as_str()),
-        ),
-        (OwnedValue::Text(text), other) => {
-            exec_shift_right(&cast_text_to_numeric(text.as_str()), other)
-        }
-        (other, OwnedValue::Text(text)) => {
-            exec_shift_right(other, &cast_text_to_numeric(text.as_str()))
-        }
-        _ => todo!(),
-    }
-}
-
-// compute binary shift to the right if rhs >= 0 and binary shift to the left - if rhs < 0
-// note, that binary shift to the right is sign-extended
-fn compute_shr(lhs: i64, rhs: i64) -> i64 {
-    if rhs == 0 {
-        lhs
-    } else if rhs > 0 {
-        // for positive right shifts
-        if rhs >= 64 {
-            if lhs < 0 {
-                -1
-            } else {
-                0
-            }
-        } else {
-            lhs >> rhs
-        }
-    } else {
-        // for negative right shifts, check if it's i64::MIN to avoid overflow
-        if rhs == i64::MIN || -rhs >= 64 {
-            0
-        } else {
-            lhs << (-rhs)
-        }
-    }
+    (NullableInteger::from(lhs) >> NullableInteger::from(rhs)).into()
 }
 
 pub fn exec_boolean_not(reg: &OwnedValue) -> OwnedValue {
-    match reg {
-        OwnedValue::Null => OwnedValue::Null,
-        OwnedValue::Integer(i) => OwnedValue::Integer((*i == 0) as i64),
-        OwnedValue::Float(f) => OwnedValue::Integer((*f == 0.0) as i64),
-        OwnedValue::Text(text) => exec_boolean_not(&&cast_text_to_real(text.as_str())),
-        OwnedValue::Blob(blob) => {
-            let text = String::from_utf8_lossy(blob);
-            exec_boolean_not(&cast_text_to_real(&text))
-        }
+    match Numeric::from(reg).try_into_bool() {
+        None => OwnedValue::Null,
+        Some(v) => OwnedValue::Integer(!v as i64),
     }
 }
 pub fn exec_concat(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
@@ -5872,46 +5577,24 @@ pub fn exec_concat(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
 }
 
 pub fn exec_and(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    match (lhs, rhs) {
-        (_, OwnedValue::Integer(0))
-        | (OwnedValue::Integer(0), _)
-        | (_, OwnedValue::Float(0.0))
-        | (OwnedValue::Float(0.0), _) => OwnedValue::Integer(0),
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_and(
-            &cast_text_to_real(lhs.as_str()),
-            &cast_text_to_real(rhs.as_str()),
-        ),
-        (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_and(&cast_text_to_real(text.as_str()), other)
-        }
-        (OwnedValue::Blob(blob), other) | (other, OwnedValue::Blob(blob)) => {
-            let text = String::from_utf8_lossy(blob);
-            exec_and(&cast_text_to_real(&text), other)
-        }
-        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
+    match (
+        Numeric::from(lhs).try_into_bool(),
+        Numeric::from(rhs).try_into_bool(),
+    ) {
+        (Some(false), _) | (_, Some(false)) => OwnedValue::Integer(0),
+        (None, _) | (_, None) => OwnedValue::Null,
         _ => OwnedValue::Integer(1),
     }
 }
 
 pub fn exec_or(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
-    match (lhs, rhs) {
-        (OwnedValue::Null, OwnedValue::Null)
-        | (OwnedValue::Null, OwnedValue::Float(0.0))
-        | (OwnedValue::Float(0.0), OwnedValue::Null)
-        | (OwnedValue::Null, OwnedValue::Integer(0))
-        | (OwnedValue::Integer(0), OwnedValue::Null) => OwnedValue::Null,
-        (OwnedValue::Float(0.0), OwnedValue::Integer(0))
-        | (OwnedValue::Integer(0), OwnedValue::Float(0.0))
-        | (OwnedValue::Float(0.0), OwnedValue::Float(0.0))
-        | (OwnedValue::Integer(0), OwnedValue::Integer(0)) => OwnedValue::Integer(0),
-        (OwnedValue::Text(lhs), OwnedValue::Text(rhs)) => exec_or(
-            &cast_text_to_numeric(lhs.as_str()),
-            &cast_text_to_numeric(rhs.as_str()),
-        ),
-        (OwnedValue::Text(text), other) | (other, OwnedValue::Text(text)) => {
-            exec_or(&cast_text_to_numeric(text.as_str()), other)
-        }
-        _ => OwnedValue::Integer(1),
+    match (
+        Numeric::from(lhs).try_into_bool(),
+        Numeric::from(rhs).try_into_bool(),
+    ) {
+        (Some(true), _) | (_, Some(true)) => OwnedValue::Integer(1),
+        (None, _) | (_, None) => OwnedValue::Null,
+        _ => OwnedValue::Integer(0),
     }
 }
 
