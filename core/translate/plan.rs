@@ -34,13 +34,26 @@ pub struct ResultSetColumn {
 }
 
 impl ResultSetColumn {
-    pub fn name<'a>(&'a self, tables: &'a [TableReference]) -> Option<&'a String> {
+    pub fn name<'a>(&'a self, tables: &'a [TableReference]) -> Option<&'a str> {
         if let Some(alias) = &self.alias {
             return Some(alias);
         }
         match &self.expr {
             ast::Expr::Column { table, column, .. } => {
-                tables[*table].columns()[*column].name.as_ref()
+                tables[*table].columns()[*column].name.as_deref()
+            }
+            ast::Expr::RowId { table, .. } => {
+                // If there is a rowid alias column, use its name
+                if let Table::BTree(table) = &tables[*table].table {
+                    if let Some(rowid_alias_column) = table.get_rowid_alias_column() {
+                        if let Some(name) = &rowid_alias_column.1.name {
+                            return Some(name);
+                        }
+                    }
+                }
+
+                // If there is no rowid alias, use "rowid".
+                Some("rowid")
             }
             _ => None,
         }
@@ -465,7 +478,7 @@ impl TableReference {
             plan.result_columns
                 .iter()
                 .map(|rc| Column {
-                    name: rc.name(&plan.table_references).map(String::clone),
+                    name: rc.name(&plan.table_references).map(String::from),
                     ty: Type::Text, // FIXME: infer proper type
                     ty_str: "TEXT".to_string(),
                     is_rowid_alias: false,
