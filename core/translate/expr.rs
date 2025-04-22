@@ -186,7 +186,9 @@ pub fn translate_condition_expr(
     resolver: &Resolver,
 ) -> Result<()> {
     match expr {
-        ast::Expr::Between { .. } => todo!(),
+        ast::Expr::Between { .. } => {
+            unreachable!("expression should have been rewritten in optmizer")
+        }
         ast::Expr::Binary(lhs, ast::Operator::And, rhs) => {
             // In a binary AND, never jump to the parent 'jump_target_when_true' label on the first condition, because
             // the second condition MUST also be true. Instead we instruct the child expression to jump to a local
@@ -492,7 +494,9 @@ pub fn translate_expr(
         return Ok(target_register);
     }
     match expr {
-        ast::Expr::Between { .. } => todo!(),
+        ast::Expr::Between { .. } => {
+            unreachable!("expression should have been rewritten in optmizer")
+        }
         ast::Expr::Binary(e1, op, e2) => {
             // Check if both sides of the expression are equivalent and reuse the same register if so
             if exprs_are_equivalent(e1, e2) {
