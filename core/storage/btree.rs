@@ -1027,7 +1027,7 @@ impl BTreeCursor {
     }
 
     /// Specialized version of move_to() for table btrees.
-    fn tablebtree_move_to_binsearch(
+    fn tablebtree_move_to(
         &mut self,
         rowid: u64,
         seek_op: SeekOp,
@@ -1305,13 +1305,13 @@ impl BTreeCursor {
     ) -> Result<CursorResult<Option<u64>>> {
         assert!(self.mv_cursor.is_none());
         self.move_to_root();
-        return_if_io!(self.tablebtree_move_to_binsearch(rowid, seek_op, iter_dir));
+        return_if_io!(self.tablebtree_move_to(rowid, seek_op, iter_dir));
         let page = self.stack.top();
         return_if_locked!(page);
         let contents = page.get().contents.as_ref().unwrap();
         assert!(
             contents.is_leaf(),
-            "tablebtree_seek_binsearch() called on non-leaf page"
+            "tablebtree_seek() called on non-leaf page"
         );
 
         let cell_count = contents.cell_count();
@@ -1648,7 +1648,7 @@ impl BTreeCursor {
         let iter_dir = cmp.iteration_direction();
         match key {
             SeekKey::TableRowId(rowid_key) => {
-                return self.tablebtree_move_to_binsearch(rowid_key, cmp, iter_dir);
+                return self.tablebtree_move_to(rowid_key, cmp, iter_dir);
             }
             SeekKey::IndexKey(index_key) => {
                 return self.indexbtree_move_to(index_key, cmp, iter_dir);
