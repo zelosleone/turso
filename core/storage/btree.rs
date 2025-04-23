@@ -1423,26 +1423,87 @@ impl BTreeCursor {
         let contents = page.get().contents.as_ref().unwrap();
 
         let cell_count = contents.cell_count();
-        let mut cell_idx: isize = if cell_iter_dir == IterationDirection::Forwards {
-            0
-        } else {
-            cell_count as isize - 1
-        };
-        let end = if cell_iter_dir == IterationDirection::Forwards {
-            cell_count as isize - 1
-        } else {
-            0
-        };
-        self.stack.set_cell_index(cell_idx as i32);
-        while cell_count > 0
-            && (if cell_iter_dir == IterationDirection::Forwards {
-                cell_idx <= end
-            } else {
-                cell_idx >= end
-            })
-        {
+        let mut min: isize = 0;
+        let mut max: isize = cell_count as isize - 1;
+
+        // If iter dir is forwards, we want the first cell that matches;
+        // If iter dir is backwards, we want the last cell that matches.
+        let mut nearest_matching_cell = None;
+        loop {
+            if min > max {
+                let Some(nearest_matching_cell) = nearest_matching_cell else {
+                    // We have now iterated over all cells in the leaf page and found no match.
+                    // Unlike tables, indexes store payloads in interior cells as well. self.move_to() always moves to a leaf page, so there are cases where we need to
+                    // move back up to the parent interior cell and get the next record from there to perform a correct seek.
+                    // an example of how this can occur:
+                    //
+                    // we do an index seek for key K with cmp = SeekOp::GT, meaning we want to seek to the first key that is greater than K.
+                    // in self.move_to(), we encounter an interior cell with key K' = K+2, and move the left child page, which is a leaf page.
+                    // the reason we move to the left child page is that we know that in an index, all keys in the left child page are less than K' i.e. less than K+2,
+                    // meaning that the left subtree may contain a key greater than K, e.g. K+1. however, it is possible that it doesn't, in which case the correct
+                    // next key is K+2, which is in the parent interior cell.
+                    //
+                    // In the seek() method, once we have landed in the leaf page and find that there is no cell with a key greater than K,
+                    // if we were to return Ok(CursorResult::Ok((None, None))), self.record would be None, which is incorrect, because we already know
+                    // that there is a record with a key greater than K (K' = K+2) in the parent interior cell. Hence, we need to move back up the tree
+                    // and get the next matching record from there.
+                    match seek_op.iteration_direction() {
+                        IterationDirection::Forwards => {
+                            self.stack.set_cell_index(cell_count as i32);
+                            return self.get_next_record(Some((SeekKey::IndexKey(key), seek_op)));
+                        }
+                        IterationDirection::Backwards => {
+                            self.stack.set_cell_index(-1);
+                            return self.get_prev_record(Some((SeekKey::IndexKey(key), seek_op)));
+                        }
+                    }
+                };
+                let cell = contents.cell_get(
+                    nearest_matching_cell as usize,
+                    payload_overflow_threshold_max(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    payload_overflow_threshold_min(
+                        contents.page_type(),
+                        self.usable_space() as u16,
+                    ),
+                    self.usable_space(),
+                )?;
+
+                let BTreeCell::IndexLeafCell(IndexLeafCell {
+                    payload,
+                    first_overflow_page,
+                    payload_size,
+                }) = &cell
+                else {
+                    unreachable!("unexpected cell type: {:?}", cell);
+                };
+
+                if let Some(next_page) = first_overflow_page {
+                    return_if_io!(self.process_overflow_read(payload, *next_page, *payload_size))
+                } else {
+                    crate::storage::sqlite3_ondisk::read_record(
+                        payload,
+                        self.get_immutable_record_or_create().as_mut().unwrap(),
+                    )?
+                }
+                let record = self.get_immutable_record();
+                let record = record.as_ref().unwrap();
+                let rowid = match record.last_value() {
+                    Some(RefValue::Integer(rowid)) => *rowid as u64,
+                    _ => unreachable!("index cells should have an integer rowid"),
+                };
+                self.stack.set_cell_index(nearest_matching_cell as i32);
+                self.stack.next_cell_in_direction(cell_iter_dir);
+                return Ok(CursorResult::Ok(Some(rowid)));
+            }
+
+            let cur_cell_idx = (min + max) / 2;
+            self.stack.set_cell_index(cur_cell_idx as i32);
+
             let cell = contents.cell_get(
-                cell_idx as usize,
+                cur_cell_idx as usize,
                 payload_overflow_threshold_max(contents.page_type(), self.usable_space() as u16),
                 payload_overflow_threshold_min(contents.page_type(), self.usable_space() as u16),
                 self.usable_space(),
@@ -1468,54 +1529,44 @@ impl BTreeCursor {
             let record = record.as_ref().unwrap();
             let record_slice_equal_number_of_cols =
                 &record.get_values().as_slice()[..key.get_values().len()];
-            let order = compare_immutable(
+            let cmp = compare_immutable(
                 record_slice_equal_number_of_cols,
                 key.get_values(),
                 self.index_key_sort_order,
             );
             let found = match seek_op {
-                SeekOp::GT => order.is_gt(),
-                SeekOp::GE => order.is_ge(),
-                SeekOp::EQ => order.is_eq(),
-                SeekOp::LE => order.is_le(),
-                SeekOp::LT => order.is_lt(),
+                SeekOp::GT => cmp.is_gt(),
+                SeekOp::GE => cmp.is_ge(),
+                SeekOp::EQ => cmp.is_eq(),
+                SeekOp::LE => cmp.is_le(),
+                SeekOp::LT => cmp.is_lt(),
             };
-            self.stack.next_cell_in_direction(cell_iter_dir);
             if found {
-                let rowid = match record.last_value() {
-                    Some(RefValue::Integer(rowid)) => *rowid as u64,
-                    _ => unreachable!("index cells should have an integer rowid"),
-                };
-                return Ok(CursorResult::Ok(Some(rowid)));
-            }
-            if cell_iter_dir == IterationDirection::Forwards {
-                cell_idx += 1;
+                match cell_iter_dir {
+                    IterationDirection::Forwards => {
+                        nearest_matching_cell = Some(cur_cell_idx as usize);
+                        max = cur_cell_idx - 1;
+                    }
+                    IterationDirection::Backwards => {
+                        nearest_matching_cell = Some(cur_cell_idx as usize);
+                        min = cur_cell_idx + 1;
+                    }
+                }
             } else {
-                cell_idx -= 1;
-            }
-        }
-
-        // We have now iterated over all cells in the leaf page and found no match.
-        // Unlike tables, indexes store payloads in interior cells as well. self.move_to() always moves to a leaf page, so there are cases where we need to
-        // move back up to the parent interior cell and get the next record from there to perform a correct seek.
-        // an example of how this can occur:
-        //
-        // we do an index seek for key K with cmp = SeekOp::GT, meaning we want to seek to the first key that is greater than K.
-        // in self.move_to(), we encounter an interior cell with key K' = K+2, and move the left child page, which is a leaf page.
-        // the reason we move to the left child page is that we know that in an index, all keys in the left child page are less than K' i.e. less than K+2,
-        // meaning that the left subtree may contain a key greater than K, e.g. K+1. however, it is possible that it doesn't, in which case the correct
-        // next key is K+2, which is in the parent interior cell.
-        //
-        // In the seek() method, once we have landed in the leaf page and find that there is no cell with a key greater than K,
-        // if we were to return Ok(CursorResult::Ok((None, None))), self.record would be None, which is incorrect, because we already know
-        // that there is a record with a key greater than K (K' = K+2) in the parent interior cell. Hence, we need to move back up the tree
-        // and get the next matching record from there.
-        match seek_op.iteration_direction() {
-            IterationDirection::Forwards => {
-                return self.get_next_record(Some((SeekKey::IndexKey(key), seek_op)));
-            }
-            IterationDirection::Backwards => {
-                return self.get_prev_record(Some((SeekKey::IndexKey(key), seek_op)));
+                if cmp.is_gt() {
+                    max = cur_cell_idx - 1;
+                } else if cmp.is_lt() {
+                    min = cur_cell_idx + 1;
+                } else {
+                    match cell_iter_dir {
+                        IterationDirection::Forwards => {
+                            min = cur_cell_idx + 1;
+                        }
+                        IterationDirection::Backwards => {
+                            max = cur_cell_idx - 1;
+                        }
+                    }
+                }
             }
         }
     }
