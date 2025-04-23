@@ -309,7 +309,7 @@ mod tests {
             let col_choices = ["x", "y", "z", "nonindexed_col"];
             let col_choices_weights = [10.0, 10.0, 10.0, 3.0];
             let num_cols_in_select = rng.random_range(1..=4);
-            let select_cols = col_choices
+            let mut select_cols = col_choices
                 .choose_multiple_weighted(&mut rng, num_cols_in_select, |s| {
                     let idx = col_choices.iter().position(|c| c == s).unwrap();
                     col_choices_weights[idx]
@@ -319,6 +319,9 @@ mod tests {
                 .iter()
                 .map(|x| x.to_string())
                 .collect::<Vec<_>>();
+
+            // sort select cols by index of col_choices
+            select_cols.sort_by_cached_key(|x| col_choices.iter().position(|c| c == x).unwrap());
 
             let (comp1, comp2, comp3) = all_comps[rng.random_range(0..all_comps.len())];
             // Similarly as for the constraints, generate order by permutations so that the only columns involved in the index seek are potentially part of the ORDER BY.
