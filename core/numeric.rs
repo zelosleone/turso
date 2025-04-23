@@ -347,6 +347,8 @@ const MAX_EXACT: u64 = u64::MAX << 11;
 
 const VERTICAL_TAB: char = '\u{b}';
 
+/// Encapsulates Dekker's arithmetic for higher precision. This is spiritually the same as using a
+/// f128 for arithmetic, but cross platform and compatible with sqlite.
 #[derive(Debug, Clone, Copy)]
 struct DoubleDouble(f64, f64);
 
