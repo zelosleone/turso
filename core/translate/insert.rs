@@ -344,7 +344,7 @@ pub fn translate_insert(
                 .enumerate()
                 .fold(String::new(), |mut accum, (idx, name)| {
                     if idx % 2 == 1 {
-                        accum.push(',');
+                        accum.push_str(", ");
                     }
                     accum.push_str(&name);
                     accum
@@ -352,7 +352,7 @@ pub fn translate_insert(
 
         program.emit_insn(Insn::Halt {
             err_code: SQLITE_CONSTRAINT_PRIMARYKEY,
-            description: format!("{}.{}", table_name.0, column_names),
+            description: column_names,
         });
 
         program.resolve_label(make_record_label, program.offset());
