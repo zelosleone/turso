@@ -138,7 +138,7 @@ pub extern "system" fn Java_tech_turso_core_LimboStatement_columns<'local>(
 
     for i in 0..num_columns {
         let column_name = stmt.stmt.get_column_name(i);
-        let str = env.new_string(column_name.as_str()).unwrap();
+        let str = env.new_string(column_name.into_owned()).unwrap();
         env.set_object_array_element(&obj_arr, i as i32, str)
             .unwrap();
     }

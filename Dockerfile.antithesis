@@ -71,4 +71,5 @@ COPY --from=builder /app/target/release/limbo_stress /bin/limbo_stress
 COPY stress/docker-entrypoint.sh /bin
 RUN chmod +x /bin/docker-entrypoint.sh
 ENTRYPOINT ["/bin/docker-entrypoint.sh"]
+ENV RUST_BACKTRACE=1
 CMD ["/bin/limbo_stress"]

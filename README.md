@@ -10,7 +10,9 @@
 <p align="center">
   <a title="Build Status" target="_blank" href="https://github.com/tursodatabase/limbo/actions/workflows/rust.yml"><img src="https://img.shields.io/github/actions/workflow/status/tursodatabase/limbo/rust.yml?style=flat-square"></a>
   <a title="Releases" target="_blank" href="https://github.com/tursodatabase/limbo/releases"><img src="https://img.shields.io/github/release/tursodatabase/limbo?style=flat-square&color=9CF"></a>
-  <a title="PyPI" target="_blank" href="https://pypi.org/project/pylimbo/"><img alt="PyPI" src="https://img.shields.io/pypi/v/pylimbo"></a>
+  <a title="Rust" target="_blank" href="https://crates.io/crates/limbo"><img alt="PyPI" src="https://img.shields.io/crates/v/limbo"></a>
+  <a title="JavaScript" target="_blank" href="https://www.npmjs.com/package/@tursodatabase/limbo"><img alt="PyPI" src="https://img.shields.io/npm/v/@tursodatabase/limbo"></a>
+  <a title="Python" target="_blank" href="https://pypi.org/project/pylimbo/"><img alt="PyPI" src="https://img.shields.io/pypi/v/pylimbo"></a>
   <a title="MIT" target="_blank" href="https://github.com/tursodatabase/limbo/blob/main/LICENSE.md"><img src="http://img.shields.io/badge/license-MIT-orange.svg?style=flat-square"></a>
   <br>
   <a title="GitHub Pull Requests" target="_blank" href="https://github.com/tursodatabase/limbo/pulls"><img src="https://img.shields.io/github/issues-pr-closed/tursodatabase/limbo.svg?style=flat-square&color=FF9966"></a>

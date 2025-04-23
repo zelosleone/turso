@@ -190,6 +190,39 @@ impl Statement {
             }
         }
     }
+
+    pub fn columns(&self) -> Vec<Column> {
+        let stmt = self.inner.lock().unwrap();
+
+        let n = stmt.num_columns();
+
+        let mut cols = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let name = stmt.get_column_name(i).into_owned();
+            cols.push(Column {
+                name,
+                decl_type: None, // TODO
+            });
+        }
+
+        cols
+    }
+}
+
+pub struct Column {
+    name: String,
+    decl_type: Option<String>,
+}
+
+impl Column {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn decl_type(&self) -> Option<&str> {
+        self.decl_type.as_deref()
+    }
 }
 
 pub trait IntoValue {
