@@ -975,13 +975,12 @@ impl BTreeCursor {
     /// or e.g. find the first record greater than the seek key in a range query (e.g. SELECT * FROM table WHERE col > 10).
     /// We don't include the rowid in the comparison and that's why the last value from the record is not included.
     fn do_seek(&mut self, key: SeekKey<'_>, op: SeekOp) -> Result<CursorResult<Option<u64>>> {
-        let cell_iter_dir = op.iteration_direction();
         match key {
             SeekKey::TableRowId(rowid) => {
-                return self.tablebtree_seek(rowid, op, cell_iter_dir);
+                return self.tablebtree_seek(rowid, op);
             }
             SeekKey::IndexKey(index_key) => {
-                return self.indexbtree_seek(index_key, op, cell_iter_dir);
+                return self.indexbtree_seek(index_key, op);
             }
         }
     }
@@ -1027,12 +1026,8 @@ impl BTreeCursor {
     }
 
     /// Specialized version of move_to() for table btrees.
-    fn tablebtree_move_to(
-        &mut self,
-        rowid: u64,
-        seek_op: SeekOp,
-        iter_dir: IterationDirection,
-    ) -> Result<CursorResult<()>> {
+    fn tablebtree_move_to(&mut self, rowid: u64, seek_op: SeekOp) -> Result<CursorResult<()>> {
+        let iter_dir = seek_op.iteration_direction();
         'outer: loop {
             let page = self.stack.top();
             return_if_locked!(page);
@@ -1141,8 +1136,8 @@ impl BTreeCursor {
         &mut self,
         index_key: &ImmutableRecord,
         cmp: SeekOp,
-        iter_dir: IterationDirection,
     ) -> Result<CursorResult<()>> {
+        let iter_dir = cmp.iteration_direction();
         'outer: loop {
             let page = self.stack.top();
             return_if_locked!(page);
@@ -1301,11 +1296,10 @@ impl BTreeCursor {
         &mut self,
         rowid: u64,
         seek_op: SeekOp,
-        iter_dir: IterationDirection,
     ) -> Result<CursorResult<Option<u64>>> {
         assert!(self.mv_cursor.is_none());
         self.move_to_root();
-        return_if_io!(self.tablebtree_move_to(rowid, seek_op, iter_dir));
+        return_if_io!(self.tablebtree_move_to(rowid, seek_op));
         let page = self.stack.top();
         return_if_locked!(page);
         let contents = page.get().contents.as_ref().unwrap();
@@ -1313,6 +1307,7 @@ impl BTreeCursor {
             contents.is_leaf(),
             "tablebtree_seek() called on non-leaf page"
         );
+        let iter_dir = seek_op.iteration_direction();
 
         let cell_count = contents.cell_count();
         let mut min: isize = 0;
@@ -1441,10 +1436,9 @@ impl BTreeCursor {
         &mut self,
         key: &ImmutableRecord,
         seek_op: SeekOp,
-        cell_iter_dir: IterationDirection,
     ) -> Result<CursorResult<Option<u64>>> {
         self.move_to_root();
-        return_if_io!(self.indexbtree_move_to(key, seek_op, cell_iter_dir));
+        return_if_io!(self.indexbtree_move_to(key, seek_op));
 
         let page = self.stack.top();
         return_if_locked!(page);
@@ -1454,6 +1448,8 @@ impl BTreeCursor {
         let cell_count = contents.cell_count();
         let mut min: isize = 0;
         let mut max: isize = cell_count as isize - 1;
+
+        let iter_dir = seek_op.iteration_direction();
 
         // If iter dir is forwards, we want the first cell that matches;
         // If iter dir is backwards, we want the last cell that matches.
@@ -1524,7 +1520,7 @@ impl BTreeCursor {
                     _ => unreachable!("index cells should have an integer rowid"),
                 };
                 self.stack.set_cell_index(nearest_matching_cell as i32);
-                self.stack.next_cell_in_direction(cell_iter_dir);
+                self.stack.next_cell_in_direction(iter_dir);
                 return Ok(CursorResult::Ok(Some(rowid)));
             }
 
@@ -1571,7 +1567,7 @@ impl BTreeCursor {
                 SeekOp::LT => cmp.is_lt(),
             };
             if found {
-                match cell_iter_dir {
+                match iter_dir {
                     IterationDirection::Forwards => {
                         nearest_matching_cell = Some(cur_cell_idx as usize);
                         max = cur_cell_idx - 1;
@@ -1587,7 +1583,7 @@ impl BTreeCursor {
                 } else if cmp.is_lt() {
                     min = cur_cell_idx + 1;
                 } else {
-                    match cell_iter_dir {
+                    match iter_dir {
                         IterationDirection::Forwards => {
                             min = cur_cell_idx + 1;
                         }
@@ -1645,13 +1641,12 @@ impl BTreeCursor {
         // 6. If we find the cell, we return the record. Otherwise, we return an empty result.
         self.move_to_root();
 
-        let iter_dir = cmp.iteration_direction();
         match key {
             SeekKey::TableRowId(rowid_key) => {
-                return self.tablebtree_move_to(rowid_key, cmp, iter_dir);
+                return self.tablebtree_move_to(rowid_key, cmp);
             }
             SeekKey::IndexKey(index_key) => {
-                return self.indexbtree_move_to(index_key, cmp, iter_dir);
+                return self.indexbtree_move_to(index_key, cmp);
             }
         }
     }
