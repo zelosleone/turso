@@ -14,4 +14,4 @@ package = false
 limbo_test = { workspace = true }
 
 [tool.uv.workspace]
-members = ["testing"]
+members = ["testing", "scripts"]
