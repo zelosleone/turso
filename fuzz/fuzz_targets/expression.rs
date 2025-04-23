@@ -169,7 +169,7 @@ fn do_fuzz(expr: Expr) -> Result<Corpus, Box<dyn Error>> {
     let sql = format!("SELECT {}", expr.query);
 
     // FIX: `limbo_core::translate::expr::translate_expr` causes a overflow if this is any higher.
-    if expr.depth > 150 {
+    if expr.depth > 140 {
         return Ok(Corpus::Reject);
     }
 
