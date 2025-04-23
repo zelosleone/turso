@@ -367,7 +367,7 @@ pub struct Program {
     pub insns: Vec<(Insn, InsnFunction)>,
     pub cursor_ref: Vec<(Option<String>, CursorType)>,
     pub database_header: Arc<SpinLock<DatabaseHeader>>,
-    pub comments: Option<HashMap<InsnReference, &'static str>>,
+    pub comments: Option<Vec<(InsnReference, &'static str)>>,
     pub parameters: crate::parameters::Parameters,
     pub connection: Weak<Connection>,
     pub n_change: Cell<i64>,
@@ -557,10 +557,11 @@ fn trace_insn(program: &Program, addr: InsnReference, insn: &Insn) {
             addr,
             insn,
             String::new(),
-            program
-                .comments
-                .as_ref()
-                .and_then(|comments| comments.get(&{ addr }).copied())
+            program.comments.as_ref().and_then(|comments| comments
+                .iter()
+                .find(|(offset, _)| *offset == addr)
+                .map(|(_, comment)| comment)
+                .copied())
         )
     );
 }
@@ -571,10 +572,13 @@ fn print_insn(program: &Program, addr: InsnReference, insn: &Insn, indent: Strin
         addr,
         insn,
         indent,
-        program
-            .comments
-            .as_ref()
-            .and_then(|comments| comments.get(&{ addr }).copied()),
+        program.comments.as_ref().and_then(|comments| {
+            comments
+                .iter()
+                .find(|(offset, _)| *offset == addr)
+                .map(|(_, comment)| comment)
+                .copied()
+        }),
     );
     w.push_str(&s);
 }

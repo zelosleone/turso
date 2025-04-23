@@ -1,7 +1,6 @@
 use std::{
     cell::Cell,
     cmp::Ordering,
-    collections::HashMap,
     rc::{Rc, Weak},
     sync::Arc,
 };
@@ -35,7 +34,7 @@ pub struct ProgramBuilder {
     // Bitmask of cursors that have emitted a SeekRowid instruction.
     seekrowid_emitted_bitmask: u64,
     // map of instruction index to manual comment (used in EXPLAIN only)
-    comments: Option<HashMap<InsnReference, &'static str>>,
+    comments: Option<Vec<(InsnReference, &'static str)>>,
     pub parameters: Parameters,
     pub result_columns: Vec<ResultSetColumn>,
     pub table_references: Vec<TableReference>,
@@ -89,7 +88,7 @@ impl ProgramBuilder {
             label_to_resolved_offset: Vec::with_capacity(opts.approx_num_labels),
             seekrowid_emitted_bitmask: 0,
             comments: if opts.query_mode == QueryMode::Explain {
-                Some(HashMap::new())
+                Some(Vec::new())
             } else {
                 None
             },
@@ -247,7 +246,7 @@ impl ProgramBuilder {
 
     pub fn add_comment(&mut self, insn_index: BranchOffset, comment: &'static str) {
         if let Some(comments) = &mut self.comments {
-            comments.insert(insn_index.to_offset_int(), comment);
+            comments.push((insn_index.to_offset_int(), comment));
         }
     }
 
@@ -296,6 +295,18 @@ impl ProgramBuilder {
                     .position(|(_, _, index)| *old_offset == *index as u32)
                     .unwrap() as u32;
                 *resolved_offset = Some((new_offset, *target));
+            }
+        }
+
+        // Fix comments to refer to new locations
+        if let Some(comments) = &mut self.comments {
+            for (old_offset, _) in comments.iter_mut() {
+                let new_offset = self
+                    .insns
+                    .iter()
+                    .position(|(_, _, index)| *old_offset == *index as u32)
+                    .expect("comment must exist") as u32;
+                *old_offset = new_offset;
             }
         }
     }
