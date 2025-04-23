@@ -1447,7 +1447,6 @@ pub fn op_result_row(
         values: &state.registers[*start_reg] as *const Register,
         count: *count,
     };
-
     state.result_row = Some(row);
     state.pc += 1;
     return Ok(InsnFunctionStepResult::Row);
