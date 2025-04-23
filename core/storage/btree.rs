@@ -1137,26 +1137,79 @@ impl BTreeCursor {
     }
 
     /// Specialized version of move_to() for index btrees.
-    /// TODO: refactor this to use binary search instead of iterating cells in order.
-    fn indexbtree_move_to<'a>(
+    fn indexbtree_move_to(
         &mut self,
-        index_key: &'a ImmutableRecord,
+        index_key: &ImmutableRecord,
         cmp: SeekOp,
         iter_dir: IterationDirection,
     ) -> Result<CursorResult<()>> {
-        loop {
+        'outer: loop {
             let page = self.stack.top();
             return_if_locked!(page);
-
             let contents = page.get().contents.as_ref().unwrap();
             if contents.is_leaf() {
                 return Ok(CursorResult::Ok(()));
             }
 
-            let mut found_cell = false;
-            for cell_idx in 0..contents.cell_count() {
+            let cell_count = contents.cell_count();
+            let mut min: isize = 0;
+            let mut max: isize = cell_count as isize - 1;
+            let mut leftmost_matching_cell = None;
+            loop {
+                if min > max {
+                    let Some(leftmost_matching_cell) = leftmost_matching_cell else {
+                        self.stack.set_cell_index(contents.cell_count() as i32 + 1);
+                        match contents.rightmost_pointer() {
+                            Some(right_most_pointer) => {
+                                let mem_page = self.pager.read_page(right_most_pointer as usize)?;
+                                self.stack.push(mem_page);
+                                continue 'outer;
+                            }
+                            None => {
+                                unreachable!(
+                                    "we shall not go back up! The only way is down the slope"
+                                );
+                            }
+                        }
+                    };
+                    let matching_cell = contents.cell_get(
+                        leftmost_matching_cell,
+                        payload_overflow_threshold_max(
+                            contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        payload_overflow_threshold_min(
+                            contents.page_type(),
+                            self.usable_space() as u16,
+                        ),
+                        self.usable_space(),
+                    )?;
+                    self.stack.set_cell_index(leftmost_matching_cell as i32);
+                    // we don't advance in case of forward iteration and index tree internal nodes because we will visit this node going up.
+                    // in backwards iteration, we must retreat because otherwise we would unnecessarily visit this node again.
+                    // Example:
+                    // this parent: key 666, and we found the target key in the left child.
+                    // left child has: key 663, key 664, key 665
+                    // we need to move to the previous parent (with e.g. key 662) when iterating backwards so that we don't end up back here again.
+                    if iter_dir == IterationDirection::Backwards {
+                        self.stack.retreat();
+                    }
+                    let BTreeCell::IndexInteriorCell(IndexInteriorCell {
+                        left_child_page, ..
+                    }) = &matching_cell
+                    else {
+                        unreachable!("unexpected cell type: {:?}", matching_cell);
+                    };
+
+                    let mem_page = self.pager.read_page(*left_child_page as usize)?;
+                    self.stack.push(mem_page);
+                    continue 'outer;
+                }
+
+                let cur_cell_idx = (min + max) / 2;
+                self.stack.set_cell_index(cur_cell_idx as i32);
                 let cell = contents.cell_get(
-                    cell_idx,
+                    cur_cell_idx as usize,
                     payload_overflow_threshold_max(
                         contents.page_type(),
                         self.usable_space() as u16,
@@ -1168,10 +1221,10 @@ impl BTreeCursor {
                     self.usable_space(),
                 )?;
                 let BTreeCell::IndexInteriorCell(IndexInteriorCell {
-                    left_child_page,
                     payload,
-                    first_overflow_page,
                     payload_size,
+                    first_overflow_page,
+                    ..
                 }) = &cell
                 else {
                     unreachable!("unexpected cell type: {:?}", cell);
@@ -1231,36 +1284,12 @@ impl BTreeCursor {
                     SeekOp::LE => interior_cell_vs_index_key.is_gt(),
                     SeekOp::LT => interior_cell_vs_index_key.is_ge(),
                 };
-                if target_leaf_page_is_in_left_subtree {
-                    // we don't advance in case of forward iteration and index tree internal nodes because we will visit this node going up.
-                    // in backwards iteration, we must retreat because otherwise we would unnecessarily visit this node again.
-                    // Example:
-                    // this parent: key 666, and we found the target key in the left child.
-                    // left child has: key 663, key 664, key 665
-                    // we need to move to the previous parent (with e.g. key 662) when iterating backwards so that we don't end up back here again.
-                    if iter_dir == IterationDirection::Backwards {
-                        self.stack.retreat();
-                    }
-                    let mem_page = self.pager.read_page(*left_child_page as usize)?;
-                    self.stack.push(mem_page);
-                    found_cell = true;
-                    break;
-                } else {
-                    self.stack.advance();
-                }
-            }
 
-            if !found_cell {
-                match contents.rightmost_pointer() {
-                    Some(right_most_pointer) => {
-                        self.stack.advance();
-                        let mem_page = self.pager.read_page(right_most_pointer as usize)?;
-                        self.stack.push(mem_page);
-                        continue;
-                    }
-                    None => {
-                        unreachable!("we shall not go back up! The only way is down the slope");
-                    }
+                if target_leaf_page_is_in_left_subtree {
+                    leftmost_matching_cell = Some(cur_cell_idx as usize);
+                    max = cur_cell_idx - 1;
+                } else {
+                    min = cur_cell_idx + 1;
                 }
             }
         }
