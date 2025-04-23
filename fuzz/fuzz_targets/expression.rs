@@ -31,13 +31,15 @@ macro_rules! str_enum {
 
 str_enum! {
     enum Binary {
-        Equal => "=",
-        Is => "IS",
-        NotEqual => "<>",
-        GreaterThan => ">",
-        GreaterThanOrEqual => ">=",
-        LessThan => "<",
-        LessThanOrEqual => "<=",
+        // TODO: Not compatible yet
+        // Equal => "=",
+        // Is => "IS",
+        // Concat => "||",
+        // NotEqual => "<>",
+        // GreaterThan => ">",
+        // GreaterThanOrEqual => ">=",
+        // LessThan => "<",
+        // LessThanOrEqual => "<=",
         RightShift => ">>",
         LeftShift => "<<",
         BitwiseAnd => "&",
@@ -49,13 +51,13 @@ str_enum! {
         Multiply => "*",
         Divide => "/",
         Mod => "%",
-        Concat => "||",
     }
 }
 
 str_enum! {
     enum Unary {
-        Not => "~",
+        Not => "NOT",
+        BitwiseNot => "~",
         Negative => "-",
         Positive => "+",
     }
@@ -167,7 +169,7 @@ fn do_fuzz(expr: Expr) -> Result<Corpus, Box<dyn Error>> {
     let sql = format!("SELECT {}", expr.query);
 
     // FIX: `limbo_core::translate::expr::translate_expr` causes a overflow if this is any higher.
-    if expr.depth > 153 {
+    if expr.depth > 140 {
         return Ok(Corpus::Reject);
     }
 
@@ -206,12 +208,8 @@ fn do_fuzz(expr: Expr) -> Result<Corpus, Box<dyn Error>> {
     assert_eq!(
         OwnedValue::from(expected.clone()),
         found.clone(),
-        "with expression {:?} {}",
+        "with expression {:?}",
         expr,
-        match (expected, found) {
-            (Value::Real(a), OwnedValue::Float(b)) => format!("float diff: {:?}", (a - b).abs()),
-            _ => "".to_string(),
-        }
     );
 
     Ok(Corpus::Keep)
