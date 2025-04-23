@@ -462,9 +462,10 @@ impl ProgramBuilder {
                 Insn::InitCoroutine {
                     yield_reg: _,
                     jump_on_definition,
-                    start_offset: _,
+                    start_offset,
                 } => {
                     resolve(jump_on_definition, "InitCoroutine");
+                    resolve(start_offset, "InitCoroutine");
                 }
                 Insn::NotExists {
                     cursor: _,
