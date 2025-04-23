@@ -80,21 +80,19 @@ impl<T: AsRef<str>> From<T> for Numeric {
     fn from(value: T) -> Self {
         let text = value.as_ref();
 
-        let Some((real, is_fractional)) = atof(text) else {
-            return Self::Integer(0);
-        };
+        match str_to_f64(text) {
+            None => Self::Integer(0),
+            Some(StrToF64::Fractional(value)) => Self::Float(value),
+            Some(StrToF64::Decimal(real)) => {
+                let integer = str_to_i64(text).unwrap_or(0);
 
-        if is_fractional {
-            return Self::Float(real);
+                if real == integer as f64 {
+                    Self::Integer(integer)
+                } else {
+                    Self::Float(real)
+                }
+            }
         }
-
-        let integer = atoi(text);
-
-        if real == integer as f64 {
-            return Self::Integer(integer);
-        }
-
-        Self::Float(real)
     }
 }
 
@@ -233,7 +231,7 @@ impl From<NullableInteger> for OwnedValue {
 
 impl<T: AsRef<str>> From<T> for NullableInteger {
     fn from(value: T) -> Self {
-        Self::Integer(atoi(value.as_ref()))
+        Self::Integer(str_to_i64(value.as_ref()).unwrap_or(0))
     }
 }
 
@@ -417,7 +415,7 @@ impl std::ops::MulAssign for DoubleDouble {
     }
 }
 
-pub fn atoi(input: impl AsRef<str>) -> i64 {
+pub fn str_to_i64(input: impl AsRef<str>) -> Option<i64> {
     let input = input
         .as_ref()
         .trim_matches(|ch: char| ch.is_ascii_whitespace() || ch == VERTICAL_TAB);
@@ -426,19 +424,26 @@ pub fn atoi(input: impl AsRef<str>) -> i64 {
 
     iter.next_if(|(_, ch)| matches!(ch, '+' | '-'));
     let Some((end, _)) = iter.take_while(|(_, ch)| ch.is_ascii_digit()).last() else {
-        return 0;
+        return Some(0);
     };
 
-    input[0..=end]
-        .parse::<i64>()
-        .unwrap_or_else(|err| match err.kind() {
-            std::num::IntErrorKind::PosOverflow => i64::MAX,
-            std::num::IntErrorKind::NegOverflow => i64::MIN,
-            _ => 0,
-        })
+    input[0..=end].parse::<i64>().map_or_else(
+        |err| match err.kind() {
+            std::num::IntErrorKind::PosOverflow => Some(i64::MAX),
+            std::num::IntErrorKind::NegOverflow => Some(i64::MIN),
+            std::num::IntErrorKind::Empty => unreachable!(),
+            _ => Some(0),
+        },
+        Some,
+    )
 }
 
-pub fn atof(input: impl AsRef<str>) -> Option<(NonNan, bool)> {
+pub enum StrToF64 {
+    Fractional(NonNan),
+    Decimal(NonNan),
+}
+
+pub fn str_to_f64(input: impl AsRef<str>) -> Option<StrToF64> {
     let mut input = input
         .as_ref()
         .trim_matches(|ch: char| ch.is_ascii_whitespace() || ch == VERTICAL_TAB)
@@ -560,5 +565,9 @@ pub fn atof(input: impl AsRef<str>) -> Option<(NonNan, bool)> {
     let result = NonNan::new(f64::from(result) * sign)
         .unwrap_or_else(|| NonNan::new(sign * f64::INFINITY).unwrap());
 
-    Some((result, is_fractional))
+    Some(if is_fractional {
+        StrToF64::Fractional(result)
+    } else {
+        StrToF64::Decimal(result)
+    })
 }
