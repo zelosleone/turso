@@ -1,5 +1,6 @@
 use std::{
     cell::Cell,
+    cmp::Ordering,
     collections::HashMap,
     rc::{Rc, Weak},
     sync::Arc,
@@ -21,9 +22,12 @@ use super::{BranchOffset, CursorID, Insn, InsnFunction, InsnReference, Program};
 pub struct ProgramBuilder {
     next_free_register: usize,
     next_free_cursor_id: usize,
-    insns: Vec<(Insn, InsnFunction)>,
-    // for temporarily storing instructions that will be put after Transaction opcode
-    constant_insns: Vec<(Insn, InsnFunction)>,
+    /// Instruction, the function to execute it with, and its original index in the vector.
+    insns: Vec<(Insn, InsnFunction, usize)>,
+    /// A span of instructions from (offset_start_inclusive, offset_end_exclusive),
+    /// that are deemed to be compile-time constant and can be hoisted out of loops
+    /// so that they get evaluated only once at the start of the program.
+    pub constant_spans: Vec<(usize, usize)>,
     // Vector of labels which must be assigned to next emitted instruction
     next_insn_labels: Vec<BranchOffset>,
     // Cursors that are referenced by the program. Indexed by CursorID.
@@ -84,7 +88,7 @@ impl ProgramBuilder {
             insns: Vec::with_capacity(opts.approx_num_insns),
             next_insn_labels: Vec::with_capacity(2),
             cursor_ref: Vec::with_capacity(opts.num_cursors),
-            constant_insns: Vec::new(),
+            constant_spans: Vec::new(),
             label_to_resolved_offset: Vec::with_capacity(opts.approx_num_labels),
             seekrowid_emitted_bitmask: 0,
             comments: if opts.query_mode == QueryMode::Explain {
@@ -96,6 +100,56 @@ impl ProgramBuilder {
             result_columns: Vec::new(),
             table_references: Vec::new(),
         }
+    }
+
+    /// Start a new constant span. The next instruction to be emitted will be the first
+    /// instruction in the span.
+    pub fn constant_span_start(&mut self) -> usize {
+        let span = self.constant_spans.len();
+        let start = self.insns.len();
+        self.constant_spans.push((start, usize::MAX));
+        span
+    }
+
+    /// End the current constant span. The last instruction that was emitted is the last
+    /// instruction in the span.
+    pub fn constant_span_end(&mut self, span_idx: usize) {
+        let span = &mut self.constant_spans[span_idx];
+        if span.1 == usize::MAX {
+            span.1 = self.insns.len().saturating_sub(1);
+        }
+    }
+
+    /// End all constant spans that are currently open. This is used to handle edge cases
+    /// where we think a parent expression is constant, but we decide during the evaluation
+    /// of one of its children that it is not.
+    pub fn constant_span_end_all(&mut self) {
+        for span in self.constant_spans.iter_mut() {
+            if span.1 == usize::MAX {
+                span.1 = self.insns.len().saturating_sub(1);
+            }
+        }
+    }
+
+    /// Check if there is a constant span that is currently open.
+    pub fn constant_span_is_open(&self) -> bool {
+        self.constant_spans
+            .last()
+            .map_or(false, |(_, end)| *end == usize::MAX)
+    }
+
+    /// Get the index of the next constant span.
+    /// Used in [crate::translate::expr::translate_expr_no_constant_opt()] to invalidate
+    /// all constant spans after the given index.
+    pub fn constant_spans_next_idx(&self) -> usize {
+        self.constant_spans.len()
+    }
+
+    /// Invalidate all constant spans after the given index. This is used when we want to
+    /// be sure that constant optimization is never used for translating a given expression.
+    /// See [crate::translate::expr::translate_expr_no_constant_opt()] for more details.
+    pub fn constant_spans_invalidate_after(&mut self, idx: usize) {
+        self.constant_spans.truncate(idx);
     }
 
     pub fn alloc_register(&mut self) -> usize {
@@ -123,12 +177,8 @@ impl ProgramBuilder {
     }
 
     pub fn emit_insn(&mut self, insn: Insn) {
-        for label in self.next_insn_labels.drain(..) {
-            self.label_to_resolved_offset[label.to_label_value() as usize] =
-                Some(self.insns.len() as InsnReference);
-        }
         let function = insn.to_function();
-        self.insns.push((insn, function));
+        self.insns.push((insn, function, self.insns.len()));
     }
 
     pub fn close_cursors(&mut self, cursors: &[CursorID]) {
@@ -204,16 +254,53 @@ impl ProgramBuilder {
         }
     }
 
-    // Emit an instruction that will be put at the end of the program (after Transaction statement).
-    // This is useful for instructions that otherwise will be unnecessarily repeated in a loop.
-    // Example: In `SELECT * from users where name='John'`, it is unnecessary to set r[1]='John' as we SCAN users table.
-    // We could simply set it once before the SCAN started.
     pub fn mark_last_insn_constant(&mut self) {
-        self.constant_insns.push(self.insns.pop().unwrap());
+        if self.constant_span_is_open() {
+            // no need to mark this insn as constant as the surrounding parent expression is already constant
+            return;
+        }
+
+        let prev = self.insns.len().saturating_sub(1);
+        self.constant_spans.push((prev, prev));
     }
 
     pub fn emit_constant_insns(&mut self) {
-        self.insns.append(&mut self.constant_insns);
+        // move compile-time constant instructions to the end of the program, where they are executed once after Init jumps to it.
+        // any label_to_resolved_offset that points to an instruction within any moved constant span should be updated to point to the new location.
+
+        // the instruction reordering can be done by sorting the insns, so that the ordering is:
+        // 1. if insn not in any constant span, it stays where it is
+        // 2. if insn is in a constant span, it is after other insns, except those that are in a later constant span
+        // 3. within a single constant span the order is preserver
+        self.insns.sort_by(|(_, _, index_a), (_, _, index_b)| {
+            let a_span = self
+                .constant_spans
+                .iter()
+                .find(|span| span.0 <= *index_a && span.1 >= *index_a);
+            let b_span = self
+                .constant_spans
+                .iter()
+                .find(|span| span.0 <= *index_b && span.1 >= *index_b);
+            if a_span.is_some() && b_span.is_some() {
+                a_span.unwrap().0.cmp(&b_span.unwrap().0)
+            } else if a_span.is_some() {
+                Ordering::Greater
+            } else if b_span.is_some() {
+                Ordering::Less
+            } else {
+                Ordering::Equal
+            }
+        });
+        for resolved_offset in self.label_to_resolved_offset.iter_mut() {
+            if let Some((old_offset, target)) = resolved_offset {
+                let new_offset = self
+                    .insns
+                    .iter()
+                    .position(|(_, _, index)| *old_offset == *index as u32)
+                    .unwrap() as u32;
+                *resolved_offset = Some((new_offset, *target));
+            }
+        }
     }
 
     pub fn offset(&self) -> BranchOffset {
@@ -260,7 +347,7 @@ impl ProgramBuilder {
                 );
             }
         };
-        for (insn, _) in self.insns.iter_mut() {
+        for (insn, _, _) in self.insns.iter_mut() {
             match insn {
                 Insn::Init { target_pc } => {
                     resolve(target_pc, "Init");
@@ -467,15 +554,15 @@ impl ProgramBuilder {
         change_cnt_on: bool,
     ) -> Program {
         self.resolve_labels();
-        assert!(
-            self.constant_insns.is_empty(),
-            "constant_insns is not empty when build() is called, did you forget to call emit_constant_insns()?"
-        );
 
         self.parameters.list.dedup();
         Program {
             max_registers: self.next_free_register,
-            insns: self.insns,
+            insns: self
+                .insns
+                .into_iter()
+                .map(|(insn, function, _)| (insn, function))
+                .collect(),
             cursor_ref: self.cursor_ref,
             database_header,
             comments: self.comments,
