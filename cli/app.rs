@@ -797,7 +797,7 @@ impl<'a> Limbo<'a> {
                         }
                     }
 
-                    if table.header().is_some() {
+                    if !table.is_empty() {
                         let _ = self.write_fmt(format_args!("{}", table));
                     }
                 }
