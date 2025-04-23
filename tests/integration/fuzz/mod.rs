@@ -211,32 +211,26 @@ mod tests {
         } else {
             rng_from_time()
         };
+        let table_defs: [&str; 8] = [
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y, z))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y, z))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y desc, z))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y, z desc))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y desc, z))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y, z desc))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y desc, z desc))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y desc, z desc))",
+        ];
         // Create all different 3-column primary key permutations
         let dbs = [
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y, z))",
-            ),
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y, z))",
-            ),
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y desc, z))",
-            ),
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y, z desc))",
-            ),
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y desc, z))",
-            ),
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y desc, z desc))",
-            ),
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y, z desc))",
-            ),
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y desc, z desc))",
-            ),
+            TempDatabase::new_with_rusqlite(table_defs[0]),
+            TempDatabase::new_with_rusqlite(table_defs[1]),
+            TempDatabase::new_with_rusqlite(table_defs[2]),
+            TempDatabase::new_with_rusqlite(table_defs[3]),
+            TempDatabase::new_with_rusqlite(table_defs[4]),
+            TempDatabase::new_with_rusqlite(table_defs[5]),
+            TempDatabase::new_with_rusqlite(table_defs[6]),
+            TempDatabase::new_with_rusqlite(table_defs[7]),
         ];
         let mut pk_tuples = HashSet::new();
         while pk_tuples.len() < 100000 {
@@ -475,8 +469,8 @@ mod tests {
                     }
 
                     panic!(
-                        "DIFFERENT RESULTS! limbo: {:?}, sqlite: {:?}, seed: {}, query: {}",
-                        limbo, sqlite, seed, query
+                        "DIFFERENT RESULTS! limbo: {:?}, sqlite: {:?}, seed: {}, query: {}, table def: {}",
+                        limbo, sqlite, seed, query, table_defs[i]
                     );
                 }
             }
