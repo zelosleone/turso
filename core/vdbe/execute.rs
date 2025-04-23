@@ -3,6 +3,7 @@ use crate::numeric::{NullableInteger, Numeric};
 use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::CreateBTreeFlags;
+use crate::types::ImmutableRecord;
 use crate::{
     error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY},
     ext::ExtValue,
@@ -3892,6 +3893,67 @@ pub fn op_soft_null(
     };
     state.registers[*reg] = Register::OwnedValue(OwnedValue::Null);
     state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_no_conflict(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::NoConflict {
+        cursor_id,
+        target_pc,
+        record_reg,
+        num_regs,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    let found = {
+        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = cursor.as_btree_mut();
+
+        let any_fn = |record: &ImmutableRecord| {
+            for val in record.values.iter() {
+                if matches!(val, RefValue::Null) {
+                    return false;
+                }
+            }
+            true
+        };
+
+        let record = if *num_regs == 0 {
+            let record = match &state.registers[*record_reg] {
+                Register::Record(r) => r,
+                _ => {
+                    return Err(LimboError::InternalError(
+                        "NoConflict: exepected a record in the register".into(),
+                    ));
+                }
+            };
+            record
+        } else {
+            &make_record(&state.registers, record_reg, num_regs)
+        };
+
+        // Should early return and jump if any of the values in the record is NULL
+        let found = any_fn(record);
+        if found {
+            return_if_io!(cursor.seek(SeekKey::IndexKey(record), SeekOp::EQ))
+        } else {
+            found
+        }
+    };
+
+    if found {
+        state.pc += 1;
+    } else {
+        state.pc = target_pc.to_offset_int();
+    }
+
     Ok(InsnFunctionStepResult::Step)
 }
 

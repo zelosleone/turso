@@ -664,6 +664,13 @@ pub enum Insn {
         reg: usize,
     },
 
+    NoConflict {
+        cursor_id: CursorID,     // P1 index cursor
+        target_pc: BranchOffset, // P2 jump target
+        record_reg: usize,
+        num_regs: usize,
+    },
+
     NotExists {
         cursor: CursorID,
         rowid_reg: usize,
@@ -922,6 +929,7 @@ impl Insn {
             Insn::NewRowid { .. } => execute::op_new_rowid,
             Insn::MustBeInt { .. } => execute::op_must_be_int,
             Insn::SoftNull { .. } => execute::op_soft_null,
+            Insn::NoConflict { .. } => execute::op_no_conflict,
             Insn::NotExists { .. } => execute::op_not_exists,
             Insn::OffsetLimit { .. } => execute::op_offset_limit,
             Insn::OpenWrite { .. } => execute::op_open_write,

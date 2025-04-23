@@ -283,19 +283,7 @@ pub fn translate_insert(
         }
         _ => (),
     }
-    // Create and insert the record
-    program.emit_insn(Insn::MakeRecord {
-        start_reg: column_registers_start,
-        count: num_cols,
-        dest_reg: record_register,
-    });
 
-    program.emit_insn(Insn::Insert {
-        cursor: cursor_id,
-        key_reg: rowid_reg,
-        record_reg: record_register,
-        flag: 0,
-    });
     for index_col_mapping in index_col_mappings.iter() {
         // find which cursor we opened earlier for this index
         let idx_cursor_id = idx_cursors
@@ -332,6 +320,43 @@ pub fn translate_insert(
             dest_reg: record_reg,
         });
 
+        let make_record_label = program.allocate_label();
+        program.emit_insn(Insn::NoConflict {
+            cursor_id: idx_cursor_id,
+            target_pc: make_record_label,
+            record_reg: idx_start_reg,
+            num_regs: num_cols,
+        });
+        let mut column_names = Vec::new();
+        for (index, ..) in index_col_mapping.columns.iter() {
+            let name = btree_table
+                .columns
+                .get(*index)
+                .unwrap()
+                .name
+                .as_ref()
+                .expect("column name is None");
+            column_names.push(format!("{}.{name}", btree_table.name));
+        }
+        let column_names =
+            column_names
+                .into_iter()
+                .enumerate()
+                .fold(String::new(), |mut accum, (idx, name)| {
+                    if idx % 2 == 1 {
+                        accum.push(',');
+                    }
+                    accum.push_str(&name);
+                    accum
+                });
+
+        program.emit_insn(Insn::Halt {
+            err_code: SQLITE_CONSTRAINT_PRIMARYKEY,
+            description: format!("{}.{}", table_name.0, column_names),
+        });
+
+        program.resolve_label(make_record_label, program.offset());
+
         // now do the actual index insertion using the unpacked registers
         program.emit_insn(Insn::IdxInsert {
             cursor_id: idx_cursor_id,
@@ -342,6 +367,21 @@ pub fn translate_insert(
             flags: IdxInsertFlags::new(),
         });
     }
+
+    // Create and insert the record
+    program.emit_insn(Insn::MakeRecord {
+        start_reg: column_registers_start,
+        count: num_cols,
+        dest_reg: record_register,
+    });
+
+    program.emit_insn(Insn::Insert {
+        cursor: cursor_id,
+        key_reg: rowid_reg,
+        record_reg: record_register,
+        flag: 0,
+    });
+
     if inserting_multiple_rows {
         // For multiple rows, loop back
         program.emit_insn(Insn::Goto {
@@ -472,7 +512,7 @@ fn resolve_columns_for_insert<'a>(
 /// Represents how a column in an index should be populated during an INSERT.
 /// Similar to ColumnMapping above but includes the index name, as well as multiple
 /// possible value indices for each.
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct IndexColMapping {
     idx_name: String,
     columns: Vec<(usize, IndexColumn)>,
