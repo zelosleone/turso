@@ -976,169 +976,14 @@ impl BTreeCursor {
     /// We don't include the rowid in the comparison and that's why the last value from the record is not included.
     fn do_seek(&mut self, key: SeekKey<'_>, op: SeekOp) -> Result<CursorResult<Option<u64>>> {
         let cell_iter_dir = op.iteration_direction();
-        if let SeekKey::TableRowId(rowid) = key {
-            return self.tablebtree_seek(rowid, op, cell_iter_dir);
-        }
-        return_if_io!(self.move_to(key.clone(), op.clone()));
-
-        {
-            let page = self.stack.top();
-            return_if_locked!(page);
-
-            let contents = page.get().contents.as_ref().unwrap();
-
-            let cell_count = contents.cell_count();
-            let mut cell_idx: isize = if cell_iter_dir == IterationDirection::Forwards {
-                0
-            } else {
-                cell_count as isize - 1
-            };
-            let end = if cell_iter_dir == IterationDirection::Forwards {
-                cell_count as isize - 1
-            } else {
-                0
-            };
-            self.stack.set_cell_index(cell_idx as i32);
-            while cell_count > 0
-                && (if cell_iter_dir == IterationDirection::Forwards {
-                    cell_idx <= end
-                } else {
-                    cell_idx >= end
-                })
-            {
-                let cell = contents.cell_get(
-                    cell_idx as usize,
-                    payload_overflow_threshold_max(
-                        contents.page_type(),
-                        self.usable_space() as u16,
-                    ),
-                    payload_overflow_threshold_min(
-                        contents.page_type(),
-                        self.usable_space() as u16,
-                    ),
-                    self.usable_space(),
-                )?;
-                match &cell {
-                    BTreeCell::TableLeafCell(TableLeafCell {
-                        _rowid: cell_rowid,
-                        _payload: payload,
-                        first_overflow_page,
-                        payload_size,
-                    }) => {
-                        let SeekKey::TableRowId(rowid_key) = key else {
-                            unreachable!("table seek key should be a rowid");
-                        };
-                        let found = match op {
-                            SeekOp::GT => *cell_rowid > rowid_key,
-                            SeekOp::GE => *cell_rowid >= rowid_key,
-                            SeekOp::EQ => *cell_rowid == rowid_key,
-                            SeekOp::LE => *cell_rowid <= rowid_key,
-                            SeekOp::LT => *cell_rowid < rowid_key,
-                        };
-                        if found {
-                            if let Some(next_page) = first_overflow_page {
-                                return_if_io!(self.process_overflow_read(
-                                    payload,
-                                    *next_page,
-                                    *payload_size
-                                ))
-                            } else {
-                                crate::storage::sqlite3_ondisk::read_record(
-                                    payload,
-                                    self.get_immutable_record_or_create().as_mut().unwrap(),
-                                )?
-                            };
-                            self.stack.next_cell_in_direction(cell_iter_dir);
-                            return Ok(CursorResult::Ok(Some(*cell_rowid)));
-                        } else {
-                            self.stack.next_cell_in_direction(cell_iter_dir);
-                        }
-                    }
-                    BTreeCell::IndexLeafCell(IndexLeafCell {
-                        payload,
-                        first_overflow_page,
-                        payload_size,
-                    }) => {
-                        let SeekKey::IndexKey(index_key) = key else {
-                            unreachable!("index seek key should be a record");
-                        };
-                        if let Some(next_page) = first_overflow_page {
-                            return_if_io!(self.process_overflow_read(
-                                payload,
-                                *next_page,
-                                *payload_size
-                            ))
-                        } else {
-                            crate::storage::sqlite3_ondisk::read_record(
-                                payload,
-                                self.get_immutable_record_or_create().as_mut().unwrap(),
-                            )?
-                        };
-                        let record = self.get_immutable_record();
-                        let record = record.as_ref().unwrap();
-                        let record_slice_equal_number_of_cols =
-                            &record.get_values().as_slice()[..index_key.get_values().len()];
-                        let order = compare_immutable(
-                            record_slice_equal_number_of_cols,
-                            index_key.get_values(),
-                            self.index_key_sort_order,
-                        );
-                        let found = match op {
-                            SeekOp::GT => order.is_gt(),
-                            SeekOp::GE => order.is_ge(),
-                            SeekOp::EQ => order.is_eq(),
-                            SeekOp::LE => order.is_le(),
-                            SeekOp::LT => order.is_lt(),
-                        };
-                        self.stack.next_cell_in_direction(cell_iter_dir);
-                        if found {
-                            let rowid = match record.last_value() {
-                                Some(RefValue::Integer(rowid)) => *rowid as u64,
-                                _ => unreachable!("index cells should have an integer rowid"),
-                            };
-                            return Ok(CursorResult::Ok(Some(rowid)));
-                        }
-                    }
-                    cell_type => {
-                        unreachable!("unexpected cell type: {:?}", cell_type);
-                    }
-                }
-                if cell_iter_dir == IterationDirection::Forwards {
-                    cell_idx += 1;
-                } else {
-                    cell_idx -= 1;
-                }
+        match key {
+            SeekKey::TableRowId(rowid) => {
+                return self.tablebtree_seek(rowid, op, cell_iter_dir);
+            }
+            SeekKey::IndexKey(index_key) => {
+                return self.indexbtree_seek(index_key, op, cell_iter_dir);
             }
         }
-
-        // We have now iterated over all cells in the leaf page and found no match.
-        let is_index = matches!(key, SeekKey::IndexKey(_));
-        if is_index {
-            // Unlike tables, indexes store payloads in interior cells as well. self.move_to() always moves to a leaf page, so there are cases where we need to
-            // move back up to the parent interior cell and get the next record from there to perform a correct seek.
-            // an example of how this can occur:
-            //
-            // we do an index seek for key K with cmp = SeekOp::GT, meaning we want to seek to the first key that is greater than K.
-            // in self.move_to(), we encounter an interior cell with key K' = K+2, and move the left child page, which is a leaf page.
-            // the reason we move to the left child page is that we know that in an index, all keys in the left child page are less than K' i.e. less than K+2,
-            // meaning that the left subtree may contain a key greater than K, e.g. K+1. however, it is possible that it doesn't, in which case the correct
-            // next key is K+2, which is in the parent interior cell.
-            //
-            // In the seek() method, once we have landed in the leaf page and find that there is no cell with a key greater than K,
-            // if we were to return Ok(CursorResult::Ok((None, None))), self.record would be None, which is incorrect, because we already know
-            // that there is a record with a key greater than K (K' = K+2) in the parent interior cell. Hence, we need to move back up the tree
-            // and get the next matching record from there.
-            match op.iteration_direction() {
-                IterationDirection::Forwards => {
-                    return self.get_next_record(Some((key, op)));
-                }
-                IterationDirection::Backwards => {
-                    return self.get_prev_record(Some((key, op)));
-                }
-            }
-        }
-
-        Ok(CursorResult::Ok(None))
     }
 
     /// Move the cursor to the root page of the btree.
@@ -1559,6 +1404,118 @@ impl BTreeCursor {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    fn indexbtree_seek(
+        &mut self,
+        key: &ImmutableRecord,
+        seek_op: SeekOp,
+        cell_iter_dir: IterationDirection,
+    ) -> Result<CursorResult<Option<u64>>> {
+        self.move_to_root();
+        return_if_io!(self.indexbtree_move_to(key, seek_op, cell_iter_dir));
+
+        let page = self.stack.top();
+        return_if_locked!(page);
+
+        let contents = page.get().contents.as_ref().unwrap();
+
+        let cell_count = contents.cell_count();
+        let mut cell_idx: isize = if cell_iter_dir == IterationDirection::Forwards {
+            0
+        } else {
+            cell_count as isize - 1
+        };
+        let end = if cell_iter_dir == IterationDirection::Forwards {
+            cell_count as isize - 1
+        } else {
+            0
+        };
+        self.stack.set_cell_index(cell_idx as i32);
+        while cell_count > 0
+            && (if cell_iter_dir == IterationDirection::Forwards {
+                cell_idx <= end
+            } else {
+                cell_idx >= end
+            })
+        {
+            let cell = contents.cell_get(
+                cell_idx as usize,
+                payload_overflow_threshold_max(contents.page_type(), self.usable_space() as u16),
+                payload_overflow_threshold_min(contents.page_type(), self.usable_space() as u16),
+                self.usable_space(),
+            )?;
+            let BTreeCell::IndexLeafCell(IndexLeafCell {
+                payload,
+                first_overflow_page,
+                payload_size,
+            }) = &cell
+            else {
+                unreachable!("unexpected cell type: {:?}", cell);
+            };
+
+            if let Some(next_page) = first_overflow_page {
+                return_if_io!(self.process_overflow_read(payload, *next_page, *payload_size))
+            } else {
+                crate::storage::sqlite3_ondisk::read_record(
+                    payload,
+                    self.get_immutable_record_or_create().as_mut().unwrap(),
+                )?
+            };
+            let record = self.get_immutable_record();
+            let record = record.as_ref().unwrap();
+            let record_slice_equal_number_of_cols =
+                &record.get_values().as_slice()[..key.get_values().len()];
+            let order = compare_immutable(
+                record_slice_equal_number_of_cols,
+                key.get_values(),
+                self.index_key_sort_order,
+            );
+            let found = match seek_op {
+                SeekOp::GT => order.is_gt(),
+                SeekOp::GE => order.is_ge(),
+                SeekOp::EQ => order.is_eq(),
+                SeekOp::LE => order.is_le(),
+                SeekOp::LT => order.is_lt(),
+            };
+            self.stack.next_cell_in_direction(cell_iter_dir);
+            if found {
+                let rowid = match record.last_value() {
+                    Some(RefValue::Integer(rowid)) => *rowid as u64,
+                    _ => unreachable!("index cells should have an integer rowid"),
+                };
+                return Ok(CursorResult::Ok(Some(rowid)));
+            }
+            if cell_iter_dir == IterationDirection::Forwards {
+                cell_idx += 1;
+            } else {
+                cell_idx -= 1;
+            }
+        }
+
+        // We have now iterated over all cells in the leaf page and found no match.
+        // Unlike tables, indexes store payloads in interior cells as well. self.move_to() always moves to a leaf page, so there are cases where we need to
+        // move back up to the parent interior cell and get the next record from there to perform a correct seek.
+        // an example of how this can occur:
+        //
+        // we do an index seek for key K with cmp = SeekOp::GT, meaning we want to seek to the first key that is greater than K.
+        // in self.move_to(), we encounter an interior cell with key K' = K+2, and move the left child page, which is a leaf page.
+        // the reason we move to the left child page is that we know that in an index, all keys in the left child page are less than K' i.e. less than K+2,
+        // meaning that the left subtree may contain a key greater than K, e.g. K+1. however, it is possible that it doesn't, in which case the correct
+        // next key is K+2, which is in the parent interior cell.
+        //
+        // In the seek() method, once we have landed in the leaf page and find that there is no cell with a key greater than K,
+        // if we were to return Ok(CursorResult::Ok((None, None))), self.record would be None, which is incorrect, because we already know
+        // that there is a record with a key greater than K (K' = K+2) in the parent interior cell. Hence, we need to move back up the tree
+        // and get the next matching record from there.
+        match seek_op.iteration_direction() {
+            IterationDirection::Forwards => {
+                return self.get_next_record(Some((SeekKey::IndexKey(key), seek_op)));
+            }
+            IterationDirection::Backwards => {
+                return self.get_prev_record(Some((SeekKey::IndexKey(key), seek_op)));
             }
         }
     }
