@@ -787,7 +787,7 @@ impl ImmutableRecord {
             serials.push((serial_type_buf, n));
 
             let value_size = match serial_type {
-                SerialType::Null => 0,
+                SerialType::Null | SerialType::ConstInt0 | SerialType::ConstInt1 => 0,
                 SerialType::I8 => 1,
                 SerialType::I16 => 2,
                 SerialType::I24 => 3,
@@ -845,6 +845,7 @@ impl ImmutableRecord {
                     values.push(RefValue::Integer(*i));
                     let serial_type = SerialType::from(value);
                     match serial_type {
+                        SerialType::ConstInt0 | SerialType::ConstInt1 => {}
                         SerialType::I8 => writer.extend_from_slice(&(*i as i8).to_be_bytes()),
                         SerialType::I16 => writer.extend_from_slice(&(*i as i16).to_be_bytes()),
                         SerialType::I24 => {
@@ -853,7 +854,7 @@ impl ImmutableRecord {
                         SerialType::I32 => writer.extend_from_slice(&(*i as i32).to_be_bytes()),
                         SerialType::I48 => writer.extend_from_slice(&i.to_be_bytes()[2..]), // remove 2 most significant bytes
                         SerialType::I64 => writer.extend_from_slice(&i.to_be_bytes()),
-                        _ => unreachable!(),
+                        other => panic!("Serial type is not an integer: {:?}", other),
                     }
                 }
                 OwnedValue::Float(f) => {
@@ -1113,7 +1114,7 @@ const I48_HIGH: i64 = 140737488355327;
 /// Sqlite Serial Types
 /// https://www.sqlite.org/fileformat.html#record_format
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum SerialType {
+pub enum SerialType {
     Null,
     I8,
     I16,
@@ -1122,8 +1123,17 @@ enum SerialType {
     I48,
     I64,
     F64,
+    ConstInt0,
+    ConstInt1,
     Text { content_size: usize },
     Blob { content_size: usize },
+}
+
+impl SerialType {
+    #[inline(always)]
+    pub fn u64_is_valid_serial_type(n: u64) -> bool {
+        n != 10 && n != 11
+    }
 }
 
 impl From<&OwnedValue> for SerialType {
@@ -1131,6 +1141,8 @@ impl From<&OwnedValue> for SerialType {
         match value {
             OwnedValue::Null => SerialType::Null,
             OwnedValue::Integer(i) => match i {
+                0 => SerialType::ConstInt0,
+                1 => SerialType::ConstInt1,
                 i if *i >= I8_LOW && *i <= I8_HIGH => SerialType::I8,
                 i if *i >= I16_LOW && *i <= I16_HIGH => SerialType::I16,
                 i if *i >= I24_LOW && *i <= I24_HIGH => SerialType::I24,
@@ -1160,8 +1172,42 @@ impl From<SerialType> for u64 {
             SerialType::I48 => 5,
             SerialType::I64 => 6,
             SerialType::F64 => 7,
+            SerialType::ConstInt0 => 8,
+            SerialType::ConstInt1 => 9,
             SerialType::Text { content_size } => (content_size * 2 + 13) as u64,
             SerialType::Blob { content_size } => (content_size * 2 + 12) as u64,
+        }
+    }
+}
+
+impl TryFrom<u64> for SerialType {
+    type Error = LimboError;
+
+    fn try_from(serial_type: u64) -> Result<Self> {
+        match serial_type {
+            0 => Ok(SerialType::Null),
+            1 => Ok(SerialType::I8),
+            2 => Ok(SerialType::I16),
+            3 => Ok(SerialType::I24),
+            4 => Ok(SerialType::I32),
+            5 => Ok(SerialType::I48),
+            6 => Ok(SerialType::I64),
+            7 => Ok(SerialType::F64),
+            8 => Ok(SerialType::ConstInt0),
+            9 => Ok(SerialType::ConstInt1),
+            n if n >= 12 => match n % 2 {
+                0 => Ok(SerialType::Blob {
+                    content_size: (n as usize - 12) / 2,
+                }),
+                1 => Ok(SerialType::Text {
+                    content_size: (n as usize - 13) / 2,
+                }),
+                _ => unreachable!(),
+            },
+            _ => Err(LimboError::Corrupt(format!(
+                "Invalid serial type: {}",
+                serial_type
+            ))),
         }
     }
 }
