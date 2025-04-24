@@ -396,7 +396,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "num_nodes": num_nodes,
         "main_node_id": main_id,
     });
-    lifecycle::setup_complete(&startup_data);
+    // lifecycle::setup_complete(&startup_data);
     antithesis_init();
 
     let mut opts = Opts::parse();
