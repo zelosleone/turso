@@ -47,7 +47,9 @@ use crate::io::{Buffer, Completion, ReadCompletion, SyncCompletion, WriteComplet
 use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
 use crate::storage::pager::Pager;
-use crate::types::{ImmutableRecord, RawSlice, RefValue, SerialType, TextRef, TextSubtype};
+use crate::types::{
+    ImmutableRecord, RawSlice, RefValue, SerialType, SerialTypeKind, TextRef, TextSubtype,
+};
 use crate::{File, Result};
 use std::cell::RefCell;
 use std::mem::MaybeUninit;
@@ -1117,16 +1119,16 @@ pub fn read_record(payload: &[u8], reuse_immutable: &mut ImmutableRecord) -> Res
 /// always.
 #[inline(always)]
 pub fn read_value(buf: &[u8], serial_type: SerialType) -> Result<(RefValue, usize)> {
-    match serial_type {
-        SerialType::Null => Ok((RefValue::Null, 0)),
-        SerialType::I8 => {
+    match serial_type.kind() {
+        SerialTypeKind::Null => Ok((RefValue::Null, 0)),
+        SerialTypeKind::I8 => {
             if buf.is_empty() {
                 crate::bail_corrupt_error!("Invalid UInt8 value");
             }
             let val = buf[0] as i8;
             Ok((RefValue::Integer(val as i64), 1))
         }
-        SerialType::I16 => {
+        SerialTypeKind::I16 => {
             if buf.len() < 2 {
                 crate::bail_corrupt_error!("Invalid BEInt16 value");
             }
@@ -1135,7 +1137,7 @@ pub fn read_value(buf: &[u8], serial_type: SerialType) -> Result<(RefValue, usiz
                 2,
             ))
         }
-        SerialType::I24 => {
+        SerialTypeKind::I24 => {
             if buf.len() < 3 {
                 crate::bail_corrupt_error!("Invalid BEInt24 value");
             }
@@ -1147,7 +1149,7 @@ pub fn read_value(buf: &[u8], serial_type: SerialType) -> Result<(RefValue, usiz
                 3,
             ))
         }
-        SerialType::I32 => {
+        SerialTypeKind::I32 => {
             if buf.len() < 4 {
                 crate::bail_corrupt_error!("Invalid BEInt32 value");
             }
@@ -1156,7 +1158,7 @@ pub fn read_value(buf: &[u8], serial_type: SerialType) -> Result<(RefValue, usiz
                 4,
             ))
         }
-        SerialType::I48 => {
+        SerialTypeKind::I48 => {
             if buf.len() < 6 {
                 crate::bail_corrupt_error!("Invalid BEInt48 value");
             }
@@ -1175,7 +1177,7 @@ pub fn read_value(buf: &[u8], serial_type: SerialType) -> Result<(RefValue, usiz
                 6,
             ))
         }
-        SerialType::I64 => {
+        SerialTypeKind::I64 => {
             if buf.len() < 8 {
                 crate::bail_corrupt_error!("Invalid BEInt64 value");
             }
@@ -1186,7 +1188,7 @@ pub fn read_value(buf: &[u8], serial_type: SerialType) -> Result<(RefValue, usiz
                 8,
             ))
         }
-        SerialType::F64 => {
+        SerialTypeKind::F64 => {
             if buf.len() < 8 {
                 crate::bail_corrupt_error!("Invalid BEFloat64 value");
             }
@@ -1197,9 +1199,10 @@ pub fn read_value(buf: &[u8], serial_type: SerialType) -> Result<(RefValue, usiz
                 8,
             ))
         }
-        SerialType::ConstInt0 => Ok((RefValue::Integer(0), 0)),
-        SerialType::ConstInt1 => Ok((RefValue::Integer(1), 0)),
-        SerialType::Blob { content_size } => {
+        SerialTypeKind::ConstInt0 => Ok((RefValue::Integer(0), 0)),
+        SerialTypeKind::ConstInt1 => Ok((RefValue::Integer(1), 0)),
+        SerialTypeKind::Blob => {
+            let content_size = serial_type.size();
             if buf.len() < content_size {
                 crate::bail_corrupt_error!("Invalid Blob value");
             }
@@ -1211,7 +1214,8 @@ pub fn read_value(buf: &[u8], serial_type: SerialType) -> Result<(RefValue, usiz
                 Ok((RefValue::Blob(slice), content_size))
             }
         }
-        SerialType::Text { content_size } => {
+        SerialTypeKind::Text => {
+            let content_size = serial_type.size();
             if buf.len() < content_size {
                 crate::bail_corrupt_error!(
                     "Invalid String value, length {} < expected length {}",
@@ -1567,32 +1571,32 @@ mod tests {
     use rstest::rstest;
 
     #[rstest]
-    #[case(&[], SerialType::Null, OwnedValue::Null)]
-    #[case(&[255], SerialType::I8, OwnedValue::Integer(-1))]
-    #[case(&[0x12, 0x34], SerialType::I16, OwnedValue::Integer(0x1234))]
-    #[case(&[0xFE], SerialType::I8, OwnedValue::Integer(-2))]
-    #[case(&[0x12, 0x34, 0x56], SerialType::I24, OwnedValue::Integer(0x123456))]
-    #[case(&[0x12, 0x34, 0x56, 0x78], SerialType::I32, OwnedValue::Integer(0x12345678))]
-    #[case(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], SerialType::I48, OwnedValue::Integer(0x123456789ABC))]
-    #[case(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xFF], SerialType::I64, OwnedValue::Integer(0x123456789ABCDEFF))]
-    #[case(&[0x40, 0x09, 0x21, 0xFB, 0x54, 0x44, 0x2D, 0x18], SerialType::F64, OwnedValue::Float(std::f64::consts::PI))]
-    #[case(&[1, 2], SerialType::ConstInt0, OwnedValue::Integer(0))]
-    #[case(&[65, 66], SerialType::ConstInt1, OwnedValue::Integer(1))]
-    #[case(&[1, 2, 3], SerialType::Blob { content_size: 3 }, OwnedValue::Blob(vec![1, 2, 3].into()))]
-    #[case(&[], SerialType::Blob { content_size: 0 }, OwnedValue::Blob(vec![].into()))] // empty blob
-    #[case(&[65, 66, 67], SerialType::Text { content_size: 3 }, OwnedValue::build_text("ABC"))]
-    #[case(&[0x80], SerialType::I8, OwnedValue::Integer(-128))]
-    #[case(&[0x80, 0], SerialType::I16, OwnedValue::Integer(-32768))]
-    #[case(&[0x80, 0, 0], SerialType::I24, OwnedValue::Integer(-8388608))]
-    #[case(&[0x80, 0, 0, 0], SerialType::I32, OwnedValue::Integer(-2147483648))]
-    #[case(&[0x80, 0, 0, 0, 0, 0], SerialType::I48, OwnedValue::Integer(-140737488355328))]
-    #[case(&[0x80, 0, 0, 0, 0, 0, 0, 0], SerialType::I64, OwnedValue::Integer(-9223372036854775808))]
-    #[case(&[0x7f], SerialType::I8, OwnedValue::Integer(127))]
-    #[case(&[0x7f, 0xff], SerialType::I16, OwnedValue::Integer(32767))]
-    #[case(&[0x7f, 0xff, 0xff], SerialType::I24, OwnedValue::Integer(8388607))]
-    #[case(&[0x7f, 0xff, 0xff, 0xff], SerialType::I32, OwnedValue::Integer(2147483647))]
-    #[case(&[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff], SerialType::I48, OwnedValue::Integer(140737488355327))]
-    #[case(&[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff], SerialType::I64, OwnedValue::Integer(9223372036854775807))]
+    #[case(&[], SerialType::null(), OwnedValue::Null)]
+    #[case(&[255], SerialType::i8(), OwnedValue::Integer(-1))]
+    #[case(&[0x12, 0x34], SerialType::i16(), OwnedValue::Integer(0x1234))]
+    #[case(&[0xFE], SerialType::i8(), OwnedValue::Integer(-2))]
+    #[case(&[0x12, 0x34, 0x56], SerialType::i24(), OwnedValue::Integer(0x123456))]
+    #[case(&[0x12, 0x34, 0x56, 0x78], SerialType::i32(), OwnedValue::Integer(0x12345678))]
+    #[case(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], SerialType::i48(), OwnedValue::Integer(0x123456789ABC))]
+    #[case(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xFF], SerialType::i64(), OwnedValue::Integer(0x123456789ABCDEFF))]
+    #[case(&[0x40, 0x09, 0x21, 0xFB, 0x54, 0x44, 0x2D, 0x18], SerialType::f64(), OwnedValue::Float(std::f64::consts::PI))]
+    #[case(&[1, 2], SerialType::const_int0(), OwnedValue::Integer(0))]
+    #[case(&[65, 66], SerialType::const_int1(), OwnedValue::Integer(1))]
+    #[case(&[1, 2, 3], SerialType::blob(3), OwnedValue::Blob(vec![1, 2, 3].into()))]
+    #[case(&[], SerialType::blob(0), OwnedValue::Blob(vec![].into()))] // empty blob
+    #[case(&[65, 66, 67], SerialType::text(3), OwnedValue::build_text("ABC"))]
+    #[case(&[0x80], SerialType::i8(), OwnedValue::Integer(-128))]
+    #[case(&[0x80, 0], SerialType::i16(), OwnedValue::Integer(-32768))]
+    #[case(&[0x80, 0, 0], SerialType::i24(), OwnedValue::Integer(-8388608))]
+    #[case(&[0x80, 0, 0, 0], SerialType::i32(), OwnedValue::Integer(-2147483648))]
+    #[case(&[0x80, 0, 0, 0, 0, 0], SerialType::i48(), OwnedValue::Integer(-140737488355328))]
+    #[case(&[0x80, 0, 0, 0, 0, 0, 0, 0], SerialType::i64(), OwnedValue::Integer(-9223372036854775808))]
+    #[case(&[0x7f], SerialType::i8(), OwnedValue::Integer(127))]
+    #[case(&[0x7f, 0xff], SerialType::i16(), OwnedValue::Integer(32767))]
+    #[case(&[0x7f, 0xff, 0xff], SerialType::i24(), OwnedValue::Integer(8388607))]
+    #[case(&[0x7f, 0xff, 0xff, 0xff], SerialType::i32(), OwnedValue::Integer(2147483647))]
+    #[case(&[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff], SerialType::i48(), OwnedValue::Integer(140737488355327))]
+    #[case(&[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff], SerialType::i64(), OwnedValue::Integer(9223372036854775807))]
     fn test_read_value(
         #[case] buf: &[u8],
         #[case] serial_type: SerialType,
@@ -1606,45 +1610,45 @@ mod tests {
     fn test_serial_type_helpers() {
         assert_eq!(
             TryInto::<SerialType>::try_into(12u64).unwrap(),
-            SerialType::Blob { content_size: 0 }
+            SerialType::blob(0)
         );
         assert_eq!(
             TryInto::<SerialType>::try_into(14u64).unwrap(),
-            SerialType::Blob { content_size: 1 }
+            SerialType::blob(1)
         );
         assert_eq!(
             TryInto::<SerialType>::try_into(13u64).unwrap(),
-            SerialType::Text { content_size: 0 }
+            SerialType::text(0)
         );
         assert_eq!(
             TryInto::<SerialType>::try_into(15u64).unwrap(),
-            SerialType::Text { content_size: 1 }
+            SerialType::text(1)
         );
         assert_eq!(
             TryInto::<SerialType>::try_into(16u64).unwrap(),
-            SerialType::Blob { content_size: 2 }
+            SerialType::blob(2)
         );
         assert_eq!(
             TryInto::<SerialType>::try_into(17u64).unwrap(),
-            SerialType::Text { content_size: 2 }
+            SerialType::text(2)
         );
     }
 
     #[rstest]
-    #[case(0, SerialType::Null)]
-    #[case(1, SerialType::I8)]
-    #[case(2, SerialType::I16)]
-    #[case(3, SerialType::I24)]
-    #[case(4, SerialType::I32)]
-    #[case(5, SerialType::I48)]
-    #[case(6, SerialType::I64)]
-    #[case(7, SerialType::F64)]
-    #[case(8, SerialType::ConstInt0)]
-    #[case(9, SerialType::ConstInt1)]
-    #[case(12, SerialType::Blob { content_size: 0 })]
-    #[case(13, SerialType::Text { content_size: 0 })]
-    #[case(14, SerialType::Blob { content_size: 1 })]
-    #[case(15, SerialType::Text { content_size: 1 })]
+    #[case(0, SerialType::null())]
+    #[case(1, SerialType::i8())]
+    #[case(2, SerialType::i16())]
+    #[case(3, SerialType::i24())]
+    #[case(4, SerialType::i32())]
+    #[case(5, SerialType::i48())]
+    #[case(6, SerialType::i64())]
+    #[case(7, SerialType::f64())]
+    #[case(8, SerialType::const_int0())]
+    #[case(9, SerialType::const_int1())]
+    #[case(12, SerialType::blob(0))]
+    #[case(13, SerialType::text(0))]
+    #[case(14, SerialType::blob(1))]
+    #[case(15, SerialType::text(1))]
     fn test_parse_serial_type(#[case] input: u64, #[case] expected: SerialType) {
         let result = SerialType::try_from(input).unwrap();
         assert_eq!(result, expected);
