@@ -1815,7 +1815,7 @@ pub fn op_row_id(
                 let rowid = record.get_values().last().unwrap();
                 match rowid {
                     RefValue::Integer(rowid) => *rowid as u64,
-                    _ => todo!(),
+                    _ => unreachable!(),
                 }
             };
             let mut table_cursor = state.get_cursor(table_cursor_id);
@@ -3784,10 +3784,22 @@ pub fn op_idx_delete(
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_btree_mut();
         return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ));
+
+        if cursor.rowid()?.is_none() {
+            // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching
+            // index entry is found. This happens when running an UPDATE or DELETE statement and the
+            // index entry to be updated or deleted is not found. For some uses of IdxDelete
+            // (example: the EXCEPT operator) it does not matter that no matching entry is found.
+            // For those cases, P5 is zero. Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
+            return Err(LimboError::Corrupt(format!(
+                "IdxDelete: no matching index entry found for record {:?}",
+                record
+            )));
+        }
         return_if_io!(cursor.delete());
     }
-    let prev_changes = program.n_change.get();
-    program.n_change.set(prev_changes + 1);
+    let n_change = program.n_change.get();
+    program.n_change.set(n_change + 1);
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
