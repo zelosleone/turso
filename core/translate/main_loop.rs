@@ -977,7 +977,7 @@ fn emit_seek(
             // and if so, jump to the loop end.
             // This is to avoid returning rows for e.g. SELECT * FROM t WHERE t.x > NULL,
             // which would erroneously return all rows from t, as NULL is lower than any non-NULL value in index key comparisons.
-            if !expr.is_nonnull() {
+            if !expr.is_nonnull(tables) {
                 program.emit_insn(Insn::IsNull {
                     reg,
                     target_pc: loop_end,

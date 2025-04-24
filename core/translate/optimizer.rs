@@ -502,7 +502,7 @@ pub trait Optimizable {
             .map_or(false, |c| c == ConstantPredicate::AlwaysFalse))
     }
     fn is_rowid_alias_of(&self, table_index: usize) -> bool;
-    fn is_nonnull(&self) -> bool;
+    fn is_nonnull(&self, tables: &[TableReference]) -> bool;
 }
 
 impl Optimizable for ast::Expr {
@@ -522,26 +522,28 @@ impl Optimizable for ast::Expr {
     /// This function is currently very conservative, and will return false
     /// for any expression where we aren't sure and didn't bother to find out
     /// by writing more complex code.
-    fn is_nonnull(&self) -> bool {
+    fn is_nonnull(&self, tables: &[TableReference]) -> bool {
         match self {
             Expr::Between {
                 lhs, start, end, ..
-            } => lhs.is_nonnull() && start.is_nonnull() && end.is_nonnull(),
-            Expr::Binary(expr, _, expr1) => expr.is_nonnull() && expr1.is_nonnull(),
+            } => lhs.is_nonnull(tables) && start.is_nonnull(tables) && end.is_nonnull(tables),
+            Expr::Binary(expr, _, expr1) => expr.is_nonnull(tables) && expr1.is_nonnull(tables),
             Expr::Case {
                 base,
                 when_then_pairs,
                 else_expr,
                 ..
             } => {
-                base.as_ref().map_or(true, |base| base.is_nonnull())
-                    && when_then_pairs.iter().all(|(_, then)| then.is_nonnull())
+                base.as_ref().map_or(true, |base| base.is_nonnull(tables))
+                    && when_then_pairs
+                        .iter()
+                        .all(|(_, then)| then.is_nonnull(tables))
                     && else_expr
                         .as_ref()
-                        .map_or(true, |else_expr| else_expr.is_nonnull())
+                        .map_or(true, |else_expr| else_expr.is_nonnull(tables))
             }
-            Expr::Cast { expr, .. } => expr.is_nonnull(),
-            Expr::Collate(expr, _) => expr.is_nonnull(),
+            Expr::Cast { expr, .. } => expr.is_nonnull(tables),
+            Expr::Collate(expr, _) => expr.is_nonnull(tables),
             Expr::DoublyQualified(..) => {
                 panic!("Do not call is_nonnull before DoublyQualified has been rewritten as Column")
             }
@@ -549,18 +551,32 @@ impl Optimizable for ast::Expr {
             Expr::FunctionCall { .. } => false,
             Expr::FunctionCallStar { .. } => false,
             Expr::Id(..) => panic!("Do not call is_nonnull before Id has been rewritten as Column"),
-            Expr::Column { is_rowid_alias, .. } => *is_rowid_alias,
+            Expr::Column {
+                table,
+                column,
+                is_rowid_alias,
+                ..
+            } => {
+                if *is_rowid_alias {
+                    return true;
+                }
+
+                let table_ref = &tables[*table];
+                let columns = table_ref.columns();
+                let column = &columns[*column];
+                return column.primary_key || column.notnull;
+            }
             Expr::RowId { .. } => true,
             Expr::InList { lhs, rhs, .. } => {
-                lhs.is_nonnull()
+                lhs.is_nonnull(tables)
                     && rhs
                         .as_ref()
-                        .map_or(true, |rhs| rhs.iter().all(|rhs| rhs.is_nonnull()))
+                        .map_or(true, |rhs| rhs.iter().all(|rhs| rhs.is_nonnull(tables)))
             }
             Expr::InSelect { .. } => false,
             Expr::InTable { .. } => false,
             Expr::IsNull(..) => true,
-            Expr::Like { lhs, rhs, .. } => lhs.is_nonnull() && rhs.is_nonnull(),
+            Expr::Like { lhs, rhs, .. } => lhs.is_nonnull(tables) && rhs.is_nonnull(tables),
             Expr::Literal(literal) => match literal {
                 ast::Literal::Numeric(_) => true,
                 ast::Literal::String(_) => true,
@@ -573,13 +589,13 @@ impl Optimizable for ast::Expr {
             },
             Expr::Name(..) => false,
             Expr::NotNull(..) => true,
-            Expr::Parenthesized(exprs) => exprs.iter().all(|expr| expr.is_nonnull()),
+            Expr::Parenthesized(exprs) => exprs.iter().all(|expr| expr.is_nonnull(tables)),
             Expr::Qualified(..) => {
                 panic!("Do not call is_nonnull before Qualified has been rewritten as Column")
             }
             Expr::Raise(..) => false,
             Expr::Subquery(..) => false,
-            Expr::Unary(_, expr) => expr.is_nonnull(),
+            Expr::Unary(_, expr) => expr.is_nonnull(tables),
             Expr::Variable(..) => false,
         }
     }
