@@ -160,6 +160,9 @@ fn update_pragma(
             // getting here
             unreachable!();
         }
+        PragmaName::PageSize => {
+            todo!("updating page_size is not yet implemented")
+        }
     }
 }
 
@@ -255,6 +258,10 @@ fn query_pragma(
                 dest: register,
                 cookie: Cookie::UserVersion,
             });
+            program.emit_result_row(register, 1);
+        }
+        PragmaName::PageSize => {
+            program.emit_int(database_header.lock().page_size.into(), register);
             program.emit_result_row(register, 1);
         }
     }
