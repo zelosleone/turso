@@ -62,7 +62,11 @@ RUN if [ "$antithesis" = "true" ]; then \
 #
 
 FROM debian:bullseye-slim AS runtime
-RUN apt-get update && apt-get install -y bash && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y bash curl xz-utils python3 sqlite3 bc binutils pip && rm -rf /var/lib/apt/lists/*
+RUN curl --proto '=https' --tlsv1.2 -LsSf \
+    https://github.com/tursodatabase/limbo/releases/latest/download/limbo_cli-installer.sh | sh
+RUN bash -c "source $HOME/.limbo/env"
+RUN pip install antithesis pylimbo --break-system-packages
 
 WORKDIR /app
 EXPOSE 8080
