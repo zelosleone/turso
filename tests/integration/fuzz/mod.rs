@@ -211,32 +211,26 @@ mod tests {
         } else {
             rng_from_time()
         };
+        let table_defs: [&str; 8] = [
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y, z))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y, z))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y desc, z))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y, z desc))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y desc, z))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y, z desc))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y desc, z desc))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y desc, z desc))",
+        ];
         // Create all different 3-column primary key permutations
         let dbs = [
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y, z))",
-            ),
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y, z))",
-            ),
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y desc, z))",
-            ),
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y, z desc))",
-            ),
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y desc, z))",
-            ),
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y desc, z desc))",
-            ),
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y, z desc))",
-            ),
-            TempDatabase::new_with_rusqlite(
-                "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y desc, z desc))",
-            ),
+            TempDatabase::new_with_rusqlite(table_defs[0]),
+            TempDatabase::new_with_rusqlite(table_defs[1]),
+            TempDatabase::new_with_rusqlite(table_defs[2]),
+            TempDatabase::new_with_rusqlite(table_defs[3]),
+            TempDatabase::new_with_rusqlite(table_defs[4]),
+            TempDatabase::new_with_rusqlite(table_defs[5]),
+            TempDatabase::new_with_rusqlite(table_defs[6]),
+            TempDatabase::new_with_rusqlite(table_defs[7]),
         ];
         let mut pk_tuples = HashSet::new();
         while pk_tuples.len() < 100000 {
@@ -315,7 +309,7 @@ mod tests {
             let col_choices = ["x", "y", "z", "nonindexed_col"];
             let col_choices_weights = [10.0, 10.0, 10.0, 3.0];
             let num_cols_in_select = rng.random_range(1..=4);
-            let select_cols = col_choices
+            let mut select_cols = col_choices
                 .choose_multiple_weighted(&mut rng, num_cols_in_select, |s| {
                     let idx = col_choices.iter().position(|c| c == s).unwrap();
                     col_choices_weights[idx]
@@ -325,6 +319,9 @@ mod tests {
                 .iter()
                 .map(|x| x.to_string())
                 .collect::<Vec<_>>();
+
+            // sort select cols by index of col_choices
+            select_cols.sort_by_cached_key(|x| col_choices.iter().position(|c| c == x).unwrap());
 
             let (comp1, comp2, comp3) = all_comps[rng.random_range(0..all_comps.len())];
             // Similarly as for the constraints, generate order by permutations so that the only columns involved in the index seek are potentially part of the ORDER BY.
@@ -475,8 +472,8 @@ mod tests {
                     }
 
                     panic!(
-                        "DIFFERENT RESULTS! limbo: {:?}, sqlite: {:?}, seed: {}, query: {}",
-                        limbo, sqlite, seed, query
+                        "DIFFERENT RESULTS! limbo: {:?}, sqlite: {:?}, seed: {}, query: {}, table def: {}",
+                        limbo, sqlite, seed, query, table_defs[i]
                     );
                 }
             }
