@@ -569,13 +569,13 @@ pub fn insn_to_str(
             ),
             Insn::Halt {
                 err_code,
-                description: _,
+                description,
             } => (
                 "Halt",
                 *err_code as i32,
                 0,
                 0,
-                OwnedValue::build_text(""),
+                OwnedValue::build_text(&description),
                 0,
                 "".to_string(),
             ),
@@ -1067,6 +1067,20 @@ pub fn insn_to_str(
                 OwnedValue::build_text(""),
                 0,
                 "".to_string(),
+            ),
+            Insn::NoConflict {
+                cursor_id,
+                target_pc,
+                record_reg,
+                num_regs,
+            } => (
+                "NoConflict",
+                *cursor_id as i32,
+                target_pc.to_debug_int(),
+                *record_reg as i32,
+                OwnedValue::build_text(&format!("{num_regs}")),
+                0,
+                format!("key=r[{}]", record_reg),
             ),
             Insn::NotExists {
                 cursor,

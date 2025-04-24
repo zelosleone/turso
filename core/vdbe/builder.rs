@@ -440,6 +440,9 @@ impl ProgramBuilder {
                 Insn::VFilter { pc_if_empty, .. } => {
                     resolve(pc_if_empty, "VFilter");
                 }
+                Insn::NoConflict { target_pc, .. } => {
+                    resolve(target_pc, "NoConflict");
+                }
                 _ => {}
             }
         }
