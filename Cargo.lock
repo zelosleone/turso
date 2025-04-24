@@ -1922,7 +1922,6 @@ dependencies = [
  "clap",
  "hex",
  "limbo",
- "serde_json",
  "tokio",
  "tracing",
  "tracing-appender",
