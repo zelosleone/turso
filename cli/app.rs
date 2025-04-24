@@ -410,8 +410,14 @@ impl<'a> Limbo<'a> {
         // Uncased or Unicase.
         let temp = input.to_lowercase();
         if temp.trim_start().starts_with("explain") {
-            if let Ok(Some(stmt)) = self.conn.query(input) {
-                let _ = self.writeln(stmt.explain().as_bytes());
+            match self.conn.query(input) {
+                Ok(Some(stmt)) => {
+                    let _ = self.writeln(stmt.explain().as_bytes());
+                }
+                Err(e) => {
+                    let _ = self.writeln(e.to_string());
+                }
+                _ => {}
             }
         } else {
             let conn = self.conn.clone();
