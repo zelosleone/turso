@@ -1,4 +1,7 @@
 services:
-  workload:
-    image: us-central1-docker.pkg.dev/molten-verve-216720/turso-repository/limbo-workload:antithesis-latest
-    command: [ "/bin/limbo_stress" ]
+  limbo:
+    container_name: limbo
+    hostname: limbo
+    image: limbo:latest
+    entrypoint: ["/bin/docker-entrypoint.sh"]
+    command: ["sleep", "infinity"]

@@ -321,7 +321,7 @@ fn generate_plan(opts: &Opts) -> Result<Plan, Box<dyn std::error::Error + Send +
         let mut queries = vec![];
         for _ in 0..opts.nr_iterations {
             let sql = generate_random_statement(&schema);
-            writeln!(log_file, "{}", sql)?;
+            // writeln!(log_file, "{}", sql)?;
             queries.push(sql);
         }
         plan.queries_per_thread.push(queries);
@@ -396,7 +396,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "num_nodes": num_nodes,
         "main_node_id": main_id,
     });
-    lifecycle::setup_complete(&startup_data);
+    // lifecycle::setup_complete(&startup_data);
     antithesis_init();
 
     let mut opts = Opts::parse();
