@@ -72,8 +72,16 @@ WORKDIR /app
 EXPOSE 8080
 COPY --from=builder /usr/lib/libvoidstar.so* /usr/lib/
 COPY --from=builder /app/target/release/limbo_stress /bin/limbo_stress
+COPY --from=builder /app/target/antithesis/limbo_stress /symbols
 COPY stress/docker-entrypoint.sh /bin
 RUN chmod +x /bin/docker-entrypoint.sh
+
+COPY ./antithesis-tests/bank-test/*.py /opt/antithesis/test/v1/bank-test/
+COPY ./antithesis-tests/stress-composer/*.py /opt/antithesis/test/v1/stress-composer/
+COPY ./antithesis-tests/stress /opt/antithesis/test/v1/stress
+RUN chmod 777 -R /opt/antithesis/test/v1
+
+RUN mkdir /opt/antithesis/catalog
+RUN ln -s /opt/antithesis/test/v1/bank-test/*.py /opt/antithesis/catalog
+
 ENTRYPOINT ["/bin/docker-entrypoint.sh"]
-ENV RUST_BACKTRACE=1
-CMD ["/bin/limbo_stress"]
