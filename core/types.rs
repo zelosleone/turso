@@ -1129,6 +1129,13 @@ pub enum SerialType {
     Blob { content_size: usize },
 }
 
+impl SerialType {
+    #[inline(always)]
+    pub fn u64_is_valid_serial_type(n: u64) -> bool {
+        n != 10 && n != 11
+    }
+}
+
 impl From<&OwnedValue> for SerialType {
     fn from(value: &OwnedValue) -> Self {
         match value {
