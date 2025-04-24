@@ -320,42 +320,48 @@ pub fn translate_insert(
             dest_reg: record_reg,
         });
 
-        let make_record_label = program.allocate_label();
-        program.emit_insn(Insn::NoConflict {
-            cursor_id: idx_cursor_id,
-            target_pc: make_record_label,
-            record_reg: idx_start_reg,
-            num_regs: num_cols,
-        });
-        let mut column_names = Vec::new();
-        for (index, ..) in index_col_mapping.columns.iter() {
-            let name = btree_table
-                .columns
-                .get(*index)
-                .unwrap()
-                .name
-                .as_ref()
-                .expect("column name is None");
-            column_names.push(format!("{}.{name}", btree_table.name));
-        }
-        let column_names =
-            column_names
-                .into_iter()
-                .enumerate()
-                .fold(String::new(), |mut accum, (idx, name)| {
-                    if idx % 2 == 1 {
+        let index = schema
+            .get_index(&table_name.0, &index_col_mapping.idx_name)
+            .expect("index should be present");
+
+        if index.unique {
+            let label_idx_insert = program.allocate_label();
+            program.emit_insn(Insn::NoConflict {
+                cursor_id: idx_cursor_id,
+                target_pc: label_idx_insert,
+                record_reg: idx_start_reg,
+                num_regs: num_cols,
+            });
+            let column_names = index_col_mapping.columns.iter().enumerate().fold(
+                String::with_capacity(50),
+                |mut accum, (idx, (index, _))| {
+                    if idx > 0 {
                         accum.push_str(", ");
                     }
-                    accum.push_str(&name);
+
+                    accum.push_str(&btree_table.name);
+                    accum.push('.');
+
+                    let name = btree_table
+                        .columns
+                        .get(*index)
+                        .unwrap()
+                        .name
+                        .as_ref()
+                        .expect("column name is None");
+                    accum.push_str(name);
+
                     accum
-                });
+                },
+            );
 
-        program.emit_insn(Insn::Halt {
-            err_code: SQLITE_CONSTRAINT_PRIMARYKEY,
-            description: column_names,
-        });
+            program.emit_insn(Insn::Halt {
+                err_code: SQLITE_CONSTRAINT_PRIMARYKEY,
+                description: column_names,
+            });
 
-        program.resolve_label(make_record_label, program.offset());
+            program.resolve_label(label_idx_insert, program.offset());
+        }
 
         // now do the actual index insertion using the unpacked registers
         program.emit_insn(Insn::IdxInsert {

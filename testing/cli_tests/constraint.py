@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+
+# Eventually extract these tests to be in the fuzzing integration tests
 import os
 from faker import Faker
 from faker.providers.lorem.en_US import Provider as P

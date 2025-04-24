@@ -3,7 +3,6 @@ use crate::numeric::{NullableInteger, Numeric};
 use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::CreateBTreeFlags;
-use crate::types::ImmutableRecord;
 use crate::{
     error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY},
     ext::ExtValue,
@@ -3912,48 +3911,41 @@ pub fn op_no_conflict(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let found = {
-        let mut cursor = state.get_cursor(*cursor_id);
-        let cursor = cursor.as_btree_mut();
+    let mut cursor_ref = state.get_cursor(*cursor_id);
+    let cursor = cursor_ref.as_btree_mut();
 
-        let any_fn = |record: &ImmutableRecord| {
-            for val in record.values.iter() {
-                if matches!(val, RefValue::Null) {
-                    return false;
-                }
+    let record = if *num_regs == 0 {
+        let record = match &state.registers[*record_reg] {
+            Register::Record(r) => r,
+            _ => {
+                return Err(LimboError::InternalError(
+                    "NoConflict: exepected a record in the register".into(),
+                ));
             }
-            true
         };
-
-        let record = if *num_regs == 0 {
-            let record = match &state.registers[*record_reg] {
-                Register::Record(r) => r,
-                _ => {
-                    return Err(LimboError::InternalError(
-                        "NoConflict: exepected a record in the register".into(),
-                    ));
-                }
-            };
-            record
-        } else {
-            &make_record(&state.registers, record_reg, num_regs)
-        };
-
-        // Should early return and jump if any of the values in the record is NULL
-        let found = any_fn(record);
-        if found {
-            return_if_io!(cursor.seek(SeekKey::IndexKey(record), SeekOp::EQ))
-        } else {
-            found
-        }
-    };
-
-    if found {
-        state.pc += 1;
+        record
     } else {
+        &make_record(&state.registers, record_reg, num_regs)
+    };
+    // If there is at least one NULL in the index record, there cannot be a conflict so we can immediately jump.
+    let contains_nulls = record
+        .get_values()
+        .iter()
+        .any(|val| matches!(val, RefValue::Null));
+
+    if contains_nulls {
+        drop(cursor_ref);
         state.pc = target_pc.to_offset_int();
+        return Ok(InsnFunctionStepResult::Step);
     }
 
+    let conflict = return_if_io!(cursor.seek(SeekKey::IndexKey(record), SeekOp::EQ));
+    drop(cursor_ref);
+    if !conflict {
+        state.pc = target_pc.to_offset_int();
+    } else {
+        state.pc += 1;
+    }
     Ok(InsnFunctionStepResult::Step)
 }
 
