@@ -63,6 +63,8 @@ pub const DATABASE_HEADER_SIZE: usize = 100;
 // DEFAULT_CACHE_SIZE negative values mean that we store the amount of pages a XKiB of memory can hold.
 // We can calculate "real" cache size by diving by page size.
 const DEFAULT_CACHE_SIZE: i32 = -2000;
+// The size of db page in bytes.
+const DEFAULT_PAGE_SIZE: u16 = 4096;
 // Minimum number of pages that cache can hold.
 pub const MIN_PAGE_CACHE_SIZE: usize = 10;
 
@@ -217,7 +219,7 @@ impl Default for DatabaseHeader {
     fn default() -> Self {
         Self {
             magic: *b"SQLite format 3\0",
-            page_size: 4096,
+            page_size: DEFAULT_PAGE_SIZE,
             write_version: 2,
             read_version: 2,
             reserved_space: 0,
@@ -1475,6 +1477,7 @@ pub fn begin_write_wal_frame(
     io: &Arc<dyn File>,
     offset: usize,
     page: &PageRef,
+    page_size: u16,
     db_size: u32,
     write_counter: Rc<RefCell<usize>>,
     wal_header: &WalHeader,
@@ -1511,15 +1514,16 @@ pub fn begin_write_wal_frame(
         let content_len = contents_buf.len();
         buf[WAL_FRAME_HEADER_SIZE..WAL_FRAME_HEADER_SIZE + content_len]
             .copy_from_slice(contents_buf);
-        if content_len < 4096 {
-            buf[WAL_FRAME_HEADER_SIZE + content_len..WAL_FRAME_HEADER_SIZE + 4096].fill(0);
+        if content_len < page_size as usize {
+            buf[WAL_FRAME_HEADER_SIZE + content_len..WAL_FRAME_HEADER_SIZE + page_size as usize]
+                .fill(0);
         }
 
         let expects_be = wal_header.magic & 1;
         let use_native_endian = cfg!(target_endian = "big") as u32 == expects_be;
         let header_checksum = checksum_wal(&buf[0..8], wal_header, checksums, use_native_endian); // Only 8 bytes
         let final_checksum = checksum_wal(
-            &buf[WAL_FRAME_HEADER_SIZE..WAL_FRAME_HEADER_SIZE + 4096],
+            &buf[WAL_FRAME_HEADER_SIZE..WAL_FRAME_HEADER_SIZE + page_size as usize],
             wal_header,
             header_checksum,
             use_native_endian,
