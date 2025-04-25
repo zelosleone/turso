@@ -4229,13 +4229,8 @@ pub fn op_page_count(
         // TODO: implement temp databases
         todo!("temp databases not implemented yet");
     }
-    // SQLite returns "0" on an empty database, and 2 on the first insertion,
-    // so we'll mimic that behavior.
-    let mut pages = pager.db_header.lock().database_size.into();
-    if pages == 1 {
-        pages = 0;
-    }
-    state.registers[*dest] = Register::OwnedValue(OwnedValue::Integer(pages));
+    let count = pager.db_header.lock().database_size.into();
+    state.registers[*dest] = Register::OwnedValue(OwnedValue::Integer(count));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }

@@ -35,7 +35,7 @@ do_execsql_test pragma-table-info-invalid-table {
 
 do_execsql_test_on_specific_db ":memory:" pragma-page-count-empty {
   PRAGMA page_count
-} {0}
+} {1}
 
 do_execsql_test_on_specific_db ":memory:" pragma-page-count-table {
   CREATE TABLE foo(bar);
