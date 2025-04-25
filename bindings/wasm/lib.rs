@@ -1,7 +1,5 @@
 use js_sys::{Array, Object};
-use limbo_core::{
-    maybe_init_database_file, Clock, Instant, OpenFlags, Pager, Result, WalFileShared,
-};
+use limbo_core::{maybe_init_database_file, Clock, Instant, OpenFlags, Result};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
