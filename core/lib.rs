@@ -85,9 +85,9 @@ enum TransactionState {
     None,
 }
 
-pub(crate) type MvStore = crate::mvcc::MvStore<crate::mvcc::LocalClock>;
+pub(crate) type MvStore = mvcc::MvStore<mvcc::LocalClock>;
 
-pub(crate) type MvCursor = crate::mvcc::cursor::ScanCursor<crate::mvcc::LocalClock>;
+pub(crate) type MvCursor = mvcc::cursor::ScanCursor<mvcc::LocalClock>;
 
 pub struct Database {
     mv_store: Option<Rc<MvStore>>,
@@ -123,6 +123,7 @@ impl Database {
         enable_mvcc: bool,
     ) -> Result<Arc<Database>> {
         let db_header = Pager::begin_open(db_file.clone())?;
+        // ensure db header is there
         io.run_once()?;
 
         let page_size = db_header.lock().page_size;
@@ -216,7 +217,7 @@ impl Database {
     #[cfg(feature = "fs")]
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn open_new(path: &str, vfs: &str) -> Result<(Arc<dyn IO>, Arc<Database>)> {
-        let vfsmods = crate::ext::add_builtin_vfs_extensions(None)?;
+        let vfsmods = ext::add_builtin_vfs_extensions(None)?;
         let io: Arc<dyn IO> = match vfsmods.iter().find(|v| v.0 == vfs).map(|v| v.1.clone()) {
             Some(vfs) => vfs,
             None => match vfs.trim() {
