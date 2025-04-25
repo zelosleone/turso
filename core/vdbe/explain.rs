@@ -1179,6 +1179,15 @@ pub fn insn_to_str(
                 0,
                 format!("DROP TABLE {}", table_name),
             ),
+            Insn::DropIndex { db, index } => (
+                "DropIndex",
+                0,
+                0,
+                0,
+                OwnedValue::build_text(&Rc::new(index.name.clone())),
+                0,
+                format!("DROP INDEX {}", index.name),
+            ),
             Insn::Close { cursor_id } => (
                 "Close",
                 *cursor_id as i32,

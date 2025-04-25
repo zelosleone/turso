@@ -1,11 +1,12 @@
 use std::{
     num::{NonZero, NonZeroUsize},
     rc::Rc,
+    sync::Arc,
 };
 
 use super::{execute, AggFunc, BranchOffset, CursorID, FuncCtx, InsnFunction, PageIdx};
 use crate::{
-    schema::BTreeTable,
+    schema::{BTreeTable, Index},
     storage::{pager::CreateBTreeFlags, wal::CheckpointMode},
     types::Record,
 };
@@ -730,6 +731,12 @@ pub enum Insn {
         //  The name of the table being dropped
         table_name: String,
     },
+    DropIndex {
+        ///  The database within which this index needs to be dropped (P1).
+        db: usize,
+        //  The name of the index being dropped
+        index: Arc<Index>,
+    },
 
     /// Close a cursor.
     Close {
@@ -856,6 +863,7 @@ impl Insn {
             Insn::Subtract { .. } => execute::op_subtract,
             Insn::Multiply { .. } => execute::op_multiply,
             Insn::Divide { .. } => execute::op_divide,
+            Insn::DropIndex { .. } => execute::op_drop_index,
             Insn::Compare { .. } => execute::op_compare,
             Insn::BitAnd { .. } => execute::op_bit_and,
             Insn::BitOr { .. } => execute::op_bit_or,

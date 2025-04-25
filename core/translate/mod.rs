@@ -35,7 +35,7 @@ use crate::translate::delete::translate_delete;
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
 use crate::vdbe::Program;
 use crate::{bail_parse_error, Connection, Result, SymbolTable};
-use index::translate_create_index;
+use index::{translate_create_index, translate_drop_index};
 use insert::translate_insert;
 use limbo_sqlite3_parser::ast::{self, Delete, Insert};
 use schema::{translate_create_table, translate_create_virtual_table, translate_drop_table};
@@ -110,7 +110,10 @@ pub fn translate(
             translate_delete(query_mode, schema, &tbl_name, where_clause, limit, syms)?
         }
         ast::Stmt::Detach(_) => bail_parse_error!("DETACH not supported yet"),
-        ast::Stmt::DropIndex { .. } => bail_parse_error!("DROP INDEX not supported yet"),
+        ast::Stmt::DropIndex {
+            if_exists,
+            idx_name,
+        } => translate_drop_index(query_mode, &idx_name.name.0, if_exists, schema)?,
         ast::Stmt::DropTable {
             if_exists,
             tbl_name,
