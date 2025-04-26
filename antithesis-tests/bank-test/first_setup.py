@@ -20,7 +20,7 @@ cur.execute(f'''
 
 # randomly create up to 100 accounts with a balance up to 1e9
 total = 0
-num_accts = get_random() % 100
+num_accts = get_random() % 100 + 1
 for i in range(num_accts):
     bal = get_random() % 1e9
     total += bal
