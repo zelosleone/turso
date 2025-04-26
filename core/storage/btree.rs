@@ -5537,15 +5537,15 @@ mod tests {
 
     fn empty_btree() -> (Rc<Pager>, usize) {
         let db_header = DatabaseHeader::default();
-        let page_size = db_header.page_size as usize;
+        let page_size = db_header.get_page_size();
 
         #[allow(clippy::arc_with_non_send_sync)]
         let io: Arc<dyn IO> = Arc::new(MemoryIO::new());
         let io_file = io.open_file("test.db", OpenFlags::Create, false).unwrap();
         let db_file = Arc::new(DatabaseFile::new(io_file));
 
-        let buffer_pool = Rc::new(BufferPool::new(db_header.page_size as usize));
-        let wal_shared = WalFileShared::open_shared(&io, "test.wal", db_header.page_size).unwrap();
+        let buffer_pool = Rc::new(BufferPool::new(page_size as usize));
+        let wal_shared = WalFileShared::open_shared(&io, "test.wal", page_size as u32).unwrap();
         let wal_file = WalFile::new(io.clone(), page_size, wal_shared, buffer_pool.clone());
         let wal = Rc::new(RefCell::new(wal_file));
 
@@ -5908,7 +5908,7 @@ mod tests {
     fn setup_test_env(database_size: u32) -> (Rc<Pager>, Arc<SpinLock<DatabaseHeader>>) {
         let page_size = 512;
         let mut db_header = DatabaseHeader::default();
-        db_header.page_size = page_size;
+        db_header.update_page_size(page_size);
         db_header.database_size = database_size;
         let db_header = Arc::new(SpinLock::new(db_header));
 
@@ -5940,7 +5940,7 @@ mod tests {
         let wal_shared = WalFileShared::open_shared(&io, "test.wal", page_size).unwrap();
         let wal = Rc::new(RefCell::new(WalFile::new(
             io.clone(),
-            page_size as usize,
+            page_size,
             wal_shared,
             buffer_pool.clone(),
         )));
@@ -5980,7 +5980,7 @@ mod tests {
             let drop_fn = Rc::new(|_buf| {});
             #[allow(clippy::arc_with_non_send_sync)]
             let buf = Arc::new(RefCell::new(Buffer::allocate(
-                db_header.lock().page_size as usize,
+                db_header.lock().get_page_size() as usize,
                 drop_fn,
             )));
             let write_complete = Box::new(|_| {});

@@ -4522,7 +4522,7 @@ pub fn op_open_ephemeral(
     let db_file = Arc::new(FileMemoryStorage::new(file));
 
     let db_header = Pager::begin_open(db_file.clone())?;
-    let buffer_pool = Rc::new(BufferPool::new(db_header.lock().page_size as usize));
+    let buffer_pool = Rc::new(BufferPool::new(db_header.lock().get_page_size() as usize));
     let page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
 
     let pager = Rc::new(Pager::finish_open(
