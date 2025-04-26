@@ -1062,7 +1062,7 @@ impl BTreeCursor {
                         self.stack.push(mem_page);
                         continue 'outer;
                     }
-                    self.stack.set_cell_index(contents.cell_count() as i32 + 1);
+                    self.stack.set_cell_index(cell_count as i32 + 1);
                     match contents.rightmost_pointer() {
                         Some(right_most_pointer) => {
                             let mem_page = self.pager.read_page(right_most_pointer as usize)?;
