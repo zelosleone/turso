@@ -5545,7 +5545,7 @@ mod tests {
         let db_file = Arc::new(DatabaseFile::new(io_file));
 
         let buffer_pool = Rc::new(BufferPool::new(page_size as usize));
-        let wal_shared = WalFileShared::open_shared(&io, "test.wal", page_size as u32).unwrap();
+        let wal_shared = WalFileShared::open_shared(&io, "test.wal", page_size).unwrap();
         let wal_file = WalFile::new(io.clone(), page_size, wal_shared, buffer_pool.clone());
         let wal = Rc::new(RefCell::new(wal_file));
 
