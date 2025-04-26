@@ -1043,18 +1043,8 @@ impl BTreeCursor {
             loop {
                 if min > max {
                     if let Some(leftmost_matching_cell) = leftmost_matching_cell {
-                        self.stack.set_cell_index(leftmost_matching_cell as i32);
-                        let matching_cell = contents.cell_get(
-                            leftmost_matching_cell,
-                            payload_overflow_threshold_max(
-                                contents.page_type(),
-                                self.usable_space() as u16,
-                            ),
-                            payload_overflow_threshold_min(
-                                contents.page_type(),
-                                self.usable_space() as u16,
-                            ),
-                            self.usable_space(),
+                        let left_child_page = contents.cell_table_interior_read_left_child_page(
+                            leftmost_matching_cell as usize,
                         )?;
                         // If we found our target rowid in the left subtree,
                         // we need to move the parent cell pointer forwards or backwards depending on the iteration direction.
@@ -1064,15 +1054,11 @@ impl BTreeCursor {
                         // this parent: rowid 666
                         // left child has: 664,665,666
                         // we need to move to the previous parent (with e.g. rowid 663) when iterating backwards.
-                        self.stack.next_cell_in_direction(iter_dir);
-                        let BTreeCell::TableInteriorCell(TableInteriorCell {
-                            _left_child_page,
-                            ..
-                        }) = matching_cell
-                        else {
-                            unreachable!("unexpected cell type: {:?}", matching_cell);
-                        };
-                        let mem_page = self.pager.read_page(_left_child_page as usize)?;
+                        let index_change =
+                            -1 + (iter_dir == IterationDirection::Forwards) as i32 * 2;
+                        self.stack
+                            .set_cell_index(leftmost_matching_cell as i32 + index_change);
+                        let mem_page = self.pager.read_page(left_child_page as usize)?;
                         self.stack.push(mem_page);
                         continue 'outer;
                     }
@@ -1089,7 +1075,6 @@ impl BTreeCursor {
                     }
                 }
                 let cur_cell_idx = (min + max) / 2;
-                self.stack.set_cell_index(cur_cell_idx as i32);
                 let cell_rowid = contents.cell_table_interior_read_rowid(cur_cell_idx as usize)?;
                 // in sqlite btrees left child pages have <= keys.
                 // table btrees can have a duplicate rowid in the interior cell, so for example if we are looking for rowid=10,
