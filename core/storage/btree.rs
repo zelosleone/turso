@@ -1074,7 +1074,7 @@ impl BTreeCursor {
                         }
                     }
                 }
-                let cur_cell_idx = (min + max) / 2;
+                let cur_cell_idx = (min + max) >> 1; // rustc generates extra insns for (min+max)/2 due to them being isize. we know min&max are >=0 here.
                 let cell_rowid = contents.cell_table_interior_read_rowid(cur_cell_idx as usize)?;
                 // in sqlite btrees left child pages have <= keys.
                 // table btrees can have a duplicate rowid in the interior cell, so for example if we are looking for rowid=10,
@@ -1186,7 +1186,7 @@ impl BTreeCursor {
                     continue 'outer;
                 }
 
-                let cur_cell_idx = (min + max) / 2;
+                let cur_cell_idx = (min + max) >> 1; // rustc generates extra insns for (min+max)/2 due to them being isize. we know min&max are >=0 here.
                 self.stack.set_cell_index(cur_cell_idx as i32);
                 let cell = contents.cell_get(
                     cur_cell_idx as usize,
@@ -1340,7 +1340,7 @@ impl BTreeCursor {
                 return Ok(CursorResult::Ok(Some(cell_rowid)));
             }
 
-            let cur_cell_idx = (min + max) / 2;
+            let cur_cell_idx = (min + max) >> 1; // rustc generates extra insns for (min+max)/2 due to them being isize. we know min&max are >=0 here.
             self.stack.set_cell_index(cur_cell_idx as i32);
             let cell_rowid = contents.cell_table_leaf_read_rowid(cur_cell_idx as usize)?;
 
@@ -1509,7 +1509,7 @@ impl BTreeCursor {
                 return Ok(CursorResult::Ok(Some(rowid)));
             }
 
-            let cur_cell_idx = (min + max) / 2;
+            let cur_cell_idx = (min + max) >> 1; // rustc generates extra insns for (min+max)/2 due to them being isize. we know min&max are >=0 here.
             self.stack.set_cell_index(cur_cell_idx as i32);
 
             let cell = contents.cell_get(
