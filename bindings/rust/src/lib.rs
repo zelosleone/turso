@@ -129,6 +129,14 @@ pub struct Statement {
     inner: Arc<Mutex<limbo_core::Statement>>,
 }
 
+impl Clone for Statement {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
 unsafe impl Send for Statement {}
 unsafe impl Sync for Statement {}
 
@@ -239,6 +247,14 @@ pub struct Transaction {}
 
 pub struct Rows {
     inner: Arc<Mutex<limbo_core::Statement>>,
+}
+
+impl Clone for Rows {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
 }
 
 unsafe impl Send for Rows {}
