@@ -3,6 +3,7 @@ use crate::numeric::{NullableInteger, Numeric};
 use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::CreateBTreeFlags;
+use crate::types::ImmutableRecord;
 use crate::{
     error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY},
     ext::ExtValue,
@@ -3756,6 +3757,11 @@ pub fn op_delete(
     {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_btree_mut();
+        tracing::debug!(
+            "op_delete(record={:?}, rowid={:?})",
+            cursor.record(),
+            cursor.rowid()?
+        );
         return_if_io!(cursor.delete());
     }
     let prev_changes = program.n_change.get();
@@ -3764,6 +3770,10 @@ pub fn op_delete(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub enum OpIdxDeleteState {
+    Seeking(ImmutableRecord), // First seek row to delete
+    Deleting,
+}
 pub fn op_idx_delete(
     program: &Program,
     state: &mut ProgramState,
@@ -3779,29 +3789,50 @@ pub fn op_idx_delete(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let record = make_record(&state.registers, start_reg, num_regs);
-    {
-        let mut cursor = state.get_cursor(*cursor_id);
-        let cursor = cursor.as_btree_mut();
-        return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ));
-
-        if cursor.rowid()?.is_none() {
-            // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching
-            // index entry is found. This happens when running an UPDATE or DELETE statement and the
-            // index entry to be updated or deleted is not found. For some uses of IdxDelete
-            // (example: the EXCEPT operator) it does not matter that no matching entry is found.
-            // For those cases, P5 is zero. Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
-            return Err(LimboError::Corrupt(format!(
-                "IdxDelete: no matching index entry found for record {:?}",
-                record
-            )));
+    loop {
+        match &state.op_idx_delete_state {
+            Some(OpIdxDeleteState::Seeking(record)) => {
+                {
+                    let mut cursor = state.get_cursor(*cursor_id);
+                    let cursor = cursor.as_btree_mut();
+                    return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ));
+                    tracing::debug!(
+                        "op_idx_delete(seek={}, record={} rowid={:?})",
+                        &record,
+                        cursor.record().as_ref().unwrap(),
+                        cursor.rowid()
+                    );
+                    if cursor.rowid()?.is_none() {
+                        // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching
+                        // index entry is found. This happens when running an UPDATE or DELETE statement and the
+                        // index entry to be updated or deleted is not found. For some uses of IdxDelete
+                        // (example: the EXCEPT operator) it does not matter that no matching entry is found.
+                        // For those cases, P5 is zero. Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
+                        return Err(LimboError::Corrupt(format!(
+                            "IdxDelete: no matching index entry found for record {:?}",
+                            record
+                        )));
+                    }
+                }
+                state.op_idx_delete_state = Some(OpIdxDeleteState::Deleting);
+            }
+            Some(OpIdxDeleteState::Deleting) => {
+                {
+                    let mut cursor = state.get_cursor(*cursor_id);
+                    let cursor = cursor.as_btree_mut();
+                    return_if_io!(cursor.delete());
+                }
+                let n_change = program.n_change.get();
+                program.n_change.set(n_change + 1);
+                state.pc += 1;
+                return Ok(InsnFunctionStepResult::Step);
+            }
+            None => {
+                let record = make_record(&state.registers, start_reg, num_regs);
+                state.op_idx_delete_state = Some(OpIdxDeleteState::Seeking(record));
+            }
         }
-        return_if_io!(cursor.delete());
     }
-    let n_change = program.n_change.get();
-    program.n_change.set(n_change + 1);
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
 }
 
 pub fn op_idx_insert(
