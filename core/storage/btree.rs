@@ -1043,18 +1043,8 @@ impl BTreeCursor {
             loop {
                 if min > max {
                     if let Some(leftmost_matching_cell) = leftmost_matching_cell {
-                        self.stack.set_cell_index(leftmost_matching_cell as i32);
-                        let matching_cell = contents.cell_get(
-                            leftmost_matching_cell,
-                            payload_overflow_threshold_max(
-                                contents.page_type(),
-                                self.usable_space() as u16,
-                            ),
-                            payload_overflow_threshold_min(
-                                contents.page_type(),
-                                self.usable_space() as u16,
-                            ),
-                            self.usable_space(),
+                        let left_child_page = contents.cell_table_interior_read_left_child_page(
+                            leftmost_matching_cell as usize,
                         )?;
                         // If we found our target rowid in the left subtree,
                         // we need to move the parent cell pointer forwards or backwards depending on the iteration direction.
@@ -1064,19 +1054,15 @@ impl BTreeCursor {
                         // this parent: rowid 666
                         // left child has: 664,665,666
                         // we need to move to the previous parent (with e.g. rowid 663) when iterating backwards.
-                        self.stack.next_cell_in_direction(iter_dir);
-                        let BTreeCell::TableInteriorCell(TableInteriorCell {
-                            _left_child_page,
-                            ..
-                        }) = matching_cell
-                        else {
-                            unreachable!("unexpected cell type: {:?}", matching_cell);
-                        };
-                        let mem_page = self.pager.read_page(_left_child_page as usize)?;
+                        let index_change =
+                            -1 + (iter_dir == IterationDirection::Forwards) as i32 * 2;
+                        self.stack
+                            .set_cell_index(leftmost_matching_cell as i32 + index_change);
+                        let mem_page = self.pager.read_page(left_child_page as usize)?;
                         self.stack.push(mem_page);
                         continue 'outer;
                     }
-                    self.stack.set_cell_index(contents.cell_count() as i32 + 1);
+                    self.stack.set_cell_index(cell_count as i32 + 1);
                     match contents.rightmost_pointer() {
                         Some(right_most_pointer) => {
                             let mem_page = self.pager.read_page(right_most_pointer as usize)?;
@@ -1088,8 +1074,7 @@ impl BTreeCursor {
                         }
                     }
                 }
-                let cur_cell_idx = (min + max) / 2;
-                self.stack.set_cell_index(cur_cell_idx as i32);
+                let cur_cell_idx = (min + max) >> 1; // rustc generates extra insns for (min+max)/2 due to them being isize. we know min&max are >=0 here.
                 let cell_rowid = contents.cell_table_interior_read_rowid(cur_cell_idx as usize)?;
                 // in sqlite btrees left child pages have <= keys.
                 // table btrees can have a duplicate rowid in the interior cell, so for example if we are looking for rowid=10,
@@ -1201,7 +1186,7 @@ impl BTreeCursor {
                     continue 'outer;
                 }
 
-                let cur_cell_idx = (min + max) / 2;
+                let cur_cell_idx = (min + max) >> 1; // rustc generates extra insns for (min+max)/2 due to them being isize. we know min&max are >=0 here.
                 self.stack.set_cell_index(cur_cell_idx as i32);
                 let cell = contents.cell_get(
                     cur_cell_idx as usize,
@@ -1321,7 +1306,6 @@ impl BTreeCursor {
                 let Some(nearest_matching_cell) = nearest_matching_cell else {
                     return Ok(CursorResult::Ok(None));
                 };
-                self.stack.set_cell_index(nearest_matching_cell as i32);
                 let matching_cell = contents.cell_get(
                     nearest_matching_cell,
                     payload_overflow_threshold_max(
@@ -1350,13 +1334,16 @@ impl BTreeCursor {
                     first_overflow_page,
                     payload_size
                 ));
-                self.stack.next_cell_in_direction(iter_dir);
-
+                let cell_idx = if iter_dir == IterationDirection::Forwards {
+                    nearest_matching_cell as i32 + 1
+                } else {
+                    nearest_matching_cell as i32 - 1
+                };
+                self.stack.set_cell_index(cell_idx as i32);
                 return Ok(CursorResult::Ok(Some(cell_rowid)));
             }
 
-            let cur_cell_idx = (min + max) / 2;
-            self.stack.set_cell_index(cur_cell_idx as i32);
+            let cur_cell_idx = (min + max) >> 1; // rustc generates extra insns for (min+max)/2 due to them being isize. we know min&max are >=0 here.
             let cell_rowid = contents.cell_table_leaf_read_rowid(cur_cell_idx as usize)?;
 
             let cmp = cell_rowid.cmp(&rowid);
@@ -1398,7 +1385,12 @@ impl BTreeCursor {
                     first_overflow_page,
                     payload_size
                 ));
-                self.stack.next_cell_in_direction(iter_dir);
+                let cell_idx = if iter_dir == IterationDirection::Forwards {
+                    cur_cell_idx + 1
+                } else {
+                    cur_cell_idx - 1
+                };
+                self.stack.set_cell_index(cell_idx as i32);
                 return Ok(CursorResult::Ok(Some(cell_rowid)));
             }
 
@@ -1524,7 +1516,7 @@ impl BTreeCursor {
                 return Ok(CursorResult::Ok(Some(rowid)));
             }
 
-            let cur_cell_idx = (min + max) / 2;
+            let cur_cell_idx = (min + max) >> 1; // rustc generates extra insns for (min+max)/2 due to them being isize. we know min&max are >=0 here.
             self.stack.set_cell_index(cur_cell_idx as i32);
 
             let cell = contents.cell_get(
