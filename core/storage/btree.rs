@@ -165,21 +165,13 @@ enum DeleteState {
         cell_idx: usize,
         original_child_pointer: Option<u32>,
     },
-    DropCell {
-        cell_idx: usize,
-    },
     CheckNeedsBalancing,
-    StartBalancing {
-        target_key: DeleteSavepoint,
-    },
     WaitForBalancingToComplete {
         target_key: DeleteSavepoint,
     },
     SeekAfterBalancing {
         target_key: DeleteSavepoint,
     },
-    StackRetreat,
-    Finish,
 }
 
 #[derive(Clone)]
@@ -3530,15 +3522,12 @@ impl BTreeCursor {
     /// 1. Start -> check if the rowid to be delete is present in the page or not. If not we early return
     /// 2. LoadPage -> load the page.
     /// 3. FindCell -> find the cell to be deleted in the page.
-    /// 4. ClearOverflowPages -> clear overflow pages associated with the cell. here if the cell is a leaf page go to DropCell state
-    ///    or else go to InteriorNodeReplacement
+    /// 4. ClearOverflowPages -> Clear the overflow pages if there are any before dropping the cell, then if we are in a leaf page we just drop the cell in place.
+    /// if we are in interior page, we need to rotate keys in order to replace current cell (InteriorNodeReplacement).
     /// 5. InteriorNodeReplacement -> we copy the left subtree leaf node into the deleted interior node's place.
-    /// 6. DropCell -> only for leaf nodes. drop the cell.
-    /// 7. CheckNeedsBalancing -> check if balancing is needed. If yes, move to StartBalancing else move to StackRetreat
-    /// 8. WaitForBalancingToComplete -> perform balancing
-    /// 9. SeekAfterBalancing -> adjust the cursor to a node that is closer to the deleted value. go to Finish
-    /// 10. StackRetreat -> perform stack retreat for cursor positioning. only when balancing is not needed. go to Finish
-    /// 11. Finish -> Delete operation is done. Return CursorResult(Ok())
+    /// 6. WaitForBalancingToComplete -> perform balancing
+    /// 7. SeekAfterBalancing -> adjust the cursor to a node that is closer to the deleted value. go to Finish
+    /// 8. Finish -> Delete operation is done. Return CursorResult(Ok())
     pub fn delete(&mut self) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
 
@@ -3554,10 +3543,13 @@ impl BTreeCursor {
                 let delete_info = self.state.delete_info().expect("cannot get delete info");
                 delete_info.state.clone()
             };
+            tracing::debug!("delete state: {:?}", delete_state);
 
             match delete_state {
                 DeleteState::Start => {
                     let page = self.stack.top();
+                    page.set_dirty();
+                    self.pager.add_dirty(page.get().id);
                     if matches!(
                         page.get_contents().page_type(),
                         PageType::TableLeaf | PageType::TableInterior
@@ -3646,7 +3638,11 @@ impl BTreeCursor {
                             original_child_pointer,
                         };
                     } else {
-                        delete_info.state = DeleteState::DropCell { cell_idx };
+                        let contents = page.get().contents.as_mut().unwrap();
+                        drop_cell(contents, cell_idx, self.usable_space() as u16)?;
+
+                        let delete_info = self.state.mut_delete_info().unwrap();
+                        delete_info.state = DeleteState::CheckNeedsBalancing;
                     }
                 }
 
@@ -3724,33 +3720,9 @@ impl BTreeCursor {
                     delete_info.state = DeleteState::CheckNeedsBalancing;
                 }
 
-                DeleteState::DropCell { cell_idx } => {
-                    let page = self.stack.top();
-                    return_if_locked!(page);
-
-                    if !page.is_loaded() {
-                        self.pager.load_page(page.clone())?;
-                        return Ok(CursorResult::IO);
-                    }
-
-                    page.set_dirty();
-                    self.pager.add_dirty(page.get().id);
-
-                    let contents = page.get().contents.as_mut().unwrap();
-                    drop_cell(contents, cell_idx, self.usable_space() as u16)?;
-
-                    let delete_info = self.state.mut_delete_info().unwrap();
-                    delete_info.state = DeleteState::CheckNeedsBalancing;
-                }
-
                 DeleteState::CheckNeedsBalancing => {
                     let page = self.stack.top();
-                    return_if_locked!(page);
-
-                    if !page.is_loaded() {
-                        self.pager.load_page(page.clone())?;
-                        return Ok(CursorResult::IO);
-                    }
+                    return_if_locked_maybe_load!(self.pager, page);
 
                     let contents = page.get().contents.as_ref().unwrap();
                     let free_space = compute_free_space(contents, self.usable_space() as u16);
@@ -3764,22 +3736,18 @@ impl BTreeCursor {
 
                     let delete_info = self.state.mut_delete_info().unwrap();
                     if needs_balancing {
-                        delete_info.state = DeleteState::StartBalancing { target_key };
+                        if delete_info.balance_write_info.is_none() {
+                            let mut write_info = WriteInfo::new();
+                            write_info.state = WriteState::BalanceStart;
+                            delete_info.balance_write_info = Some(write_info);
+                        }
+
+                        delete_info.state = DeleteState::WaitForBalancingToComplete { target_key }
                     } else {
-                        delete_info.state = DeleteState::StackRetreat;
+                        self.stack.retreat();
+                        self.state = CursorState::None;
+                        return Ok(CursorResult::Ok(()));
                     }
-                }
-
-                DeleteState::StartBalancing { target_key } => {
-                    let delete_info = self.state.mut_delete_info().unwrap();
-
-                    if delete_info.balance_write_info.is_none() {
-                        let mut write_info = WriteInfo::new();
-                        write_info.state = WriteState::BalanceStart;
-                        delete_info.balance_write_info = Some(write_info);
-                    }
-
-                    delete_info.state = DeleteState::WaitForBalancingToComplete { target_key }
                 }
 
                 DeleteState::WaitForBalancingToComplete { target_key } => {
@@ -3806,6 +3774,7 @@ impl BTreeCursor {
                         }
 
                         CursorResult::IO => {
+                            // Move to seek state
                             // Save balance progress and return IO
                             let write_info = match &self.state {
                                 CursorState::Write(wi) => wi.clone(),
@@ -3830,19 +3799,6 @@ impl BTreeCursor {
                     };
                     return_if_io!(self.seek(key, SeekOp::EQ));
 
-                    let delete_info = self.state.mut_delete_info().unwrap();
-                    delete_info.state = DeleteState::Finish;
-                    delete_info.balance_write_info = None;
-                }
-
-                DeleteState::StackRetreat => {
-                    self.stack.retreat();
-                    let delete_info = self.state.mut_delete_info().unwrap();
-                    delete_info.state = DeleteState::Finish;
-                    delete_info.balance_write_info = None;
-                }
-
-                DeleteState::Finish => {
                     self.state = CursorState::None;
                     return Ok(CursorResult::Ok(()));
                 }

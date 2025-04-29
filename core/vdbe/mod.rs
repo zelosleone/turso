@@ -43,7 +43,7 @@ use crate::CheckpointStatus;
 #[cfg(feature = "json")]
 use crate::json::JsonCacheCell;
 use crate::{Connection, MvStore, Result, TransactionState};
-use execute::{InsnFunction, InsnFunctionStepResult};
+use execute::{InsnFunction, InsnFunctionStepResult, OpIdxDeleteState};
 
 use rand::{
     distributions::{Distribution, Uniform},
@@ -257,6 +257,7 @@ pub struct ProgramState {
     halt_state: Option<HaltState>,
     #[cfg(feature = "json")]
     json_cache: JsonCacheCell,
+    op_idx_delete_state: Option<OpIdxDeleteState>,
 }
 
 impl ProgramState {
@@ -280,6 +281,7 @@ impl ProgramState {
             halt_state: None,
             #[cfg(feature = "json")]
             json_cache: JsonCacheCell::new(),
+            op_idx_delete_state: None,
         }
     }
 
