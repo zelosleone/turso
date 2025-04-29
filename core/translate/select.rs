@@ -104,12 +104,17 @@ pub fn prepare_select_plan<'a>(
                 match column {
                     ResultColumn::Star => {
                         select_star(&plan.table_references, &mut plan.result_columns);
+                        for table in plan.table_references.iter_mut() {
+                            for idx in 0..table.columns().len() {
+                                table.mark_column_used(idx);
+                            }
+                        }
                     }
                     ResultColumn::TableStar(name) => {
                         let name_normalized = normalize_ident(name.0.as_str());
                         let referenced_table = plan
                             .table_references
-                            .iter()
+                            .iter_mut()
                             .enumerate()
                             .find(|(_, t)| t.identifier == name_normalized);
 
@@ -117,23 +122,29 @@ pub fn prepare_select_plan<'a>(
                             crate::bail_parse_error!("Table {} not found", name.0);
                         }
                         let (table_index, table) = referenced_table.unwrap();
-                        for (idx, col) in table.columns().iter().enumerate() {
+                        let num_columns = table.columns().len();
+                        for idx in 0..num_columns {
+                            let is_rowid_alias = {
+                                let columns = table.columns();
+                                columns[idx].is_rowid_alias
+                            };
                             plan.result_columns.push(ResultSetColumn {
                                 expr: ast::Expr::Column {
                                     database: None, // TODO: support different databases
                                     table: table_index,
                                     column: idx,
-                                    is_rowid_alias: col.is_rowid_alias,
+                                    is_rowid_alias,
                                 },
                                 alias: None,
                                 contains_aggregates: false,
                             });
+                            table.mark_column_used(idx);
                         }
                     }
                     ResultColumn::Expr(ref mut expr, maybe_alias) => {
                         bind_column_references(
                             expr,
-                            &plan.table_references,
+                            &mut plan.table_references,
                             Some(&plan.result_columns),
                         )?;
                         match expr {
@@ -293,7 +304,7 @@ pub fn prepare_select_plan<'a>(
             // Parse the actual WHERE clause and add its conditions to the plan WHERE clause that already contains the join conditions.
             parse_where(
                 where_clause,
-                &plan.table_references,
+                &mut plan.table_references,
                 Some(&plan.result_columns),
                 &mut plan.where_clause,
             )?;
@@ -303,7 +314,7 @@ pub fn prepare_select_plan<'a>(
                     replace_column_number_with_copy_of_column_expr(expr, &plan.result_columns)?;
                     bind_column_references(
                         expr,
-                        &plan.table_references,
+                        &mut plan.table_references,
                         Some(&plan.result_columns),
                     )?;
                 }
@@ -316,7 +327,7 @@ pub fn prepare_select_plan<'a>(
                         for expr in predicates.iter_mut() {
                             bind_column_references(
                                 expr,
-                                &plan.table_references,
+                                &mut plan.table_references,
                                 Some(&plan.result_columns),
                             )?;
                             let contains_aggregates =
@@ -352,7 +363,7 @@ pub fn prepare_select_plan<'a>(
 
                     bind_column_references(
                         &mut o.expr,
-                        &plan.table_references,
+                        &mut plan.table_references,
                         Some(&plan.result_columns),
                     )?;
                     resolve_aggregates(&o.expr, &mut plan.aggregates);
@@ -370,7 +381,7 @@ pub fn prepare_select_plan<'a>(
 
             // Parse the LIMIT/OFFSET clause
             (plan.limit, plan.offset) =
-                select.limit.map_or(Ok((None, None)), |l| parse_limit(*l))?;
+                select.limit.map_or(Ok((None, None)), |l| parse_limit(&l))?;
 
             // Return the unoptimized query plan
             Ok(Plan::Select(plan))
@@ -411,8 +422,8 @@ fn count_plan_required_cursors(plan: &SelectPlan) -> usize {
         .map(|t| match &t.op {
             Operation::Scan { .. } => 1,
             Operation::Search(search) => match search {
-                Search::RowidEq { .. } | Search::RowidSearch { .. } => 1,
-                Search::IndexSearch { .. } => 2, // btree cursor and index cursor
+                Search::RowidEq { .. } => 1,
+                Search::Seek { index, .. } => 1 + index.is_some() as usize,
             },
             Operation::Subquery { plan, .. } => count_plan_required_cursors(plan),
         })

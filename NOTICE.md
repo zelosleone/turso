@@ -1,4 +1,4 @@
-Limbo 
+Limbo
 =======
 
 Please visit our GitHub for more information:
@@ -18,29 +18,25 @@ This product depends on AssertJ, distributed by the AssertJ authors:
 * License: licenses/bindings/java/errorprone-license.md (Apache License v2.0)
 * Homepage: https://joel-costigliola.github.io/assertj/
 
-This product depends on logback, distributed by the logback authors: 
+This product depends on logback, distributed by the logback authors:
 
 * License: licenses/bindings/java/logback-license.md (Apache License v2.0)
-* Homepage: https://github.com/qos-ch/logback?tab=License-1-ov-file 
+* Homepage: https://github.com/qos-ch/logback?tab=License-1-ov-file
 
 This product depends on spotless, distributed by the diffplug authors:
 
 * License: licenses/bindings/java/spotless-license.md (Apache License v2.0)
 * Homepage: https://github.com/diffplug/spotless
 
-This product depends on serde, distributed by the serde-rs project: 
-
-* License: licenses/core/serde-apache-license.md (Apache License v2.0)
-* License: licenses/core/serde-mit-license.md (MIT License)
-* Homepage: https://github.com/serde-rs/serde
-
-This product depends on serde_json5, distributed 
-
-* License: licenses/core/serde_json5-license.md (Apache License v2.0)
-* Homepage: https://github.com/google/serde_json5
 
 This project depends on ipnetwork, distributed by the ipnetwork project:
 
 * License: licenses/extensions/ipnetwork-apache-license.md (Apache License v2.0)
 * License: licenses/extensions/ipnetwork-mit-license.md (MIT License)
 * Homepage: https://github.com/achanda/ipnetwork
+
+This project depends on libm, distributed by the rust-lang project:
+
+* License: licenses/extensions/libm-apache-license.md (Apache License v2.0)
+* License: licenses/extensions/libm-mit-license.md (MIT License)
+* Homepage: https://github.com/rust-lang/libm

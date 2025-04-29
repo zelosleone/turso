@@ -1,12 +1,9 @@
-use crate::common::{do_flush, TempDatabase};
+use crate::common::{do_flush, maybe_setup_tracing, TempDatabase};
 use limbo_core::{Connection, LimboError, Result, StepResult};
 use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::EnvFilter;
 
 #[allow(clippy::arc_with_non_send_sync)]
 #[test]
@@ -84,11 +81,7 @@ fn test_wal_1_writer_1_reader() -> Result<()> {
                     match rows.step().unwrap() {
                         StepResult::Row => {
                             let row = rows.row().unwrap();
-                            let first_value = row.get_value(0);
-                            let id = match first_value {
-                                limbo_core::OwnedValue::Integer(i) => *i as i32,
-                                _ => unreachable!(),
-                            };
+                            let id = row.get::<i64>(0).unwrap();
                             assert_eq!(id, i);
                             i += 1;
                         }
@@ -114,17 +107,6 @@ fn test_wal_1_writer_1_reader() -> Result<()> {
     writer_thread.join().unwrap();
     reader_thread.join().unwrap();
     Ok(())
-}
-
-fn maybe_setup_tracing() {
-    let _ = tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_line_number(true)
-                .with_thread_ids(true),
-        )
-        .with(EnvFilter::from_default_env())
-        .try_init();
 }
 
 /// Execute a statement and get strings result

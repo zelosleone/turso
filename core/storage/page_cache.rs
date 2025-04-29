@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap, ptr::NonNull};
 
-use tracing::debug;
+use tracing::{debug, trace};
 
 use super::pager::PageRef;
 
@@ -61,7 +61,7 @@ impl DumbLruPageCache {
 
     pub fn insert(&mut self, key: PageCacheKey, value: PageRef) {
         self._delete(key.clone(), false);
-        debug!("cache_insert(key={:?})", key);
+        trace!("cache_insert(key={:?})", key);
         let entry = Box::new(PageCacheEntry {
             key: key.clone(),
             next: None,
@@ -79,7 +79,7 @@ impl DumbLruPageCache {
     }
 
     pub fn delete(&mut self, key: PageCacheKey) {
-        debug!("cache_delete(key={:?})", key);
+        trace!("cache_delete(key={:?})", key);
         self._delete(key, true)
     }
 
@@ -105,7 +105,7 @@ impl DumbLruPageCache {
 
     /// Get page without promoting entry
     pub fn peek(&mut self, key: &PageCacheKey, touch: bool) -> Option<PageRef> {
-        debug!("cache_get(key={:?})", key);
+        trace!("cache_get(key={:?})", key);
         let mut ptr = self.get_ptr(key)?;
         let page = unsafe { ptr.as_mut().page.clone() };
         if touch {
@@ -188,6 +188,7 @@ impl DumbLruPageCache {
             // TODO: drop from another clean entry?
             return;
         }
+        tracing::debug!("pop_if_not_dirty(key={:?})", tail_entry.key);
         self.detach(tail, true);
         assert!(self.map.borrow_mut().remove(&tail_entry.key).is_some());
     }

@@ -1,7 +1,7 @@
 use super::{
     plan::{
-        Aggregate, EvalAt, JoinInfo, Operation, Plan, ResultSetColumn, SelectPlan, SelectQueryType,
-        TableReference, WhereTerm,
+        Aggregate, ColumnUsedMask, EvalAt, IterationDirection, JoinInfo, Operation, Plan,
+        ResultSetColumn, SelectPlan, SelectQueryType, TableReference, WhereTerm,
     },
     select::prepare_select_plan,
     SymbolTable,
@@ -85,7 +85,7 @@ pub fn resolve_aggregates(expr: &Expr, aggs: &mut Vec<Aggregate>) -> bool {
 
 pub fn bind_column_references(
     expr: &mut Expr,
-    referenced_tables: &[TableReference],
+    referenced_tables: &mut [TableReference],
     result_columns: Option<&[ResultSetColumn]>,
 ) -> Result<()> {
     match expr {
@@ -128,6 +128,7 @@ pub fn bind_column_references(
                     column: col_idx,
                     is_rowid_alias,
                 };
+                referenced_tables[tbl_idx].mark_column_used(col_idx);
                 return Ok(());
             }
 
@@ -178,6 +179,7 @@ pub fn bind_column_references(
                 column: col_idx.unwrap(),
                 is_rowid_alias: col.is_rowid_alias,
             };
+            referenced_tables[tbl_idx].mark_column_used(col_idx.unwrap());
             Ok(())
         }
         Expr::Between {
@@ -320,10 +322,14 @@ fn parse_from_clause_table<'a>(
                     ));
                 };
                 scope.tables.push(TableReference {
-                    op: Operation::Scan { iter_dir: None },
+                    op: Operation::Scan {
+                        iter_dir: IterationDirection::Forwards,
+                        index: None,
+                    },
                     table: tbl_ref,
                     identifier: alias.unwrap_or(normalized_qualified_name),
                     join_info: None,
+                    col_used_mask: ColumnUsedMask::new(),
                 });
                 return Ok(());
             };
@@ -399,10 +405,14 @@ fn parse_from_clause_table<'a>(
                 .unwrap_or(normalized_name.to_string());
 
             scope.tables.push(TableReference {
-                op: Operation::Scan { iter_dir: None },
+                op: Operation::Scan {
+                    iter_dir: IterationDirection::Forwards,
+                    index: None,
+                },
                 join_info: None,
                 table: Table::Virtual(vtab),
                 identifier: alias,
+                col_used_mask: ColumnUsedMask::new(),
             });
 
             Ok(())
@@ -533,7 +543,7 @@ pub fn parse_from<'a>(
 
 pub fn parse_where(
     where_clause: Option<Expr>,
-    table_references: &[TableReference],
+    table_references: &mut [TableReference],
     result_columns: Option<&[ResultSetColumn]>,
     out_where_clause: &mut Vec<WhereTerm>,
 ) -> Result<()> {
@@ -564,7 +574,7 @@ pub fn parse_where(
   For expressions not referencing any tables (e.g. constants), this is before the main loop is
   opened, because they do not need any table data.
 */
-fn determine_where_to_eval_expr<'a>(predicate: &'a ast::Expr) -> Result<EvalAt> {
+pub fn determine_where_to_eval_expr<'a>(predicate: &'a ast::Expr) -> Result<EvalAt> {
     let mut eval_at: EvalAt = EvalAt::BeforeLoop;
     match predicate {
         ast::Expr::Binary(e1, _, e2) => {
@@ -752,7 +762,7 @@ fn parse_join<'a>(
                 let mut preds = vec![];
                 break_predicate_at_and_boundaries(expr, &mut preds);
                 for predicate in preds.iter_mut() {
-                    bind_column_references(predicate, &scope.tables, None)?;
+                    bind_column_references(predicate, &mut scope.tables, None)?;
                 }
                 for pred in preds {
                     let cur_table_idx = scope.tables.len() - 1;
@@ -826,6 +836,11 @@ fn parse_join<'a>(
                             is_rowid_alias: right_col.is_rowid_alias,
                         }),
                     );
+
+                    let left_table = scope.tables.get_mut(left_table_idx).unwrap();
+                    left_table.mark_column_used(left_col_idx);
+                    let right_table = scope.tables.get_mut(cur_table_idx).unwrap();
+                    right_table.mark_column_used(right_col_idx);
                     let eval_at = if outer {
                         EvalAt::Loop(cur_table_idx)
                     } else {
@@ -850,30 +865,33 @@ fn parse_join<'a>(
     Ok(())
 }
 
-pub fn parse_limit(limit: Limit) -> Result<(Option<isize>, Option<isize>)> {
-    let offset_val = match limit.offset {
+pub fn parse_limit(limit: &Limit) -> Result<(Option<isize>, Option<isize>)> {
+    let offset_val = match &limit.offset {
         Some(offset_expr) => match offset_expr {
             Expr::Literal(ast::Literal::Numeric(n)) => n.parse().ok(),
             // If OFFSET is negative, the result is as if OFFSET is zero
-            Expr::Unary(UnaryOperator::Negative, expr) => match *expr {
-                Expr::Literal(ast::Literal::Numeric(n)) => n.parse::<isize>().ok().map(|num| -num),
-                _ => crate::bail_parse_error!("Invalid OFFSET clause"),
-            },
+            Expr::Unary(UnaryOperator::Negative, expr) => {
+                if let Expr::Literal(ast::Literal::Numeric(ref n)) = &**expr {
+                    n.parse::<isize>().ok().map(|num| -num)
+                } else {
+                    crate::bail_parse_error!("Invalid OFFSET clause");
+                }
+            }
             _ => crate::bail_parse_error!("Invalid OFFSET clause"),
         },
         None => Some(0),
     };
 
-    if let Expr::Literal(ast::Literal::Numeric(n)) = limit.expr {
+    if let Expr::Literal(ast::Literal::Numeric(n)) = &limit.expr {
         Ok((n.parse().ok(), offset_val))
-    } else if let Expr::Unary(UnaryOperator::Negative, expr) = limit.expr {
-        if let Expr::Literal(ast::Literal::Numeric(n)) = *expr {
+    } else if let Expr::Unary(UnaryOperator::Negative, expr) = &limit.expr {
+        if let Expr::Literal(ast::Literal::Numeric(n)) = &**expr {
             let limit_val = n.parse::<isize>().ok().map(|num| -num);
             Ok((limit_val, offset_val))
         } else {
             crate::bail_parse_error!("Invalid LIMIT clause");
         }
-    } else if let Expr::Id(id) = limit.expr {
+    } else if let Expr::Id(id) = &limit.expr {
         if id.0.eq_ignore_ascii_case("true") {
             Ok((Some(1), offset_val))
         } else if id.0.eq_ignore_ascii_case("false") {

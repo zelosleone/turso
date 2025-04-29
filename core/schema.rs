@@ -1,8 +1,8 @@
-use crate::VirtualTable;
 use crate::{util::normalize_ident, Result};
+use crate::{LimboError, VirtualTable};
 use core::fmt;
 use fallible_iterator::FallibleIterator;
-use limbo_sqlite3_parser::ast::{Expr, Literal, TableOptions};
+use limbo_sqlite3_parser::ast::{Expr, Literal, SortOrder, TableOptions};
 use limbo_sqlite3_parser::{
     ast::{Cmd, CreateTableBody, QualifiedName, ResultColumn, Stmt},
     lexer::sql::Parser,
@@ -28,6 +28,13 @@ impl Schema {
             Arc::new(Table::BTree(sqlite_schema_table().into())),
         );
         Self { tables, indexes }
+    }
+
+    pub fn is_unique_idx_name(&self, name: &str) -> bool {
+        !self
+            .indexes
+            .iter()
+            .any(|idx| idx.1.iter().any(|i| i.name == name))
     }
 
     pub fn add_btree_table(&mut self, table: Rc<BTreeTable>) {
@@ -72,6 +79,14 @@ impl Schema {
         self.indexes
             .get(&name)
             .map_or_else(|| &[] as &[Arc<Index>], |v| v.as_slice())
+    }
+
+    pub fn get_index(&self, table_name: &str, index_name: &str) -> Option<&Arc<Index>> {
+        let name = normalize_ident(table_name);
+        self.indexes
+            .get(&name)?
+            .iter()
+            .find(|index| index.name == index_name)
     }
 
     pub fn remove_indices_for_table(&mut self, table_name: &str) {
@@ -151,15 +166,16 @@ impl PartialEq for Table {
 pub struct BTreeTable {
     pub root_page: usize,
     pub name: String,
-    pub primary_key_column_names: Vec<String>,
+    pub primary_key_columns: Vec<(String, SortOrder)>,
     pub columns: Vec<Column>,
     pub has_rowid: bool,
+    pub is_strict: bool,
 }
 
 impl BTreeTable {
     pub fn get_rowid_alias_column(&self) -> Option<(usize, &Column)> {
-        if self.primary_key_column_names.len() == 1 {
-            let (idx, col) = self.get_column(&self.primary_key_column_names[0]).unwrap();
+        if self.primary_key_columns.len() == 1 {
+            let (idx, col) = self.get_column(&self.primary_key_columns[0].0).unwrap();
             if self.column_is_rowid_alias(col) {
                 return Some((idx, col));
             }
@@ -171,6 +187,10 @@ impl BTreeTable {
         col.is_rowid_alias
     }
 
+    /// Returns the column position and column for a given column name.
+    /// Returns None if the column name is not found.
+    /// E.g. if table is CREATE TABLE t(a, b, c)
+    /// then get_column("b") returns (1, &Column { .. })
     pub fn get_column(&self, name: &str) -> Option<(usize, &Column)> {
         let name = normalize_ident(name);
         for (i, column) in self.columns.iter().enumerate() {
@@ -209,7 +229,7 @@ impl BTreeTable {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PseudoTable {
     pub columns: Vec<Column>,
 }
@@ -245,12 +265,6 @@ impl PseudoTable {
     }
 }
 
-impl Default for PseudoTable {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 fn create_table(
     tbl_name: QualifiedName,
     body: CreateTableBody,
@@ -259,14 +273,16 @@ fn create_table(
     let table_name = normalize_ident(&tbl_name.name.0);
     trace!("Creating table {}", table_name);
     let mut has_rowid = true;
-    let mut primary_key_column_names = vec![];
+    let mut primary_key_columns = vec![];
     let mut cols = vec![];
+    let is_strict: bool;
     match body {
         CreateTableBody::ColumnsAndConstraints {
             columns,
             constraints,
             options,
         } => {
+            is_strict = options.contains(TableOptions::STRICT);
             if let Some(constraints) = constraints {
                 for c in constraints {
                     if let limbo_sqlite3_parser::ast::TableConstraint::PrimaryKey {
@@ -274,7 +290,7 @@ fn create_table(
                     } = c.constraint
                     {
                         for column in columns {
-                            primary_key_column_names.push(match column.expr {
+                            let col_name = match column.expr {
                                 Expr::Id(id) => normalize_ident(&id.0),
                                 Expr::Literal(Literal::String(value)) => {
                                     value.trim_matches('\'').to_owned()
@@ -282,7 +298,9 @@ fn create_table(
                                 _ => {
                                     todo!("Unsupported primary key expression");
                                 }
-                            });
+                            };
+                            primary_key_columns
+                                .push((col_name, column.order.unwrap_or(SortOrder::Asc)));
                         }
                     }
                 }
@@ -339,10 +357,17 @@ fn create_table(
                 let mut default = None;
                 let mut primary_key = false;
                 let mut notnull = false;
+                let mut order = SortOrder::Asc;
                 for c_def in &col_def.constraints {
                     match &c_def.constraint {
-                        limbo_sqlite3_parser::ast::ColumnConstraint::PrimaryKey { .. } => {
+                        limbo_sqlite3_parser::ast::ColumnConstraint::PrimaryKey {
+                            order: o,
+                            ..
+                        } => {
                             primary_key = true;
+                            if let Some(o) = o {
+                                order = o.clone();
+                            }
                         }
                         limbo_sqlite3_parser::ast::ColumnConstraint::NotNull { .. } => {
                             notnull = true;
@@ -355,8 +380,11 @@ fn create_table(
                 }
 
                 if primary_key {
-                    primary_key_column_names.push(name.clone());
-                } else if primary_key_column_names.contains(&name) {
+                    primary_key_columns.push((name.clone(), order));
+                } else if primary_key_columns
+                    .iter()
+                    .any(|(col_name, _)| col_name == &name)
+                {
                     primary_key = true;
                 }
 
@@ -378,7 +406,7 @@ fn create_table(
     };
     // flip is_rowid_alias back to false if the table has multiple primary keys
     // or if the table has no rowid
-    if !has_rowid || primary_key_column_names.len() > 1 {
+    if !has_rowid || primary_key_columns.len() > 1 {
         for col in cols.iter_mut() {
             col.is_rowid_alias = false;
         }
@@ -387,8 +415,9 @@ fn create_table(
         root_page,
         name: table_name,
         has_rowid,
-        primary_key_column_names,
+        primary_key_columns,
         columns: cols,
+        is_strict,
     })
 }
 
@@ -455,7 +484,7 @@ pub fn affinity(datatype: &str) -> Affinity {
     }
 
     // Rule 3: BLOB or empty -> BLOB affinity (historically called NONE)
-    if datatype.contains("BLOB") || datatype.is_empty() {
+    if datatype.contains("BLOB") || datatype.is_empty() || datatype.contains("ANY") {
         return Affinity::Blob;
     }
 
@@ -478,26 +507,72 @@ pub enum Type {
     Blob,
 }
 
+/// # SQLite Column Type Affinities
+///
 /// Each column in an SQLite 3 database is assigned one of the following type affinities:
 ///
-/// TEXT
-/// NUMERIC
-/// INTEGER
-/// REAL
-/// BLOB
-/// (Historical note: The "BLOB" type affinity used to be called "NONE". But that term was easy to confuse with "no affinity" and so it was renamed.)
+/// - **TEXT**
+/// - **NUMERIC**
+/// - **INTEGER**
+/// - **REAL**
+/// - **BLOB**
 ///
-/// A column with TEXT affinity stores all data using storage classes NULL, TEXT or BLOB. If numerical data is inserted into a column with TEXT affinity it is converted into text form before being stored.
+/// > **Note:** Historically, the "BLOB" type affinity was called "NONE". However, this term was renamed to avoid confusion with "no affinity".
 ///
-/// A column with NUMERIC affinity may contain values using all five storage classes. When text data is inserted into a NUMERIC column, the storage class of the text is converted to INTEGER or REAL (in order of preference) if the text is a well-formed integer or real literal, respectively. If the TEXT value is a well-formed integer literal that is too large to fit in a 64-bit signed integer, it is converted to REAL. For conversions between TEXT and REAL storage classes, only the first 15 significant decimal digits of the number are preserved. If the TEXT value is not a well-formed integer or real literal, then the value is stored as TEXT. For the purposes of this paragraph, hexadecimal integer literals are not considered well-formed and are stored as TEXT. (This is done for historical compatibility with versions of SQLite prior to version 3.8.6 2014-08-15 where hexadecimal integer literals were first introduced into SQLite.) If a floating point value that can be represented exactly as an integer is inserted into a column with NUMERIC affinity, the value is converted into an integer. No attempt is made to convert NULL or BLOB values.
+/// ## Affinity Descriptions
 ///
-/// A string might look like a floating-point literal with a decimal point and/or exponent notation but as long as the value can be expressed as an integer, the NUMERIC affinity will convert it into an integer. Hence, the string '3.0e+5' is stored in a column with NUMERIC affinity as the integer 300000, not as the floating point value 300000.0.
+/// ### **TEXT**
+/// - Stores data using the NULL, TEXT, or BLOB storage classes.
+/// - Numerical data inserted into a column with TEXT affinity is converted into text form before being stored.
+/// - **Example:**
+///   ```sql
+///   CREATE TABLE example (col TEXT);
+///   INSERT INTO example (col) VALUES (123); -- Stored as '123' (text)
+///   SELECT typeof(col) FROM example; -- Returns 'text'
+///   ```
 ///
-/// A column that uses INTEGER affinity behaves the same as a column with NUMERIC affinity. The difference between INTEGER and NUMERIC affinity is only evident in a CAST expression: The expression "CAST(4.0 AS INT)" returns an integer 4, whereas "CAST(4.0 AS NUMERIC)" leaves the value as a floating-point 4.0.
+/// ### **NUMERIC**
+/// - Can store values using all five storage classes.
+/// - Text data is converted to INTEGER or REAL (in that order of preference) if it is a well-formed integer or real literal.
+/// - If the text represents an integer too large for a 64-bit signed integer, it is converted to REAL.
+/// - If the text is not a well-formed literal, it is stored as TEXT.
+/// - Hexadecimal integer literals are stored as TEXT for historical compatibility.
+/// - Floating-point values that can be exactly represented as integers are converted to integers.
+/// - **Example:**
+///   ```sql
+///   CREATE TABLE example (col NUMERIC);
+///   INSERT INTO example (col) VALUES ('3.0e+5'); -- Stored as 300000 (integer)
+///   SELECT typeof(col) FROM example; -- Returns 'integer'
+///   ```
 ///
-/// A column with REAL affinity behaves like a column with NUMERIC affinity except that it forces integer values into floating point representation. (As an internal optimization, small floating point values with no fractional component and stored in columns with REAL affinity are written to disk as integers in order to take up less space and are automatically converted back into floating point as the value is read out. This optimization is completely invisible at the SQL level and can only be detected by examining the raw bits of the database file.)
+/// ### **INTEGER**
+/// - Behaves like NUMERIC affinity but differs in `CAST` expressions.
+/// - **Example:**
+///   ```sql
+///   CREATE TABLE example (col INTEGER);
+///   INSERT INTO example (col) VALUES (4.0); -- Stored as 4 (integer)
+///   SELECT typeof(col) FROM example; -- Returns 'integer'
+///   ```
 ///
-/// A column with affinity BLOB does not prefer one storage class over another and no attempt is made to coerce data from one storage class into another.
+/// ### **REAL**
+/// - Similar to NUMERIC affinity but forces integer values into floating-point representation.
+/// - **Optimization:** Small floating-point values with no fractional component may be stored as integers on disk to save space. This is invisible at the SQL level.
+/// - **Example:**
+///   ```sql
+///   CREATE TABLE example (col REAL);
+///   INSERT INTO example (col) VALUES (4); -- Stored as 4.0 (real)
+///   SELECT typeof(col) FROM example; -- Returns 'real'
+///   ```
+///
+/// ### **BLOB**
+/// - Does not prefer any storage class.
+/// - No coercion is performed between storage classes.
+/// - **Example:**
+///   ```sql
+///   CREATE TABLE example (col BLOB);
+///   INSERT INTO example (col) VALUES (x'1234'); -- Stored as a binary blob
+///   SELECT typeof(col) FROM example; -- Returns 'blob'
+///   ```
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Affinity {
     Integer,
@@ -507,11 +582,11 @@ pub enum Affinity {
     Numeric,
 }
 
-pub const SQLITE_AFF_TEXT: char = 'a';
-pub const SQLITE_AFF_NONE: char = 'b'; // Historically called NONE, but it's the same as BLOB
-pub const SQLITE_AFF_NUMERIC: char = 'c';
-pub const SQLITE_AFF_INTEGER: char = 'd';
-pub const SQLITE_AFF_REAL: char = 'e';
+pub const SQLITE_AFF_NONE: char = 'A'; // Historically called NONE, but it's the same as BLOB
+pub const SQLITE_AFF_TEXT: char = 'B';
+pub const SQLITE_AFF_NUMERIC: char = 'C';
+pub const SQLITE_AFF_INTEGER: char = 'D';
+pub const SQLITE_AFF_REAL: char = 'E';
 
 impl Affinity {
     /// This is meant to be used in opcodes like Eq, which state:
@@ -528,6 +603,20 @@ impl Affinity {
             Affinity::Blob => SQLITE_AFF_NONE,
             Affinity::Real => SQLITE_AFF_REAL,
             Affinity::Numeric => SQLITE_AFF_NUMERIC,
+        }
+    }
+
+    pub fn from_char(char: char) -> Result<Self> {
+        match char {
+            SQLITE_AFF_INTEGER => Ok(Affinity::Integer),
+            SQLITE_AFF_TEXT => Ok(Affinity::Text),
+            SQLITE_AFF_NONE => Ok(Affinity::Blob),
+            SQLITE_AFF_REAL => Ok(Affinity::Real),
+            SQLITE_AFF_NUMERIC => Ok(Affinity::Numeric),
+            _ => Err(LimboError::InternalError(format!(
+                "Invalid affinity character: {}",
+                char
+            ))),
         }
     }
 }
@@ -551,7 +640,8 @@ pub fn sqlite_schema_table() -> BTreeTable {
         root_page: 1,
         name: "sqlite_schema".to_string(),
         has_rowid: true,
-        primary_key_column_names: vec![],
+        is_strict: false,
+        primary_key_columns: vec![],
         columns: vec![
             Column {
                 name: Some("type".to_string()),
@@ -610,23 +700,24 @@ pub struct Index {
     pub root_page: usize,
     pub columns: Vec<IndexColumn>,
     pub unique: bool,
+    pub ephemeral: bool,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct IndexColumn {
     pub name: String,
-    pub order: Order,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Order {
-    Ascending,
-    Descending,
+    pub order: SortOrder,
+    /// the position of the column in the source table.
+    /// for example:
+    /// CREATE TABLE t(a,b,c)
+    /// CREATE INDEX idx ON t(b)
+    /// b.pos_in_table == 1
+    pub pos_in_table: usize,
 }
 
 impl Index {
-    pub fn from_sql(sql: &str, root_page: usize) -> Result<Index> {
+    pub fn from_sql(sql: &str, root_page: usize, table: &BTreeTable) -> Result<Index> {
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next()?;
         match cmd {
@@ -638,23 +729,28 @@ impl Index {
                 ..
             })) => {
                 let index_name = normalize_ident(&idx_name.name.0);
-                let index_columns = columns
-                    .into_iter()
-                    .map(|col| IndexColumn {
-                        name: normalize_ident(&col.expr.to_string()),
-                        order: match col.order {
-                            Some(limbo_sqlite3_parser::ast::SortOrder::Asc) => Order::Ascending,
-                            Some(limbo_sqlite3_parser::ast::SortOrder::Desc) => Order::Descending,
-                            None => Order::Ascending,
-                        },
-                    })
-                    .collect();
+                let mut index_columns = Vec::with_capacity(columns.len());
+                for col in columns.into_iter() {
+                    let name = normalize_ident(&col.expr.to_string());
+                    let Some((pos_in_table, _)) = table.get_column(&name) else {
+                        return Err(crate::LimboError::InternalError(format!(
+                            "Column {} is in index {} but not found in table {}",
+                            name, index_name, table.name
+                        )));
+                    };
+                    index_columns.push(IndexColumn {
+                        name,
+                        order: col.order.unwrap_or(SortOrder::Asc),
+                        pos_in_table,
+                    });
+                }
                 Ok(Index {
                     name: index_name,
                     table_name: normalize_ident(&tbl_name.0),
                     root_page,
                     columns: index_columns,
                     unique,
+                    ephemeral: false,
                 })
             }
             _ => todo!("Expected create index statement"),
@@ -666,26 +762,27 @@ impl Index {
         index_name: &str,
         root_page: usize,
     ) -> Result<Index> {
-        if table.primary_key_column_names.is_empty() {
+        if table.primary_key_columns.is_empty() {
             return Err(crate::LimboError::InternalError(
                 "Cannot create automatic index for table without primary key".to_string(),
             ));
         }
 
         let index_columns = table
-            .primary_key_column_names
+            .primary_key_columns
             .iter()
-            .map(|col_name| {
+            .map(|(col_name, order)| {
                 // Verify that each primary key column exists in the table
-                if table.get_column(col_name).is_none() {
+                let Some((pos_in_table, _)) = table.get_column(col_name) else {
                     return Err(crate::LimboError::InternalError(format!(
-                        "Primary key column {} not found in table {}",
-                        col_name, table.name
+                        "Column {} is in index {} but not found in table {}",
+                        col_name, index_name, table.name
                     )));
-                }
+                };
                 Ok(IndexColumn {
                     name: normalize_ident(col_name),
-                    order: Order::Ascending, // Primary key indexes are always ascending
+                    order: order.clone(),
+                    pos_in_table,
                 })
             })
             .collect::<Result<Vec<_>>>()?;
@@ -696,7 +793,20 @@ impl Index {
             root_page,
             columns: index_columns,
             unique: true, // Primary key indexes are always unique
+            ephemeral: false,
         })
+    }
+
+    /// Given a column position in the table, return the position in the index.
+    /// Returns None if the column is not found in the index.
+    /// For example, given:
+    /// CREATE TABLE t(a, b, c)
+    /// CREATE INDEX idx ON t(b)
+    /// then column_table_pos_to_index_pos(1) returns Some(0)
+    pub fn column_table_pos_to_index_pos(&self, table_pos: usize) -> Option<usize> {
+        self.columns
+            .iter()
+            .position(|c| c.pos_in_table == table_pos)
     }
 }
 
@@ -818,8 +928,8 @@ mod tests {
         let column = table.get_column("c").unwrap().1;
         assert!(!column.primary_key, "column 'c' shouldn't be a primary key");
         assert_eq!(
-            vec!["a"],
-            table.primary_key_column_names,
+            vec![("a".to_string(), SortOrder::Asc)],
+            table.primary_key_columns,
             "primary key column names should be ['a']"
         );
         Ok(())
@@ -836,8 +946,11 @@ mod tests {
         let column = table.get_column("c").unwrap().1;
         assert!(!column.primary_key, "column 'c' shouldn't be a primary key");
         assert_eq!(
-            vec!["a", "b"],
-            table.primary_key_column_names,
+            vec![
+                ("a".to_string(), SortOrder::Asc),
+                ("b".to_string(), SortOrder::Asc)
+            ],
+            table.primary_key_columns,
             "primary key column names should be ['a', 'b']"
         );
         Ok(())
@@ -845,7 +958,7 @@ mod tests {
 
     #[test]
     pub fn test_primary_key_separate_single() -> Result<()> {
-        let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, c REAL, PRIMARY KEY(a));"#;
+        let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, c REAL, PRIMARY KEY(a desc));"#;
         let table = BTreeTable::from_sql(sql, 0)?;
         let column = table.get_column("a").unwrap().1;
         assert!(column.primary_key, "column 'a' should be a primary key");
@@ -854,8 +967,8 @@ mod tests {
         let column = table.get_column("c").unwrap().1;
         assert!(!column.primary_key, "column 'c' shouldn't be a primary key");
         assert_eq!(
-            vec!["a"],
-            table.primary_key_column_names,
+            vec![("a".to_string(), SortOrder::Desc)],
+            table.primary_key_columns,
             "primary key column names should be ['a']"
         );
         Ok(())
@@ -863,7 +976,7 @@ mod tests {
 
     #[test]
     pub fn test_primary_key_separate_multiple() -> Result<()> {
-        let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, c REAL, PRIMARY KEY(a, b));"#;
+        let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, c REAL, PRIMARY KEY(a, b desc));"#;
         let table = BTreeTable::from_sql(sql, 0)?;
         let column = table.get_column("a").unwrap().1;
         assert!(column.primary_key, "column 'a' should be a primary key");
@@ -872,8 +985,11 @@ mod tests {
         let column = table.get_column("c").unwrap().1;
         assert!(!column.primary_key, "column 'c' shouldn't be a primary key");
         assert_eq!(
-            vec!["a", "b"],
-            table.primary_key_column_names,
+            vec![
+                ("a".to_string(), SortOrder::Asc),
+                ("b".to_string(), SortOrder::Desc)
+            ],
+            table.primary_key_columns,
             "primary key column names should be ['a', 'b']"
         );
         Ok(())
@@ -890,8 +1006,8 @@ mod tests {
         let column = table.get_column("c").unwrap().1;
         assert!(!column.primary_key, "column 'c' shouldn't be a primary key");
         assert_eq!(
-            vec!["a"],
-            table.primary_key_column_names,
+            vec![("a".to_string(), SortOrder::Asc)],
+            table.primary_key_columns,
             "primary key column names should be ['a']"
         );
         Ok(())
@@ -907,8 +1023,8 @@ mod tests {
         let column = table.get_column("c").unwrap().1;
         assert!(!column.primary_key, "column 'c' shouldn't be a primary key");
         assert_eq!(
-            vec!["a"],
-            table.primary_key_column_names,
+            vec![("a".to_string(), SortOrder::Asc)],
+            table.primary_key_columns,
             "primary key column names should be ['a']"
         );
         Ok(())
@@ -1012,7 +1128,7 @@ mod tests {
         assert!(index.unique);
         assert_eq!(index.columns.len(), 1);
         assert_eq!(index.columns[0].name, "a");
-        assert!(matches!(index.columns[0].order, Order::Ascending));
+        assert!(matches!(index.columns[0].order, SortOrder::Asc));
         Ok(())
     }
 
@@ -1029,8 +1145,8 @@ mod tests {
         assert_eq!(index.columns.len(), 2);
         assert_eq!(index.columns[0].name, "a");
         assert_eq!(index.columns[1].name, "b");
-        assert!(matches!(index.columns[0].order, Order::Ascending));
-        assert!(matches!(index.columns[1].order, Order::Ascending));
+        assert!(matches!(index.columns[0].order, SortOrder::Asc));
+        assert!(matches!(index.columns[1].order, SortOrder::Asc));
         Ok(())
     }
 
@@ -1055,7 +1171,8 @@ mod tests {
             root_page: 0,
             name: "t1".to_string(),
             has_rowid: true,
-            primary_key_column_names: vec!["nonexistent".to_string()],
+            is_strict: false,
+            primary_key_columns: vec![("nonexistent".to_string(), SortOrder::Asc)],
             columns: vec![Column {
                 name: Some("a".to_string()),
                 ty: Type::Integer,

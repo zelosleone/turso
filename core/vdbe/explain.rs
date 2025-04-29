@@ -1,4 +1,4 @@
-use crate::vdbe::builder::CursorType;
+use crate::vdbe::{builder::CursorType, insn::RegisterOrLiteral};
 
 use super::{Insn, InsnReference, OwnedValue, Program};
 use crate::function::{Func, ScalarFunc};
@@ -336,11 +336,11 @@ pub fn insn_to_str(
                 0,
                 format!("if !r[{}] goto {}", reg, target_pc.to_debug_int()),
             ),
-            Insn::OpenReadAsync {
+            Insn::OpenRead {
                 cursor_id,
                 root_page,
             } => (
-                "OpenReadAsync",
+                "OpenRead",
                 *cursor_id as i32,
                 *root_page as i32,
                 0,
@@ -355,27 +355,9 @@ pub fn insn_to_str(
                     root_page
                 ),
             ),
-            Insn::OpenReadAwait => (
-                "OpenReadAwait",
-                0,
-                0,
-                0,
-                OwnedValue::build_text(""),
-                0,
-                "".to_string(),
-            ),
-            Insn::VOpenAsync { cursor_id } => (
-                "VOpenAsync",
+            Insn::VOpen { cursor_id } => (
+                "VOpen",
                 *cursor_id as i32,
-                0,
-                0,
-                OwnedValue::build_text(""),
-                0,
-                "".to_string(),
-            ),
-            Insn::VOpenAwait => (
-                "VOpenAwait",
-                0,
                 0,
                 0,
                 OwnedValue::build_text(""),
@@ -449,6 +431,15 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
+            Insn::VDestroy { db, table_name } => (
+                "VDestroy",
+                *db as i32,
+                0,
+                0,
+                OwnedValue::build_text(table_name),
+                0,
+                "".to_string(),
+            ),
             Insn::OpenPseudo {
                 cursor_id,
                 content_reg,
@@ -462,27 +453,18 @@ pub fn insn_to_str(
                 0,
                 format!("{} columns in r[{}]", num_fields, content_reg),
             ),
-            Insn::RewindAsync { cursor_id } => (
-                "RewindAsync",
-                *cursor_id as i32,
-                0,
-                0,
-                OwnedValue::build_text(""),
-                0,
-                "".to_string(),
-            ),
-            Insn::RewindAwait {
+            Insn::Rewind {
                 cursor_id,
                 pc_if_empty,
             } => (
-                "RewindAwait",
+                "Rewind",
                 *cursor_id as i32,
                 pc_if_empty.to_debug_int(),
                 0,
                 OwnedValue::build_text(""),
                 0,
                 format!(
-                    "Rewind table {}",
+                    "Rewind {}",
                     program.cursor_ref[*cursor_id]
                         .0
                         .as_ref()
@@ -528,6 +510,20 @@ pub fn insn_to_str(
                     ),
                 )
             }
+            Insn::TypeCheck {
+                start_reg,
+                count,
+                check_generated,
+                ..
+            } => (
+                "TypeCheck",
+                *start_reg as i32,
+                *count as i32,
+                *check_generated as i32,
+                OwnedValue::build_text(""),
+                0,
+                String::from(""),
+            ),
             Insn::MakeRecord {
                 start_reg,
                 count,
@@ -559,20 +555,11 @@ pub fn insn_to_str(
                     format!("output=r[{}..{}]", start_reg, start_reg + count - 1)
                 },
             ),
-            Insn::NextAsync { cursor_id } => (
-                "NextAsync",
-                *cursor_id as i32,
-                0,
-                0,
-                OwnedValue::build_text(""),
-                0,
-                "".to_string(),
-            ),
-            Insn::NextAwait {
+            Insn::Next {
                 cursor_id,
                 pc_if_next,
             } => (
-                "NextAwait",
+                "Next",
                 *cursor_id as i32,
                 pc_if_next.to_debug_int(),
                 0,
@@ -582,13 +569,13 @@ pub fn insn_to_str(
             ),
             Insn::Halt {
                 err_code,
-                description: _,
+                description,
             } => (
                 "Halt",
                 *err_code as i32,
                 0,
                 0,
-                OwnedValue::build_text(""),
+                OwnedValue::build_text(&description),
                 0,
                 "".to_string(),
             ),
@@ -672,7 +659,7 @@ pub fn insn_to_str(
                 0,
                 *dest as i32,
                 0,
-                OwnedValue::Blob(Rc::new(value.clone())),
+                OwnedValue::Blob(value.clone()),
                 0,
                 format!(
                     "r[{}]={} (len={})",
@@ -683,6 +670,22 @@ pub fn insn_to_str(
             ),
             Insn::RowId { cursor_id, dest } => (
                 "RowId",
+                *cursor_id as i32,
+                *dest as i32,
+                0,
+                OwnedValue::build_text(""),
+                0,
+                format!(
+                    "r[{}]={}.rowid",
+                    dest,
+                    &program.cursor_ref[*cursor_id]
+                        .0
+                        .as_ref()
+                        .unwrap_or(&format!("cursor {}", cursor_id))
+                ),
+            ),
+            Insn::IdxRowId { cursor_id, dest } => (
+                "IdxRowId",
                 *cursor_id as i32,
                 *dest as i32,
                 0,
@@ -734,87 +737,105 @@ pub fn insn_to_str(
                 is_index: _,
                 cursor_id,
                 start_reg,
-                num_regs: _,
+                num_regs,
+                target_pc,
+            }
+            | Insn::SeekGE {
+                is_index: _,
+                cursor_id,
+                start_reg,
+                num_regs,
+                target_pc,
+            }
+            | Insn::SeekLE {
+                is_index: _,
+                cursor_id,
+                start_reg,
+                num_regs,
+                target_pc,
+            }
+            | Insn::SeekLT {
+                is_index: _,
+                cursor_id,
+                start_reg,
+                num_regs,
                 target_pc,
             } => (
-                "SeekGT",
+                match insn {
+                    Insn::SeekGT { .. } => "SeekGT",
+                    Insn::SeekGE { .. } => "SeekGE",
+                    Insn::SeekLE { .. } => "SeekLE",
+                    Insn::SeekLT { .. } => "SeekLT",
+                    _ => unreachable!(),
+                },
                 *cursor_id as i32,
                 target_pc.to_debug_int(),
                 *start_reg as i32,
+                OwnedValue::build_text(""),
+                0,
+                format!("key=[{}..{}]", start_reg, start_reg + num_regs - 1),
+            ),
+            Insn::SeekEnd { cursor_id } => (
+                "SeekEnd",
+                *cursor_id as i32,
+                0,
+                0,
                 OwnedValue::build_text(""),
                 0,
                 "".to_string(),
             ),
-            Insn::SeekGE {
-                is_index: _,
+            Insn::IdxInsert {
                 cursor_id,
-                start_reg,
-                num_regs: _,
-                target_pc,
+                record_reg,
+                unpacked_start,
+                flags,
+                ..
             } => (
-                "SeekGE",
+                "IdxInsert",
                 *cursor_id as i32,
-                target_pc.to_debug_int(),
-                *start_reg as i32,
+                *record_reg as i32,
+                unpacked_start.unwrap_or(0) as i32,
                 OwnedValue::build_text(""),
-                0,
-                "".to_string(),
+                flags.0 as u16,
+                format!("key=r[{}]", record_reg),
             ),
             Insn::IdxGT {
                 cursor_id,
                 start_reg,
-                num_regs: _,
+                num_regs,
                 target_pc,
-            } => (
-                "IdxGT",
-                *cursor_id as i32,
-                target_pc.to_debug_int(),
-                *start_reg as i32,
-                OwnedValue::build_text(""),
-                0,
-                "".to_string(),
-            ),
-            Insn::IdxGE {
+            }
+            | Insn::IdxGE {
                 cursor_id,
                 start_reg,
-                num_regs: _,
+                num_regs,
                 target_pc,
-            } => (
-                "IdxGE",
-                *cursor_id as i32,
-                target_pc.to_debug_int(),
-                *start_reg as i32,
-                OwnedValue::build_text(""),
-                0,
-                "".to_string(),
-            ),
-            Insn::IdxLT {
+            }
+            | Insn::IdxLE {
                 cursor_id,
                 start_reg,
-                num_regs: _,
+                num_regs,
                 target_pc,
-            } => (
-                "IdxLT",
-                *cursor_id as i32,
-                target_pc.to_debug_int(),
-                *start_reg as i32,
-                OwnedValue::build_text(""),
-                0,
-                "".to_string(),
-            ),
-            Insn::IdxLE {
+            }
+            | Insn::IdxLT {
                 cursor_id,
                 start_reg,
-                num_regs: _,
+                num_regs,
                 target_pc,
             } => (
-                "IdxLE",
+                match insn {
+                    Insn::IdxGT { .. } => "IdxGT",
+                    Insn::IdxGE { .. } => "IdxGE",
+                    Insn::IdxLE { .. } => "IdxLE",
+                    Insn::IdxLT { .. } => "IdxLT",
+                    _ => unreachable!(),
+                },
                 *cursor_id as i32,
                 target_pc.to_debug_int(),
                 *start_reg as i32,
                 OwnedValue::build_text(""),
                 0,
-                "".to_string(),
+                format!("key=[{}..{}]", start_reg, start_reg + num_regs - 1),
             ),
             Insn::DecrJumpZero { reg, target_pc } => (
                 "DecrJumpZero",
@@ -993,13 +1014,13 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
-            Insn::InsertAsync {
+            Insn::Insert {
                 cursor,
                 key_reg,
                 record_reg,
                 flag,
             } => (
-                "InsertAsync",
+                "Insert",
                 *cursor as i32,
                 *record_reg as i32,
                 *key_reg as i32,
@@ -1007,8 +1028,8 @@ pub fn insn_to_str(
                 *flag as u16,
                 "".to_string(),
             ),
-            Insn::InsertAwait { cursor_id } => (
-                "InsertAwait",
+            Insn::Delete { cursor_id } => (
+                "Delete",
                 *cursor_id as i32,
                 0,
                 0,
@@ -1016,20 +1037,15 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
-            Insn::DeleteAsync { cursor_id } => (
-                "DeleteAsync",
+            Insn::IdxDelete {
+                cursor_id,
+                start_reg,
+                num_regs,
+            } => (
+                "IdxDelete",
                 *cursor_id as i32,
-                0,
-                0,
-                OwnedValue::build_text(""),
-                0,
-                "".to_string(),
-            ),
-            Insn::DeleteAwait { cursor_id } => (
-                "DeleteAwait",
-                *cursor_id as i32,
-                0,
-                0,
+                *start_reg as i32,
+                *num_regs as i32,
                 OwnedValue::build_text(""),
                 0,
                 "".to_string(),
@@ -1065,6 +1081,20 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
+            Insn::NoConflict {
+                cursor_id,
+                target_pc,
+                record_reg,
+                num_regs,
+            } => (
+                "NoConflict",
+                *cursor_id as i32,
+                target_pc.to_debug_int(),
+                *record_reg as i32,
+                OwnedValue::build_text(&format!("{num_regs}")),
+                0,
+                format!("key=r[{}]", record_reg),
+            ),
             Insn::NotExists {
                 cursor,
                 rowid_reg,
@@ -1094,22 +1124,17 @@ pub fn insn_to_str(
                     limit_reg, combined_reg, limit_reg, offset_reg, combined_reg
                 ),
             ),
-            Insn::OpenWriteAsync {
+            Insn::OpenWrite {
                 cursor_id,
                 root_page,
+                ..
             } => (
-                "OpenWriteAsync",
+                "OpenWrite",
                 *cursor_id as i32,
-                *root_page as i32,
-                0,
-                OwnedValue::build_text(""),
-                0,
-                "".to_string(),
-            ),
-            Insn::OpenWriteAwait {} => (
-                "OpenWriteAwait",
-                0,
-                0,
+                match root_page {
+                    RegisterOrLiteral::Literal(i) => *i as _,
+                    RegisterOrLiteral::Register(i) => *i as _,
+                },
                 0,
                 OwnedValue::build_text(""),
                 0,
@@ -1132,10 +1157,10 @@ pub fn insn_to_str(
                 "CreateBtree",
                 *db as i32,
                 *root as i32,
-                *flags as i32,
+                flags.get_flags() as i32,
                 OwnedValue::build_text(""),
                 0,
-                format!("r[{}]=root iDb={} flags={}", root, db, flags),
+                format!("r[{}]=root iDb={} flags={}", root, db, flags.get_flags()),
             ),
             Insn::Destroy {
                 root,
@@ -1176,10 +1201,13 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
-            Insn::LastAsync { .. } => (
-                "LastAsync",
-                0,
-                0,
+            Insn::Last {
+                cursor_id,
+                pc_if_empty,
+            } => (
+                "Last",
+                *cursor_id as i32,
+                pc_if_empty.to_debug_int(),
                 0,
                 OwnedValue::build_text(""),
                 0,
@@ -1203,28 +1231,13 @@ pub fn insn_to_str(
                 0,
                 where_clause.clone(),
             ),
-            Insn::LastAwait { .. } => (
-                "LastAwait",
-                0,
-                0,
-                0,
-                OwnedValue::build_text(""),
-                0,
-                "".to_string(),
-            ),
-            Insn::PrevAsync { .. } => (
-                "PrevAsync",
-                0,
-                0,
-                0,
-                OwnedValue::build_text(""),
-                0,
-                "".to_string(),
-            ),
-            Insn::PrevAwait { .. } => (
-                "PrevAwait",
-                0,
-                0,
+            Insn::Prev {
+                cursor_id,
+                pc_if_prev,
+            } => (
+                "Prev",
+                *cursor_id as i32,
+                pc_if_prev.to_debug_int(),
                 0,
                 OwnedValue::build_text(""),
                 0,
@@ -1343,6 +1356,93 @@ pub fn insn_to_str(
                 OwnedValue::build_text(""),
                 0,
                 format!("auto_commit={}, rollback={}", auto_commit, rollback),
+            ),
+            Insn::OpenEphemeral {
+                cursor_id,
+                is_table,
+            } => (
+                "OpenEphemeral",
+                *cursor_id as i32,
+                *is_table as i32,
+                0,
+                OwnedValue::build_text(""),
+                0,
+                format!(
+                    "cursor={} is_table={}",
+                    cursor_id,
+                    if *is_table { "true" } else { "false" }
+                ),
+            ),
+            Insn::OpenAutoindex { cursor_id } => (
+                "OpenAutoindex",
+                *cursor_id as i32,
+                0,
+                0,
+                OwnedValue::build_text(""),
+                0,
+                format!("cursor={}", cursor_id),
+            ),
+            Insn::Once {
+                target_pc_when_reentered,
+            } => (
+                "Once",
+                target_pc_when_reentered.to_debug_int(),
+                0,
+                0,
+                OwnedValue::build_text(""),
+                0,
+                format!("goto {}", target_pc_when_reentered.to_debug_int()),
+            ),
+            Insn::BeginSubrtn { dest, dest_end } => (
+                "BeginSubrtn",
+                *dest as i32,
+                dest_end.map_or(0, |end| end as i32),
+                0,
+                OwnedValue::build_text(""),
+                0,
+                dest_end.map_or(format!("r[{}]=NULL", dest), |end| {
+                    format!("r[{}..{}]=NULL", dest, end)
+                }),
+            ),
+            Insn::NotFound {
+                cursor_id,
+                target_pc,
+                record_reg,
+                ..
+            } => (
+                "NotFound",
+                *cursor_id as i32,
+                target_pc.to_debug_int(),
+                *record_reg as i32,
+                OwnedValue::build_text(""),
+                0,
+                format!(
+                    "if (r[{}] != NULL) goto {}",
+                    record_reg,
+                    target_pc.to_debug_int()
+                ),
+            ),
+            Insn::Affinity {
+                start_reg,
+                count,
+                affinities,
+            } => (
+                "Affinity",
+                *start_reg as i32,
+                count.get() as i32,
+                0,
+                OwnedValue::build_text(""),
+                0,
+                format!(
+                    "r[{}..{}] = {}",
+                    start_reg,
+                    start_reg + count.get(),
+                    affinities
+                        .chars()
+                        .map(|a| a.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
             ),
         };
     format!(

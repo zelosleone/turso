@@ -1,0 +1,19 @@
+{
+  "name": "@tursodatabase/limbo-darwin-universal",
+  "version": "0.0.19",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tursodatabase/limbo"
+  },
+  "os": [
+    "darwin"
+  ],
+  "main": "turso-limbo.darwin-universal.node",
+  "files": [
+    "turso-limbo.darwin-universal.node"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">= 10"
+  }
+}

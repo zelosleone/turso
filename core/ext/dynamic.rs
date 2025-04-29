@@ -6,6 +6,7 @@ use libloading::{Library, Symbol};
 use limbo_ext::{ExtensionApi, ExtensionApiRef, ExtensionEntryPoint, ResultCode, VfsImpl};
 use std::{
     ffi::{c_char, CString},
+    rc::Rc,
     sync::{Arc, Mutex, OnceLock},
 };
 
@@ -29,7 +30,10 @@ unsafe impl Send for VfsMod {}
 unsafe impl Sync for VfsMod {}
 
 impl Connection {
-    pub fn load_extension<P: AsRef<std::ffi::OsStr>>(&self, path: P) -> crate::Result<()> {
+    pub fn load_extension<P: AsRef<std::ffi::OsStr>>(
+        self: &Rc<Connection>,
+        path: P,
+    ) -> crate::Result<()> {
         use limbo_ext::ExtensionApiRef;
 
         let api = Box::new(self.build_limbo_ext());
@@ -44,7 +48,15 @@ impl Connection {
         let result_code = unsafe { entry(api_ptr) };
         if result_code.is_ok() {
             let extensions = get_extension_libraries();
-            extensions.lock().unwrap().push((Arc::new(lib), api_ref));
+            extensions
+                .lock()
+                .map_err(|_| {
+                    LimboError::ExtensionError("Error locking extension libraries".to_string())
+                })?
+                .push((Arc::new(lib), api_ref));
+            {
+                self.parse_schema_rows()?;
+            }
             Ok(())
         } else {
             if !api_ptr.is_null() {
@@ -65,7 +77,7 @@ pub(crate) unsafe extern "C" fn register_vfs(
     if name.is_null() || vfs.is_null() {
         return ResultCode::Error;
     }
-    let c_str = unsafe { CString::from_raw(name as *mut i8) };
+    let c_str = unsafe { CString::from_raw(name as *mut _) };
     let name_str = match c_str.to_str() {
         Ok(s) => s.to_string(),
         Err(_) => return ResultCode::Error,
@@ -116,7 +128,7 @@ pub fn add_builtin_vfs_extensions(
         }
         let vfsimpl = unsafe { &**vfs };
         let name = unsafe {
-            CString::from_raw(vfsimpl.name as *mut i8)
+            CString::from_raw(vfsimpl.name as *mut _)
                 .to_str()
                 .map_err(|_| {
                     LimboError::ExtensionError("unable to register vfs extension".to_string())

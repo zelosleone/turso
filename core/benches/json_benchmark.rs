@@ -485,9 +485,462 @@ fn bench(criterion: &mut Criterion) {
     }
 }
 
+fn bench_sequential_jsonb(criterion: &mut Criterion) {
+    // Flag to disable rusqlite benchmarks if needed
+    let enable_rusqlite = std::env::var("DISABLE_RUSQLITE_BENCHMARK").is_err();
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let io = Arc::new(PlatformIO::new().unwrap());
+    let db = Database::open_file(io.clone(), "../testing/testing.db", false).unwrap();
+    let limbo_conn = db.connect().unwrap();
+
+    // Select a subset of JSON payloads to use in the sequential test
+    let json_payloads = [
+        ("Small", r#"{"id": 1, "name": "Test"}"#),
+        (
+            "Medium",
+            r#"{"id": 1, "name": "Test", "attributes": {"color": "blue", "size": "medium", "tags": ["tag1", "tag2", "tag3"]}}"#,
+        ),
+        (
+            "Real world json #1",
+            r#"{
+          "user": {
+            "id": "usr_7f8d3a2e",
+            "name": "Jane Smith",
+            "email": "jane.smith@example.com",
+            "verified": true,
+            "created_at": "2023-05-12T15:42:31Z",
+            "preferences": {
+              "theme": "dark",
+              "notifications": {
+                "email": true,
+                "push": false,
+                "sms": true
+              },
+              "language": "en-US"
+            }
+          }
+        }"#,
+        ),
+        (
+            "Real world json #2",
+            r#"{
+      "feed": {
+        "user_id": "u_12345",
+        "posts": [
+          {
+            "id": "post_001",
+            "author": "user_789",
+            "content": "Just launched our new product! Check it out at example.com/new",
+            "timestamp": "2024-03-13T14:27:32Z",
+            "likes": 24,
+            "comments": [
+              {
+                "id": "comment_001",
+                "author": "user_456",
+                "content": "Looks amazing! Cant wait to try it.",
+                "timestamp": "2024-03-13T14:35:12Z",
+                "likes": 3
+              },
+              {
+                "id": "comment_002",
+                "author": "user_789",
+                "content": "Thanks! Let me know what you think after youve tried it.",
+                "timestamp": "2024-03-13T14:42:45Z",
+                "likes": 1
+              }
+            ],
+            "tags": ["product", "launch", "technology"]
+          },
+          {
+            "id": "post_002",
+            "author": "user_123",
+            "content": "Beautiful day for hiking! #nature #outdoors",
+            "timestamp": "2024-03-13T11:15:22Z",
+            "likes": 57,
+            "comments": [
+              {
+                "id": "comment_003",
+                "author": "user_345",
+                "content": "Where is this? So beautiful!",
+                "timestamp": "2024-03-13T11:22:05Z",
+                "likes": 2
+              },
+              {
+                "id": "comment_004",
+                "author": "user_123",
+                "content": "Mount Rainier National Park!",
+                "timestamp": "2024-03-13T11:30:16Z",
+                "likes": 3
+              }
+            ],
+            "tags": ["nature", "outdoors", "hiking"],
+            "location": {
+              "name": "Mount Rainier National Park",
+              "latitude": 46.8800,
+              "longitude": -121.7269
+            }
+          }
+        ],
+        "has_more": true,
+        "next_cursor": "cursor_xyz123"
+      }
+    }"#,
+        ),
+    ];
+
+    // Create a query that calls jsonb() multiple times in sequence
+    let query = format!(
+        "SELECT jsonb('{}'), jsonb('{}'), jsonb('{}'), jsonb('{}'), jsonb('{}'), jsonb('{}'), jsonb('{}'), jsonb('{}')",
+        json_payloads[0].1.replace("'", "\\'"),
+        json_payloads[1].1.replace("'", "\\'"),
+        json_payloads[2].1.replace("'", "\\'"),
+        json_payloads[3].1.replace("'", "\\'"),
+        json_payloads[0].1.replace("'", "\\'"),
+        json_payloads[1].1.replace("'", "\\'"),
+        json_payloads[2].1.replace("'", "\\'"),
+        json_payloads[3].1.replace("'", "\\'"),
+    );
+
+    let mut group = criterion.benchmark_group("Sequential JSONB Calls");
+
+    group.bench_function("Limbo - Sequential", |b| {
+        let mut stmt = limbo_conn.prepare(&query).unwrap();
+        let io = io.clone();
+        b.iter(|| {
+            loop {
+                match stmt.step().unwrap() {
+                    limbo_core::StepResult::Row => {}
+                    limbo_core::StepResult::IO => {
+                        let _ = io.run_once();
+                    }
+                    limbo_core::StepResult::Done => {
+                        break;
+                    }
+                    limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => {
+                        unreachable!();
+                    }
+                }
+            }
+            stmt.reset();
+        });
+    });
+
+    if enable_rusqlite {
+        let sqlite_conn = rusqlite_open();
+
+        group.bench_function("Sqlite3 - Sequential", |b| {
+            let mut stmt = sqlite_conn.prepare(&query).unwrap();
+            b.iter(|| {
+                let mut rows = stmt.raw_query();
+                while let Some(row) = rows.next().unwrap() {
+                    black_box(row);
+                }
+            });
+        });
+    }
+
+    group.finish();
+}
+
+fn bench_json_patch(criterion: &mut Criterion) {
+    let enable_rusqlite = std::env::var("DISABLE_RUSQLITE_BENCHMARK").is_err();
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    let io = Arc::new(PlatformIO::new().unwrap());
+    let db = Database::open_file(io.clone(), "../testing/testing.db", false).unwrap();
+    let limbo_conn = db.connect().unwrap();
+
+    let json_patch_cases = [
+        (
+            "Simple Property Update",
+            r#"{"name": "Original", "value": 42}"#,
+            r#"{"name": "Updated", "value": 100}"#,
+        ),
+        (
+            "Add New Property",
+            r#"{"name": "Original", "value": 42}"#,
+            r#"{"name": "Original", "value": 42, "description": "Added field"}"#,
+        ),
+        (
+            "Remove Property",
+            r#"{"name": "Original", "value": 42, "toRemove": true}"#,
+            r#"{"name": "Original", "value": 42}"#,
+        ),
+        (
+            "Nested Property Update",
+            r#"{"name": "Original", "value": 42, "nested": {"a": 1, "b": 2}}"#,
+            r#"{"name": "Updated", "value": 42, "nested": {"a": 10, "b": 2, "c": 3}}"#,
+        ),
+        (
+            "Array Update",
+            r#"{"items": ["apple", "banana", "cherry"]}"#,
+            r#"{"items": ["avocado", "cherry", "dragon fruit"]}"#,
+        ),
+        (
+            "Complex User Object Update",
+            r#"{
+                "user": {
+                    "id": "usr_7f8d3a2e",
+                    "name": "Jane Smith",
+                    "email": "jane.smith@example.com",
+                    "verified": true,
+                    "preferences": {
+                        "theme": "dark",
+                        "notifications": {
+                            "email": true,
+                            "push": false,
+                            "sms": true
+                        },
+                        "language": "en-US"
+                    }
+                }
+            }"#,
+            r#"{
+                "user": {
+                    "id": "usr_7f8d3a2e",
+                    "name": "Jane Doe",
+                    "email": "jane.doe@example.com",
+                    "verified": true,
+                    "preferences": {
+                        "theme": "light",
+                        "notifications": {
+                            "email": true,
+                            "push": true,
+                            "sms": false
+                        },
+                        "language": "en-US"
+                    },
+                    "subscription": {
+                        "plan": "premium",
+                        "status": "active"
+                    }
+                }
+            }"#,
+        ),
+        (
+            "Large Config Update",
+            r#"{
+                "app_name": "DataProcessor",
+                "version": "2.1.3",
+                "environment": "production",
+                "debug": false,
+                "log_level": "info",
+                "database": {
+                    "main": {
+                        "host": "db-primary.internal",
+                        "port": 5432,
+                        "name": "app_production",
+                        "user": "app_user",
+                        "max_connections": 50,
+                        "timeout_ms": 5000
+                    },
+                    "replica": {
+                        "host": "db-replica.internal",
+                        "port": 5432,
+                        "name": "app_production_replica",
+                        "user": "app_readonly",
+                        "max_connections": 25,
+                        "timeout_ms": 3000
+                    }
+                },
+                "cache": {
+                    "enabled": true,
+                    "ttl_seconds": 3600,
+                    "max_size_mb": 512
+                },
+                "api": {
+                    "host": "0.0.0.0",
+                    "port": 8080,
+                    "rate_limit": {
+                        "requests_per_minute": 120,
+                        "burst": 30
+                    },
+                    "timeouts": {
+                        "read_ms": 5000,
+                        "write_ms": 10000,
+                        "idle_ms": 60000
+                    }
+                },
+                "feature_flags": {
+                    "new_dashboard": true,
+                    "beta_analytics": false,
+                    "improved_search": true
+                }
+            }"#,
+            r#"{
+                "app_name": "DataProcessor",
+                "version": "2.2.0",
+                "environment": "production",
+                "debug": true,
+                "log_level": "debug",
+                "database": {
+                    "main": {
+                        "host": "db-primary.internal",
+                        "port": 5432,
+                        "name": "app_production",
+                        "user": "app_user",
+                        "max_connections": 100,
+                        "timeout_ms": 5000
+                    },
+                    "replica": {
+                        "host": "db-replica.internal",
+                        "port": 5432,
+                        "name": "app_production_replica",
+                        "user": "app_readonly",
+                        "max_connections": 25,
+                        "timeout_ms": 3000
+                    },
+                    "backup": {
+                        "host": "db-backup.internal",
+                        "port": 5432
+                    }
+                },
+                "cache": {
+                    "enabled": true,
+                    "ttl_seconds": 3600,
+                    "max_size_mb": 1024
+                },
+                "api": {
+                    "host": "0.0.0.0",
+                    "port": 8080,
+                    "rate_limit": {
+                        "requests_per_minute": 240,
+                        "burst": 30
+                    },
+                    "timeouts": {
+                        "read_ms": 5000,
+                        "write_ms": 10000,
+                        "idle_ms": 60000
+                    }
+                },
+                "feature_flags": {
+                    "new_dashboard": true,
+                    "beta_analytics": true,
+                    "improved_search": true,
+                    "ai_recommendations": true
+                }
+            }"#,
+        ),
+        (
+            "Deeply Nested Social Feed Update",
+            r#"{
+                "feed": {
+                    "user_id": "u_12345",
+                    "posts": [
+                        {
+                            "id": "post_001",
+                            "author": "user_789",
+                            "content": "Just launched our new product!",
+                            "likes": 24,
+                            "comments": [
+                                {
+                                    "id": "comment_001",
+                                    "author": "user_456",
+                                    "content": "Looks amazing!",
+                                    "likes": 3
+                                },
+                                {
+                                    "id": "comment_002",
+                                    "author": "user_789",
+                                    "content": "Thanks!",
+                                    "likes": 1
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }"#,
+            r#"{
+                "feed": {
+                    "user_id": "u_12345",
+                    "posts": [
+                        {
+                            "id": "post_001",
+                            "author": "user_789",
+                            "content": "Updated product announcement!",
+                            "likes": 35,
+                            "comments": [
+                                {
+                                    "id": "comment_001",
+                                    "author": "user_456",
+                                    "content": "This is incredible!",
+                                    "likes": 5
+                                },
+                                {
+                                    "id": "comment_002",
+                                    "author": "user_789",
+                                    "content": "Thanks!",
+                                    "likes": 1
+                                },
+                                {
+                                    "id": "comment_003",
+                                    "author": "user_555",
+                                    "content": "Just ordered one!",
+                                    "likes": 0
+                                }
+                            ],
+                            "tags": ["product", "launch"]
+                        }
+                    ]
+                }
+            }"#,
+        ),
+    ];
+
+    for (case_name, target_json, patch_json) in json_patch_cases.iter() {
+        let query = format!(
+            "SELECT json_patch('{}', '{}')",
+            target_json.replace("'", "''"),
+            patch_json.replace("'", "''")
+        );
+
+        let mut group = criterion.benchmark_group(format!("JSON Patch - {}", case_name));
+
+        group.bench_function("Limbo", |b| {
+            let mut stmt = limbo_conn.prepare(&query).unwrap();
+            let io = io.clone();
+            b.iter(|| {
+                loop {
+                    match stmt.step().unwrap() {
+                        limbo_core::StepResult::Row => {}
+                        limbo_core::StepResult::IO => {
+                            let _ = io.run_once();
+                        }
+                        limbo_core::StepResult::Done => {
+                            break;
+                        }
+                        limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => {
+                            unreachable!();
+                        }
+                    }
+                }
+                stmt.reset();
+            });
+        });
+
+        if enable_rusqlite {
+            let sqlite_conn = rusqlite_open();
+
+            group.bench_function("Sqlite3", |b| {
+                let mut stmt = sqlite_conn.prepare(&query).unwrap();
+                b.iter(|| {
+                    let mut rows = stmt.raw_query();
+                    while let Some(row) = rows.next().unwrap() {
+                        black_box(row);
+                    }
+                });
+            });
+        }
+
+        group.finish();
+    }
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(Some(Options::default()))));
-    targets = bench
+    targets = bench, bench_sequential_jsonb, bench_json_patch
 }
+
 criterion_main!(benches);

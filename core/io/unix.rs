@@ -2,7 +2,7 @@ use crate::error::LimboError;
 use crate::io::common;
 use crate::Result;
 
-use super::{Completion, File, OpenFlags, IO};
+use super::{Completion, File, MemoryIO, OpenFlags, IO};
 use polling::{Event, Events, Poller};
 use rustix::{
     fd::{AsFd, AsRawFd},
@@ -18,6 +18,7 @@ use std::{
     sync::Arc,
 };
 use tracing::{debug, trace};
+use crate::io::clock::{Clock, Instant};
 
 struct OwnedCallbacks(UnsafeCell<Callbacks>);
 // We assume we locking on IO level is done by user.
@@ -183,6 +184,16 @@ impl UnixIO {
     }
 }
 
+impl Clock for UnixIO {
+    fn now(&self) -> Instant {
+        let now = chrono::Local::now();
+        Instant {
+            secs: now.timestamp(),
+            micros: now.timestamp_subsec_micros(),
+        }
+    }
+}
+
 impl IO for UnixIO {
     fn open_file(&self, path: &str, flags: OpenFlags, _direct: bool) -> Result<Arc<dyn File>> {
         trace!("open_file(path = {})", path);
@@ -247,9 +258,9 @@ impl IO for UnixIO {
         getrandom::getrandom(&mut buf).unwrap();
         i64::from_ne_bytes(buf)
     }
-
-    fn get_current_time(&self) -> String {
-        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
     }
 }
 

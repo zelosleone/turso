@@ -4,6 +4,8 @@ This document describes the compatibility of Limbo with SQLite.
 
 ## Table of contents
 
+- [Limbo compatibility with SQLite](#limbo-compatibility-with-sqlite)
+  - [Table of contents](#table-of-contents)
   - [Overview](#overview)
     - [Features](#features)
     - [Limitations](#limitations)
@@ -41,7 +43,6 @@ Limbo aims to be fully compatible with SQLite, with opt-in features not supporte
 * ⛔️ Concurrent access from multiple processes is not supported.
 * ⛔️ Savepoints are not supported.
 * ⛔️ Triggers are not supported.
-* ⛔️ Indexes are not supported.
 * ⛔️ Views are not supported.
 * ⛔️ Vacuum is not supported.
 
@@ -56,15 +57,16 @@ Limbo aims to be fully compatible with SQLite, with opt-in features not supporte
 | ATTACH DATABASE           | No      |                                                                                   |
 | BEGIN TRANSACTION         | Partial | Transaction names are not supported.                                              |
 | COMMIT TRANSACTION        | Partial | Transaction names are not supported.                                              |
-| CREATE INDEX              | No      |                                                                                   |
+| CREATE INDEX              | Yes     |                                                                                   |
 | CREATE TABLE              | Partial |                                                                                   |
+| CREATE TABLE ... STRICT   | Yes     |                                                                                   |
 | CREATE TRIGGER            | No      |                                                                                   |
 | CREATE VIEW               | No      |                                                                                   |
-| CREATE VIRTUAL TABLE      | No      |                                                                                   |
+| CREATE VIRTUAL TABLE      | Yes     |                                                                                   |
 | DELETE                    | Yes     |                                                                                   |
 | DETACH DATABASE           | No      |                                                                                   |
 | DROP INDEX                | No      |                                                                                   |
-| DROP TABLE                | No      |                                                                                   |
+| DROP TABLE                | Yes     |                                                                                   |
 | DROP TRIGGER              | No      |                                                                                   |
 | DROP VIEW                 | No      |                                                                                   |
 | END TRANSACTION           | Partial | Alias for `COMMIT TRANSACTION`                                                    |
@@ -198,7 +200,7 @@ Feature support of [sqlite expr syntax](https://www.sqlite.org/lang_expr.html).
 | (NOT) MATCH               | No      |                                          |
 | IS (NOT)                  | Yes     |                                          |
 | IS (NOT) DISTINCT FROM    | Yes     |                                          |
-| (NOT) BETWEEN ... AND ... | No      |                                          |
+| (NOT) BETWEEN ... AND ... | Yes     | Expression is rewritten in the optimizer |
 | (NOT) IN (subquery)       | No      |                                          |
 | (NOT) EXISTS (subquery)   | No      |                                          |
 | CASE WHEN THEN ELSE END   | Yes     |                                          |
@@ -226,8 +228,8 @@ Feature support of [sqlite expr syntax](https://www.sqlite.org/lang_expr.html).
 | length(X)                    | Yes     |                                                      |
 | like(X,Y)                    | Yes     |                                                      |
 | like(X,Y,Z)                  | Yes     |                                                      |
-| likelihood(X,Y)              | No      |                                                      |
-| likely(X)                    | No      |                                                      |
+| likelihood(X,Y)              | Yes     |                                                      |
+| likely(X)                    | Yes     |                                                      |
 | load_extension(X)            | Yes     | sqlite3 extensions not yet supported                 |
 | load_extension(X,Y)          | No      |                                                      |
 | lower(X)                     | Yes     |                                                      |
@@ -325,10 +327,10 @@ Feature support of [sqlite expr syntax](https://www.sqlite.org/lang_expr.html).
 | date()      | Yes     | partially supports modifiers |
 | time()      | Yes     | partially supports modifiers |
 | datetime()  | Yes     | partially supports modifiers |
-| julianday() | Partial | does not support modifiers   |
+| julianday() | Yes     | partially support modifiers  |
 | unixepoch() | Partial | does not support modifiers   |
 | strftime()  | Yes     | partially supports modifiers |
-| timediff()  | No      |                              |
+| timediff()  | Yes     | partially supports modifiers |
 
 Modifiers:
 
@@ -376,8 +378,8 @@ Modifiers:
 | json_object(label1,value1,...)     | Yes     |                                                              |
 | jsonb_object(label1,value1,...)    | Yes     |                                                                                                                                              |
 | json_patch(json1,json2)            | Yes     |                                                                                                                                              |
-| jsonb_patch(json1,json2)           |         |                                                                                                                                              |
-| json_pretty(json)                  | Partial | Shares same json(val) limitations. Also, when passing blobs for indentation, conversion is not exactly the same as in SQLite                 |
+| jsonb_patch(json1,json2)           | Yes     |                                                                                                                                              |
+| json_pretty(json)                  | Yes |                                                              |
 | json_remove(json,path,...)         | Yes     |                                                                                                                                              |
 | jsonb_remove(json,path,...)        | Yes     |                                                                                                                                              |
 | json_replace(json,path,value,...)  | Yes     |                                                                                                                                              |
@@ -389,10 +391,10 @@ Modifiers:
 | json_valid(json)                   | Yes     |                                                                                                                                              |
 | json_valid(json,flags)             |         |                                                                                                                                              |
 | json_quote(value)                  | Yes     |                                                                                                                                              |
-| json_group_array(value)            |         |                                                                                                                                              |
-| jsonb_group_array(value)           |         |                                                                                                                                              |
-| json_group_object(label,value)     |         |                                                                                                                                              |
-| jsonb_group_object(name,value)     |         |                                                                                                                                              |
+| json_group_array(value)            | Yes     |                                                                                                                                              |
+| jsonb_group_array(value)           | Yes     |                                                                                                                                              |
+| json_group_object(label,value)     | Yes     |                                                                                                                                              |
+| jsonb_group_object(name,value)     | Yes     |                                                                                                                                              |
 | json_each(json)                    |         |                                                                                                                                              |
 | json_each(json,path)               |         |                                                                                                                                              |
 | json_tree(json)                    |         |                                                                                                                                              |
@@ -425,6 +427,7 @@ Modifiers:
 | BitNot         | Yes    |         |
 | BitOr          | Yes    |         |
 | Blob           | Yes    |         |
+| BeginSubrtn    | Yes    |         |
 | Checkpoint     | No     |         |
 | Clear          | No     |         |
 | Close          | No     |         |
@@ -460,7 +463,7 @@ Modifiers:
 | HaltIfNull     | No     |         |
 | IdxDelete      | No     |         |
 | IdxGE          | Yes    |         |
-| IdxInsert      | No     |         |
+| IdxInsert      | Yes     |         |
 | IdxLE          | Yes    |         |
 | IdxLT          | Yes    |         |
 | IdxRowid       | No     |         |
@@ -472,9 +475,7 @@ Modifiers:
 | IncrVacuum     | No     |         |
 | Init           | Yes    |         |
 | InitCoroutine  | Yes    |         |
-| Insert         | No     |         |
-| InsertAsync    | Yes    |         |
-| InsertAwait    | Yes    |         |
+| Insert         | Yes     |         |
 | InsertInt      | No     |         |
 | Int64          | No     |         |
 | Integer        | Yes    |         |
@@ -495,9 +496,7 @@ Modifiers:
 | MustBeInt      | Yes    |         |
 | Ne             | Yes    |         |
 | NewRowid       | Yes    |         |
-| Next           | No     |         |
-| NextAsync      | Yes    |         |
-| NextAwait      | Yes    |         |
+| Next           | Yes     |         |
 | Noop           | Yes     |         |
 | Not            | Yes    |         |
 | NotExists      | Yes    |         |
@@ -505,23 +504,18 @@ Modifiers:
 | NotNull        | Yes    |         |
 | Null           | Yes    |         |
 | NullRow        | Yes    |         |
-| Once           | No     |         |
-| OpenAutoindex  | No     |         |
-| OpenEphemeral  | No     |         |
+| Once           | Yes     |         |
+| OpenAutoindex  | Yes     |         |
+| OpenEphemeral  | Yes     |         |
 | OpenPseudo     | Yes    |         |
 | OpenRead       | Yes    |         |
-| OpenReadAsync  | Yes    |         |
-| OpenWrite      | No     |         |
-| OpenWriteAsync | Yes    |         |
-| OpenWriteAwait | Yes    |         |
+| OpenWrite      | Yes     |         |
 | Or             | Yes    |         |
 | Pagecount      | Partial| no temp databases |
 | Param          | No     |         |
 | ParseSchema    | No     |         |
 | Permutation    | No     |         |
-| Prev           | No     |         |
-| PrevAsync      | Yes    |         |
-| PrevAwait      | Yes    |         |
+| Prev           | Yes     |         |
 | Program        | No     |         |
 | ReadCookie     | Partial| no temp databases, only user_version supported |
 | Real           | Yes    |         |
@@ -531,8 +525,6 @@ Modifiers:
 | ResultRow      | Yes    |         |
 | Return         | Yes    |         |
 | Rewind         | Yes    |         |
-| RewindAsync    | Yes    |         |
-| RewindAwait    | Yes    |         |
 | RowData        | No     |         |
 | RowId          | Yes    |         |
 | RowKey         | No     |         |
@@ -548,6 +540,7 @@ Modifiers:
 | SeekLe         | No     |         |
 | SeekLt         | No     |         |
 | SeekRowid      | Yes    |         |
+| SeekEnd        | Yes    |         |
 | Sequence       | No     |         |
 | SetCookie      | No     |         |
 | ShiftLeft      | Yes    |         |
@@ -574,10 +567,10 @@ Modifiers:
 | VBegin         | No     |         |
 | VColumn        | Yes    |         |
 | VCreate        | Yes    |         |
-| VDestroy       | No     |         |
+| VDestroy       | Yes    |         |
 | VFilter        | Yes    |         |
 | VNext          | Yes    |         |
-| VOpen          | Yes    |VOpenAsync|
+| VOpen          | Yes    |         |
 | VRename        | No     |         |
 | VUpdate        | Yes    |         |
 | Vacuum         | No     |         |

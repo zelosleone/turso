@@ -34,14 +34,14 @@ impl OpenFlags {
     }
 }
 
-pub trait IO: Send + Sync {
+pub trait IO: Clock + Send + Sync {
     fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>>;
 
     fn run_once(&self) -> Result<()>;
 
     fn generate_random_number(&self) -> i64;
 
-    fn get_current_time(&self) -> String;
+    fn get_memory_io(&self) -> Arc<MemoryIO>;
 }
 
 pub type Complete = dyn Fn(Arc<RefCell<Buffer>>);
@@ -191,7 +191,8 @@ cfg_block! {
         mod unix;
         #[cfg(feature = "fs")]
         pub use unix::UnixIO;
-        pub use io_uring::UringIO as PlatformIO;
+        pub use unix::UnixIO as SyscallIO;
+        pub use unix::UnixIO as PlatformIO;
     }
 
     #[cfg(any(all(target_os = "linux",not(feature = "io_uring")), target_os = "macos"))] {
@@ -199,16 +200,19 @@ cfg_block! {
         #[cfg(feature = "fs")]
         pub use unix::UnixIO;
         pub use unix::UnixIO as PlatformIO;
+        pub use PlatformIO as SyscallIO;
     }
 
     #[cfg(target_os = "windows")] {
         mod windows;
         pub use windows::WindowsIO as PlatformIO;
+        pub use PlatformIO as SyscallIO;
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))] {
         mod generic;
         pub use generic::GenericIO as PlatformIO;
+        pub use PlatformIO as SyscallIO;
     }
 }
 
@@ -216,4 +220,6 @@ mod memory;
 #[cfg(feature = "fs")]
 mod vfs;
 pub use memory::MemoryIO;
+pub mod clock;
 mod common;
+pub use clock::Clock;

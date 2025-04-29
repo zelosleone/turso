@@ -1,6 +1,6 @@
-use crate::common;
+use crate::common::{self, maybe_setup_tracing};
 use crate::common::{compare_string, do_flush, TempDatabase};
-use limbo_core::{Connection, StepResult};
+use limbo_core::{Connection, OwnedValue, StepResult};
 use log::debug;
 use std::rc::Rc;
 
@@ -44,17 +44,8 @@ fn test_simple_overflow_page() -> anyhow::Result<()> {
             match rows.step()? {
                 StepResult::Row => {
                     let row = rows.row().unwrap();
-                    let first_value = row.get_value(0);
-                    let text = row.get_value(1);
-                    let id = match first_value {
-                        limbo_core::OwnedValue::Integer(i) => *i as i32,
-                        limbo_core::OwnedValue::Float(f) => *f as i32,
-                        _ => unreachable!(),
-                    };
-                    let text = match text {
-                        limbo_core::OwnedValue::Text(t) => t.as_str(),
-                        _ => unreachable!(),
-                    };
+                    let id = row.get::<i64>(0).unwrap();
+                    let text = row.get::<&str>(0).unwrap();
                     assert_eq!(1, id);
                     compare_string(&huge_text, text);
                 }
@@ -76,9 +67,9 @@ fn test_simple_overflow_page() -> anyhow::Result<()> {
 }
 
 #[test]
-#[ignore]
 fn test_sequential_overflow_page() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
+    maybe_setup_tracing();
     let tmp_db =
         TempDatabase::new_with_rusqlite("CREATE TABLE test (x INTEGER PRIMARY KEY, t TEXT);");
     let conn = tmp_db.connect_limbo();
@@ -120,20 +111,11 @@ fn test_sequential_overflow_page() -> anyhow::Result<()> {
             match rows.step()? {
                 StepResult::Row => {
                     let row = rows.row().unwrap();
-                    let first_value = row.get_value(0);
-                    let text = row.get_value(1);
-                    let id = match first_value {
-                        limbo_core::OwnedValue::Integer(i) => *i as i32,
-                        limbo_core::OwnedValue::Float(f) => *f as i32,
-                        _ => unreachable!(),
-                    };
-                    let text = match text {
-                        limbo_core::OwnedValue::Text(t) => t.as_str(),
-                        _ => unreachable!(),
-                    };
+                    let id = row.get::<i64>(0).unwrap();
+                    let text = row.get::<String>(1).unwrap();
                     let huge_text = &huge_texts[current_index];
-                    assert_eq!(current_index, id as usize);
                     compare_string(huge_text, text);
+                    assert_eq!(current_index, id as usize);
                     current_index += 1;
                 }
                 StepResult::IO => {
@@ -153,10 +135,11 @@ fn test_sequential_overflow_page() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[ignore]
 #[test_log::test]
+#[ignore = "this takes too long :)"]
 fn test_sequential_write() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
+    maybe_setup_tracing();
 
     let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE test (x INTEGER PRIMARY KEY);");
     let conn = tmp_db.connect_limbo();
@@ -192,7 +175,7 @@ fn test_sequential_write() -> anyhow::Result<()> {
                 match rows.step()? {
                     StepResult::Row => {
                         let row = rows.row().unwrap();
-                        let first_value = row.get_values().first().expect("missing id");
+                        let first_value = row.get::<&OwnedValue>(0).expect("missing id");
                         let id = match first_value {
                             limbo_core::OwnedValue::Integer(i) => *i as i32,
                             limbo_core::OwnedValue::Float(f) => *f as i32,
@@ -258,9 +241,9 @@ fn test_regression_multi_row_insert() -> anyhow::Result<()> {
             match rows.step()? {
                 StepResult::Row => {
                     let row = rows.row().unwrap();
-                    let first_value = row.get_values().first().expect("missing id");
+                    let first_value = row.get::<&OwnedValue>(0).expect("missing id");
                     let id = match first_value {
-                        limbo_core::OwnedValue::Float(f) => *f as i32,
+                        OwnedValue::Float(f) => *f as i32,
                         _ => panic!("expected float"),
                     };
                     actual_ids.push(id);
@@ -304,7 +287,10 @@ fn test_statement_reset() -> anyhow::Result<()> {
         match stmt.step()? {
             StepResult::Row => {
                 let row = stmt.row().unwrap();
-                assert_eq!(*row.get_value(0), limbo_core::OwnedValue::Integer(1));
+                assert_eq!(
+                    *row.get::<&OwnedValue>(0).unwrap(),
+                    limbo_core::OwnedValue::Integer(1)
+                );
                 break;
             }
             StepResult::IO => tmp_db.io.run_once()?,
@@ -318,7 +304,10 @@ fn test_statement_reset() -> anyhow::Result<()> {
         match stmt.step()? {
             StepResult::Row => {
                 let row = stmt.row().unwrap();
-                assert_eq!(*row.get_value(0), limbo_core::OwnedValue::Integer(1));
+                assert_eq!(
+                    *row.get::<&OwnedValue>(0).unwrap(),
+                    limbo_core::OwnedValue::Integer(1)
+                );
                 break;
             }
             StepResult::IO => tmp_db.io.run_once()?,
@@ -368,12 +357,7 @@ fn test_wal_checkpoint() -> anyhow::Result<()> {
             match rows.step()? {
                 StepResult::Row => {
                     let row = rows.row().unwrap();
-                    let first_value = row.get_value(0);
-                    let id = match first_value {
-                        limbo_core::OwnedValue::Integer(i) => *i as i32,
-                        limbo_core::OwnedValue::Float(f) => *f as i32,
-                        _ => unreachable!(),
-                    };
+                    let id = row.get::<i64>(0).unwrap();
                     assert_eq!(current_index, id as usize);
                     current_index += 1;
                 }
@@ -432,13 +416,9 @@ fn test_wal_restart() -> anyhow::Result<()> {
                     match rows.step()? {
                         StepResult::Row => {
                             let row = rows.row().unwrap();
-                            let first_value = row.get_value(0);
-                            let count = match first_value {
-                                limbo_core::OwnedValue::Integer(i) => i,
-                                _ => unreachable!(),
-                            };
+                            let count = row.get::<i64>(0).unwrap();
                             debug!("counted {}", count);
-                            return Ok(*count as usize);
+                            return Ok(count as usize);
                         }
                         StepResult::IO => {
                             tmp_db.io.run_once()?;
@@ -467,5 +447,142 @@ fn test_wal_restart() -> anyhow::Result<()> {
         );
         conn.close()?;
     }
+    Ok(())
+}
+
+#[test]
+fn test_insert_after_big_blob() -> anyhow::Result<()> {
+    let _ = env_logger::try_init();
+    let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE temp (t1 BLOB, t2 INTEGER)");
+    let conn = tmp_db.connect_limbo();
+
+    conn.execute("insert into temp values (zeroblob (262144))")?;
+    conn.execute("insert into temp values (1)")?;
+
+    Ok(())
+}
+
+#[test_log::test]
+#[ignore = "this takes too long :)"]
+fn test_write_delete_with_index() -> anyhow::Result<()> {
+    let _ = env_logger::try_init();
+
+    maybe_setup_tracing();
+
+    let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE test (x PRIMARY KEY);");
+    let conn = tmp_db.connect_limbo();
+
+    let list_query = "SELECT * FROM test";
+    let max_iterations = 1000;
+    for i in 0..max_iterations {
+        println!("inserting {} ", i);
+        if (i % 100) == 0 {
+            let progress = (i as f64 / max_iterations as f64) * 100.0;
+            println!("progress {:.1}%", progress);
+        }
+        let insert_query = format!("INSERT INTO test VALUES ({})", i);
+        match conn.query(insert_query) {
+            Ok(Some(ref mut rows)) => loop {
+                match rows.step()? {
+                    StepResult::IO => {
+                        tmp_db.io.run_once()?;
+                    }
+                    StepResult::Done => break,
+                    _ => unreachable!(),
+                }
+            },
+            Ok(None) => {}
+            Err(err) => {
+                eprintln!("{}", err);
+            }
+        };
+    }
+    for i in 0..max_iterations {
+        println!("deleting {} ", i);
+        if (i % 100) == 0 {
+            let progress = (i as f64 / max_iterations as f64) * 100.0;
+            println!("progress {:.1}%", progress);
+        }
+        let delete_query = format!("delete from test where x={}", i);
+        match conn.query(delete_query) {
+            Ok(Some(ref mut rows)) => loop {
+                match rows.step()? {
+                    StepResult::IO => {
+                        tmp_db.io.run_once()?;
+                    }
+                    StepResult::Done => break,
+                    _ => unreachable!(),
+                }
+            },
+            Ok(None) => {}
+            Err(err) => {
+                eprintln!("{}", err);
+            }
+        };
+        println!("listing after deleting {} ", i);
+        let mut current_read_index = i + 1;
+        match conn.query(list_query) {
+            Ok(Some(ref mut rows)) => loop {
+                match rows.step()? {
+                    StepResult::Row => {
+                        let row = rows.row().unwrap();
+                        let first_value = row.get::<&OwnedValue>(0).expect("missing id");
+                        let id = match first_value {
+                            limbo_core::OwnedValue::Integer(i) => *i as i32,
+                            limbo_core::OwnedValue::Float(f) => *f as i32,
+                            _ => unreachable!(),
+                        };
+                        assert_eq!(current_read_index, id);
+                        current_read_index += 1;
+                    }
+                    StepResult::IO => {
+                        tmp_db.io.run_once()?;
+                    }
+                    StepResult::Interrupt => break,
+                    StepResult::Done => break,
+                    StepResult::Busy => {
+                        panic!("Database is busy");
+                    }
+                }
+            },
+            Ok(None) => {}
+            Err(err) => {
+                eprintln!("{}", err);
+            }
+        }
+        for i in i + 1..max_iterations {
+            // now test with seek
+            match conn.query(format!("select * from test where x = {}", i)) {
+                Ok(Some(ref mut rows)) => loop {
+                    match rows.step()? {
+                        StepResult::Row => {
+                            let row = rows.row().unwrap();
+                            let first_value = row.get::<&OwnedValue>(0).expect("missing id");
+                            let id = match first_value {
+                                limbo_core::OwnedValue::Integer(i) => *i as i32,
+                                limbo_core::OwnedValue::Float(f) => *f as i32,
+                                _ => unreachable!(),
+                            };
+                            assert_eq!(i, id);
+                            break;
+                        }
+                        StepResult::IO => {
+                            tmp_db.io.run_once()?;
+                        }
+                        StepResult::Interrupt => break,
+                        StepResult::Done => break,
+                        StepResult::Busy => {
+                            panic!("Database is busy");
+                        }
+                    }
+                },
+                Ok(None) => {}
+                Err(err) => {
+                    eprintln!("{}", err);
+                }
+            }
+        }
+    }
+
     Ok(())
 }

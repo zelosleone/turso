@@ -29,7 +29,7 @@ fn list_pragmas(
     }
 
     program.emit_halt();
-    program.resolve_label(init_label, program.offset());
+    program.preassign_label_to_next_insn(init_label);
     program.emit_constant_insns();
     program.emit_goto(start_offset);
 }
@@ -104,7 +104,7 @@ pub fn translate_pragma(
         },
     };
     program.emit_halt();
-    program.resolve_label(init_label, program.offset());
+    program.preassign_label_to_next_insn(init_label);
     program.emit_transaction(write);
     program.emit_constant_insns();
     program.emit_goto(start_offset);
@@ -159,6 +159,9 @@ fn update_pragma(
             // this should be unreachable. We have to force-call query_pragma before
             // getting here
             unreachable!();
+        }
+        PragmaName::PageSize => {
+            todo!("updating page_size is not yet implemented")
         }
     }
 }
@@ -255,6 +258,10 @@ fn query_pragma(
                 dest: register,
                 cookie: Cookie::UserVersion,
             });
+            program.emit_result_row(register, 1);
+        }
+        PragmaName::PageSize => {
+            program.emit_int(database_header.lock().page_size.into(), register);
             program.emit_result_row(register, 1);
         }
     }

@@ -1,4 +1,5 @@
-use crate::{Completion, File, LimboError, OpenFlags, Result, IO};
+use super::MemoryIO;
+use crate::{Clock, Completion, File, Instant, LimboError, OpenFlags, Result, IO};
 use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
@@ -26,6 +27,7 @@ impl IO for GenericIO {
             .open(path)?;
         Ok(Arc::new(GenericFile {
             file: RefCell::new(file),
+            memory_io: Arc::new(MemoryIO::new()),
         }))
     }
 
@@ -39,13 +41,24 @@ impl IO for GenericIO {
         i64::from_ne_bytes(buf)
     }
 
-    fn get_current_time(&self) -> String {
-        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
+    }
+}
+
+impl Clock for GenericIO {
+    fn now(&self) -> Instant {
+        let now = chrono::Local::now();
+        Instant {
+            secs: now.timestamp(),
+            micros: now.timestamp_subsec_micros(),
+        }
     }
 }
 
 pub struct GenericFile {
     file: RefCell<std::fs::File>,
+    memory_io: Arc<MemoryIO>,
 }
 
 unsafe impl Send for GenericFile {}

@@ -47,10 +47,12 @@ use crate::io::{Buffer, Completion, ReadCompletion, SyncCompletion, WriteComplet
 use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
 use crate::storage::pager::Pager;
-use crate::types::{OwnedValue, Record, Text, TextSubtype};
+use crate::types::{
+    ImmutableRecord, RawSlice, RefValue, SerialType, SerialTypeKind, TextRef, TextSubtype,
+};
 use crate::{File, Result};
-use parking_lot::RwLock;
 use std::cell::RefCell;
+use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -63,6 +65,8 @@ pub const DATABASE_HEADER_SIZE: usize = 100;
 // DEFAULT_CACHE_SIZE negative values mean that we store the amount of pages a XKiB of memory can hold.
 // We can calculate "real" cache size by diving by page size.
 const DEFAULT_CACHE_SIZE: i32 = -2000;
+// The size of db page in bytes.
+const DEFAULT_PAGE_SIZE: u16 = 4096;
 // Minimum number of pages that cache can hold.
 pub const MIN_PAGE_CACHE_SIZE: usize = 10;
 
@@ -217,7 +221,7 @@ impl Default for DatabaseHeader {
     fn default() -> Self {
         Self {
             magic: *b"SQLite format 3\0",
-            page_size: 4096,
+            page_size: DEFAULT_PAGE_SIZE,
             write_version: 2,
             read_version: 2,
             reserved_space: 0,
@@ -244,7 +248,7 @@ impl Default for DatabaseHeader {
 }
 
 pub fn begin_read_database_header(
-    page_io: Arc<dyn DatabaseStorage>,
+    db_file: Arc<dyn DatabaseStorage>,
 ) -> Result<Arc<SpinLock<DatabaseHeader>>> {
     let drop_fn = Rc::new(|_buf| {});
     #[allow(clippy::arc_with_non_send_sync)]
@@ -256,7 +260,7 @@ pub fn begin_read_database_header(
         finish_read_database_header(buf, header).unwrap();
     });
     let c = Completion::Read(ReadCompletion::new(buf, complete));
-    page_io.read_page(1, c)?;
+    db_file.read_page(1, c)?;
     Ok(result)
 }
 
@@ -297,7 +301,7 @@ fn finish_read_database_header(
 }
 
 pub fn begin_write_database_header(header: &DatabaseHeader, pager: &Pager) -> Result<()> {
-    let page_source = pager.page_io.clone();
+    let page_source = pager.db_file.clone();
     let header = Rc::new(header.clone());
 
     let drop_fn = Rc::new(|_buf| {});
@@ -332,7 +336,7 @@ pub fn begin_write_database_header(header: &DatabaseHeader, pager: &Pager) -> Re
     });
 
     let c = Completion::Write(WriteCompletion::new(write_complete));
-    page_source.write_page(0, buffer_to_copy, c)?;
+    page_source.write_page(1, buffer_to_copy, c)?;
 
     Ok(())
 }
@@ -413,6 +417,14 @@ impl Clone for PageContent {
 }
 
 impl PageContent {
+    pub fn new(offset: usize, buffer: Arc<RefCell<Buffer>>) -> Self {
+        Self {
+            offset,
+            buffer,
+            overflow_cells: Vec::new(),
+        }
+    }
+
     pub fn page_type(&self) -> PageType {
         self.read_u8(0).try_into().unwrap()
     }
@@ -447,6 +459,11 @@ impl PageContent {
     pub fn read_u16_no_offset(&self, pos: usize) -> u16 {
         let buf = self.as_ptr();
         u16::from_be_bytes([buf[pos], buf[pos + 1]])
+    }
+
+    pub fn read_u32_no_offset(&self, pos: usize) -> u32 {
+        let buf = self.as_ptr();
+        u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]])
     }
 
     pub fn read_u32(&self, pos: usize) -> u32 {
@@ -558,7 +575,6 @@ impl PageContent {
     pub fn cell_get(
         &self,
         idx: usize,
-        pager: Rc<Pager>,
         payload_overflow_threshold_max: usize,
         payload_overflow_threshold_min: usize,
         usable_size: usize,
@@ -574,16 +590,66 @@ impl PageContent {
         let cell_pointer = cell_pointer_array_start + (idx * 2);
         let cell_pointer = self.read_u16(cell_pointer) as usize;
 
+        // SAFETY: this buffer is valid as long as the page is alive. We could store the page in the cell and do some lifetime magic
+        // but that is extra memory for no reason at all. Just be careful like in the old times :).
+        let static_buf: &'static [u8] = unsafe { std::mem::transmute::<&[u8], &'static [u8]>(buf) };
         read_btree_cell(
-            buf,
+            static_buf,
             &self.page_type(),
             cell_pointer,
-            pager,
             payload_overflow_threshold_max,
             payload_overflow_threshold_min,
             usable_size,
         )
     }
+
+    /// Read the rowid of a table interior cell.
+    #[inline(always)]
+    pub fn cell_table_interior_read_rowid(&self, idx: usize) -> Result<u64> {
+        debug_assert!(self.page_type() == PageType::TableInterior);
+        let buf = self.as_ptr();
+        const INTERIOR_PAGE_HEADER_SIZE_BYTES: usize = 12;
+        let cell_pointer_array_start = INTERIOR_PAGE_HEADER_SIZE_BYTES;
+        let cell_pointer = cell_pointer_array_start + (idx * 2);
+        let cell_pointer = self.read_u16(cell_pointer) as usize;
+        const LEFT_CHILD_PAGE_SIZE_BYTES: usize = 4;
+        let (rowid, _) = read_varint(&buf[cell_pointer + LEFT_CHILD_PAGE_SIZE_BYTES..])?;
+        Ok(rowid)
+    }
+
+    /// Read the left child page of a table interior cell.
+    #[inline(always)]
+    pub fn cell_table_interior_read_left_child_page(&self, idx: usize) -> Result<u32> {
+        debug_assert!(self.page_type() == PageType::TableInterior);
+        let buf = self.as_ptr();
+        const INTERIOR_PAGE_HEADER_SIZE_BYTES: usize = 12;
+        let cell_pointer_array_start = INTERIOR_PAGE_HEADER_SIZE_BYTES;
+        let cell_pointer = cell_pointer_array_start + (idx * 2);
+        let cell_pointer = self.read_u16(cell_pointer) as usize;
+        Ok(u32::from_be_bytes([
+            buf[cell_pointer],
+            buf[cell_pointer + 1],
+            buf[cell_pointer + 2],
+            buf[cell_pointer + 3],
+        ]))
+    }
+
+    /// Read the rowid of a table leaf cell.
+    #[inline(always)]
+    pub fn cell_table_leaf_read_rowid(&self, idx: usize) -> Result<u64> {
+        debug_assert!(self.page_type() == PageType::TableLeaf);
+        let buf = self.as_ptr();
+        const LEAF_PAGE_HEADER_SIZE_BYTES: usize = 8;
+        let cell_pointer_array_start = LEAF_PAGE_HEADER_SIZE_BYTES;
+        let cell_pointer = cell_pointer_array_start + (idx * 2);
+        let cell_pointer = self.read_u16(cell_pointer) as usize;
+        let mut pos = cell_pointer;
+        let (_, nr) = read_varint(&buf[pos..])?;
+        pos += nr;
+        let (rowid, _) = read_varint(&buf[pos..])?;
+        Ok(rowid)
+    }
+
     /// The cell pointer array of a b-tree page immediately follows the b-tree page header.
     /// Let K be the number of cells on the btree.
     /// The cell pointer array consists of K 2-byte integer offsets to the cell contents.
@@ -620,9 +686,9 @@ impl PageContent {
                     usable_size,
                 );
                 if overflows {
-                    4 + to_read + n_payload + 4
+                    4 + to_read + n_payload
                 } else {
-                    4 + len_payload as usize + n_payload + 4
+                    4 + len_payload as usize + n_payload
                 }
             }
             PageType::TableInterior => {
@@ -638,9 +704,9 @@ impl PageContent {
                     usable_size,
                 );
                 if overflows {
-                    to_read + n_payload + 4
+                    to_read + n_payload
                 } else {
-                    len_payload as usize + n_payload + 4
+                    len_payload as usize + n_payload
                 }
             }
             PageType::TableLeaf => {
@@ -700,7 +766,7 @@ impl PageContent {
 }
 
 pub fn begin_read_page(
-    page_io: Arc<dyn DatabaseStorage>,
+    db_file: Arc<dyn DatabaseStorage>,
     buffer_pool: Rc<BufferPool>,
     page: PageRef,
     page_idx: usize,
@@ -720,7 +786,7 @@ pub fn begin_read_page(
         }
     });
     let c = Completion::Read(ReadCompletion::new(buf, complete));
-    page_io.read_page(page_idx, c)?;
+    db_file.read_page(page_idx, c)?;
     Ok(())
 }
 
@@ -735,11 +801,7 @@ fn finish_read_page(
     } else {
         0
     };
-    let inner = PageContent {
-        offset: pos,
-        buffer: buffer_ref.clone(),
-        overflow_cells: Vec::new(),
-    };
+    let inner = PageContent::new(pos, buffer_ref.clone());
     {
         page.get().contents.replace(inner);
         page.set_uptodate();
@@ -755,7 +817,7 @@ pub fn begin_write_btree_page(
     write_counter: Rc<RefCell<usize>>,
 ) -> Result<()> {
     trace!("begin_write_btree_page(page={})", page.get().id);
-    let page_source = &pager.page_io;
+    let page_source = &pager.db_file;
     let page_finish = page.clone();
 
     let page_id = page.get().id;
@@ -786,7 +848,7 @@ pub fn begin_write_btree_page(
     Ok(())
 }
 
-pub fn begin_sync(page_io: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>) -> Result<()> {
+pub fn begin_sync(db_file: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>) -> Result<()> {
     assert!(!*syncing.borrow());
     *syncing.borrow_mut() = true;
     let completion = Completion::Sync(SyncCompletion {
@@ -794,7 +856,7 @@ pub fn begin_sync(page_io: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>)
             *syncing.borrow_mut() = false;
         }),
     });
-    page_io.sync(completion)?;
+    db_file.sync(completion)?;
     Ok(())
 }
 
@@ -816,28 +878,36 @@ pub struct TableInteriorCell {
 #[derive(Debug, Clone)]
 pub struct TableLeafCell {
     pub _rowid: u64,
-    pub _payload: Vec<u8>,
+    /// Payload of cell, if it overflows it won't include overflowed payload.
+    pub _payload: &'static [u8],
+    /// This is the complete payload size including overflow pages.
+    pub payload_size: u64,
     pub first_overflow_page: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
 pub struct IndexInteriorCell {
     pub left_child_page: u32,
-    pub payload: Vec<u8>,
+    pub payload: &'static [u8],
+    /// This is the complete payload size including overflow pages.
+    pub payload_size: u64,
     pub first_overflow_page: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
 pub struct IndexLeafCell {
-    pub payload: Vec<u8>,
+    pub payload: &'static [u8],
     pub first_overflow_page: Option<u32>,
+    /// This is the complete payload size including overflow pages.
+    pub payload_size: u64,
 }
 
+/// read_btree_cell contructs a BTreeCell which is basically a wrapper around pointer to the payload of a cell.
+/// buffer input "page" is static because we want the cell to point to the data in the page in case it has any payload.
 pub fn read_btree_cell(
-    page: &[u8],
+    page: &'static [u8],
     page_type: &PageType,
     pos: usize,
-    pager: Rc<Pager>,
     max_local: usize,
     min_local: usize,
     usable_size: usize,
@@ -856,11 +926,12 @@ pub fn read_btree_cell(
             let to_read = if overflows { to_read } else { page.len() - pos };
 
             let (payload, first_overflow_page) =
-                read_payload(&page[pos..pos + to_read], payload_size as usize, pager);
+                read_payload(&page[pos..pos + to_read], payload_size as usize);
             Ok(BTreeCell::IndexInteriorCell(IndexInteriorCell {
                 left_child_page,
                 payload,
                 first_overflow_page,
+                payload_size,
             }))
         }
         PageType::TableInterior => {
@@ -884,10 +955,11 @@ pub fn read_btree_cell(
             let to_read = if overflows { to_read } else { page.len() - pos };
 
             let (payload, first_overflow_page) =
-                read_payload(&page[pos..pos + to_read], payload_size as usize, pager);
+                read_payload(&page[pos..pos + to_read], payload_size as usize);
             Ok(BTreeCell::IndexLeafCell(IndexLeafCell {
                 payload,
                 first_overflow_page,
+                payload_size,
             }))
         }
         PageType::TableLeaf => {
@@ -902,11 +974,12 @@ pub fn read_btree_cell(
             let to_read = if overflows { to_read } else { page.len() - pos };
 
             let (payload, first_overflow_page) =
-                read_payload(&page[pos..pos + to_read], payload_size as usize, pager);
+                read_payload(&page[pos..pos + to_read], payload_size as usize);
             Ok(BTreeCell::TableLeafCell(TableLeafCell {
                 _rowid: rowid,
                 _payload: payload,
                 first_overflow_page,
+                payload_size,
             }))
         }
     }
@@ -915,11 +988,12 @@ pub fn read_btree_cell(
 /// read_payload takes in the unread bytearray with the payload size
 /// and returns the payload on the page, and optionally the first overflow page number.
 #[allow(clippy::readonly_write_lock)]
-fn read_payload(unread: &[u8], payload_size: usize, pager: Rc<Pager>) -> (Vec<u8>, Option<u32>) {
+fn read_payload(unread: &'static [u8], payload_size: usize) -> (&'static [u8], Option<u32>) {
     let cell_len = unread.len();
+    // We will let overflow be constructed back if needed or requested.
     if payload_size <= cell_len {
         // fit within 1 page
-        (unread[..payload_size].to_vec(), None)
+        (&unread[..payload_size], None)
     } else {
         // overflow
         let first_overflow_page = u32::from_be_bytes([
@@ -928,294 +1002,264 @@ fn read_payload(unread: &[u8], payload_size: usize, pager: Rc<Pager>) -> (Vec<u8
             unread[cell_len - 2],
             unread[cell_len - 1],
         ]);
-        let usable_size = pager.usable_size();
-        let mut next_overflow = first_overflow_page;
-        let mut payload = unread[..cell_len - 4].to_vec();
-        let mut left_to_read = payload_size - (cell_len - 4); // minus four because last for bytes of a payload cell are the overflow pointer
-        while next_overflow != 0 {
-            assert!(left_to_read > 0);
-            let page;
-            loop {
-                // FIXME(pere): this looks terrible, what did i do lmao
-                let page_ref = pager.read_page(next_overflow as usize);
-                if let Ok(p) = page_ref {
-                    page = p;
-                    break;
-                }
-            }
-            let page = page.get();
-            let contents = page.contents.as_mut().unwrap();
+        (&unread[..cell_len - 4], Some(first_overflow_page))
+    }
+}
 
-            let to_read = left_to_read.min(usable_size - 4);
-            let buf = contents.as_ptr();
-            payload.extend_from_slice(&buf[4..4 + to_read]);
+#[inline(always)]
+pub fn validate_serial_type(value: u64) -> Result<()> {
+    if !SerialType::u64_is_valid_serial_type(value) {
+        crate::bail_corrupt_error!("Invalid serial type: {}", value);
+    }
+    Ok(())
+}
 
-            next_overflow = contents.read_u32(0);
-            left_to_read -= to_read;
+pub struct SmallVec<T, const N: usize = 64> {
+    /// Stack allocated data
+    pub data: [std::mem::MaybeUninit<T>; N],
+    /// Length of the vector, accounting for both stack and heap allocated data
+    pub len: usize,
+    /// Extra data on heap
+    pub extra_data: Option<Vec<T>>,
+}
+
+impl<T: Default + Copy, const N: usize> SmallVec<T, N> {
+    pub fn new() -> Self {
+        Self {
+            data: unsafe { std::mem::MaybeUninit::uninit().assume_init() },
+            len: 0,
+            extra_data: None,
         }
-        assert_eq!(left_to_read, 0);
+    }
 
-        (payload, Some(first_overflow_page))
+    pub fn push(&mut self, value: T) {
+        if self.len < self.data.len() {
+            self.data[self.len] = MaybeUninit::new(value);
+            self.len += 1;
+        } else {
+            if self.extra_data.is_none() {
+                self.extra_data = Some(Vec::new());
+            }
+            self.extra_data.as_mut().unwrap().push(value);
+            self.len += 1;
+        }
+    }
+
+    fn get_from_heap(&self, index: usize) -> T {
+        assert!(self.extra_data.is_some());
+        assert!(index >= self.data.len());
+        let extra_data_index = index - self.data.len();
+        let extra_data = self.extra_data.as_ref().unwrap();
+        assert!(extra_data_index < extra_data.len());
+        extra_data[extra_data_index]
+    }
+
+    pub fn get(&self, index: usize) -> Option<T> {
+        if index >= self.len {
+            return None;
+        }
+        let data_is_on_stack = index < self.data.len();
+        if data_is_on_stack {
+            // SAFETY: We know this index is initialized we checked for index < self.len earlier above.
+            unsafe { Some(self.data[index].assume_init()) }
+        } else {
+            Some(self.get_from_heap(index))
+        }
     }
 }
 
-pub type SerialType = u64;
-
-pub const SERIAL_TYPE_NULL: SerialType = 0;
-pub const SERIAL_TYPE_INT8: SerialType = 1;
-pub const SERIAL_TYPE_BEINT16: SerialType = 2;
-pub const SERIAL_TYPE_BEINT24: SerialType = 3;
-pub const SERIAL_TYPE_BEINT32: SerialType = 4;
-pub const SERIAL_TYPE_BEINT48: SerialType = 5;
-pub const SERIAL_TYPE_BEINT64: SerialType = 6;
-pub const SERIAL_TYPE_BEFLOAT64: SerialType = 7;
-pub const SERIAL_TYPE_CONSTINT0: SerialType = 8;
-pub const SERIAL_TYPE_CONSTINT1: SerialType = 9;
-
-pub trait SerialTypeExt {
-    fn is_null(self) -> bool;
-    fn is_int8(self) -> bool;
-    fn is_beint16(self) -> bool;
-    fn is_beint24(self) -> bool;
-    fn is_beint32(self) -> bool;
-    fn is_beint48(self) -> bool;
-    fn is_beint64(self) -> bool;
-    fn is_befloat64(self) -> bool;
-    fn is_constint0(self) -> bool;
-    fn is_constint1(self) -> bool;
-    fn is_blob(self) -> bool;
-    fn is_string(self) -> bool;
-    fn blob_size(self) -> usize;
-    fn string_size(self) -> usize;
-    fn is_valid(self) -> bool;
-}
-
-impl SerialTypeExt for u64 {
-    fn is_null(self) -> bool {
-        self == SERIAL_TYPE_NULL
-    }
-
-    fn is_int8(self) -> bool {
-        self == SERIAL_TYPE_INT8
-    }
-
-    fn is_beint16(self) -> bool {
-        self == SERIAL_TYPE_BEINT16
-    }
-
-    fn is_beint24(self) -> bool {
-        self == SERIAL_TYPE_BEINT24
-    }
-
-    fn is_beint32(self) -> bool {
-        self == SERIAL_TYPE_BEINT32
-    }
-
-    fn is_beint48(self) -> bool {
-        self == SERIAL_TYPE_BEINT48
-    }
-
-    fn is_beint64(self) -> bool {
-        self == SERIAL_TYPE_BEINT64
-    }
-
-    fn is_befloat64(self) -> bool {
-        self == SERIAL_TYPE_BEFLOAT64
-    }
-
-    fn is_constint0(self) -> bool {
-        self == SERIAL_TYPE_CONSTINT0
-    }
-
-    fn is_constint1(self) -> bool {
-        self == SERIAL_TYPE_CONSTINT1
-    }
-
-    fn is_blob(self) -> bool {
-        self >= 12 && self % 2 == 0
-    }
-
-    fn is_string(self) -> bool {
-        self >= 13 && self % 2 == 1
-    }
-
-    fn blob_size(self) -> usize {
-        debug_assert!(self.is_blob());
-        ((self - 12) / 2) as usize
-    }
-
-    fn string_size(self) -> usize {
-        debug_assert!(self.is_string());
-        ((self - 13) / 2) as usize
-    }
-
-    fn is_valid(self) -> bool {
-        self <= 9 || self.is_blob() || self.is_string()
+impl<T: Default + Copy, const N: usize> SmallVec<T, N> {
+    pub fn iter(&self) -> SmallVecIter<'_, T, N> {
+        SmallVecIter { vec: self, pos: 0 }
     }
 }
 
-pub fn validate_serial_type(value: u64) -> Result<SerialType> {
-    if value.is_valid() {
-        Ok(value)
-    } else {
-        crate::bail_corrupt_error!("Invalid serial type: {}", value)
+pub struct SmallVecIter<'a, T, const N: usize> {
+    vec: &'a SmallVec<T, N>,
+    pos: usize,
+}
+
+impl<'a, T: Default + Copy, const N: usize> Iterator for SmallVecIter<'a, T, N> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.vec.get(self.pos).map(|item| {
+            self.pos += 1;
+            item
+        })
     }
 }
 
-pub fn read_record(payload: &[u8]) -> Result<Record> {
+pub fn read_record(payload: &[u8], reuse_immutable: &mut ImmutableRecord) -> Result<()> {
+    // Let's clear previous use
+    reuse_immutable.invalidate();
+    // Copy payload to ImmutableRecord in order to make RefValue that point to this new buffer.
+    // By reusing this immutable record we make it less allocation expensive.
+    reuse_immutable.start_serialization(payload);
+
     let mut pos = 0;
     let (header_size, nr) = read_varint(payload)?;
     assert!((header_size as usize) >= nr);
     let mut header_size = (header_size as usize) - nr;
     pos += nr;
 
-    let mut serial_types = Vec::with_capacity(header_size);
+    let mut serial_types = SmallVec::<u64, 64>::new();
     while header_size > 0 {
-        let (serial_type, nr) = read_varint(&payload[pos..])?;
-        let serial_type = validate_serial_type(serial_type)?;
+        let (serial_type, nr) = read_varint(&reuse_immutable.get_payload()[pos..])?;
+        validate_serial_type(serial_type)?;
         serial_types.push(serial_type);
         pos += nr;
         assert!(header_size >= nr);
         header_size -= nr;
     }
 
-    let mut values = Vec::with_capacity(serial_types.len());
-    for &serial_type in &serial_types {
-        let (value, n) = read_value(&payload[pos..], serial_type)?;
+    for &serial_type in &serial_types.data[..serial_types.len.min(serial_types.data.len())] {
+        let (value, n) = read_value(&reuse_immutable.get_payload()[pos..], unsafe {
+            serial_type.assume_init().try_into()?
+        })?;
         pos += n;
-        values.push(value);
+        reuse_immutable.add_value(value);
+    }
+    if let Some(extra) = serial_types.extra_data.as_ref() {
+        for serial_type in extra {
+            let (value, n) = read_value(
+                &reuse_immutable.get_payload()[pos..],
+                (*serial_type).try_into()?,
+            )?;
+            pos += n;
+            reuse_immutable.add_value(value);
+        }
     }
 
-    Ok(Record::new(values))
+    Ok(())
 }
 
-pub fn read_value(buf: &[u8], serial_type: SerialType) -> Result<(OwnedValue, usize)> {
-    if serial_type.is_null() {
-        return Ok((OwnedValue::Null, 0));
-    }
-
-    if serial_type.is_int8() {
-        if buf.is_empty() {
-            crate::bail_corrupt_error!("Invalid UInt8 value");
+/// Reads a value that might reference the buffer it is reading from. Be sure to store RefValue with the buffer
+/// always.
+#[inline(always)]
+pub fn read_value(buf: &[u8], serial_type: SerialType) -> Result<(RefValue, usize)> {
+    match serial_type.kind() {
+        SerialTypeKind::Null => Ok((RefValue::Null, 0)),
+        SerialTypeKind::I8 => {
+            if buf.is_empty() {
+                crate::bail_corrupt_error!("Invalid UInt8 value");
+            }
+            let val = buf[0] as i8;
+            Ok((RefValue::Integer(val as i64), 1))
         }
-        let val = buf[0] as i8;
-        return Ok((OwnedValue::Integer(val as i64), 1));
-    }
-
-    if serial_type.is_beint16() {
-        if buf.len() < 2 {
-            crate::bail_corrupt_error!("Invalid BEInt16 value");
+        SerialTypeKind::I16 => {
+            if buf.len() < 2 {
+                crate::bail_corrupt_error!("Invalid BEInt16 value");
+            }
+            Ok((
+                RefValue::Integer(i16::from_be_bytes([buf[0], buf[1]]) as i64),
+                2,
+            ))
         }
-        return Ok((
-            OwnedValue::Integer(i16::from_be_bytes([buf[0], buf[1]]) as i64),
-            2,
-        ));
-    }
-
-    if serial_type.is_beint24() {
-        if buf.len() < 3 {
-            crate::bail_corrupt_error!("Invalid BEInt24 value");
+        SerialTypeKind::I24 => {
+            if buf.len() < 3 {
+                crate::bail_corrupt_error!("Invalid BEInt24 value");
+            }
+            let sign_extension = if buf[0] <= 127 { 0 } else { 255 };
+            Ok((
+                RefValue::Integer(
+                    i32::from_be_bytes([sign_extension, buf[0], buf[1], buf[2]]) as i64
+                ),
+                3,
+            ))
         }
-        let sign_extension = if buf[0] <= 127 { 0 } else { 255 };
-        return Ok((
-            OwnedValue::Integer(i32::from_be_bytes([sign_extension, buf[0], buf[1], buf[2]]) as i64),
-            3,
-        ));
-    }
-
-    if serial_type.is_beint32() {
-        if buf.len() < 4 {
-            crate::bail_corrupt_error!("Invalid BEInt32 value");
+        SerialTypeKind::I32 => {
+            if buf.len() < 4 {
+                crate::bail_corrupt_error!("Invalid BEInt32 value");
+            }
+            Ok((
+                RefValue::Integer(i32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as i64),
+                4,
+            ))
         }
-        return Ok((
-            OwnedValue::Integer(i32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]) as i64),
-            4,
-        ));
-    }
-
-    if serial_type.is_beint48() {
-        if buf.len() < 6 {
-            crate::bail_corrupt_error!("Invalid BEInt48 value");
+        SerialTypeKind::I48 => {
+            if buf.len() < 6 {
+                crate::bail_corrupt_error!("Invalid BEInt48 value");
+            }
+            let sign_extension = if buf[0] <= 127 { 0 } else { 255 };
+            Ok((
+                RefValue::Integer(i64::from_be_bytes([
+                    sign_extension,
+                    sign_extension,
+                    buf[0],
+                    buf[1],
+                    buf[2],
+                    buf[3],
+                    buf[4],
+                    buf[5],
+                ])),
+                6,
+            ))
         }
-        let sign_extension = if buf[0] <= 127 { 0 } else { 255 };
-        return Ok((
-            OwnedValue::Integer(i64::from_be_bytes([
-                sign_extension,
-                sign_extension,
-                buf[0],
-                buf[1],
-                buf[2],
-                buf[3],
-                buf[4],
-                buf[5],
-            ])),
-            6,
-        ));
-    }
-
-    if serial_type.is_beint64() {
-        if buf.len() < 8 {
-            crate::bail_corrupt_error!("Invalid BEInt64 value");
+        SerialTypeKind::I64 => {
+            if buf.len() < 8 {
+                crate::bail_corrupt_error!("Invalid BEInt64 value");
+            }
+            Ok((
+                RefValue::Integer(i64::from_be_bytes([
+                    buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
+                ])),
+                8,
+            ))
         }
-        return Ok((
-            OwnedValue::Integer(i64::from_be_bytes([
-                buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
-            ])),
-            8,
-        ));
-    }
-
-    if serial_type.is_befloat64() {
-        if buf.len() < 8 {
-            crate::bail_corrupt_error!("Invalid BEFloat64 value");
+        SerialTypeKind::F64 => {
+            if buf.len() < 8 {
+                crate::bail_corrupt_error!("Invalid BEFloat64 value");
+            }
+            Ok((
+                RefValue::Float(f64::from_be_bytes([
+                    buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
+                ])),
+                8,
+            ))
         }
-        return Ok((
-            OwnedValue::Float(f64::from_be_bytes([
-                buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
-            ])),
-            8,
-        ));
-    }
-
-    if serial_type.is_constint0() {
-        return Ok((OwnedValue::Integer(0), 0));
-    }
-
-    if serial_type.is_constint1() {
-        return Ok((OwnedValue::Integer(1), 0));
-    }
-
-    if serial_type.is_blob() {
-        let n = serial_type.blob_size();
-        if buf.len() < n {
-            crate::bail_corrupt_error!("Invalid Blob value");
+        SerialTypeKind::ConstInt0 => Ok((RefValue::Integer(0), 0)),
+        SerialTypeKind::ConstInt1 => Ok((RefValue::Integer(1), 0)),
+        SerialTypeKind::Blob => {
+            let content_size = serial_type.size();
+            if buf.len() < content_size {
+                crate::bail_corrupt_error!("Invalid Blob value");
+            }
+            if content_size == 0 {
+                Ok((RefValue::Blob(RawSlice::new(std::ptr::null(), 0)), 0))
+            } else {
+                let ptr = &buf[0] as *const u8;
+                let slice = RawSlice::new(ptr, content_size);
+                Ok((RefValue::Blob(slice), content_size))
+            }
         }
-        return Ok((OwnedValue::Blob(Rc::new(buf[0..n].to_vec())), n));
-    }
-
-    if serial_type.is_string() {
-        let n = serial_type.string_size();
-        if buf.len() < n {
-            crate::bail_corrupt_error!(
-                "Invalid String value, length {} < expected length {}",
-                buf.len(),
-                n
-            );
+        SerialTypeKind::Text => {
+            let content_size = serial_type.size();
+            if buf.len() < content_size {
+                crate::bail_corrupt_error!(
+                    "Invalid String value, length {} < expected length {}",
+                    buf.len(),
+                    content_size
+                );
+            }
+            let slice = if content_size == 0 {
+                RawSlice::new(std::ptr::null(), 0)
+            } else {
+                let ptr = &buf[0] as *const u8;
+                RawSlice::new(ptr, content_size)
+            };
+            Ok((
+                RefValue::Text(TextRef {
+                    value: slice,
+                    subtype: TextSubtype::Text,
+                }),
+                content_size,
+            ))
         }
-        let bytes = buf[0..n].to_vec();
-        return Ok((
-            OwnedValue::Text(Text {
-                value: Rc::new(bytes),
-                subtype: TextSubtype::Text,
-            }),
-            n,
-        ));
     }
-
-    // This should never happen if validate_serial_type is used correctly
-    crate::bail_corrupt_error!("Invalid serial type: {}", serial_type)
 }
 
+#[inline(always)]
 pub fn read_varint(buf: &[u8]) -> Result<(u64, usize)> {
     let mut v: u64 = 0;
     for i in 0..8 {
@@ -1280,11 +1324,11 @@ pub fn write_varint_to_vec(value: u64, payload: &mut Vec<u8>) {
     payload.extend_from_slice(&varint[0..n]);
 }
 
-pub fn begin_read_wal_header(io: &Arc<dyn File>) -> Result<Arc<RwLock<WalHeader>>> {
+pub fn begin_read_wal_header(io: &Arc<dyn File>) -> Result<Arc<SpinLock<WalHeader>>> {
     let drop_fn = Rc::new(|_buf| {});
     #[allow(clippy::arc_with_non_send_sync)]
     let buf = Arc::new(RefCell::new(Buffer::allocate(512, drop_fn)));
-    let result = Arc::new(RwLock::new(WalHeader::default()));
+    let result = Arc::new(SpinLock::new(WalHeader::default()));
     let header = result.clone();
     let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
         let header = header.clone();
@@ -1295,10 +1339,13 @@ pub fn begin_read_wal_header(io: &Arc<dyn File>) -> Result<Arc<RwLock<WalHeader>
     Ok(result)
 }
 
-fn finish_read_wal_header(buf: Arc<RefCell<Buffer>>, header: Arc<RwLock<WalHeader>>) -> Result<()> {
+fn finish_read_wal_header(
+    buf: Arc<RefCell<Buffer>>,
+    header: Arc<SpinLock<WalHeader>>,
+) -> Result<()> {
     let buf = buf.borrow();
     let buf = buf.as_slice();
-    let mut header = header.write();
+    let mut header = header.lock();
     header.magic = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
     header.file_format = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]);
     header.page_size = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
@@ -1342,6 +1389,7 @@ pub fn begin_write_wal_frame(
     io: &Arc<dyn File>,
     offset: usize,
     page: &PageRef,
+    page_size: u16,
     db_size: u32,
     write_counter: Rc<RefCell<usize>>,
     wal_header: &WalHeader,
@@ -1354,8 +1402,8 @@ pub fn begin_write_wal_frame(
     let mut header = WalFrameHeader {
         page_number: page_id as u32,
         db_size,
-        salt_1: 0,
-        salt_2: 0,
+        salt_1: wal_header.salt_1,
+        salt_2: wal_header.salt_2,
         checksum_1: 0,
         checksum_2: 0,
     };
@@ -1371,28 +1419,35 @@ pub fn begin_write_wal_frame(
         let buf = buffer.as_mut_slice();
         buf[0..4].copy_from_slice(&header.page_number.to_be_bytes());
         buf[4..8].copy_from_slice(&header.db_size.to_be_bytes());
-
-        {
-            let contents_buf = contents.as_ptr();
-            let expects_be = wal_header.magic & 1; // LSB is set on big endian checksums
-            let use_native_endian = cfg!(target_endian = "big") as u32 == expects_be; // check if checksum
-                                                                                      // type and native type is the same so that we know when to swap bytes
-            let checksums = checksum_wal(&buf[0..8], wal_header, checksums, use_native_endian);
-            let checksums = checksum_wal(contents_buf, wal_header, checksums, use_native_endian);
-            header.checksum_1 = checksums.0;
-            header.checksum_2 = checksums.1;
-            header.salt_1 = wal_header.salt_1;
-            header.salt_2 = wal_header.salt_2;
-        }
-
         buf[8..12].copy_from_slice(&header.salt_1.to_be_bytes());
         buf[12..16].copy_from_slice(&header.salt_2.to_be_bytes());
+
+        let contents_buf = contents.as_ptr();
+        let content_len = contents_buf.len();
+        buf[WAL_FRAME_HEADER_SIZE..WAL_FRAME_HEADER_SIZE + content_len]
+            .copy_from_slice(contents_buf);
+        if content_len < page_size as usize {
+            buf[WAL_FRAME_HEADER_SIZE + content_len..WAL_FRAME_HEADER_SIZE + page_size as usize]
+                .fill(0);
+        }
+
+        let expects_be = wal_header.magic & 1;
+        let use_native_endian = cfg!(target_endian = "big") as u32 == expects_be;
+        let header_checksum = checksum_wal(&buf[0..8], wal_header, checksums, use_native_endian); // Only 8 bytes
+        let final_checksum = checksum_wal(
+            &buf[WAL_FRAME_HEADER_SIZE..WAL_FRAME_HEADER_SIZE + page_size as usize],
+            wal_header,
+            header_checksum,
+            use_native_endian,
+        );
+        header.checksum_1 = final_checksum.0;
+        header.checksum_2 = final_checksum.1;
+
         buf[16..20].copy_from_slice(&header.checksum_1.to_be_bytes());
         buf[20..24].copy_from_slice(&header.checksum_2.to_be_bytes());
-        buf[WAL_FRAME_HEADER_SIZE..].copy_from_slice(contents.as_ptr());
 
         #[allow(clippy::arc_with_non_send_sync)]
-        (Arc::new(RefCell::new(buffer)), checksums)
+        (Arc::new(RefCell::new(buffer)), final_checksum)
     };
 
     *write_counter.borrow_mut() += 1;
@@ -1411,6 +1466,7 @@ pub fn begin_write_wal_frame(
     };
     let c = Completion::Write(WriteCompletion::new(write_complete));
     io.pwrite(offset, buffer.clone(), c)?;
+    trace!("Frame written and synced at offset={offset}");
     Ok(checksums)
 }
 
@@ -1530,94 +1586,137 @@ pub fn read_u32(buf: &[u8], pos: usize) -> u32 {
 
 #[cfg(test)]
 mod tests {
+    use crate::OwnedValue;
+
     use super::*;
     use rstest::rstest;
 
     #[rstest]
-    #[case(&[], SERIAL_TYPE_NULL, OwnedValue::Null)]
-    #[case(&[255], SERIAL_TYPE_INT8, OwnedValue::Integer(-1))]
-    #[case(&[0x12, 0x34], SERIAL_TYPE_BEINT16, OwnedValue::Integer(0x1234))]
-    #[case(&[0xFE], SERIAL_TYPE_INT8, OwnedValue::Integer(-2))]
-    #[case(&[0x12, 0x34, 0x56], SERIAL_TYPE_BEINT24, OwnedValue::Integer(0x123456))]
-    #[case(&[0x12, 0x34, 0x56, 0x78], SERIAL_TYPE_BEINT32, OwnedValue::Integer(0x12345678))]
-    #[case(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], SERIAL_TYPE_BEINT48, OwnedValue::Integer(0x123456789ABC))]
-    #[case(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xFF], SERIAL_TYPE_BEINT64, OwnedValue::Integer(0x123456789ABCDEFF))]
-    #[case(&[0x40, 0x09, 0x21, 0xFB, 0x54, 0x44, 0x2D, 0x18], SERIAL_TYPE_BEFLOAT64, OwnedValue::Float(std::f64::consts::PI))]
-    #[case(&[1, 2], SERIAL_TYPE_CONSTINT0, OwnedValue::Integer(0))]
-    #[case(&[65, 66], SERIAL_TYPE_CONSTINT1, OwnedValue::Integer(1))]
-    #[case(&[1, 2, 3], 18, OwnedValue::Blob(vec![1, 2, 3].into()))]
-    #[case(&[65, 66, 67], 19, OwnedValue::build_text("ABC"))]
-    #[case(&[0x80], SERIAL_TYPE_INT8, OwnedValue::Integer(-128))]
-    #[case(&[0x80, 0], SERIAL_TYPE_BEINT16, OwnedValue::Integer(-32768))]
-    #[case(&[0x80, 0, 0], SERIAL_TYPE_BEINT24, OwnedValue::Integer(-8388608))]
-    #[case(&[0x80, 0, 0, 0], SERIAL_TYPE_BEINT32, OwnedValue::Integer(-2147483648))]
-    #[case(&[0x80, 0, 0, 0, 0, 0], SERIAL_TYPE_BEINT48, OwnedValue::Integer(-140737488355328))]
-    #[case(&[0x80, 0, 0, 0, 0, 0, 0, 0], SERIAL_TYPE_BEINT64, OwnedValue::Integer(-9223372036854775808))]
-    #[case(&[0x7f], SERIAL_TYPE_INT8, OwnedValue::Integer(127))]
-    #[case(&[0x7f, 0xff], SERIAL_TYPE_BEINT16, OwnedValue::Integer(32767))]
-    #[case(&[0x7f, 0xff, 0xff], SERIAL_TYPE_BEINT24, OwnedValue::Integer(8388607))]
-    #[case(&[0x7f, 0xff, 0xff, 0xff], SERIAL_TYPE_BEINT32, OwnedValue::Integer(2147483647))]
-    #[case(&[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff], SERIAL_TYPE_BEINT48, OwnedValue::Integer(140737488355327))]
-    #[case(&[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff], SERIAL_TYPE_BEINT64, OwnedValue::Integer(9223372036854775807))]
+    #[case(&[], SerialType::null(), OwnedValue::Null)]
+    #[case(&[255], SerialType::i8(), OwnedValue::Integer(-1))]
+    #[case(&[0x12, 0x34], SerialType::i16(), OwnedValue::Integer(0x1234))]
+    #[case(&[0xFE], SerialType::i8(), OwnedValue::Integer(-2))]
+    #[case(&[0x12, 0x34, 0x56], SerialType::i24(), OwnedValue::Integer(0x123456))]
+    #[case(&[0x12, 0x34, 0x56, 0x78], SerialType::i32(), OwnedValue::Integer(0x12345678))]
+    #[case(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], SerialType::i48(), OwnedValue::Integer(0x123456789ABC))]
+    #[case(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xFF], SerialType::i64(), OwnedValue::Integer(0x123456789ABCDEFF))]
+    #[case(&[0x40, 0x09, 0x21, 0xFB, 0x54, 0x44, 0x2D, 0x18], SerialType::f64(), OwnedValue::Float(std::f64::consts::PI))]
+    #[case(&[1, 2], SerialType::const_int0(), OwnedValue::Integer(0))]
+    #[case(&[65, 66], SerialType::const_int1(), OwnedValue::Integer(1))]
+    #[case(&[1, 2, 3], SerialType::blob(3), OwnedValue::Blob(vec![1, 2, 3].into()))]
+    #[case(&[], SerialType::blob(0), OwnedValue::Blob(vec![].into()))] // empty blob
+    #[case(&[65, 66, 67], SerialType::text(3), OwnedValue::build_text("ABC"))]
+    #[case(&[0x80], SerialType::i8(), OwnedValue::Integer(-128))]
+    #[case(&[0x80, 0], SerialType::i16(), OwnedValue::Integer(-32768))]
+    #[case(&[0x80, 0, 0], SerialType::i24(), OwnedValue::Integer(-8388608))]
+    #[case(&[0x80, 0, 0, 0], SerialType::i32(), OwnedValue::Integer(-2147483648))]
+    #[case(&[0x80, 0, 0, 0, 0, 0], SerialType::i48(), OwnedValue::Integer(-140737488355328))]
+    #[case(&[0x80, 0, 0, 0, 0, 0, 0, 0], SerialType::i64(), OwnedValue::Integer(-9223372036854775808))]
+    #[case(&[0x7f], SerialType::i8(), OwnedValue::Integer(127))]
+    #[case(&[0x7f, 0xff], SerialType::i16(), OwnedValue::Integer(32767))]
+    #[case(&[0x7f, 0xff, 0xff], SerialType::i24(), OwnedValue::Integer(8388607))]
+    #[case(&[0x7f, 0xff, 0xff, 0xff], SerialType::i32(), OwnedValue::Integer(2147483647))]
+    #[case(&[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff], SerialType::i48(), OwnedValue::Integer(140737488355327))]
+    #[case(&[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff], SerialType::i64(), OwnedValue::Integer(9223372036854775807))]
     fn test_read_value(
         #[case] buf: &[u8],
         #[case] serial_type: SerialType,
         #[case] expected: OwnedValue,
     ) {
         let result = read_value(buf, serial_type).unwrap();
-        assert_eq!(result.0, expected);
+        assert_eq!(result.0.to_owned(), expected);
     }
 
     #[test]
     fn test_serial_type_helpers() {
-        assert!(SERIAL_TYPE_NULL.is_null());
-        assert!(SERIAL_TYPE_INT8.is_int8());
-        assert!(SERIAL_TYPE_BEINT16.is_beint16());
-        assert!(SERIAL_TYPE_BEINT24.is_beint24());
-        assert!(SERIAL_TYPE_BEINT32.is_beint32());
-        assert!(SERIAL_TYPE_BEINT48.is_beint48());
-        assert!(SERIAL_TYPE_BEINT64.is_beint64());
-        assert!(SERIAL_TYPE_BEFLOAT64.is_befloat64());
-        assert!(SERIAL_TYPE_CONSTINT0.is_constint0());
-        assert!(SERIAL_TYPE_CONSTINT1.is_constint1());
-
-        assert!(12u64.is_blob());
-        assert!(14u64.is_blob());
-        assert!(13u64.is_string());
-        assert!(15u64.is_string());
-
-        assert_eq!(12u64.blob_size(), 0);
-        assert_eq!(14u64.blob_size(), 1);
-        assert_eq!(16u64.blob_size(), 2);
-
-        assert_eq!(13u64.string_size(), 0);
-        assert_eq!(15u64.string_size(), 1);
-        assert_eq!(17u64.string_size(), 2);
+        assert_eq!(
+            TryInto::<SerialType>::try_into(12u64).unwrap(),
+            SerialType::blob(0)
+        );
+        assert_eq!(
+            TryInto::<SerialType>::try_into(14u64).unwrap(),
+            SerialType::blob(1)
+        );
+        assert_eq!(
+            TryInto::<SerialType>::try_into(13u64).unwrap(),
+            SerialType::text(0)
+        );
+        assert_eq!(
+            TryInto::<SerialType>::try_into(15u64).unwrap(),
+            SerialType::text(1)
+        );
+        assert_eq!(
+            TryInto::<SerialType>::try_into(16u64).unwrap(),
+            SerialType::blob(2)
+        );
+        assert_eq!(
+            TryInto::<SerialType>::try_into(17u64).unwrap(),
+            SerialType::text(2)
+        );
     }
 
     #[rstest]
-    #[case(0, SERIAL_TYPE_NULL)]
-    #[case(1, SERIAL_TYPE_INT8)]
-    #[case(2, SERIAL_TYPE_BEINT16)]
-    #[case(3, SERIAL_TYPE_BEINT24)]
-    #[case(4, SERIAL_TYPE_BEINT32)]
-    #[case(5, SERIAL_TYPE_BEINT48)]
-    #[case(6, SERIAL_TYPE_BEINT64)]
-    #[case(7, SERIAL_TYPE_BEFLOAT64)]
-    #[case(8, SERIAL_TYPE_CONSTINT0)]
-    #[case(9, SERIAL_TYPE_CONSTINT1)]
-    #[case(12, 12)] // Blob(0)
-    #[case(13, 13)] // String(0)
-    #[case(14, 14)] // Blob(1)
-    #[case(15, 15)] // String(1)
-    fn test_validate_serial_type(#[case] input: u64, #[case] expected: SerialType) {
-        let result = validate_serial_type(input).unwrap();
+    #[case(0, SerialType::null())]
+    #[case(1, SerialType::i8())]
+    #[case(2, SerialType::i16())]
+    #[case(3, SerialType::i24())]
+    #[case(4, SerialType::i32())]
+    #[case(5, SerialType::i48())]
+    #[case(6, SerialType::i64())]
+    #[case(7, SerialType::f64())]
+    #[case(8, SerialType::const_int0())]
+    #[case(9, SerialType::const_int1())]
+    #[case(12, SerialType::blob(0))]
+    #[case(13, SerialType::text(0))]
+    #[case(14, SerialType::blob(1))]
+    #[case(15, SerialType::text(1))]
+    fn test_parse_serial_type(#[case] input: u64, #[case] expected: SerialType) {
+        let result = SerialType::try_from(input).unwrap();
         assert_eq!(result, expected);
     }
 
     #[test]
-    fn test_invalid_serial_type() {
-        let result = validate_serial_type(10);
-        assert!(result.is_err());
+    fn test_validate_serial_type() {
+        for i in 0..=9 {
+            let result = validate_serial_type(i);
+            assert!(result.is_ok());
+        }
+        for i in 10..=11 {
+            let result = validate_serial_type(i);
+            assert!(result.is_err());
+        }
+        for i in 12..=1000 {
+            let result = validate_serial_type(i);
+            assert!(result.is_ok());
+        }
+    }
+
+    #[test]
+    fn test_smallvec_iter() {
+        let mut small_vec = SmallVec::<i32, 4>::new();
+        (0..8).for_each(|i| small_vec.push(i));
+
+        let mut iter = small_vec.iter();
+        assert_eq!(iter.next(), Some(0));
+        assert_eq!(iter.next(), Some(1));
+        assert_eq!(iter.next(), Some(2));
+        assert_eq!(iter.next(), Some(3));
+        assert_eq!(iter.next(), Some(4));
+        assert_eq!(iter.next(), Some(5));
+        assert_eq!(iter.next(), Some(6));
+        assert_eq!(iter.next(), Some(7));
+        assert_eq!(iter.next(), None);
+    }
+
+    #[test]
+    fn test_smallvec_get() {
+        let mut small_vec = SmallVec::<i32, 4>::new();
+        (0..8).for_each(|i| small_vec.push(i));
+
+        (0..8).for_each(|i| {
+            assert_eq!(small_vec.get(i), Some(i as i32));
+        });
+
+        assert_eq!(small_vec.get(8), None);
     }
 }

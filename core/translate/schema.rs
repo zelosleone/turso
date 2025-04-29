@@ -4,6 +4,8 @@ use std::rc::Rc;
 use crate::ast;
 use crate::ext::VTabImpl;
 use crate::schema::Schema;
+use crate::schema::Table;
+use crate::storage::pager::CreateBTreeFlags;
 use crate::translate::ProgramBuilder;
 use crate::translate::ProgramBuilderOpts;
 use crate::translate::QueryMode;
@@ -39,7 +41,7 @@ pub fn translate_create_table(
             let init_label = program.emit_init();
             let start_offset = program.offset();
             program.emit_halt();
-            program.resolve_label(init_label, program.offset());
+            program.preassign_label_to_next_insn(init_label);
             program.emit_transaction(true);
             program.emit_constant_insns();
             program.emit_goto(start_offset);
@@ -64,7 +66,7 @@ pub fn translate_create_table(
     program.emit_insn(Insn::CreateBtree {
         db: 0,
         root: table_root_reg,
-        flags: 1, // Table leaf page
+        flags: CreateBTreeFlags::new_table(),
     });
 
     // Create an automatic index B-tree if needed
@@ -96,7 +98,7 @@ pub fn translate_create_table(
         program.emit_insn(Insn::CreateBtree {
             db: 0,
             root: index_root_reg,
-            flags: 2, // Index leaf page
+            flags: CreateBTreeFlags::new_index(),
         });
     }
 
@@ -105,11 +107,10 @@ pub fn translate_create_table(
         Some(SQLITE_TABLEID.to_owned()),
         CursorType::BTreeTable(table.clone()),
     );
-    program.emit_insn(Insn::OpenWriteAsync {
+    program.emit_insn(Insn::OpenWrite {
         cursor_id: sqlite_schema_cursor_id,
-        root_page: 1,
+        root_page: 1usize.into(),
     });
-    program.emit_insn(Insn::OpenWriteAwait {});
 
     // Add the table entry to sqlite_schema
     emit_schema_entry(
@@ -151,7 +152,7 @@ pub fn translate_create_table(
 
     // TODO: SqlExec
     program.emit_halt();
-    program.resolve_label(init_label, program.offset());
+    program.preassign_label_to_next_insn(init_label);
     program.emit_transaction(true);
     program.emit_constant_insns();
     program.emit_goto(start_offset);
@@ -159,8 +160,8 @@ pub fn translate_create_table(
     Ok(program)
 }
 
-#[derive(Debug)]
-enum SchemaEntryType {
+#[derive(Debug, Clone, Copy)]
+pub enum SchemaEntryType {
     Table,
     Index,
 }
@@ -173,9 +174,9 @@ impl SchemaEntryType {
         }
     }
 }
-const SQLITE_TABLEID: &str = "sqlite_schema";
+pub const SQLITE_TABLEID: &str = "sqlite_schema";
 
-fn emit_schema_entry(
+pub fn emit_schema_entry(
     program: &mut ProgramBuilder,
     sqlite_schema_cursor_id: usize,
     entry_type: SchemaEntryType,
@@ -223,14 +224,11 @@ fn emit_schema_entry(
         dest_reg: record_reg,
     });
 
-    program.emit_insn(Insn::InsertAsync {
+    program.emit_insn(Insn::Insert {
         cursor: sqlite_schema_cursor_id,
         key_reg: rowid_reg,
         record_reg,
         flag: 0,
-    });
-    program.emit_insn(Insn::InsertAwait {
-        cursor_id: sqlite_schema_cursor_id,
     });
 }
 
@@ -479,7 +477,7 @@ pub fn translate_create_virtual_table(
         });
         let init_label = program.emit_init();
         program.emit_halt();
-        program.resolve_label(init_label, program.offset());
+        program.preassign_label_to_next_insn(init_label);
         program.emit_transaction(true);
         program.emit_constant_insns();
         return Ok(program);
@@ -491,7 +489,8 @@ pub fn translate_create_virtual_table(
         approx_num_insns: 40,
         approx_num_labels: 2,
     });
-
+    let init_label = program.emit_init();
+    let start_offset = program.offset();
     let module_name_reg = program.emit_string8_new_reg(module_name_str.clone());
     let table_name_reg = program.emit_string8_new_reg(table_name.clone());
     let args_reg = if !args_vec.is_empty() {
@@ -524,11 +523,10 @@ pub fn translate_create_virtual_table(
         Some(SQLITE_TABLEID.to_owned()),
         CursorType::BTreeTable(table.clone()),
     );
-    program.emit_insn(Insn::OpenWriteAsync {
+    program.emit_insn(Insn::OpenWrite {
         cursor_id: sqlite_schema_cursor_id,
-        root_page: 1,
+        root_page: 1usize.into(),
     });
-    program.emit_insn(Insn::OpenWriteAwait {});
 
     let sql = create_vtable_body_to_str(&vtab, vtab_module.clone());
     emit_schema_entry(
@@ -547,10 +545,8 @@ pub fn translate_create_virtual_table(
         where_clause: parse_schema_where_clause,
     });
 
-    let init_label = program.emit_init();
-    let start_offset = program.offset();
     program.emit_halt();
-    program.resolve_label(init_label, program.offset());
+    program.preassign_label_to_next_insn(init_label);
     program.emit_transaction(true);
     program.emit_constant_insns();
     program.emit_goto(start_offset);
@@ -570,13 +566,13 @@ pub fn translate_drop_table(
         approx_num_insns: 30,
         approx_num_labels: 1,
     });
-    let table = schema.get_btree_table(tbl_name.name.0.as_str());
+    let table = schema.get_table(tbl_name.name.0.as_str());
     if table.is_none() {
         if if_exists {
             let init_label = program.emit_init();
             let start_offset = program.offset();
             program.emit_halt();
-            program.resolve_label(init_label, program.offset());
+            program.preassign_label_to_next_insn(init_label);
             program.emit_transaction(true);
             program.emit_constant_insns();
             program.emit_goto(start_offset);
@@ -585,6 +581,7 @@ pub fn translate_drop_table(
         }
         bail_parse_error!("No such table: {}", tbl_name.name.0.as_str());
     }
+
     let table = table.unwrap(); // safe since we just checked for None
 
     let init_label = program.emit_init();
@@ -600,31 +597,27 @@ pub fn translate_drop_table(
     let row_id_reg = program.alloc_register(); //  r5
 
     let table_name = "sqlite_schema";
-    let schema_table = schema.get_btree_table(&table_name).unwrap();
+    let schema_table = schema.get_btree_table(table_name).unwrap();
     let sqlite_schema_cursor_id = program.alloc_cursor_id(
         Some(table_name.to_string()),
         CursorType::BTreeTable(schema_table.clone()),
     );
-    program.emit_insn(Insn::OpenWriteAsync {
+    program.emit_insn(Insn::OpenWrite {
         cursor_id: sqlite_schema_cursor_id,
-        root_page: 1,
+        root_page: 1usize.into(),
     });
-    program.emit_insn(Insn::OpenWriteAwait {});
 
     //  1. Remove all entries from the schema table related to the table we are dropping, except for triggers
     //  loop to beginning of schema table
-    program.emit_insn(Insn::RewindAsync {
-        cursor_id: sqlite_schema_cursor_id,
-    });
     let end_metadata_label = program.allocate_label();
-    program.emit_insn(Insn::RewindAwait {
+    let metadata_loop = program.allocate_label();
+    program.emit_insn(Insn::Rewind {
         cursor_id: sqlite_schema_cursor_id,
         pc_if_empty: end_metadata_label,
     });
+    program.preassign_label_to_next_insn(metadata_loop);
 
     //  start loop on schema table
-    let metadata_loop = program.allocate_label();
-    program.resolve_label(metadata_loop, program.offset());
     program.emit_insn(Insn::Column {
         cursor_id: sqlite_schema_cursor_id,
         column: 2,
@@ -652,22 +645,16 @@ pub fn translate_drop_table(
         cursor_id: sqlite_schema_cursor_id,
         dest: row_id_reg,
     });
-    program.emit_insn(Insn::DeleteAsync {
-        cursor_id: sqlite_schema_cursor_id,
-    });
-    program.emit_insn(Insn::DeleteAwait {
+    program.emit_insn(Insn::Delete {
         cursor_id: sqlite_schema_cursor_id,
     });
 
     program.resolve_label(next_label, program.offset());
-    program.emit_insn(Insn::NextAsync {
-        cursor_id: sqlite_schema_cursor_id,
-    });
-    program.emit_insn(Insn::NextAwait {
+    program.emit_insn(Insn::Next {
         cursor_id: sqlite_schema_cursor_id,
         pc_if_next: metadata_loop,
     });
-    program.resolve_label(end_metadata_label, program.offset());
+    program.preassign_label_to_next_insn(end_metadata_label);
     //  end of loop on schema table
 
     //  2. Destroy the indices within a loop
@@ -690,11 +677,31 @@ pub fn translate_drop_table(
     }
 
     //  3. Destroy the table structure
-    program.emit_insn(Insn::Destroy {
-        root: table.root_page,
-        former_root_reg: 0, //  no autovacuum (https://www.sqlite.org/opcode.html#Destroy)
-        is_temp: 0,
-    });
+    match table.as_ref() {
+        Table::BTree(table) => {
+            program.emit_insn(Insn::Destroy {
+                root: table.root_page,
+                former_root_reg: 0, //  no autovacuum (https://www.sqlite.org/opcode.html#Destroy)
+                is_temp: 0,
+            });
+        }
+        Table::Virtual(vtab) => {
+            // From what I see, TableValuedFunction is not stored in the schema as a table.
+            // But this line here below is a safeguard in case this behavior changes in the future
+            // And mirrors what SQLite does.
+            if matches!(vtab.kind, limbo_ext::VTabKind::TableValuedFunction) {
+                return Err(crate::LimboError::ParseError(format!(
+                    "table {} may not be dropped",
+                    vtab.name
+                )));
+            }
+            program.emit_insn(Insn::VDestroy {
+                table_name: vtab.name.clone(),
+                db: 0, // TODO change this for multiple databases
+            });
+        }
+        Table::Pseudo(..) => unimplemented!(),
+    };
 
     let r6 = program.alloc_register();
     let r7 = program.alloc_register();
@@ -716,7 +723,7 @@ pub fn translate_drop_table(
 
     //  end of the program
     program.emit_halt();
-    program.resolve_label(init_label, program.offset());
+    program.preassign_label_to_next_insn(init_label);
     program.emit_transaction(true);
     program.emit_constant_insns();
 

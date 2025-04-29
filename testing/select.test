@@ -11,6 +11,14 @@ do_execsql_test select-const-2 {
   SELECT 2
 } {2}
 
+do_execsql_test select-const-3 {
+  SELECT 0xDEAF
+} {57007}
+
+do_execsql_test select-const-4 {
+  SELECT -0xA
+} {-10}
+
 do_execsql_test select-true {
   SELECT true
 } {1}
@@ -165,3 +173,70 @@ do_execsql_test select-not-like-expression {
 do_execsql_test select-like-expression {
     select 2 % 0.5
 } {}
+
+do_execsql_test select_positive_infinite_float {
+  SELECT 1.7976931348623157E+308 + 1e308; -- f64::MAX + 1e308
+} {Inf}
+
+do_execsql_test select_negative_infinite_float {
+  SELECT -1.7976931348623157E+308 - 1e308 -- f64::MIN - 1e308
+} {-Inf}
+
+do_execsql_test select_shl_large_negative_float {
+    SELECT 1 << -1e19;
+    SELECT 1 << -9223372036854775808;  -- i64::MIN
+    SELECT 1 << 9223372036854775807;   -- i64::MAX
+} {0 0 0}
+
+do_execsql_test select_shl_basic {
+    SELECT 1 << 0, 1 << 1, 1 << 2, 1 << 3;
+    SELECT 2 << 0, 2 << 1, 2 << 2, 2 << 3;
+} {1|2|4|8
+2|4|8|16}
+
+do_execsql_test select_shl_negative_numbers {
+    SELECT -1 << 0, -1 << 1, -1 << 2, -1 << 3;
+    SELECT -2 << 0, -2 << 1, -2 << 2, -2 << 3;
+} {-1|-2|-4|-8
+-2|-4|-8|-16}
+do_execsql_test select_shl_negative_shifts {
+    SELECT 8 << -1, 8 << -2, 8 << -3, 8 << -4;
+    SELECT -8 << -1, -8 << -2, -8 << -3, -8 << -4;
+} {4|2|1|0
+-4|-2|-1|-1}
+
+do_execsql_test select_shl_large_shifts {
+    SELECT 1 << 62, 1 << 63, 1 << 64;
+    SELECT -1 << 62, -1 << 63, -1 << 64;
+} {4611686018427387904|-9223372036854775808|0
+-4611686018427387904|-9223372036854775808|0}
+
+do_execsql_test select_shl_text_conversion {
+    SELECT '1' << '2';
+    SELECT '8' << '-2';
+    SELECT '-4' << '2';
+} {4 2 -16}
+
+do_execsql_test select_shl_chained {
+    SELECT (1 << 2) << 3;
+    SELECT (2 << 1) << (1 << 1);
+} {32 16}
+
+do_execsql_test select_shl_numeric_types {
+    SELECT CAST(1 AS INTEGER) << 2;
+    SELECT 1.0 << 2;
+    SELECT 1.5 << 2;
+} {4 4 4}
+
+do_execsql_test select_fuzz_failure_case {
+  SELECT (-9 << ((-6) << (9)) >> ((5)) % -10 - + - (-9));
+} {-16}
+
+# regression test for https://github.com/tursodatabase/limbo/issues/1157
+do_execsql_test select-invalid-numeric-text {
+  select -'e';
+} {0}
+
+do_execsql_test select-invalid-numeric-text {
+  select -'E';
+} {0}

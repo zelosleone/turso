@@ -1,11 +1,12 @@
 use crate::types::OwnedValue;
+use crate::vdbe::Register;
 use crate::LimboError;
 use crate::Result;
 
 pub mod vector_types;
 use vector_types::*;
 
-pub fn vector32(args: &[OwnedValue]) -> Result<OwnedValue> {
+pub fn vector32(args: &[Register]) -> Result<OwnedValue> {
     if args.len() != 1 {
         return Err(LimboError::ConversionError(
             "vector32 requires exactly one argument".to_string(),
@@ -22,7 +23,7 @@ pub fn vector32(args: &[OwnedValue]) -> Result<OwnedValue> {
     }
 }
 
-pub fn vector64(args: &[OwnedValue]) -> Result<OwnedValue> {
+pub fn vector64(args: &[Register]) -> Result<OwnedValue> {
     if args.len() != 1 {
         return Err(LimboError::ConversionError(
             "vector64 requires exactly one argument".to_string(),
@@ -39,14 +40,14 @@ pub fn vector64(args: &[OwnedValue]) -> Result<OwnedValue> {
     }
 }
 
-pub fn vector_extract(args: &[OwnedValue]) -> Result<OwnedValue> {
+pub fn vector_extract(args: &[Register]) -> Result<OwnedValue> {
     if args.len() != 1 {
         return Err(LimboError::ConversionError(
             "vector_extract requires exactly one argument".to_string(),
         ));
     }
 
-    let blob = match &args[0] {
+    let blob = match &args[0].get_owned_value() {
         OwnedValue::Blob(b) => b,
         _ => {
             return Err(LimboError::ConversionError(
@@ -64,7 +65,7 @@ pub fn vector_extract(args: &[OwnedValue]) -> Result<OwnedValue> {
     Ok(OwnedValue::build_text(&vector_to_text(&vector)))
 }
 
-pub fn vector_distance_cos(args: &[OwnedValue]) -> Result<OwnedValue> {
+pub fn vector_distance_cos(args: &[Register]) -> Result<OwnedValue> {
     if args.len() != 2 {
         return Err(LimboError::ConversionError(
             "vector_distance_cos requires exactly two arguments".to_string(),

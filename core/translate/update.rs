@@ -3,20 +3,19 @@ use crate::{
     bail_parse_error,
     schema::{Schema, Table},
     util::normalize_ident,
-    vdbe::{
-        builder::{CursorType, ProgramBuilder, ProgramBuilderOpts, QueryMode},
-        insn::Insn,
-    },
+    vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode},
     SymbolTable,
 };
-use limbo_sqlite3_parser::ast::Update;
+use limbo_sqlite3_parser::ast::{self, Expr, ResultColumn, SortOrder, Update};
 
-use super::planner::bind_column_references;
-use super::{
-    emitter::Resolver,
-    expr::{translate_condition_expr, translate_expr, ConditionMetadata},
-    plan::TableReference,
+use super::emitter::emit_program;
+use super::optimizer::optimize_plan;
+use super::plan::{
+    ColumnUsedMask, Direction, IterationDirection, Plan, ResultSetColumn, TableReference,
+    UpdatePlan,
 };
+use super::planner::bind_column_references;
+use super::planner::{parse_limit, parse_where};
 
 /*
 * Update is simple. By default we scan the table, and for each row, we check the WHERE
@@ -53,6 +52,8 @@ pub fn translate_update(
     body: &mut Update,
     syms: &SymbolTable,
 ) -> crate::Result<ProgramBuilder> {
+    let mut plan = prepare_update_plan(schema, body)?;
+    optimize_plan(&mut plan, schema)?;
     // TODO: freestyling these numbers
     let mut program = ProgramBuilder::new(ProgramBuilderOpts {
         query_mode,
@@ -60,7 +61,11 @@ pub fn translate_update(
         approx_num_insns: 20,
         approx_num_labels: 4,
     });
+    emit_program(&mut program, plan, syms)?;
+    Ok(program)
+}
 
+pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<Plan> {
     if body.with.is_some() {
         bail_parse_error!("WITH clause is not supported");
     }
@@ -72,145 +77,120 @@ pub fn translate_update(
         Some(table) => table,
         None => bail_parse_error!("Parse error: no such table: {}", table_name),
     };
-    if let Table::Virtual(_) = table.as_ref() {
-        bail_parse_error!("vtable update not yet supported");
-    }
-    let resolver = Resolver::new(syms);
-
-    let init_label = program.allocate_label();
-    program.emit_insn(Insn::Init {
-        target_pc: init_label,
-    });
-    let start_offset = program.offset();
-    let Some(btree_table) = table.btree() else {
-        crate::bail_corrupt_error!("Parse error: no such table: {}", table_name);
-    };
-    let cursor_id = program.alloc_cursor_id(
-        Some(table_name.0.clone()),
-        CursorType::BTreeTable(btree_table.clone()),
-    );
-    let root_page = btree_table.root_page;
-    program.emit_insn(Insn::OpenWriteAsync {
-        cursor_id,
-        root_page,
-    });
-    program.emit_insn(Insn::OpenWriteAwait {});
-
-    let end_label = program.allocate_label();
-    program.emit_insn(Insn::RewindAsync { cursor_id });
-    program.emit_insn(Insn::RewindAwait {
-        cursor_id,
-        pc_if_empty: end_label,
-    });
-    let first_col_reg = program.alloc_registers(btree_table.columns.len());
-    let referenced_tables = vec![TableReference {
-        table: Table::BTree(btree_table.clone()),
+    let iter_dir = body
+        .order_by
+        .as_ref()
+        .and_then(|order_by| {
+            order_by.first().and_then(|ob| {
+                ob.order.map(|o| match o {
+                    SortOrder::Asc => IterationDirection::Forwards,
+                    SortOrder::Desc => IterationDirection::Backwards,
+                })
+            })
+        })
+        .unwrap_or(IterationDirection::Forwards);
+    let mut table_references = vec![TableReference {
+        table: match table.as_ref() {
+            Table::Virtual(vtab) => Table::Virtual(vtab.clone()),
+            Table::BTree(btree_table) => Table::BTree(btree_table.clone()),
+            _ => unreachable!(),
+        },
         identifier: table_name.0.clone(),
-        op: Operation::Scan { iter_dir: None },
+        op: Operation::Scan {
+            iter_dir,
+            index: None,
+        },
         join_info: None,
+        col_used_mask: ColumnUsedMask::new(),
     }];
+    let set_clauses = body
+        .sets
+        .iter_mut()
+        .map(|set| {
+            let ident = normalize_ident(set.col_names[0].0.as_str());
+            let col_index = table
+                .columns()
+                .iter()
+                .enumerate()
+                .find_map(|(i, col)| {
+                    col.name
+                        .as_ref()
+                        .filter(|name| name.eq_ignore_ascii_case(&ident))
+                        .map(|_| i)
+                })
+                .ok_or_else(|| {
+                    crate::LimboError::ParseError(format!(
+                        "column '{}' not found in table '{}'",
+                        ident, table_name.0
+                    ))
+                })?;
 
-    // store the (col_index, Expr value) of each 'Set'
-    // if a column declared here isn't found: error
-    let mut update_idxs = Vec::with_capacity(body.sets.len());
-    for s in body.sets.iter_mut() {
-        let ident = normalize_ident(s.col_names[0].0.as_str());
-        if let Some((i, _)) = btree_table.columns.iter().enumerate().find(|(_, col)| {
-            col.name
-                .as_ref()
-                .unwrap_or(&String::new())
-                .eq_ignore_ascii_case(&ident)
-        }) {
-            bind_column_references(&mut s.expr, &referenced_tables, None)?;
-            update_idxs.push((i, &s.expr));
-        } else {
-            bail_parse_error!("column {} not found", ident);
+            let _ = bind_column_references(&mut set.expr, &mut table_references, None);
+            Ok((col_index, set.expr.clone()))
+        })
+        .collect::<Result<Vec<(usize, Expr)>, crate::LimboError>>()?;
+
+    let mut where_clause = vec![];
+    let mut result_columns = vec![];
+    if let Some(returning) = &mut body.returning {
+        for rc in returning.iter_mut() {
+            if let ResultColumn::Expr(expr, alias) = rc {
+                bind_column_references(expr, &mut table_references, None)?;
+                result_columns.push(ResultSetColumn {
+                    expr: expr.clone(),
+                    alias: alias.as_ref().and_then(|a| {
+                        if let ast::As::As(name) = a {
+                            Some(name.to_string())
+                        } else {
+                            None
+                        }
+                    }),
+                    contains_aggregates: false,
+                });
+            } else {
+                bail_parse_error!("Only expressions are allowed in RETURNING clause");
+            }
         }
     }
+    let order_by = body.order_by.as_ref().map(|order| {
+        order
+            .iter()
+            .map(|o| {
+                (
+                    o.expr.clone(),
+                    o.order
+                        .map(|s| match s {
+                            SortOrder::Asc => Direction::Ascending,
+                            SortOrder::Desc => Direction::Descending,
+                        })
+                        .unwrap_or(Direction::Ascending),
+                )
+            })
+            .collect()
+    });
+    // Parse the WHERE clause
+    parse_where(
+        body.where_clause.as_ref().map(|w| *w.clone()),
+        &mut table_references,
+        Some(&result_columns),
+        &mut where_clause,
+    )?;
 
-    let loop_start = program.offset();
-    let skip_label = program.allocate_label();
-    if let Some(where_clause) = body.where_clause.as_mut() {
-        bind_column_references(where_clause, &referenced_tables, None)?;
-        translate_condition_expr(
-            &mut program,
-            &referenced_tables,
-            where_clause,
-            ConditionMetadata {
-                jump_if_condition_is_true: false,
-                jump_target_when_true: crate::vdbe::BranchOffset::Placeholder,
-                jump_target_when_false: skip_label,
-            },
-            &resolver,
-        )?;
-    }
-    let rowid_reg = program.alloc_register();
-    program.emit_insn(Insn::RowId {
-        cursor_id,
-        dest: rowid_reg,
-    });
-    // if no rowid, we're done
-    program.emit_insn(Insn::IsNull {
-        reg: rowid_reg,
-        target_pc: end_label,
-    });
+    // Parse the LIMIT/OFFSET clause
+    let (limit, offset) = body
+        .limit
+        .as_ref()
+        .map(|l| parse_limit(l))
+        .unwrap_or(Ok((None, None)))?;
 
-    // we scan a column at a time, loading either the column's values, or the new value
-    // from the Set expression, into registers so we can emit a MakeRecord and update the row.
-    for idx in 0..btree_table.columns.len() {
-        if let Some((idx, expr)) = update_idxs.iter().find(|(i, _)| *i == idx) {
-            let target_reg = first_col_reg + idx;
-            translate_expr(
-                &mut program,
-                Some(&referenced_tables),
-                expr,
-                target_reg,
-                &resolver,
-            )?;
-        } else {
-            program.emit_insn(Insn::Column {
-                cursor_id,
-                column: idx,
-                dest: first_col_reg + idx,
-            });
-        }
-    }
-    let record_reg = program.alloc_register();
-    program.emit_insn(Insn::MakeRecord {
-        start_reg: first_col_reg,
-        count: btree_table.columns.len(),
-        dest_reg: record_reg,
-    });
-
-    program.emit_insn(Insn::InsertAsync {
-        cursor: cursor_id,
-        key_reg: rowid_reg,
-        record_reg,
-        flag: 0,
-    });
-    program.emit_insn(Insn::InsertAwait { cursor_id });
-
-    // label for false `WHERE` clause: proceed to next row
-    program.resolve_label(skip_label, program.offset());
-    program.emit_insn(Insn::NextAsync { cursor_id });
-    program.emit_insn(Insn::NextAwait {
-        cursor_id,
-        pc_if_next: loop_start,
-    });
-
-    // cleanup/halt
-    program.resolve_label(end_label, program.offset());
-    program.emit_insn(Insn::Halt {
-        err_code: 0,
-        description: String::new(),
-    });
-    program.resolve_label(init_label, program.offset());
-    program.emit_insn(Insn::Transaction { write: true });
-
-    program.emit_constant_insns();
-    program.emit_insn(Insn::Goto {
-        target_pc: start_offset,
-    });
-    program.table_references = referenced_tables.clone();
-    Ok(program)
+    Ok(Plan::Update(UpdatePlan {
+        table_references,
+        set_clauses,
+        where_clause,
+        returning: Some(result_columns),
+        order_by,
+        limit,
+        offset,
+        contains_constant_false_condition: false,
+    }))
 }

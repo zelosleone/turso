@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import os
-from test_limbo_cli import TestLimboShell
+from cli_tests.test_limbo_cli import TestLimboShell
+from cli_tests import console
 
 sqlite_exec = "./scripts/limbo-sqlite3"
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
@@ -81,7 +82,7 @@ def test_regexp():
         lambda res: "Parse error: no such function" in res,
     )
     limbo.run_test_fn(f".load {extension_path}", null)
-    print(f"Extension {extension_path} loaded successfully.")
+    console.info(f"Extension {extension_path} loaded successfully.")
     limbo.run_test_fn("SELECT regexp('a.c', 'abc');", true)
     limbo.run_test_fn("SELECT regexp('a.c', 'ac');", false)
     limbo.run_test_fn("SELECT regexp('[0-9]+', 'the year is 2021');", true)
@@ -339,16 +340,18 @@ def test_series():
 def test_kv():
     ext_path = "target/debug/liblimbo_ext_tests"
     limbo = TestLimboShell()
+    # first, create a normal table to ensure no issues
+    limbo.execute_dot("CREATE TABLE other (a,b,c);")
+    limbo.execute_dot("INSERT INTO other values (23,32,23);")
     limbo.run_test_fn(
         "create virtual table t using kv_store;",
         lambda res: "Parse error: no such module: kv_store" in res,
     )
     limbo.execute_dot(f".load {ext_path}")
-    limbo.run_test_fn(
+    limbo.execute_dot(
         "create virtual table t using kv_store;",
-        null,
-        "can create kv_store vtable",
     )
+    limbo.run_test_fn(".schema", lambda res: "CREATE VIRTUAL TABLE t" in res)
     limbo.run_test_fn(
         "insert into t values ('hello', 'world');",
         null,
@@ -395,9 +398,34 @@ def test_kv():
     limbo.run_test_fn(
         "select count(*) from t;", lambda res: "100" == res, "can insert 100 rows"
     )
+    limbo.run_test_fn("update t set value = 'updated' where key = 'key33';", null)
+    limbo.run_test_fn(
+        "select * from t where key = 'key33';",
+        lambda res: res == "key33|updated",
+        "can update single row",
+    )
+    limbo.run_test_fn(
+        "select COUNT(*) from t where value = 'updated';",
+        lambda res: res == "1",
+        "only updated a single row",
+    )
+    limbo.run_test_fn("update t set value = 'updated2';", null)
+    limbo.run_test_fn(
+        "select COUNT(*) from t where value = 'updated2';",
+        lambda res: res == "100",
+        "can update all rows",
+    )
     limbo.run_test_fn("delete from t limit 96;", null, "can delete 96 rows")
     limbo.run_test_fn(
         "select count(*) from t;", lambda res: "4" == res, "four rows remain"
+    )
+    limbo.run_test_fn(
+        "update t set key = '100' where 1;", null, "where clause evaluates properly"
+    )
+    limbo.run_test_fn(
+        "select * from t where key = '100';",
+        lambda res: res == "100|updated2",
+        "there is only 1 key remaining after setting all keys to same value",
     )
     limbo.quit()
 
@@ -494,11 +522,33 @@ def test_vfs():
         lambda res: res == "50",
         "Tested large write to testfs",
     )
-    print("Tested large write to testfs")
-    # open regular db file to ensure we don't segfault when vfs file is dropped
-    limbo.execute_dot(".open testing/vfs.db")
-    limbo.execute_dot("create table test (id integer primary key, value float);")
-    limbo.execute_dot("insert into test (value) values (1.0);")
+    console.info("Tested large write to testfs")
+    limbo.quit()
+
+
+def test_drop_virtual_table():
+    ext_path = "target/debug/liblimbo_ext_tests"
+    limbo = TestLimboShell()
+    limbo.execute_dot(f".load {ext_path}")
+    limbo.debug_print(
+        "create virtual table t using kv_store;",
+    )
+    limbo.run_test_fn(".schema", lambda res: "CREATE VIRTUAL TABLE t" in res)
+    limbo.run_test_fn(
+        "insert into t values ('hello', 'world');",
+        null,
+        "can insert into kv_store vtable",
+    )
+    limbo.run_test_fn(
+        "DROP TABLE t;",
+        lambda res: "VDestroy called" in res,
+        "can drop kv_store vtable",
+    )
+    limbo.run_test_fn(
+        "DROP TABLE t;",
+        lambda res: "× Parse error: No such table: t" == res,
+        "should error when drop kv_store vtable",
+    )
     limbo.quit()
 
 
@@ -538,20 +588,25 @@ def cleanup():
         os.remove("testing/vfs.db-wal")
 
 
-if __name__ == "__main__":
+def main():
     try:
         test_regexp()
         test_uuid()
         test_aggregates()
         test_crypto()
         test_series()
-        test_kv()
         test_ipaddr()
         test_vfs()
         test_sqlite_vfs_compat()
+        test_kv()
+        test_drop_virtual_table()
     except Exception as e:
-        print(f"Test FAILED: {e}")
+        console.error(f"Test FAILED: {e}")
         cleanup()
         exit(1)
     cleanup()
-    print("All tests passed successfully.")
+    console.info("All tests passed successfully.")
+
+
+if __name__ == "__main__":
+    main()

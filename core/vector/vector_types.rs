@@ -1,4 +1,5 @@
 use crate::types::{OwnedValue, OwnedValueType};
+use crate::vdbe::Register;
 use crate::{LimboError, Result};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -103,11 +104,14 @@ pub fn parse_string_vector(vector_type: VectorType, value: &OwnedValue) -> Resul
     })
 }
 
-pub fn parse_vector(value: &OwnedValue, vec_ty: Option<VectorType>) -> Result<Vector> {
-    match value.value_type() {
-        OwnedValueType::Text => parse_string_vector(vec_ty.unwrap_or(VectorType::Float32), value),
+pub fn parse_vector(value: &Register, vec_ty: Option<VectorType>) -> Result<Vector> {
+    match value.get_owned_value().value_type() {
+        OwnedValueType::Text => parse_string_vector(
+            vec_ty.unwrap_or(VectorType::Float32),
+            value.get_owned_value(),
+        ),
         OwnedValueType::Blob => {
-            let Some(blob) = value.to_blob() else {
+            let Some(blob) = value.get_owned_value().to_blob() else {
                 return Err(LimboError::ConversionError(
                     "Invalid vector value".to_string(),
                 ));

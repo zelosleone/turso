@@ -422,6 +422,58 @@ impl<Clock: LogicalClock> MvStore<Clock> {
             .collect())
     }
 
+    pub fn get_row_id_range(
+        &self,
+        table_id: u64,
+        start: u64,
+        bucket: &mut Vec<RowID>,
+        max_items: u64,
+    ) -> Result<()> {
+        tracing::trace!(
+            "get_row_id_in_range(table_id={}, range_start={})",
+            table_id,
+            start,
+        );
+        let start_id = RowID {
+            table_id,
+            row_id: start,
+        };
+
+        let end_id = RowID {
+            table_id,
+            row_id: u64::MAX,
+        };
+
+        self.rows
+            .range(start_id..end_id)
+            .take(max_items as usize)
+            .for_each(|entry| bucket.push(*entry.key()));
+
+        Ok(())
+    }
+
+    pub fn get_next_row_id_for_table(&self, table_id: u64, start: u64) -> Option<RowID> {
+        tracing::trace!(
+            "getting_next_id_for_table(table_id={}, range_start={})",
+            table_id,
+            start,
+        );
+        let min_bound = RowID {
+            table_id,
+            row_id: start,
+        };
+
+        let max_bound = RowID {
+            table_id,
+            row_id: u64::MAX,
+        };
+
+        self.rows
+            .range(min_bound..max_bound)
+            .next()
+            .map(|entry| *entry.key())
+    }
+
     /// Begins a new transaction in the database.
     ///
     /// This function starts a new transaction in the database and returns a `TxID` value

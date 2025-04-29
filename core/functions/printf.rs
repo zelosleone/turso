@@ -1,12 +1,14 @@
 use crate::types::OwnedValue;
+use crate::vdbe::Register;
 use crate::LimboError;
 
+// TODO: Support %!.3s %i, %x, %X, %o, %e, %E, %c. flags: - + 0 ! ,
 #[inline(always)]
-pub fn exec_printf(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
+pub fn exec_printf(values: &[Register]) -> crate::Result<OwnedValue> {
     if values.is_empty() {
         return Ok(OwnedValue::Null);
     }
-    let format_str = match &values[0] {
+    let format_str = match &values[0].get_owned_value() {
         OwnedValue::Text(t) => t.as_str(),
         _ => return Ok(OwnedValue::Null),
     };
@@ -30,9 +32,10 @@ pub fn exec_printf(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
                 if args_index >= values.len() {
                     return Err(LimboError::InvalidArgument("not enough arguments".into()));
                 }
-                match &values[args_index] {
-                    OwnedValue::Integer(i) => result.push_str(&i.to_string()),
-                    OwnedValue::Float(f) => result.push_str(&f.to_string()),
+                let value = &values[args_index].get_owned_value();
+                match value {
+                    OwnedValue::Integer(_) => result.push_str(&format!("{}", value)),
+                    OwnedValue::Float(_) => result.push_str(&format!("{}", value)),
                     _ => result.push_str("0".into()),
                 }
                 args_index += 1;
@@ -41,10 +44,10 @@ pub fn exec_printf(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
                 if args_index >= values.len() {
                     return Err(LimboError::InvalidArgument("not enough arguments".into()));
                 }
-                match &values[args_index] {
+                match &values[args_index].get_owned_value() {
                     OwnedValue::Text(t) => result.push_str(t.as_str()),
                     OwnedValue::Null => result.push_str("(null)"),
-                    v => result.push_str(&v.to_string()),
+                    v => result.push_str(&format!("{}", v)),
                 }
                 args_index += 1;
             }
@@ -52,9 +55,10 @@ pub fn exec_printf(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
                 if args_index >= values.len() {
                     return Err(LimboError::InvalidArgument("not enough arguments".into()));
                 }
-                match &values[args_index] {
-                    OwnedValue::Float(f) => result.push_str(&f.to_string()),
-                    OwnedValue::Integer(i) => result.push_str(&(*i as f64).to_string()),
+                let value = &values[args_index].get_owned_value();
+                match value {
+                    OwnedValue::Float(f) => result.push_str(&format!("{:.6}", f)),
+                    OwnedValue::Integer(i) => result.push_str(&format!("{:.6}", *i as f64)),
                     _ => result.push_str("0.0".into()),
                 }
                 args_index += 1;
@@ -78,16 +82,16 @@ pub fn exec_printf(values: &[OwnedValue]) -> crate::Result<OwnedValue> {
 mod tests {
     use super::*;
 
-    fn text(value: &str) -> OwnedValue {
-        OwnedValue::build_text(value)
+    fn text(value: &str) -> Register {
+        Register::OwnedValue(OwnedValue::build_text(value))
     }
 
-    fn integer(value: i64) -> OwnedValue {
-        OwnedValue::Integer(value)
+    fn integer(value: i64) -> Register {
+        Register::OwnedValue(OwnedValue::Integer(value))
     }
 
-    fn float(value: f64) -> OwnedValue {
-        OwnedValue::Float(value)
+    fn float(value: f64) -> Register {
+        Register::OwnedValue(OwnedValue::Float(value))
     }
 
     #[test]
@@ -99,7 +103,7 @@ mod tests {
     fn test_printf_basic_string() {
         assert_eq!(
             exec_printf(&[text("Hello World")]).unwrap(),
-            text("Hello World")
+            *text("Hello World").get_owned_value()
         );
     }
 
@@ -118,7 +122,7 @@ mod tests {
             ),
             // String with null value
             (
-                vec![text("Hello, %s!"), OwnedValue::Null],
+                vec![text("Hello, %s!"), Register::OwnedValue(OwnedValue::Null)],
                 text("Hello, (null)!"),
             ),
             // String with number conversion
@@ -127,7 +131,7 @@ mod tests {
             (vec![text("100%% complete")], text("100% complete")),
         ];
         for (input, output) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), output);
+            assert_eq!(exec_printf(&input).unwrap(), *output.get_owned_value());
         }
     }
 
@@ -150,7 +154,7 @@ mod tests {
             ),
         ];
         for (input, output) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), output)
+            assert_eq!(exec_printf(&input).unwrap(), *output.get_owned_value())
         }
     }
 
@@ -158,18 +162,24 @@ mod tests {
     fn test_printf_float_formatting() {
         let test_cases = vec![
             // Basic float formatting
-            (vec![text("Number: %f"), float(42.5)], text("Number: 42.5")),
+            (
+                vec![text("Number: %f"), float(42.5)],
+                text("Number: 42.500000"),
+            ),
             // Negative float
             (
                 vec![text("Number: %f"), float(-42.5)],
-                text("Number: -42.5"),
+                text("Number: -42.500000"),
             ),
             // Integer as float
-            (vec![text("Number: %f"), integer(42)], text("Number: 42")),
+            (
+                vec![text("Number: %f"), integer(42)],
+                text("Number: 42.000000"),
+            ),
             // Multiple floats
             (
                 vec![text("%f + %f = %f"), float(2.5), float(3.5), float(6.0)],
-                text("2.5 + 3.5 = 6"),
+                text("2.500000 + 3.500000 = 6.000000"),
             ),
             // Non-numeric value defaults to 0.0
             (
@@ -179,7 +189,7 @@ mod tests {
         ];
 
         for (input, expected) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), expected);
+            assert_eq!(exec_printf(&input).unwrap(), *expected.get_owned_value());
         }
     }
 
@@ -199,7 +209,7 @@ mod tests {
                     integer(75),
                     float(75.5),
                 ],
-                text("Progress: 75 (75.5%)"),
+                text("Progress: 75 (75.500000%)"),
             ),
             // Complex format
             (
@@ -209,12 +219,12 @@ mod tests {
                     integer(123),
                     float(95.5),
                 ],
-                text("Name: John, ID: 123, Score: 95.5"),
+                text("Name: John, ID: 123, Score: 95.500000"),
             ),
         ];
 
         for (input, expected) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), expected);
+            assert_eq!(exec_printf(&input).unwrap(), *expected.get_owned_value());
         }
     }
 
@@ -256,7 +266,7 @@ mod tests {
         ];
 
         for (input, expected) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), expected);
+            assert_eq!(exec_printf(&input).unwrap(), *expected.get_owned_value());
         }
     }
 }

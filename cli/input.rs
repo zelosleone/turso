@@ -43,7 +43,7 @@ impl Default for Io {
             true => {
                 #[cfg(all(target_os = "linux", feature = "io_uring"))]
                 {
-                    Io::IoUring
+                    Io::Syscall // FIXME: make io_uring faster so it can be the default
                 }
                 #[cfg(any(
                     not(target_os = "linux"),
@@ -81,28 +81,32 @@ pub struct Settings {
     pub echo: bool,
     pub is_stdout: bool,
     pub io: Io,
+    pub tracing_output: Option<String>,
+    pub timer: bool,
 }
 
-impl From<&Opts> for Settings {
-    fn from(opts: &Opts) -> Self {
+impl From<Opts> for Settings {
+    fn from(opts: Opts) -> Self {
         Self {
             null_value: String::new(),
             output_mode: opts.output_mode,
             echo: false,
             is_stdout: opts.output.is_empty(),
-            output_filename: opts.output.clone(),
+            output_filename: opts.output,
             db_file: opts
                 .database
                 .as_ref()
                 .map_or(":memory:".to_string(), |p| p.to_string_lossy().to_string()),
             io: match opts.vfs.as_ref().unwrap_or(&String::new()).as_str() {
-                "memory" => Io::Memory,
+                "memory" | ":memory:" => Io::Memory,
                 "syscall" => Io::Syscall,
                 #[cfg(all(target_os = "linux", feature = "io_uring"))]
                 "io_uring" => Io::IoUring,
                 "" => Io::default(),
                 vfs => Io::External(vfs.to_string()),
             },
+            tracing_output: opts.tracing_output,
+            timer: false,
         }
     }
 }
@@ -168,30 +172,13 @@ pub fn get_io(db_location: DbLocation, io_choice: &str) -> anyhow::Result<Arc<dy
     })
 }
 
-pub const HELP_MSG: &str = r#"
+pub const BEFORE_HELP_MSG: &str = r#"
+
 Limbo SQL Shell Help
 ==============
 Welcome to the Limbo SQL Shell! You can execute any standard SQL command here.
-In addition to standard SQL commands, the following special commands are available:
-
-Special Commands:
------------------
-.quit                      Stop interpreting input stream and exit
-.show                      Display current settings
-.open <database_file>      Open and connect to a database file
-.mode <mode>               Change the output mode. Available modes are 'list' and 'pretty'
-.schema <table_name>       Show the schema of the specified table
-.tables <pattern>          List names of tables matching LIKE pattern TABLE
-.opcodes                   Display all the opcodes defined by the virtual machine
-.cd <directory>            Change the current working directory
-.nullvalue <string>        Set the value to be displayed for null values
-.echo on|off               Toggle echo mode to repeat commands before execution
-.import --csv FILE TABLE   Import csv data from FILE into TABLE
-.dump                      Output database contents as SQL
-.load                      Load an extension library
-.help                      Display this help message
-
-Usage Examples:
+In addition to standard SQL commands, the following special commands are available:"#;
+pub const AFTER_HELP_MSG: &str = r#"Usage Examples:
 ---------------
 1. To quit the Limbo SQL Shell:
    .quit
@@ -229,6 +216,11 @@ Usage Examples:
 12. To load an extension library:
    .load /target/debug/liblimbo_regexp
 
+13. To list all available VFS:
+   .listvfs
+14. To show names of indexes:
+   .indexes ?TABLE?
+
 Note:
 - All SQL commands must end with a semicolon (;).
-- Special commands do not require a semicolon."#;
+- Special commands start with a dot (.) and are not required to end with a semicolon."#;

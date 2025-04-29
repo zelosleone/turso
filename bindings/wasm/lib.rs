@@ -1,5 +1,5 @@
 use js_sys::{Array, Object};
-use limbo_core::{maybe_init_database_file, OpenFlags, Pager, Result, WalFileShared};
+use limbo_core::{maybe_init_database_file, Clock, Instant, OpenFlags, Result};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -17,22 +17,10 @@ impl Database {
     #[wasm_bindgen(constructor)]
     pub fn new(path: &str) -> Database {
         let io: Arc<dyn limbo_core::IO> = Arc::new(PlatformIO { vfs: VFS::new() });
-        let file = io
-            .open_file(path, limbo_core::OpenFlags::Create, false)
-            .unwrap();
+        let file = io.open_file(path, OpenFlags::Create, false).unwrap();
         maybe_init_database_file(&file, &io).unwrap();
-        let page_io = Arc::new(DatabaseStorage::new(file));
-        let db_header = Pager::begin_open(page_io.clone()).unwrap();
-
-        // ensure db header is there
-        io.run_once().unwrap();
-
-        let page_size = db_header.lock().page_size;
-
-        let wal_path = format!("{}-wal", path);
-        let wal_shared = WalFileShared::open_shared(&io, wal_path.as_str(), page_size).unwrap();
-
-        let db = limbo_core::Database::open(io, page_io, wal_shared, false).unwrap();
+        let db_file = Arc::new(DatabaseFile::new(file));
+        let db = limbo_core::Database::open(io, path, db_file, false).unwrap();
         let conn = db.connect().unwrap();
         Database { db, conn }
     }
@@ -191,7 +179,6 @@ fn to_js_value(value: &limbo_core::OwnedValue) -> JsValue {
         limbo_core::OwnedValue::Float(f) => JsValue::from(*f),
         limbo_core::OwnedValue::Text(t) => JsValue::from_str(t.as_str()),
         limbo_core::OwnedValue::Blob(b) => js_sys::Uint8Array::from(b.as_slice()).into(),
-        _ => unreachable!(),
     }
 }
 
@@ -270,6 +257,18 @@ pub struct PlatformIO {
 unsafe impl Send for PlatformIO {}
 unsafe impl Sync for PlatformIO {}
 
+impl Clock for PlatformIO {
+    fn now(&self) -> Instant {
+        let date = Date::new();
+        let ms_since_epoch = date.getTime();
+
+        Instant {
+            secs: (ms_since_epoch / 1000.0) as i64,
+            micros: ((ms_since_epoch % 1000.0) * 1000.0) as u32,
+        }
+    }
+}
+
 impl limbo_core::IO for PlatformIO {
     fn open_file(
         &self,
@@ -293,9 +292,8 @@ impl limbo_core::IO for PlatformIO {
         (random_f64 * i64::MAX as f64) as i64
     }
 
-    fn get_current_time(&self) -> String {
-        let date = Date::new();
-        date.toISOString()
+    fn get_memory_io(&self) -> Arc<limbo_core::MemoryIO> {
+        Arc::new(limbo_core::MemoryIO::new())
     }
 }
 
@@ -313,21 +311,25 @@ extern "C" {
 
     #[wasm_bindgen(method, getter)]
     fn toISOString(this: &Date) -> String;
+
+    #[wasm_bindgen(method)]
+    fn getTime(this: &Date) -> f64;
 }
 
-pub struct DatabaseStorage {
+pub struct DatabaseFile {
     file: Arc<dyn limbo_core::File>,
 }
-unsafe impl Send for DatabaseStorage {}
-unsafe impl Sync for DatabaseStorage {}
 
-impl DatabaseStorage {
+unsafe impl Send for DatabaseFile {}
+unsafe impl Sync for DatabaseFile {}
+
+impl DatabaseFile {
     pub fn new(file: Arc<dyn limbo_core::File>) -> Self {
         Self { file }
     }
 }
 
-impl limbo_core::DatabaseStorage for DatabaseStorage {
+impl limbo_core::DatabaseStorage for DatabaseFile {
     fn read_page(&self, page_idx: usize, c: limbo_core::Completion) -> Result<()> {
         let r = match c {
             limbo_core::Completion::Read(ref r) => r,
