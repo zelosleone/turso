@@ -33,7 +33,7 @@ fuzz = []
 io-uring = { version = "0.7.5", optional = true }
 
 [target.'cfg(target_family = "unix")'.dependencies]
-polling = "3.7.2"
+polling = "3.7.4"
 rustix = "0.38.34"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
