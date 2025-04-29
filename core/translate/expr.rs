@@ -1,8 +1,12 @@
 use limbo_sqlite3_parser::ast::{self, UnaryOperator};
 
+use super::emitter::Resolver;
+use super::optimizer::Optimizable;
+use super::plan::{Operation, TableReference};
 #[cfg(feature = "json")]
 use crate::function::JsonFunc;
 use crate::function::{Func, FuncCtx, MathFuncArity, ScalarFunc, VectorFunc};
+use crate::functions::datetime;
 use crate::schema::{Table, Type};
 use crate::util::{exprs_are_equivalent, normalize_ident};
 use crate::vdbe::{
@@ -11,10 +15,6 @@ use crate::vdbe::{
     BranchOffset,
 };
 use crate::Result;
-
-use super::emitter::Resolver;
-use super::optimizer::Optimizable;
-use super::plan::{Operation, TableReference};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ConditionMetadata {
@@ -2020,9 +2020,27 @@ pub fn translate_expr(
                 });
                 Ok(target_register)
             }
-            ast::Literal::CurrentDate => todo!(),
-            ast::Literal::CurrentTime => todo!(),
-            ast::Literal::CurrentTimestamp => todo!(),
+            ast::Literal::CurrentDate => {
+                program.emit_insn(Insn::String8 {
+                    value: datetime::exec_date(&[]).to_string(),
+                    dest: target_register,
+                });
+                Ok(target_register)
+            }
+            ast::Literal::CurrentTime => {
+                program.emit_insn(Insn::String8 {
+                    value: datetime::exec_time(&[]).to_string(),
+                    dest: target_register,
+                });
+                Ok(target_register)
+            }
+            ast::Literal::CurrentTimestamp => {
+                program.emit_insn(Insn::String8 {
+                    value: datetime::exec_datetime_full(&[]).to_string(),
+                    dest: target_register,
+                });
+                Ok(target_register)
+            }
         },
         ast::Expr::Name(_) => todo!(),
         ast::Expr::NotNull(_) => todo!(),
