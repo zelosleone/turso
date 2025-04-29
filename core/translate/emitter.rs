@@ -686,7 +686,7 @@ fn emit_update_insns(
 
             // don't emit null for pkey of virtual tables. they require first two args
             // before the 'record' to be explicitly non-null
-            if table_column.primary_key && !is_virtual {
+            if table_column.is_rowid_alias && !is_virtual {
                 program.emit_null(target_reg, None);
             } else if is_virtual {
                 program.emit_insn(Insn::VColumn {
