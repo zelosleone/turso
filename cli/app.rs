@@ -558,11 +558,13 @@ impl Limbo {
             }
             Ok(cmd) => match cmd.command {
                 Command::Exit(args) => {
+                    self.save_history();
                     std::process::exit(args.code);
                 }
                 Command::Quit => {
                     let _ = self.writeln("Exiting Limbo SQL Shell.");
                     let _ = self.close_conn();
+                    self.save_history();
                     std::process::exit(0)
                 }
                 Command::Open(args) => {
@@ -1062,12 +1064,16 @@ impl Limbo {
             Ok(input)
         }
     }
+
+    fn save_history(&mut self) {
+        if let Some(rl) = &mut self.rl {
+            let _ = rl.save_history(HISTORY_FILE.as_path());
+        }
+    }
 }
 
 impl Drop for Limbo {
     fn drop(&mut self) {
-        if let Some(rl) = &mut self.rl {
-            let _ = rl.save_history(HISTORY_FILE.as_path());
-        }
+        self.save_history()
     }
 }
