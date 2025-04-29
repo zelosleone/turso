@@ -37,7 +37,7 @@ polling = "3.7.4"
 rustix = "1.0.5"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-mimalloc = { version = "0.1", default-features = false }
+mimalloc = { version = "0.1.46", default-features = false }
 libloading = "0.8.6"
 
 [dependencies]
