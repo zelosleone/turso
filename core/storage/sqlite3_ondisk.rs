@@ -117,7 +117,7 @@ pub struct DatabaseHeader {
     pub freelist_pages: u32,
 
     /// The schema cookie. Incremented when the database schema changes.
-    schema_cookie: u32,
+    pub schema_cookie: u32,
 
     /// The schema format number. Supported formats are 1, 2, 3, and 4.
     schema_format: u32,
