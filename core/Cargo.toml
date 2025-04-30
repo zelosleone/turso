@@ -34,7 +34,7 @@ io-uring = { version = "0.7.5", optional = true }
 
 [target.'cfg(target_family = "unix")'.dependencies]
 polling = "3.7.4"
-rustix = "1.0.5"
+rustix = { version = "1.0.5", features = ["fs"]}
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 mimalloc = { version = "0.1.46", default-features = false }
