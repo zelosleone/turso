@@ -297,4 +297,8 @@ impl Row {
             limbo_core::OwnedValue::Blob(items) => Ok(Value::Blob(items.to_vec())),
         }
     }
+
+    pub fn column_count(&self) -> usize {
+        self.values.len()
+    }
 }
