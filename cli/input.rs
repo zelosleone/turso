@@ -218,6 +218,8 @@ pub const AFTER_HELP_MSG: &str = r#"Usage Examples:
 
 13. To list all available VFS:
    .listvfs
+14. To show names of indexes:
+   .indexes ?TABLE?
 
 Note:
 - All SQL commands must end with a semicolon (;).

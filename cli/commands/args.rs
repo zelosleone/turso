@@ -4,6 +4,12 @@ use clap_complete::{ArgValueCompleter, CompletionCandidate, PathCompleter};
 use crate::{input::OutputMode, opcodes_dictionary::OPCODE_DESCRIPTIONS};
 
 #[derive(Debug, Clone, Args)]
+pub struct IndexesArgs {
+    /// Name of table
+    pub tbl_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct ExitArgs {
     /// Exit code
     #[arg(default_value_t = 0)]

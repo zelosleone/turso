@@ -903,6 +903,26 @@ impl ImmutableRecord {
     }
 }
 
+impl Display for ImmutableRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for value in &self.values {
+            match value {
+                RefValue::Null => write!(f, "NULL")?,
+                RefValue::Integer(i) => write!(f, "Integer({})", *i)?,
+                RefValue::Float(flo) => write!(f, "Float({})", *flo)?,
+                RefValue::Text(text_ref) => write!(f, "Text({})", text_ref.as_str())?,
+                RefValue::Blob(raw_slice) => {
+                    write!(f, "Blob({})", String::from_utf8_lossy(raw_slice.to_slice()))?
+                }
+            }
+            if value != self.values.last().unwrap() {
+                write!(f, ", ")?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Clone for ImmutableRecord {
     fn clone(&self) -> Self {
         let mut new_values = Vec::new();
@@ -1402,6 +1422,7 @@ impl SeekOp {
     /// A seek with SeekOp::LE implies:
     /// Find the last table/index key that compares less than or equal to the seek key
     /// -> used in backwards iteration.
+    #[inline(always)]
     pub fn iteration_direction(&self) -> IterationDirection {
         match self {
             SeekOp::EQ | SeekOp::GE | SeekOp::GT => IterationDirection::Forwards,

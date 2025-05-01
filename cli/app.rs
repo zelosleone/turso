@@ -558,11 +558,13 @@ impl Limbo {
             }
             Ok(cmd) => match cmd.command {
                 Command::Exit(args) => {
+                    self.save_history();
                     std::process::exit(args.code);
                 }
                 Command::Quit => {
                     let _ = self.writeln("Exiting Limbo SQL Shell.");
                     let _ = self.close_conn();
+                    self.save_history();
                     std::process::exit(0)
                 }
                 Command::Open(args) => {
@@ -640,6 +642,11 @@ impl Limbo {
                     self.conn.list_vfs().iter().for_each(|v| {
                         let _ = self.writeln(v);
                     });
+                }
+                Command::ListIndexes(args) => {
+                    if let Err(e) = self.display_indexes(args.tbl_name) {
+                        let _ = self.writeln(e.to_string());
+                    }
                 }
                 Command::Timer(timer_mode) => {
                     self.opts.timer = match timer_mode.mode {
@@ -916,6 +923,55 @@ impl Limbo {
         Ok(())
     }
 
+    fn display_indexes(&mut self, maybe_table: Option<String>) -> anyhow::Result<()> {
+        let sql = match maybe_table {
+            Some(ref tbl_name) => format!(
+                "SELECT name FROM sqlite_schema WHERE type='index' AND tbl_name = '{}' ORDER BY 1",
+                tbl_name
+            ),
+            None => String::from("SELECT name FROM sqlite_schema WHERE type='index' ORDER BY 1"),
+        };
+
+        match self.conn.query(&sql) {
+            Ok(Some(ref mut rows)) => {
+                let mut indexes = String::new();
+                loop {
+                    match rows.step()? {
+                        StepResult::Row => {
+                            let row = rows.row().unwrap();
+                            if let Ok(OwnedValue::Text(idx)) = row.get::<&OwnedValue>(0) {
+                                indexes.push_str(idx.as_str());
+                                indexes.push(' ');
+                            }
+                        }
+                        StepResult::IO => {
+                            self.io.run_once()?;
+                        }
+                        StepResult::Interrupt => break,
+                        StepResult::Done => break,
+                        StepResult::Busy => {
+                            let _ = self.writeln("database is busy");
+                            break;
+                        }
+                    }
+                }
+                if !indexes.is_empty() {
+                    let _ = self.writeln(indexes.trim_end());
+                }
+            }
+            Err(err) => {
+                if err.to_string().contains("no such table: sqlite_schema") {
+                    return Err(anyhow::anyhow!("Unable to access database schema. The database may be using an older SQLite version or may not be properly initialized."));
+                } else {
+                    return Err(anyhow::anyhow!("Error querying schema: {}", err));
+                }
+            }
+            Ok(None) => {}
+        }
+
+        Ok(())
+    }
+
     fn display_tables(&mut self, pattern: Option<&str>) -> anyhow::Result<()> {
         let sql = match pattern {
             Some(pattern) => format!(
@@ -1008,12 +1064,16 @@ impl Limbo {
             Ok(input)
         }
     }
+
+    fn save_history(&mut self) {
+        if let Some(rl) = &mut self.rl {
+            let _ = rl.save_history(HISTORY_FILE.as_path());
+        }
+    }
 }
 
 impl Drop for Limbo {
     fn drop(&mut self) {
-        if let Some(rl) = &mut self.rl {
-            let _ = rl.save_history(HISTORY_FILE.as_path());
-        }
+        self.save_history()
     }
 }
