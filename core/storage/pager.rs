@@ -257,7 +257,7 @@ impl Pager {
     /// In other words, if the page size is 512, then the reserved space size cannot exceed 32.
     pub fn usable_space(&self) -> usize {
         let db_header = self.db_header.lock();
-        (db_header.page_size - db_header.reserved_space as u16) as usize
+        (db_header.get_page_size() - db_header.reserved_space as u32) as usize
     }
 
     #[inline(always)]
@@ -685,7 +685,7 @@ impl Pager {
 
     pub fn usable_size(&self) -> usize {
         let db_header = self.db_header.lock();
-        (db_header.page_size - db_header.reserved_space as u16) as usize
+        (db_header.get_page_size() - db_header.reserved_space as u32) as usize
     }
 }
 

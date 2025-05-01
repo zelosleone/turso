@@ -96,7 +96,7 @@ pub struct Database {
     header: Arc<SpinLock<DatabaseHeader>>,
     db_file: Arc<dyn DatabaseStorage>,
     io: Arc<dyn IO>,
-    page_size: u16,
+    page_size: u32,
     // Shared structures of a Database are the parts that are common to multiple threads that might
     // create DB connections.
     shared_page_cache: Arc<RwLock<DumbLruPageCache>>,
@@ -126,7 +126,7 @@ impl Database {
         // ensure db header is there
         io.run_once()?;
 
-        let page_size = db_header.lock().page_size;
+        let page_size = db_header.lock().get_page_size();
         let wal_path = format!("{}-wal", path);
         let shared_wal = WalFileShared::open_shared(&io, wal_path.as_str(), page_size)?;
 
@@ -181,7 +181,7 @@ impl Database {
 
         let wal = Rc::new(RefCell::new(WalFile::new(
             self.io.clone(),
-            self.page_size as usize,
+            self.page_size,
             self.shared_wal.clone(),
             buffer_pool.clone(),
         )));
@@ -244,7 +244,7 @@ pub fn maybe_init_database_file(file: &Arc<dyn File>, io: &Arc<dyn IO>) -> Resul
         let db_header = DatabaseHeader::default();
         let page1 = allocate_page(
             1,
-            &Rc::new(BufferPool::new(db_header.page_size as usize)),
+            &Rc::new(BufferPool::new(db_header.get_page_size() as usize)),
             DATABASE_HEADER_SIZE,
         );
         {
@@ -256,7 +256,7 @@ pub fn maybe_init_database_file(file: &Arc<dyn File>, io: &Arc<dyn IO>) -> Resul
                 &page1,
                 storage::sqlite3_ondisk::PageType::TableLeaf,
                 DATABASE_HEADER_SIZE,
-                db_header.page_size - db_header.reserved_space as u16,
+                (db_header.get_page_size() - db_header.reserved_space as u32) as u16,
             );
 
             let contents = page1.get().contents.as_mut().unwrap();

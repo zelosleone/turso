@@ -65,10 +65,18 @@ pub const DATABASE_HEADER_SIZE: usize = 100;
 // DEFAULT_CACHE_SIZE negative values mean that we store the amount of pages a XKiB of memory can hold.
 // We can calculate "real" cache size by diving by page size.
 const DEFAULT_CACHE_SIZE: i32 = -2000;
-// The size of db page in bytes.
-const DEFAULT_PAGE_SIZE: u16 = 4096;
+
 // Minimum number of pages that cache can hold.
 pub const MIN_PAGE_CACHE_SIZE: usize = 10;
+
+/// The minimum page size in bytes.
+const MIN_PAGE_SIZE: u32 = 512;
+
+/// The maximum page size in bytes.
+const MAX_PAGE_SIZE: u32 = 65536;
+
+/// The default page size in bytes.
+const DEFAULT_PAGE_SIZE: u16 = 4096;
 
 /// The database header.
 /// The first 100 bytes of the database file comprise the database file header.
@@ -81,7 +89,7 @@ pub struct DatabaseHeader {
 
     /// The database page size in bytes. Must be a power of two between 512 and 32768 inclusive,
     /// or the value 1 representing a page size of 65536.
-    pub page_size: u16,
+    page_size: u16,
 
     /// File format write version. 1 for legacy; 2 for WAL.
     write_version: u8,
@@ -172,7 +180,7 @@ pub struct WalHeader {
     /// WAL format version. Currently 3007000
     pub file_format: u32,
 
-    /// Database page size in bytes. Power of two between 512 and 32768 inclusive
+    /// Database page size in bytes. Power of two between 512 and 65536 inclusive
     pub page_size: u32,
 
     /// Checkpoint sequence number. Increases with each checkpoint
@@ -243,6 +251,28 @@ impl Default for DatabaseHeader {
             reserved_for_expansion: [0; 20],
             version_valid_for: 3047000,
             version_number: 3047000,
+        }
+    }
+}
+
+impl DatabaseHeader {
+    pub fn update_page_size(&mut self, size: u32) {
+        if !(MIN_PAGE_SIZE..=MAX_PAGE_SIZE).contains(&size) || (size & (size - 1) != 0) {
+            return;
+        }
+
+        self.page_size = if size == MAX_PAGE_SIZE {
+            1u16
+        } else {
+            size as u16
+        };
+    }
+
+    pub fn get_page_size(&self) -> u32 {
+        if self.page_size == 1 {
+            MAX_PAGE_SIZE
+        } else {
+            self.page_size as u32
         }
     }
 }

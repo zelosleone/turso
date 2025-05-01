@@ -261,7 +261,7 @@ fn query_pragma(
             program.emit_result_row(register, 1);
         }
         PragmaName::PageSize => {
-            program.emit_int(database_header.lock().page_size.into(), register);
+            program.emit_int(database_header.lock().get_page_size().into(), register);
             program.emit_result_row(register, 1);
         }
     }
