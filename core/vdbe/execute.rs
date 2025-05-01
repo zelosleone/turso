@@ -4362,6 +4362,7 @@ pub fn op_read_cookie(
     }
     let cookie_value = match cookie {
         Cookie::UserVersion => pager.db_header.lock().user_version.into(),
+        Cookie::SchemaVersion => pager.db_header.lock().schema_cookie.into(),
         cookie => todo!("{cookie:?} is not yet implement for ReadCookie"),
     };
     state.registers[*dest] = Register::OwnedValue(OwnedValue::Integer(cookie_value));
