@@ -554,7 +554,7 @@ fn emit_program_for_update(
         OperationMode::UPDATE,
     )?;
     // Open indexes for update.
-    let mut index_cursors = vec![];
+    let mut index_cursors = Vec::with_capacity(plan.indexes_to_update.len());
     // TODO: do not reopen if there is table reference using it.
     for index in &plan.indexes_to_update {
         let index_cursor = program.alloc_cursor_id(

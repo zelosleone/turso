@@ -183,19 +183,20 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         .map(|l| parse_limit(l))
         .unwrap_or(Ok((None, None)))?;
 
-    let mut indexes_to_update = vec![];
+    // Check what indexes will need to be updated by checking set_clauses and see
+    // if a column is contained in an index.
     let indexes = schema.get_indices(&table_name.0);
-    for (set_column_index, _) in &set_clauses {
-        if let Some(index) = indexes.iter().find(|index| {
-            index
-                .columns
-                .iter()
-                .find(|column| column.pos_in_table == *set_column_index)
-                .is_some()
-        }) {
-            indexes_to_update.push(index.clone());
-        }
-    }
+    let indexes_to_update = indexes
+        .iter()
+        .filter(|index| {
+            index.columns.iter().any(|index_column| {
+                set_clauses
+                    .iter()
+                    .any(|(set_index_column, _)| index_column.pos_in_table == *set_index_column)
+            })
+        })
+        .cloned()
+        .collect();
 
     Ok(Plan::Update(UpdatePlan {
         table_references,
