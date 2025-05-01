@@ -183,6 +183,20 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         .map(|l| parse_limit(l))
         .unwrap_or(Ok((None, None)))?;
 
+    let mut indexes_to_update = vec![];
+    let indexes = schema.get_indices(&table_name.0);
+    for (set_column_index, _) in &set_clauses {
+        if let Some(index) = indexes.iter().find(|index| {
+            index
+                .columns
+                .iter()
+                .find(|column| column.pos_in_table == *set_column_index)
+                .is_some()
+        }) {
+            indexes_to_update.push(index.clone());
+        }
+    }
+
     Ok(Plan::Update(UpdatePlan {
         table_references,
         set_clauses,
@@ -192,5 +206,6 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         limit,
         offset,
         contains_constant_false_condition: false,
+        indexes_to_update,
     }))
 }

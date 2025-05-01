@@ -315,6 +315,7 @@ pub struct UpdatePlan {
     pub returning: Option<Vec<ResultSetColumn>>,
     // whether the WHERE clause is always false
     pub contains_constant_false_condition: bool,
+    pub indexes_to_update: Vec<Arc<Index>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

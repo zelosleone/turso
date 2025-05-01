@@ -10,8 +10,8 @@ use crate::function::Func;
 use crate::schema::Index;
 use crate::translate::plan::{DeletePlan, Plan, Search};
 use crate::util::exprs_are_equivalent;
-use crate::vdbe::builder::ProgramBuilder;
-use crate::vdbe::insn::RegisterOrLiteral;
+use crate::vdbe::builder::{CursorType, ProgramBuilder};
+use crate::vdbe::insn::{IdxInsertFlags, RegisterOrLiteral};
 use crate::vdbe::{insn::Insn, BranchOffset};
 use crate::{Result, SymbolTable};
 
@@ -546,19 +546,34 @@ fn emit_program_for_update(
             target_pc: after_main_loop_label,
         });
     }
+
     init_loop(
         program,
         &mut t_ctx,
         &plan.table_references,
         OperationMode::UPDATE,
     )?;
+    // Open indexes for update.
+    let mut index_cursors = vec![];
+    // TODO: do not reopen if there is table reference using it.
+    for index in &plan.indexes_to_update {
+        let index_cursor = program.alloc_cursor_id(
+            Some(index.table_name.clone()),
+            CursorType::BTreeIndex(index.clone()),
+        );
+        program.emit_insn(Insn::OpenWrite {
+            cursor_id: index_cursor,
+            root_page: RegisterOrLiteral::Literal(index.root_page),
+        });
+        index_cursors.push(index_cursor);
+    }
     open_loop(
         program,
         &mut t_ctx,
         &plan.table_references,
         &plan.where_clause,
     )?;
-    emit_update_insns(&plan, &t_ctx, program)?;
+    emit_update_insns(&plan, &t_ctx, program, index_cursors)?;
     close_loop(program, &mut t_ctx, &plan.table_references)?;
     program.preassign_label_to_next_insn(after_main_loop_label);
 
@@ -573,6 +588,7 @@ fn emit_update_insns(
     plan: &UpdatePlan,
     t_ctx: &TranslateCtx,
     program: &mut ProgramBuilder,
+    index_cursors: Vec<usize>,
 ) -> crate::Result<()> {
     let table_ref = &plan.table_references.first().unwrap();
     let loop_labels = t_ctx.labels_main_loop.first().unwrap();
@@ -663,6 +679,46 @@ fn emit_update_insns(
         )?;
     }
 
+    // Update indexes first. Columns that are updated will be translated from an expression and those who aren't modified will be
+    // read from table. Mutiple value index key could be updated partially.
+    for (index, index_cursor) in plan.indexes_to_update.iter().zip(index_cursors) {
+        let index_record_reg_count = index.columns.len() + 1;
+        let index_record_reg_start = program.alloc_registers(index_record_reg_count);
+        for (idx, column) in index.columns.iter().enumerate() {
+            if let Some((_, expr)) = plan.set_clauses.iter().find(|(i, _)| *i == idx) {
+                translate_expr(
+                    program,
+                    Some(&plan.table_references),
+                    expr,
+                    index_record_reg_start + idx,
+                    &t_ctx.resolver,
+                )?;
+            } else {
+                program.emit_insn(Insn::Column {
+                    cursor_id: cursor_id,
+                    column: column.pos_in_table,
+                    dest: index_record_reg_start + idx,
+                });
+            }
+        }
+        program.emit_insn(Insn::RowId {
+            cursor_id: cursor_id,
+            dest: index_record_reg_start + index.columns.len(),
+        });
+        let index_record_reg = program.alloc_register();
+        program.emit_insn(Insn::MakeRecord {
+            start_reg: index_record_reg_start,
+            count: index_record_reg_count,
+            dest_reg: index_record_reg,
+        });
+        program.emit_insn(Insn::IdxInsert {
+            cursor_id: index_cursor,
+            record_reg: index_record_reg,
+            unpacked_start: Some(index_record_reg_start),
+            unpacked_count: Some(index_record_reg_count as u16),
+            flags: IdxInsertFlags::new(),
+        });
+    }
     // we scan a column at a time, loading either the column's values, or the new value
     // from the Set expression, into registers so we can emit a MakeRecord and update the row.
     let start = if is_virtual { beg + 2 } else { beg + 1 };
