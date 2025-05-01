@@ -393,6 +393,42 @@ fn test_write_delete_with_index() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn test_update_with_index() -> anyhow::Result<()> {
+    let _ = env_logger::try_init();
+
+    maybe_setup_tracing();
+
+    let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE test (x REAL PRIMARY KEY, y TEXT);");
+    let conn = tmp_db.connect_limbo();
+
+    run_query(&tmp_db, &conn, "INSERT INTO test VALUES (1.0, 'foo')")?;
+    run_query(&tmp_db, &conn, "INSERT INTO test VALUES (2.0, 'bar')")?;
+
+    run_query_on_row(&tmp_db, &conn, "SELECT * from test WHERE x=10.0", |row| {
+        assert_eq!(row.get::<f64>(0).unwrap(), 1.0);
+    })?;
+    run_query(&tmp_db, &conn, "UPDATE test SET x=10.0 WHERE x=1.0")?;
+    run_query_on_row(&tmp_db, &conn, "SELECT * from test WHERE x=10.0", |row| {
+        assert_eq!(row.get::<f64>(0).unwrap(), 10.0);
+    })?;
+
+    let mut count_1 = 0;
+    let mut count_10 = 0;
+    run_query_on_row(&tmp_db, &conn, "SELECT * from test", |row| {
+        let v = row.get::<f64>(0).unwrap();
+        if v == 1.0 {
+            count_1 += 1;
+        } else if v == 10.0 {
+            count_10 += 1;
+        }
+    })?;
+    assert_eq!(count_1, 0, "1.0 shouldn't be inside table");
+    assert_eq!(count_10, 1, "10.0 should have existed");
+
+    Ok(())
+}
+
 fn run_query(tmp_db: &TempDatabase, conn: &Rc<Connection>, query: &str) -> anyhow::Result<()> {
     run_query_core(tmp_db, conn, query, None::<fn(&Row)>)
 }

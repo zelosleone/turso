@@ -623,6 +623,15 @@ impl<'a> FromValueRow<'a> for i64 {
     }
 }
 
+impl<'a> FromValueRow<'a> for f64 {
+    fn from_value(value: &'a OwnedValue) -> Result<Self> {
+        match value {
+            OwnedValue::Float(f) => Ok(*f),
+            _ => Err(LimboError::ConversionError("Expected integer value".into())),
+        }
+    }
+}
+
 impl<'a> FromValueRow<'a> for String {
     fn from_value(value: &'a OwnedValue) -> Result<Self> {
         match value {
