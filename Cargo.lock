@@ -1726,6 +1726,7 @@ dependencies = [
 name = "limbo_core"
 version = "0.0.19"
 dependencies = [
+ "bitflags 2.9.0",
  "built",
  "cfg_block",
  "chrono",

@@ -19,11 +19,15 @@ unsafe impl Sync for WindowsIO {}
 impl IO for WindowsIO {
     fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>> {
         trace!("open_file(path = {})", path);
-        let file = std::fs::File::options()
-            .read(true)
-            .write(true)
-            .create(matches!(flags, OpenFlags::Create))
-            .open(path)?;
+        let mut file = std::fs::File::options();
+        file.read(true);
+
+        if !flags.contains(OpenFlags::ReadOnly) {
+            file.write(true);
+            file.create(flags.contains(OpenFlags::Create));
+        }
+
+        let file = file.open(path)?;
         Ok(Arc::new(WindowsFile {
             file: RefCell::new(file),
         }))

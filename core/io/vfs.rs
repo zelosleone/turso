@@ -24,7 +24,7 @@ impl IO for VfsMod {
         })?;
         let ctx = self.ctx as *mut c_void;
         let vfs = unsafe { &*self.ctx };
-        let file = unsafe { (vfs.open)(ctx, c_path.as_ptr(), flags.to_flags(), direct) };
+        let file = unsafe { (vfs.open)(ctx, c_path.as_ptr(), flags.0, direct) };
         if file.is_null() {
             return Err(LimboError::ExtensionError("File not found".to_string()));
         }
