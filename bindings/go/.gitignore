@@ -1,0 +1,7 @@
+# Ignore generated libraries directory
+/libs/
+
+# Ignore any extracted libraries in development
+*.dll
+*.so
+*.dylib
