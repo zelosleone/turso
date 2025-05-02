@@ -20,7 +20,6 @@ use crate::{
     LimboError, Result,
 };
 
-#[cfg(debug_assertions)]
 use std::collections::HashSet;
 use std::{
     cell::{Cell, Ref, RefCell},
@@ -367,6 +366,7 @@ pub struct BTreeCursor {
     pub index_key_sort_order: IndexKeySortOrder,
     /// Maintain count of the number of records in the btree. Used for the `Count` opcode
     count: usize,
+    rowid_seen: HashSet<u64>,
 }
 
 impl BTreeCursor {
@@ -393,6 +393,7 @@ impl BTreeCursor {
             empty_record: Cell::new(true),
             index_key_sort_order: IndexKeySortOrder::default(),
             count: 0,
+            rowid_seen: HashSet::new(),
         }
     }
 
@@ -834,6 +835,11 @@ impl BTreeCursor {
                         )?
                     };
                     self.stack.advance();
+                    if self.rowid_seen.contains(_rowid) {
+                        continue;
+                    } else {
+                        self.rowid_seen.insert(*_rowid);
+                    }
                     return Ok(CursorResult::Ok(Some(*_rowid)));
                 }
                 BTreeCell::IndexInteriorCell(IndexInteriorCell {
@@ -899,6 +905,11 @@ impl BTreeCursor {
                             Some(RefValue::Integer(rowid)) => *rowid as u64,
                             _ => unreachable!("index cells should have an integer rowid"),
                         };
+                        if self.rowid_seen.contains(&rowid) {
+                            continue;
+                        } else {
+                            self.rowid_seen.insert(rowid);
+                        }
                         return Ok(CursorResult::Ok(Some(rowid)));
                     } else {
                         continue;
@@ -959,6 +970,11 @@ impl BTreeCursor {
                             Some(RefValue::Integer(rowid)) => *rowid as u64,
                             _ => unreachable!("index cells should have an integer rowid"),
                         };
+                        if self.rowid_seen.contains(&rowid) {
+                            continue;
+                        } else {
+                            self.rowid_seen.insert(rowid);
+                        }
                         return Ok(CursorResult::Ok(Some(rowid)));
                     } else {
                         continue;
@@ -3424,6 +3440,7 @@ impl BTreeCursor {
     }
 
     pub fn rewind(&mut self) -> Result<CursorResult<()>> {
+        self.rowid_seen.clear();
         if self.mv_cursor.is_some() {
             let rowid = return_if_io!(self.get_next_record(None));
             self.rowid.replace(rowid);
