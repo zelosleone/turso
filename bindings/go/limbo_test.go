@@ -9,8 +9,10 @@ import (
 	_ "github.com/tursodatabase/limbo"
 )
 
-var conn *sql.DB
-var connErr error
+var (
+	conn    *sql.DB
+	connErr error
+)
 
 func TestMain(m *testing.M) {
 	conn, connErr = sql.Open("sqlite3", ":memory:")
@@ -59,7 +61,7 @@ func TestQuery(t *testing.T) {
 			t.Errorf("Expected column %d to be %s, got %s", i, expectedCols[i], col)
 		}
 	}
-	var i = 1
+	i := 1
 	for rows.Next() {
 		var a int
 		var b string
@@ -78,7 +80,6 @@ func TestQuery(t *testing.T) {
 	if err = rows.Err(); err != nil {
 		t.Fatalf("Row iteration error: %v", err)
 	}
-
 }
 
 func TestFunctions(t *testing.T) {
@@ -278,6 +279,81 @@ func TestDriverRowsErrorMessages(t *testing.T) {
 		t.Fatalf("expected error scanning wrong type: %v", err)
 	}
 	t.Log("Rows error behavior test passed")
+}
+
+func TestTransaction(t *testing.T) {
+	// Open database connection
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("Error opening database: %v", err)
+	}
+	defer db.Close()
+
+	// Create a test table
+	_, err = db.Exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)")
+	if err != nil {
+		t.Fatalf("Error creating table: %v", err)
+	}
+
+	// Insert initial data
+	_, err = db.Exec("INSERT INTO test (id, name) VALUES (1, 'Initial')")
+	if err != nil {
+		t.Fatalf("Error inserting initial data: %v", err)
+	}
+
+	// Begin a transaction
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("Error starting transaction: %v", err)
+	}
+
+	// Insert data within the transaction
+	_, err = tx.Exec("INSERT INTO test (id, name) VALUES (2, 'Transaction')")
+	if err != nil {
+		t.Fatalf("Error inserting data in transaction: %v", err)
+	}
+
+	// Commit the transaction
+	err = tx.Commit()
+	if err != nil {
+		t.Fatalf("Error committing transaction: %v", err)
+	}
+
+	// Verify both rows are visible after commit
+	rows, err := db.Query("SELECT id, name FROM test ORDER BY id")
+	if err != nil {
+		t.Fatalf("Error querying data after commit: %v", err)
+	}
+	defer rows.Close()
+
+	expected := []struct {
+		id   int
+		name string
+	}{
+		{1, "Initial"},
+		{2, "Transaction"},
+	}
+
+	i := 0
+	for rows.Next() {
+		var id int
+		var name string
+		if err := rows.Scan(&id, &name); err != nil {
+			t.Fatalf("Error scanning row: %v", err)
+		}
+
+		if id != expected[i].id || name != expected[i].name {
+			t.Errorf("Row %d: expected (%d, %s), got (%d, %s)",
+				i, expected[i].id, expected[i].name, id, name)
+		}
+		i++
+	}
+
+	if i != 2 {
+		t.Fatalf("Expected 2 rows, got %d", i)
+	}
+
+	t.Log("Transaction test passed")
 }
 
 func slicesAreEq(a, b []byte) bool {
