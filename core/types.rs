@@ -1079,6 +1079,14 @@ impl IndexKeySortOrder {
         IndexKeySortOrder(spec)
     }
 
+    pub fn from_list(order: &[SortOrder]) -> Self {
+        let mut spec = 0;
+        for (i, order) in order.iter().enumerate() {
+            spec |= ((*order == SortOrder::Desc) as u64) << i;
+        }
+        IndexKeySortOrder(spec)
+    }
+
     pub fn default() -> Self {
         Self(0)
     }

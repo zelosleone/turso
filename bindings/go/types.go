@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"runtime"
+	"time"
 	"unsafe"
 )
 
@@ -244,6 +245,12 @@ func buildArgs(args []driver.Value) ([]limboValue, func(), error) {
 			blob := makeBlob(val)
 			pinner.Pin(blob)
 			*(*uintptr)(unsafe.Pointer(&limboVal.Value)) = uintptr(unsafe.Pointer(blob))
+		case time.Time: // Add this case
+			limboVal.Type = textVal
+			timeStr := val.Format(time.RFC3339)
+			cstr := CString(timeStr)
+			pinner.Pin(cstr)
+			*(*uintptr)(unsafe.Pointer(&limboVal.Value)) = uintptr(unsafe.Pointer(cstr))
 		default:
 			return nil, pinner.Unpin, fmt.Errorf("unsupported type: %T", v)
 		}

@@ -3,13 +3,11 @@ use std::sync::Arc;
 use crate::{
     schema::{BTreeTable, Column, Index, IndexColumn, PseudoTable, Schema},
     storage::pager::CreateBTreeFlags,
-    types::Record,
     util::normalize_ident,
     vdbe::{
         builder::{CursorType, ProgramBuilder, QueryMode},
         insn::{IdxInsertFlags, Insn, RegisterOrLiteral},
     },
-    OwnedValue,
 };
 use limbo_sqlite3_parser::ast::{self, Expr, Id, SortOrder, SortedColumn};
 
@@ -114,21 +112,12 @@ pub fn translate_create_index(
     );
 
     // determine the order of the columns in the index for the sorter
-    let order = idx
-        .columns
-        .iter()
-        .map(|c| {
-            OwnedValue::Integer(match c.order {
-                SortOrder::Asc => 0,
-                SortOrder::Desc => 1,
-            })
-        })
-        .collect();
+    let order = idx.columns.iter().map(|c| c.order.clone()).collect();
     // open the sorter and the pseudo table
     program.emit_insn(Insn::SorterOpen {
         cursor_id: sorter_cursor_id,
         columns: columns.len(),
-        order: Record::new(order),
+        order,
     });
     let content_reg = program.alloc_register();
     program.emit_insn(Insn::OpenPseudo {

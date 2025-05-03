@@ -1,4 +1,5 @@
 use crate::Result;
+use bitflags::bitflags;
 use cfg_block::cfg_block;
 use std::fmt;
 use std::sync::Arc;
@@ -19,18 +20,20 @@ pub trait File: Send + Sync {
     fn size(&self) -> Result<u64>;
 }
 
-#[derive(Copy, Clone)]
-pub enum OpenFlags {
-    None,
-    Create,
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct OpenFlags(i32);
+
+bitflags! {
+    impl OpenFlags: i32 {
+        const None = 0b00000000;
+        const Create = 0b0000001;
+        const ReadOnly = 0b0000010;
+    }
 }
 
-impl OpenFlags {
-    pub fn to_flags(&self) -> i32 {
-        match self {
-            Self::None => 0,
-            Self::Create => 1,
-        }
+impl Default for OpenFlags {
+    fn default() -> Self {
+        Self::Create
     }
 }
 

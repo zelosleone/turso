@@ -129,6 +129,14 @@ pub struct Statement {
     inner: Arc<Mutex<limbo_core::Statement>>,
 }
 
+impl Clone for Statement {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
 unsafe impl Send for Statement {}
 unsafe impl Sync for Statement {}
 
@@ -153,6 +161,10 @@ impl Statement {
     }
 
     pub async fn execute(&mut self, params: impl IntoParams) -> Result<u64> {
+        {
+            // Reset the statement before executing
+            self.inner.lock().unwrap().reset();
+        }
         let params = params.into_params()?;
         match params {
             params::Params::None => (),
@@ -241,6 +253,14 @@ pub struct Rows {
     inner: Arc<Mutex<limbo_core::Statement>>,
 }
 
+impl Clone for Rows {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
 unsafe impl Send for Rows {}
 unsafe impl Sync for Rows {}
 
@@ -263,6 +283,7 @@ impl Rows {
     }
 }
 
+#[derive(Debug)]
 pub struct Row {
     values: Vec<limbo_core::OwnedValue>,
 }
@@ -280,5 +301,9 @@ impl Row {
             limbo_core::OwnedValue::Text(text) => Ok(Value::Text(text.to_string())),
             limbo_core::OwnedValue::Blob(items) => Ok(Value::Blob(items.to_vec())),
         }
+    }
+
+    pub fn column_count(&self) -> usize {
+        self.values.len()
     }
 }

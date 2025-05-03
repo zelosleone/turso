@@ -11,8 +11,7 @@ use limbo_sqlite3_parser::ast::{self, Expr, ResultColumn, SortOrder, Update};
 use super::emitter::emit_program;
 use super::optimizer::optimize_plan;
 use super::plan::{
-    ColumnUsedMask, Direction, IterationDirection, Plan, ResultSetColumn, TableReference,
-    UpdatePlan,
+    ColumnUsedMask, IterationDirection, Plan, ResultSetColumn, TableReference, UpdatePlan,
 };
 use super::planner::bind_column_references;
 use super::planner::{parse_limit, parse_where};
@@ -155,17 +154,7 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
     let order_by = body.order_by.as_ref().map(|order| {
         order
             .iter()
-            .map(|o| {
-                (
-                    o.expr.clone(),
-                    o.order
-                        .map(|s| match s {
-                            SortOrder::Asc => Direction::Ascending,
-                            SortOrder::Desc => Direction::Descending,
-                        })
-                        .unwrap_or(Direction::Ascending),
-                )
-            })
+            .map(|o| (o.expr.clone(), o.order.unwrap_or(SortOrder::Asc)))
             .collect()
     });
     // Parse the WHERE clause
@@ -183,6 +172,21 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         .map(|l| parse_limit(l))
         .unwrap_or(Ok((None, None)))?;
 
+    // Check what indexes will need to be updated by checking set_clauses and see
+    // if a column is contained in an index.
+    let indexes = schema.get_indices(&table_name.0);
+    let indexes_to_update = indexes
+        .iter()
+        .filter(|index| {
+            index.columns.iter().any(|index_column| {
+                set_clauses
+                    .iter()
+                    .any(|(set_index_column, _)| index_column.pos_in_table == *set_index_column)
+            })
+        })
+        .cloned()
+        .collect();
+
     Ok(Plan::Update(UpdatePlan {
         table_references,
         set_clauses,
@@ -192,5 +196,6 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         limit,
         offset,
         contains_constant_false_condition: false,
+        indexes_to_update,
     }))
 }

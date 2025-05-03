@@ -256,7 +256,6 @@ fn query_pragma(
             }
         }
         PragmaName::UserVersion => {
-            program.emit_transaction(false);
             program.emit_insn(Insn::ReadCookie {
                 db: 0,
                 dest: register,

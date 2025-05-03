@@ -1564,20 +1564,17 @@ pub fn op_transaction(
     let Insn::Transaction { write } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
+    let connection = program.connection.upgrade().unwrap();
+    if *write && connection._db.open_flags.contains(OpenFlags::ReadOnly) {
+        return Err(LimboError::ReadOnly);
+    }
     if let Some(mv_store) = &mv_store {
         if state.mv_tx_id.is_none() {
             let tx_id = mv_store.begin_tx();
-            program
-                .connection
-                .upgrade()
-                .unwrap()
-                .mv_transactions
-                .borrow_mut()
-                .push(tx_id);
+            connection.mv_transactions.borrow_mut().push(tx_id);
             state.mv_tx_id = Some(tx_id);
         }
     } else {
-        let connection = program.connection.upgrade().unwrap();
         let current_state = connection.transaction_state.get();
         let (new_transaction_state, updated) = match (current_state, write) {
             (TransactionState::Write, true) => (TransactionState::Write, false),
@@ -2698,14 +2695,6 @@ pub fn op_sorter_open(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let order = order
-        .get_values()
-        .iter()
-        .map(|v| match v {
-            OwnedValue::Integer(i) => *i == 0,
-            _ => unreachable!(),
-        })
-        .collect();
     let cursor = Sorter::new(order);
     let mut cursors = state.cursors.borrow_mut();
     cursors

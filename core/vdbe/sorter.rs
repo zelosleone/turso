@@ -1,18 +1,21 @@
-use crate::types::ImmutableRecord;
-use std::cmp::Ordering;
+use limbo_sqlite3_parser::ast::SortOrder;
+
+use crate::types::{compare_immutable, ImmutableRecord, IndexKeySortOrder};
 
 pub struct Sorter {
     records: Vec<ImmutableRecord>,
     current: Option<ImmutableRecord>,
-    order: Vec<bool>,
+    order: IndexKeySortOrder,
+    key_len: usize,
 }
 
 impl Sorter {
-    pub fn new(order: Vec<bool>) -> Self {
+    pub fn new(order: &[SortOrder]) -> Self {
         Self {
             records: Vec::new(),
             current: None,
-            order,
+            key_len: order.len(),
+            order: IndexKeySortOrder::from_list(order),
         }
     }
     pub fn is_empty(&self) -> bool {
@@ -26,24 +29,11 @@ impl Sorter {
     // We do the sorting here since this is what is called by the SorterSort instruction
     pub fn sort(&mut self) {
         self.records.sort_by(|a, b| {
-            let cmp_by_idx = |idx: usize, ascending: bool| {
-                let a = &a.get_value(idx);
-                let b = &b.get_value(idx);
-                if ascending {
-                    a.cmp(b)
-                } else {
-                    b.cmp(a)
-                }
-            };
-
-            let mut cmp_ret = Ordering::Equal;
-            for (idx, &is_asc) in self.order.iter().enumerate() {
-                cmp_ret = cmp_by_idx(idx, is_asc);
-                if cmp_ret != Ordering::Equal {
-                    break;
-                }
-            }
-            cmp_ret
+            compare_immutable(
+                &a.values[..self.key_len],
+                &b.values[..self.key_len],
+                self.order,
+            )
         });
         self.records.reverse();
         self.next()
