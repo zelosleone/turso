@@ -1,9 +1,9 @@
-use crate::{Completion, File, LimboError, OpenFlags, Result, IO};
+use super::MemoryIO;
+use crate::{Clock, Completion, File, Instant, LimboError, OpenFlags, Result, IO};
 use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
 use tracing::{debug, trace};
-
 pub struct WindowsIO {}
 
 impl WindowsIO {
@@ -19,11 +19,15 @@ unsafe impl Sync for WindowsIO {}
 impl IO for WindowsIO {
     fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>> {
         trace!("open_file(path = {})", path);
-        let file = std::fs::File::options()
-            .read(true)
-            .write(true)
-            .create(matches!(flags, OpenFlags::Create))
-            .open(path)?;
+        let mut file = std::fs::File::options();
+        file.read(true);
+
+        if !flags.contains(OpenFlags::ReadOnly) {
+            file.write(true);
+            file.create(flags.contains(OpenFlags::Create));
+        }
+
+        let file = file.open(path)?;
         Ok(Arc::new(WindowsFile {
             file: RefCell::new(file),
         }))
@@ -39,8 +43,18 @@ impl IO for WindowsIO {
         i64::from_ne_bytes(buf)
     }
 
-    fn get_current_time(&self) -> String {
-        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
+    }
+}
+
+impl Clock for WindowsIO {
+    fn now(&self) -> Instant {
+        let now = chrono::Local::now();
+        Instant {
+            secs: now.timestamp(),
+            micros: now.timestamp_subsec_micros(),
+        }
     }
 }
 

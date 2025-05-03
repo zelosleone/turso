@@ -20,6 +20,12 @@ mod util;
 mod vdbe;
 mod vector;
 
+#[cfg(feature = "fuzz")]
+pub mod numeric;
+
+#[cfg(not(feature = "fuzz"))]
+mod numeric;
+
 #[cfg(not(target_family = "wasm"))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -27,12 +33,15 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use crate::{fast_lock::SpinLock, translate::optimizer::optimize_plan};
 pub use error::LimboError;
 use fallible_iterator::FallibleIterator;
+pub use io::clock::{Clock, Instant};
 #[cfg(all(feature = "fs", target_family = "unix"))]
 pub use io::UnixIO;
 #[cfg(all(feature = "fs", target_os = "linux", feature = "io_uring"))]
 pub use io::UringIO;
-pub use io::{Buffer, Completion, File, MemoryIO, OpenFlags, PlatformIO, WriteCompletion, IO};
-use limbo_ext::{ResultCode, VTabKind, VTabModuleImpl};
+pub use io::{
+    Buffer, Completion, File, MemoryIO, OpenFlags, PlatformIO, SyscallIO, WriteCompletion, IO,
+};
+use limbo_ext::{ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabKind, VTabModuleImpl};
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::{Column, Schema};
@@ -66,20 +75,19 @@ pub use types::OwnedValue;
 pub use types::RefValue;
 use util::{columns_from_create_table_body, parse_schema_rows};
 use vdbe::{builder::QueryMode, VTabOpaqueCursor};
-
 pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 pub static DATABASE_VERSION: OnceLock<String> = OnceLock::new();
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum TransactionState {
     Write,
     Read,
     None,
 }
 
-pub(crate) type MvStore = crate::mvcc::MvStore<crate::mvcc::LocalClock>;
+pub(crate) type MvStore = mvcc::MvStore<mvcc::LocalClock>;
 
-pub(crate) type MvCursor = crate::mvcc::cursor::ScanCursor<crate::mvcc::LocalClock>;
+pub(crate) type MvCursor = mvcc::cursor::ScanCursor<mvcc::LocalClock>;
 
 pub struct Database {
     mv_store: Option<Rc<MvStore>>,
@@ -88,11 +96,12 @@ pub struct Database {
     header: Arc<SpinLock<DatabaseHeader>>,
     db_file: Arc<dyn DatabaseStorage>,
     io: Arc<dyn IO>,
-    page_size: u16,
+    page_size: u32,
     // Shared structures of a Database are the parts that are common to multiple threads that might
     // create DB connections.
     shared_page_cache: Arc<RwLock<DumbLruPageCache>>,
     shared_wal: Arc<UnsafeCell<WalFileShared>>,
+    open_flags: OpenFlags,
 }
 
 unsafe impl Send for Database {}
@@ -101,53 +110,74 @@ unsafe impl Sync for Database {}
 impl Database {
     #[cfg(feature = "fs")]
     pub fn open_file(io: Arc<dyn IO>, path: &str, enable_mvcc: bool) -> Result<Arc<Database>> {
-        use storage::wal::WalFileShared;
+        Self::open_file_with_flags(io, path, OpenFlags::default(), enable_mvcc)
+    }
 
-        let file = io.open_file(path, OpenFlags::Create, true)?;
+    #[cfg(feature = "fs")]
+    pub fn open_file_with_flags(
+        io: Arc<dyn IO>,
+        path: &str,
+        flags: OpenFlags,
+        enable_mvcc: bool,
+    ) -> Result<Arc<Database>> {
+        let file = io.open_file(path, flags, true)?;
         maybe_init_database_file(&file, &io)?;
         let db_file = Arc::new(DatabaseFile::new(file));
-        let wal_path = format!("{}-wal", path);
-        let db_header = Pager::begin_open(db_file.clone())?;
-        io.run_once()?;
-        let page_size = db_header.lock().page_size;
-        let wal_shared = WalFileShared::open_shared(&io, wal_path.as_str(), page_size)?;
-        Self::open(io, db_file, wal_shared, enable_mvcc)
+        Self::open_with_flags(io, path, db_file, flags, enable_mvcc)
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn open(
         io: Arc<dyn IO>,
+        path: &str,
         db_file: Arc<dyn DatabaseStorage>,
-        shared_wal: Arc<UnsafeCell<WalFileShared>>,
+        enable_mvcc: bool,
+    ) -> Result<Arc<Database>> {
+        Self::open_with_flags(io, path, db_file, OpenFlags::default(), enable_mvcc)
+    }
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    pub fn open_with_flags(
+        io: Arc<dyn IO>,
+        path: &str,
+        db_file: Arc<dyn DatabaseStorage>,
+        flags: OpenFlags,
         enable_mvcc: bool,
     ) -> Result<Arc<Database>> {
         let db_header = Pager::begin_open(db_file.clone())?;
+        // ensure db header is there
         io.run_once()?;
+
+        let page_size = db_header.lock().get_page_size();
+        let wal_path = format!("{}-wal", path);
+        let shared_wal = WalFileShared::open_shared(&io, wal_path.as_str(), page_size)?;
+
         DATABASE_VERSION.get_or_init(|| {
             let version = db_header.lock().version_number;
             version.to_string()
         });
+
         let mv_store = if enable_mvcc {
             Some(Rc::new(MvStore::new(
-                crate::mvcc::LocalClock::new(),
-                crate::mvcc::persistent_storage::Storage::new_noop(),
+                mvcc::LocalClock::new(),
+                mvcc::persistent_storage::Storage::new_noop(),
             )))
         } else {
             None
         };
+
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
-        let page_size = db_header.lock().page_size;
-        let header = db_header;
         let schema = Arc::new(RwLock::new(Schema::new()));
         let db = Database {
             mv_store,
             schema: schema.clone(),
-            header: header.clone(),
+            header: db_header.clone(),
             shared_page_cache: shared_page_cache.clone(),
             shared_wal: shared_wal.clone(),
             db_file,
             io: io.clone(),
             page_size,
+            open_flags: flags,
         };
         let db = Arc::new(db);
         {
@@ -158,7 +188,13 @@ impl Database {
                 .try_write()
                 .expect("lock on schema should succeed first try");
             let syms = conn.syms.borrow();
-            parse_schema_rows(rows, &mut schema, io, syms.deref(), None)?;
+            if let Err(LimboError::ExtensionError(e)) =
+                parse_schema_rows(rows, &mut schema, io, &syms, None)
+            {
+                // this means that a vtab exists and we no longer have the module loaded. we print
+                // a warning to the user to load the module
+                eprintln!("Warning: {}", e);
+            }
         }
         Ok(db)
     }
@@ -168,14 +204,14 @@ impl Database {
 
         let wal = Rc::new(RefCell::new(WalFile::new(
             self.io.clone(),
-            self.page_size as usize,
+            self.page_size,
             self.shared_wal.clone(),
             buffer_pool.clone(),
         )));
         let pager = Rc::new(Pager::finish_open(
             self.header.clone(),
             self.db_file.clone(),
-            wal,
+            Some(wal),
             self.io.clone(),
             self.shared_page_cache.clone(),
             buffer_pool,
@@ -186,9 +222,9 @@ impl Database {
             schema: self.schema.clone(),
             header: self.header.clone(),
             last_insert_rowid: Cell::new(0),
-            auto_commit: RefCell::new(true),
+            auto_commit: Cell::new(true),
             mv_transactions: RefCell::new(Vec::new()),
-            transaction_state: RefCell::new(TransactionState::None),
+            transaction_state: Cell::new(TransactionState::None),
             last_change: Cell::new(0),
             syms: RefCell::new(SymbolTable::new()),
             total_changes: Cell::new(0),
@@ -204,12 +240,12 @@ impl Database {
     #[cfg(feature = "fs")]
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn open_new(path: &str, vfs: &str) -> Result<(Arc<dyn IO>, Arc<Database>)> {
-        let vfsmods = crate::ext::add_builtin_vfs_extensions(None)?;
+        let vfsmods = ext::add_builtin_vfs_extensions(None)?;
         let io: Arc<dyn IO> = match vfsmods.iter().find(|v| v.0 == vfs).map(|v| v.1.clone()) {
             Some(vfs) => vfs,
             None => match vfs.trim() {
                 "memory" => Arc::new(MemoryIO::new()),
-                "syscall" => Arc::new(PlatformIO::new()?),
+                "syscall" => Arc::new(SyscallIO::new()?),
                 #[cfg(all(target_os = "linux", feature = "io_uring"))]
                 "io_uring" => Arc::new(UringIO::new()?),
                 other => {
@@ -231,7 +267,7 @@ pub fn maybe_init_database_file(file: &Arc<dyn File>, io: &Arc<dyn IO>) -> Resul
         let db_header = DatabaseHeader::default();
         let page1 = allocate_page(
             1,
-            &Rc::new(BufferPool::new(db_header.page_size as usize)),
+            &Rc::new(BufferPool::new(db_header.get_page_size() as usize)),
             DATABASE_HEADER_SIZE,
         );
         {
@@ -243,7 +279,7 @@ pub fn maybe_init_database_file(file: &Arc<dyn File>, io: &Arc<dyn IO>) -> Resul
                 &page1,
                 storage::sqlite3_ondisk::PageType::TableLeaf,
                 DATABASE_HEADER_SIZE,
-                db_header.page_size - db_header.reserved_space as u16,
+                (db_header.get_page_size() - db_header.reserved_space as u32) as u16,
             );
 
             let contents = page1.get().contents.as_mut().unwrap();
@@ -278,9 +314,9 @@ pub struct Connection {
     pager: Rc<Pager>,
     schema: Arc<RwLock<Schema>>,
     header: Arc<SpinLock<DatabaseHeader>>,
-    auto_commit: RefCell<bool>,
+    auto_commit: Cell<bool>,
     mv_transactions: RefCell<Vec<crate::mvcc::database::TxID>>,
-    transaction_state: RefCell<TransactionState>,
+    transaction_state: Cell<TransactionState>,
     last_insert_rowid: Cell<u64>,
     last_change: Cell<i64>,
     total_changes: Cell<i64>,
@@ -517,7 +553,26 @@ impl Connection {
     }
 
     pub fn get_auto_commit(&self) -> bool {
-        *self.auto_commit.borrow()
+        self.auto_commit.get()
+    }
+
+    pub fn parse_schema_rows(self: &Rc<Connection>) -> Result<()> {
+        let rows = self.query("SELECT * FROM sqlite_schema")?;
+        let mut schema = self
+            .schema
+            .try_write()
+            .expect("lock on schema should succeed first try");
+        {
+            let syms = self.syms.borrow();
+            if let Err(LimboError::ExtensionError(e)) =
+                parse_schema_rows(rows, &mut schema, self.pager.io.clone(), &syms, None)
+            {
+                // this means that a vtab exists and we no longer have the module loaded. we print
+                // a warning to the user to load the module
+                eprintln!("Warning: {}", e);
+            }
+        }
+        Ok(())
     }
 }
 
@@ -564,7 +619,7 @@ impl Statement {
         self.program.result_columns.len()
     }
 
-    pub fn get_column_name(&self, idx: usize) -> Cow<String> {
+    pub fn get_column_name(&self, idx: usize) -> Cow<str> {
         let column = &self.program.result_columns[idx];
         match column.name(&self.program.table_references) {
             Some(name) => Cow::Borrowed(name),
@@ -607,11 +662,27 @@ pub struct VirtualTable {
     args: Option<Vec<ast::Expr>>,
     pub implementation: Rc<VTabModuleImpl>,
     columns: Vec<Column>,
+    kind: VTabKind,
 }
 
 impl VirtualTable {
     pub(crate) fn rowid(&self, cursor: &VTabOpaqueCursor) -> i64 {
         unsafe { (self.implementation.rowid)(cursor.as_ptr()) }
+    }
+
+    pub(crate) fn best_index(
+        &self,
+        constraints: &[ConstraintInfo],
+        order_by: &[OrderByInfo],
+    ) -> IndexInfo {
+        unsafe {
+            IndexInfo::from_ffi((self.implementation.best_idx)(
+                constraints.as_ptr(),
+                constraints.len() as i32,
+                order_by.as_ptr(),
+                order_by.len() as i32,
+            ))
+        }
     }
     /// takes ownership of the provided Args
     pub(crate) fn from_args(
@@ -630,7 +701,7 @@ impl VirtualTable {
                 module_name
             )))?;
         if let VTabKind::VirtualTable = kind {
-            if module.module_kind != VTabKind::VirtualTable {
+            if module.module_kind == VTabKind::TableValuedFunction {
                 return Err(LimboError::ExtensionError(format!(
                     "{} is not a virtual table module",
                     module_name
@@ -648,6 +719,7 @@ impl VirtualTable {
                 implementation: module.implementation.clone(),
                 columns,
                 args: exprs,
+                kind,
             });
             return Ok(vtab);
         }
@@ -661,21 +733,30 @@ impl VirtualTable {
         VTabOpaqueCursor::new(cursor)
     }
 
+    #[tracing::instrument(skip(cursor))]
     pub fn filter(
         &self,
         cursor: &VTabOpaqueCursor,
+        idx_num: i32,
+        idx_str: Option<String>,
         arg_count: usize,
-        args: Vec<OwnedValue>,
+        args: Vec<limbo_ext::Value>,
     ) -> Result<bool> {
-        let mut filter_args = Vec::with_capacity(arg_count);
-        for i in 0..arg_count {
-            let ownedvalue_arg = args.get(i).unwrap();
-            filter_args.push(ownedvalue_arg.to_ffi());
-        }
+        tracing::trace!("xFilter");
+        let c_idx_str = idx_str
+            .map(|s| std::ffi::CString::new(s).unwrap())
+            .map(|cstr| cstr.into_raw())
+            .unwrap_or(std::ptr::null_mut());
         let rc = unsafe {
-            (self.implementation.filter)(cursor.as_ptr(), arg_count as i32, filter_args.as_ptr())
+            (self.implementation.filter)(
+                cursor.as_ptr(),
+                arg_count as i32,
+                args.as_ptr(),
+                c_idx_str,
+                idx_num,
+            )
         };
-        for arg in filter_args {
+        for arg in args {
             unsafe {
                 arg.__free_internal_type();
             }
@@ -722,6 +803,19 @@ impl VirtualTable {
         match rc {
             ResultCode::OK => Ok(None),
             ResultCode::RowID => Ok(Some(newrowid)),
+            _ => Err(LimboError::ExtensionError(rc.to_string())),
+        }
+    }
+
+    pub fn destroy(&self) -> Result<()> {
+        let implementation = self.implementation.as_ref();
+        let rc = unsafe {
+            (self.implementation.destroy)(
+                implementation as *const VTabModuleImpl as *const std::ffi::c_void,
+            )
+        };
+        match rc {
+            ResultCode::OK => Ok(()),
             _ => Err(LimboError::ExtensionError(rc.to_string())),
         }
     }

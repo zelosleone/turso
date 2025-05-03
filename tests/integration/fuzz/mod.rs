@@ -2,14 +2,14 @@ pub mod grammar_generator;
 
 #[cfg(test)]
 mod tests {
-    use std::rc::Rc;
+    use std::collections::HashSet;
 
-    use rand::SeedableRng;
+    use rand::{seq::IndexedRandom, Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
     use rusqlite::params;
 
     use crate::{
-        common::TempDatabase,
+        common::{limbo_exec_rows, sqlite_exec_rows, TempDatabase},
         fuzz::grammar_generator::{const_str, rand_int, rand_str, GrammarGenerator},
     };
 
@@ -22,69 +22,6 @@ mod tests {
             .as_secs();
         let rng = ChaCha8Rng::seed_from_u64(seed);
         (rng, seed)
-    }
-
-    fn sqlite_exec_rows(
-        conn: &rusqlite::Connection,
-        query: &str,
-    ) -> Vec<Vec<rusqlite::types::Value>> {
-        let mut stmt = conn.prepare(&query).unwrap();
-        let mut rows = stmt.query(params![]).unwrap();
-        let mut results = Vec::new();
-        while let Some(row) = rows.next().unwrap() {
-            let mut result = Vec::new();
-            for i in 0.. {
-                let column: rusqlite::types::Value = match row.get(i) {
-                    Ok(column) => column,
-                    Err(rusqlite::Error::InvalidColumnIndex(_)) => break,
-                    Err(err) => panic!("unexpected rusqlite error: {}", err),
-                };
-                result.push(column);
-            }
-            results.push(result)
-        }
-
-        results
-    }
-
-    fn limbo_exec_rows(
-        db: &TempDatabase,
-        conn: &Rc<limbo_core::Connection>,
-        query: &str,
-    ) -> Vec<Vec<rusqlite::types::Value>> {
-        let mut stmt = conn.prepare(query).unwrap();
-        let mut rows = Vec::new();
-        'outer: loop {
-            let row = loop {
-                let result = stmt.step().unwrap();
-                match result {
-                    limbo_core::StepResult::Row => {
-                        let row = stmt.row().unwrap();
-                        break row;
-                    }
-                    limbo_core::StepResult::IO => {
-                        db.io.run_once().unwrap();
-                        continue;
-                    }
-                    limbo_core::StepResult::Done => break 'outer,
-                    r => panic!("unexpected result {:?}: expecting single row", r),
-                }
-            };
-            let row = row
-                .get_values()
-                .map(|x| match x {
-                    limbo_core::OwnedValue::Null => rusqlite::types::Value::Null,
-                    limbo_core::OwnedValue::Integer(x) => rusqlite::types::Value::Integer(*x),
-                    limbo_core::OwnedValue::Float(x) => rusqlite::types::Value::Real(*x),
-                    limbo_core::OwnedValue::Text(x) => {
-                        rusqlite::types::Value::Text(x.as_str().to_string())
-                    }
-                    limbo_core::OwnedValue::Blob(x) => rusqlite::types::Value::Blob(x.to_vec()),
-                })
-                .collect();
-            rows.push(row);
-        }
-        rows
     }
 
     #[test]
@@ -104,6 +41,379 @@ mod tests {
                 "query: {}, limbo: {:?}, sqlite: {:?}",
                 query, limbo, sqlite
             );
+        }
+    }
+
+    #[test]
+    pub fn rowid_seek_fuzz() {
+        let db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x INTEGER PRIMARY KEY)"); // INTEGER PRIMARY KEY is a rowid alias, so an index is not created
+        let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
+
+        let insert = format!(
+            "INSERT INTO t VALUES {}",
+            (1..10000)
+                .map(|x| format!("({})", x))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        sqlite_conn.execute(&insert, params![]).unwrap();
+        sqlite_conn.close().unwrap();
+        let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
+        let limbo_conn = db.connect_limbo();
+
+        const COMPARISONS: [&str; 4] = ["<", "<=", ">", ">="];
+        const ORDER_BY: [Option<&str>; 4] = [
+            None,
+            Some("ORDER BY x"),
+            Some("ORDER BY x DESC"),
+            Some("ORDER BY x ASC"),
+        ];
+
+        for comp in COMPARISONS.iter() {
+            for order_by in ORDER_BY.iter() {
+                for max in 0..=10000 {
+                    let query = format!(
+                        "SELECT * FROM t WHERE x {} {} {} LIMIT 3",
+                        comp,
+                        max,
+                        order_by.unwrap_or("")
+                    );
+                    log::trace!("query: {}", query);
+                    let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
+                    let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
+                    assert_eq!(
+                        limbo, sqlite,
+                        "query: {}, limbo: {:?}, sqlite: {:?}",
+                        query, limbo, sqlite
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    pub fn index_scan_fuzz() {
+        let db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x PRIMARY KEY)");
+        let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
+
+        let insert = format!(
+            "INSERT INTO t VALUES {}",
+            (0..10000)
+                .map(|x| format!("({})", x))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        sqlite_conn.execute(&insert, params![]).unwrap();
+        sqlite_conn.close().unwrap();
+        let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
+        let limbo_conn = db.connect_limbo();
+
+        const COMPARISONS: [&str; 5] = ["=", "<", "<=", ">", ">="];
+
+        const ORDER_BY: [Option<&str>; 4] = [
+            None,
+            Some("ORDER BY x"),
+            Some("ORDER BY x DESC"),
+            Some("ORDER BY x ASC"),
+        ];
+
+        for comp in COMPARISONS.iter() {
+            for order_by in ORDER_BY.iter() {
+                for max in 0..=10000 {
+                    let query = format!(
+                        "SELECT * FROM t WHERE x {} {} {} LIMIT 3",
+                        comp,
+                        max,
+                        order_by.unwrap_or(""),
+                    );
+                    let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
+                    let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
+                    assert_eq!(
+                        limbo, sqlite,
+                        "query: {}, limbo: {:?}, sqlite: {:?}",
+                        query, limbo, sqlite
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    /// A test for verifying that index seek+scan works correctly for compound keys
+    /// on indexes with various column orderings.
+    pub fn index_scan_compound_key_fuzz() {
+        let (mut rng, seed) = if std::env::var("SEED").is_ok() {
+            let seed = std::env::var("SEED").unwrap().parse::<u64>().unwrap();
+            (ChaCha8Rng::seed_from_u64(seed), seed)
+        } else {
+            rng_from_time()
+        };
+        let table_defs: [&str; 8] = [
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y, z))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y, z))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y desc, z))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y, z desc))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y desc, z))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y, z desc))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y desc, z desc))",
+            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y desc, z desc))",
+        ];
+        // Create all different 3-column primary key permutations
+        let dbs = [
+            TempDatabase::new_with_rusqlite(table_defs[0]),
+            TempDatabase::new_with_rusqlite(table_defs[1]),
+            TempDatabase::new_with_rusqlite(table_defs[2]),
+            TempDatabase::new_with_rusqlite(table_defs[3]),
+            TempDatabase::new_with_rusqlite(table_defs[4]),
+            TempDatabase::new_with_rusqlite(table_defs[5]),
+            TempDatabase::new_with_rusqlite(table_defs[6]),
+            TempDatabase::new_with_rusqlite(table_defs[7]),
+        ];
+        let mut pk_tuples = HashSet::new();
+        while pk_tuples.len() < 100000 {
+            pk_tuples.insert((
+                rng.random_range(0..3000),
+                rng.random_range(0..3000),
+                rng.random_range(0..3000),
+            ));
+        }
+        let mut tuples = Vec::new();
+        for pk_tuple in pk_tuples {
+            tuples.push(format!(
+                "({}, {}, {}, {})",
+                pk_tuple.0,
+                pk_tuple.1,
+                pk_tuple.2,
+                rng.random_range(0..3000)
+            ));
+        }
+        let insert = format!("INSERT INTO t VALUES {}", tuples.join(", "));
+
+        // Insert all tuples into all databases
+        let sqlite_conns = dbs
+            .iter()
+            .map(|db| rusqlite::Connection::open(db.path.clone()).unwrap())
+            .collect::<Vec<_>>();
+        for sqlite_conn in sqlite_conns.into_iter() {
+            sqlite_conn.execute(&insert, params![]).unwrap();
+            sqlite_conn.close().unwrap();
+        }
+        let sqlite_conns = dbs
+            .iter()
+            .map(|db| rusqlite::Connection::open(db.path.clone()).unwrap())
+            .collect::<Vec<_>>();
+        let limbo_conns = dbs.iter().map(|db| db.connect_limbo()).collect::<Vec<_>>();
+
+        const COMPARISONS: [&str; 5] = ["=", "<", "<=", ">", ">="];
+
+        // For verifying index scans, we only care about cases where all but potentially the last column are constrained by an equality (=),
+        // because this is the only way to utilize an index efficiently for seeking. This is called the "left-prefix rule" of indexes.
+        // Hence we generate constraint combinations in this manner; as soon as a comparison is not an equality, we stop generating more constraints for the where clause.
+        // Examples:
+        // x = 1 AND y = 2 AND z > 3
+        // x = 1 AND y > 2
+        // x > 1
+        let col_comp_first = COMPARISONS
+            .iter()
+            .cloned()
+            .map(|x| (Some(x), None, None))
+            .collect::<Vec<_>>();
+        let col_comp_second = COMPARISONS
+            .iter()
+            .cloned()
+            .map(|x| (Some("="), Some(x), None))
+            .collect::<Vec<_>>();
+        let col_comp_third = COMPARISONS
+            .iter()
+            .cloned()
+            .map(|x| (Some("="), Some("="), Some(x)))
+            .collect::<Vec<_>>();
+
+        let all_comps = [col_comp_first, col_comp_second, col_comp_third].concat();
+
+        const ORDER_BY: [Option<&str>; 3] = [None, Some("DESC"), Some("ASC")];
+
+        const ITERATIONS: usize = 10000;
+        for i in 0..ITERATIONS {
+            if i % (ITERATIONS / 100) == 0 {
+                println!(
+                    "index_scan_compound_key_fuzz: iteration {}/{}",
+                    i + 1,
+                    ITERATIONS
+                );
+            }
+            // let's choose random columns from the table
+            let col_choices = ["x", "y", "z", "nonindexed_col"];
+            let col_choices_weights = [10.0, 10.0, 10.0, 3.0];
+            let num_cols_in_select = rng.random_range(1..=4);
+            let mut select_cols = col_choices
+                .choose_multiple_weighted(&mut rng, num_cols_in_select, |s| {
+                    let idx = col_choices.iter().position(|c| c == s).unwrap();
+                    col_choices_weights[idx]
+                })
+                .unwrap()
+                .collect::<Vec<_>>()
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>();
+
+            // sort select cols by index of col_choices
+            select_cols.sort_by_cached_key(|x| col_choices.iter().position(|c| c == x).unwrap());
+
+            let (comp1, comp2, comp3) = all_comps[rng.random_range(0..all_comps.len())];
+            // Similarly as for the constraints, generate order by permutations so that the only columns involved in the index seek are potentially part of the ORDER BY.
+            let (order_by1, order_by2, order_by3) = {
+                if comp1.is_some() && comp2.is_some() && comp3.is_some() {
+                    (
+                        ORDER_BY[rng.random_range(0..ORDER_BY.len())],
+                        ORDER_BY[rng.random_range(0..ORDER_BY.len())],
+                        ORDER_BY[rng.random_range(0..ORDER_BY.len())],
+                    )
+                } else if comp1.is_some() && comp2.is_some() {
+                    (
+                        ORDER_BY[rng.random_range(0..ORDER_BY.len())],
+                        ORDER_BY[rng.random_range(0..ORDER_BY.len())],
+                        None,
+                    )
+                } else {
+                    (ORDER_BY[rng.random_range(0..ORDER_BY.len())], None, None)
+                }
+            };
+
+            // Generate random values for the WHERE clause constraints. Only involve primary key columns.
+            let (col_val_first, col_val_second, col_val_third) = {
+                if comp1.is_some() && comp2.is_some() && comp3.is_some() {
+                    (
+                        Some(rng.random_range(0..=3000)),
+                        Some(rng.random_range(0..=3000)),
+                        Some(rng.random_range(0..=3000)),
+                    )
+                } else if comp1.is_some() && comp2.is_some() {
+                    (
+                        Some(rng.random_range(0..=3000)),
+                        Some(rng.random_range(0..=3000)),
+                        None,
+                    )
+                } else {
+                    (Some(rng.random_range(0..=3000)), None, None)
+                }
+            };
+
+            // Use a small limit to make the test complete faster
+            let limit = 5;
+
+            // Generate WHERE clause string
+            let where_clause_components = vec![
+                comp1.map(|x| format!("x {} {}", x, col_val_first.unwrap())),
+                comp2.map(|x| format!("y {} {}", x, col_val_second.unwrap())),
+                comp3.map(|x| format!("z {} {}", x, col_val_third.unwrap())),
+            ]
+            .into_iter()
+            .filter_map(|x| x)
+            .collect::<Vec<_>>();
+            let where_clause = if where_clause_components.is_empty() {
+                "".to_string()
+            } else {
+                format!("WHERE {}", where_clause_components.join(" AND "))
+            };
+
+            // Generate ORDER BY string
+            let order_by_components = vec![
+                order_by1.map(|x| format!("x {}", x)),
+                order_by2.map(|x| format!("y {}", x)),
+                order_by3.map(|x| format!("z {}", x)),
+            ]
+            .into_iter()
+            .filter_map(|x| x)
+            .collect::<Vec<_>>();
+            let order_by = if order_by_components.is_empty() {
+                "".to_string()
+            } else {
+                format!("ORDER BY {}", order_by_components.join(", "))
+            };
+
+            // Generate final query string
+            let query = format!(
+                "SELECT {} FROM t {} {} LIMIT {}",
+                select_cols.join(", "),
+                where_clause,
+                order_by,
+                limit
+            );
+            log::debug!("query: {}", query);
+
+            // Execute the query on all databases and compare the results
+            for (i, sqlite_conn) in sqlite_conns.iter().enumerate() {
+                let limbo = limbo_exec_rows(&dbs[i], &limbo_conns[i], &query);
+                let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
+                if limbo != sqlite {
+                    // if the order by contains exclusively components that are constrained by an equality (=),
+                    // sqlite sometimes doesn't bother with ASC/DESC because it doesn't semantically matter
+                    // so we need to check that limbo and sqlite return the same results when the ordering is reversed.
+                    // because we are generally using LIMIT (to make the test complete faster), we need to rerun the query
+                    // without limit and then check that the results are the same if reversed.
+                    let order_by_only_equalities = !order_by_components.is_empty()
+                        && order_by_components.iter().all(|o: &String| {
+                            if o.starts_with("x ") {
+                                comp1.map_or(false, |c| c == "=")
+                            } else if o.starts_with("y ") {
+                                comp2.map_or(false, |c| c == "=")
+                            } else {
+                                comp3.map_or(false, |c| c == "=")
+                            }
+                        });
+
+                    let query_no_limit =
+                        format!("SELECT * FROM t {} {} {}", where_clause, order_by, "");
+                    let limbo_no_limit = limbo_exec_rows(&dbs[i], &limbo_conns[i], &query_no_limit);
+                    let sqlite_no_limit = sqlite_exec_rows(&sqlite_conn, &query_no_limit);
+                    let limbo_rev = limbo_no_limit.iter().cloned().rev().collect::<Vec<_>>();
+                    if limbo_rev == sqlite_no_limit && order_by_only_equalities {
+                        continue;
+                    }
+
+                    // finally, if the order by columns specified contain duplicates, sqlite might've returned the rows in an arbitrary different order.
+                    // e.g. SELECT x,y,z FROM t ORDER BY x,y -- if there are duplicates on (x,y), the ordering returned might be different for limbo and sqlite.
+                    // let's check this case and forgive ourselves if the ordering is different for this reason (but no other reason!)
+                    let order_by_cols = select_cols
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| {
+                            order_by_components
+                                .iter()
+                                .any(|o| o.starts_with(col_choices[*i]))
+                        })
+                        .map(|(i, _)| i)
+                        .collect::<Vec<_>>();
+                    let duplicate_on_order_by_exists = {
+                        let mut exists = false;
+                        'outer: for (i, row) in limbo_no_limit.iter().enumerate() {
+                            for (j, other_row) in limbo_no_limit.iter().enumerate() {
+                                if i != j
+                                    && order_by_cols.iter().all(|&col| row[col] == other_row[col])
+                                {
+                                    exists = true;
+                                    break 'outer;
+                                }
+                            }
+                        }
+                        exists
+                    };
+                    if duplicate_on_order_by_exists {
+                        let len_equal = limbo_no_limit.len() == sqlite_no_limit.len();
+                        let all_contained =
+                            len_equal && limbo_no_limit.iter().all(|x| sqlite_no_limit.contains(x));
+                        if all_contained {
+                            continue;
+                        }
+                    }
+
+                    panic!(
+                        "DIFFERENT RESULTS! limbo: {:?}, sqlite: {:?}, seed: {}, query: {}, table def: {}",
+                        limbo, sqlite, seed, query, table_defs[i]
+                    );
+                }
+            }
         }
     }
 
@@ -872,19 +1182,38 @@ mod tests {
         let limbo_conn = db.connect_limbo();
         let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
         for table in tables.iter() {
-            let query = format!("CREATE TABLE {} ({})", table.name, table.columns.join(", "));
+            let columns_with_first_column_as_pk = {
+                let mut columns = vec![];
+                columns.push(format!("{} PRIMARY KEY", table.columns[0]));
+                columns.extend(table.columns[1..].iter().map(|c| c.to_string()));
+                columns.join(", ")
+            };
+            let query = format!(
+                "CREATE TABLE {} ({})",
+                table.name, columns_with_first_column_as_pk
+            );
+            let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
+            let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
+
             assert_eq!(
-                limbo_exec_rows(&db, &limbo_conn, &query),
-                sqlite_exec_rows(&sqlite_conn, &query)
+                limbo, sqlite,
+                "query: {}, limbo: {:?}, sqlite: {:?}",
+                query, limbo, sqlite
             );
         }
 
         let (mut rng, seed) = rng_from_time();
         log::info!("seed: {}", seed);
 
-        for _ in 0..100 {
-            let (x, y, z) = (
-                g.generate(&mut rng, builders.number, 1),
+        let mut i = 0;
+        let mut primary_key_set = HashSet::with_capacity(100);
+        while i < 100 {
+            let x = g.generate(&mut rng, builders.number, 1);
+            if primary_key_set.contains(&x) {
+                continue;
+            }
+            primary_key_set.insert(x.clone());
+            let (y, z) = (
                 g.generate(&mut rng, builders.number, 1),
                 g.generate(&mut rng, builders.number, 1),
             );
@@ -896,7 +1225,13 @@ mod tests {
                 "seed: {}",
                 seed,
             );
+            i += 1;
         }
+        // verify the same number of rows in both tables
+        let query = format!("SELECT COUNT(*) FROM t");
+        let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
+        let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
+        assert_eq!(limbo, sqlite, "seed: {}", seed);
 
         let sql = g
             .create()
@@ -910,11 +1245,25 @@ mod tests {
             log::info!("query: {}", query);
             let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
             let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
-            assert_eq!(
-                limbo, sqlite,
-                "query: {}, limbo: {:?}, sqlite: {:?} seed: {}",
-                query, limbo, sqlite, seed
-            );
+
+            if limbo.len() != sqlite.len() {
+                panic!("MISMATCHING ROW COUNT (limbo: {}, sqlite: {}) for query: {}\n\n limbo: {:?}\n\n sqlite: {:?}", limbo.len(), sqlite.len(), query, limbo, sqlite);
+            }
+            // find first row where limbo and sqlite differ
+            let diff_rows = limbo
+                .iter()
+                .zip(sqlite.iter())
+                .filter(|(l, s)| l != s)
+                .collect::<Vec<_>>();
+            if !diff_rows.is_empty() {
+                // due to different choices in index usage (usually in these cases sqlite is smart enough to use an index and we aren't),
+                // sqlite might return rows in a different order
+                // check if all limbo rows are present in sqlite
+                let all_present = limbo.iter().all(|l| sqlite.iter().any(|s| l == s));
+                if !all_present {
+                    panic!("MISMATCHING ROWS (limbo: {}, sqlite: {}) for query: {}\n\n limbo: {:?}\n\n sqlite: {:?}\n\n differences: {:?}", limbo.len(), sqlite.len(), query, limbo, sqlite, diff_rows);
+                }
+            }
         }
     }
 }

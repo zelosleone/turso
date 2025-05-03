@@ -5,6 +5,7 @@ from time import sleep
 import subprocess
 from pathlib import Path
 from typing import Callable, List, Optional
+from cli_tests import console
 
 
 PIPE_BUF = 4096
@@ -50,7 +51,8 @@ class LimboShell:
             return ""
         self._write_to_pipe(f"SELECT '{end_marker}';")
         output = ""
-        while True:
+        done = False
+        while not done:
             ready, _, errors = select.select(
                 [self.pipe.stdout, self.pipe.stderr],
                 [],
@@ -58,7 +60,7 @@ class LimboShell:
             )
             ready_or_errors = set(ready + errors)
             if self.pipe.stderr in ready_or_errors:
-                self._handle_error()
+                done = self._handle_error()
             if self.pipe.stdout in ready_or_errors:
                 fragment = self.pipe.stdout.read(PIPE_BUF).decode()
                 output += fragment
@@ -71,7 +73,7 @@ class LimboShell:
         self.pipe.stdin.write((command + "\n").encode())
         self.pipe.stdin.flush()
 
-    def _handle_error(self) -> None:
+    def _handle_error(self) -> bool:
         while True:
             ready, _, errors = select.select(
                 [self.pipe.stderr], [], [self.pipe.stderr], 0
@@ -79,7 +81,7 @@ class LimboShell:
             if not (ready + errors):
                 break
             error_output = self.pipe.stderr.read(PIPE_BUF).decode()
-            print(error_output, end="")
+            console.error(error_output, end="", _stack_offset=2)
         raise RuntimeError("Error encountered in Limbo shell.")
 
     @staticmethod
@@ -111,7 +113,6 @@ class TestLimboShell:
         if init_commands is None:
             # Default initialization
             init_commands = """
-.open :memory:
 CREATE TABLE users (id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, age INTEGER);
 CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price INTEGER);
 INSERT INTO users VALUES (1, 'Alice', 'Smith', 30), (2, 'Bob', 'Johnson', 25),
@@ -131,7 +132,7 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
         self.shell.quit()
 
     def run_test(self, name: str, sql: str, expected: str) -> None:
-        print(f"Running test: {name}")
+        console.test(f"Running test: {name}", _stack_offset=2)
         actual = self.shell.execute(sql)
         assert actual == expected, (
             f"Test failed: {name}\n"
@@ -141,17 +142,26 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
         )
 
     def debug_print(self, sql: str):
-        print(f"debugging: {sql}")
+        console.debug(f"debugging: {sql}", _stack_offset=2)
         actual = self.shell.execute(sql)
-        print(f"OUTPUT:\n{repr(actual)}")
+        console.debug(f"OUTPUT:\n{repr(actual)}", _stack_offset=2)
 
     def run_test_fn(
         self, sql: str, validate: Callable[[str], bool], desc: str = ""
     ) -> None:
-        actual = self.shell.execute(sql)
+        # Print the test that is executing before executing the sql command
+        # Printing later confuses the user of the code what test has actually failed
         if desc:
-            print(f"Testing: {desc}")
+            console.test(f"Testing: {desc}", _stack_offset=2)
+        actual = self.shell.execute(sql)
         assert validate(actual), f"Test failed\nSQL: {sql}\nActual:\n{repr(actual)}"
 
     def execute_dot(self, dot_command: str) -> None:
         self.shell._write_to_pipe(dot_command)
+
+    # Enables the use of `with` syntax
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exception_type, exception_value, exception_traceback):
+        self.quit()

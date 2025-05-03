@@ -2,8 +2,8 @@ pub mod args;
 pub mod import;
 
 use args::{
-    CwdArgs, EchoArgs, ExitArgs, LoadExtensionArgs, NullValueArgs, OpcodesArgs, OpenArgs,
-    OutputModeArgs, SchemaArgs, SetOutputArgs, TablesArgs,
+    CwdArgs, EchoArgs, ExitArgs, IndexesArgs, LoadExtensionArgs, NullValueArgs, OpcodesArgs,
+    OpenArgs, OutputModeArgs, SchemaArgs, SetOutputArgs, TablesArgs, TimerArgs,
 };
 use clap::Parser;
 use import::ImportArgs;
@@ -35,9 +35,6 @@ pub enum Command {
     /// Open a database file
     #[command(display_name = ".open")]
     Open(OpenArgs),
-    /// Print this message or the help of the given subcommand(s)
-    // #[command(display_name = ".help")]
-    // Help,
     /// Display schema for a table
     #[command(display_name = ".schema")]
     Schema(SchemaArgs),
@@ -75,6 +72,11 @@ pub enum Command {
     /// List vfs modules available
     #[command(name = "vfslist", display_name = ".vfslist")]
     ListVfs,
+    /// Show names of indexes
+    #[command(name = "indexes", display_name = ".indexes")]
+    ListIndexes(IndexesArgs),
+    #[command(name = "timer", display_name = ".timer")]
+    Timer(TimerArgs),
 }
 
 const _HELP_TEMPLATE: &str = "{before-help}{name}

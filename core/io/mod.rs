@@ -1,4 +1,5 @@
 use crate::Result;
+use bitflags::bitflags;
 use cfg_block::cfg_block;
 use std::fmt;
 use std::sync::Arc;
@@ -19,29 +20,31 @@ pub trait File: Send + Sync {
     fn size(&self) -> Result<u64>;
 }
 
-#[derive(Copy, Clone)]
-pub enum OpenFlags {
-    None,
-    Create,
-}
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub struct OpenFlags(i32);
 
-impl OpenFlags {
-    pub fn to_flags(&self) -> i32 {
-        match self {
-            Self::None => 0,
-            Self::Create => 1,
-        }
+bitflags! {
+    impl OpenFlags: i32 {
+        const None = 0b00000000;
+        const Create = 0b0000001;
+        const ReadOnly = 0b0000010;
     }
 }
 
-pub trait IO: Send + Sync {
+impl Default for OpenFlags {
+    fn default() -> Self {
+        Self::Create
+    }
+}
+
+pub trait IO: Clock + Send + Sync {
     fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>>;
 
     fn run_once(&self) -> Result<()>;
 
     fn generate_random_number(&self) -> i64;
 
-    fn get_current_time(&self) -> String;
+    fn get_memory_io(&self) -> Arc<MemoryIO>;
 }
 
 pub type Complete = dyn Fn(Arc<RefCell<Buffer>>);
@@ -191,7 +194,8 @@ cfg_block! {
         mod unix;
         #[cfg(feature = "fs")]
         pub use unix::UnixIO;
-        pub use io_uring::UringIO as PlatformIO;
+        pub use unix::UnixIO as SyscallIO;
+        pub use unix::UnixIO as PlatformIO;
     }
 
     #[cfg(any(all(target_os = "linux",not(feature = "io_uring")), target_os = "macos"))] {
@@ -199,16 +203,19 @@ cfg_block! {
         #[cfg(feature = "fs")]
         pub use unix::UnixIO;
         pub use unix::UnixIO as PlatformIO;
+        pub use PlatformIO as SyscallIO;
     }
 
     #[cfg(target_os = "windows")] {
         mod windows;
         pub use windows::WindowsIO as PlatformIO;
+        pub use PlatformIO as SyscallIO;
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))] {
         mod generic;
         pub use generic::GenericIO as PlatformIO;
+        pub use PlatformIO as SyscallIO;
     }
 }
 
@@ -216,4 +223,6 @@ mod memory;
 #[cfg(feature = "fs")]
 mod vfs;
 pub use memory::MemoryIO;
+pub mod clock;
 mod common;
+pub use clock::Clock;

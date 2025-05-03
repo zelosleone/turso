@@ -1622,6 +1622,10 @@ pub enum PragmaName {
     LegacyFileFormat,
     /// Return the total number of pages in the database file.
     PageCount,
+    /// Return the page size of the database in bytes.
+    PageSize,
+    /// Returns schema version of the database file.
+    SchemaVersion,
     /// returns information about the columns of a table
     TableInfo,
     /// Returns the user version of the database file.

@@ -1,7 +1,7 @@
 use lazy_static::lazy_static;
 use limbo_ext::{
-    register_extension, scalar, ExtResult, ResultCode, VTabCursor, VTabKind, VTabModule,
-    VTabModuleDerive, Value,
+    register_extension, scalar, ConstraintInfo, ConstraintOp, ConstraintUsage, ExtResult,
+    IndexInfo, OrderByInfo, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive, Value,
 };
 #[cfg(not(target_family = "wasm"))]
 use limbo_ext::{VfsDerive, VfsExtension, VfsFile};
@@ -40,27 +40,99 @@ impl VTabModule for KVStoreVTab {
     }
 
     fn open(&self) -> Result<Self::VCursor, Self::Error> {
+        let _ = env_logger::try_init();
         Ok(KVStoreCursor {
             rows: Vec::new(),
             index: None,
         })
     }
 
-    fn filter(cursor: &mut Self::VCursor, _args: &[Value]) -> ResultCode {
-        let store = GLOBAL_STORE.lock().unwrap();
-        cursor.rows = store
-            .iter()
-            .map(|(&rowid, (k, v))| (rowid, k.clone(), v.clone()))
-            .collect();
-        cursor.rows.sort_by_key(|(rowid, _, _)| *rowid);
-
-        if cursor.rows.is_empty() {
-            cursor.index = None;
-            return ResultCode::EOF;
-        } else {
-            cursor.index = Some(0);
+    fn best_index(constraints: &[ConstraintInfo], _order_by: &[OrderByInfo]) -> IndexInfo {
+        // Look for: key = ?
+        for constraint in constraints.iter() {
+            if constraint.usable
+                && constraint.op == ConstraintOp::Eq
+                && constraint.column_index == 0
+            {
+                // this extension wouldn't support order by but for testing purposes,
+                // we will consume it if we find an ASC order by clause on the value column
+                let mut consumed = false;
+                if let Some(order) = _order_by.first() {
+                    if order.column_index == 1 && !order.desc {
+                        consumed = true;
+                    }
+                }
+                log::debug!("xBestIndex: constraint found for 'key = ?'");
+                return IndexInfo {
+                    idx_num: 1,
+                    idx_str: Some("key_eq".to_string()),
+                    order_by_consumed: consumed,
+                    estimated_cost: 10.0,
+                    estimated_rows: 4,
+                    constraint_usages: vec![ConstraintUsage {
+                        omit: true,
+                        argv_index: Some(1),
+                    }],
+                };
+            }
         }
-        ResultCode::OK
+
+        // fallback: full scan
+        log::debug!("No usable constraints found, using full scan");
+        IndexInfo {
+            idx_num: -1,
+            idx_str: None,
+            order_by_consumed: false,
+            estimated_cost: 1000.0,
+            ..Default::default()
+        }
+    }
+
+    fn filter(
+        cursor: &mut Self::VCursor,
+        args: &[Value],
+        idx_str: Option<(&str, i32)>,
+    ) -> ResultCode {
+        match idx_str {
+            Some(("key_eq", 1)) => {
+                let key = args
+                    .first()
+                    .and_then(|v| v.to_text())
+                    .map(|s| s.to_string());
+                log::debug!("idx_str found: key_eq\n value: {:?}", key);
+                if let Some(key) = key {
+                    let rowid = hash_key(&key);
+                    let store = GLOBAL_STORE.lock().unwrap();
+                    if let Some((k, v)) = store.get(&rowid) {
+                        cursor.rows.push((rowid, k.clone(), v.clone()));
+                        cursor.index = Some(0);
+                    } else {
+                        cursor.rows.clear();
+                        cursor.index = None;
+                        return ResultCode::EOF;
+                    }
+                    return ResultCode::OK;
+                }
+                cursor.rows.clear();
+                cursor.index = None;
+                ResultCode::OK
+            }
+            _ => {
+                let store = GLOBAL_STORE.lock().unwrap();
+                cursor.rows = store
+                    .iter()
+                    .map(|(&rowid, (k, v))| (rowid, k.clone(), v.clone()))
+                    .collect();
+                cursor.rows.sort_by_key(|(rowid, _, _)| *rowid);
+                if cursor.rows.is_empty() {
+                    cursor.index = None;
+                    ResultCode::EOF
+                } else {
+                    cursor.index = Some(0);
+                    ResultCode::OK
+                }
+            }
+        }
     }
 
     fn insert(&mut self, values: &[Value]) -> Result<i64, Self::Error> {
@@ -96,6 +168,7 @@ impl VTabModule for KVStoreVTab {
         let _ = self.insert(values)?;
         Ok(())
     }
+
     fn eof(cursor: &Self::VCursor) -> bool {
         cursor.index.is_some_and(|s| s >= cursor.rows.len()) || cursor.index.is_none()
     }
@@ -112,12 +185,20 @@ impl VTabModule for KVStoreVTab {
         if cursor.index.is_some_and(|c| c >= cursor.rows.len()) {
             return Err("cursor out of range".into());
         }
-        let (_, ref key, ref val) = cursor.rows[cursor.index.unwrap_or(0)];
-        match idx {
-            0 => Ok(Value::from_text(key.clone())), // key
-            1 => Ok(Value::from_text(val.clone())), // value
-            _ => Err("Invalid column".into()),
+        if let Some((_, ref key, ref val)) = cursor.rows.get(cursor.index.unwrap_or(0)) {
+            match idx {
+                0 => Ok(Value::from_text(key.clone())), // key
+                1 => Ok(Value::from_text(val.clone())), // value
+                _ => Err("Invalid column".into()),
+            }
+        } else {
+            Err("Invalid Column".into())
         }
+    }
+
+    fn destroy(&mut self) -> Result<(), Self::Error> {
+        println!("VDestroy called");
+        Ok(())
     }
 }
 

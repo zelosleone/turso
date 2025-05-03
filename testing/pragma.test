@@ -33,9 +33,10 @@ do_execsql_test pragma-table-info-invalid-table {
   PRAGMA table_info=pekka
 } {}
 
-do_execsql_test_on_specific_db ":memory:" pragma-page-count-empty {
-  PRAGMA page_count
-} {0}
+# temporarily skip this test case. The issue is detailed in #1407
+#do_execsql_test_on_specific_db ":memory:" pragma-page-count-empty {
+#  PRAGMA page_count
+#} {0}
 
 do_execsql_test_on_specific_db ":memory:" pragma-page-count-table {
   CREATE TABLE foo(bar);

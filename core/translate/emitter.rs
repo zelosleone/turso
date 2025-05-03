@@ -1,12 +1,17 @@
 // This module contains code for emitting bytecode instructions for SQL query execution.
 // It handles translating high-level SQL operations into low-level bytecode that can be executed by the virtual machine.
 
+use std::rc::Rc;
+use std::sync::Arc;
+
 use limbo_sqlite3_parser::ast::{self};
 
 use crate::function::Func;
+use crate::schema::Index;
 use crate::translate::plan::{DeletePlan, Plan, Search};
 use crate::util::exprs_are_equivalent;
-use crate::vdbe::builder::ProgramBuilder;
+use crate::vdbe::builder::{CursorType, ProgramBuilder};
+use crate::vdbe::insn::{IdxInsertFlags, RegisterOrLiteral};
 use crate::vdbe::{insn::Insn, BranchOffset};
 use crate::{Result, SymbolTable};
 
@@ -62,6 +67,10 @@ pub struct TranslateCtx<'a> {
     pub label_main_loop_end: Option<BranchOffset>,
     // First register of the aggregation results
     pub reg_agg_start: Option<usize>,
+    // In non-group-by statements with aggregations (e.g. SELECT foo, bar, sum(baz) FROM t),
+    // we want to emit the non-aggregate columns (foo and bar) only once.
+    // This register is a flag that tracks whether we have already done that.
+    pub reg_nonagg_emit_once_flag: Option<usize>,
     // First register of the result columns of the query
     pub reg_result_cols_start: Option<usize>,
     // The register holding the limit value, if any.
@@ -84,11 +93,12 @@ pub struct TranslateCtx<'a> {
     // This vector holds the indexes of the result columns that we need to skip.
     pub result_columns_to_skip_in_orderby_sorter: Option<Vec<usize>>,
     pub resolver: Resolver<'a>,
+    pub omit_predicates: Vec<usize>,
 }
 
 /// Used to distinguish database operations
 #[allow(clippy::upper_case_acronyms, dead_code)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OperationMode {
     SELECT,
     INSERT,
@@ -115,6 +125,7 @@ fn prologue<'a>(
         labels_main_loop: (0..table_count).map(|_| LoopLabels::new(program)).collect(),
         label_main_loop_end: None,
         reg_agg_start: None,
+        reg_nonagg_emit_once_flag: None,
         reg_limit: None,
         reg_offset: None,
         reg_limit_offset_sum: None,
@@ -125,11 +136,13 @@ fn prologue<'a>(
         result_column_indexes_in_orderby_sorter: (0..result_column_count).collect(),
         result_columns_to_skip_in_orderby_sorter: None,
         resolver: Resolver::new(syms),
+        omit_predicates: Vec::new(),
     };
 
     Ok((t_ctx, init_label, start_offset))
 }
 
+#[derive(Clone, Copy, Debug)]
 pub enum TransactionMode {
     None,
     Read,
@@ -149,8 +162,7 @@ fn epilogue(
         err_code: 0,
         description: String::new(),
     });
-
-    program.resolve_label(init_label, program.offset());
+    program.preassign_label_to_next_insn(init_label);
 
     match txn_mode {
         TransactionMode::Read => program.emit_insn(Insn::Transaction { write: false }),
@@ -243,6 +255,18 @@ pub fn emit_query<'a>(
         });
     }
 
+    // For non-grouped aggregation queries that also have non-aggregate columns,
+    // we need to ensure non-aggregate columns are only emitted once.
+    // This flag helps track whether we've already emitted these columns.
+    if !plan.aggregates.is_empty()
+        && plan.group_by.is_none()
+        && plan.result_columns.iter().any(|c| !c.contains_aggregates)
+    {
+        let flag = program.alloc_register();
+        program.emit_int(0, flag); // Initialize flag to 0 (not yet emitted)
+        t_ctx.reg_nonagg_emit_once_flag = Some(flag);
+    }
+
     // Allocate registers for result columns
     t_ctx.reg_result_cols_start = Some(program.alloc_registers(plan.result_columns.len()));
 
@@ -251,8 +275,8 @@ pub fn emit_query<'a>(
         init_order_by(program, t_ctx, order_by)?;
     }
 
-    if let Some(ref mut group_by) = plan.group_by {
-        init_group_by(program, t_ctx, group_by, &plan.aggregates)?;
+    if let Some(ref group_by) = plan.group_by {
+        init_group_by(program, t_ctx, group_by, &plan)?;
     }
     init_loop(
         program,
@@ -275,7 +299,7 @@ pub fn emit_query<'a>(
             condition_metadata,
             &t_ctx.resolver,
         )?;
-        program.resolve_label(jump_target_when_true, program.offset());
+        program.preassign_label_to_next_insn(jump_target_when_true);
     }
 
     // Set up main query execution loop
@@ -286,8 +310,7 @@ pub fn emit_query<'a>(
 
     // Clean up and close the main execution loop
     close_loop(program, t_ctx, &plan.table_references)?;
-
-    program.resolve_label(after_main_loop_label, program.offset());
+    program.preassign_label_to_next_insn(after_main_loop_label);
 
     let mut order_by_necessary = plan.order_by.is_some() && !plan.contains_constant_false_condition;
     let order_by = plan.order_by.as_ref();
@@ -353,12 +376,17 @@ fn emit_program_for_delete(
         &plan.table_references,
         &plan.where_clause,
     )?;
-    emit_delete_insns(program, &mut t_ctx, &plan.table_references, &plan.limit)?;
+    emit_delete_insns(
+        program,
+        &mut t_ctx,
+        &plan.table_references,
+        &plan.indexes,
+        &plan.limit,
+    )?;
 
     // Clean up and close the main execution loop
     close_loop(program, &mut t_ctx, &plan.table_references)?;
-
-    program.resolve_label(after_main_loop_label, program.offset());
+    program.preassign_label_to_next_insn(after_main_loop_label);
 
     // Finalize program
     epilogue(program, init_label, start_offset, TransactionMode::Write)?;
@@ -371,24 +399,28 @@ fn emit_delete_insns(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx,
     table_references: &[TableReference],
+    index_references: &[Arc<Index>],
     limit: &Option<isize>,
 ) -> Result<()> {
     let table_reference = table_references.first().unwrap();
     let cursor_id = match &table_reference.op {
         Operation::Scan { .. } => program.resolve_cursor_id(&table_reference.identifier),
         Operation::Search(search) => match search {
-            Search::RowidEq { .. } | Search::RowidSearch { .. } => {
+            Search::RowidEq { .. } | Search::Seek { index: None, .. } => {
                 program.resolve_cursor_id(&table_reference.identifier)
             }
-            Search::IndexSearch { index, .. } => program.resolve_cursor_id(&index.name),
+            Search::Seek {
+                index: Some(index), ..
+            } => program.resolve_cursor_id(&index.name),
         },
         _ => return Ok(()),
     };
+    let main_table_cursor_id = program.resolve_cursor_id(table_reference.table.get_name());
 
     // Emit the instructions to delete the row
     let key_reg = program.alloc_register();
     program.emit_insn(Insn::RowId {
-        cursor_id,
+        cursor_id: main_table_cursor_id,
         dest: key_reg,
     });
 
@@ -409,8 +441,43 @@ fn emit_delete_insns(
             conflict_action,
         });
     } else {
-        program.emit_insn(Insn::DeleteAsync { cursor_id });
-        program.emit_insn(Insn::DeleteAwait { cursor_id });
+        for index in index_references {
+            let index_cursor_id = program.alloc_cursor_id(
+                Some(index.name.clone()),
+                crate::vdbe::builder::CursorType::BTreeIndex(index.clone()),
+            );
+
+            program.emit_insn(Insn::OpenWrite {
+                cursor_id: index_cursor_id,
+                root_page: RegisterOrLiteral::Literal(index.root_page),
+            });
+            let num_regs = index.columns.len() + 1;
+            let start_reg = program.alloc_registers(num_regs);
+            // Emit columns that are part of the index
+            index
+                .columns
+                .iter()
+                .enumerate()
+                .for_each(|(reg_offset, column_index)| {
+                    program.emit_insn(Insn::Column {
+                        cursor_id: main_table_cursor_id,
+                        column: column_index.pos_in_table,
+                        dest: start_reg + reg_offset,
+                    });
+                });
+            program.emit_insn(Insn::RowId {
+                cursor_id: main_table_cursor_id,
+                dest: start_reg + num_regs - 1,
+            });
+            program.emit_insn(Insn::IdxDelete {
+                start_reg,
+                num_regs,
+                cursor_id: index_cursor_id,
+            });
+        }
+        program.emit_insn(Insn::Delete {
+            cursor_id: main_table_cursor_id,
+        });
     }
     if let Some(limit) = limit {
         let limit_reg = program.alloc_register();
@@ -442,25 +509,11 @@ fn emit_program_for_update(
 
     // Exit on LIMIT 0
     if let Some(0) = plan.limit {
-        epilogue(program, init_label, start_offset, TransactionMode::Read)?;
+        epilogue(program, init_label, start_offset, TransactionMode::None)?;
         program.result_columns = plan.returning.unwrap_or_default();
         program.table_references = plan.table_references;
         return Ok(());
     }
-    let after_main_loop_label = program.allocate_label();
-    t_ctx.label_main_loop_end = Some(after_main_loop_label);
-    if plan.contains_constant_false_condition {
-        program.emit_insn(Insn::Goto {
-            target_pc: after_main_loop_label,
-        });
-    }
-    let skip_label = program.allocate_label();
-    init_loop(
-        program,
-        &mut t_ctx,
-        &plan.table_references,
-        OperationMode::UPDATE,
-    )?;
     if t_ctx.reg_limit.is_none() && plan.limit.is_some() {
         let reg = program.alloc_register();
         t_ctx.reg_limit = Some(reg);
@@ -469,6 +522,50 @@ fn emit_program_for_update(
             dest: reg,
         });
         program.mark_last_insn_constant();
+        if t_ctx.reg_offset.is_none() && plan.offset.is_some_and(|n| n.ne(&0)) {
+            let reg = program.alloc_register();
+            t_ctx.reg_offset = Some(reg);
+            program.emit_insn(Insn::Integer {
+                value: plan.offset.unwrap() as i64,
+                dest: reg,
+            });
+            program.mark_last_insn_constant();
+            let combined_reg = program.alloc_register();
+            t_ctx.reg_limit_offset_sum = Some(combined_reg);
+            program.emit_insn(Insn::OffsetLimit {
+                limit_reg: t_ctx.reg_limit.unwrap(),
+                offset_reg: reg,
+                combined_reg,
+            });
+        }
+    }
+    let after_main_loop_label = program.allocate_label();
+    t_ctx.label_main_loop_end = Some(after_main_loop_label);
+    if plan.contains_constant_false_condition {
+        program.emit_insn(Insn::Goto {
+            target_pc: after_main_loop_label,
+        });
+    }
+
+    init_loop(
+        program,
+        &mut t_ctx,
+        &plan.table_references,
+        OperationMode::UPDATE,
+    )?;
+    // Open indexes for update.
+    let mut index_cursors = Vec::with_capacity(plan.indexes_to_update.len());
+    // TODO: do not reopen if there is table reference using it.
+    for index in &plan.indexes_to_update {
+        let index_cursor = program.alloc_cursor_id(
+            Some(index.table_name.clone()),
+            CursorType::BTreeIndex(index.clone()),
+        );
+        program.emit_insn(Insn::OpenWrite {
+            cursor_id: index_cursor,
+            root_page: RegisterOrLiteral::Literal(index.root_page),
+        });
+        index_cursors.push(index_cursor);
     }
     open_loop(
         program,
@@ -476,11 +573,9 @@ fn emit_program_for_update(
         &plan.table_references,
         &plan.where_clause,
     )?;
-    emit_update_insns(&plan, &t_ctx, program)?;
-    program.resolve_label(skip_label, program.offset());
+    emit_update_insns(&plan, &t_ctx, program, index_cursors)?;
     close_loop(program, &mut t_ctx, &plan.table_references)?;
-
-    program.resolve_label(after_main_loop_label, program.offset());
+    program.preassign_label_to_next_insn(after_main_loop_label);
 
     // Finalize program
     epilogue(program, init_label, start_offset, TransactionMode::Write)?;
@@ -493,17 +588,28 @@ fn emit_update_insns(
     plan: &UpdatePlan,
     t_ctx: &TranslateCtx,
     program: &mut ProgramBuilder,
+    index_cursors: Vec<usize>,
 ) -> crate::Result<()> {
     let table_ref = &plan.table_references.first().unwrap();
-    let (cursor_id, index) = match &table_ref.op {
-        Operation::Scan { .. } => (program.resolve_cursor_id(&table_ref.identifier), None),
+    let loop_labels = t_ctx.labels_main_loop.first().unwrap();
+    let (cursor_id, index, is_virtual) = match &table_ref.op {
+        Operation::Scan { .. } => (
+            program.resolve_cursor_id(&table_ref.identifier),
+            None,
+            table_ref.virtual_table().is_some(),
+        ),
         Operation::Search(search) => match search {
-            &Search::RowidEq { .. } | Search::RowidSearch { .. } => {
-                (program.resolve_cursor_id(&table_ref.identifier), None)
-            }
-            Search::IndexSearch { index, .. } => (
+            &Search::RowidEq { .. } | Search::Seek { index: None, .. } => (
+                program.resolve_cursor_id(&table_ref.identifier),
+                None,
+                false,
+            ),
+            Search::Seek {
+                index: Some(index), ..
+            } => (
                 program.resolve_cursor_id(&table_ref.identifier),
                 Some((index.clone(), program.resolve_cursor_id(&index.name))),
+                false,
             ),
         },
         _ => return Ok(()),
@@ -523,25 +629,102 @@ fn emit_update_insns(
             meta,
             &t_ctx.resolver,
         )?;
-        program.resolve_label(jump_target, program.offset());
+        program.preassign_label_to_next_insn(jump_target);
     }
-    let first_col_reg = program.alloc_registers(table_ref.table.columns().len());
-    let rowid_reg = program.alloc_register();
+    let beg = program.alloc_registers(
+        table_ref.table.columns().len()
+            + if is_virtual {
+                2 // two args before the relevant columns for VUpdate
+            } else {
+                1 // rowid reg
+            },
+    );
     program.emit_insn(Insn::RowId {
         cursor_id,
-        dest: rowid_reg,
+        dest: beg,
     });
     // if no rowid, we're done
     program.emit_insn(Insn::IsNull {
-        reg: rowid_reg,
+        reg: beg,
         target_pc: t_ctx.label_main_loop_end.unwrap(),
     });
+    if is_virtual {
+        program.emit_insn(Insn::Copy {
+            src_reg: beg,
+            dst_reg: beg + 1,
+            amount: 0,
+        })
+    }
 
+    if let Some(offset) = t_ctx.reg_offset {
+        program.emit_insn(Insn::IfPos {
+            reg: offset,
+            target_pc: loop_labels.next,
+            decrement_by: 1,
+        });
+    }
+
+    for cond in plan.where_clause.iter().filter(|c| c.is_constant()) {
+        let meta = ConditionMetadata {
+            jump_if_condition_is_true: false,
+            jump_target_when_true: BranchOffset::Placeholder,
+            jump_target_when_false: loop_labels.next,
+        };
+        translate_condition_expr(
+            program,
+            &plan.table_references,
+            &cond.expr,
+            meta,
+            &t_ctx.resolver,
+        )?;
+    }
+
+    // Update indexes first. Columns that are updated will be translated from an expression and those who aren't modified will be
+    // read from table. Mutiple value index key could be updated partially.
+    for (index, index_cursor) in plan.indexes_to_update.iter().zip(index_cursors) {
+        let index_record_reg_count = index.columns.len() + 1;
+        let index_record_reg_start = program.alloc_registers(index_record_reg_count);
+        for (idx, column) in index.columns.iter().enumerate() {
+            if let Some((_, expr)) = plan.set_clauses.iter().find(|(i, _)| *i == idx) {
+                translate_expr(
+                    program,
+                    Some(&plan.table_references),
+                    expr,
+                    index_record_reg_start + idx,
+                    &t_ctx.resolver,
+                )?;
+            } else {
+                program.emit_insn(Insn::Column {
+                    cursor_id: cursor_id,
+                    column: column.pos_in_table,
+                    dest: index_record_reg_start + idx,
+                });
+            }
+        }
+        program.emit_insn(Insn::RowId {
+            cursor_id: cursor_id,
+            dest: index_record_reg_start + index.columns.len(),
+        });
+        let index_record_reg = program.alloc_register();
+        program.emit_insn(Insn::MakeRecord {
+            start_reg: index_record_reg_start,
+            count: index_record_reg_count,
+            dest_reg: index_record_reg,
+        });
+        program.emit_insn(Insn::IdxInsert {
+            cursor_id: index_cursor,
+            record_reg: index_record_reg,
+            unpacked_start: Some(index_record_reg_start),
+            unpacked_count: Some(index_record_reg_count as u16),
+            flags: IdxInsertFlags::new(),
+        });
+    }
     // we scan a column at a time, loading either the column's values, or the new value
     // from the Set expression, into registers so we can emit a MakeRecord and update the row.
+    let start = if is_virtual { beg + 2 } else { beg + 1 };
     for idx in 0..table_ref.columns().len() {
-        if let Some((idx, expr)) = plan.set_clauses.iter().find(|(i, _)| *i == idx) {
-            let target_reg = first_col_reg + idx;
+        let target_reg = start + idx;
+        if let Some((_, expr)) = plan.set_clauses.iter().find(|(i, _)| *i == idx) {
             translate_expr(
                 program,
                 Some(&plan.table_references),
@@ -556,9 +739,17 @@ fn emit_update_insns(
                     .iter()
                     .position(|c| Some(&c.name) == table_column.name.as_ref())
             });
-            let dest = first_col_reg + idx;
-            if table_column.primary_key {
-                program.emit_null(dest, None);
+
+            // don't emit null for pkey of virtual tables. they require first two args
+            // before the 'record' to be explicitly non-null
+            if table_column.is_rowid_alias && !is_virtual {
+                program.emit_null(target_reg, None);
+            } else if is_virtual {
+                program.emit_insn(Insn::VColumn {
+                    cursor_id,
+                    column: idx,
+                    dest: target_reg,
+                });
             } else {
                 program.emit_insn(Insn::Column {
                     cursor_id: *index
@@ -572,24 +763,42 @@ fn emit_update_insns(
                         })
                         .unwrap_or(&cursor_id),
                     column: column_idx_in_index.unwrap_or(idx),
-                    dest,
+                    dest: target_reg,
                 });
             }
         }
     }
-    let record_reg = program.alloc_register();
-    program.emit_insn(Insn::MakeRecord {
-        start_reg: first_col_reg,
-        count: table_ref.columns().len(),
-        dest_reg: record_reg,
-    });
-    program.emit_insn(Insn::InsertAsync {
-        cursor: cursor_id,
-        key_reg: rowid_reg,
-        record_reg,
-        flag: 0,
-    });
-    program.emit_insn(Insn::InsertAwait { cursor_id });
+    if let Some(btree_table) = table_ref.btree() {
+        if btree_table.is_strict {
+            program.emit_insn(Insn::TypeCheck {
+                start_reg: start,
+                count: table_ref.columns().len(),
+                check_generated: true,
+                table_reference: Rc::clone(&btree_table),
+            });
+        }
+        let record_reg = program.alloc_register();
+        program.emit_insn(Insn::MakeRecord {
+            start_reg: start,
+            count: table_ref.columns().len(),
+            dest_reg: record_reg,
+        });
+        program.emit_insn(Insn::Insert {
+            cursor: cursor_id,
+            key_reg: beg,
+            record_reg,
+            flag: 0,
+        });
+    } else if let Some(vtab) = table_ref.virtual_table() {
+        let arg_count = table_ref.columns().len() + 2;
+        program.emit_insn(Insn::VUpdate {
+            cursor_id,
+            arg_count,
+            start_reg: beg,
+            vtab_ptr: vtab.implementation.as_ref().ctx as usize,
+            conflict_action: 0u16,
+        });
+    }
 
     if let Some(limit_reg) = t_ctx.reg_limit {
         program.emit_insn(Insn::DecrJumpZero {

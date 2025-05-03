@@ -6,6 +6,7 @@ pub use value::Value;
 pub use params::params_from_iter;
 
 use crate::params::*;
+use std::fmt::Debug;
 use std::num::NonZero;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -16,11 +17,13 @@ pub enum Error {
     ToSqlConversionFailure(BoxError),
     #[error("Mutex lock error: {0}")]
     MutexError(String),
+    #[error("SQL execution failure: `{0}`")]
+    SqlExecutionFailure(String),
 }
 
 impl From<limbo_core::LimboError> for Error {
-    fn from(_err: limbo_core::LimboError) -> Self {
-        todo!();
+    fn from(err: limbo_core::LimboError) -> Self {
+        Error::SqlExecutionFailure(err.to_string())
     }
 }
 
@@ -55,12 +58,19 @@ impl Builder {
     }
 }
 
+#[derive(Clone)]
 pub struct Database {
     inner: Arc<limbo_core::Database>,
 }
 
 unsafe impl Send for Database {}
 unsafe impl Sync for Database {}
+
+impl Debug for Database {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Database").finish()
+    }
+}
 
 impl Database {
     pub fn connect(&self) -> Result<Connection> {
@@ -119,6 +129,14 @@ pub struct Statement {
     inner: Arc<Mutex<limbo_core::Statement>>,
 }
 
+impl Clone for Statement {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
+}
+
 unsafe impl Send for Statement {}
 unsafe impl Sync for Statement {}
 
@@ -143,6 +161,10 @@ impl Statement {
     }
 
     pub async fn execute(&mut self, params: impl IntoParams) -> Result<u64> {
+        {
+            // Reset the statement before executing
+            self.inner.lock().unwrap().reset();
+        }
         let params = params.into_params()?;
         match params {
             params::Params::None => (),
@@ -180,6 +202,39 @@ impl Statement {
             }
         }
     }
+
+    pub fn columns(&self) -> Vec<Column> {
+        let stmt = self.inner.lock().unwrap();
+
+        let n = stmt.num_columns();
+
+        let mut cols = Vec::with_capacity(n);
+
+        for i in 0..n {
+            let name = stmt.get_column_name(i).into_owned();
+            cols.push(Column {
+                name,
+                decl_type: None, // TODO
+            });
+        }
+
+        cols
+    }
+}
+
+pub struct Column {
+    name: String,
+    decl_type: Option<String>,
+}
+
+impl Column {
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn decl_type(&self) -> Option<&str> {
+        self.decl_type.as_deref()
+    }
 }
 
 pub trait IntoValue {
@@ -196,6 +251,14 @@ pub struct Transaction {}
 
 pub struct Rows {
     inner: Arc<Mutex<limbo_core::Statement>>,
+}
+
+impl Clone for Rows {
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+        }
+    }
 }
 
 unsafe impl Send for Rows {}
@@ -220,6 +283,7 @@ impl Rows {
     }
 }
 
+#[derive(Debug)]
 pub struct Row {
     values: Vec<limbo_core::OwnedValue>,
 }
@@ -237,5 +301,9 @@ impl Row {
             limbo_core::OwnedValue::Text(text) => Ok(Value::Text(text.to_string())),
             limbo_core::OwnedValue::Blob(items) => Ok(Value::Blob(items.to_vec())),
         }
+    }
+
+    pub fn column_count(&self) -> usize {
+        self.values.len()
     }
 }

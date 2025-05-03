@@ -8,16 +8,29 @@ do_execsql_test fuzz-test-failure {
   SELECT mod(atanh(tanh(-1.0)), ((1.0))) / ((asinh(-1.0) / 2.0 * 1.0) + pow(0.0, 1.0) + 0.5);
 } {-16.8596516555675}
 
-do_execsql_test add-int {
+do_execsql_test add-int-1 {
   SELECT 10 + 1
 } {11}
+
+do_execsql_test add-int-2 {
+  SELECT 0xA + 0xFF
+} {265}
+
+do_execsql_test add-int-3 {
+  SELECT 0xA + 1
+} {11}
+
 
 do_execsql_test add-float {
   SELECT 10.1 + 0.3
 } {10.4}
 
-do_execsql_test add-int-float {
+do_execsql_test add-int-float-1 {
   SELECT 10 + 0.1
+} {10.1}
+
+do_execsql_test add-int-float-2 {
+  SELECT 0xa + 0.1
 } {10.1}
 
 do_execsql_test add-agg-int-agg-int {
@@ -81,6 +94,18 @@ do_execsql_test subtract-agg-int-agg-float {
 do_execsql_test subtract-agg-float-agg-int {
   SELECT sum(3.5) - sum(1)
 } {2.5}
+
+do_execsql_test subtract-blob {
+  SELECT -x'11'
+} {0}
+
+do_execsql_test subtract-blob-empty {
+  SELECT -x''
+} {0}
+
+do_execsql_test subtract-blob-charcter {
+  SELECT -'hi';
+} {0}
 
 foreach {testnum lhs rhs ans} {
    1   'a'   'a'   0
@@ -599,9 +624,13 @@ do_execsql_test bitwise-not-text-float {
 	SELECT ~'823.34'
 } {-824}
 
-do_execsql_test bitwise-not-text-int {
+do_execsql_test bitwise-not-text-int-1 {
 	SELECT ~'1234'
 } {-1235}
+
+do_execsql_test bitwise-not-text-int-2 {
+	SELECT ~0xA
+} {-11}
 
 do_execsql_test bitwise-not-scalar-float {
 	SELECT ~abs(693.9)
@@ -627,23 +656,22 @@ do_execsql_test bitwise-not-zero {
 	SELECT ~0
 } {-1}
 
-foreach {testname lhs ans} {
-  int-1           1        0
-  int-2           2        0
-  int-3           0        1
-  float-1         1.0      0
-  float-2         2.0      0
-  float-3         0.0      1
-  text            'a'      1
-  text-int-1      '0'      1
-  text-int-2      '1'      0
-  text-float-1    '1.0'    0
-  text-float-2    '0.0'    1
-  text-float-edge '12-23.0' 0
-  null            NULL     {}
-} {
-  do_execsql_test boolean-not "SELECT not $lhs" $::ans
-}
+do_execsql_test bitwise-not-empty-blob {
+	SELECT ~x''
+} {-1}
+
+do_execsql_test bitwise-not-cast-blob {
+	SELECT ~ CAST ('af' AS BLOB);
+} {-1}
+
+do_execsql_test bitwise-not-blob {
+	SELECT ~ x'0000';
+} {-1}
+
+do_execsql_test bitwise-not-blob-2 {
+	SELECT ~ x'0001';
+} {-1}
+
 
 do_execsql_test pi {
   SELECT pi()
@@ -1309,53 +1337,74 @@ do_execsql_test log-int-null {
   SELECT log(5, null)
 } {}
 
-do_execsql_test mod-int-null {
+do_execsql_test remainder-int-null {
   SELECT 183 % null
 } {}
 
-do_execsql_test mod-int-0 {
+do_execsql_test remainder-int-0 {
   SELECT 183 % 0
 } {}
 
-do_execsql_test mod-int-int {
+do_execsql_test remainder-int-int {
   SELECT 183 % 10
 } { 3 }
 
-do_execsql_test mod-int-float {
+do_execsql_test remainder-int-float {
   SELECT 38 % 10.35
 } { 8.0 }
 
-do_execsql_test mod-float-int {
+do_execsql_test remainder-float-int {
   SELECT 38.43 % 13
 } { 12.0 }
 
-do_execsql_test mod-0-float {
+do_execsql_test remainder-0-float {
   SELECT 0 % 12.0
 } { 0.0 }
 
-do_execsql_test mod-float-0 {
+do_execsql_test remainder-float-0 {
   SELECT 23.14 % 0
 } {}
 
-do_execsql_test mod-float-float {
+do_execsql_test remainder-float-float {
   SELECT 23.14 % 12.0
 } { 11.0 }
 
-do_execsql_test mod-float-agg {
+do_execsql_test remainder-float-agg {
     SELECT 23.14 % sum(id) from products
 } { 23.0 }
 
-do_execsql_test mod-int-agg {
+do_execsql_test remainder-int-agg {
     SELECT 17 % sum(id) from users
 } { 17 }
 
-do_execsql_test mod-agg-int {
+do_execsql_test remainder-agg-int {
     SELECT count(*) % 17 from users
 } { 4 }
 
-do_execsql_test mod-agg-float {
+do_execsql_test remainder-agg-float {
     SELECT count(*) % 2.43 from users
 } { 0.0 }
+
+foreach {testnum lhs rhs ans} {
+   1   'a'    'a'   {}
+   2   'a'    10    0
+   3   10     'a'   {}
+   4   'a'    11.0  0.0
+   5   11.0   'a'   {}
+   7   '10'   '3'   1
+   8   '10.0' '3'   1.0
+   9   '10.0' -3    1.0
+} {
+  do_execsql_test remainder-text-$testnum "SELECT $lhs % $rhs" $::ans
+}
+
+foreach {testnum lhs rhs ans} {
+   1   '-9223372036854775808'  '-1'  0 
+   2   -9223372036854775808     -1   0
+   3   -9223372036854775809     -1   0.0
+} {
+  do_execsql_test remainder-overflow-$testnum "SELECT $lhs % $rhs" $::ans
+}
 
 do_execsql_test comp-float-float {
     SELECT 0.0 = 0.0

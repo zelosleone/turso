@@ -2,6 +2,7 @@ use limbo_sqlite3_parser::ast::{self, CreateTableBody, Expr, FunctionTail, Liter
 use std::{rc::Rc, sync::Arc};
 
 use crate::{
+    function::Func,
     schema::{self, Column, Schema, Type},
     types::{OwnedValue, OwnedValueType},
     LimboError, OpenFlags, Result, Statement, StepResult, SymbolTable, IO,
@@ -36,6 +37,21 @@ pub fn normalize_ident(identifier: &str) -> String {
 
 pub const PRIMARY_KEY_AUTOMATIC_INDEX_NAME_PREFIX: &str = "sqlite_autoindex_";
 
+enum UnparsedIndex {
+    /// CREATE INDEX idx ON table_name(sql)
+    FromSql {
+        table_name: String,
+        root_page: usize,
+        sql: String,
+    },
+    /// Implicitly created index due to primary key constraints (or UNIQUE, but not implemented)
+    FromConstraint {
+        name: String,
+        table_name: String,
+        root_page: usize,
+    },
+}
+
 pub fn parse_schema_rows(
     rows: Option<Statement>,
     schema: &mut Schema,
@@ -45,7 +61,7 @@ pub fn parse_schema_rows(
 ) -> Result<()> {
     if let Some(mut rows) = rows {
         rows.set_mv_tx_id(mv_tx_id);
-        let mut automatic_indexes = Vec::new();
+        let mut unparsed_indexes = Vec::with_capacity(10);
         loop {
             match rows.step()? {
                 StepResult::Row => {
@@ -58,9 +74,37 @@ pub fn parse_schema_rows(
                         "table" => {
                             let root_page: i64 = row.get::<i64>(3)?;
                             let sql: &str = row.get::<&str>(4)?;
-                            if root_page == 0 && sql.to_lowercase().contains("virtual") {
+                            if root_page == 0 && sql.to_lowercase().contains("create virtual") {
                                 let name: &str = row.get::<&str>(1)?;
-                                let vtab = syms.vtabs.get(name).unwrap().clone();
+                                // a virtual table is found in the sqlite_schema, but it's no
+                                // longer in the in-memory schema. We need to recreate it if
+                                // the module is loaded in the symbol table.
+                                let vtab = if let Some(vtab) = syms.vtabs.get(name) {
+                                    vtab.clone()
+                                } else {
+                                    let mod_name = module_name_from_sql(sql)?;
+                                    if let Some(vmod) = syms.vtab_modules.get(mod_name) {
+                                        if let limbo_ext::VTabKind::VirtualTable = vmod.module_kind
+                                        {
+                                            crate::VirtualTable::from_args(
+                                                Some(name),
+                                                mod_name,
+                                                module_args_from_sql(sql)?,
+                                                syms,
+                                                vmod.module_kind,
+                                                None,
+                                            )?
+                                        } else {
+                                            return Err(LimboError::Corrupt("Table valued function: {name} registered as virtual table in schema".to_string()));
+                                        }
+                                    } else {
+                                        // the extension isn't loaded, so we emit a warning.
+                                        return Err(LimboError::ExtensionError(format!(
+                                            "Virtual table module '{}' not found\nPlease load extension",
+                                            &mod_name
+                                        )));
+                                    }
+                                };
                                 schema.add_virtual_table(vtab);
                             } else {
                                 let table = schema::BTreeTable::from_sql(sql, root_page as usize)?;
@@ -71,21 +115,24 @@ pub fn parse_schema_rows(
                             let root_page: i64 = row.get::<i64>(3)?;
                             match row.get::<&str>(4) {
                                 Ok(sql) => {
-                                    let index = schema::Index::from_sql(sql, root_page as usize)?;
-                                    schema.add_index(Arc::new(index));
+                                    unparsed_indexes.push(UnparsedIndex::FromSql {
+                                        table_name: row.get::<&str>(2)?.to_string(),
+                                        root_page: root_page as usize,
+                                        sql: sql.to_string(),
+                                    });
                                 }
                                 _ => {
                                     // Automatic index on primary key, e.g.
                                     // table|foo|foo|2|CREATE TABLE foo (a text PRIMARY KEY, b)
                                     // index|sqlite_autoindex_foo_1|foo|3|
-                                    let index_name = row.get::<&str>(1)?;
-                                    let table_name = row.get::<&str>(2)?;
+                                    let index_name = row.get::<&str>(1)?.to_string();
+                                    let table_name = row.get::<&str>(2)?.to_string();
                                     let root_page = row.get::<i64>(3)?;
-                                    automatic_indexes.push((
-                                        index_name.to_string(),
-                                        table_name.to_string(),
-                                        root_page,
-                                    ));
+                                    unparsed_indexes.push(UnparsedIndex::FromConstraint {
+                                        name: index_name,
+                                        table_name,
+                                        root_page: root_page as usize,
+                                    });
                                 }
                             }
                         }
@@ -102,12 +149,31 @@ pub fn parse_schema_rows(
                 StepResult::Busy => break,
             }
         }
-        for (index_name, table_name, root_page) in automatic_indexes {
-            // We need to process these after all tables are loaded into memory due to the schema.get_table() call
-            let table = schema.get_btree_table(&table_name).unwrap();
-            let index =
-                schema::Index::automatic_from_primary_key(&table, &index_name, root_page as usize)?;
-            schema.add_index(Arc::new(index));
+        for unparsed_index in unparsed_indexes {
+            match unparsed_index {
+                UnparsedIndex::FromSql {
+                    table_name,
+                    root_page,
+                    sql,
+                } => {
+                    let table = schema.get_btree_table(&table_name).unwrap();
+                    let index = schema::Index::from_sql(&sql, root_page as usize, table.as_ref())?;
+                    schema.add_index(Arc::new(index));
+                }
+                UnparsedIndex::FromConstraint {
+                    name,
+                    table_name,
+                    root_page,
+                } => {
+                    let table = schema.get_btree_table(&table_name).unwrap();
+                    let index = schema::Index::automatic_from_primary_key(
+                        table.as_ref(),
+                        &name,
+                        root_page as usize,
+                    )?;
+                    schema.add_index(Arc::new(index));
+                }
+            }
         }
     }
     Ok(())
@@ -130,6 +196,99 @@ pub fn check_ident_equivalency(ident1: &str, ident2: &str) -> bool {
         identifier
     }
     strip_quotes(ident1).eq_ignore_ascii_case(strip_quotes(ident2))
+}
+
+fn module_name_from_sql(sql: &str) -> Result<&str> {
+    if let Some(start) = sql.find("USING") {
+        let start = start + 6;
+        // stop at the first space, semicolon, or parenthesis
+        let end = sql[start..]
+            .find(|c: char| c.is_whitespace() || c == ';' || c == '(')
+            .unwrap_or(sql.len() - start)
+            + start;
+        Ok(sql[start..end].trim())
+    } else {
+        Err(LimboError::InvalidArgument(
+            "Expected 'USING' in module name".to_string(),
+        ))
+    }
+}
+
+// CREATE VIRTUAL TABLE table_name USING module_name(arg1, arg2, ...);
+// CREATE VIRTUAL TABLE table_name USING module_name;
+fn module_args_from_sql(sql: &str) -> Result<Vec<limbo_ext::Value>> {
+    if !sql.contains('(') {
+        return Ok(vec![]);
+    }
+    let start = sql.find('(').ok_or_else(|| {
+        LimboError::InvalidArgument("Expected '(' in module argument list".to_string())
+    })? + 1;
+    let end = sql.rfind(')').ok_or_else(|| {
+        LimboError::InvalidArgument("Expected ')' in module argument list".to_string())
+    })?;
+
+    let mut args = Vec::new();
+    let mut current_arg = String::new();
+    let mut chars = sql[start..end].chars().peekable();
+    let mut in_quotes = false;
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\'' => {
+                if in_quotes {
+                    if chars.peek() == Some(&'\'') {
+                        // Escaped quote
+                        current_arg.push('\'');
+                        chars.next();
+                    } else {
+                        in_quotes = false;
+                        args.push(limbo_ext::Value::from_text(current_arg.trim().to_string()));
+                        current_arg.clear();
+                        // Skip until comma or end
+                        while let Some(&nc) = chars.peek() {
+                            if nc == ',' {
+                                chars.next(); // Consume comma
+                                break;
+                            } else if nc.is_whitespace() {
+                                chars.next();
+                            } else {
+                                return Err(LimboError::InvalidArgument(
+                                    "Unexpected characters after quoted argument".to_string(),
+                                ));
+                            }
+                        }
+                    }
+                } else {
+                    in_quotes = true;
+                }
+            }
+            ',' => {
+                if !in_quotes {
+                    if !current_arg.trim().is_empty() {
+                        args.push(limbo_ext::Value::from_text(current_arg.trim().to_string()));
+                        current_arg.clear();
+                    }
+                } else {
+                    current_arg.push(c);
+                }
+            }
+            _ => {
+                current_arg.push(c);
+            }
+        }
+    }
+
+    if !current_arg.trim().is_empty() && !in_quotes {
+        args.push(limbo_ext::Value::from_text(current_arg.trim().to_string()));
+    }
+
+    if in_quotes {
+        return Err(LimboError::InvalidArgument(
+            "Unterminated string literal in module arguments".to_string(),
+        ));
+    }
+
+    Ok(args)
 }
 
 pub fn check_literal_equivalency(lhs: &Literal, rhs: &Literal) -> bool {
@@ -278,7 +437,11 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
         (Expr::Unary(op1, expr1), Expr::Unary(op2, expr2)) => {
             op1 == op2 && exprs_are_equivalent(expr1, expr2)
         }
-        (Expr::Variable(var1), Expr::Variable(var2)) => var1 == var2,
+        // Variables that are not bound to a specific value, are treated as NULL
+        // https://sqlite.org/lang_expr.html#varparam
+        (Expr::Variable(var), Expr::Variable(var2)) if var == "" && var2 == "" => false,
+        // Named variables can be compared by their name
+        (Expr::Variable(val), Expr::Variable(val2)) => val == val2,
         (Expr::Parenthesized(exprs1), Expr::Parenthesized(exprs2)) => {
             exprs1.len() == exprs2.len()
                 && exprs1
@@ -401,6 +564,39 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
             Some(column)
         })
         .collect::<Vec<_>>())
+}
+
+/// This function checks if a given expression is a constant value that can be pushed down to the database engine.
+/// It is expected to be called with the other half of a binary expression with an Expr::Column
+pub fn can_pushdown_predicate(expr: &Expr, table_idx: usize) -> bool {
+    match expr {
+        Expr::Literal(_) => true,
+        Expr::Column { table, .. } => *table <= table_idx,
+        Expr::Binary(lhs, _, rhs) => {
+            can_pushdown_predicate(lhs, table_idx) && can_pushdown_predicate(rhs, table_idx)
+        }
+        Expr::Parenthesized(exprs) => can_pushdown_predicate(exprs.first().unwrap(), table_idx),
+        Expr::Unary(_, expr) => can_pushdown_predicate(expr, table_idx),
+        Expr::FunctionCall { args, name, .. } => {
+            let function = crate::function::Func::resolve_function(
+                &name.0,
+                args.as_ref().map_or(0, |a| a.len()),
+            );
+            // is deterministic
+            matches!(function, Ok(Func::Scalar(_)))
+        }
+        Expr::Like { lhs, rhs, .. } => {
+            can_pushdown_predicate(lhs, table_idx) && can_pushdown_predicate(rhs, table_idx)
+        }
+        Expr::Between {
+            lhs, start, end, ..
+        } => {
+            can_pushdown_predicate(lhs, table_idx)
+                && can_pushdown_predicate(start, table_idx)
+                && can_pushdown_predicate(end, table_idx)
+        }
+        _ => false,
+    }
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -716,11 +912,10 @@ fn parse_numeric_str(text: &str) -> Result<(OwnedValueType, &str), ()> {
     let text = text.trim();
     let bytes = text.as_bytes();
 
-    if bytes.is_empty()
-        || bytes[0] == b'e'
-        || bytes[0] == b'E'
-        || (bytes[0] == b'.' && (bytes[1] == b'e' || bytes[1] == b'E'))
-    {
+    if matches!(
+        bytes,
+        [] | [b'e', ..] | [b'E', ..] | [b'.', b'e' | b'E', ..]
+    ) {
         return Err(());
     }
 
@@ -822,6 +1017,24 @@ pub mod tests {
         assert_eq!(normalize_ident("`foo`"), "foo");
         assert_eq!(normalize_ident("[foo]"), "foo");
         assert_eq!(normalize_ident("\"foo\""), "foo");
+    }
+
+    #[test]
+    fn test_anonymous_variable_comparison() {
+        let expr1 = Expr::Variable("".to_string());
+        let expr2 = Expr::Variable("".to_string());
+        assert!(!exprs_are_equivalent(&expr1, &expr2));
+    }
+
+    #[test]
+    fn test_named_variable_comparison() {
+        let expr1 = Expr::Variable("1".to_string());
+        let expr2 = Expr::Variable("1".to_string());
+        assert!(exprs_are_equivalent(&expr1, &expr2));
+
+        let expr1 = Expr::Variable("1".to_string());
+        let expr2 = Expr::Variable("2".to_string());
+        assert!(!exprs_are_equivalent(&expr1, &expr2));
     }
 
     #[test]
@@ -1631,5 +1844,89 @@ pub mod tests {
             parse_numeric_str("1.23e4extra"),
             Ok((OwnedValueType::Float, "1.23e4"))
         );
+    }
+
+    #[test]
+    fn test_module_name_basic() {
+        let sql = "CREATE VIRTUAL TABLE x USING y;";
+        assert_eq!(module_name_from_sql(sql).unwrap(), "y");
+    }
+
+    #[test]
+    fn test_module_name_with_args() {
+        let sql = "CREATE VIRTUAL TABLE x USING modname('a', 'b');";
+        assert_eq!(module_name_from_sql(sql).unwrap(), "modname");
+    }
+
+    #[test]
+    fn test_module_name_missing_using() {
+        let sql = "CREATE VIRTUAL TABLE x (a, b);";
+        assert!(module_name_from_sql(sql).is_err());
+    }
+
+    #[test]
+    fn test_module_name_no_semicolon() {
+        let sql = "CREATE VIRTUAL TABLE x USING limbo(a, b)";
+        assert_eq!(module_name_from_sql(sql).unwrap(), "limbo");
+    }
+
+    #[test]
+    fn test_module_name_no_semicolon_or_args() {
+        let sql = "CREATE VIRTUAL TABLE x USING limbo";
+        assert_eq!(module_name_from_sql(sql).unwrap(), "limbo");
+    }
+
+    #[test]
+    fn test_module_args_none() {
+        let sql = "CREATE VIRTUAL TABLE x USING modname;";
+        let args = module_args_from_sql(sql).unwrap();
+        assert_eq!(args.len(), 0);
+    }
+
+    #[test]
+    fn test_module_args_basic() {
+        let sql = "CREATE VIRTUAL TABLE x USING modname('arg1', 'arg2');";
+        let args = module_args_from_sql(sql).unwrap();
+        assert_eq!(args.len(), 2);
+        assert_eq!("arg1", args[0].to_text().unwrap());
+        assert_eq!("arg2", args[1].to_text().unwrap());
+        for arg in args {
+            unsafe { arg.__free_internal_type() }
+        }
+    }
+
+    #[test]
+    fn test_module_args_with_escaped_quote() {
+        let sql = "CREATE VIRTUAL TABLE x USING modname('a''b', 'c');";
+        let args = module_args_from_sql(sql).unwrap();
+        assert_eq!(args.len(), 2);
+        assert_eq!(args[0].to_text().unwrap(), "a'b");
+        assert_eq!(args[1].to_text().unwrap(), "c");
+        for arg in args {
+            unsafe { arg.__free_internal_type() }
+        }
+    }
+
+    #[test]
+    fn test_module_args_unterminated_string() {
+        let sql = "CREATE VIRTUAL TABLE x USING modname('arg1, 'arg2');";
+        assert!(module_args_from_sql(sql).is_err());
+    }
+
+    #[test]
+    fn test_module_args_extra_garbage_after_quote() {
+        let sql = "CREATE VIRTUAL TABLE x USING modname('arg1'x);";
+        assert!(module_args_from_sql(sql).is_err());
+    }
+
+    #[test]
+    fn test_module_args_trailing_comma() {
+        let sql = "CREATE VIRTUAL TABLE x USING modname('arg1',);";
+        let args = module_args_from_sql(sql).unwrap();
+        assert_eq!(args.len(), 1);
+        assert_eq!("arg1", args[0].to_text().unwrap());
+        for arg in args {
+            unsafe { arg.__free_internal_type() }
+        }
     }
 }

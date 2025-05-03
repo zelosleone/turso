@@ -1,10 +1,13 @@
 use limbo_ext::{AggCtx, FinalizeFunction, StepFunction};
+use limbo_sqlite3_parser::ast::SortOrder;
 
 use crate::error::LimboError;
 use crate::ext::{ExtValue, ExtValueType};
 use crate::pseudo::PseudoCursor;
+use crate::schema::Index;
 use crate::storage::btree::BTreeCursor;
 use crate::storage::sqlite3_ondisk::write_varint;
+use crate::translate::plan::IterationDirection;
 use crate::vdbe::sorter::Sorter;
 use crate::vdbe::{Register, VTabOpaqueCursor};
 use crate::Result;
@@ -20,6 +23,20 @@ pub enum OwnedValueType {
     Text,
     Blob,
     Error,
+}
+
+impl Display for OwnedValueType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
+            Self::Null => "NULL",
+            Self::Integer => "INT",
+            Self::Float => "REAL",
+            Self::Blob => "BLOB",
+            Self::Text => "TEXT",
+            Self::Error => "ERROR",
+        };
+        write!(f, "{}", value)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +83,15 @@ impl Text {
 
     pub fn as_str(&self) -> &str {
         unsafe { std::str::from_utf8_unchecked(self.value.as_ref()) }
+    }
+}
+
+impl From<String> for Text {
+    fn from(value: String) -> Self {
+        Text {
+            value: value.into_bytes(),
+            subtype: TextSubtype::Text,
+        }
     }
 }
 
@@ -145,13 +171,13 @@ impl OwnedValue {
             OwnedValue::Null => {}
             OwnedValue::Integer(i) => {
                 let serial_type = SerialType::from(self);
-                match serial_type {
-                    SerialType::I8 => out.extend_from_slice(&(*i as i8).to_be_bytes()),
-                    SerialType::I16 => out.extend_from_slice(&(*i as i16).to_be_bytes()),
-                    SerialType::I24 => out.extend_from_slice(&(*i as i32).to_be_bytes()[1..]), // remove most significant byte
-                    SerialType::I32 => out.extend_from_slice(&(*i as i32).to_be_bytes()),
-                    SerialType::I48 => out.extend_from_slice(&i.to_be_bytes()[2..]), // remove 2 most significant bytes
-                    SerialType::I64 => out.extend_from_slice(&i.to_be_bytes()),
+                match serial_type.kind() {
+                    SerialTypeKind::I8 => out.extend_from_slice(&(*i as i8).to_be_bytes()),
+                    SerialTypeKind::I16 => out.extend_from_slice(&(*i as i16).to_be_bytes()),
+                    SerialTypeKind::I24 => out.extend_from_slice(&(*i as i32).to_be_bytes()[1..]), // remove most significant byte
+                    SerialTypeKind::I32 => out.extend_from_slice(&(*i as i32).to_be_bytes()),
+                    SerialTypeKind::I48 => out.extend_from_slice(&i.to_be_bytes()[2..]), // remove 2 most significant bytes
+                    SerialTypeKind::I64 => out.extend_from_slice(&i.to_be_bytes()),
                     _ => unreachable!(),
                 }
             }
@@ -197,6 +223,12 @@ impl Display for OwnedValue {
             }
             Self::Float(fl) => {
                 let fl = *fl;
+                if fl == f64::INFINITY {
+                    return write!(f, "Inf");
+                }
+                if fl == f64::NEG_INFINITY {
+                    return write!(f, "-Inf");
+                }
                 if fl.is_nan() {
                     return write!(f, "");
                 }
@@ -732,6 +764,10 @@ impl ImmutableRecord {
         &self.values[idx]
     }
 
+    pub fn get_value_opt(&self, idx: usize) -> Option<&RefValue> {
+        self.values.get(idx)
+    }
+
     pub fn len(&self) -> usize {
         self.values.len()
     }
@@ -750,18 +786,7 @@ impl ImmutableRecord {
             let n = write_varint(&mut serial_type_buf[0..], serial_type.into());
             serials.push((serial_type_buf, n));
 
-            let value_size = match serial_type {
-                SerialType::Null => 0,
-                SerialType::I8 => 1,
-                SerialType::I16 => 2,
-                SerialType::I24 => 3,
-                SerialType::I32 => 4,
-                SerialType::I48 => 6,
-                SerialType::I64 => 8,
-                SerialType::F64 => 8,
-                SerialType::Text { content_size } => content_size,
-                SerialType::Blob { content_size } => content_size,
-            };
+            let value_size = serial_type.size();
 
             size_header += n;
             size_values += value_size;
@@ -808,16 +833,17 @@ impl ImmutableRecord {
                 OwnedValue::Integer(i) => {
                     values.push(RefValue::Integer(*i));
                     let serial_type = SerialType::from(value);
-                    match serial_type {
-                        SerialType::I8 => writer.extend_from_slice(&(*i as i8).to_be_bytes()),
-                        SerialType::I16 => writer.extend_from_slice(&(*i as i16).to_be_bytes()),
-                        SerialType::I24 => {
+                    match serial_type.kind() {
+                        SerialTypeKind::ConstInt0 | SerialTypeKind::ConstInt1 => {}
+                        SerialTypeKind::I8 => writer.extend_from_slice(&(*i as i8).to_be_bytes()),
+                        SerialTypeKind::I16 => writer.extend_from_slice(&(*i as i16).to_be_bytes()),
+                        SerialTypeKind::I24 => {
                             writer.extend_from_slice(&(*i as i32).to_be_bytes()[1..])
                         } // remove most significant byte
-                        SerialType::I32 => writer.extend_from_slice(&(*i as i32).to_be_bytes()),
-                        SerialType::I48 => writer.extend_from_slice(&i.to_be_bytes()[2..]), // remove 2 most significant bytes
-                        SerialType::I64 => writer.extend_from_slice(&i.to_be_bytes()),
-                        _ => unreachable!(),
+                        SerialTypeKind::I32 => writer.extend_from_slice(&(*i as i32).to_be_bytes()),
+                        SerialTypeKind::I48 => writer.extend_from_slice(&i.to_be_bytes()[2..]), // remove 2 most significant bytes
+                        SerialTypeKind::I64 => writer.extend_from_slice(&i.to_be_bytes()),
+                        other => panic!("Serial type is not an integer: {:?}", other),
                     }
                 }
                 OwnedValue::Float(f) => {
@@ -874,6 +900,26 @@ impl ImmutableRecord {
 
     pub fn get_payload(&self) -> &[u8] {
         &self.payload
+    }
+}
+
+impl Display for ImmutableRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for value in &self.values {
+            match value {
+                RefValue::Null => write!(f, "NULL")?,
+                RefValue::Integer(i) => write!(f, "Integer({})", *i)?,
+                RefValue::Float(flo) => write!(f, "Float({})", *flo)?,
+                RefValue::Text(text_ref) => write!(f, "Text({})", text_ref.as_str())?,
+                RefValue::Blob(raw_slice) => {
+                    write!(f, "Blob({})", String::from_utf8_lossy(raw_slice.to_slice()))?
+                }
+            }
+            if value != self.values.last().unwrap() {
+                write!(f, ", ")?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1009,8 +1055,66 @@ impl PartialOrd<RefValue> for RefValue {
     }
 }
 
-pub fn compare_immutable(l: &[RefValue], r: &[RefValue]) -> std::cmp::Ordering {
-    l.partial_cmp(r).unwrap()
+/// A bitfield that represents the comparison spec for index keys.
+/// Since indexed columns can individually specify ASC/DESC, each key must
+/// be compared differently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(transparent)]
+pub struct IndexKeySortOrder(u64);
+
+impl IndexKeySortOrder {
+    pub fn get_sort_order_for_col(&self, column_idx: usize) -> SortOrder {
+        assert!(column_idx < 64, "column index out of range: {}", column_idx);
+        match self.0 & (1 << column_idx) {
+            0 => SortOrder::Asc,
+            _ => SortOrder::Desc,
+        }
+    }
+
+    pub fn from_index(index: &Index) -> Self {
+        let mut spec = 0;
+        for (i, column) in index.columns.iter().enumerate() {
+            spec |= ((column.order == SortOrder::Desc) as u64) << i;
+        }
+        IndexKeySortOrder(spec)
+    }
+
+    pub fn from_list(order: &[SortOrder]) -> Self {
+        let mut spec = 0;
+        for (i, order) in order.iter().enumerate() {
+            spec |= ((*order == SortOrder::Desc) as u64) << i;
+        }
+        IndexKeySortOrder(spec)
+    }
+
+    pub fn default() -> Self {
+        Self(0)
+    }
+}
+
+impl Default for IndexKeySortOrder {
+    fn default() -> Self {
+        Self::default()
+    }
+}
+
+pub fn compare_immutable(
+    l: &[RefValue],
+    r: &[RefValue],
+    index_key_sort_order: IndexKeySortOrder,
+) -> std::cmp::Ordering {
+    assert_eq!(l.len(), r.len());
+    for (i, (l, r)) in l.iter().zip(r).enumerate() {
+        let column_order = index_key_sort_order.get_sort_order_for_col(i);
+        let cmp = l.partial_cmp(r).unwrap();
+        if !cmp.is_eq() {
+            return match column_order {
+                SortOrder::Asc => cmp,
+                SortOrder::Desc => cmp.reverse(),
+            };
+        }
+    }
+    std::cmp::Ordering::Equal
 }
 
 const I8_LOW: i64 = -128;
@@ -1027,7 +1131,11 @@ const I48_HIGH: i64 = 140737488355327;
 /// Sqlite Serial Types
 /// https://www.sqlite.org/fileformat.html#record_format
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum SerialType {
+#[repr(transparent)]
+pub struct SerialType(u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum SerialTypeKind {
     Null,
     I8,
     I16,
@@ -1036,47 +1144,154 @@ enum SerialType {
     I48,
     I64,
     F64,
-    Text { content_size: usize },
-    Blob { content_size: usize },
+    ConstInt0,
+    ConstInt1,
+    Text,
+    Blob,
+}
+
+impl SerialType {
+    #[inline(always)]
+    pub fn u64_is_valid_serial_type(n: u64) -> bool {
+        n != 10 && n != 11
+    }
+
+    const NULL: Self = Self(0);
+    const I8: Self = Self(1);
+    const I16: Self = Self(2);
+    const I24: Self = Self(3);
+    const I32: Self = Self(4);
+    const I48: Self = Self(5);
+    const I64: Self = Self(6);
+    const F64: Self = Self(7);
+    const CONST_INT0: Self = Self(8);
+    const CONST_INT1: Self = Self(9);
+
+    pub fn null() -> Self {
+        Self::NULL
+    }
+
+    pub fn i8() -> Self {
+        Self::I8
+    }
+
+    pub fn i16() -> Self {
+        Self::I16
+    }
+
+    pub fn i24() -> Self {
+        Self::I24
+    }
+
+    pub fn i32() -> Self {
+        Self::I32
+    }
+
+    pub fn i48() -> Self {
+        Self::I48
+    }
+
+    pub fn i64() -> Self {
+        Self::I64
+    }
+
+    pub fn f64() -> Self {
+        Self::F64
+    }
+
+    pub fn const_int0() -> Self {
+        Self::CONST_INT0
+    }
+
+    pub fn const_int1() -> Self {
+        Self::CONST_INT1
+    }
+
+    pub fn blob(size: u64) -> Self {
+        Self(12 + size * 2)
+    }
+
+    pub fn text(size: u64) -> Self {
+        Self(13 + size * 2)
+    }
+
+    pub fn kind(&self) -> SerialTypeKind {
+        match self.0 {
+            0 => SerialTypeKind::Null,
+            1 => SerialTypeKind::I8,
+            2 => SerialTypeKind::I16,
+            3 => SerialTypeKind::I24,
+            4 => SerialTypeKind::I32,
+            5 => SerialTypeKind::I48,
+            6 => SerialTypeKind::I64,
+            7 => SerialTypeKind::F64,
+            8 => SerialTypeKind::ConstInt0,
+            9 => SerialTypeKind::ConstInt1,
+            n if n >= 12 => match n % 2 {
+                0 => SerialTypeKind::Blob,
+                1 => SerialTypeKind::Text,
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn size(&self) -> usize {
+        match self.kind() {
+            SerialTypeKind::Null => 0,
+            SerialTypeKind::I8 => 1,
+            SerialTypeKind::I16 => 2,
+            SerialTypeKind::I24 => 3,
+            SerialTypeKind::I32 => 4,
+            SerialTypeKind::I48 => 6,
+            SerialTypeKind::I64 => 8,
+            SerialTypeKind::F64 => 8,
+            SerialTypeKind::ConstInt0 => 0,
+            SerialTypeKind::ConstInt1 => 0,
+            SerialTypeKind::Text => (self.0 as usize - 13) / 2,
+            SerialTypeKind::Blob => (self.0 as usize - 12) / 2,
+        }
+    }
 }
 
 impl From<&OwnedValue> for SerialType {
     fn from(value: &OwnedValue) -> Self {
         match value {
-            OwnedValue::Null => SerialType::Null,
+            OwnedValue::Null => SerialType::null(),
             OwnedValue::Integer(i) => match i {
-                i if *i >= I8_LOW && *i <= I8_HIGH => SerialType::I8,
-                i if *i >= I16_LOW && *i <= I16_HIGH => SerialType::I16,
-                i if *i >= I24_LOW && *i <= I24_HIGH => SerialType::I24,
-                i if *i >= I32_LOW && *i <= I32_HIGH => SerialType::I32,
-                i if *i >= I48_LOW && *i <= I48_HIGH => SerialType::I48,
-                _ => SerialType::I64,
+                0 => SerialType::const_int0(),
+                1 => SerialType::const_int1(),
+                i if *i >= I8_LOW && *i <= I8_HIGH => SerialType::i8(),
+                i if *i >= I16_LOW && *i <= I16_HIGH => SerialType::i16(),
+                i if *i >= I24_LOW && *i <= I24_HIGH => SerialType::i24(),
+                i if *i >= I32_LOW && *i <= I32_HIGH => SerialType::i32(),
+                i if *i >= I48_LOW && *i <= I48_HIGH => SerialType::i48(),
+                _ => SerialType::i64(),
             },
-            OwnedValue::Float(_) => SerialType::F64,
-            OwnedValue::Text(t) => SerialType::Text {
-                content_size: t.value.len(),
-            },
-            OwnedValue::Blob(b) => SerialType::Blob {
-                content_size: b.len(),
-            },
+            OwnedValue::Float(_) => SerialType::f64(),
+            OwnedValue::Text(t) => SerialType::text(t.value.len() as u64),
+            OwnedValue::Blob(b) => SerialType::blob(b.len() as u64),
         }
     }
 }
 
 impl From<SerialType> for u64 {
     fn from(serial_type: SerialType) -> Self {
-        match serial_type {
-            SerialType::Null => 0,
-            SerialType::I8 => 1,
-            SerialType::I16 => 2,
-            SerialType::I24 => 3,
-            SerialType::I32 => 4,
-            SerialType::I48 => 5,
-            SerialType::I64 => 6,
-            SerialType::F64 => 7,
-            SerialType::Text { content_size } => (content_size * 2 + 13) as u64,
-            SerialType::Blob { content_size } => (content_size * 2 + 12) as u64,
+        serial_type.0
+    }
+}
+
+impl TryFrom<u64> for SerialType {
+    type Error = LimboError;
+
+    fn try_from(uint: u64) -> Result<Self> {
+        if uint == 10 || uint == 11 {
+            return Err(LimboError::Corrupt(format!(
+                "Invalid serial type: {}",
+                uint
+            )));
         }
+        Ok(SerialType(uint))
     }
 }
 
@@ -1104,13 +1319,15 @@ impl Record {
                 OwnedValue::Null => {}
                 OwnedValue::Integer(i) => {
                     let serial_type = SerialType::from(value);
-                    match serial_type {
-                        SerialType::I8 => buf.extend_from_slice(&(*i as i8).to_be_bytes()),
-                        SerialType::I16 => buf.extend_from_slice(&(*i as i16).to_be_bytes()),
-                        SerialType::I24 => buf.extend_from_slice(&(*i as i32).to_be_bytes()[1..]), // remove most significant byte
-                        SerialType::I32 => buf.extend_from_slice(&(*i as i32).to_be_bytes()),
-                        SerialType::I48 => buf.extend_from_slice(&i.to_be_bytes()[2..]), // remove 2 most significant bytes
-                        SerialType::I64 => buf.extend_from_slice(&i.to_be_bytes()),
+                    match serial_type.kind() {
+                        SerialTypeKind::I8 => buf.extend_from_slice(&(*i as i8).to_be_bytes()),
+                        SerialTypeKind::I16 => buf.extend_from_slice(&(*i as i16).to_be_bytes()),
+                        SerialTypeKind::I24 => {
+                            buf.extend_from_slice(&(*i as i32).to_be_bytes()[1..])
+                        } // remove most significant byte
+                        SerialTypeKind::I32 => buf.extend_from_slice(&(*i as i32).to_be_bytes()),
+                        SerialTypeKind::I48 => buf.extend_from_slice(&i.to_be_bytes()[2..]), // remove 2 most significant bytes
+                        SerialTypeKind::I64 => buf.extend_from_slice(&i.to_be_bytes()),
                         _ => unreachable!(),
                     }
                 }
@@ -1193,11 +1410,43 @@ pub enum CursorResult<T> {
     IO,
 }
 
-#[derive(Clone, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// The match condition of a table/index seek.
 pub enum SeekOp {
     EQ,
     GE,
     GT,
+    LE,
+    LT,
+}
+
+impl SeekOp {
+    /// A given seek op implies an iteration direction.
+    ///
+    /// For example, a seek with SeekOp::GT implies:
+    /// Find the first table/index key that compares greater than the seek key
+    /// -> used in forwards iteration.
+    ///
+    /// A seek with SeekOp::LE implies:
+    /// Find the last table/index key that compares less than or equal to the seek key
+    /// -> used in backwards iteration.
+    #[inline(always)]
+    pub fn iteration_direction(&self) -> IterationDirection {
+        match self {
+            SeekOp::EQ | SeekOp::GE | SeekOp::GT => IterationDirection::Forwards,
+            SeekOp::LE | SeekOp::LT => IterationDirection::Backwards,
+        }
+    }
+
+    pub fn reverse(&self) -> Self {
+        match self {
+            SeekOp::EQ => SeekOp::EQ,
+            SeekOp::GE => SeekOp::LE,
+            SeekOp::GT => SeekOp::LT,
+            SeekOp::LE => SeekOp::GE,
+            SeekOp::LT => SeekOp::GT,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -1234,7 +1483,7 @@ mod tests {
         // First byte should be header size
         assert_eq!(header[0], header_length as u8);
         // Second byte should be serial type for NULL
-        assert_eq!(header[1] as u64, u64::from(SerialType::Null));
+        assert_eq!(header[1] as u64, u64::from(SerialType::null()));
         // Check that the buffer is empty after the header
         assert_eq!(buf.len(), header_length);
     }
@@ -1258,12 +1507,12 @@ mod tests {
         assert_eq!(header[0], header_length as u8); // Header should be larger than number of values
 
         // Check that correct serial types were chosen
-        assert_eq!(header[1] as u64, u64::from(SerialType::I8));
-        assert_eq!(header[2] as u64, u64::from(SerialType::I16));
-        assert_eq!(header[3] as u64, u64::from(SerialType::I24));
-        assert_eq!(header[4] as u64, u64::from(SerialType::I32));
-        assert_eq!(header[5] as u64, u64::from(SerialType::I48));
-        assert_eq!(header[6] as u64, u64::from(SerialType::I64));
+        assert_eq!(header[1] as u64, u64::from(SerialType::i8()));
+        assert_eq!(header[2] as u64, u64::from(SerialType::i16()));
+        assert_eq!(header[3] as u64, u64::from(SerialType::i24()));
+        assert_eq!(header[4] as u64, u64::from(SerialType::i32()));
+        assert_eq!(header[5] as u64, u64::from(SerialType::i48()));
+        assert_eq!(header[6] as u64, u64::from(SerialType::i64()));
 
         // test that the bytes after the header can be interpreted as the correct values
         let mut cur_offset = header_length;
@@ -1326,7 +1575,7 @@ mod tests {
         // First byte should be header size
         assert_eq!(header[0], header_length as u8);
         // Second byte should be serial type for FLOAT
-        assert_eq!(header[1] as u64, u64::from(SerialType::F64));
+        assert_eq!(header[1] as u64, u64::from(SerialType::f64()));
         // Check that the bytes after the header can be interpreted as the float
         let float_bytes = &buf[header_length..header_length + size_of::<f64>()];
         let float = f64::from_be_bytes(float_bytes.try_into().unwrap());
@@ -1390,11 +1639,11 @@ mod tests {
         // First byte should be header size
         assert_eq!(header[0], header_length as u8);
         // Second byte should be serial type for NULL
-        assert_eq!(header[1] as u64, u64::from(SerialType::Null));
+        assert_eq!(header[1] as u64, u64::from(SerialType::null()));
         // Third byte should be serial type for I8
-        assert_eq!(header[2] as u64, u64::from(SerialType::I8));
+        assert_eq!(header[2] as u64, u64::from(SerialType::i8()));
         // Fourth byte should be serial type for F64
-        assert_eq!(header[3] as u64, u64::from(SerialType::F64));
+        assert_eq!(header[3] as u64, u64::from(SerialType::f64()));
         // Fifth byte should be serial type for TEXT, which is (len * 2 + 13)
         assert_eq!(header[4] as u64, (4 * 2 + 13) as u64);
 

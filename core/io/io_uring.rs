@@ -1,5 +1,6 @@
 use super::{common, Completion, File, OpenFlags, WriteCompletion, IO};
-use crate::{LimboError, Result};
+use crate::io::clock::{Clock, Instant};
+use crate::{LimboError, MemoryIO, Result};
 use rustix::fs::{self, FlockOperation, OFlags};
 use rustix::io_uring::iovec;
 use std::cell::RefCell;
@@ -138,11 +139,15 @@ impl WrappedIOUring {
 impl IO for UringIO {
     fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>> {
         trace!("open_file(path = {})", path);
-        let file = std::fs::File::options()
-            .read(true)
-            .write(true)
-            .create(matches!(flags, OpenFlags::Create))
-            .open(path)?;
+        let mut file = std::fs::File::options();
+        file.read(true);
+
+        if !flags.contains(OpenFlags::ReadOnly) {
+            file.write(true);
+            file.create(flags.contains(OpenFlags::Create));
+        }
+
+        let file = file.open(path)?;
         // Let's attempt to enable direct I/O. Not all filesystems support it
         // so ignore any errors.
         let fd = file.as_fd();
@@ -157,7 +162,7 @@ impl IO for UringIO {
             file,
         });
         if std::env::var(common::ENV_DISABLE_FILE_LOCK).is_err() {
-            uring_file.lock_file(true)?;
+            uring_file.lock_file(!flags.contains(OpenFlags::ReadOnly))?;
         }
         Ok(uring_file)
     }
@@ -197,8 +202,18 @@ impl IO for UringIO {
         i64::from_ne_bytes(buf)
     }
 
-    fn get_current_time(&self) -> String {
-        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
+    }
+}
+
+impl Clock for UringIO {
+    fn now(&self) -> Instant {
+        let now = chrono::Local::now();
+        Instant {
+            secs: now.timestamp(),
+            micros: now.timestamp_subsec_micros(),
+        }
     }
 }
 

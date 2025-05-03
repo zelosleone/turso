@@ -2,7 +2,8 @@ use crate::error::LimboError;
 use crate::io::common;
 use crate::Result;
 
-use super::{Completion, File, OpenFlags, IO};
+use super::{Completion, File, MemoryIO, OpenFlags, IO};
+use crate::io::clock::{Clock, Instant};
 use polling::{Event, Events, Poller};
 use rustix::{
     fd::{AsFd, AsRawFd},
@@ -183,15 +184,28 @@ impl UnixIO {
     }
 }
 
+impl Clock for UnixIO {
+    fn now(&self) -> Instant {
+        let now = chrono::Local::now();
+        Instant {
+            secs: now.timestamp(),
+            micros: now.timestamp_subsec_micros(),
+        }
+    }
+}
+
 impl IO for UnixIO {
     fn open_file(&self, path: &str, flags: OpenFlags, _direct: bool) -> Result<Arc<dyn File>> {
         trace!("open_file(path = {})", path);
-        let file = std::fs::File::options()
-            .read(true)
-            .custom_flags(OFlags::NONBLOCK.bits() as i32)
-            .write(true)
-            .create(matches!(flags, OpenFlags::Create))
-            .open(path)?;
+        let mut file = std::fs::File::options();
+        file.read(true).custom_flags(OFlags::NONBLOCK.bits() as i32);
+
+        if !flags.contains(OpenFlags::ReadOnly) {
+            file.write(true);
+            file.create(flags.contains(OpenFlags::Create));
+        }
+
+        let file = file.open(path)?;
 
         #[allow(clippy::arc_with_non_send_sync)]
         let unix_file = Arc::new(UnixFile {
@@ -200,7 +214,7 @@ impl IO for UnixIO {
             callbacks: BorrowedCallbacks(self.callbacks.as_mut().into()),
         });
         if std::env::var(common::ENV_DISABLE_FILE_LOCK).is_err() {
-            unix_file.lock_file(true)?;
+            unix_file.lock_file(!flags.contains(OpenFlags::ReadOnly))?;
         }
         Ok(unix_file)
     }
@@ -248,8 +262,8 @@ impl IO for UnixIO {
         i64::from_ne_bytes(buf)
     }
 
-    fn get_current_time(&self) -> String {
-        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+    fn get_memory_io(&self) -> Arc<MemoryIO> {
+        Arc::new(MemoryIO::new())
     }
 }
 

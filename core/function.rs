@@ -10,6 +10,12 @@ pub struct ExternalFunc {
     pub func: ExtFunc,
 }
 
+impl ExternalFunc {
+    pub fn is_deterministic(&self) -> bool {
+        false // external functions can be whatever so let's just default to false
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ExtFunc {
     Scalar(ScalarFunction),
@@ -99,6 +105,13 @@ pub enum JsonFunc {
 }
 
 #[cfg(feature = "json")]
+impl JsonFunc {
+    pub fn is_deterministic(&self) -> bool {
+        true
+    }
+}
+
+#[cfg(feature = "json")]
 impl Display for JsonFunc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -143,6 +156,12 @@ pub enum VectorFunc {
     Vector64,
     VectorExtract,
     VectorDistanceCos,
+}
+
+impl VectorFunc {
+    pub fn is_deterministic(&self) -> bool {
+        true
+    }
 }
 
 impl Display for VectorFunc {
@@ -198,6 +217,10 @@ impl PartialEq for AggFunc {
 }
 
 impl AggFunc {
+    pub fn is_deterministic(&self) -> bool {
+        false // consider aggregate functions nondeterministic since they depend on the number of rows, not only the input arguments
+    }
+
     pub fn num_args(&self) -> usize {
         match self {
             Self::Avg => 1,
@@ -292,6 +315,68 @@ pub enum ScalarFunc {
     LoadExtension,
     StrfTime,
     Printf,
+    Likely,
+    TimeDiff,
+    Likelihood,
+}
+
+impl ScalarFunc {
+    pub fn is_deterministic(&self) -> bool {
+        match self {
+            ScalarFunc::Cast => true,
+            ScalarFunc::Changes => false, // depends on DB state
+            ScalarFunc::Char => true,
+            ScalarFunc::Coalesce => true,
+            ScalarFunc::Concat => true,
+            ScalarFunc::ConcatWs => true,
+            ScalarFunc::Glob => true,
+            ScalarFunc::IfNull => true,
+            ScalarFunc::Iif => true,
+            ScalarFunc::Instr => true,
+            ScalarFunc::Like => true,
+            ScalarFunc::Abs => true,
+            ScalarFunc::Upper => true,
+            ScalarFunc::Lower => true,
+            ScalarFunc::Random => false,     // duh
+            ScalarFunc::RandomBlob => false, // duh
+            ScalarFunc::Trim => true,
+            ScalarFunc::LTrim => true,
+            ScalarFunc::RTrim => true,
+            ScalarFunc::Round => true,
+            ScalarFunc::Length => true,
+            ScalarFunc::OctetLength => true,
+            ScalarFunc::Min => true,
+            ScalarFunc::Max => true,
+            ScalarFunc::Nullif => true,
+            ScalarFunc::Sign => true,
+            ScalarFunc::Substr => true,
+            ScalarFunc::Substring => true,
+            ScalarFunc::Soundex => true,
+            ScalarFunc::Date => false,
+            ScalarFunc::Time => false,
+            ScalarFunc::TotalChanges => false,
+            ScalarFunc::DateTime => false,
+            ScalarFunc::Typeof => true,
+            ScalarFunc::Unicode => true,
+            ScalarFunc::Quote => true,
+            ScalarFunc::SqliteVersion => true,
+            ScalarFunc::SqliteSourceId => true,
+            ScalarFunc::UnixEpoch => false,
+            ScalarFunc::JulianDay => false,
+            ScalarFunc::Hex => true,
+            ScalarFunc::Unhex => true,
+            ScalarFunc::ZeroBlob => true,
+            ScalarFunc::LastInsertRowid => false,
+            ScalarFunc::Replace => true,
+            #[cfg(feature = "fs")]
+            ScalarFunc::LoadExtension => true,
+            ScalarFunc::StrfTime => false,
+            ScalarFunc::Printf => false,
+            ScalarFunc::Likely => true,
+            ScalarFunc::TimeDiff => false,
+            ScalarFunc::Likelihood => true,
+        }
+    }
 }
 
 impl Display for ScalarFunc {
@@ -346,6 +431,9 @@ impl Display for ScalarFunc {
             Self::LoadExtension => "load_extension".to_string(),
             Self::StrfTime => "strftime".to_string(),
             Self::Printf => "printf".to_string(),
+            Self::Likely => "likely".to_string(),
+            Self::TimeDiff => "timediff".to_string(),
+            Self::Likelihood => "likelihood".to_string(),
         };
         write!(f, "{}", str)
     }
@@ -392,6 +480,9 @@ pub enum MathFuncArity {
 }
 
 impl MathFunc {
+    pub fn is_deterministic(&self) -> bool {
+        true
+    }
     pub fn arity(&self) -> MathFuncArity {
         match self {
             Self::Pi => MathFuncArity::Nullary,
@@ -495,6 +586,17 @@ pub struct FuncCtx {
 }
 
 impl Func {
+    pub fn is_deterministic(&self) -> bool {
+        match self {
+            Self::Agg(agg_func) => agg_func.is_deterministic(),
+            Self::Scalar(scalar_func) => scalar_func.is_deterministic(),
+            Self::Math(math_func) => math_func.is_deterministic(),
+            Self::Vector(vector_func) => vector_func.is_deterministic(),
+            #[cfg(feature = "json")]
+            Self::Json(json_func) => json_func.is_deterministic(),
+            Self::External(external_func) => external_func.is_deterministic(),
+        }
+    }
     pub fn resolve_function(name: &str, arg_count: usize) -> Result<Self, LimboError> {
         match name {
             "avg" => {
@@ -553,6 +655,12 @@ impl Func {
                 }
                 Ok(Self::Agg(AggFunc::Total))
             }
+            "timediff" => {
+                if arg_count != 2 {
+                    crate::bail_parse_error!("wrong number of arguments to function {}()", name)
+                }
+                Ok(Self::Scalar(ScalarFunc::TimeDiff))
+            }
             #[cfg(feature = "json")]
             "jsonb_group_array" => Ok(Self::Agg(AggFunc::JsonbGroupArray)),
             #[cfg(feature = "json")]
@@ -596,6 +704,8 @@ impl Func {
             "sqlite_version" => Ok(Self::Scalar(ScalarFunc::SqliteVersion)),
             "sqlite_source_id" => Ok(Self::Scalar(ScalarFunc::SqliteSourceId)),
             "replace" => Ok(Self::Scalar(ScalarFunc::Replace)),
+            "likely" => Ok(Self::Scalar(ScalarFunc::Likely)),
+            "likelihood" => Ok(Self::Scalar(ScalarFunc::Likelihood)),
             #[cfg(feature = "json")]
             "json" => Ok(Self::Json(JsonFunc::Json)),
             #[cfg(feature = "json")]

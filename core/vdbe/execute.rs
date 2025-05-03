@@ -1,44 +1,65 @@
 #![allow(unused_variables)]
-use crate::error::{LimboError, SQLITE_CONSTRAINT_PRIMARYKEY};
-use crate::ext::ExtValue;
-use crate::function::{AggFunc, ExtFunc, MathFunc, MathFuncArity, ScalarFunc, VectorFunc};
-use crate::functions::datetime::{
-    exec_date, exec_datetime_full, exec_julianday, exec_strftime, exec_time, exec_unixepoch,
+use crate::numeric::{NullableInteger, Numeric};
+use crate::storage::database::FileMemoryStorage;
+use crate::storage::page_cache::DumbLruPageCache;
+use crate::storage::pager::CreateBTreeFlags;
+use crate::types::ImmutableRecord;
+use crate::{
+    error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY},
+    ext::ExtValue,
+    function::{AggFunc, ExtFunc, MathFunc, MathFuncArity, ScalarFunc, VectorFunc},
+    functions::{
+        datetime::{
+            exec_date, exec_datetime_full, exec_julianday, exec_strftime, exec_time, exec_unixepoch,
+        },
+        printf::exec_printf,
+    },
+    types::compare_immutable,
 };
-use crate::functions::printf::exec_printf;
-use std::{borrow::BorrowMut, rc::Rc};
+use std::{borrow::BorrowMut, rc::Rc, sync::Arc};
 
-use crate::pseudo::PseudoCursor;
-use crate::result::LimboResult;
-use crate::schema::{affinity, Affinity};
-use crate::storage::btree::BTreeCursor;
-use crate::storage::wal::CheckpointResult;
-use crate::types::{
-    AggContext, Cursor, CursorResult, ExternalAggState, OwnedValue, SeekKey, SeekOp,
-};
-use crate::util::{
-    cast_real_to_integer, cast_text_to_integer, cast_text_to_numeric, cast_text_to_real,
-    checked_cast_text_to_numeric, parse_schema_rows, RoundToPrecision,
-};
-use crate::vdbe::builder::CursorType;
-use crate::vdbe::insn::Insn;
-use crate::vector::{vector32, vector64, vector_distance_cos, vector_extract};
+use crate::{pseudo::PseudoCursor, result::LimboResult};
 
-use crate::{info, MvCursor, RefValue, Row, StepResult, TransactionState};
-
-use super::insn::{
-    exec_add, exec_and, exec_bit_and, exec_bit_not, exec_bit_or, exec_boolean_not, exec_concat,
-    exec_divide, exec_multiply, exec_or, exec_remainder, exec_shift_left, exec_shift_right,
-    exec_subtract, Cookie,
+use crate::{
+    schema::{affinity, Affinity},
+    storage::btree::{BTreeCursor, BTreeKey},
 };
-use super::HaltState;
+
+use crate::{
+    storage::wal::CheckpointResult,
+    types::{
+        AggContext, Cursor, CursorResult, ExternalAggState, OwnedValue, OwnedValueType, SeekKey,
+        SeekOp,
+    },
+    util::{
+        cast_real_to_integer, cast_text_to_integer, cast_text_to_numeric, cast_text_to_real,
+        checked_cast_text_to_numeric, parse_schema_rows, RoundToPrecision,
+    },
+    vdbe::{
+        builder::CursorType,
+        insn::{IdxInsertFlags, Insn},
+    },
+    vector::{vector32, vector64, vector_distance_cos, vector_extract},
+};
+
+use crate::{
+    info, maybe_init_database_file, BufferPool, MvCursor, OpenFlags, RefValue, Row, StepResult,
+    TransactionState, IO,
+};
+
+use super::{
+    insn::{Cookie, RegisterOrLiteral},
+    HaltState,
+};
+use parking_lot::RwLock;
 use rand::thread_rng;
 
-use super::likeop::{construct_like_escape_arg, exec_glob, exec_like_with_escape};
-use super::sorter::Sorter;
+use super::{
+    likeop::{construct_like_escape_arg, exec_glob, exec_like_with_escape},
+    sorter::Sorter,
+};
 use regex::{Regex, RegexBuilder};
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::{cell::RefCell, collections::HashMap};
 
 #[cfg(feature = "json")]
 use crate::{
@@ -795,14 +816,14 @@ pub fn op_if_not(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_open_read_async(
+pub fn op_open_read(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::OpenReadAsync {
+    let Insn::OpenRead {
         cursor_id,
         root_page,
     } = insn
@@ -821,59 +842,50 @@ pub fn op_open_read_async(
         }
         None => None,
     };
-    let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
     let mut cursors = state.cursors.borrow_mut();
     match cursor_type {
         CursorType::BTreeTable(_) => {
+            let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
             cursors
                 .get_mut(*cursor_id)
                 .unwrap()
                 .replace(Cursor::new_btree(cursor));
         }
-        CursorType::BTreeIndex(_) => {
+        CursorType::BTreeIndex(index) => {
+            let cursor =
+                BTreeCursor::new_index(mv_cursor, pager.clone(), *root_page, index.as_ref());
             cursors
                 .get_mut(*cursor_id)
                 .unwrap()
                 .replace(Cursor::new_btree(cursor));
         }
         CursorType::Pseudo(_) => {
-            panic!("OpenReadAsync on pseudo cursor");
+            panic!("OpenRead on pseudo cursor");
         }
         CursorType::Sorter => {
-            panic!("OpenReadAsync on sorter cursor");
+            panic!("OpenRead on sorter cursor");
         }
         CursorType::VirtualTable(_) => {
-            panic!("OpenReadAsync on virtual table cursor, use Insn:VOpenAsync instead");
+            panic!("OpenRead on virtual table cursor, use Insn:VOpen instead");
         }
     }
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_open_read_await(
+pub fn op_vopen(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_vopen_async(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::VOpenAsync { cursor_id } = insn else {
+    let Insn::VOpen { cursor_id } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let CursorType::VirtualTable(virtual_table) = cursor_type else {
-        panic!("VOpenAsync on non-virtual table cursor");
+        panic!("VOpen on non-virtual table cursor");
     };
     let cursor = virtual_table.open()?;
     state
@@ -917,12 +929,21 @@ pub fn op_vcreate(
             "Failed to upgrade Connection".to_string(),
         ));
     };
+    let mod_type = conn
+        .syms
+        .borrow()
+        .vtab_modules
+        .get(&module_name)
+        .ok_or_else(|| {
+            crate::LimboError::ExtensionError(format!("Module {} not found", module_name))
+        })?
+        .module_kind;
     let table = crate::VirtualTable::from_args(
         Some(&table_name),
         &module_name,
         args,
         &conn.syms.borrow(),
-        limbo_ext::VTabKind::VirtualTable,
+        mod_type,
         None,
     )?;
     {
@@ -931,17 +952,6 @@ pub fn op_vcreate(
             .vtabs
             .insert(table_name, table.clone());
     }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_vopen_await(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -958,6 +968,8 @@ pub fn op_vfilter(
         pc_if_empty,
         arg_count,
         args_reg,
+        idx_str,
+        idx_num,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -969,11 +981,21 @@ pub fn op_vfilter(
     let has_rows = {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_virtual_mut();
-        let mut args = Vec::new();
+        let mut args = Vec::with_capacity(*arg_count);
         for i in 0..*arg_count {
-            args.push(state.registers[args_reg + i].get_owned_value().clone());
+            args.push(
+                state.registers[args_reg + i]
+                    .get_owned_value()
+                    .clone()
+                    .to_ffi(),
+            );
         }
-        virtual_table.filter(cursor, *arg_count, args)?
+        let idx_str = if let Some(idx_str) = idx_str {
+            Some(state.registers[*idx_str].get_owned_value().to_string())
+        } else {
+            None
+        };
+        virtual_table.filter(cursor, *idx_num as i32, idx_str, *arg_count, args)?
     };
     if !has_rows {
         state.pc = pc_if_empty.to_offset_int();
@@ -1092,7 +1114,7 @@ pub fn op_vnext(
     };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let CursorType::VirtualTable(virtual_table) = cursor_type else {
-        panic!("VNextAsync on non-virtual table cursor");
+        panic!("VNext on non-virtual table cursor");
     };
     let has_more = {
         let mut cursor = state.get_cursor(*cursor_id);
@@ -1104,6 +1126,35 @@ pub fn op_vnext(
     } else {
         state.pc += 1;
     }
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_vdestroy(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::VDestroy { db, table_name } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    let Some(conn) = program.connection.upgrade() else {
+        return Err(crate::LimboError::ExtensionError(
+            "Failed to upgrade Connection".to_string(),
+        ));
+    };
+
+    {
+        let Some(vtab) = conn.syms.borrow_mut().vtabs.remove(table_name) else {
+            return Err(crate::LimboError::InternalError(
+                "Could not find Virtual Table to Destroy".to_string(),
+            ));
+        };
+        vtab.destroy()?;
+    }
+
+    state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
 
@@ -1134,53 +1185,14 @@ pub fn op_open_pseudo(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_rewind_async(
+pub fn op_rewind(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::RewindAsync { cursor_id } = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    {
-        let mut cursor =
-            must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "RewindAsync");
-        let cursor = cursor.as_btree_mut();
-        return_if_io!(cursor.rewind());
-    }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_last_async(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::LastAsync { cursor_id } = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "LastAsync");
-        let cursor = cursor.as_btree_mut();
-        return_if_io!(cursor.last());
-    }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_last_await(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::LastAwait {
+    let Insn::Rewind {
         cursor_id,
         pc_if_empty,
     } = insn
@@ -1189,9 +1201,9 @@ pub fn op_last_await(
     };
     assert!(pc_if_empty.is_offset());
     let is_empty = {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "LastAwait");
+        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Rewind");
         let cursor = cursor.as_btree_mut();
-        cursor.wait_for_completion()?;
+        return_if_io!(cursor.rewind());
         cursor.is_empty()
     };
     if is_empty {
@@ -1202,14 +1214,14 @@ pub fn op_last_await(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_rewind_await(
+pub fn op_last(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::RewindAwait {
+    let Insn::Last {
         cursor_id,
         pc_if_empty,
     } = insn
@@ -1218,10 +1230,9 @@ pub fn op_rewind_await(
     };
     assert!(pc_if_empty.is_offset());
     let is_empty = {
-        let mut cursor =
-            must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "RewindAwait");
+        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Last");
         let cursor = cursor.as_btree_mut();
-        cursor.wait_for_completion()?;
+        return_if_io!(cursor.last());
         cursor.is_empty()
     };
     if is_empty {
@@ -1278,7 +1289,10 @@ pub fn op_column(
                     if cursor.get_null_flag() {
                         RefValue::Null
                     } else {
-                        record.get_value(*column).clone()
+                        match record.get_value_opt(*column) {
+                            Some(val) => val.clone(),
+                            None => RefValue::Null,
+                        }
                     }
                 } else {
                     RefValue::Null
@@ -1305,10 +1319,14 @@ pub fn op_column(
             let record = {
                 let mut cursor = state.get_cursor(*cursor_id);
                 let cursor = cursor.as_sorter_mut();
-                cursor.record().map(|r| r.clone())
+                cursor.record().cloned()
             };
             if let Some(record) = record {
-                state.registers[*dest] = Register::OwnedValue(record.get_value(*column).to_owned());
+                state.registers[*dest] =
+                    Register::OwnedValue(match record.get_value_opt(*column) {
+                        Some(val) => val.to_owned(),
+                        None => OwnedValue::Null,
+                    });
             } else {
                 state.registers[*dest] = Register::OwnedValue(OwnedValue::Null);
             }
@@ -1329,6 +1347,68 @@ pub fn op_column(
             panic!("Insn:Column on virtual table cursor, use Insn:VColumn instead");
         }
     }
+
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_type_check(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::TypeCheck {
+        start_reg,
+        count,
+        check_generated,
+        table_reference,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    assert_eq!(table_reference.is_strict, true);
+    state.registers[*start_reg..*start_reg + *count]
+        .iter_mut()
+        .zip(table_reference.columns.iter())
+        .try_for_each(|(reg, col)| {
+            // INT PRIMARY KEY is not row_id_alias so we throw error if this col is NULL
+            if !col.is_rowid_alias
+                && col.primary_key
+                && matches!(reg.get_owned_value(), OwnedValue::Null)
+            {
+                bail_constraint_error!(
+                    "NOT NULL constraint failed: {}.{} ({})",
+                    &table_reference.name,
+                    col.name.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                    SQLITE_CONSTRAINT
+                )
+            } else if col.is_rowid_alias && matches!(reg.get_owned_value(), OwnedValue::Null) {
+                // Handle INTEGER PRIMARY KEY for null as usual (Rowid will be auto-assigned)
+                return Ok(());
+            }
+            let col_affinity = col.affinity();
+            let ty_str = col.ty_str.as_str();
+            let applied = apply_affinity_char(reg, col_affinity);
+            let value_type = reg.get_owned_value().value_type();
+            match (ty_str, value_type) {
+                ("INTEGER" | "INT", OwnedValueType::Integer) => {}
+                ("REAL", OwnedValueType::Float) => {}
+                ("BLOB", OwnedValueType::Blob) => {}
+                ("TEXT", OwnedValueType::Text) => {}
+                ("ANY", _) => {}
+                (t, v) => bail_constraint_error!(
+                    "cannot store {} value in {} column {}.{} ({})",
+                    v,
+                    t,
+                    &table_reference.name,
+                    col.name.as_ref().map(|s| s.as_str()).unwrap_or(""),
+                    SQLITE_CONSTRAINT
+                ),
+            };
+            Ok(())
+        })?;
 
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -1369,60 +1449,19 @@ pub fn op_result_row(
         values: &state.registers[*start_reg] as *const Register,
         count: *count,
     };
-
     state.result_row = Some(row);
     state.pc += 1;
     return Ok(InsnFunctionStepResult::Row);
 }
 
-pub fn op_next_async(
+pub fn op_next(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::NextAsync { cursor_id } = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "NextAsync");
-        let cursor = cursor.as_btree_mut();
-        cursor.set_null_flag(false);
-        return_if_io!(cursor.next());
-    }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_prev_async(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::PrevAsync { cursor_id } = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "PrevAsync");
-        let cursor = cursor.as_btree_mut();
-        cursor.set_null_flag(false);
-        return_if_io!(cursor.prev());
-    }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_prev_await(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::PrevAwait {
+    let Insn::Next {
         cursor_id,
         pc_if_next,
     } = insn
@@ -1431,9 +1470,11 @@ pub fn op_prev_await(
     };
     assert!(pc_if_next.is_offset());
     let is_empty = {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "PrevAwait");
+        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Next");
         let cursor = cursor.as_btree_mut();
-        cursor.wait_for_completion()?;
+        cursor.set_null_flag(false);
+        return_if_io!(cursor.next());
+
         cursor.is_empty()
     };
     if !is_empty {
@@ -1444,29 +1485,31 @@ pub fn op_prev_await(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_next_await(
+pub fn op_prev(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::NextAwait {
+    let Insn::Prev {
         cursor_id,
-        pc_if_next,
+        pc_if_prev,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    assert!(pc_if_next.is_offset());
+    assert!(pc_if_prev.is_offset());
     let is_empty = {
-        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "NextAwait");
+        let mut cursor = must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Prev");
         let cursor = cursor.as_btree_mut();
-        cursor.wait_for_completion()?;
+        cursor.set_null_flag(false);
+        return_if_io!(cursor.prev());
+
         cursor.is_empty()
     };
     if !is_empty {
-        state.pc = pc_if_next.to_offset_int();
+        state.pc = pc_if_prev.to_offset_int();
     } else {
         state.pc += 1;
     }
@@ -1502,7 +1545,7 @@ pub fn op_halt(
             )));
         }
     }
-    match program.halt(pager.clone(), state, mv_store.clone())? {
+    match program.halt(pager.clone(), state, mv_store)? {
         StepResult::Done => Ok(InsnFunctionStepResult::Done),
         StepResult::IO => Ok(InsnFunctionStepResult::IO),
         StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1521,22 +1564,19 @@ pub fn op_transaction(
     let Insn::Transaction { write } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
+    let connection = program.connection.upgrade().unwrap();
+    if *write && connection._db.open_flags.contains(OpenFlags::ReadOnly) {
+        return Err(LimboError::ReadOnly);
+    }
     if let Some(mv_store) = &mv_store {
         if state.mv_tx_id.is_none() {
             let tx_id = mv_store.begin_tx();
-            program
-                .connection
-                .upgrade()
-                .unwrap()
-                .mv_transactions
-                .borrow_mut()
-                .push(tx_id);
+            connection.mv_transactions.borrow_mut().push(tx_id);
             state.mv_tx_id = Some(tx_id);
         }
     } else {
-        let connection = program.connection.upgrade().unwrap();
-        let current_state = connection.transaction_state.borrow().clone();
-        let (new_transaction_state, updated) = match (&current_state, write) {
+        let current_state = connection.transaction_state.get();
+        let (new_transaction_state, updated) = match (current_state, write) {
             (TransactionState::Write, true) => (TransactionState::Write, false),
             (TransactionState::Write, false) => (TransactionState::Write, false),
             (TransactionState::Read, true) => (TransactionState::Write, true),
@@ -1581,7 +1621,7 @@ pub fn op_auto_commit(
     };
     let conn = program.connection.upgrade().unwrap();
     if matches!(state.halt_state, Some(HaltState::Checkpointing)) {
-        return match program.halt(pager.clone(), state, mv_store.clone())? {
+        return match program.halt(pager.clone(), state, mv_store)? {
             super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
             super::StepResult::IO => Ok(InsnFunctionStepResult::IO),
             super::StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1590,7 +1630,7 @@ pub fn op_auto_commit(
         };
     }
 
-    if *auto_commit != *conn.auto_commit.borrow() {
+    if *auto_commit != conn.auto_commit.get() {
         if *rollback {
             todo!("Rollback is not implemented");
         } else {
@@ -1609,7 +1649,7 @@ pub fn op_auto_commit(
             "cannot commit - no transaction is active".to_string(),
         ));
     }
-    return match program.halt(pager.clone(), state, mv_store.clone())? {
+    return match program.halt(pager.clone(), state, mv_store)? {
         super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
         super::StepResult::IO => Ok(InsnFunctionStepResult::IO),
         super::StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1768,17 +1808,20 @@ pub fn op_row_id(
             let rowid = {
                 let mut index_cursor = state.get_cursor(index_cursor_id);
                 let index_cursor = index_cursor.as_btree_mut();
-                let rowid = index_cursor.rowid()?;
-                rowid
+                let record = index_cursor.record();
+                let record = record.as_ref().unwrap();
+                let rowid = record.get_values().last().unwrap();
+                match rowid {
+                    RefValue::Integer(rowid) => *rowid as u64,
+                    _ => unreachable!(),
+                }
             };
             let mut table_cursor = state.get_cursor(table_cursor_id);
             let table_cursor = table_cursor.as_btree_mut();
-            let deferred_seek =
-                match table_cursor.seek(SeekKey::TableRowId(rowid.unwrap()), SeekOp::EQ)? {
-                    CursorResult::Ok(_) => None,
-                    CursorResult::IO => Some((index_cursor_id, table_cursor_id)),
-                };
-            deferred_seek
+            match table_cursor.seek(SeekKey::TableRowId(rowid), SeekOp::EQ)? {
+                CursorResult::Ok(_) => None,
+                CursorResult::IO => Some((index_cursor_id, table_cursor_id)),
+            }
         };
         if let Some(deferred_seek) = deferred_seek {
             state.deferred_seek = Some(deferred_seek);
@@ -1808,6 +1851,28 @@ pub fn op_row_id(
             "RowId: cursor is not a table or virtual cursor".to_string(),
         ));
     }
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_idx_row_id(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::IdxRowId { cursor_id, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    let mut cursors = state.cursors.borrow_mut();
+    let cursor = cursors.get_mut(*cursor_id).unwrap().as_mut().unwrap();
+    let cursor = cursor.as_btree_mut();
+    let rowid = cursor.rowid()?;
+    state.registers[*dest] = match rowid {
+        Some(rowid) => Register::OwnedValue(OwnedValue::Integer(rowid as i64)),
+        None => Register::OwnedValue(OwnedValue::Null),
+    };
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -1876,97 +1941,69 @@ pub fn op_deferred_seek(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_seek_ge(
+pub fn op_seek(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::SeekGE {
+    let (Insn::SeekGE {
         cursor_id,
         start_reg,
         num_regs,
         target_pc,
         is_index,
-    } = insn
-    else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    assert!(target_pc.is_offset());
-    if *is_index {
-        let found = {
-            let mut cursor = state.get_cursor(*cursor_id);
-            let cursor = cursor.as_btree_mut();
-            let record_from_regs = make_record(&state.registers, start_reg, num_regs);
-            let found =
-                return_if_io!(cursor.seek(SeekKey::IndexKey(&record_from_regs), SeekOp::GE));
-            found
-        };
-        if !found {
-            state.pc = target_pc.to_offset_int();
-        } else {
-            state.pc += 1;
-        }
-    } else {
-        let pc = {
-            let mut cursor = state.get_cursor(*cursor_id);
-            let cursor = cursor.as_btree_mut();
-            let rowid = match state.registers[*start_reg].get_owned_value() {
-                OwnedValue::Null => {
-                    // All integer values are greater than null so we just rewind the cursor
-                    return_if_io!(cursor.rewind());
-                    None
-                }
-                OwnedValue::Integer(rowid) => Some(*rowid as u64),
-                _ => {
-                    return Err(LimboError::InternalError(
-                        "SeekGE: the value in the register is not an integer".into(),
-                    ));
-                }
-            };
-            match rowid {
-                Some(rowid) => {
-                    let found = return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GE));
-                    if !found {
-                        target_pc.to_offset_int()
-                    } else {
-                        state.pc + 1
-                    }
-                }
-                None => state.pc + 1,
-            }
-        };
-        state.pc = pc;
     }
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_seek_gt(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::SeekGT {
+    | Insn::SeekGT {
         cursor_id,
         start_reg,
         num_regs,
         target_pc,
         is_index,
-    } = insn
+    }
+    | Insn::SeekLE {
+        cursor_id,
+        start_reg,
+        num_regs,
+        target_pc,
+        is_index,
+    }
+    | Insn::SeekLT {
+        cursor_id,
+        start_reg,
+        num_regs,
+        target_pc,
+        is_index,
+    }) = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    assert!(target_pc.is_offset());
+    assert!(
+        target_pc.is_offset(),
+        "target_pc should be an offset, is: {:?}",
+        target_pc
+    );
+    let op = match insn {
+        Insn::SeekGE { .. } => SeekOp::GE,
+        Insn::SeekGT { .. } => SeekOp::GT,
+        Insn::SeekLE { .. } => SeekOp::LE,
+        Insn::SeekLT { .. } => SeekOp::LT,
+        _ => unreachable!("unexpected Insn {:?}", insn),
+    };
+    let op_name = match op {
+        SeekOp::GE => "SeekGE",
+        SeekOp::GT => "SeekGT",
+        SeekOp::LE => "SeekLE",
+        SeekOp::LT => "SeekLT",
+        _ => unreachable!("unexpected SeekOp {:?}", op),
+    };
     if *is_index {
         let found = {
             let mut cursor = state.get_cursor(*cursor_id);
             let cursor = cursor.as_btree_mut();
             let record_from_regs = make_record(&state.registers, start_reg, num_regs);
-            let found =
-                return_if_io!(cursor.seek(SeekKey::IndexKey(&record_from_regs), SeekOp::GT));
+            let found = return_if_io!(cursor.seek(SeekKey::IndexKey(&record_from_regs), op));
             found
         };
         if !found {
@@ -1986,14 +2023,15 @@ pub fn op_seek_gt(
                 }
                 OwnedValue::Integer(rowid) => Some(*rowid as u64),
                 _ => {
-                    return Err(LimboError::InternalError(
-                        "SeekGT: the value in the register is not an integer".into(),
-                    ));
+                    return Err(LimboError::InternalError(format!(
+                        "{}: the value in the register is not an integer",
+                        op_name
+                    )));
                 }
             };
             let found = match rowid {
                 Some(rowid) => {
-                    let found = return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GT));
+                    let found = return_if_io!(cursor.seek(SeekKey::TableRowId(rowid), op));
                     if !found {
                         target_pc.to_offset_int()
                     } else {
@@ -2032,9 +2070,10 @@ pub fn op_idx_ge(
         let record_from_regs = make_record(&state.registers, start_reg, num_regs);
         let pc = if let Some(ref idx_record) = *cursor.record() {
             // Compare against the same number of values
-            let ord = idx_record.get_values()[..record_from_regs.len()]
-                .partial_cmp(&record_from_regs.get_values()[..])
-                .unwrap();
+            let idx_values = idx_record.get_values();
+            let idx_values = &idx_values[..record_from_regs.len()];
+            let record_values = record_from_regs.get_values();
+            let ord = compare_immutable(&idx_values, &record_values, cursor.index_key_sort_order);
             if ord.is_ge() {
                 target_pc.to_offset_int()
             } else {
@@ -2046,6 +2085,24 @@ pub fn op_idx_ge(
         pc
     };
     state.pc = pc;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_seek_end(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    if let Insn::SeekEnd { cursor_id } = *insn {
+        let mut cursor = state.get_cursor(cursor_id);
+        let cursor = cursor.as_btree_mut();
+        return_if_io!(cursor.seek_end());
+    } else {
+        unreachable!("unexpected Insn {:?}", insn)
+    }
+    state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
 
@@ -2072,9 +2129,10 @@ pub fn op_idx_le(
         let record_from_regs = make_record(&state.registers, start_reg, num_regs);
         let pc = if let Some(ref idx_record) = *cursor.record() {
             // Compare against the same number of values
-            let ord = idx_record.get_values()[..record_from_regs.len()]
-                .partial_cmp(&record_from_regs.get_values()[..])
-                .unwrap();
+            let idx_values = idx_record.get_values();
+            let idx_values = &idx_values[..record_from_regs.len()];
+            let record_values = record_from_regs.get_values();
+            let ord = compare_immutable(&idx_values, &record_values, cursor.index_key_sort_order);
             if ord.is_le() {
                 target_pc.to_offset_int()
             } else {
@@ -2112,9 +2170,10 @@ pub fn op_idx_gt(
         let record_from_regs = make_record(&state.registers, start_reg, num_regs);
         let pc = if let Some(ref idx_record) = *cursor.record() {
             // Compare against the same number of values
-            let ord = idx_record.get_values()[..record_from_regs.len()]
-                .partial_cmp(&record_from_regs.get_values()[..])
-                .unwrap();
+            let idx_values = idx_record.get_values();
+            let idx_values = &idx_values[..record_from_regs.len()];
+            let record_values = record_from_regs.get_values();
+            let ord = compare_immutable(&idx_values, &record_values, cursor.index_key_sort_order);
             if ord.is_gt() {
                 target_pc.to_offset_int()
             } else {
@@ -2152,9 +2211,10 @@ pub fn op_idx_lt(
         let record_from_regs = make_record(&state.registers, start_reg, num_regs);
         let pc = if let Some(ref idx_record) = *cursor.record() {
             // Compare against the same number of values
-            let ord = idx_record.get_values()[..record_from_regs.len()]
-                .partial_cmp(&record_from_regs.get_values()[..])
-                .unwrap();
+            let idx_values = idx_record.get_values();
+            let idx_values = &idx_values[..record_from_regs.len()];
+            let record_values = record_from_regs.get_values();
+            let ord = compare_immutable(&idx_values, &record_values, cursor.index_key_sort_order);
             if ord.is_lt() {
                 target_pc.to_offset_int()
             } else {
@@ -2635,14 +2695,6 @@ pub fn op_sorter_open(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let order = order
-        .get_values()
-        .iter()
-        .map(|v| match v {
-            OwnedValue::Integer(i) => *i == 0,
-            _ => unreachable!(),
-        })
-        .collect();
     let cursor = Sorter::new(order);
     let mut cursors = state.cursors.borrow_mut();
     cursors
@@ -3329,6 +3381,21 @@ pub fn op_function(
                 let result = exec_time(values);
                 state.registers[*dest] = Register::OwnedValue(result);
             }
+            ScalarFunc::TimeDiff => {
+                if arg_count != 2 {
+                    state.registers[*dest] = Register::OwnedValue(OwnedValue::Null);
+                } else {
+                    let start = state.registers[*start_reg].get_owned_value().clone();
+                    let end = state.registers[*start_reg + 1].get_owned_value().clone();
+
+                    let result = crate::functions::datetime::exec_timediff(&[
+                        Register::OwnedValue(start),
+                        Register::OwnedValue(end),
+                    ]);
+
+                    state.registers[*dest] = Register::OwnedValue(result);
+                }
+            }
             ScalarFunc::TotalChanges => {
                 let res = &program.connection.upgrade().unwrap().total_changes;
                 let total_changes = res.get();
@@ -3340,26 +3407,8 @@ pub fn op_function(
                 state.registers[*dest] = Register::OwnedValue(result);
             }
             ScalarFunc::JulianDay => {
-                if *start_reg == 0 {
-                    let julianday: String = exec_julianday(&OwnedValue::build_text("now"))?;
-                    state.registers[*dest] =
-                        Register::OwnedValue(OwnedValue::build_text(&julianday));
-                } else {
-                    let datetime_value = &state.registers[*start_reg];
-                    let julianday = exec_julianday(datetime_value.get_owned_value());
-                    match julianday {
-                        Ok(time) => {
-                            state.registers[*dest] =
-                                Register::OwnedValue(OwnedValue::build_text(&time))
-                        }
-                        Err(e) => {
-                            return Err(LimboError::ParseError(format!(
-                                "Error encountered while parsing datetime value: {}",
-                                e
-                            )));
-                        }
-                    }
-                }
+                let result = exec_julianday(&state.registers[*start_reg..*start_reg + arg_count]);
+                state.registers[*dest] = Register::OwnedValue(result);
             }
             ScalarFunc::UnixEpoch => {
                 if *start_reg == 0 {
@@ -3421,6 +3470,19 @@ pub fn op_function(
             }
             ScalarFunc::Printf => {
                 let result = exec_printf(&state.registers[*start_reg..*start_reg + arg_count])?;
+                state.registers[*dest] = Register::OwnedValue(result);
+            }
+            ScalarFunc::Likely => {
+                let value = &state.registers[*start_reg].borrow_mut();
+                let result = exec_likely(value.get_owned_value());
+                state.registers[*dest] = Register::OwnedValue(result);
+            }
+            ScalarFunc::Likelihood => {
+                assert_eq!(arg_count, 2);
+                let value = &state.registers[*start_reg];
+                let probability = &state.registers[*start_reg + 1];
+                let result =
+                    exec_likelihood(value.get_owned_value(), probability.get_owned_value());
                 state.registers[*dest] = Register::OwnedValue(result);
             }
         },
@@ -3625,14 +3687,14 @@ pub fn op_yield(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_insert_async(
+pub fn op_insert(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::InsertAsync {
+    let Insn::Insert {
         cursor,
         key_reg,
         record_reg,
@@ -3648,30 +3710,14 @@ pub fn op_insert_async(
             Register::Record(r) => r,
             _ => unreachable!("Not a record! Cannot insert a non record value."),
         };
-        let key = &state.registers[*key_reg];
+        let key = match &state.registers[*key_reg].get_owned_value() {
+            OwnedValue::Integer(i) => *i,
+            _ => unreachable!("expected integer key"),
+        };
         // NOTE(pere): Sending moved_before == true is okay because we moved before but
         // if we were to set to false after starting a balance procedure, it might
         // leave undefined state.
-        return_if_io!(cursor.insert(key.get_owned_value(), record, true));
-    }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_insert_await(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::InsertAwait { cursor_id } = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    {
-        let mut cursor = state.get_cursor(*cursor_id);
-        let cursor = cursor.as_btree_mut();
-        cursor.wait_for_completion()?;
+        return_if_io!(cursor.insert(&BTreeKey::new_table_rowid(key as u64, Some(record)), true));
         // Only update last_insert_rowid for regular table inserts, not schema modifications
         if cursor.root_page() != 1 {
             if let Some(rowid) = cursor.rowid()? {
@@ -3687,43 +3733,152 @@ pub fn op_insert_await(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_delete_async(
+pub fn op_delete(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::DeleteAsync { cursor_id } = insn else {
+    let Insn::Delete { cursor_id } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
     {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_btree_mut();
+        tracing::debug!(
+            "op_delete(record={:?}, rowid={:?})",
+            cursor.record(),
+            cursor.rowid()?
+        );
         return_if_io!(cursor.delete());
-    }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_delete_await(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::DeleteAwait { cursor_id } = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    {
-        let mut cursor = state.get_cursor(*cursor_id);
-        let cursor = cursor.as_btree_mut();
-        cursor.wait_for_completion()?;
     }
     let prev_changes = program.n_change.get();
     program.n_change.set(prev_changes + 1);
     state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub enum OpIdxDeleteState {
+    Seeking(ImmutableRecord), // First seek row to delete
+    Deleting,
+}
+pub fn op_idx_delete(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::IdxDelete {
+        cursor_id,
+        start_reg,
+        num_regs,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    loop {
+        match &state.op_idx_delete_state {
+            Some(OpIdxDeleteState::Seeking(record)) => {
+                {
+                    let mut cursor = state.get_cursor(*cursor_id);
+                    let cursor = cursor.as_btree_mut();
+                    return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ));
+                    tracing::debug!(
+                        "op_idx_delete(seek={}, record={} rowid={:?})",
+                        &record,
+                        cursor.record().as_ref().unwrap(),
+                        cursor.rowid()
+                    );
+                    if cursor.rowid()?.is_none() {
+                        // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching
+                        // index entry is found. This happens when running an UPDATE or DELETE statement and the
+                        // index entry to be updated or deleted is not found. For some uses of IdxDelete
+                        // (example: the EXCEPT operator) it does not matter that no matching entry is found.
+                        // For those cases, P5 is zero. Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
+                        return Err(LimboError::Corrupt(format!(
+                            "IdxDelete: no matching index entry found for record {:?}",
+                            record
+                        )));
+                    }
+                }
+                state.op_idx_delete_state = Some(OpIdxDeleteState::Deleting);
+            }
+            Some(OpIdxDeleteState::Deleting) => {
+                {
+                    let mut cursor = state.get_cursor(*cursor_id);
+                    let cursor = cursor.as_btree_mut();
+                    return_if_io!(cursor.delete());
+                }
+                let n_change = program.n_change.get();
+                program.n_change.set(n_change + 1);
+                state.pc += 1;
+                return Ok(InsnFunctionStepResult::Step);
+            }
+            None => {
+                let record = make_record(&state.registers, start_reg, num_regs);
+                state.op_idx_delete_state = Some(OpIdxDeleteState::Seeking(record));
+            }
+        }
+    }
+}
+
+pub fn op_idx_insert(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    if let Insn::IdxInsert {
+        cursor_id,
+        record_reg,
+        flags,
+        ..
+    } = *insn
+    {
+        let (_, cursor_type) = program.cursor_ref.get(cursor_id).unwrap();
+        let CursorType::BTreeIndex(index_meta) = cursor_type else {
+            panic!("IdxInsert: not a BTree index cursor");
+        };
+        {
+            let mut cursor = state.get_cursor(cursor_id);
+            let cursor = cursor.as_btree_mut();
+            let record = match &state.registers[record_reg] {
+                Register::Record(ref r) => r,
+                _ => return Err(LimboError::InternalError("expected record".into())),
+            };
+            // To make this reentrant in case of `moved_before` = false, we need to check if the previous cursor.insert started
+            // a write/balancing operation. If it did, it means we already moved to the place we wanted.
+            let moved_before = if cursor.is_write_in_progress() {
+                true
+            } else {
+                if index_meta.unique {
+                    // check for uniqueness violation
+                    match cursor.key_exists_in_index(record)? {
+                        CursorResult::Ok(true) => {
+                            return Err(LimboError::Constraint(
+                                "UNIQUE constraint failed: duplicate key".into(),
+                            ))
+                        }
+                        CursorResult::IO => return Ok(InsnFunctionStepResult::IO),
+                        CursorResult::Ok(false) => {}
+                    };
+                    false
+                } else {
+                    flags.has(IdxInsertFlags::USE_SEEK)
+                }
+            };
+
+            // Start insertion of row. This might trigger a balance procedure which will take care of moving to different pages,
+            // therefore, we don't want to seek again if that happens, meaning we don't want to return on io without moving to the following opcode
+            // because it could trigger a movement to child page after a balance root which will leave the current page as the root page.
+            return_if_io!(cursor.insert(&BTreeKey::new_index_key(record), moved_before));
+        }
+        // TODO: flag optimizations, update n_change if OPFLAG_NCHANGE
+        state.pc += 1;
+    }
     Ok(InsnFunctionStepResult::Step)
 }
 
@@ -3804,6 +3959,60 @@ pub fn op_soft_null(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_no_conflict(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::NoConflict {
+        cursor_id,
+        target_pc,
+        record_reg,
+        num_regs,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    let mut cursor_ref = state.get_cursor(*cursor_id);
+    let cursor = cursor_ref.as_btree_mut();
+
+    let record = if *num_regs == 0 {
+        let record = match &state.registers[*record_reg] {
+            Register::Record(r) => r,
+            _ => {
+                return Err(LimboError::InternalError(
+                    "NoConflict: exepected a record in the register".into(),
+                ));
+            }
+        };
+        record
+    } else {
+        &make_record(&state.registers, record_reg, num_regs)
+    };
+    // If there is at least one NULL in the index record, there cannot be a conflict so we can immediately jump.
+    let contains_nulls = record
+        .get_values()
+        .iter()
+        .any(|val| matches!(val, RefValue::Null));
+
+    if contains_nulls {
+        drop(cursor_ref);
+        state.pc = target_pc.to_offset_int();
+        return Ok(InsnFunctionStepResult::Step);
+    }
+
+    let conflict = return_if_io!(cursor.seek(SeekKey::IndexKey(record), SeekOp::EQ));
+    drop(cursor_ref);
+    if !conflict {
+        state.pc = target_pc.to_offset_int();
+    } else {
+        state.pc += 1;
+    }
+    Ok(InsnFunctionStepResult::Step)
+}
+
 pub fn op_not_exists(
     program: &Program,
     state: &mut ProgramState,
@@ -3879,26 +4088,41 @@ pub fn op_offset_limit(
 // this cursor may be reused for next insert
 // Update: tablemoveto is used to travers on not exists, on insert depending on flags if nonseek it traverses again.
 // If not there might be some optimizations obviously.
-pub fn op_open_write_async(
+pub fn op_open_write(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::OpenWriteAsync {
+    let Insn::OpenWrite {
         cursor_id,
         root_page,
+        ..
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
+    let root_page = match root_page {
+        RegisterOrLiteral::Literal(lit) => *lit as u64,
+        RegisterOrLiteral::Register(reg) => match &state.registers[*reg].get_owned_value() {
+            OwnedValue::Integer(val) => *val as u64,
+            _ => {
+                return Err(LimboError::InternalError(
+                    "OpenWrite: the value in root_page is not an integer".into(),
+                ));
+            }
+        },
+    };
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let mut cursors = state.cursors.borrow_mut();
-    let is_index = cursor_type.is_index();
+    let maybe_index = match cursor_type {
+        CursorType::BTreeIndex(index) => Some(index),
+        _ => None,
+    };
     let mv_cursor = match state.mv_tx_id {
         Some(tx_id) => {
-            let table_id = *root_page as u64;
+            let table_id = root_page;
             let mv_store = mv_store.unwrap().clone();
             let mv_cursor = Rc::new(RefCell::new(
                 MvCursor::new(mv_store.clone(), tx_id, table_id).unwrap(),
@@ -3907,32 +4131,20 @@ pub fn op_open_write_async(
         }
         None => None,
     };
-    let cursor = BTreeCursor::new(mv_cursor, pager.clone(), *root_page);
-    if is_index {
+    if let Some(index) = maybe_index {
+        let cursor =
+            BTreeCursor::new_index(mv_cursor, pager.clone(), root_page as usize, index.as_ref());
         cursors
             .get_mut(*cursor_id)
             .unwrap()
             .replace(Cursor::new_btree(cursor));
     } else {
+        let cursor = BTreeCursor::new(mv_cursor, pager.clone(), root_page as usize);
         cursors
             .get_mut(*cursor_id)
             .unwrap()
             .replace(Cursor::new_btree(cursor));
     }
-    state.pc += 1;
-    Ok(InsnFunctionStepResult::Step)
-}
-
-pub fn op_open_write_await(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let Insn::OpenWriteAwait {} = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -3973,7 +4185,7 @@ pub fn op_create_btree(
         // TODO: implement temp databases
         todo!("temp databases not implemented yet");
     }
-    let root_page = pager.btree_create(*flags);
+    let root_page = pager.btree_create(flags);
     state.registers[*root] = Register::OwnedValue(OwnedValue::Integer(root_page as i64));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -4082,13 +4294,8 @@ pub fn op_page_count(
         // TODO: implement temp databases
         todo!("temp databases not implemented yet");
     }
-    // SQLite returns "0" on an empty database, and 2 on the first insertion,
-    // so we'll mimic that behavior.
-    let mut pages = pager.db_header.lock().database_size.into();
-    if pages == 1 {
-        pages = 0;
-    }
-    state.registers[*dest] = Register::OwnedValue(OwnedValue::Integer(pages));
+    let count = pager.db_header.lock().database_size.into();
+    state.registers[*dest] = Register::OwnedValue(OwnedValue::Integer(count));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -4110,18 +4317,20 @@ pub fn op_parse_schema(
     let conn = program.connection.upgrade();
     let conn = conn.as_ref().unwrap();
     let stmt = conn.prepare(format!(
-        "SELECT * FROM  sqlite_schema WHERE {}",
+        "SELECT * FROM sqlite_schema WHERE {}",
         where_clause
     ))?;
     let mut schema = conn.schema.write();
     // TODO: This function below is synchronous, make it async
-    parse_schema_rows(
-        Some(stmt),
-        &mut schema,
-        conn.pager.io.clone(),
-        &conn.syms.borrow(),
-        state.mv_tx_id,
-    )?;
+    {
+        parse_schema_rows(
+            Some(stmt),
+            &mut schema,
+            conn.pager.io.clone(),
+            &conn.syms.borrow(),
+            state.mv_tx_id,
+        )?;
+    }
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -4142,6 +4351,7 @@ pub fn op_read_cookie(
     }
     let cookie_value = match cookie {
         Cookie::UserVersion => pager.db_header.lock().user_version.into(),
+        Cookie::SchemaVersion => pager.db_header.lock().schema_cookie.into(),
         cookie => todo!("{cookie:?} is not yet implement for ReadCookie"),
     };
     state.registers[*dest] = Register::OwnedValue(OwnedValue::Integer(cookie_value));
@@ -4195,12 +4405,7 @@ pub fn op_variable(
     let Insn::Variable { index, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    state.registers[*dest] = Register::OwnedValue(
-        state
-            .get_parameter(*index)
-            .ok_or(LimboError::Unbound(*index))?
-            .clone(),
-    );
+    state.registers[*dest] = Register::OwnedValue(state.get_parameter(*index));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -4305,6 +4510,205 @@ pub fn op_noop(
 ) -> Result<InsnFunctionStepResult> {
     // Do nothing
     // Advance the program counter for the next opcode
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_open_ephemeral(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let (cursor_id, is_table) = match insn {
+        Insn::OpenEphemeral {
+            cursor_id,
+            is_table,
+        } => (*cursor_id, *is_table),
+        Insn::OpenAutoindex { cursor_id } => (*cursor_id, false),
+        _ => unreachable!("unexpected Insn {:?}", insn),
+    };
+
+    let conn = program.connection.upgrade().unwrap();
+    let io = conn.pager.io.get_memory_io();
+
+    let file = io.open_file("", OpenFlags::Create, true)?;
+    maybe_init_database_file(&file, &(io.clone() as Arc<dyn IO>))?;
+    let db_file = Arc::new(FileMemoryStorage::new(file));
+
+    let db_header = Pager::begin_open(db_file.clone())?;
+    let buffer_pool = Rc::new(BufferPool::new(db_header.lock().get_page_size() as usize));
+    let page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
+
+    let pager = Rc::new(Pager::finish_open(
+        db_header,
+        db_file,
+        None,
+        io,
+        page_cache,
+        buffer_pool,
+    )?);
+
+    let flag = if is_table {
+        &CreateBTreeFlags::new_table()
+    } else {
+        &CreateBTreeFlags::new_index()
+    };
+
+    let root_page = pager.btree_create(flag);
+
+    let (_, cursor_type) = program.cursor_ref.get(cursor_id).unwrap();
+    let mv_cursor = match state.mv_tx_id {
+        Some(tx_id) => {
+            let table_id = root_page as u64;
+            let mv_store = mv_store.unwrap().clone();
+            let mv_cursor = Rc::new(RefCell::new(
+                MvCursor::new(mv_store.clone(), tx_id, table_id).unwrap(),
+            ));
+            Some(mv_cursor)
+        }
+        None => None,
+    };
+    let mut cursor = BTreeCursor::new(mv_cursor, pager, root_page as usize);
+    cursor.rewind()?; // Will never return io
+
+    let mut cursors: std::cell::RefMut<'_, Vec<Option<Cursor>>> = state.cursors.borrow_mut();
+
+    // Table content is erased if the cursor already exists
+    match cursor_type {
+        CursorType::BTreeTable(_) => {
+            cursors
+                .get_mut(cursor_id)
+                .unwrap()
+                .replace(Cursor::new_btree(cursor));
+        }
+        CursorType::BTreeIndex(_) => {
+            cursors
+                .get_mut(cursor_id)
+                .unwrap()
+                .replace(Cursor::new_btree(cursor));
+        }
+        CursorType::Pseudo(_) => {
+            panic!("OpenEphemeral on pseudo cursor");
+        }
+        CursorType::Sorter => {
+            panic!("OpenEphemeral on sorter cursor");
+        }
+        CursorType::VirtualTable(_) => {
+            panic!("OpenEphemeral on virtual table cursor, use Insn::VOpen instead");
+        }
+    }
+
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+/// Execute the [Insn::Once] instruction.
+///
+/// This instruction is used to execute a block of code only once.
+/// If the instruction is executed again, it will jump to the target program counter.
+pub fn op_once(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::Once {
+        target_pc_when_reentered,
+    } = insn
+    else {
+        unreachable!("unexpected Insn: {:?}", insn)
+    };
+    assert!(target_pc_when_reentered.is_offset());
+    let offset = state.pc;
+    if state.once.iter().any(|o| o == offset) {
+        state.pc = target_pc_when_reentered.to_offset_int();
+        return Ok(InsnFunctionStepResult::Step);
+    }
+    state.once.push(offset);
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_not_found(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::NotFound {
+        cursor_id,
+        target_pc,
+        record_reg,
+        num_regs,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+
+    let found = {
+        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = cursor.as_btree_mut();
+
+        if *num_regs == 0 {
+            let record = match &state.registers[*record_reg] {
+                Register::Record(r) => r,
+                _ => {
+                    return Err(LimboError::InternalError(
+                        "NotFound: exepected a record in the register".into(),
+                    ));
+                }
+            };
+
+            return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ))
+        } else {
+            let record = make_record(&state.registers, record_reg, num_regs);
+            return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::EQ))
+        }
+    };
+
+    if found {
+        state.pc += 1;
+    } else {
+        state.pc = target_pc.to_offset_int();
+    }
+
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_affinity(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::Affinity {
+        start_reg,
+        count,
+        affinities,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+
+    if affinities.len() != count.get() {
+        return Err(LimboError::InternalError(
+            "Affinity: the length of affinities does not match the count".into(),
+        ));
+    }
+
+    for (i, affinity_char) in affinities.chars().enumerate().take(count.get()) {
+        let reg_index = *start_reg + i;
+
+        let affinity = Affinity::from_char(affinity_char)?;
+
+        apply_affinity_char(&mut state.registers[reg_index], affinity);
+    }
+
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -4900,6 +5304,77 @@ fn exec_if(reg: &OwnedValue, jump_if_null: bool, not: bool) -> bool {
     }
 }
 
+fn apply_affinity_char(target: &mut Register, affinity: Affinity) -> bool {
+    if let Register::OwnedValue(value) = target {
+        if matches!(value, OwnedValue::Blob(_)) {
+            return true;
+        }
+        match affinity {
+            Affinity::Blob => return true,
+            Affinity::Text => {
+                if matches!(value, OwnedValue::Text(_) | OwnedValue::Null) {
+                    return true;
+                }
+                let text = value.to_string();
+                *value = OwnedValue::Text(text.into());
+                return true;
+            }
+            Affinity::Integer | Affinity::Numeric => {
+                if matches!(value, OwnedValue::Integer(_)) {
+                    return true;
+                }
+                if !matches!(value, OwnedValue::Text(_) | OwnedValue::Float(_)) {
+                    return true;
+                }
+
+                if let OwnedValue::Float(fl) = *value {
+                    if let Ok(int) = cast_real_to_integer(fl).map(OwnedValue::Integer) {
+                        *value = int;
+                        return true;
+                    }
+                    return false;
+                }
+
+                let text = value.to_text().unwrap();
+                let Ok(num) = checked_cast_text_to_numeric(&text) else {
+                    return false;
+                };
+
+                *value = match &num {
+                    OwnedValue::Float(fl) => {
+                        cast_real_to_integer(*fl)
+                            .map(OwnedValue::Integer)
+                            .unwrap_or(num);
+                        return true;
+                    }
+                    OwnedValue::Integer(_) if text.starts_with("0x") => {
+                        return false;
+                    }
+                    _ => num,
+                };
+            }
+
+            Affinity::Real => {
+                if let OwnedValue::Integer(i) = value {
+                    *value = OwnedValue::Float(*i as f64);
+                    return true;
+                } else if let OwnedValue::Text(t) = value {
+                    if t.as_str().starts_with("0x") {
+                        return false;
+                    }
+                    if let Ok(num) = checked_cast_text_to_numeric(t.as_str()) {
+                        *value = num;
+                        return true;
+                    } else {
+                        return false;
+                    }
+                }
+            }
+        };
+    }
+    return true;
+}
+
 fn exec_cast(value: &OwnedValue, datatype: &str) -> OwnedValue {
     if matches!(value, OwnedValue::Null) {
         return OwnedValue::Null;
@@ -5113,15 +5588,605 @@ fn exec_math_log(arg: &OwnedValue, base: Option<&OwnedValue>) -> OwnedValue {
     OwnedValue::Float(result)
 }
 
+fn exec_likely(reg: &OwnedValue) -> OwnedValue {
+    reg.clone()
+}
+
+fn exec_likelihood(reg: &OwnedValue, _probability: &OwnedValue) -> OwnedValue {
+    reg.clone()
+}
+
+pub fn exec_add(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
+    (Numeric::from(lhs) + Numeric::from(rhs)).into()
+}
+
+pub fn exec_subtract(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
+    (Numeric::from(lhs) - Numeric::from(rhs)).into()
+}
+
+pub fn exec_multiply(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
+    (Numeric::from(lhs) * Numeric::from(rhs)).into()
+}
+
+pub fn exec_divide(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
+    (Numeric::from(lhs) / Numeric::from(rhs)).into()
+}
+
+pub fn exec_bit_and(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
+    (NullableInteger::from(lhs) & NullableInteger::from(rhs)).into()
+}
+
+pub fn exec_bit_or(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
+    (NullableInteger::from(lhs) | NullableInteger::from(rhs)).into()
+}
+
+pub fn exec_remainder(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
+    let convert_to_float = matches!(Numeric::from(lhs), Numeric::Float(_))
+        || matches!(Numeric::from(rhs), Numeric::Float(_));
+
+    match NullableInteger::from(lhs) % NullableInteger::from(rhs) {
+        NullableInteger::Null => OwnedValue::Null,
+        NullableInteger::Integer(v) => {
+            if convert_to_float {
+                OwnedValue::Float(v as f64)
+            } else {
+                OwnedValue::Integer(v)
+            }
+        }
+    }
+}
+
+pub fn exec_bit_not(reg: &OwnedValue) -> OwnedValue {
+    (!NullableInteger::from(reg)).into()
+}
+
+pub fn exec_shift_left(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
+    (NullableInteger::from(lhs) << NullableInteger::from(rhs)).into()
+}
+
+pub fn exec_shift_right(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
+    (NullableInteger::from(lhs) >> NullableInteger::from(rhs)).into()
+}
+
+pub fn exec_boolean_not(reg: &OwnedValue) -> OwnedValue {
+    match Numeric::from(reg).try_into_bool() {
+        None => OwnedValue::Null,
+        Some(v) => OwnedValue::Integer(!v as i64),
+    }
+}
+pub fn exec_concat(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
+    match (lhs, rhs) {
+        (OwnedValue::Text(lhs_text), OwnedValue::Text(rhs_text)) => {
+            OwnedValue::build_text(&(lhs_text.as_str().to_string() + rhs_text.as_str()))
+        }
+        (OwnedValue::Text(lhs_text), OwnedValue::Integer(rhs_int)) => {
+            OwnedValue::build_text(&(lhs_text.as_str().to_string() + &rhs_int.to_string()))
+        }
+        (OwnedValue::Text(lhs_text), OwnedValue::Float(rhs_float)) => {
+            OwnedValue::build_text(&(lhs_text.as_str().to_string() + &rhs_float.to_string()))
+        }
+        (OwnedValue::Integer(lhs_int), OwnedValue::Text(rhs_text)) => {
+            OwnedValue::build_text(&(lhs_int.to_string() + rhs_text.as_str()))
+        }
+        (OwnedValue::Integer(lhs_int), OwnedValue::Integer(rhs_int)) => {
+            OwnedValue::build_text(&(lhs_int.to_string() + &rhs_int.to_string()))
+        }
+        (OwnedValue::Integer(lhs_int), OwnedValue::Float(rhs_float)) => {
+            OwnedValue::build_text(&(lhs_int.to_string() + &rhs_float.to_string()))
+        }
+        (OwnedValue::Float(lhs_float), OwnedValue::Text(rhs_text)) => {
+            OwnedValue::build_text(&(lhs_float.to_string() + rhs_text.as_str()))
+        }
+        (OwnedValue::Float(lhs_float), OwnedValue::Integer(rhs_int)) => {
+            OwnedValue::build_text(&(lhs_float.to_string() + &rhs_int.to_string()))
+        }
+        (OwnedValue::Float(lhs_float), OwnedValue::Float(rhs_float)) => {
+            OwnedValue::build_text(&(lhs_float.to_string() + &rhs_float.to_string()))
+        }
+        (OwnedValue::Null, _) | (_, OwnedValue::Null) => OwnedValue::Null,
+        (OwnedValue::Blob(_), _) | (_, OwnedValue::Blob(_)) => {
+            todo!("TODO: Handle Blob conversion to String")
+        }
+    }
+}
+
+pub fn exec_and(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
+    match (
+        Numeric::from(lhs).try_into_bool(),
+        Numeric::from(rhs).try_into_bool(),
+    ) {
+        (Some(false), _) | (_, Some(false)) => OwnedValue::Integer(0),
+        (None, _) | (_, None) => OwnedValue::Null,
+        _ => OwnedValue::Integer(1),
+    }
+}
+
+pub fn exec_or(lhs: &OwnedValue, rhs: &OwnedValue) -> OwnedValue {
+    match (
+        Numeric::from(lhs).try_into_bool(),
+        Numeric::from(rhs).try_into_bool(),
+    ) {
+        (Some(true), _) | (_, Some(true)) => OwnedValue::Integer(1),
+        (None, _) | (_, None) => OwnedValue::Null,
+        _ => OwnedValue::Integer(0),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::vdbe::{execute::exec_replace, Bitfield, Register};
+    use crate::types::{OwnedValue, Text};
+
+    use super::{exec_add, exec_or};
+
+    #[test]
+    fn test_exec_add() {
+        let inputs = vec![
+            (OwnedValue::Integer(3), OwnedValue::Integer(1)),
+            (OwnedValue::Float(3.0), OwnedValue::Float(1.0)),
+            (OwnedValue::Float(3.0), OwnedValue::Integer(1)),
+            (OwnedValue::Integer(3), OwnedValue::Float(1.0)),
+            (OwnedValue::Null, OwnedValue::Null),
+            (OwnedValue::Null, OwnedValue::Integer(1)),
+            (OwnedValue::Null, OwnedValue::Float(1.0)),
+            (OwnedValue::Null, OwnedValue::Text(Text::from_str("2"))),
+            (OwnedValue::Integer(1), OwnedValue::Null),
+            (OwnedValue::Float(1.0), OwnedValue::Null),
+            (OwnedValue::Text(Text::from_str("1")), OwnedValue::Null),
+            (
+                OwnedValue::Text(Text::from_str("1")),
+                OwnedValue::Text(Text::from_str("3")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("1.0")),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("1.0")),
+                OwnedValue::Float(3.0),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("1.0")),
+                OwnedValue::Integer(3),
+            ),
+            (
+                OwnedValue::Float(1.0),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+            (
+                OwnedValue::Integer(1),
+                OwnedValue::Text(Text::from_str("3")),
+            ),
+        ];
+
+        let outputs = [
+            OwnedValue::Integer(4),
+            OwnedValue::Float(4.0),
+            OwnedValue::Float(4.0),
+            OwnedValue::Float(4.0),
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Integer(4),
+            OwnedValue::Float(4.0),
+            OwnedValue::Float(4.0),
+            OwnedValue::Float(4.0),
+            OwnedValue::Float(4.0),
+            OwnedValue::Float(4.0),
+        ];
+
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "Inputs and Outputs should have same size"
+        );
+        for (i, (lhs, rhs)) in inputs.iter().enumerate() {
+            assert_eq!(
+                exec_add(lhs, rhs),
+                outputs[i],
+                "Wrong ADD for lhs: {}, rhs: {}",
+                lhs,
+                rhs
+            );
+        }
+    }
+
+    use super::exec_subtract;
+
+    #[test]
+    fn test_exec_subtract() {
+        let inputs = vec![
+            (OwnedValue::Integer(3), OwnedValue::Integer(1)),
+            (OwnedValue::Float(3.0), OwnedValue::Float(1.0)),
+            (OwnedValue::Float(3.0), OwnedValue::Integer(1)),
+            (OwnedValue::Integer(3), OwnedValue::Float(1.0)),
+            (OwnedValue::Null, OwnedValue::Null),
+            (OwnedValue::Null, OwnedValue::Integer(1)),
+            (OwnedValue::Null, OwnedValue::Float(1.0)),
+            (OwnedValue::Null, OwnedValue::Text(Text::from_str("1"))),
+            (OwnedValue::Integer(1), OwnedValue::Null),
+            (OwnedValue::Float(1.0), OwnedValue::Null),
+            (OwnedValue::Text(Text::from_str("4")), OwnedValue::Null),
+            (
+                OwnedValue::Text(Text::from_str("1")),
+                OwnedValue::Text(Text::from_str("3")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("1.0")),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("1.0")),
+                OwnedValue::Float(3.0),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("1.0")),
+                OwnedValue::Integer(3),
+            ),
+            (
+                OwnedValue::Float(1.0),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+            (
+                OwnedValue::Integer(1),
+                OwnedValue::Text(Text::from_str("3")),
+            ),
+        ];
+
+        let outputs = [
+            OwnedValue::Integer(2),
+            OwnedValue::Float(2.0),
+            OwnedValue::Float(2.0),
+            OwnedValue::Float(2.0),
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Integer(-2),
+            OwnedValue::Float(-2.0),
+            OwnedValue::Float(-2.0),
+            OwnedValue::Float(-2.0),
+            OwnedValue::Float(-2.0),
+            OwnedValue::Float(-2.0),
+        ];
+
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "Inputs and Outputs should have same size"
+        );
+        for (i, (lhs, rhs)) in inputs.iter().enumerate() {
+            assert_eq!(
+                exec_subtract(lhs, rhs),
+                outputs[i],
+                "Wrong subtract for lhs: {}, rhs: {}",
+                lhs,
+                rhs
+            );
+        }
+    }
+    use super::exec_multiply;
+
+    #[test]
+    fn test_exec_multiply() {
+        let inputs = vec![
+            (OwnedValue::Integer(3), OwnedValue::Integer(2)),
+            (OwnedValue::Float(3.0), OwnedValue::Float(2.0)),
+            (OwnedValue::Float(3.0), OwnedValue::Integer(2)),
+            (OwnedValue::Integer(3), OwnedValue::Float(2.0)),
+            (OwnedValue::Null, OwnedValue::Null),
+            (OwnedValue::Null, OwnedValue::Integer(1)),
+            (OwnedValue::Null, OwnedValue::Float(1.0)),
+            (OwnedValue::Null, OwnedValue::Text(Text::from_str("1"))),
+            (OwnedValue::Integer(1), OwnedValue::Null),
+            (OwnedValue::Float(1.0), OwnedValue::Null),
+            (OwnedValue::Text(Text::from_str("4")), OwnedValue::Null),
+            (
+                OwnedValue::Text(Text::from_str("2")),
+                OwnedValue::Text(Text::from_str("3")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("2.0")),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("2.0")),
+                OwnedValue::Float(3.0),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("2.0")),
+                OwnedValue::Integer(3),
+            ),
+            (
+                OwnedValue::Float(2.0),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+            (
+                OwnedValue::Integer(2),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+        ];
+
+        let outputs = [
+            OwnedValue::Integer(6),
+            OwnedValue::Float(6.0),
+            OwnedValue::Float(6.0),
+            OwnedValue::Float(6.0),
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Integer(6),
+            OwnedValue::Float(6.0),
+            OwnedValue::Float(6.0),
+            OwnedValue::Float(6.0),
+            OwnedValue::Float(6.0),
+            OwnedValue::Float(6.0),
+        ];
+
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "Inputs and Outputs should have same size"
+        );
+        for (i, (lhs, rhs)) in inputs.iter().enumerate() {
+            assert_eq!(
+                exec_multiply(lhs, rhs),
+                outputs[i],
+                "Wrong multiply for lhs: {}, rhs: {}",
+                lhs,
+                rhs
+            );
+        }
+    }
+    use super::exec_divide;
+
+    #[test]
+    fn test_exec_divide() {
+        let inputs = vec![
+            (OwnedValue::Integer(1), OwnedValue::Integer(0)),
+            (OwnedValue::Float(1.0), OwnedValue::Float(0.0)),
+            (OwnedValue::Integer(i64::MIN), OwnedValue::Integer(-1)),
+            (OwnedValue::Float(6.0), OwnedValue::Float(2.0)),
+            (OwnedValue::Float(6.0), OwnedValue::Integer(2)),
+            (OwnedValue::Integer(6), OwnedValue::Integer(2)),
+            (OwnedValue::Null, OwnedValue::Integer(2)),
+            (OwnedValue::Integer(2), OwnedValue::Null),
+            (OwnedValue::Null, OwnedValue::Null),
+            (
+                OwnedValue::Text(Text::from_str("6")),
+                OwnedValue::Text(Text::from_str("2")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("6")),
+                OwnedValue::Integer(2),
+            ),
+        ];
+
+        let outputs = [
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Float(9.223372036854776e18),
+            OwnedValue::Float(3.0),
+            OwnedValue::Float(3.0),
+            OwnedValue::Float(3.0),
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Float(3.0),
+            OwnedValue::Float(3.0),
+        ];
+
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "Inputs and Outputs should have same size"
+        );
+        for (i, (lhs, rhs)) in inputs.iter().enumerate() {
+            assert_eq!(
+                exec_divide(lhs, rhs),
+                outputs[i],
+                "Wrong divide for lhs: {}, rhs: {}",
+                lhs,
+                rhs
+            );
+        }
+    }
+
+    use super::exec_remainder;
+    #[test]
+    fn test_exec_remainder() {
+        let inputs = vec![
+            (OwnedValue::Null, OwnedValue::Null),
+            (OwnedValue::Null, OwnedValue::Float(1.0)),
+            (OwnedValue::Null, OwnedValue::Integer(1)),
+            (OwnedValue::Null, OwnedValue::Text(Text::from_str("1"))),
+            (OwnedValue::Float(1.0), OwnedValue::Null),
+            (OwnedValue::Integer(1), OwnedValue::Null),
+            (OwnedValue::Integer(12), OwnedValue::Integer(0)),
+            (OwnedValue::Float(12.0), OwnedValue::Float(0.0)),
+            (OwnedValue::Float(12.0), OwnedValue::Integer(0)),
+            (OwnedValue::Integer(12), OwnedValue::Float(0.0)),
+            (OwnedValue::Integer(i64::MIN), OwnedValue::Integer(-1)),
+            (OwnedValue::Integer(12), OwnedValue::Integer(3)),
+            (OwnedValue::Float(12.0), OwnedValue::Float(3.0)),
+            (OwnedValue::Float(12.0), OwnedValue::Integer(3)),
+            (OwnedValue::Integer(12), OwnedValue::Float(3.0)),
+            (OwnedValue::Integer(12), OwnedValue::Integer(-3)),
+            (OwnedValue::Float(12.0), OwnedValue::Float(-3.0)),
+            (OwnedValue::Float(12.0), OwnedValue::Integer(-3)),
+            (OwnedValue::Integer(12), OwnedValue::Float(-3.0)),
+            (
+                OwnedValue::Text(Text::from_str("12.0")),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+            (
+                OwnedValue::Text(Text::from_str("12.0")),
+                OwnedValue::Float(3.0),
+            ),
+            (
+                OwnedValue::Float(12.0),
+                OwnedValue::Text(Text::from_str("3.0")),
+            ),
+        ];
+        let outputs = vec![
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Float(0.0),
+            OwnedValue::Integer(0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Integer(0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Float(0.0),
+            OwnedValue::Float(0.0),
+        ];
+
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "Inputs and Outputs should have same size"
+        );
+
+        for (i, (lhs, rhs)) in inputs.iter().enumerate() {
+            assert_eq!(
+                exec_remainder(lhs, rhs),
+                outputs[i],
+                "Wrong remainder for lhs: {}, rhs: {}",
+                lhs,
+                rhs
+            );
+        }
+    }
+
+    use super::exec_and;
+
+    #[test]
+    fn test_exec_and() {
+        let inputs = vec![
+            (OwnedValue::Integer(0), OwnedValue::Null),
+            (OwnedValue::Null, OwnedValue::Integer(1)),
+            (OwnedValue::Null, OwnedValue::Null),
+            (OwnedValue::Float(0.0), OwnedValue::Null),
+            (OwnedValue::Integer(1), OwnedValue::Float(2.2)),
+            (
+                OwnedValue::Integer(0),
+                OwnedValue::Text(Text::from_str("string")),
+            ),
+            (
+                OwnedValue::Integer(0),
+                OwnedValue::Text(Text::from_str("1")),
+            ),
+            (
+                OwnedValue::Integer(1),
+                OwnedValue::Text(Text::from_str("1")),
+            ),
+        ];
+        let outputs = [
+            OwnedValue::Integer(0),
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Integer(0),
+            OwnedValue::Integer(1),
+            OwnedValue::Integer(0),
+            OwnedValue::Integer(0),
+            OwnedValue::Integer(1),
+        ];
+
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "Inputs and Outputs should have same size"
+        );
+        for (i, (lhs, rhs)) in inputs.iter().enumerate() {
+            assert_eq!(
+                exec_and(lhs, rhs),
+                outputs[i],
+                "Wrong AND for lhs: {}, rhs: {}",
+                lhs,
+                rhs
+            );
+        }
+    }
+
+    #[test]
+    fn test_exec_or() {
+        let inputs = vec![
+            (OwnedValue::Integer(0), OwnedValue::Null),
+            (OwnedValue::Null, OwnedValue::Integer(1)),
+            (OwnedValue::Null, OwnedValue::Null),
+            (OwnedValue::Float(0.0), OwnedValue::Null),
+            (OwnedValue::Integer(1), OwnedValue::Float(2.2)),
+            (OwnedValue::Float(0.0), OwnedValue::Integer(0)),
+            (
+                OwnedValue::Integer(0),
+                OwnedValue::Text(Text::from_str("string")),
+            ),
+            (
+                OwnedValue::Integer(0),
+                OwnedValue::Text(Text::from_str("1")),
+            ),
+            (OwnedValue::Integer(0), OwnedValue::Text(Text::from_str(""))),
+        ];
+        let outputs = [
+            OwnedValue::Null,
+            OwnedValue::Integer(1),
+            OwnedValue::Null,
+            OwnedValue::Null,
+            OwnedValue::Integer(1),
+            OwnedValue::Integer(0),
+            OwnedValue::Integer(0),
+            OwnedValue::Integer(1),
+            OwnedValue::Integer(0),
+        ];
+
+        assert_eq!(
+            inputs.len(),
+            outputs.len(),
+            "Inputs and Outputs should have same size"
+        );
+        for (i, (lhs, rhs)) in inputs.iter().enumerate() {
+            assert_eq!(
+                exec_or(lhs, rhs),
+                outputs[i],
+                "Wrong OR for lhs: {}, rhs: {}",
+                lhs,
+                rhs
+            );
+        }
+    }
+
+    use crate::vdbe::{
+        execute::{exec_likelihood, exec_likely, exec_replace},
+        Bitfield, Register,
+    };
 
     use super::{
         exec_abs, exec_char, exec_hex, exec_if, exec_instr, exec_length, exec_like, exec_lower,
         exec_ltrim, exec_max, exec_min, exec_nullif, exec_quote, exec_random, exec_randomblob,
         exec_round, exec_rtrim, exec_sign, exec_soundex, exec_substring, exec_trim, exec_typeof,
-        exec_unhex, exec_unicode, exec_upper, exec_zeroblob, execute_sqlite_version, OwnedValue,
+        exec_unhex, exec_unicode, exec_upper, exec_zeroblob, execute_sqlite_version,
     };
     use std::collections::HashMap;
 
@@ -6005,6 +7070,62 @@ mod tests {
             exec_replace(&input_str, &pattern_str, &replace_str),
             expected_str
         );
+    }
+
+    #[test]
+    fn test_likely() {
+        let input = OwnedValue::build_text("limbo");
+        let expected = OwnedValue::build_text("limbo");
+        assert_eq!(exec_likely(&input), expected);
+
+        let input = OwnedValue::Integer(100);
+        let expected = OwnedValue::Integer(100);
+        assert_eq!(exec_likely(&input), expected);
+
+        let input = OwnedValue::Float(12.34);
+        let expected = OwnedValue::Float(12.34);
+        assert_eq!(exec_likely(&input), expected);
+
+        let input = OwnedValue::Null;
+        let expected = OwnedValue::Null;
+        assert_eq!(exec_likely(&input), expected);
+
+        let input = OwnedValue::Blob(vec![1, 2, 3, 4]);
+        let expected = OwnedValue::Blob(vec![1, 2, 3, 4]);
+        assert_eq!(exec_likely(&input), expected);
+    }
+
+    #[test]
+    fn test_likelihood() {
+        let value = OwnedValue::build_text("limbo");
+        let prob = OwnedValue::Float(0.5);
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let value = OwnedValue::build_text("database");
+        let prob = OwnedValue::Float(0.9375);
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let value = OwnedValue::Integer(100);
+        let prob = OwnedValue::Float(1.0);
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let value = OwnedValue::Float(12.34);
+        let prob = OwnedValue::Float(0.5);
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let value = OwnedValue::Null;
+        let prob = OwnedValue::Float(0.5);
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let value = OwnedValue::Blob(vec![1, 2, 3, 4]);
+        let prob = OwnedValue::Float(0.5);
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let prob = OwnedValue::build_text("0.5");
+        assert_eq!(exec_likelihood(&value, &prob), value);
+
+        let prob = OwnedValue::Null;
+        assert_eq!(exec_likelihood(&value, &prob), value);
     }
 
     #[test]

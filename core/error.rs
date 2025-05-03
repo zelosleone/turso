@@ -1,5 +1,3 @@
-use std::num::NonZero;
-
 use thiserror::Error;
 
 #[derive(Debug, Error, miette::Diagnostic)]
@@ -49,12 +47,12 @@ pub enum LimboError {
     Constraint(String),
     #[error("Extension error: {0}")]
     ExtensionError(String),
-    #[error("Unbound parameter at index {0}")]
-    Unbound(NonZero<usize>),
     #[error("Runtime error: integer overflow")]
     IntegerOverflow,
     #[error("Schema is locked for write")]
     SchemaLocked,
+    #[error("Database Connection is read-only")]
+    ReadOnly,
 }
 
 #[macro_export]

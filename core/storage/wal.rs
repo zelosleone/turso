@@ -246,7 +246,7 @@ pub struct WalFile {
 
     sync_state: RefCell<SyncState>,
     syncing: Rc<RefCell<bool>>,
-    page_size: usize,
+    page_size: u32,
 
     shared: Arc<UnsafeCell<WalFileShared>>,
     ongoing_checkpoint: OngoingCheckpoint,
@@ -462,6 +462,7 @@ impl Wal for WalFile {
             &shared.file,
             offset,
             &page,
+            self.page_size as u16,
             db_size,
             write_counter,
             &header,
@@ -687,7 +688,7 @@ impl Wal for WalFile {
 impl WalFile {
     pub fn new(
         io: Arc<dyn IO>,
-        page_size: usize,
+        page_size: u32,
         shared: Arc<UnsafeCell<WalFileShared>>,
         buffer_pool: Rc<BufferPool>,
     ) -> Self {
@@ -698,11 +699,10 @@ impl WalFile {
             let drop_fn = Rc::new(move |buf| {
                 buffer_pool.put(buf);
             });
-            checkpoint_page.get().contents = Some(PageContent {
-                offset: 0,
-                buffer: Arc::new(RefCell::new(Buffer::new(buffer, drop_fn))),
-                overflow_cells: Vec::new(),
-            });
+            checkpoint_page.get().contents = Some(PageContent::new(
+                0,
+                Arc::new(RefCell::new(Buffer::new(buffer, drop_fn))),
+            ));
         }
         Self {
             io,
@@ -728,7 +728,7 @@ impl WalFile {
     fn frame_offset(&self, frame_id: u64) -> usize {
         assert!(frame_id > 0, "Frame ID must be 1-based");
         let page_size = self.page_size;
-        let page_offset = (frame_id - 1) * (page_size + WAL_FRAME_HEADER_SIZE) as u64;
+        let page_offset = (frame_id - 1) * (page_size + WAL_FRAME_HEADER_SIZE as u32) as u64;
         let offset = WAL_HEADER_SIZE as u64 + page_offset;
         offset as usize
     }
@@ -743,7 +743,7 @@ impl WalFileShared {
     pub fn open_shared(
         io: &Arc<dyn IO>,
         path: &str,
-        page_size: u16,
+        page_size: u32,
     ) -> Result<Arc<UnsafeCell<WalFileShared>>> {
         let file = io.open_file(path, crate::io::OpenFlags::Create, false)?;
         let header = if file.size()? > 0 {
@@ -764,7 +764,7 @@ impl WalFileShared {
             let mut wal_header = WalHeader {
                 magic,
                 file_format: 3007000,
-                page_size: page_size as u32,
+                page_size,
                 checkpoint_seq: 0, // TODO implement sequence number
                 salt_1: io.generate_random_number() as u32,
                 salt_2: io.generate_random_number() as u32,

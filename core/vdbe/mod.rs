@@ -24,37 +24,61 @@ pub mod insn;
 pub mod likeop;
 pub mod sorter;
 
-use crate::error::LimboError;
-use crate::fast_lock::SpinLock;
-use crate::function::{AggFunc, FuncCtx};
-
-use crate::storage::sqlite3_ondisk::DatabaseHeader;
-use crate::storage::{btree::BTreeCursor, pager::Pager};
-use crate::translate::plan::{ResultSetColumn, TableReference};
-use crate::types::{
-    AggContext, Cursor, CursorResult, ImmutableRecord, OwnedValue, SeekKey, SeekOp,
+use crate::{
+    error::LimboError,
+    fast_lock::SpinLock,
+    function::{AggFunc, FuncCtx},
+    storage::sqlite3_ondisk::SmallVec,
 };
-use crate::util::cast_text_to_numeric;
-use crate::vdbe::builder::CursorType;
-use crate::vdbe::insn::Insn;
+
+use crate::{
+    storage::{btree::BTreeCursor, pager::Pager, sqlite3_ondisk::DatabaseHeader},
+    translate::plan::{ResultSetColumn, TableReference},
+    types::{AggContext, Cursor, CursorResult, ImmutableRecord, OwnedValue, SeekKey, SeekOp},
+    vdbe::{builder::CursorType, insn::Insn},
+};
 
 use crate::CheckpointStatus;
 
 #[cfg(feature = "json")]
 use crate::json::JsonCacheCell;
 use crate::{Connection, MvStore, Result, TransactionState};
-use execute::{InsnFunction, InsnFunctionStepResult};
+use execute::{InsnFunction, InsnFunctionStepResult, OpIdxDeleteState};
 
-use rand::distributions::{Distribution, Uniform};
-use rand::Rng;
+use rand::{
+    distributions::{Distribution, Uniform},
+    Rng,
+};
 use regex::Regex;
-use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
-use std::ffi::c_void;
-use std::num::NonZero;
-use std::ops::Deref;
-use std::rc::{Rc, Weak};
-use std::sync::Arc;
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    ffi::c_void,
+    num::NonZero,
+    ops::Deref,
+    rc::{Rc, Weak},
+    sync::Arc,
+};
+
+/// We use labels to indicate that we want to jump to whatever the instruction offset
+/// will be at runtime, because the offset cannot always be determined when the jump
+/// instruction is created.
+///
+/// In some cases, we want to jump to EXACTLY a specific instruction.
+/// - Example: a condition is not met, so we want to jump to wherever Halt is.
+/// In other cases, we don't care what the exact instruction is, but we know that we
+/// want to jump to whatever comes AFTER a certain instruction.
+/// - Example: a Next instruction will want to jump to "whatever the start of the loop is",
+/// but it doesn't care what instruction that is.
+///
+/// The reason this distinction is important is that we might reorder instructions that are
+/// constant at compile time, and when we do that, we need to change the offsets of any impacted
+/// jump instructions, so the instruction that comes immediately after "next Insn" might have changed during the reordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum JumpTarget {
+    ExactlyThisInsn,
+    AfterThisInsn,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Represents a target for a jump instruction.
@@ -91,15 +115,6 @@ impl BranchOffset {
         }
     }
 
-    /// Returns the label value. Panics if the branch offset is an offset or placeholder.
-    pub fn to_label_value(&self) -> u32 {
-        match self {
-            BranchOffset::Label(v) => *v,
-            BranchOffset::Offset(_) => unreachable!("Offset cannot be converted to label value"),
-            BranchOffset::Placeholder => unreachable!("Unresolved placeholder"),
-        }
-    }
-
     /// Returns the branch offset as a signed integer.
     /// Used in explain output, where we don't want to panic in case we have an unresolved
     /// label or placeholder.
@@ -116,6 +131,10 @@ impl BranchOffset {
     /// Panics if the branch offset is a label or placeholder.
     pub fn add<N: Into<u32>>(self, n: N) -> BranchOffset {
         BranchOffset::Offset(self.to_offset_int() + n.into())
+    }
+
+    pub fn sub<N: Into<u32>>(self, n: N) -> BranchOffset {
+        BranchOffset::Offset(self.to_offset_int() - n.into())
     }
 }
 
@@ -229,6 +248,8 @@ pub struct ProgramState {
     last_compare: Option<std::cmp::Ordering>,
     deferred_seek: Option<(CursorID, CursorID)>,
     ended_coroutine: Bitfield<4>, // flag to indicate that a coroutine has ended (key is the yield register. currently we assume that the yield register is always between 0-255, YOLO)
+    /// Indicate whether an [Insn::Once] instruction at a given program counter position has already been executed, well, once.
+    once: SmallVec<u32, 4>,
     regex_cache: RegexCache,
     pub(crate) mv_tx_id: Option<crate::mvcc::database::TxID>,
     interrupted: bool,
@@ -236,6 +257,7 @@ pub struct ProgramState {
     halt_state: Option<HaltState>,
     #[cfg(feature = "json")]
     json_cache: JsonCacheCell,
+    op_idx_delete_state: Option<OpIdxDeleteState>,
 }
 
 impl ProgramState {
@@ -251,6 +273,7 @@ impl ProgramState {
             last_compare: None,
             deferred_seek: None,
             ended_coroutine: Bitfield::new(),
+            once: SmallVec::<u32, 4>::new(),
             regex_cache: RegexCache::new(),
             mv_tx_id: None,
             interrupted: false,
@@ -258,6 +281,7 @@ impl ProgramState {
             halt_state: None,
             #[cfg(feature = "json")]
             json_cache: JsonCacheCell::new(),
+            op_idx_delete_state: None,
         }
     }
 
@@ -281,8 +305,11 @@ impl ProgramState {
         self.parameters.insert(index, value);
     }
 
-    pub fn get_parameter(&self, index: NonZero<usize>) -> Option<&OwnedValue> {
-        self.parameters.get(&index)
+    pub fn get_parameter(&self, index: NonZero<usize>) -> OwnedValue {
+        self.parameters
+            .get(&index)
+            .cloned()
+            .unwrap_or(OwnedValue::Null)
     }
 
     pub fn reset(&mut self) {
@@ -342,7 +369,7 @@ pub struct Program {
     pub insns: Vec<(Insn, InsnFunction)>,
     pub cursor_ref: Vec<(Option<String>, CursorType)>,
     pub database_header: Arc<SpinLock<DatabaseHeader>>,
-    pub comments: Option<HashMap<InsnReference, &'static str>>,
+    pub comments: Option<Vec<(InsnReference, &'static str)>>,
     pub parameters: crate::parameters::Parameters,
     pub connection: Weak<Connection>,
     pub n_change: Cell<i64>,
@@ -386,7 +413,7 @@ impl Program {
     ) -> Result<StepResult> {
         if let Some(mv_store) = mv_store {
             let conn = self.connection.upgrade().unwrap();
-            let auto_commit = *conn.auto_commit.borrow();
+            let auto_commit = conn.auto_commit.get();
             if auto_commit {
                 let mut mv_transactions = conn.mv_transactions.borrow_mut();
                 for tx_id in mv_transactions.iter() {
@@ -394,13 +421,13 @@ impl Program {
                 }
                 mv_transactions.clear();
             }
-            return Ok(StepResult::Done);
+            Ok(StepResult::Done)
         } else {
             let connection = self
                 .connection
                 .upgrade()
                 .expect("only weak ref to connection?");
-            let auto_commit = *connection.auto_commit.borrow();
+            let auto_commit = connection.auto_commit.get();
             tracing::trace!("Halt auto_commit {}", auto_commit);
             assert!(
                 program_state.halt_state.is_none()
@@ -408,30 +435,28 @@ impl Program {
             );
             if program_state.halt_state.is_some() {
                 self.step_end_write_txn(&pager, &mut program_state.halt_state, connection.deref())
-            } else {
-                if auto_commit {
-                    let current_state = connection.transaction_state.borrow().clone();
-                    match current_state {
-                        TransactionState::Write => self.step_end_write_txn(
-                            &pager,
-                            &mut program_state.halt_state,
-                            connection.deref(),
-                        ),
-                        TransactionState::Read => {
-                            connection.transaction_state.replace(TransactionState::None);
-                            pager.end_read_tx()?;
-                            Ok(StepResult::Done)
-                        }
-                        TransactionState::None => Ok(StepResult::Done),
+            } else if auto_commit {
+                let current_state = connection.transaction_state.get();
+                match current_state {
+                    TransactionState::Write => self.step_end_write_txn(
+                        &pager,
+                        &mut program_state.halt_state,
+                        connection.deref(),
+                    ),
+                    TransactionState::Read => {
+                        connection.transaction_state.replace(TransactionState::None);
+                        pager.end_read_tx()?;
+                        Ok(StepResult::Done)
                     }
-                } else {
-                    if self.change_cnt_on {
-                        if let Some(conn) = self.connection.upgrade() {
-                            conn.set_changes(self.n_change.get());
-                        }
-                    }
-                    Ok(StepResult::Done)
+                    TransactionState::None => Ok(StepResult::Done),
                 }
+            } else {
+                if self.change_cnt_on {
+                    if let Some(conn) = self.connection.upgrade() {
+                        conn.set_changes(self.n_change.get());
+                    }
+                }
+                Ok(StepResult::Done)
             }
         }
     }
@@ -534,10 +559,11 @@ fn trace_insn(program: &Program, addr: InsnReference, insn: &Insn) {
             addr,
             insn,
             String::new(),
-            program
-                .comments
-                .as_ref()
-                .and_then(|comments| comments.get(&{ addr }).copied())
+            program.comments.as_ref().and_then(|comments| comments
+                .iter()
+                .find(|(offset, _)| *offset == addr)
+                .map(|(_, comment)| comment)
+                .copied())
         )
     );
 }
@@ -548,10 +574,13 @@ fn print_insn(program: &Program, addr: InsnReference, insn: &Insn, indent: Strin
         addr,
         insn,
         indent,
-        program
-            .comments
-            .as_ref()
-            .and_then(|comments| comments.get(&{ addr }).copied()),
+        program.comments.as_ref().and_then(|comments| {
+            comments
+                .iter()
+                .find(|(offset, _)| *offset == addr)
+                .map(|(_, comment)| comment)
+                .copied()
+        }),
     );
     w.push_str(&s);
 }
@@ -559,11 +588,14 @@ fn print_insn(program: &Program, addr: InsnReference, insn: &Insn, indent: Strin
 fn get_indent_count(indent_count: usize, curr_insn: &Insn, prev_insn: Option<&Insn>) -> usize {
     let indent_count = if let Some(insn) = prev_insn {
         match insn {
-            Insn::RewindAwait { .. }
-            | Insn::LastAwait { .. }
+            Insn::Rewind { .. }
+            | Insn::Last { .. }
             | Insn::SorterSort { .. }
             | Insn::SeekGE { .. }
-            | Insn::SeekGT { .. } => indent_count + 1,
+            | Insn::SeekGT { .. }
+            | Insn::SeekLE { .. }
+            | Insn::SeekLT { .. } => indent_count + 1,
+
             _ => indent_count,
         }
     } else {
@@ -571,9 +603,7 @@ fn get_indent_count(indent_count: usize, curr_insn: &Insn, prev_insn: Option<&In
     };
 
     match curr_insn {
-        Insn::NextAsync { .. } | Insn::SorterNext { .. } | Insn::PrevAsync { .. } => {
-            indent_count - 1
-        }
+        Insn::Next { .. } | Insn::SorterNext { .. } | Insn::Prev { .. } => indent_count - 1,
         _ => indent_count,
     }
 }
@@ -588,6 +618,15 @@ impl<'a> FromValueRow<'a> for i64 {
     fn from_value(value: &'a OwnedValue) -> Result<Self> {
         match value {
             OwnedValue::Integer(i) => Ok(*i),
+            _ => Err(LimboError::ConversionError("Expected integer value".into())),
+        }
+    }
+}
+
+impl<'a> FromValueRow<'a> for f64 {
+    fn from_value(value: &'a OwnedValue) -> Result<Self> {
+        match value {
+            OwnedValue::Float(f) => Ok(*f),
             _ => Err(LimboError::ConversionError("Expected integer value".into())),
         }
     }
@@ -629,11 +668,10 @@ impl Row {
 
     pub fn get_value<'a>(&'a self, idx: usize) -> &'a OwnedValue {
         let value = unsafe { self.values.add(idx).as_ref().unwrap() };
-        let value = match value {
+        match value {
             Register::OwnedValue(owned_value) => owned_value,
             _ => unreachable!("a row should be formed of values only"),
-        };
-        value
+        }
     }
 
     pub fn get_values(&self) -> impl Iterator<Item = &OwnedValue> {

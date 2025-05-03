@@ -28,16 +28,17 @@ ipaddr = ["limbo_ipaddr/static"]
 completion = ["limbo_completion/static"]
 testvfs = ["limbo_ext_tests/static"]
 static = ["limbo_ext/static"]
+fuzz = []
 
 [target.'cfg(target_os = "linux")'.dependencies]
-io-uring = { version = "0.6.1", optional = true }
+io-uring = { version = "0.7.5", optional = true }
 
 [target.'cfg(target_family = "unix")'.dependencies]
-polling = "3.7.2"
-rustix = "0.38.34"
+polling = "3.7.4"
+rustix = { version = "1.0.5", features = ["fs"]}
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
-mimalloc = { version = "0.1", default-features = false }
+mimalloc = { version = "0.1.46", default-features = false }
 libloading = "0.8.6"
 
 [dependencies]
@@ -45,7 +46,7 @@ limbo_ext = { workspace = true, features = ["core_only"] }
 cfg_block = "0.1.1"
 fallible-iterator = "0.3.0"
 hex = "0.4.3"
-libc = { version = "0.2.155", optional = true }
+libc = { version = "0.2.172", optional = true }
 limbo_sqlite3_parser = { workspace = true }
 thiserror = "1.0.61"
 getrandom = { version = "0.2.15" }
@@ -54,7 +55,7 @@ regex-syntax = { version = "0.8.5", default-features = false, features = [
     "unicode",
 ] }
 chrono = { version = "0.4.38", default-features = false, features = ["clock"] }
-julian_day_converter = "0.4.4"
+julian_day_converter = "0.4.5"
 rand = "0.8.5"
 libm = "0.2"
 limbo_macros = { workspace = true }
@@ -67,12 +68,13 @@ limbo_series = { workspace = true, optional = true, features = ["static"] }
 limbo_ipaddr = { workspace = true, optional = true, features = ["static"] }
 limbo_completion = { workspace = true, optional = true, features = ["static"] }
 limbo_ext_tests = { workspace = true, optional = true, features = ["static"] }
-miette = "7.4.0"
+miette = "7.6.0"
 strum = "0.26"
 parking_lot = "0.12.3"
 crossbeam-skiplist = "0.1.3"
 tracing = "0.1.41"
 ryu = "1.0.19"
+bitflags = "2.9.0"
 
 [build-dependencies]
 chrono = { version = "0.4.38", default-features = false }
@@ -96,7 +98,7 @@ rand = "0.8.5" # Required for quickcheck
 rand_chacha = "0.9.0"
 env_logger = "0.11.6"
 test-log = { version = "0.2.17", features = ["trace"] }
-lru = "0.13.0"
+lru = "0.14.0"
 
 [[bench]]
 name = "benchmark"
