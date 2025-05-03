@@ -17,7 +17,9 @@ use crate::{Result, SymbolTable};
 
 use super::aggregation::emit_ungrouped_aggregation;
 use super::expr::{translate_condition_expr, translate_expr, ConditionMetadata};
-use super::group_by::{emit_group_by, init_group_by, GroupByMetadata};
+use super::group_by::{
+    group_by_agg_phase, group_by_emit_row_phase, init_group_by, GroupByMetadata, GroupByRowSource,
+};
 use super::main_loop::{close_loop, emit_loop, init_loop, open_loop, LeftJoinMetadata, LoopLabels};
 use super::order_by::{emit_order_by, init_order_by, SortMetadata};
 use super::plan::{JoinOrderMember, Operation, SelectPlan, TableReference, UpdatePlan};
@@ -324,9 +326,18 @@ pub fn emit_query<'a>(
 
     let mut order_by_necessary = plan.order_by.is_some() && !plan.contains_constant_false_condition;
     let order_by = plan.order_by.as_ref();
+
     // Handle GROUP BY and aggregation processing
     if plan.group_by.is_some() {
-        emit_group_by(program, t_ctx, plan)?;
+        let row_source = &t_ctx
+            .meta_group_by
+            .as_ref()
+            .expect("group by metadata not found")
+            .row_source;
+        if matches!(row_source, GroupByRowSource::Sorter { .. }) {
+            group_by_agg_phase(program, t_ctx, plan)?;
+        }
+        group_by_emit_row_phase(program, t_ctx, plan)?;
     } else if !plan.aggregates.is_empty() {
         // Handle aggregation without GROUP BY
         emit_ungrouped_aggregation(program, t_ctx, plan)?;

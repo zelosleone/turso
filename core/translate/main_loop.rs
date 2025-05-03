@@ -22,7 +22,7 @@ use super::{
         translate_condition_expr, translate_expr, translate_expr_no_constant_opt,
         ConditionMetadata, NoConstantOptReason,
     },
-    group_by::is_column_in_group_by,
+    group_by::{group_by_agg_phase, GroupByMetadata, GroupByRowSource},
     optimizer::Optimizable,
     order_by::{order_by_sorter_insert, sorter_insert},
     plan::{
@@ -562,11 +562,12 @@ pub fn open_loop(
 /// SQLite (and so Limbo) processes joins as a nested loop.
 /// The loop may emit rows to various destinations depending on the query:
 /// - a GROUP BY sorter (grouping is done by sorting based on the GROUP BY keys and aggregating while the GROUP BY keys match)
+/// - a GROUP BY phase with no sorting (when the rows are already in the order required by the GROUP BY keys)
 /// - an ORDER BY sorter (when there is no GROUP BY, but there is an ORDER BY)
 /// - an AggStep (the columns are collected for aggregation, which is finished later)
 /// - a QueryResult (there is none of the above, so the loop either emits a ResultRow, or if it's a subquery, yields to the parent query)
 enum LoopEmitTarget {
-    GroupBySorter,
+    GroupBy,
     OrderBySorter,
     AggStep,
     QueryResult,
@@ -574,14 +575,15 @@ enum LoopEmitTarget {
 
 /// Emits the bytecode for the inner loop of a query.
 /// At this point the cursors for all tables have been opened and rewound.
-pub fn emit_loop(
+pub fn emit_loop<'a>(
     program: &mut ProgramBuilder,
-    t_ctx: &mut TranslateCtx,
-    plan: &mut SelectPlan,
+    t_ctx: &mut TranslateCtx<'a>,
+    plan: &'a SelectPlan,
 ) -> Result<()> {
-    // if we have a group by, we emit a record into the group by sorter.
+    // if we have a group by, we emit a record into the group by sorter,
+    // or if the rows are already sorted, we do the group by aggregation phase directly.
     if plan.group_by.is_some() {
-        return emit_loop_source(program, t_ctx, plan, LoopEmitTarget::GroupBySorter);
+        return emit_loop_source(program, t_ctx, plan, LoopEmitTarget::GroupBy);
     }
     // if we DONT have a group by, but we have aggregates, we emit without ResultRow.
     // we also do not need to sort because we are emitting a single row.
@@ -599,50 +601,31 @@ pub fn emit_loop(
 /// This is a helper function for inner_loop_emit,
 /// which does a different thing depending on the emit target.
 /// See the InnerLoopEmitTarget enum for more details.
-fn emit_loop_source(
+fn emit_loop_source<'a>(
     program: &mut ProgramBuilder,
-    t_ctx: &mut TranslateCtx,
-    plan: &SelectPlan,
+    t_ctx: &mut TranslateCtx<'a>,
+    plan: &'a SelectPlan,
     emit_target: LoopEmitTarget,
 ) -> Result<()> {
     match emit_target {
-        LoopEmitTarget::GroupBySorter => {
-            // This function creates a sorter for GROUP BY operations by allocating registers and
-            // translating expressions for three types of columns:
+        LoopEmitTarget::GroupBy => {
+            // This function either:
+            // - creates a sorter for GROUP BY operations by allocating registers and translating expressions for three types of columns:
             // 1) GROUP BY columns (used as sorting keys)
             // 2) non-aggregate, non-GROUP BY columns
             // 3) aggregate function arguments
+            // - or if the rows produced by the loop are already sorted in the order required by the GROUP BY keys,
+            // the group by comparisons are done directly inside the main loop.
             let group_by = plan.group_by.as_ref().unwrap();
             let aggregates = &plan.aggregates;
 
-            // Identify columns in the result set that are neither in GROUP BY nor contain aggregates
-            let non_group_by_non_agg_expr = plan
-                .result_columns
-                .iter()
-                .filter(|rc| {
-                    !rc.contains_aggregates && !is_column_in_group_by(&rc.expr, &group_by.exprs)
-                })
-                .map(|rc| &rc.expr);
-            let non_agg_count = non_group_by_non_agg_expr.clone().count();
-            // Store the count of non-GROUP BY, non-aggregate columns in the metadata
-            // This will be used later during aggregation processing
-            t_ctx.meta_group_by.as_mut().map(|meta| {
-                meta.non_group_by_non_agg_column_count = Some(non_agg_count);
-                meta
-            });
+            let GroupByMetadata {
+                row_source,
+                registers,
+                ..
+            } = t_ctx.meta_group_by.as_ref().unwrap();
 
-            // Calculate the total number of arguments used across all aggregate functions
-            let aggregate_arguments_count = plan
-                .aggregates
-                .iter()
-                .map(|agg| agg.args.len())
-                .sum::<usize>();
-
-            // Calculate total number of registers needed for all columns in the sorter
-            let column_count = group_by.exprs.len() + aggregate_arguments_count + non_agg_count;
-
-            // Allocate a contiguous block of registers for all columns
-            let start_reg = program.alloc_registers(column_count);
+            let start_reg = registers.reg_group_by_source_cols_start;
             let mut cur_reg = start_reg;
 
             // Step 1: Process GROUP BY columns first
@@ -662,7 +645,7 @@ fn emit_loop_source(
             // Step 2: Process columns that aren't part of GROUP BY and don't contain aggregates
             // Example: SELECT col1, col2, SUM(col3) FROM table GROUP BY col1
             // Here col2 would be processed in this loop if it's in the result set
-            for expr in non_group_by_non_agg_expr {
+            for expr in plan.non_group_by_non_agg_columns() {
                 let key_reg = cur_reg;
                 cur_reg += 1;
                 translate_expr(
@@ -693,19 +676,36 @@ fn emit_loop_source(
                 }
             }
 
-            let group_by_metadata = t_ctx.meta_group_by.as_ref().unwrap();
-
-            sorter_insert(
-                program,
-                start_reg,
-                column_count,
-                group_by_metadata.sort_cursor,
-                group_by_metadata.reg_sorter_key,
-            );
+            match row_source {
+                GroupByRowSource::Sorter {
+                    sort_cursor,
+                    sorter_column_count,
+                    reg_sorter_key,
+                    ..
+                } => {
+                    sorter_insert(
+                        program,
+                        start_reg,
+                        *sorter_column_count,
+                        *sort_cursor,
+                        *reg_sorter_key,
+                    );
+                }
+                GroupByRowSource::MainLoop { .. } => group_by_agg_phase(program, t_ctx, plan)?,
+            }
 
             Ok(())
         }
-        LoopEmitTarget::OrderBySorter => order_by_sorter_insert(program, t_ctx, plan),
+        LoopEmitTarget::OrderBySorter => order_by_sorter_insert(
+            program,
+            &t_ctx.resolver,
+            t_ctx
+                .meta_sort
+                .as_ref()
+                .expect("sort metadata must exist for ORDER BY"),
+            &mut t_ctx.result_column_indexes_in_orderby_sorter,
+            plan,
+        ),
         LoopEmitTarget::AggStep => {
             let num_aggs = plan.aggregates.len();
             let start_reg = program.alloc_registers(num_aggs);
@@ -778,10 +778,15 @@ fn emit_loop_source(
                 .or(t_ctx.label_main_loop_end);
             emit_select_result(
                 program,
-                t_ctx,
+                &t_ctx.resolver,
                 plan,
                 t_ctx.label_main_loop_end,
                 offset_jump_to,
+                t_ctx.reg_nonagg_emit_once_flag,
+                t_ctx.reg_offset,
+                t_ctx.reg_result_cols_start.unwrap(),
+                t_ctx.reg_limit,
+                t_ctx.reg_limit_offset_sum,
             )?;
 
             Ok(())

@@ -12,7 +12,7 @@ use crate::util::normalize_ident;
 use crate::vdbe::builder::{ProgramBuilderOpts, QueryMode};
 use crate::SymbolTable;
 use crate::{schema::Schema, vdbe::builder::ProgramBuilder, Result};
-use limbo_sqlite3_parser::ast::{self};
+use limbo_sqlite3_parser::ast::{self, SortOrder};
 use limbo_sqlite3_parser::ast::{ResultColumn, SelectInner};
 
 pub fn translate_select(
@@ -328,6 +328,7 @@ pub fn prepare_select_plan<'a>(
                 }
 
                 plan.group_by = Some(GroupBy {
+                    sort_order: Some((0..group_by.exprs.len()).map(|_| SortOrder::Asc).collect()),
                     exprs: group_by.exprs,
                     having: if let Some(having) = group_by.having {
                         let mut predicates = vec![];
