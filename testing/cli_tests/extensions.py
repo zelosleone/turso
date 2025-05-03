@@ -345,7 +345,7 @@ def test_kv():
     limbo.execute_dot("INSERT INTO other values (23,32,23);")
     limbo.run_test_fn(
         "create virtual table t using kv_store;",
-        lambda res: "Module kv_store not found" in res,
+        lambda res: "Parse error: no such module: kv_store" in res,
     )
     limbo.execute_dot(f".load {ext_path}")
     limbo.execute_dot(
