@@ -3,6 +3,7 @@ use crate::io::common;
 use crate::Result;
 
 use super::{Completion, File, MemoryIO, OpenFlags, IO};
+use crate::io::clock::{Clock, Instant};
 use polling::{Event, Events, Poller};
 use rustix::{
     fd::{AsFd, AsRawFd},
@@ -18,7 +19,6 @@ use std::{
     sync::Arc,
 };
 use tracing::{debug, trace};
-use crate::io::clock::{Clock, Instant};
 
 struct OwnedCallbacks(UnsafeCell<Callbacks>);
 // We assume we locking on IO level is done by user.
@@ -197,12 +197,15 @@ impl Clock for UnixIO {
 impl IO for UnixIO {
     fn open_file(&self, path: &str, flags: OpenFlags, _direct: bool) -> Result<Arc<dyn File>> {
         trace!("open_file(path = {})", path);
-        let file = std::fs::File::options()
-            .read(true)
-            .custom_flags(OFlags::NONBLOCK.bits() as i32)
-            .write(true)
-            .create(matches!(flags, OpenFlags::Create))
-            .open(path)?;
+        let mut file = std::fs::File::options();
+        file.read(true).custom_flags(OFlags::NONBLOCK.bits() as i32);
+
+        if !flags.contains(OpenFlags::ReadOnly) {
+            file.write(true);
+            file.create(flags.contains(OpenFlags::Create));
+        }
+
+        let file = file.open(path)?;
 
         #[allow(clippy::arc_with_non_send_sync)]
         let unix_file = Arc::new(UnixFile {
@@ -211,7 +214,7 @@ impl IO for UnixIO {
             callbacks: BorrowedCallbacks(self.callbacks.as_mut().into()),
         });
         if std::env::var(common::ENV_DISABLE_FILE_LOCK).is_err() {
-            unix_file.lock_file(true)?;
+            unix_file.lock_file(!flags.contains(OpenFlags::ReadOnly))?;
         }
         Ok(unix_file)
     }
@@ -258,7 +261,7 @@ impl IO for UnixIO {
         getrandom::getrandom(&mut buf).unwrap();
         i64::from_ne_bytes(buf)
     }
-    
+
     fn get_memory_io(&self) -> Arc<MemoryIO> {
         Arc::new(MemoryIO::new())
     }

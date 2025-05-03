@@ -1564,20 +1564,17 @@ pub fn op_transaction(
     let Insn::Transaction { write } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
+    let connection = program.connection.upgrade().unwrap();
+    if *write && connection._db.open_flags.contains(OpenFlags::ReadOnly) {
+        return Err(LimboError::ReadOnly);
+    }
     if let Some(mv_store) = &mv_store {
         if state.mv_tx_id.is_none() {
             let tx_id = mv_store.begin_tx();
-            program
-                .connection
-                .upgrade()
-                .unwrap()
-                .mv_transactions
-                .borrow_mut()
-                .push(tx_id);
+            connection.mv_transactions.borrow_mut().push(tx_id);
             state.mv_tx_id = Some(tx_id);
         }
     } else {
-        let connection = program.connection.upgrade().unwrap();
         let current_state = connection.transaction_state.get();
         let (new_transaction_state, updated) = match (current_state, write) {
             (TransactionState::Write, true) => (TransactionState::Write, false),

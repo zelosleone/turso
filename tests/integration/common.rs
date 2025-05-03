@@ -1,6 +1,7 @@
 use limbo_core::{CheckpointStatus, Connection, Database, IO};
 use rand::{rng, RngCore};
-use std::path::PathBuf;
+use rusqlite::params;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -28,6 +29,14 @@ impl TempDatabase {
         Self { path, io }
     }
 
+    pub fn new_with_existent(db_path: &Path) -> Self {
+        let io: Arc<dyn IO + Send> = Arc::new(limbo_core::PlatformIO::new().unwrap());
+        Self {
+            path: db_path.to_path_buf(),
+            io,
+        }
+    }
+
     pub fn new_with_rusqlite(table_sql: &str) -> Self {
         let mut path = TempDir::new().unwrap().into_path();
         path.push("test.db");
@@ -44,8 +53,21 @@ impl TempDatabase {
     }
 
     pub fn connect_limbo(&self) -> Rc<limbo_core::Connection> {
+        Self::connect_limbo_with_flags(&self, limbo_core::OpenFlags::default())
+    }
+
+    pub fn connect_limbo_with_flags(
+        &self,
+        flags: limbo_core::OpenFlags,
+    ) -> Rc<limbo_core::Connection> {
         log::debug!("conneting to limbo");
-        let db = Database::open_file(self.io.clone(), self.path.to_str().unwrap(), false).unwrap();
+        let db = Database::open_file_with_flags(
+            self.io.clone(),
+            self.path.to_str().unwrap(),
+            flags,
+            false,
+        )
+        .unwrap();
 
         let conn = db.connect().unwrap();
         log::debug!("connected to limbo");
@@ -104,9 +126,97 @@ pub fn maybe_setup_tracing() {
         .with(EnvFilter::from_default_env())
         .try_init();
 }
+
+pub(crate) fn sqlite_exec_rows(
+    conn: &rusqlite::Connection,
+    query: &str,
+) -> Vec<Vec<rusqlite::types::Value>> {
+    let mut stmt = conn.prepare(&query).unwrap();
+    let mut rows = stmt.query(params![]).unwrap();
+    let mut results = Vec::new();
+    while let Some(row) = rows.next().unwrap() {
+        let mut result = Vec::new();
+        for i in 0.. {
+            let column: rusqlite::types::Value = match row.get(i) {
+                Ok(column) => column,
+                Err(rusqlite::Error::InvalidColumnIndex(_)) => break,
+                Err(err) => panic!("unexpected rusqlite error: {}", err),
+            };
+            result.push(column);
+        }
+        results.push(result)
+    }
+
+    results
+}
+
+pub(crate) fn limbo_exec_rows(
+    db: &TempDatabase,
+    conn: &Rc<limbo_core::Connection>,
+    query: &str,
+) -> Vec<Vec<rusqlite::types::Value>> {
+    let mut stmt = conn.prepare(query).unwrap();
+    let mut rows = Vec::new();
+    'outer: loop {
+        let row = loop {
+            let result = stmt.step().unwrap();
+            match result {
+                limbo_core::StepResult::Row => {
+                    let row = stmt.row().unwrap();
+                    break row;
+                }
+                limbo_core::StepResult::IO => {
+                    db.io.run_once().unwrap();
+                    continue;
+                }
+                limbo_core::StepResult::Done => break 'outer,
+                r => panic!("unexpected result {:?}: expecting single row", r),
+            }
+        };
+        let row = row
+            .get_values()
+            .map(|x| match x {
+                limbo_core::OwnedValue::Null => rusqlite::types::Value::Null,
+                limbo_core::OwnedValue::Integer(x) => rusqlite::types::Value::Integer(*x),
+                limbo_core::OwnedValue::Float(x) => rusqlite::types::Value::Real(*x),
+                limbo_core::OwnedValue::Text(x) => {
+                    rusqlite::types::Value::Text(x.as_str().to_string())
+                }
+                limbo_core::OwnedValue::Blob(x) => rusqlite::types::Value::Blob(x.to_vec()),
+            })
+            .collect();
+        rows.push(row);
+    }
+    rows
+}
+
+pub(crate) fn limbo_exec_rows_error(
+    db: &TempDatabase,
+    conn: &Rc<limbo_core::Connection>,
+    query: &str,
+) -> limbo_core::Result<()> {
+    let mut stmt = conn.prepare(query)?;
+    loop {
+        let result = stmt.step()?;
+        match result {
+            limbo_core::StepResult::IO => {
+                db.io.run_once()?;
+                continue;
+            }
+            limbo_core::StepResult::Done => return Ok(()),
+            r => panic!("unexpected result {:?}: expecting single row", r),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::TempDatabase;
+    use std::vec;
+
+    use tempfile::TempDir;
+
+    use super::{limbo_exec_rows, limbo_exec_rows_error, TempDatabase};
+    use rusqlite::types::Value;
 
     #[test]
     fn test_statement_columns() -> anyhow::Result<()> {
@@ -143,6 +253,31 @@ mod tests {
         let columns = stmt.num_columns();
         assert_eq!(columns, 0);
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_limbo_open_read_only() -> anyhow::Result<()> {
+        let path = TempDir::new().unwrap().into_path().join("temp_read_only");
+        let db = TempDatabase::new_with_existent(&path);
+        {
+            let conn = db.connect_limbo();
+            let ret = limbo_exec_rows(&db, &conn, "CREATE table t(a)");
+            assert!(ret.is_empty(), "{:?}", ret);
+            limbo_exec_rows(&db, &conn, "INSERT INTO t values (1)");
+            conn.close().unwrap()
+        }
+
+        {
+            let conn = db.connect_limbo_with_flags(
+                limbo_core::OpenFlags::default() | limbo_core::OpenFlags::ReadOnly,
+            );
+            let ret = limbo_exec_rows(&db, &conn, "SELECT * from t");
+            assert_eq!(ret, vec![vec![Value::Integer(1)]]);
+
+            let err = limbo_exec_rows_error(&db, &conn, "INSERT INTO t values (1)").unwrap_err();
+            assert!(matches!(err, limbo_core::LimboError::ReadOnly), "{:?}", err);
+        }
         Ok(())
     }
 }

@@ -101,6 +101,7 @@ pub struct Database {
     // create DB connections.
     shared_page_cache: Arc<RwLock<DumbLruPageCache>>,
     shared_wal: Arc<UnsafeCell<WalFileShared>>,
+    open_flags: OpenFlags,
 }
 
 unsafe impl Send for Database {}
@@ -109,10 +110,20 @@ unsafe impl Sync for Database {}
 impl Database {
     #[cfg(feature = "fs")]
     pub fn open_file(io: Arc<dyn IO>, path: &str, enable_mvcc: bool) -> Result<Arc<Database>> {
-        let file = io.open_file(path, OpenFlags::Create, true)?;
+        Self::open_file_with_flags(io, path, OpenFlags::default(), enable_mvcc)
+    }
+
+    #[cfg(feature = "fs")]
+    pub fn open_file_with_flags(
+        io: Arc<dyn IO>,
+        path: &str,
+        flags: OpenFlags,
+        enable_mvcc: bool,
+    ) -> Result<Arc<Database>> {
+        let file = io.open_file(path, flags, true)?;
         maybe_init_database_file(&file, &io)?;
         let db_file = Arc::new(DatabaseFile::new(file));
-        Self::open(io, path, db_file, enable_mvcc)
+        Self::open_with_flags(io, path, db_file, flags, enable_mvcc)
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
@@ -120,6 +131,17 @@ impl Database {
         io: Arc<dyn IO>,
         path: &str,
         db_file: Arc<dyn DatabaseStorage>,
+        enable_mvcc: bool,
+    ) -> Result<Arc<Database>> {
+        Self::open_with_flags(io, path, db_file, OpenFlags::default(), enable_mvcc)
+    }
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    pub fn open_with_flags(
+        io: Arc<dyn IO>,
+        path: &str,
+        db_file: Arc<dyn DatabaseStorage>,
+        flags: OpenFlags,
         enable_mvcc: bool,
     ) -> Result<Arc<Database>> {
         let db_header = Pager::begin_open(db_file.clone())?;
@@ -155,6 +177,7 @@ impl Database {
             db_file,
             io: io.clone(),
             page_size,
+            open_flags: flags,
         };
         let db = Arc::new(db);
         {

@@ -2,14 +2,14 @@ pub mod grammar_generator;
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, rc::Rc};
+    use std::collections::HashSet;
 
     use rand::{seq::IndexedRandom, Rng, SeedableRng};
     use rand_chacha::ChaCha8Rng;
     use rusqlite::params;
 
     use crate::{
-        common::TempDatabase,
+        common::{limbo_exec_rows, sqlite_exec_rows, TempDatabase},
         fuzz::grammar_generator::{const_str, rand_int, rand_str, GrammarGenerator},
     };
 
@@ -22,69 +22,6 @@ mod tests {
             .as_secs();
         let rng = ChaCha8Rng::seed_from_u64(seed);
         (rng, seed)
-    }
-
-    fn sqlite_exec_rows(
-        conn: &rusqlite::Connection,
-        query: &str,
-    ) -> Vec<Vec<rusqlite::types::Value>> {
-        let mut stmt = conn.prepare(&query).unwrap();
-        let mut rows = stmt.query(params![]).unwrap();
-        let mut results = Vec::new();
-        while let Some(row) = rows.next().unwrap() {
-            let mut result = Vec::new();
-            for i in 0.. {
-                let column: rusqlite::types::Value = match row.get(i) {
-                    Ok(column) => column,
-                    Err(rusqlite::Error::InvalidColumnIndex(_)) => break,
-                    Err(err) => panic!("unexpected rusqlite error: {}", err),
-                };
-                result.push(column);
-            }
-            results.push(result)
-        }
-
-        results
-    }
-
-    fn limbo_exec_rows(
-        db: &TempDatabase,
-        conn: &Rc<limbo_core::Connection>,
-        query: &str,
-    ) -> Vec<Vec<rusqlite::types::Value>> {
-        let mut stmt = conn.prepare(query).unwrap();
-        let mut rows = Vec::new();
-        'outer: loop {
-            let row = loop {
-                let result = stmt.step().unwrap();
-                match result {
-                    limbo_core::StepResult::Row => {
-                        let row = stmt.row().unwrap();
-                        break row;
-                    }
-                    limbo_core::StepResult::IO => {
-                        db.io.run_once().unwrap();
-                        continue;
-                    }
-                    limbo_core::StepResult::Done => break 'outer,
-                    r => panic!("unexpected result {:?}: expecting single row", r),
-                }
-            };
-            let row = row
-                .get_values()
-                .map(|x| match x {
-                    limbo_core::OwnedValue::Null => rusqlite::types::Value::Null,
-                    limbo_core::OwnedValue::Integer(x) => rusqlite::types::Value::Integer(*x),
-                    limbo_core::OwnedValue::Float(x) => rusqlite::types::Value::Real(*x),
-                    limbo_core::OwnedValue::Text(x) => {
-                        rusqlite::types::Value::Text(x.as_str().to_string())
-                    }
-                    limbo_core::OwnedValue::Blob(x) => rusqlite::types::Value::Blob(x.to_vec()),
-                })
-                .collect();
-            rows.push(row);
-        }
-        rows
     }
 
     #[test]
