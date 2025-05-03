@@ -1,3 +1,5 @@
+use limbo_sqlite3_parser::ast::SortOrder;
+
 use crate::vdbe::{builder::CursorType, insn::RegisterOrLiteral};
 
 use super::{Insn, InsnReference, OwnedValue, Program};
@@ -876,17 +878,10 @@ pub fn insn_to_str(
             } => {
                 let _p4 = String::new();
                 let to_print: Vec<String> = order
-                    .get_values()
                     .iter()
                     .map(|v| match v {
-                        OwnedValue::Integer(i) => {
-                            if *i == 0 {
-                                "B".to_string()
-                            } else {
-                                "-B".to_string()
-                            }
-                        }
-                        _ => unreachable!(),
+                        SortOrder::Asc => "B".to_string(),
+                        SortOrder::Desc => "-B".to_string(),
                     })
                     .collect();
                 (

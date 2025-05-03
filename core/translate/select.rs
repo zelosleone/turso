@@ -3,7 +3,7 @@ use super::plan::{select_star, Operation, Search, SelectQueryType};
 use super::planner::Scope;
 use crate::function::{AggFunc, ExtFunc, Func};
 use crate::translate::optimizer::optimize_plan;
-use crate::translate::plan::{Aggregate, Direction, GroupBy, Plan, ResultSetColumn, SelectPlan};
+use crate::translate::plan::{Aggregate, GroupBy, Plan, ResultSetColumn, SelectPlan};
 use crate::translate::planner::{
     bind_column_references, break_predicate_at_and_boundaries, parse_from, parse_limit,
     parse_where, resolve_aggregates,
@@ -368,13 +368,7 @@ pub fn prepare_select_plan<'a>(
                     )?;
                     resolve_aggregates(&o.expr, &mut plan.aggregates);
 
-                    key.push((
-                        o.expr,
-                        o.order.map_or(Direction::Ascending, |o| match o {
-                            ast::SortOrder::Asc => Direction::Ascending,
-                            ast::SortOrder::Desc => Direction::Descending,
-                        }),
-                    ));
+                    key.push((o.expr, o.order.unwrap_or(ast::SortOrder::Asc)));
                 }
                 plan.order_by = Some(key);
             }

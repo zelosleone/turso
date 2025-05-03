@@ -13,8 +13,8 @@ use crate::{
 use super::{
     emitter::Resolver,
     plan::{
-        DeletePlan, Direction, EvalAt, GroupBy, IterationDirection, Operation, Plan, Search,
-        SeekDef, SeekKey, SelectPlan, TableReference, UpdatePlan, WhereTerm,
+        DeletePlan, EvalAt, GroupBy, IterationDirection, Operation, Plan, Search, SeekDef, SeekKey,
+        SelectPlan, TableReference, UpdatePlan, WhereTerm,
     },
     planner::determine_where_to_eval_expr,
 };
@@ -112,59 +112,36 @@ fn eliminate_orderby_like_groupby(plan: &mut SelectPlan) -> Result<()> {
     }
 
     let order_by_clauses = plan.order_by.as_mut().unwrap();
+    // TODO: let's make the group by sorter aware of the order by directions so we dont need to skip
+    // descending terms.
+    if order_by_clauses
+        .iter()
+        .any(|(_, dir)| matches!(dir, SortOrder::Desc))
+    {
+        return Ok(());
+    }
     let group_by_clauses = plan.group_by.as_mut().unwrap();
-
-    let mut group_by_insert_position = 0;
-    let mut order_index = 0;
-
-    // This function optimizes query execution by eliminating duplicate expressions between ORDER BY and GROUP BY clauses
-    // When the same column appears in both clauses, we can avoid redundant sorting operations
-    // The function reorders GROUP BY expressions and removes redundant ORDER BY expressions to ensure consistent ordering
-    while order_index < order_by_clauses.len() {
-        let (order_expr, direction) = &order_by_clauses[order_index];
-
-        // Skip descending orders as they require separate sorting
-        if matches!(direction, Direction::Descending) {
-            order_index += 1;
-            continue;
-        }
-
-        // Check if the current ORDER BY expression matches any expression in the GROUP BY clause
-        if let Some(group_expr_position) = group_by_clauses
+    // all order by terms must be in the group by clause for order by to be eliminated
+    if !order_by_clauses.iter().all(|(o_expr, _)| {
+        group_by_clauses
             .exprs
             .iter()
-            .position(|expr| exprs_are_equivalent(expr, order_expr))
-        {
-            // If we found a matching expression in GROUP BY, we need to ensure it's in the correct position
-            // to preserve the ordering specified by ORDER BY clauses
-
-            // Move the matching GROUP BY expression to the current insertion position
-            // This effectively "bubbles up" the expression to maintain proper ordering
-            if group_expr_position != group_by_insert_position {
-                let mut current_position = group_expr_position;
-
-                // Swap expressions to move the matching one to the correct position
-                while current_position > group_by_insert_position {
-                    group_by_clauses
-                        .exprs
-                        .swap(current_position, current_position - 1);
-                    current_position -= 1;
-                }
-            }
-
-            group_by_insert_position += 1;
-
-            // Remove this expression from ORDER BY since it's now handled by GROUP BY
-            order_by_clauses.remove(order_index);
-            // Note: We don't increment order_index here because removal shifts all elements
-        } else {
-            // If not found in GROUP BY, move to next ORDER BY expression
-            order_index += 1;
-        }
+            .any(|g_expr| exprs_are_equivalent(g_expr, o_expr))
+    }) {
+        return Ok(());
     }
-    if order_by_clauses.is_empty() {
-        plan.order_by = None
-    }
+
+    // reorder group by terms so that they match the order by terms
+    // this way the group by sorter will effectively do the order by sorter's job and
+    // we can remove the order by clause
+    group_by_clauses.exprs.sort_by_key(|g_expr| {
+        order_by_clauses
+            .iter()
+            .position(|(o_expr, _)| exprs_are_equivalent(o_expr, g_expr))
+            .unwrap_or(usize::MAX)
+    });
+
+    plan.order_by = None;
     Ok(())
 }
 
@@ -173,7 +150,7 @@ fn eliminate_orderby_like_groupby(plan: &mut SelectPlan) -> Result<()> {
 fn eliminate_unnecessary_orderby(
     table_references: &mut [TableReference],
     available_indexes: &HashMap<String, Vec<Arc<Index>>>,
-    order_by: &mut Option<Vec<(ast::Expr, Direction)>>,
+    order_by: &mut Option<Vec<(ast::Expr, SortOrder)>>,
     group_by: &Option<GroupBy>,
 ) -> Result<bool> {
     let Some(order) = order_by else {
@@ -206,8 +183,8 @@ fn eliminate_unnecessary_orderby(
     // Special case: if ordering by just the rowid, we can remove the ORDER BY clause
     if order.len() == 1 && order[0].0.is_rowid_alias_of(0) {
         *iter_dir = match order[0].1 {
-            Direction::Ascending => IterationDirection::Forwards,
-            Direction::Descending => IterationDirection::Backwards,
+            SortOrder::Asc => IterationDirection::Forwards,
+            SortOrder::Desc => IterationDirection::Backwards,
         };
         *order_by = None;
         return Ok(true);
@@ -248,10 +225,10 @@ fn eliminate_unnecessary_orderby(
     // If they don't, we must iterate the index in backwards order.
     let index_direction = &matching_index.columns.first().as_ref().unwrap().order;
     *iter_dir = match (index_direction, order[0].1) {
-        (SortOrder::Asc, Direction::Ascending) | (SortOrder::Desc, Direction::Descending) => {
+        (SortOrder::Asc, SortOrder::Asc) | (SortOrder::Desc, SortOrder::Desc) => {
             IterationDirection::Forwards
         }
-        (SortOrder::Asc, Direction::Descending) | (SortOrder::Desc, Direction::Ascending) => {
+        (SortOrder::Asc, SortOrder::Desc) | (SortOrder::Desc, SortOrder::Asc) => {
             IterationDirection::Backwards
         }
     };
@@ -266,12 +243,10 @@ fn eliminate_unnecessary_orderby(
             let mut all_match_reverse = true;
             for (i, (_, direction)) in order.iter().enumerate() {
                 match (&matching_index.columns[i].order, direction) {
-                    (SortOrder::Asc, Direction::Ascending)
-                    | (SortOrder::Desc, Direction::Descending) => {
+                    (SortOrder::Asc, SortOrder::Asc) | (SortOrder::Desc, SortOrder::Desc) => {
                         all_match_reverse = false;
                     }
-                    (SortOrder::Asc, Direction::Descending)
-                    | (SortOrder::Desc, Direction::Ascending) => {
+                    (SortOrder::Asc, SortOrder::Desc) | (SortOrder::Desc, SortOrder::Asc) => {
                         all_match_forward = false;
                     }
                 }
@@ -299,7 +274,7 @@ fn use_indexes(
     table_references: &mut [TableReference],
     available_indexes: &HashMap<String, Vec<Arc<Index>>>,
     where_clause: &mut Vec<WhereTerm>,
-    order_by: &mut Option<Vec<(ast::Expr, Direction)>>,
+    order_by: &mut Option<Vec<(ast::Expr, SortOrder)>>,
     group_by: &Option<GroupBy>,
 ) -> Result<()> {
     // Try to use indexes for eliminating ORDER BY clauses
