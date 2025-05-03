@@ -161,6 +161,10 @@ impl Statement {
     }
 
     pub async fn execute(&mut self, params: impl IntoParams) -> Result<u64> {
+        {
+            // Reset the statement before executing
+            self.inner.lock().unwrap().reset();
+        }
         let params = params.into_params()?;
         match params {
             params::Params::None => (),
@@ -279,6 +283,7 @@ impl Rows {
     }
 }
 
+#[derive(Debug)]
 pub struct Row {
     values: Vec<limbo_core::OwnedValue>,
 }
