@@ -1944,7 +1944,11 @@ impl BTreeCursor {
                 let current_sibling = sibling_pointer;
                 for i in (0..=current_sibling).rev() {
                     let page = self.pager.read_page(pgno as usize)?;
-                    debug_validate_cells!(&page.get_contents(), self.usable_space() as u16);
+                    #[cfg(debug_assertions)]
+                    {
+                        return_if_locked!(page);
+                        debug_validate_cells!(&page.get_contents(), self.usable_space() as u16);
+                    }
                     pages_to_balance[i].replace(page);
                     assert_eq!(
                         parent_contents.overflow_cells.len(),
