@@ -13,6 +13,21 @@ import (
 )
 
 func loadLibrary() (uintptr, error) {
+	// Try to extract embedded library first
+	libPath, err := extractEmbeddedLibrary()
+	if err == nil {
+		// Successfully extracted embedded library, try to load it
+		slib, dlerr := purego.Dlopen(libPath, purego.RTLD_NOW|purego.RTLD_GLOBAL)
+		if dlerr == nil {
+			return slib, nil
+		}
+		// If loading failed, log the error and fall back to system paths
+		fmt.Printf("Warning: Failed to load embedded library: %v\n", dlerr)
+	} else {
+		fmt.Printf("Warning: Failed to extract embedded library: %v\n", err)
+	}
+
+	// Fall back to original behavior for compatibility
 	var libraryName string
 	switch runtime.GOOS {
 	case "darwin":
@@ -23,7 +38,7 @@ func loadLibrary() (uintptr, error) {
 		return 0, fmt.Errorf("GOOS=%s is not supported", runtime.GOOS)
 	}
 
-	libPath := os.Getenv("LD_LIBRARY_PATH")
+	libPath = os.Getenv("LD_LIBRARY_PATH")
 	paths := strings.Split(libPath, ":")
 	cwd, err := os.Getwd()
 	if err != nil {
