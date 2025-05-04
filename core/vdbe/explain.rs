@@ -1179,7 +1179,7 @@ pub fn insn_to_str(
                 0,
                 format!("DROP TABLE {}", table_name),
             ),
-            Insn::DropIndex { db, index } => (
+            Insn::DropIndex { db: _, index } => (
                 "DropIndex",
                 0,
                 0,

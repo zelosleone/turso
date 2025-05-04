@@ -196,7 +196,7 @@ pub fn op_drop_index(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::DropIndex { index, db } = insn else {
+    let Insn::DropIndex { index, db: _ } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
     if let Some(conn) = program.connection.upgrade() {
