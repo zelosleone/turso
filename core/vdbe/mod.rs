@@ -203,20 +203,34 @@ impl<const N: usize> Bitfield<N> {
     }
 }
 
-pub struct VTabOpaqueCursor(*const c_void);
+type VTabOpaqueCursorCloseFn = unsafe extern "C" fn(*const c_void) -> limbo_ext::ResultCode;
+
+pub struct VTabOpaqueCursor {
+    cursor: *const c_void,
+    close: VTabOpaqueCursorCloseFn,
+}
 
 impl VTabOpaqueCursor {
-    pub fn new(cursor: *const c_void) -> Result<Self> {
+    pub fn new(cursor: *const c_void, close: VTabOpaqueCursorCloseFn) -> Result<Self> {
         if cursor.is_null() {
             return Err(LimboError::InternalError(
                 "VTabOpaqueCursor: cursor is null".into(),
             ));
         }
-        Ok(Self(cursor))
+        Ok(Self { cursor, close })
     }
 
     pub fn as_ptr(&self) -> *const c_void {
-        self.0
+        self.cursor
+    }
+}
+
+impl Drop for VTabOpaqueCursor {
+    fn drop(&mut self) {
+        let result = unsafe { (self.close)(self.cursor) };
+        if !result.is_ok() {
+            tracing::error!("Failed to close virtual table cursor");
+        }
     }
 }
 

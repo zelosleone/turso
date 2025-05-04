@@ -15,6 +15,7 @@ pub struct VTabModuleImpl {
     pub name: *const c_char,
     pub create_schema: VtabFnCreateSchema,
     pub open: VtabFnOpen,
+    pub close: VtabFnClose,
     pub filter: VtabFnFilter,
     pub column: VtabFnColumn,
     pub next: VtabFnNext,
@@ -43,6 +44,8 @@ impl VTabModuleImpl {
 pub type VtabFnCreateSchema = unsafe extern "C" fn(args: *const Value, argc: i32) -> *mut c_char;
 
 pub type VtabFnOpen = unsafe extern "C" fn(*const c_void) -> *const c_void;
+
+pub type VtabFnClose = unsafe extern "C" fn(cursor: *const c_void) -> ResultCode;
 
 pub type VtabFnFilter = unsafe extern "C" fn(
     cursor: *const c_void,
@@ -134,6 +137,9 @@ pub trait VTabCursor: Sized {
     fn column(&self, idx: u32) -> Result<Value, Self::Error>;
     fn eof(&self) -> bool;
     fn next(&mut self) -> ResultCode;
+    fn close(&self) -> ResultCode {
+        ResultCode::OK
+    }
 }
 
 #[repr(u8)]

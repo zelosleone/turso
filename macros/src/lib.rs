@@ -448,6 +448,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
     let register_fn_name = format_ident!("register_{}", struct_name);
     let create_schema_fn_name = format_ident!("create_schema_{}", struct_name);
     let open_fn_name = format_ident!("open_{}", struct_name);
+    let close_fn_name = format_ident!("close_{}", struct_name);
     let filter_fn_name = format_ident!("filter_{}", struct_name);
     let column_fn_name = format_ident!("column_{}", struct_name);
     let next_fn_name = format_ident!("next_{}", struct_name);
@@ -484,6 +485,17 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                 } else {
                     return ::std::ptr::null();
                 }
+            }
+
+            #[no_mangle]
+            unsafe extern "C" fn #close_fn_name(
+                cursor: *const ::std::ffi::c_void
+            ) -> ::limbo_ext::ResultCode {
+                if cursor.is_null() {
+                    return ::limbo_ext::ResultCode::Error;
+                }
+                let boxed_cursor = ::std::boxed::Box::from_raw(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor);
+                boxed_cursor.close()
             }
 
             #[no_mangle]
@@ -649,6 +661,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                     name: name_c,
                     create_schema: Self::#create_schema_fn_name,
                     open: Self::#open_fn_name,
+                    close: Self::#close_fn_name,
                     filter: Self::#filter_fn_name,
                     column: Self::#column_fn_name,
                     next: Self::#next_fn_name,
