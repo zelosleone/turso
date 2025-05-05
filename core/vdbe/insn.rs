@@ -644,6 +644,7 @@ pub enum Insn {
         key_reg: usize,    // Must be int.
         record_reg: usize, // Blob of record data.
         flag: usize,       // Flags used by insert, for now not used.
+        table_name: String,
     },
 
     Delete {

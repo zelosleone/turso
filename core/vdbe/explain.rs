@@ -1014,14 +1014,15 @@ pub fn insn_to_str(
                 key_reg,
                 record_reg,
                 flag,
+                table_name,
             } => (
                 "Insert",
                 *cursor as i32,
                 *record_reg as i32,
                 *key_reg as i32,
-                OwnedValue::build_text(""),
+                OwnedValue::build_text(&table_name),
                 *flag as u16,
-                "".to_string(),
+                format!("intkey=r[{}] data=r[{}]", key_reg, record_reg),
             ),
             Insn::Delete { cursor_id } => (
                 "Delete",
