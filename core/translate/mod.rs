@@ -75,7 +75,7 @@ pub fn translate(
                         return Err(LimboError::ParseError(format!("no such table: {name}")));
                     };
 
-                    if schema.tables.get(rename).is_some() {
+                    if schema.tables.contains_key(rename) {
                         return Err(LimboError::ParseError(format!(
                             "there is already another table or index with this name: {rename}"
                         )));
