@@ -752,7 +752,7 @@ pub enum Insn {
     },
     ParseSchema {
         db: usize,
-        where_clause: String,
+        where_clause: Option<String>,
     },
 
     /// Place the result of lhs >> rhs in dest register.

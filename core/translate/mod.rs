@@ -34,11 +34,16 @@ use crate::storage::sqlite3_ondisk::DatabaseHeader;
 use crate::translate::delete::translate_delete;
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
 use crate::vdbe::Program;
-use crate::{bail_parse_error, Connection, Result, SymbolTable};
+use crate::{bail_parse_error, Connection, LimboError, Result, SymbolTable};
+use fallible_iterator::FallibleIterator as _;
 use index::translate_create_index;
 use insert::translate_insert;
 use limbo_sqlite3_parser::ast::{self, Delete, Insert};
-use schema::{translate_create_table, translate_create_virtual_table, translate_drop_table};
+use limbo_sqlite3_parser::lexer::sql::Parser;
+use schema::{
+    translate_create_table, translate_create_virtual_table, translate_drop_table, ParseSchema,
+    SQLITE_TABLEID,
+};
 use select::translate_select;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
@@ -58,7 +63,57 @@ pub fn translate(
     let mut change_cnt_on = false;
 
     let program = match stmt {
-        ast::Stmt::AlterTable(_) => bail_parse_error!("ALTER TABLE not supported yet"),
+        ast::Stmt::AlterTable(a) => {
+            let (table_name, alter_table) = a.as_ref();
+
+            match alter_table {
+                ast::AlterTableBody::RenameTo(name) => {
+                    let rename = &name.0;
+                    let name = &table_name.name.0;
+
+                    let Some(table) = schema.tables.get(name) else {
+                        return Err(LimboError::ParseError(format!("no such table: {name}")));
+                    };
+
+                    if schema.tables.get(rename).is_some() {
+                        return Err(LimboError::ParseError(format!(
+                            "there is already another table or index with this name: {rename}"
+                        )));
+                    };
+
+                    let Some(btree) = table.btree() else { todo!() };
+
+                    let mut btree = (*btree).clone();
+                    btree.name = rename.clone();
+
+                    let sql = btree.to_sql();
+
+                    let stmt = format!(
+                        r#"
+                            UPDATE {SQLITE_TABLEID}
+                            SET name = '{rename}'
+                              , tbl_name = '{rename}'
+                              , sql = '{sql}'
+                            WHERE tbl_name = '{name}'
+                        "#,
+                    );
+
+                    let mut parser = Parser::new(stmt.as_bytes());
+                    let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next()? else {
+                        unreachable!();
+                    };
+
+                    translate_update(
+                        QueryMode::Normal,
+                        schema,
+                        &mut update,
+                        syms,
+                        ParseSchema::Reload,
+                    )?
+                }
+                _ => todo!(),
+            }
+        }
         ast::Stmt::Analyze(_) => bail_parse_error!("ANALYZE not supported yet"),
         ast::Stmt::Attach { .. } => bail_parse_error!("ATTACH not supported yet"),
         ast::Stmt::Begin(tx_type, tx_name) => translate_tx_begin(tx_type, tx_name)?,
@@ -130,7 +185,9 @@ pub fn translate(
         ast::Stmt::Rollback { .. } => bail_parse_error!("ROLLBACK not supported yet"),
         ast::Stmt::Savepoint(_) => bail_parse_error!("SAVEPOINT not supported yet"),
         ast::Stmt::Select(select) => translate_select(query_mode, schema, *select, syms)?,
-        ast::Stmt::Update(mut update) => translate_update(query_mode, schema, &mut update, syms)?,
+        ast::Stmt::Update(mut update) => {
+            translate_update(query_mode, schema, &mut update, syms, ParseSchema::None)?
+        }
         ast::Stmt::Vacuum(_, _) => bail_parse_error!("VACUUM not supported yet"),
         ast::Stmt::Insert(insert) => {
             let Insert {

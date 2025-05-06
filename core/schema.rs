@@ -162,7 +162,7 @@ impl PartialEq for Table {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct BTreeTable {
     pub root_page: usize,
     pub name: String,
@@ -212,7 +212,6 @@ impl BTreeTable {
         }
     }
 
-    #[cfg(test)]
     pub fn to_sql(&self) -> String {
         let mut sql = format!("CREATE TABLE {} (\n", self.name);
         for (i, column) in self.columns.iter().enumerate() {

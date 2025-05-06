@@ -15,6 +15,7 @@ use super::plan::{
 };
 use super::planner::bind_column_references;
 use super::planner::{parse_limit, parse_where};
+use super::schema::ParseSchema;
 
 /*
 * Update is simple. By default we scan the table, and for each row, we check the WHERE
@@ -50,8 +51,9 @@ pub fn translate_update(
     schema: &Schema,
     body: &mut Update,
     syms: &SymbolTable,
+    parse_schema: ParseSchema,
 ) -> crate::Result<ProgramBuilder> {
-    let mut plan = prepare_update_plan(schema, body)?;
+    let mut plan = prepare_update_plan(schema, body, parse_schema)?;
     optimize_plan(&mut plan, schema)?;
     // TODO: freestyling these numbers
     let mut program = ProgramBuilder::new(ProgramBuilderOpts {
@@ -64,7 +66,11 @@ pub fn translate_update(
     Ok(program)
 }
 
-pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<Plan> {
+pub fn prepare_update_plan(
+    schema: &Schema,
+    body: &mut Update,
+    parse_schema: ParseSchema,
+) -> crate::Result<Plan> {
     if body.with.is_some() {
         bail_parse_error!("WITH clause is not supported");
     }
@@ -197,5 +203,6 @@ pub fn prepare_update_plan(schema: &Schema, body: &mut Update) -> crate::Result<
         offset,
         contains_constant_false_condition: false,
         indexes_to_update,
+        parse_schema,
     }))
 }
