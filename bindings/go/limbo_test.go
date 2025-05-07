@@ -608,6 +608,130 @@ func TestJSONFunctions(t *testing.T) {
 	}
 }
 
+func TestParameterOrdering(t *testing.T) {
+	newConn, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("Error opening new connection: %v", err)
+	}
+	sql := "CREATE TABLE test (a,b,c);"
+	newConn.Exec(sql)
+
+	// Test inserting with parameters in a different order than
+	// the table definition.
+	sql = "INSERT INTO test (b,c,a) VALUES (?, ?, ?);"
+	expectedValues := []int{1, 2, 3}
+	_, err = newConn.Exec(sql, expectedValues[1], expectedValues[2], expectedValues[0])
+	if err != nil {
+		t.Fatalf("Error preparing statement: %v", err)
+	}
+	// check that the values are in the correct order
+	query := "SELECT a,b,c FROM test;"
+	rows, err := newConn.Query(query)
+	if err != nil {
+		t.Fatalf("Error executing query: %v", err)
+	}
+	for rows.Next() {
+		var a, b, c int
+		err := rows.Scan(&a, &b, &c)
+		if err != nil {
+			t.Fatal("Error scanning row: ", err)
+		}
+		result := []int{a, b, c}
+		for i := range 3 {
+			if result[i] != expectedValues[i] {
+				t.Fatalf("Expected %d, got %d", expectedValues[i], result[i])
+			}
+		}
+	}
+
+	sql = "CREATE TABLE test2 (a,b,c);"
+	newConn.Exec(sql)
+	expectedValues = []int{1, 22, 3}
+
+	// Test inserting with parameters in a different order than
+	// the table definition, with a mixed regular parameter included
+	sql = "INSERT INTO test2 (b,c,a) VALUES (?, 22, ?);"
+	_, err = newConn.Exec(sql, expectedValues[2], expectedValues[0])
+	if err != nil {
+		t.Fatalf("Error preparing statement: %v", err)
+	}
+	// check that the values are in the correct order
+	query = "SELECT a,b,c FROM test2;"
+	rows, err = newConn.Query(query)
+	if err != nil {
+		t.Fatalf("Error executing query: %v", err)
+	}
+	for rows.Next() {
+		var a, b, c int
+		err := rows.Scan(&a, &b, &c)
+		if err != nil {
+			t.Fatal("Error scanning row: ", err)
+		}
+		result := []int{a, b, c}
+		for i := range 3 {
+			if result[i] != expectedValues[i] {
+				t.Fatalf("Expected %d, got %d", expectedValues[i], result[i])
+			}
+		}
+	}
+}
+
+// TODO: make this pass
+// func TestUpdateParameters(t *testing.T) {
+// 	db, err := sql.Open("sqlite3", ":memory:")
+// 	if err != nil {
+// 		t.Fatalf("failed to open database: %v", err)
+// 	}
+// 	defer db.Close()
+//
+// 	// Create test table
+// 	_, err = db.Exec(`CREATE TABLE test (id TEXT PRIMARY KEY, value INTEGER)`)
+// 	if err != nil {
+// 		t.Fatalf("failed to create table: %v", err)
+// 	}
+//
+// 	// Insert with parameters (works)
+// 	_, err = db.Exec("INSERT INTO test (id, value) VALUES (?, ?)", "test1", 1)
+// 	if err != nil {
+// 		t.Fatalf("failed to insert row: %v", err)
+// 	}
+//
+// 	// Verify initial value
+// 	var value int
+// 	err = db.QueryRow("SELECT value FROM test WHERE id = ?", "test1").Scan(&value)
+// 	if err != nil {
+// 		t.Fatalf("Error querying: %v", err)
+// 	}
+// 	fmt.Printf("Initial value = %d\n", value)
+//
+// 	// Update with parameters (reports success but doesn't update)
+// 	res, err := db.Prepare("UPDATE test SET value = ? WHERE id = ?")
+// 	if err != nil {
+// 		t.Fatalf("Error updating: %v", err)
+// 	}
+// 	_, err = res.Exec(2, "test1")
+//
+// 	// Verify if the update worked
+// 	var id int
+// 	err = db.QueryRow("SELECT value FROM test WHERE id = 'test1'").Scan(&id)
+// 	if err != nil {
+// 		t.Fatalf("Error querying: %v", err)
+// 	}
+// 	fmt.Printf("After parameterized update: value = %d (should be 2)\n", id)
+// 	if id != 2 {
+// 		t.Fatalf("Expected: 2, got %d", id)
+// 	}
+// 	// Try direct SQL update (works)
+// 	_, err = db.Exec("UPDATE test SET value = 3 WHERE id = 'test1'")
+// 	if err != nil {
+// 		t.Fatalf("Error direct updating: %v", err)
+// 	}
+//
+// 	// Verify direct update
+// 	err = db.QueryRow("SELECT value FROM test WHERE id = ?", "test1").Scan(&value)
+// 	fmt.Printf("After direct update: value = %d\n", value)
+// }
+
 func slicesAreEq(a, b []byte) bool {
 	if len(a) != len(b) {
 		fmt.Printf("LENGTHS NOT EQUAL: %d != %d\n", len(a), len(b))

@@ -452,7 +452,6 @@ fn resolve_columns_for_insert<'a>(
     }
 
     let table_columns = &table.columns();
-
     // Case 1: No columns specified - map values to columns in order
     if columns.is_none() {
         let num_values = values[0].len();
@@ -503,15 +502,15 @@ fn resolve_columns_for_insert<'a>(
                 .map_or(false, |name| name.eq_ignore_ascii_case(&column_name))
         });
 
-        if table_index.is_none() {
+        let Some(table_index) = table_index else {
             crate::bail_parse_error!(
                 "table {} has no column named {}",
                 &table.get_name(),
                 column_name
             );
-        }
+        };
 
-        mappings[table_index.unwrap()].value_index = Some(value_index);
+        mappings[table_index].value_index = Some(value_index);
     }
 
     Ok(mappings)
@@ -605,6 +604,7 @@ fn populate_column_registers(
             } else {
                 target_reg
             };
+            program.current_col_idx = Some(value_index);
             translate_expr_no_constant_opt(
                 program,
                 None,
