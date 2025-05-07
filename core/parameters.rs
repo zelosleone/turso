@@ -27,6 +27,7 @@ impl Parameter {
 pub struct Parameters {
     index: NonZero<usize>,
     pub list: Vec<Parameter>,
+    remap: Vec<NonZero<usize>>,
 }
 
 impl Default for Parameters {
@@ -40,6 +41,7 @@ impl Parameters {
         Self {
             index: 1.try_into().unwrap(),
             list: vec![],
+            remap: vec![],
         }
     }
 
@@ -47,6 +49,14 @@ impl Parameters {
         let mut params = self.list.clone();
         params.dedup();
         params.len()
+    }
+
+    pub fn set_remap(&mut self, remap: Vec<NonZero<usize>>) {
+        self.remap = remap;
+    }
+
+    pub fn get_remap(&self, idx: NonZero<usize>) -> NonZero<usize> {
+        *self.remap.get(idx.get() - 1).unwrap_or(&idx)
     }
 
     pub fn name(&self, index: NonZero<usize>) -> Option<String> {
