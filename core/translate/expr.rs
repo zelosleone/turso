@@ -1851,11 +1851,8 @@ pub fn translate_expr(
                             } else {
                                 Some(program.resolve_cursor_id(&table_reference.identifier))
                             };
-                            let index_cursor_id = if let Some(index) = index {
-                                Some(program.resolve_cursor_id(&index.name))
-                            } else {
-                                None
-                            };
+                            let index_cursor_id =
+                                index.map(|index| program.resolve_cursor_id(&index.name));
                             if *is_rowid_alias {
                                 if let Some(index_cursor_id) = index_cursor_id {
                                     program.emit_insn(Insn::IdxRowId {
@@ -2150,7 +2147,21 @@ pub fn translate_expr(
             }
         },
         ast::Expr::Variable(name) => {
+            // Table t: (a,b,c)
+            // For 'insert' statements:
+            // INSERT INTO t (b,c,a) values (?,?,?)
+            // since we walk the columns in the tables column order, we have to store the value index that
+            // the parameter was given for an insert statement. Then, we may end up with something
+            // like: insert into (b,c,a) values (22,?,?), in which case we will get a = 2, c = 1
+            // instead of previously we would have gotten a = 0, c = 1
+            // where it instead should be c = 0, a = 1. So all we can do is store the value index
+            // alongside the index into the parameters list, then during bind_at: we can translate
+            // this value into the proper order.
             let index = program.parameters.push(name);
+            if let Some(ref mut indicies) = &mut program.param_positions {
+                // index of the parameter in the inserted values + index of the parameter relative
+                indicies.push((program.current_col_idx.unwrap_or(index.get()), index));
+            }
             program.emit_insn(Insn::Variable {
                 index,
                 dest: target_register,
