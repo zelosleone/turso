@@ -265,6 +265,7 @@ fn check_automatic_pk_index_required(
             options,
         } => {
             let mut primary_key_definition = None;
+            let mut has_unique_definition = false;
 
             // Check table constraints for PRIMARY KEY
             if let Some(constraints) = constraints {
@@ -336,6 +337,8 @@ fn check_automatic_pk_index_required(
                             typename,
                             is_descending: false,
                         });
+                    } else if matches!(constraint.constraint, ast::ColumnConstraint::Unique(..)) {
+                        has_unique_definition = true;
                     }
                 }
             }
@@ -346,7 +349,9 @@ fn check_automatic_pk_index_required(
             }
 
             // Check if we need an automatic index
-            let needs_auto_index = if let Some(primary_key_definition) = &primary_key_definition {
+            let needs_auto_index = if has_unique_definition {
+                true
+            } else if let Some(primary_key_definition) = &primary_key_definition {
                 match primary_key_definition {
                     PrimaryKeyDefinitionType::Simple {
                         typename,
