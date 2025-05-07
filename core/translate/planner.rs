@@ -1,7 +1,7 @@
 use super::{
     plan::{
-        Aggregate, ColumnUsedMask, EvalAt, IterationDirection, JoinInfo, Operation, Plan,
-        ResultSetColumn, SelectPlan, SelectQueryType, TableReference, WhereTerm,
+        Aggregate, ColumnUsedMask, EvalAt, IterationDirection, JoinInfo, JoinOrderMember,
+        Operation, Plan, ResultSetColumn, SelectPlan, SelectQueryType, TableReference, WhereTerm,
     },
     select::prepare_select_plan,
     SymbolTable,
@@ -554,11 +554,9 @@ pub fn parse_where(
             bind_column_references(expr, table_references, result_columns)?;
         }
         for expr in predicates {
-            let eval_at = determine_where_to_eval_expr(&expr)?;
             out_where_clause.push(WhereTerm {
                 expr,
-                from_outer_join: false,
-                eval_at,
+                from_outer_join: None,
             });
         }
         Ok(())
@@ -574,15 +572,38 @@ pub fn parse_where(
   For expressions not referencing any tables (e.g. constants), this is before the main loop is
   opened, because they do not need any table data.
 */
-pub fn determine_where_to_eval_expr<'a>(predicate: &'a ast::Expr) -> Result<EvalAt> {
+pub fn determine_where_to_eval_term(
+    term: &WhereTerm,
+    join_order: &[JoinOrderMember],
+) -> Result<EvalAt> {
+    if let Some(table_no) = term.from_outer_join {
+        return Ok(EvalAt::Loop(
+            join_order
+                .iter()
+                .position(|t| t.table_no == table_no)
+                .unwrap(),
+        ));
+    }
+
+    return determine_where_to_eval_expr(&term.expr, join_order);
+}
+
+pub fn determine_where_to_eval_expr<'a>(
+    expr: &'a Expr,
+    join_order: &[JoinOrderMember],
+) -> Result<EvalAt> {
     let mut eval_at: EvalAt = EvalAt::BeforeLoop;
-    match predicate {
+    match expr {
         ast::Expr::Binary(e1, _, e2) => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(e1)?);
-            eval_at = eval_at.max(determine_where_to_eval_expr(e2)?);
+            eval_at = eval_at.max(determine_where_to_eval_expr(e1, join_order)?);
+            eval_at = eval_at.max(determine_where_to_eval_expr(e2, join_order)?);
         }
         ast::Expr::Column { table, .. } | ast::Expr::RowId { table, .. } => {
-            eval_at = eval_at.max(EvalAt::Loop(*table));
+            let join_idx = join_order
+                .iter()
+                .position(|t| t.table_no == *table)
+                .unwrap();
+            eval_at = eval_at.max(EvalAt::Loop(join_idx));
         }
         ast::Expr::Id(_) => {
             /* Id referring to column will already have been rewritten as an Expr::Column */
@@ -593,30 +614,30 @@ pub fn determine_where_to_eval_expr<'a>(predicate: &'a ast::Expr) -> Result<Eval
         }
         ast::Expr::Literal(_) => {}
         ast::Expr::Like { lhs, rhs, .. } => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(lhs)?);
-            eval_at = eval_at.max(determine_where_to_eval_expr(rhs)?);
+            eval_at = eval_at.max(determine_where_to_eval_expr(lhs, join_order)?);
+            eval_at = eval_at.max(determine_where_to_eval_expr(rhs, join_order)?);
         }
         ast::Expr::FunctionCall {
             args: Some(args), ..
         } => {
             for arg in args {
-                eval_at = eval_at.max(determine_where_to_eval_expr(arg)?);
+                eval_at = eval_at.max(determine_where_to_eval_expr(arg, join_order)?);
             }
         }
         ast::Expr::InList { lhs, rhs, .. } => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(lhs)?);
+            eval_at = eval_at.max(determine_where_to_eval_expr(lhs, join_order)?);
             if let Some(rhs_list) = rhs {
                 for rhs_expr in rhs_list {
-                    eval_at = eval_at.max(determine_where_to_eval_expr(rhs_expr)?);
+                    eval_at = eval_at.max(determine_where_to_eval_expr(rhs_expr, join_order)?);
                 }
             }
         }
         Expr::Between {
             lhs, start, end, ..
         } => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(lhs)?);
-            eval_at = eval_at.max(determine_where_to_eval_expr(start)?);
-            eval_at = eval_at.max(determine_where_to_eval_expr(end)?);
+            eval_at = eval_at.max(determine_where_to_eval_expr(lhs, join_order)?);
+            eval_at = eval_at.max(determine_where_to_eval_expr(start, join_order)?);
+            eval_at = eval_at.max(determine_where_to_eval_expr(end, join_order)?);
         }
         Expr::Case {
             base,
@@ -624,21 +645,21 @@ pub fn determine_where_to_eval_expr<'a>(predicate: &'a ast::Expr) -> Result<Eval
             else_expr,
         } => {
             if let Some(base) = base {
-                eval_at = eval_at.max(determine_where_to_eval_expr(base)?);
+                eval_at = eval_at.max(determine_where_to_eval_expr(base, join_order)?);
             }
             for (when, then) in when_then_pairs {
-                eval_at = eval_at.max(determine_where_to_eval_expr(when)?);
-                eval_at = eval_at.max(determine_where_to_eval_expr(then)?);
+                eval_at = eval_at.max(determine_where_to_eval_expr(when, join_order)?);
+                eval_at = eval_at.max(determine_where_to_eval_expr(then, join_order)?);
             }
             if let Some(else_expr) = else_expr {
-                eval_at = eval_at.max(determine_where_to_eval_expr(else_expr)?);
+                eval_at = eval_at.max(determine_where_to_eval_expr(else_expr, join_order)?);
             }
         }
         Expr::Cast { expr, .. } => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(expr)?);
+            eval_at = eval_at.max(determine_where_to_eval_expr(expr, join_order)?);
         }
         Expr::Collate(expr, _) => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(expr)?);
+            eval_at = eval_at.max(determine_where_to_eval_expr(expr, join_order)?);
         }
         Expr::DoublyQualified(_, _, _) => {
             unreachable!("DoublyQualified should be resolved to a Column before resolving eval_at")
@@ -648,7 +669,7 @@ pub fn determine_where_to_eval_expr<'a>(predicate: &'a ast::Expr) -> Result<Eval
         }
         Expr::FunctionCall { args, .. } => {
             for arg in args.as_ref().unwrap_or(&vec![]).iter() {
-                eval_at = eval_at.max(determine_where_to_eval_expr(arg)?);
+                eval_at = eval_at.max(determine_where_to_eval_expr(arg, join_order)?);
             }
         }
         Expr::FunctionCallStar { .. } => {}
@@ -659,15 +680,15 @@ pub fn determine_where_to_eval_expr<'a>(predicate: &'a ast::Expr) -> Result<Eval
             todo!("in table not supported yet")
         }
         Expr::IsNull(expr) => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(expr)?);
+            eval_at = eval_at.max(determine_where_to_eval_expr(expr, join_order)?);
         }
         Expr::Name(_) => {}
         Expr::NotNull(expr) => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(expr)?);
+            eval_at = eval_at.max(determine_where_to_eval_expr(expr, join_order)?);
         }
         Expr::Parenthesized(exprs) => {
             for expr in exprs.iter() {
-                eval_at = eval_at.max(determine_where_to_eval_expr(expr)?);
+                eval_at = eval_at.max(determine_where_to_eval_expr(expr, join_order)?);
             }
         }
         Expr::Raise(_, _) => {
@@ -677,7 +698,7 @@ pub fn determine_where_to_eval_expr<'a>(predicate: &'a ast::Expr) -> Result<Eval
             todo!("subquery not supported yet")
         }
         Expr::Unary(_, expr) => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(expr)?);
+            eval_at = eval_at.max(determine_where_to_eval_expr(expr, join_order)?);
         }
         Expr::Variable(_) => {}
     }
@@ -765,16 +786,13 @@ fn parse_join<'a>(
                     bind_column_references(predicate, &mut scope.tables, None)?;
                 }
                 for pred in preds {
-                    let cur_table_idx = scope.tables.len() - 1;
-                    let eval_at = if outer {
-                        EvalAt::Loop(cur_table_idx)
-                    } else {
-                        determine_where_to_eval_expr(&pred)?
-                    };
                     out_where_clause.push(WhereTerm {
                         expr: pred,
-                        from_outer_join: outer,
-                        eval_at,
+                        from_outer_join: if outer {
+                            Some(scope.tables.len() - 1)
+                        } else {
+                            None
+                        },
                     });
                 }
             }
@@ -841,15 +859,9 @@ fn parse_join<'a>(
                     left_table.mark_column_used(left_col_idx);
                     let right_table = scope.tables.get_mut(cur_table_idx).unwrap();
                     right_table.mark_column_used(right_col_idx);
-                    let eval_at = if outer {
-                        EvalAt::Loop(cur_table_idx)
-                    } else {
-                        determine_where_to_eval_expr(&expr)?
-                    };
                     out_where_clause.push(WhereTerm {
                         expr,
-                        from_outer_join: outer,
-                        eval_at,
+                        from_outer_join: if outer { Some(cur_table_idx) } else { None },
                     });
                 }
                 using = Some(distinct_names);
