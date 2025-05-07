@@ -38,6 +38,8 @@ pub struct ProgramBuilder {
     pub parameters: Parameters,
     pub result_columns: Vec<ResultSetColumn>,
     pub table_references: Vec<TableReference>,
+    // Index of the referenced insert value to maintain ordering of paramaterized values
+    pub current_col_idx: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +97,7 @@ impl ProgramBuilder {
             parameters: Parameters::new(),
             result_columns: Vec::new(),
             table_references: Vec::new(),
+            current_col_idx: None,
         }
     }
 
