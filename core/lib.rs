@@ -636,7 +636,7 @@ impl Statement {
     }
 
     pub fn bind_at(&mut self, index: NonZero<usize>, value: OwnedValue) {
-        let internal = self.program.parameters.get_remap(index);
+        let internal = self.program.parameters.get_remapped_value(index);
         self.state.bind_at(internal, value);
     }
 

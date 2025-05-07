@@ -51,11 +51,11 @@ impl Parameters {
         params.len()
     }
 
-    pub fn set_remap(&mut self, remap: Vec<NonZero<usize>>) {
+    pub fn set_parameter_remap(&mut self, remap: Vec<NonZero<usize>>) {
         self.remap = remap;
     }
 
-    pub fn get_remap(&self, idx: NonZero<usize>) -> NonZero<usize> {
+    pub fn get_remapped_value(&self, idx: NonZero<usize>) -> NonZero<usize> {
         *self.remap.get(idx.get() - 1).unwrap_or(&idx)
     }
 

@@ -606,6 +606,7 @@ fn populate_column_registers(
             } else {
                 target_reg
             };
+            // set the value index to make it available to the translator
             program.current_col_idx = Some(value_index);
             translate_expr_no_constant_opt(
                 program,

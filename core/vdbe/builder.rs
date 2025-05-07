@@ -115,7 +115,7 @@ impl ProgramBuilder {
 
     pub fn set_param_remap(&mut self, remap: Option<Vec<NonZero<usize>>>) {
         if let Some(remap) = remap {
-            self.parameters.set_remap(remap);
+            self.parameters.set_parameter_remap(remap);
         }
     }
 
