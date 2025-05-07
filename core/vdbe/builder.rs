@@ -1,6 +1,7 @@
 use std::{
     cell::Cell,
     cmp::Ordering,
+    num::NonZero,
     rc::{Rc, Weak},
     sync::Arc,
 };
@@ -38,7 +39,8 @@ pub struct ProgramBuilder {
     pub parameters: Parameters,
     pub result_columns: Vec<ResultSetColumn>,
     pub table_references: Vec<TableReference>,
-    // Index of the referenced insert value to maintain ordering of paramaterized values
+    // Indexes of the referenced insert values to maintain ordering of paramaters
+    pub param_positions: Option<Vec<(usize, NonZero<usize>)>>,
     pub current_col_idx: Option<usize>,
 }
 
@@ -97,6 +99,7 @@ impl ProgramBuilder {
             parameters: Parameters::new(),
             result_columns: Vec::new(),
             table_references: Vec::new(),
+            param_positions: None,
             current_col_idx: None,
         }
     }
@@ -108,6 +111,12 @@ impl ProgramBuilder {
         let start = self.insns.len();
         self.constant_spans.push((start, usize::MAX));
         span
+    }
+
+    pub fn set_param_remap(&mut self, remap: Option<Vec<NonZero<usize>>>) {
+        if let Some(remap) = remap {
+            self.parameters.set_remap(remap);
+        }
     }
 
     /// End the current constant span. The last instruction that was emitted is the last
