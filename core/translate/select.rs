@@ -1,5 +1,5 @@
 use super::emitter::emit_program;
-use super::plan::{select_star, Operation, Search, SelectQueryType};
+use super::plan::{select_star, JoinOrderMember, Operation, Search, SelectQueryType};
 use super::planner::Scope;
 use crate::function::{AggFunc, ExtFunc, Func};
 use crate::translate::optimizer::optimize_plan;
@@ -87,6 +87,14 @@ pub fn prepare_select_plan<'a>(
             );
 
             let mut plan = SelectPlan {
+                join_order: table_references
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| JoinOrderMember {
+                        table_no: i,
+                        is_outer: t.join_info.as_ref().map_or(false, |j| j.outer),
+                    })
+                    .collect(),
                 table_references,
                 result_columns,
                 where_clause: where_predicates,

@@ -1050,13 +1050,13 @@ pub fn insn_to_str(
                 rowid_reg,
                 prev_largest_reg,
             } => (
-                "NewRowId",
+                "NewRowid",
                 *cursor as i32,
                 *rowid_reg as i32,
                 *prev_largest_reg as i32,
                 OwnedValue::build_text(""),
                 0,
-                "".to_string(),
+                format!("r[{}]=rowid", rowid_reg),
             ),
             Insn::MustBeInt { reg } => (
                 "MustBeInt",

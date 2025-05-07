@@ -13,8 +13,8 @@ use crate::{
 use super::{
     emitter::Resolver,
     plan::{
-        DeletePlan, EvalAt, GroupBy, IterationDirection, Operation, Plan, Search, SeekDef, SeekKey,
-        SelectPlan, TableReference, UpdatePlan, WhereTerm,
+        DeletePlan, EvalAt, GroupBy, IterationDirection, JoinOrderMember, Operation, Plan, Search,
+        SeekDef, SeekKey, SelectPlan, TableReference, UpdatePlan, WhereTerm,
     },
     planner::determine_where_to_eval_expr,
 };
@@ -281,6 +281,15 @@ fn use_indexes(
     let did_eliminate_orderby =
         eliminate_unnecessary_orderby(table_references, available_indexes, order_by, group_by)?;
 
+    let join_order = table_references
+        .iter()
+        .enumerate()
+        .map(|(i, t)| JoinOrderMember {
+            table_no: i,
+            is_outer: t.join_info.as_ref().map_or(false, |j| j.outer),
+        })
+        .collect::<Vec<_>>();
+
     // Try to use indexes for WHERE conditions
     for (table_index, table_reference) in table_references.iter_mut().enumerate() {
         if matches!(table_reference.op, Operation::Scan { .. }) {
@@ -303,6 +312,7 @@ fn use_indexes(
                         table_index,
                         table_reference,
                         &available_indexes,
+                        &join_order,
                     )? {
                         table_reference.op = Operation::Search(search);
                     }
@@ -317,6 +327,7 @@ fn use_indexes(
                             &mut where_clause[i],
                             table_index,
                             table_reference,
+                            &join_order,
                         )? {
                             where_clause.remove(i);
                             table_reference.op = Operation::Search(search);
@@ -341,6 +352,7 @@ fn use_indexes(
                         table_index,
                         table_reference,
                         usable_indexes_ref,
+                        &join_order,
                     )? {
                         table_reference.op = Operation::Search(search);
                     }
@@ -389,7 +401,7 @@ fn eliminate_constant_conditions(
         } else if predicate.expr.is_always_false()? {
             // any false predicate in a list of conjuncts (AND-ed predicates) will make the whole list false,
             // except an outer join condition, because that just results in NULLs, not skipping the whole loop
-            if predicate.from_outer_join {
+            if predicate.from_outer_join.is_some() {
                 i += 1;
                 continue;
             }
@@ -872,6 +884,7 @@ pub fn try_extract_index_search_from_where_clause(
     table_index: usize,
     table_reference: &TableReference,
     table_indexes: &[Arc<Index>],
+    join_order: &[JoinOrderMember],
 ) -> Result<Option<Search>> {
     // If there are no WHERE terms, we can't extract a search
     if where_clause.is_empty() {
@@ -901,7 +914,13 @@ pub fn try_extract_index_search_from_where_clause(
 
     for index in table_indexes {
         // Check how many terms in the where clause constrain the index in column order
-        find_index_constraints(where_clause, table_index, index, &mut constraints_cur)?;
+        find_index_constraints(
+            where_clause,
+            table_index,
+            index,
+            join_order,
+            &mut constraints_cur,
+        )?;
         // naive scoring since we don't have statistics: prefer the index where we can use the most columns
         // e.g. if we can use all columns of an index on (a,b), it's better than an index of (c,d,e) where we can only use c.
         let cost = dumb_cost_estimator(
@@ -925,7 +944,7 @@ pub fn try_extract_index_search_from_where_clause(
     // let's see if building an ephemeral index would be better.
     if best_index.index.is_none() {
         let (ephemeral_cost, constraints_with_col_idx, mut constraints_without_col_idx) =
-            ephemeral_index_estimate_cost(where_clause, table_reference, table_index);
+            ephemeral_index_estimate_cost(where_clause, table_reference, table_index, join_order);
         if ephemeral_cost < best_index.cost {
             // ephemeral index makes sense, so let's build it now.
             // ephemeral columns are: columns from the table_reference, constraints first, then the rest
@@ -970,11 +989,12 @@ fn ephemeral_index_estimate_cost(
     where_clause: &mut Vec<WhereTerm>,
     table_reference: &TableReference,
     table_index: usize,
+    join_order: &[JoinOrderMember],
 ) -> (f64, Vec<(usize, IndexConstraint)>, Vec<IndexConstraint>) {
     let mut constraints_with_col_idx: Vec<(usize, IndexConstraint)> = where_clause
         .iter()
         .enumerate()
-        .filter(|(_, term)| is_potential_index_constraint(term, table_index))
+        .filter(|(_, term)| is_potential_index_constraint(term, table_index, join_order))
         .filter_map(|(i, term)| {
             let Ok(ast::Expr::Binary(lhs, operator, rhs)) = unwrap_parens(&term.expr) else {
                 panic!("expected binary expression");
@@ -1179,9 +1199,13 @@ fn get_column_position_in_index(
     Ok(index.column_table_pos_to_index_pos(*column))
 }
 
-fn is_potential_index_constraint(term: &WhereTerm, table_index: usize) -> bool {
+fn is_potential_index_constraint(
+    term: &WhereTerm,
+    table_index: usize,
+    join_order: &[JoinOrderMember],
+) -> bool {
     // Skip terms that cannot be evaluated at this table's loop level
-    if !term.should_eval_at_loop(table_index) {
+    if !term.should_eval_at_loop(table_index, join_order) {
         return false;
     }
     // Skip terms that are not binary comparisons
@@ -1206,10 +1230,10 @@ fn is_potential_index_constraint(term: &WhereTerm, table_index: usize) -> bool {
     // - WHERE t.x > t.y
     // - WHERE t.x + 1 > t.y - 5
     // - WHERE t.x = (t.x)
-    let Ok(eval_at_left) = determine_where_to_eval_expr(&lhs) else {
+    let Ok(eval_at_left) = determine_where_to_eval_expr(&lhs, join_order) else {
         return false;
     };
-    let Ok(eval_at_right) = determine_where_to_eval_expr(&rhs) else {
+    let Ok(eval_at_right) = determine_where_to_eval_expr(&rhs, join_order) else {
         return false;
     };
     if eval_at_left == EvalAt::Loop(table_index) && eval_at_right == EvalAt::Loop(table_index) {
@@ -1226,12 +1250,13 @@ fn find_index_constraints(
     where_clause: &mut Vec<WhereTerm>,
     table_index: usize,
     index: &Arc<Index>,
+    join_order: &[JoinOrderMember],
     out_constraints: &mut Vec<IndexConstraint>,
 ) -> Result<()> {
     for position_in_index in 0..index.columns.len() {
         let mut found = false;
         for (position_in_where_clause, term) in where_clause.iter().enumerate() {
-            if !is_potential_index_constraint(term, table_index) {
+            if !is_potential_index_constraint(term, table_index, join_order) {
                 continue;
             }
 
@@ -1748,13 +1773,14 @@ pub fn try_extract_rowid_search_expression(
     cond: &mut WhereTerm,
     table_index: usize,
     table_reference: &TableReference,
+    join_order: &[JoinOrderMember],
 ) -> Result<Option<Search>> {
     let iter_dir = if let Operation::Scan { iter_dir, .. } = &table_reference.op {
         *iter_dir
     } else {
         return Ok(None);
     };
-    if !cond.should_eval_at_loop(table_index) {
+    if !cond.should_eval_at_loop(table_index, join_order) {
         return Ok(None);
     }
     match &mut cond.expr {
@@ -1764,8 +1790,8 @@ pub fn try_extract_rowid_search_expression(
             // - WHERE t.x > t.y
             // - WHERE t.x + 1 > t.y - 5
             // - WHERE t.x = (t.x)
-            if determine_where_to_eval_expr(lhs)? == EvalAt::Loop(table_index)
-                && determine_where_to_eval_expr(rhs)? == EvalAt::Loop(table_index)
+            if determine_where_to_eval_expr(lhs, join_order)? == EvalAt::Loop(table_index)
+                && determine_where_to_eval_expr(rhs, join_order)? == EvalAt::Loop(table_index)
             {
                 return Ok(None);
             }
@@ -1777,7 +1803,6 @@ pub fn try_extract_rowid_search_expression(
                             cmp_expr: WhereTerm {
                                 expr: rhs_owned,
                                 from_outer_join: cond.from_outer_join,
-                                eval_at: cond.eval_at,
                             },
                         }));
                     }
@@ -1805,7 +1830,6 @@ pub fn try_extract_rowid_search_expression(
                             cmp_expr: WhereTerm {
                                 expr: lhs_owned,
                                 from_outer_join: cond.from_outer_join,
-                                eval_at: cond.eval_at,
                             },
                         }));
                     }

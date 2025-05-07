@@ -23,7 +23,7 @@ use crate::{
     util::can_pushdown_predicate,
 };
 
-use super::emitter::OperationMode;
+use super::{emitter::OperationMode, planner::determine_where_to_eval_term};
 
 #[derive(Debug, Clone)]
 pub struct ResultSetColumn {
@@ -77,21 +77,30 @@ pub struct GroupBy {
 pub struct WhereTerm {
     /// The original condition expression.
     pub expr: ast::Expr,
-    /// Is this condition originally from an OUTER JOIN?
+    /// Is this condition originally from an OUTER JOIN, and which table number in the plan's [TableReference] vector?
     /// If so, we need to evaluate it at the loop of the right table in that JOIN,
     /// regardless of which tables it references.
     /// We also cannot e.g. short circuit the entire query in the optimizer if the condition is statically false.
-    pub from_outer_join: bool,
-    pub eval_at: EvalAt,
+    pub from_outer_join: Option<usize>,
 }
 
 impl WhereTerm {
-    pub fn is_constant(&self) -> bool {
-        self.eval_at == EvalAt::BeforeLoop
+    pub fn is_constant(&self, join_order: &[JoinOrderMember]) -> bool {
+        let Ok(eval_at) = self.eval_at(join_order) else {
+            return false;
+        };
+        eval_at == EvalAt::BeforeLoop
     }
 
-    pub fn should_eval_at_loop(&self, loop_idx: usize) -> bool {
-        self.eval_at == EvalAt::Loop(loop_idx)
+    pub fn should_eval_at_loop(&self, loop_idx: usize, join_order: &[JoinOrderMember]) -> bool {
+        let Ok(eval_at) = self.eval_at(join_order) else {
+            return false;
+        };
+        eval_at == EvalAt::Loop(loop_idx)
+    }
+
+    fn eval_at(&self, join_order: &[JoinOrderMember]) -> Result<EvalAt> {
+        determine_where_to_eval_term(&self, join_order)
     }
 }
 
@@ -141,7 +150,7 @@ pub fn convert_where_to_vtab_constraint(
     table_index: usize,
     pred_idx: usize,
 ) -> Option<ConstraintInfo> {
-    if term.from_outer_join {
+    if term.from_outer_join.is_some() {
         return None;
     }
     let Expr::Binary(lhs, op, rhs) = &term.expr else {
@@ -255,10 +264,29 @@ pub enum SelectQueryType {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JoinOrderMember {
+    /// The index of the table in the plan's vector of [TableReference]
+    pub table_no: usize,
+    /// Whether this member is the right side of an OUTER JOIN
+    pub is_outer: bool,
+}
+
+impl Default for JoinOrderMember {
+    fn default() -> Self {
+        Self {
+            table_no: 0,
+            is_outer: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SelectPlan {
     /// List of table references in loop order, outermost first.
     pub table_references: Vec<TableReference>,
+    /// The order in which the tables are joined. Tables have usize Ids (their index in table_references)
+    pub join_order: Vec<JoinOrderMember>,
     /// the columns inside SELECT ... FROM
     pub result_columns: Vec<ResultSetColumn>,
     /// where clause split into a vec at 'AND' boundaries. all join conditions also get shoved in here,

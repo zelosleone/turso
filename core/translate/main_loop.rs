@@ -26,8 +26,8 @@ use super::{
     optimizer::Optimizable,
     order_by::{order_by_sorter_insert, sorter_insert},
     plan::{
-        convert_where_to_vtab_constraint, IterationDirection, Operation, Search, SeekDef,
-        SelectPlan, SelectQueryType, TableReference, WhereTerm,
+        convert_where_to_vtab_constraint, IterationDirection, JoinOrderMember, Operation, Search,
+        SeekDef, SelectPlan, SelectQueryType, TableReference, WhereTerm,
     },
 };
 
@@ -199,9 +199,12 @@ pub fn open_loop(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx,
     tables: &[TableReference],
+    join_order: &[JoinOrderMember],
     predicates: &[WhereTerm],
 ) -> Result<()> {
-    for (table_index, table) in tables.iter().enumerate() {
+    for (join_index, join) in join_order.iter().enumerate() {
+        let table_index = join.table_no;
+        let table = &tables[table_index];
         let LoopLabels {
             loop_start,
             loop_end,
@@ -253,7 +256,7 @@ pub fn open_loop(
 
                 for cond in predicates
                     .iter()
-                    .filter(|cond| cond.should_eval_at_loop(table_index))
+                    .filter(|cond| cond.should_eval_at_loop(join_index, join_order))
                 {
                     let jump_target_when_true = program.allocate_label();
                     let condition_metadata = ConditionMetadata {
@@ -306,7 +309,7 @@ pub fn open_loop(
                         // We then materialise the RHS/LHS into registers before issuing VFilter.
                         let converted_constraints = predicates
                             .iter()
-                            .filter(|p| p.should_eval_at_loop(table_index))
+                            .filter(|p| p.should_eval_at_loop(join_index, join_order))
                             .enumerate()
                             .filter_map(|(i, p)| {
                                 // Build ConstraintInfo from the predicates
@@ -408,7 +411,8 @@ pub fn open_loop(
                 }
 
                 for (_, cond) in predicates.iter().enumerate().filter(|(i, cond)| {
-                    cond.should_eval_at_loop(table_index) && !t_ctx.omit_predicates.contains(i)
+                    cond.should_eval_at_loop(join_index, join_order)
+                        && !t_ctx.omit_predicates.contains(i)
                 }) {
                     let jump_target_when_true = program.allocate_label();
                     let condition_metadata = ConditionMetadata {
@@ -516,7 +520,7 @@ pub fn open_loop(
 
                 for cond in predicates
                     .iter()
-                    .filter(|cond| cond.should_eval_at_loop(table_index))
+                    .filter(|cond| cond.should_eval_at_loop(join_index, join_order))
                 {
                     let jump_target_when_true = program.allocate_label();
                     let condition_metadata = ConditionMetadata {
@@ -792,6 +796,7 @@ pub fn close_loop(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx,
     tables: &[TableReference],
+    join_order: &[JoinOrderMember],
 ) -> Result<()> {
     // We close the loops for all tables in reverse order, i.e. innermost first.
     // OPEN t1
@@ -801,8 +806,9 @@ pub fn close_loop(
     //     CLOSE t3
     //   CLOSE t2
     // CLOSE t1
-    for (idx, table) in tables.iter().rev().enumerate() {
-        let table_index = tables.len() - idx - 1;
+    for join in join_order.iter().rev() {
+        let table_index = join.table_no;
+        let table = &tables[table_index];
         let loop_labels = *t_ctx
             .labels_main_loop
             .get(table_index)

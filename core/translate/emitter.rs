@@ -20,7 +20,7 @@ use super::expr::{translate_condition_expr, translate_expr, ConditionMetadata};
 use super::group_by::{emit_group_by, init_group_by, GroupByMetadata};
 use super::main_loop::{close_loop, emit_loop, init_loop, open_loop, LeftJoinMetadata, LoopLabels};
 use super::order_by::{emit_order_by, init_order_by, SortMetadata};
-use super::plan::{Operation, SelectPlan, TableReference, UpdatePlan};
+use super::plan::{JoinOrderMember, Operation, SelectPlan, TableReference, UpdatePlan};
 use super::subquery::emit_subqueries;
 
 #[derive(Debug)]
@@ -285,7 +285,11 @@ pub fn emit_query<'a>(
         OperationMode::SELECT,
     )?;
 
-    for where_term in plan.where_clause.iter().filter(|wt| wt.is_constant()) {
+    for where_term in plan
+        .where_clause
+        .iter()
+        .filter(|wt| wt.is_constant(&plan.join_order))
+    {
         let jump_target_when_true = program.allocate_label();
         let condition_metadata = ConditionMetadata {
             jump_if_condition_is_true: false,
@@ -303,13 +307,19 @@ pub fn emit_query<'a>(
     }
 
     // Set up main query execution loop
-    open_loop(program, t_ctx, &plan.table_references, &plan.where_clause)?;
+    open_loop(
+        program,
+        t_ctx,
+        &plan.table_references,
+        &plan.join_order,
+        &plan.where_clause,
+    )?;
 
     // Process result columns and expressions in the inner loop
     emit_loop(program, t_ctx, plan)?;
 
     // Clean up and close the main execution loop
-    close_loop(program, t_ctx, &plan.table_references)?;
+    close_loop(program, t_ctx, &plan.table_references, &plan.join_order)?;
     program.preassign_label_to_next_insn(after_main_loop_label);
 
     let mut order_by_necessary = plan.order_by.is_some() && !plan.contains_constant_false_condition;
@@ -374,6 +384,7 @@ fn emit_program_for_delete(
         program,
         &mut t_ctx,
         &plan.table_references,
+        &[JoinOrderMember::default()],
         &plan.where_clause,
     )?;
     emit_delete_insns(
@@ -385,7 +396,12 @@ fn emit_program_for_delete(
     )?;
 
     // Clean up and close the main execution loop
-    close_loop(program, &mut t_ctx, &plan.table_references)?;
+    close_loop(
+        program,
+        &mut t_ctx,
+        &plan.table_references,
+        &[JoinOrderMember::default()],
+    )?;
     program.preassign_label_to_next_insn(after_main_loop_label);
 
     // Finalize program
@@ -571,10 +587,16 @@ fn emit_program_for_update(
         program,
         &mut t_ctx,
         &plan.table_references,
+        &[JoinOrderMember::default()],
         &plan.where_clause,
     )?;
     emit_update_insns(&plan, &t_ctx, program, index_cursors)?;
-    close_loop(program, &mut t_ctx, &plan.table_references)?;
+    close_loop(
+        program,
+        &mut t_ctx,
+        &plan.table_references,
+        &[JoinOrderMember::default()],
+    )?;
     program.preassign_label_to_next_insn(after_main_loop_label);
 
     // Finalize program
@@ -615,7 +637,11 @@ fn emit_update_insns(
         _ => return Ok(()),
     };
 
-    for cond in plan.where_clause.iter().filter(|c| c.is_constant()) {
+    for cond in plan
+        .where_clause
+        .iter()
+        .filter(|c| c.is_constant(&[JoinOrderMember::default()]))
+    {
         let jump_target = program.allocate_label();
         let meta = ConditionMetadata {
             jump_if_condition_is_true: false,
@@ -664,7 +690,11 @@ fn emit_update_insns(
         });
     }
 
-    for cond in plan.where_clause.iter().filter(|c| c.is_constant()) {
+    for cond in plan
+        .where_clause
+        .iter()
+        .filter(|c| c.is_constant(&[JoinOrderMember::default()]))
+    {
         let meta = ConditionMetadata {
             jump_if_condition_is_true: false,
             jump_target_when_true: BranchOffset::Placeholder,

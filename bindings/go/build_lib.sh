@@ -3,7 +3,10 @@
 
 set -e
 
-echo "Building Limbo Go library for current platform..."
+# Accept build type as parameter, default to release
+BUILD_TYPE=${1:-release}
+
+echo "Building Limbo Go library for current platform (build type: $BUILD_TYPE)..."
 
 # Determine platform-specific details
 case "$(uname -s)" in
@@ -43,11 +46,25 @@ esac
 OUTPUT_DIR="libs/${PLATFORM}"
 mkdir -p "$OUTPUT_DIR"
 
+# Set cargo build arguments based on build type
+if [ "$BUILD_TYPE" == "debug" ]; then
+    CARGO_ARGS=""
+    TARGET_DIR="debug"
+    echo "NOTE: Debug builds are faster to compile but less efficient at runtime."
+    echo "      For production use, consider using a release build with: ./build_lib.sh release"
+else
+    CARGO_ARGS="--release"
+    TARGET_DIR="release"
+    echo "NOTE: Release builds may take longer to compile and require more system resources."
+    echo "      If this build fails or takes too long, try a debug build with: ./build_lib.sh debug"
+fi
+
 # Build the library
-cargo build --package limbo-go
+echo "Running cargo build ${CARGO_ARGS} --package limbo-go"
+cargo build ${CARGO_ARGS} --package limbo-go
 
 # Copy to the appropriate directory
 echo "Copying $OUTPUT_NAME to $OUTPUT_DIR/"
-cp "../../target/debug/$OUTPUT_NAME" "$OUTPUT_DIR/"
+cp "../../target/${TARGET_DIR}/$OUTPUT_NAME" "$OUTPUT_DIR/"
 
-echo "Library built successfully for $PLATFORM"
+echo "Library built successfully for $PLATFORM ($BUILD_TYPE build)"

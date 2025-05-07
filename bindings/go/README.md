@@ -6,13 +6,39 @@ This driver uses the awesome [purego](https://github.com/ebitengine/purego) libr
 
 ## Embedded Library Support
 
-This driver now includes an embedded library feature that allows you to distribute a single binary without requiring users to set environment variables. The library for your platform is automatically embedded, extracted at runtime, and loaded dynamically.
+This driver includes an embedded library feature that allows you to distribute a single binary without requiring users to set environment variables. The library for your platform is automatically embedded, extracted at runtime, and loaded dynamically.
 
-To build with embedded library support:
-```
-# From the bindings/go directory
+### Building from Source
+
+To build with embedded library support, follow these steps:
+
+```bash
+# Clone the repository
+git clone https://github.com/tursodatabase/limbo
+
+# Navigate to the Go bindings directory
+cd limbo/bindings/go
+
+# Build the library (defaults to release build)
 ./build_lib.sh
+
+# Alternatively, for faster builds during development:
+./build_lib.sh debug
 ```
+
+### Build Options:
+
+* Release Build (default): ./build_lib.sh or ./build_lib.sh release
+
+    - Optimized for performance and smaller binary size
+    - Takes longer to compile and requires more system resources
+    - Recommended for production use
+
+* Debug Build: ./build_lib.sh debug
+
+    - Faster compilation times with less resource usage
+    - Larger binary size and slower runtime performance
+    - Recommended during development or if release build fails
 
 If the embedded library cannot be found or extracted, the driver will fall back to the traditional method of finding the library in the system paths.
 
