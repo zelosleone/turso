@@ -1,4 +1,3 @@
-use std::num::NonZero;
 use std::ops::Deref;
 use std::rc::Rc;
 
@@ -650,14 +649,12 @@ fn populate_column_registers(
     // to ensure we are binding the parameters to the proper index later on
     if let Some(ref mut params) = program.param_positions.as_mut() {
         params.sort_by_key(|(val_pos, _)| *val_pos);
+        let remap = params
+            .iter()
+            .map(|(_, internal_idx)| *internal_idx)
+            .collect();
+        program.set_param_remap(remap);
     }
-
-    let remap: Option<Vec<NonZero<usize>>> = program
-        .param_positions
-        .as_ref()
-        .map(|pos| pos.iter().map(|&(_, internal_idx)| internal_idx).collect());
-
-    program.set_param_remap(remap);
     Ok(())
 }
 

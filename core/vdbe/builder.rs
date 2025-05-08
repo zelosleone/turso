@@ -113,10 +113,8 @@ impl ProgramBuilder {
         span
     }
 
-    pub fn set_param_remap(&mut self, remap: Option<Vec<NonZero<usize>>>) {
-        if let Some(remap) = remap {
-            self.parameters.set_parameter_remap(remap);
-        }
+    pub fn set_param_remap(&mut self, remap: Vec<NonZero<usize>>) {
+        self.parameters.set_parameter_remap(remap);
     }
 
     /// End the current constant span. The last instruction that was emitted is the last

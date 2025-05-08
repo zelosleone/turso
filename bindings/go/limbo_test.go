@@ -647,42 +647,42 @@ func TestJSONFunctions(t *testing.T) {
 // 		}
 // 	}
 //
-	// -- part 2 --
-	// mixed parameters and regular values
-	// sql2 := "CREATE TABLE test2 (a,b,c);"
-	// newConn.Exec(sql2)
-	// expectedValues2 := []int{1, 2, 3}
-	//
-	// // Test inserting with parameters in a different order than
-	// // the table definition, with a mixed regular parameter included
-	// sql2 = "INSERT INTO test2 (a, b ,c) VALUES (1, ?, ?);"
-	// _, err = newConn.Exec(sql2, expectedValues2[1], expectedValues2[2])
-	// if err != nil {
-	// 	t.Fatalf("Error preparing statement: %v", err)
-	// }
-	// // check that the values are in the correct order
-	// query2 := "SELECT a,b,c FROM test2;"
-	// rows2, err := newConn.Query(query2)
-	// if err != nil {
-	// 	t.Fatalf("Error executing query: %v", err)
-	// }
-	// for rows2.Next() {
-	// 	var a, b, c int
-	// 	err := rows2.Scan(&a, &b, &c)
-	// 	if err != nil {
-	// 		t.Fatal("Error scanning row: ", err)
-	// 	}
-	// 	// result := []int{a, b, c}
-	//
-	// 	fmt.Printf("RESULTS: %d, %d, %d\n", a, b, c)
-	// 	fmt.Printf("EXPECTED: %d, %d, %d\n", expectedValues[0], expectedValues[1], expectedValues[2])
-	// for i := range 3 {
-	// if result[i] != expectedValues[i] {
-	// 	t.Fatalf("Expected %d, got %d", expectedValues[i], result[i])
-	// }
-	//}
-	//}
-}
+// -- part 2 --
+// mixed parameters and regular values
+// sql2 := "CREATE TABLE test2 (a,b,c);"
+// newConn.Exec(sql2)
+// expectedValues2 := []int{1, 2, 3}
+//
+// // Test inserting with parameters in a different order than
+// // the table definition, with a mixed regular parameter included
+// sql2 = "INSERT INTO test2 (a, b ,c) VALUES (1, ?, ?);"
+// _, err = newConn.Exec(sql2, expectedValues2[1], expectedValues2[2])
+// if err != nil {
+// 	t.Fatalf("Error preparing statement: %v", err)
+// }
+// // check that the values are in the correct order
+// query2 := "SELECT a,b,c FROM test2;"
+// rows2, err := newConn.Query(query2)
+// if err != nil {
+// 	t.Fatalf("Error executing query: %v", err)
+// }
+// for rows2.Next() {
+// 	var a, b, c int
+// 	err := rows2.Scan(&a, &b, &c)
+// 	if err != nil {
+// 		t.Fatal("Error scanning row: ", err)
+// 	}
+// 	// result := []int{a, b, c}
+//
+// 	fmt.Printf("RESULTS: %d, %d, %d\n", a, b, c)
+// 	fmt.Printf("EXPECTED: %d, %d, %d\n", expectedValues[0], expectedValues[1], expectedValues[2])
+// for i := range 3 {
+// if result[i] != expectedValues[i] {
+// 	t.Fatalf("Expected %d, got %d", expectedValues[i], result[i])
+// }
+//}
+//}
+//}
 
 // TODO: make this pass
 // func TestUpdateParameters(t *testing.T) {
