@@ -34,6 +34,14 @@ pub struct Database {
     conn: Rc<limbo_core::Connection>,
 }
 
+impl ObjectFinalize for Database {
+    // TODO: check if something more is required
+    fn finalize(self, _env: Env) -> napi::Result<()> {
+        self.conn.close().map_err(into_napi_error)?;
+        Ok(())
+    }
+}
+
 #[napi]
 impl Database {
     #[napi(constructor)]
