@@ -4,14 +4,32 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use limbo_core::{maybe_init_database_file, Clock, Instant};
-use napi::{Env, JsUnknown, Result as NapiResult};
+use limbo_core::{maybe_init_database_file, LimboError};
+use napi::{bindgen_prelude::ObjectFinalize, Env, JsUnknown, Result as NapiResult};
 use napi_derive::napi;
 
-#[napi(js_name = "Database")]
+#[napi(object)]
+pub struct OpenDatabaseOptions {
+    pub readonly: bool,
+    pub file_must_exist: bool,
+    pub timeout: u32,
+    // verbose => Callback,
+}
+
+#[napi(custom_finalize)]
 pub struct Database {
     #[napi(writable = false)]
     pub memory: bool,
+
+    // TODO: implement each property
+    // #[napi(writable = false)]
+    // pub readonly: bool,
+    // #[napi(writable = false)]
+    // pub in_transaction: bool,
+    // #[napi(writable = false)]
+    // pub open: bool,
+    #[napi(writable = false)]
+    pub name: String,
     _db: Arc<limbo_core::Database>,
     conn: Rc<limbo_core::Connection>,
 }
@@ -36,8 +54,9 @@ impl Database {
         Self {
             memory,
             _db: db,
-            conn,
-        }
+            conn, 
+            name: path,
+        })
     }
 
     #[napi]
@@ -47,8 +66,16 @@ impl Database {
     }
 }
 
-#[napi(js_name = "Statement")]
+// TODO: Add the (parent) 'database' property
+#[napi]
 pub struct Statement {
+    // TODO: implement each property when core supports it
+    // #[napi(writable = false)]
+    // pub reader: bool,
+    // #[napi(writable = false)]
+    // pub readonly: bool,
+    // #[napi(writable = false)]
+    // pub busy: bool,
     inner: RefCell<limbo_core::Statement>,
 }
 
