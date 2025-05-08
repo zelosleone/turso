@@ -219,6 +219,39 @@ fn to_js_value(env: &napi::Env, value: &limbo_core::OwnedValue) -> napi::Result<
     }
 }
 
+fn from_js_value(env: &napi::Env, value: JsUnknown) -> napi::Result<limbo_core::OwnedValue> {
+    match value.get_type()? {
+        napi::ValueType::Undefined | napi::ValueType::Null | napi::ValueType::Unknown => {
+            Ok(limbo_core::OwnedValue::Null)
+        }
+        napi::ValueType::Boolean => {
+            let b = value.coerce_to_bool()?.get_value()?;
+            Ok(limbo_core::OwnedValue::Integer(b as i64))
+        }
+        napi::ValueType::Number => {
+            let num = value.coerce_to_number()?.get_double()?;
+            if num.fract() == 0.0 {
+                Ok(limbo_core::OwnedValue::Integer(num as i64))
+            } else {
+                Ok(limbo_core::OwnedValue::Float(num))
+            }
+        }
+        napi::ValueType::String => {
+            let s = value.coerce_to_string()?;
+            Ok(limbo_core::OwnedValue::Text(Text::from_str(
+                s.into_utf8()?.as_str()?,
+            )))
+        }
+        napi::ValueType::Symbol
+        | napi::ValueType::Object
+        | napi::ValueType::Function
+        | napi::ValueType::External => Err(napi::Error::new(
+            napi::Status::GenericFailure,
+            "Unsupported type",
+        )),
+    }
+}
+
 struct DatabaseFile {
     file: Arc<dyn limbo_core::File>,
 }
