@@ -197,6 +197,14 @@ impl Statement {
         todo!()
     }
 
+    #[napi]
+    pub fn all(&self, env: Env) -> napi::Result<JsUnknown> {
+        let mut stmt = self.inner.borrow_mut();
+        stmt.reset();
+
+        self.internal_all(env)
+    }
+
     fn internal_all(&self, env: Env) -> napi::Result<JsUnknown> {
         let mut stmt = self.inner.borrow_mut();
 
