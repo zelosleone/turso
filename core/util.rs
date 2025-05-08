@@ -888,8 +888,11 @@ pub fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValu
                     e.kind(),
                     std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow
                 ) {
-                    let value = convert_overflow_i64_to_f64(text);
-                    Ok(OwnedValue::Float(value))
+                    // if overflow, we return the representation as a real.
+                    // we have to match sqlite exactly here, so we match sqlite3AtoF
+                    let value = text.parse::<f64>().unwrap_or_default();
+                    let factor = 10f64.powi(15 - value.abs().log10().ceil() as i32);
+                    Ok(OwnedValue::Float((value * factor).round() / factor))
                 } else {
                     Err(())
                 }
@@ -900,14 +903,6 @@ pub fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValu
             .map_or(OwnedValue::Float(0.0), OwnedValue::Float)),
         _ => unreachable!(),
     }
-}
-
-// if value overflow, we return the representation as a real.
-// we have to match sqlite exactly here, so we match sqlite3AtoF
-fn convert_overflow_i64_to_f64(value: &str) -> f64 {
-    let value = value.parse::<f64>().unwrap_or_default();
-    let factor = 10f64.powi(15 - value.abs().log10().ceil() as i32);
-    (value * factor).round() / factor
 }
 
 fn parse_numeric_str(text: &str) -> Result<(OwnedValueType, &str), ()> {
@@ -994,20 +989,11 @@ pub fn parse_numeric_literal(text: &str) -> Result<OwnedValue> {
         }
         return Ok(OwnedValue::Integer(-value));
     }
-
-    match text.parse::<i64>() {
-        Ok(value) => return Ok(OwnedValue::Integer(value)),
-        Err(e)
-            if matches!(
-                e.kind(),
-                std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow
-            ) =>
-        {
-            let value = convert_overflow_i64_to_f64(&text);
-            return Ok(OwnedValue::Float(value));
-        }
-        _ => {}
+    
+    if let Ok(int_value) = text.parse::<i64>() {
+        return Ok(OwnedValue::Integer(int_value));
     }
+    
     let float_value = text.parse::<f64>()?;
     Ok(OwnedValue::Float(float_value))
 }
@@ -2042,12 +2028,12 @@ pub mod tests {
         // > i64::MAX, convert to float
         assert_eq!(
             parse_numeric_literal("9223372036854775808").unwrap(),
-            OwnedValue::Float(9.22337203685478e+18)
+            OwnedValue::Float(9.223372036854775808e+18)
         );
         // < i64::MIN, convert to float
         assert_eq!(
             parse_numeric_literal("-9223372036854775809").unwrap(),
-            OwnedValue::Float(-9.22337203685478e+18)
+            OwnedValue::Float(-9.223372036854775809e+18)
         );
     }
 }

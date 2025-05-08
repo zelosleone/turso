@@ -63,6 +63,10 @@ do_execsql_test numberic-literal-exceed-max-i64 {
   SELECT 9_223_372_036_854_775_808;
 } {9.22337203685478e+18}
 
+do_execsql_test numberic-literal-exceed-min-i64 {
+  SELECT -9_223_372_036_854_775_809;
+} {-9.22337203685478e+18}
+
 do_execsql_test_any_error invalid-numberic-literal-1 {
   SELECT 0xFF__FF;
 }
