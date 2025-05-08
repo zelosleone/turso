@@ -1,6 +1,6 @@
 #![deny(clippy::all)]
 
-use std::cell::RefCell;
+use std::cell::{RefCell, RefMut};
 use std::num::NonZeroUsize;
 
 use std::rc::Rc;
@@ -189,7 +189,8 @@ impl Statement {
             }
         }
 
-        self.internal_all(env)
+        let stmt = self.inner.borrow_mut();
+        self.internal_all(env, stmt)
     }
 
     #[napi]
@@ -202,12 +203,14 @@ impl Statement {
         let mut stmt = self.inner.borrow_mut();
         stmt.reset();
 
-        self.internal_all(env)
+        self.internal_all(env, stmt)
     }
 
-    fn internal_all(&self, env: Env) -> napi::Result<JsUnknown> {
-        let mut stmt = self.inner.borrow_mut();
-
+    fn internal_all(
+        &self,
+        env: Env,
+        mut stmt: RefMut<'_, limbo_core::Statement>,
+    ) -> napi::Result<JsUnknown> {
         let mut results = env.create_empty_array()?;
         let mut index = 0;
         loop {
