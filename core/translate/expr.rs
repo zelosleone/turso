@@ -2147,6 +2147,7 @@ pub fn translate_expr(
             }
         },
         ast::Expr::Variable(name) => {
+            let index = program.parameters.push(name);
             // Table t: (a,b,c)
             // For 'insert' statements:
             // INSERT INTO t (b,c,a) values (?,?,?)
@@ -2154,14 +2155,10 @@ pub fn translate_expr(
             // the parameter was given for an insert statement. Then, we may end up with something
             // like: insert into (b,c,a) values (22,?,?), in which case we will get a = 2, c = 1
             // instead of previously we would have gotten a = 0, c = 1
-            // where it instead should be c = 0, a = 1. So all we can do is store the value index
-            // alongside the index into the parameters list, then during bind_at: we can translate
+            // where it instead should be c = 0, a = 1. So we store the value index
+            // alongside the index into the parameters list, allowing bind_at: we can translate
             // this value into the proper order.
-            let index = program.parameters.push(name);
-            if let Some(ref mut indicies) = &mut program.param_positions {
-                // (value_index, parameter_index)
-                indicies.push((program.current_col_idx.unwrap_or(index.get()), index));
-            }
+            program.parameters.push_parameter_position(index);
             program.emit_insn(Insn::Variable {
                 index,
                 dest: target_register,

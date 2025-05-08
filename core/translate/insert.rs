@@ -54,6 +54,9 @@ pub fn translate_insert(
         None => crate::bail_corrupt_error!("Parse error: no such table: {}", table_name),
     };
     let resolver = Resolver::new(syms);
+    program
+        .parameters
+        .init_parameter_remap(table.columns().len());
     if let Some(virtual_table) = &table.virtual_table() {
         translate_virtual_table_insert(
             &mut program,
@@ -589,7 +592,6 @@ fn populate_column_registers(
     rowid_reg: usize,
     resolver: &Resolver,
 ) -> Result<()> {
-    program.param_positions = Some(vec![]);
     for (i, mapping) in column_mappings.iter().enumerate() {
         let target_reg = column_registers_start + i;
 
@@ -606,7 +608,7 @@ fn populate_column_registers(
                 target_reg
             };
             // set the value index to make it available to the translator
-            program.current_col_idx = Some(value_index);
+            program.parameters.set_value_index(value_index);
             translate_expr_no_constant_opt(
                 program,
                 None,
@@ -645,17 +647,7 @@ fn populate_column_registers(
             }
         }
     }
-    // if there are any parameter positions, we sort them by the value_index position
-    // to ensure we are binding the parameters to the proper index later on
-    if let Some(ref mut params) = program.param_positions.as_mut() {
-        // sort the tuples by the value_index position, leaving the param_index in right order.
-        params.sort_by_key(|(val_pos, _)| *val_pos);
-        let remap = params
-            .iter()
-            .map(|(_, internal_idx)| *internal_idx)
-            .collect();
-        program.set_param_remap(remap);
-    }
+    program.parameters.sort_and_build_remap();
     Ok(())
 }
 

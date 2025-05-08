@@ -246,3 +246,160 @@ fn test_insert_parameter_remap_all_params() -> anyhow::Result<()> {
     assert_eq!(ins.parameters().count(), 4);
     Ok(())
 }
+
+#[test]
+fn test_insert_parameter_multiple_remap_backwards() -> anyhow::Result<()> {
+    // ───────────────────────  schema  ──────────────────────────────
+    // Table             a     b     c     d
+    // INSERT lists:     d ,   c ,   b ,   a
+    // VALUES list:     ?1 ,  ?2 ,  ?3 ,  ?4
+    //
+    // Expected row on disk:  a = ?1 , b = ?2 , c = ?3 , d = ?4
+    //
+    // The row should be (111, 222, 333, 444)
+    // ───────────────────────────────────────────────────────────────
+
+    let tmp_db = TempDatabase::new_with_rusqlite(
+        "create table test (a integer, b integer, c integer, d integer);",
+    );
+    let conn = tmp_db.connect_limbo();
+    let mut ins = conn.prepare("insert into test (d,c,b,a) values (?, ?, ?, ?);")?;
+
+    let values = [
+        OwnedValue::Integer(444), // ?1 → d
+        OwnedValue::Integer(333), // ?2 → c
+        OwnedValue::Integer(222), // ?3 → b
+        OwnedValue::Integer(111), // ?4 → a
+    ];
+    for (i, value) in values.iter().enumerate() {
+        let idx = i + 1;
+        ins.bind_at(idx.try_into()?, value.clone());
+    }
+
+    // execute the insert (no rows returned)
+    loop {
+        match ins.step()? {
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+            _ => {}
+        }
+    }
+
+    let mut sel = conn.prepare("select a, b, c, d from test;")?;
+    loop {
+        match sel.step()? {
+            StepResult::Row => {
+                let row = sel.row().unwrap();
+
+                // insert_index = 2
+                // A = 111
+                assert_eq!(
+                    row.get::<&OwnedValue>(0).unwrap(),
+                    &OwnedValue::Integer(111)
+                );
+                // insert_index = 4
+                // B = 444
+                assert_eq!(
+                    row.get::<&OwnedValue>(1).unwrap(),
+                    &OwnedValue::Integer(222)
+                );
+                // insert_index = 3
+                // C = 333
+                assert_eq!(
+                    row.get::<&OwnedValue>(2).unwrap(),
+                    &OwnedValue::Integer(333)
+                );
+                // insert_index = 1
+                // D = 999
+                assert_eq!(
+                    row.get::<&OwnedValue>(3).unwrap(),
+                    &OwnedValue::Integer(444)
+                );
+            }
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+        }
+    }
+    assert_eq!(ins.parameters().count(), 4);
+    Ok(())
+}
+#[test]
+fn test_insert_parameter_multiple_no_remap() -> anyhow::Result<()> {
+    // ───────────────────────  schema  ──────────────────────────────
+    // Table             a     b     c     d
+    // INSERT lists:     a ,   b ,   c ,   d
+    // VALUES list:     ?1 ,  ?2 ,  ?3 ,  ?4
+    //
+    // Expected row on disk:  a = ?1 , b = ?2 , c = ?3 , d = ?4
+    //
+    // The row should be (111, 222, 333, 444)
+    // ───────────────────────────────────────────────────────────────
+
+    let tmp_db = TempDatabase::new_with_rusqlite(
+        "create table test (a integer, b integer, c integer, d integer);",
+    );
+    let conn = tmp_db.connect_limbo();
+    let mut ins = conn.prepare("insert into test (a,b,c,d) values (?, ?, ?, ?);")?;
+
+    let values = [
+        OwnedValue::Integer(111), // ?1 → a
+        OwnedValue::Integer(222), // ?2 → b
+        OwnedValue::Integer(333), // ?3 → c
+        OwnedValue::Integer(444), // ?4 → d
+    ];
+    for (i, value) in values.iter().enumerate() {
+        let idx = i + 1;
+        ins.bind_at(idx.try_into()?, value.clone());
+    }
+
+    // execute the insert (no rows returned)
+    loop {
+        match ins.step()? {
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+            _ => {}
+        }
+    }
+
+    let mut sel = conn.prepare("select a, b, c, d from test;")?;
+    loop {
+        match sel.step()? {
+            StepResult::Row => {
+                let row = sel.row().unwrap();
+
+                // insert_index = 2
+                // A = 111
+                assert_eq!(
+                    row.get::<&OwnedValue>(0).unwrap(),
+                    &OwnedValue::Integer(111)
+                );
+                // insert_index = 4
+                // B = 444
+                assert_eq!(
+                    row.get::<&OwnedValue>(1).unwrap(),
+                    &OwnedValue::Integer(222)
+                );
+                // insert_index = 3
+                // C = 333
+                assert_eq!(
+                    row.get::<&OwnedValue>(2).unwrap(),
+                    &OwnedValue::Integer(333)
+                );
+                // insert_index = 1
+                // D = 999
+                assert_eq!(
+                    row.get::<&OwnedValue>(3).unwrap(),
+                    &OwnedValue::Integer(444)
+                );
+            }
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+        }
+    }
+    assert_eq!(ins.parameters().count(), 4);
+    Ok(())
+}

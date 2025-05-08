@@ -39,9 +39,6 @@ pub struct ProgramBuilder {
     pub parameters: Parameters,
     pub result_columns: Vec<ResultSetColumn>,
     pub table_references: Vec<TableReference>,
-    // Indexes of the referenced insert values to maintain ordering of paramaters
-    pub param_positions: Option<Vec<(usize, NonZero<usize>)>>,
-    pub current_col_idx: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,8 +96,6 @@ impl ProgramBuilder {
             parameters: Parameters::new(),
             result_columns: Vec::new(),
             table_references: Vec::new(),
-            param_positions: None,
-            current_col_idx: None,
         }
     }
 
@@ -111,10 +106,6 @@ impl ProgramBuilder {
         let start = self.insns.len();
         self.constant_spans.push((start, usize::MAX));
         span
-    }
-
-    pub fn set_param_remap(&mut self, remap: Vec<NonZero<usize>>) {
-        self.parameters.set_parameter_remap(remap);
     }
 
     /// End the current constant span. The last instruction that was emitted is the last
