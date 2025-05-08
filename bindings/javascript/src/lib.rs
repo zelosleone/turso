@@ -63,7 +63,7 @@ impl Database {
         Ok(Self {
             memory,
             _db: db,
-            conn, 
+            conn,
             name: path,
         })
     }
@@ -72,6 +72,65 @@ impl Database {
     pub fn prepare(&self, sql: String) -> napi::Result<Statement> {
         let stmt = self.conn.prepare(&sql).map_err(into_napi_error)?;
         Ok(Statement::new(RefCell::new(stmt)))
+    }
+
+    #[napi]
+    pub fn transaction(&self) {
+        todo!()
+    }
+
+
+    #[napi]
+    pub fn pragma(&self) {
+        todo!()
+    }
+
+
+    #[napi]
+    pub fn backup(&self) {
+        todo!()
+    }
+
+
+    #[napi]
+    pub fn serialize(&self) {
+        todo!()
+    }
+
+
+    #[napi]
+    pub fn function(&self) {
+        todo!()
+    }
+
+
+    #[napi]
+    pub fn aggregate(&self) {
+        todo!()
+    }
+
+
+    #[napi]
+    pub fn table(&self) {
+        todo!()
+    }
+
+
+    #[napi]
+    pub fn load_extension(&self) {
+        todo!()
+    }
+
+
+    #[napi]
+    pub fn exec(&self) {
+        todo!()
+    }
+
+
+    #[napi]
+    pub fn close(&self) {
+        todo!()
     }
 }
 
@@ -116,6 +175,37 @@ impl Statement {
                 napi::Error::new(napi::Status::GenericFailure, format!("{:?}", step)),
             ),
         }
+    }
+
+    #[napi]
+    pub fn run(&self, _env: Env, _args: Vec<JsUnknown>) {
+        todo!()
+    }
+
+    #[napi]
+    pub fn iterate() {
+        todo!()
+    }
+
+    #[napi]
+    pub fn pluck() {
+        todo!()
+    }
+    #[napi]
+    pub fn expand() {
+        todo!()
+    }
+    #[napi]
+    pub fn raw() {
+        todo!()
+    }
+    #[napi]
+    pub fn columns() {
+        todo!()
+    }
+    #[napi]
+    pub fn bind() {
+        todo!()
     }
 }
 
