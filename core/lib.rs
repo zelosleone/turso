@@ -730,7 +730,7 @@ impl VirtualTable {
 
     pub fn open(&self) -> crate::Result<VTabOpaqueCursor> {
         let cursor = unsafe { (self.implementation.open)(self.implementation.ctx) };
-        VTabOpaqueCursor::new(cursor)
+        VTabOpaqueCursor::new(cursor, self.implementation.close)
     }
 
     #[tracing::instrument(skip(cursor))]
