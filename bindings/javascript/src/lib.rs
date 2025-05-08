@@ -170,8 +170,8 @@ impl limbo_core::DatabaseStorage for DatabaseFile {
         Ok(())
     }
 
-    fn sync(&self, _c: limbo_core::Completion) -> limbo_core::Result<()> {
-        todo!()
+    fn sync(&self, c: limbo_core::Completion) -> limbo_core::Result<()> {
+        self.file.sync(c)
     }
 }
 
