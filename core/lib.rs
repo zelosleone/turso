@@ -325,6 +325,10 @@ pub struct Connection {
 
 impl Connection {
     pub fn prepare(self: &Rc<Connection>, sql: impl AsRef<str>) -> Result<Statement> {
+        if sql.as_ref().is_empty() {
+            return Err(LimboError::InvalidArgument("The supplied SQL string contains no statements".to_string()));
+        }
+
         let sql = sql.as_ref();
         tracing::trace!("Preparing: {}", sql);
         let mut parser = Parser::new(sql.as_bytes());
@@ -355,7 +359,10 @@ impl Connection {
                 Cmd::ExplainQueryPlan(_stmt) => todo!(),
             }
         } else {
-            todo!()
+            // Shouln't happen
+            Err(LimboError::ParseError(
+                "The supplied SQL string contains no statements".to_string(),
+            ))
         }
     }
 
