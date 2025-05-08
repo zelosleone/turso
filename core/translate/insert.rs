@@ -648,6 +648,7 @@ fn populate_column_registers(
     // if there are any parameter positions, we sort them by the value_index position
     // to ensure we are binding the parameters to the proper index later on
     if let Some(ref mut params) = program.param_positions.as_mut() {
+        // sort the tuples by the value_index position, leaving the param_index in right order.
         params.sort_by_key(|(val_pos, _)| *val_pos);
         let remap = params
             .iter()

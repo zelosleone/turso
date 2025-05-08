@@ -2159,7 +2159,7 @@ pub fn translate_expr(
             // this value into the proper order.
             let index = program.parameters.push(name);
             if let Some(ref mut indicies) = &mut program.param_positions {
-                // index of the parameter in the inserted values + index of the parameter relative
+                // (value_index, parameter_index)
                 indicies.push((program.current_col_idx.unwrap_or(index.get()), index));
             }
             program.emit_insn(Insn::Variable {
