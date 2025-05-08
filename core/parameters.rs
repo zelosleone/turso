@@ -52,11 +52,14 @@ impl Parameters {
     }
 
     pub fn set_parameter_remap(&mut self, remap: Vec<NonZero<usize>>) {
+        tracing::debug!("remap: {:?}", remap);
         self.remap = remap;
     }
 
     pub fn get_remapped_value(&self, idx: NonZero<usize>) -> NonZero<usize> {
-        *self.remap.get(idx.get() - 1).unwrap_or(&idx)
+        let res = *self.remap.get(idx.get() - 1).unwrap_or(&idx);
+        tracing::debug!("get_remapped_value: {idx}, value: {res}");
+        res
     }
 
     pub fn name(&self, index: NonZero<usize>) -> Option<String> {
