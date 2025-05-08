@@ -1,11 +1,14 @@
 #![deny(clippy::all)]
 
 use std::cell::RefCell;
+use std::num::NonZeroUsize;
+
 use std::rc::Rc;
 use std::sync::Arc;
 
+use limbo_core::types::Text;
 use limbo_core::{maybe_init_database_file, LimboError};
-use napi::{bindgen_prelude::ObjectFinalize, Env, JsUnknown, Result as NapiResult};
+use napi::{bindgen_prelude::ObjectFinalize, Env, JsUnknown};
 use napi_derive::napi;
 
 #[napi(object)]
@@ -17,6 +20,7 @@ pub struct OpenDatabaseOptions {
 }
 
 #[napi(custom_finalize)]
+#[derive(Clone)]
 pub struct Database {
     #[napi(writable = false)]
     pub memory: bool,
@@ -32,6 +36,7 @@ pub struct Database {
     pub name: String,
     _db: Arc<limbo_core::Database>,
     conn: Rc<limbo_core::Connection>,
+    io: Arc<dyn limbo_core::IO>,
 }
 
 impl ObjectFinalize for Database {
@@ -57,7 +62,8 @@ impl Database {
             .map_err(into_napi_error)?;
         maybe_init_database_file(&file, &io).map_err(into_napi_error)?;
         let db_file = Arc::new(DatabaseFile::new(file));
-        let db = limbo_core::Database::open(io, &path, db_file, false).map_err(into_napi_error)?;
+        let db = limbo_core::Database::open(io.clone(), &path, db_file, false)
+            .map_err(into_napi_error)?;
         let conn = db.connect().map_err(into_napi_error)?;
 
         Ok(Self {
@@ -65,13 +71,14 @@ impl Database {
             _db: db,
             conn,
             name: path,
+            io,
         })
     }
 
     #[napi]
     pub fn prepare(&self, sql: String) -> napi::Result<Statement> {
         let stmt = self.conn.prepare(&sql).map_err(into_napi_error)?;
-        Ok(Statement::new(RefCell::new(stmt)))
+        Ok(Statement::new(RefCell::new(stmt), self.clone()))
     }
 
     #[napi]
@@ -79,54 +86,45 @@ impl Database {
         todo!()
     }
 
-
     #[napi]
     pub fn pragma(&self) {
         todo!()
     }
-
 
     #[napi]
     pub fn backup(&self) {
         todo!()
     }
 
-
     #[napi]
     pub fn serialize(&self) {
         todo!()
     }
-
 
     #[napi]
     pub fn function(&self) {
         todo!()
     }
 
-
     #[napi]
     pub fn aggregate(&self) {
         todo!()
     }
-
 
     #[napi]
     pub fn table(&self) {
         todo!()
     }
 
-
     #[napi]
     pub fn load_extension(&self) {
         todo!()
     }
 
-
     #[napi]
     pub fn exec(&self) {
         todo!()
     }
-
 
     #[napi]
     pub fn close(&self) {
@@ -144,13 +142,14 @@ pub struct Statement {
     // pub readonly: bool,
     // #[napi(writable = false)]
     // pub busy: bool,
+    database: Database,
     inner: RefCell<limbo_core::Statement>,
 }
 
 #[napi]
 impl Statement {
-    pub fn new(inner: RefCell<limbo_core::Statement>) -> Self {
-        Self { inner }
+    pub fn new(inner: RefCell<limbo_core::Statement>, database: Database) -> Self {
+        Self { inner, database }
     }
 
     #[napi]
@@ -177,14 +176,61 @@ impl Statement {
         }
     }
 
+    // TODO: Return Info object (https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md#runbindparameters---object)
+    // The original function is variadic, check if we can do the same
     #[napi]
-    pub fn run(&self, _env: Env, _args: Vec<JsUnknown>) {
-        todo!()
+    pub fn run(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<JsUnknown> {
+        if let Some(args) = args {
+            for (i, elem) in args.into_iter().enumerate() {
+                let value = from_js_value(elem)?;
+                self.inner
+                    .borrow_mut()
+                    .bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
+            }
+        }
+
+        self.internal_all(env)
     }
 
     #[napi]
     pub fn iterate() {
         todo!()
+    }
+
+    fn internal_all(&self, env: Env) -> napi::Result<JsUnknown> {
+        let mut stmt = self.inner.borrow_mut();
+
+        let mut results = env.create_empty_array()?;
+        let mut index = 0;
+        loop {
+            match stmt.step().map_err(into_napi_error)? {
+                limbo_core::StepResult::Row => {
+                    let row = stmt.row().unwrap();
+                    let mut obj = env.create_object()?;
+                    for (idx, value) in row.get_values().enumerate() {
+                        let key = stmt.get_column_name(idx);
+                        let js_value = to_js_value(&env, value);
+                        obj.set_named_property(&key, js_value)?;
+                    }
+                    results.set_element(index, obj)?;
+                    index += 1;
+                }
+                limbo_core::StepResult::Done => {
+                    break;
+                }
+                limbo_core::StepResult::IO => {
+                    self.database.io.run_once().map_err(into_napi_error)?;
+                }
+                limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => {
+                    return Err(napi::Error::new(
+                        napi::Status::GenericFailure,
+                        format!("{:?}", stmt.step()),
+                    ));
+                }
+            }
+        }
+
+        Ok(results.into_unknown())
     }
 
     #[napi]
@@ -219,7 +265,7 @@ fn to_js_value(env: &napi::Env, value: &limbo_core::OwnedValue) -> napi::Result<
     }
 }
 
-fn from_js_value(env: &napi::Env, value: JsUnknown) -> napi::Result<limbo_core::OwnedValue> {
+fn from_js_value(value: JsUnknown) -> napi::Result<limbo_core::OwnedValue> {
     match value.get_type()? {
         napi::ValueType::Undefined | napi::ValueType::Null | napi::ValueType::Unknown => {
             Ok(limbo_core::OwnedValue::Null)
