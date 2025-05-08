@@ -45,21 +45,22 @@ impl ObjectFinalize for Database {
 #[napi]
 impl Database {
     #[napi(constructor)]
-    pub fn new(path: String) -> Self {
+    pub fn new(path: String, _options: Option<OpenDatabaseOptions>) -> napi::Result<Self> {
         let memory = path == ":memory:";
         let io: Arc<dyn limbo_core::IO> = if memory {
             Arc::new(limbo_core::MemoryIO::new())
         } else {
-            Arc::new(IO {})
+            Arc::new(limbo_core::PlatformIO::new().map_err(into_napi_error)?)
         };
         let file = io
             .open_file(&path, limbo_core::OpenFlags::Create, false)
-            .unwrap();
-        maybe_init_database_file(&file, &io).unwrap();
+            .map_err(into_napi_error)?;
+        maybe_init_database_file(&file, &io).map_err(into_napi_error)?;
         let db_file = Arc::new(DatabaseFile::new(file));
-        let db = limbo_core::Database::open(io, &path, db_file, false).unwrap();
-        let conn = db.connect().unwrap();
-        Self {
+        let db = limbo_core::Database::open(io, &path, db_file, false).map_err(into_napi_error)?;
+        let conn = db.connect().map_err(into_napi_error)?;
+
+        Ok(Self {
             memory,
             _db: db,
             conn, 
@@ -68,9 +69,9 @@ impl Database {
     }
 
     #[napi]
-    pub fn prepare(&self, sql: String) -> Statement {
-        let stmt = self.conn.prepare(&sql).unwrap();
-        Statement::new(RefCell::new(stmt))
+    pub fn prepare(&self, sql: String) -> napi::Result<Statement> {
+        let stmt = self.conn.prepare(&sql).map_err(into_napi_error)?;
+        Ok(Statement::new(RefCell::new(stmt)))
     }
 }
 
@@ -94,11 +95,12 @@ impl Statement {
     }
 
     #[napi]
-    pub fn get(&self, env: Env) -> NapiResult<JsUnknown> {
+    pub fn get(&self, env: Env) -> napi::Result<JsUnknown> {
         let mut stmt = self.inner.borrow_mut();
         stmt.reset();
-        match stmt.step() {
-            Ok(limbo_core::StepResult::Row) => {
+        let step = stmt.step().map_err(into_napi_error)?;
+        match step {
+            limbo_core::StepResult::Row => {
                 let row = stmt.row().unwrap();
                 let mut obj = env.create_object()?;
                 for (idx, value) in row.get_values().enumerate() {
@@ -108,24 +110,22 @@ impl Statement {
                 }
                 Ok(obj.into_unknown())
             }
-            Ok(limbo_core::StepResult::Done) => Ok(env.get_undefined().unwrap().into_unknown()),
-            Ok(limbo_core::StepResult::IO)
-            | Ok(limbo_core::StepResult::Interrupt)
-            | Ok(limbo_core::StepResult::Busy) => todo!(),
-            Err(e) => Err(napi::Error::from_reason(format!("Database error: {:?}", e))),
+            limbo_core::StepResult::Done => Ok(env.get_undefined()?.into_unknown()),
+            limbo_core::StepResult::IO => todo!(),
+            limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => Err(
+                napi::Error::new(napi::Status::GenericFailure, format!("{:?}", step)),
+            ),
         }
     }
 }
 
-fn to_js_value(env: &napi::Env, value: &limbo_core::OwnedValue) -> JsUnknown {
+fn to_js_value(env: &napi::Env, value: &limbo_core::OwnedValue) -> napi::Result<JsUnknown> {
     match value {
-        limbo_core::OwnedValue::Null => env.get_null().unwrap().into_unknown(),
-        limbo_core::OwnedValue::Integer(i) => env.create_int64(*i).unwrap().into_unknown(),
-        limbo_core::OwnedValue::Float(f) => env.create_double(*f).unwrap().into_unknown(),
-        limbo_core::OwnedValue::Text(s) => env.create_string(s.as_str()).unwrap().into_unknown(),
-        limbo_core::OwnedValue::Blob(b) => {
-            env.create_buffer_copy(b.as_slice()).unwrap().into_unknown()
-        }
+        limbo_core::OwnedValue::Null => Ok(env.get_null()?.into_unknown()),
+        limbo_core::OwnedValue::Integer(i) => Ok(env.create_int64(*i)?.into_unknown()),
+        limbo_core::OwnedValue::Float(f) => Ok(env.create_double(*f)?.into_unknown()),
+        limbo_core::OwnedValue::Text(s) => Ok(env.create_string(s.as_str())?.into_unknown()),
+        limbo_core::OwnedValue::Blob(b) => Ok(env.create_buffer_copy(b.as_slice())?.into_unknown()),
     }
 }
 
@@ -175,33 +175,7 @@ impl limbo_core::DatabaseStorage for DatabaseFile {
     }
 }
 
-struct IO {}
-
-impl Clock for IO {
-    fn now(&self) -> Instant {
-        todo!()
-    }
-}
-
-impl limbo_core::IO for IO {
-    fn open_file(
-        &self,
-        _path: &str,
-        _flags: limbo_core::OpenFlags,
-        _direct: bool,
-    ) -> limbo_core::Result<Arc<dyn limbo_core::File>> {
-        todo!();
-    }
-
-    fn run_once(&self) -> limbo_core::Result<()> {
-        todo!();
-    }
-
-    fn generate_random_number(&self) -> i64 {
-        todo!();
-    }
-
-    fn get_memory_io(&self) -> Arc<limbo_core::MemoryIO> {
-        Arc::new(limbo_core::MemoryIO::new())
-    }
+#[inline]
+pub fn into_napi_error(limbo_error: LimboError) -> napi::Error {
+    napi::Error::new(napi::Status::GenericFailure, format!("{limbo_error}"))
 }
