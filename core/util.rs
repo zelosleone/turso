@@ -989,11 +989,11 @@ pub fn parse_numeric_literal(text: &str) -> Result<OwnedValue> {
         }
         return Ok(OwnedValue::Integer(-value));
     }
-    
+
     if let Ok(int_value) = text.parse::<i64>() {
         return Ok(OwnedValue::Integer(int_value));
     }
-    
+
     let float_value = text.parse::<f64>()?;
     Ok(OwnedValue::Float(float_value))
 }
