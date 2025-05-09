@@ -27,11 +27,8 @@ impl Parameter {
 pub struct Parameters {
     index: NonZero<usize>,
     pub list: Vec<Parameter>,
-    remap: Option<Vec<NonZero<usize>>>,
     // Indexes of the referenced insert values to maintain ordering of paramaters
-    param_positions: Option<Vec<(usize, NonZero<usize>)>>,
-    // For insert statements with multiple rows
-    current_insert_row_idx: usize,
+    param_positions: Option<Vec<usize>>,
     current_col_value_idx: Option<usize>,
 }
 
@@ -46,9 +43,7 @@ impl Parameters {
         Self {
             index: 1.try_into().unwrap(),
             list: vec![],
-            remap: None,
             param_positions: None,
-            current_insert_row_idx: 0,
             current_col_value_idx: None,
         }
     }
@@ -63,41 +58,20 @@ impl Parameters {
         self.current_col_value_idx = Some(idx);
     }
 
-    /// Add a parameter position to the array used to build the remap.
-    pub fn push_parameter_position(&mut self, index: NonZero<usize>) {
-        if let Some(cur) = self.current_col_value_idx {
-            if let Some(positions) = self.param_positions.as_mut() {
-                positions.push((cur, index));
-                tracing::debug!("push parameter position: {:?}", positions);
-            }
-        }
+    pub fn set_parameter_positions(&mut self, params: Vec<usize>) {
+        self.param_positions = Some(params);
     }
 
-    /// Initialize the stored positions array at the start of an insert statement
-    pub fn init_parameter_remap(&mut self, cols: usize) {
-        self.param_positions = Some(Vec::with_capacity(cols));
-    }
-
-    /// Sorts the stored value indexes and builds and sets the remap array.
-    pub fn sort_and_build_remap(&mut self) {
-        self.remap = self.param_positions.as_mut().map(|positions| {
-            // sort by value_index
-            positions.sort_by_key(|(idx, _)| *idx);
-            tracing::debug!("param positions: {:?}", positions);
-            // collect the parameter indexes
-            positions.iter().map(|(_, idx)| *idx).collect::<Vec<_>>()
-        })
-    }
-
-    /// Returns the remapped index for a given parameter index or the original index if none is found
-    pub fn get_remapped_index(&self, idx: NonZero<usize>) -> NonZero<usize> {
-        let res = *self
-            .remap
-            .as_ref()
-            .map(|p| p.get(idx.get() - 1).unwrap_or(&idx))
-            .unwrap_or(&idx);
-        tracing::debug!("get_remapped_value: {idx}, value: {res}");
-        res
+    pub fn get_param_index(&self) -> Option<NonZero<usize>> {
+        if let Some(val) = self.current_col_value_idx {
+            return self.param_positions.as_ref().and_then(|positions| {
+                positions
+                    .iter()
+                    .position(|param| param.eq(&val))
+                    .map(|p| NonZero::new(p + 1).unwrap())
+            });
+        };
+        None
     }
 
     pub fn name(&self, index: NonZero<usize>) -> Option<String> {
@@ -131,7 +105,11 @@ impl Parameters {
                 let index = self.next_index();
                 self.list.push(Parameter::Anonymous(index));
                 tracing::trace!("anonymous parameter at {index}");
-                index
+                if let Some(idx) = self.get_param_index() {
+                    idx
+                } else {
+                    index
+                }
             }
             name if name.starts_with(['$', ':', '@', '#']) => {
                 match self

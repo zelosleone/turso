@@ -2148,17 +2148,6 @@ pub fn translate_expr(
         },
         ast::Expr::Variable(name) => {
             let index = program.parameters.push(name);
-            // Table t: (a,b,c)
-            // For 'insert' statements:
-            // INSERT INTO t (b,c,a) values (?,?,?)
-            // since we walk the columns in the tables column order, we have to store the value index that
-            // the parameter was given for an insert statement. Then, we may end up with something
-            // like: insert into (b,c,a) values (22,?,?), in which case we will get a = 2, c = 1
-            // instead of previously we would have gotten a = 0, c = 1
-            // where it instead should be c = 0, a = 1. So we store the value index
-            // alongside the index into the parameters list, allowing bind_at: we can translate
-            // this value into the proper order.
-            program.parameters.push_parameter_position(index);
             program.emit_insn(Insn::Variable {
                 index,
                 dest: target_register,
@@ -2547,6 +2536,16 @@ pub fn maybe_apply_affinity(col_type: Type, target_register: usize, program: &mu
             register: target_register,
         })
     }
+}
+
+/// Gather all the expected indexes of variables
+pub fn expected_param_indexes(cols: &[Vec<ast::Expr>]) -> Vec<usize> {
+    cols.iter()
+        .flat_map(|col| col.iter())
+        .enumerate()
+        .filter(|(_, col)| matches!(col, ast::Expr::Variable(_)))
+        .map(|(i, _)| i)
+        .collect::<Vec<_>>()
 }
 
 /// Sanitaizes a string literal by removing single quote at front and back

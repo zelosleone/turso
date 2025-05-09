@@ -1,7 +1,6 @@
 use std::{
     cell::Cell,
     cmp::Ordering,
-    num::NonZero,
     rc::{Rc, Weak},
     sync::Arc,
 };

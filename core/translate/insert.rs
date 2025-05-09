@@ -21,7 +21,7 @@ use crate::{
 use crate::{Result, SymbolTable, VirtualTable};
 
 use super::emitter::Resolver;
-use super::expr::{translate_expr_no_constant_opt, NoConstantOptReason};
+use super::expr::{expected_param_indexes, translate_expr_no_constant_opt, NoConstantOptReason};
 
 #[allow(clippy::too_many_arguments)]
 pub fn translate_insert(
@@ -54,9 +54,6 @@ pub fn translate_insert(
         None => crate::bail_corrupt_error!("Parse error: no such table: {}", table_name),
     };
     let resolver = Resolver::new(syms);
-    program
-        .parameters
-        .init_parameter_remap(table.columns().len());
     if let Some(virtual_table) = &table.virtual_table() {
         translate_virtual_table_insert(
             &mut program,
@@ -109,6 +106,11 @@ pub fn translate_insert(
         },
         InsertBody::DefaultValues => &vec![vec![]],
     };
+    // set expected parameter value_indexes, so we can keep track of which value_index
+    // maps to each index of a variable in translate_expr
+    program
+        .parameters
+        .set_parameter_positions(expected_param_indexes(values));
 
     let column_mappings = resolve_columns_for_insert(&table, columns, values)?;
     let index_col_mappings = resolve_indicies_for_insert(schema, table.as_ref(), &column_mappings)?;
@@ -155,8 +157,9 @@ pub fn translate_insert(
 
         program.resolve_label(start_offset_label, program.offset());
 
-        for value in values {
+        for (i, value) in values.iter().enumerate() {
             populate_column_registers(
+                i,
                 &mut program,
                 value,
                 &column_mappings,
@@ -194,6 +197,7 @@ pub fn translate_insert(
         });
 
         populate_column_registers(
+            0,
             &mut program,
             &values[0],
             &column_mappings,
@@ -584,6 +588,7 @@ fn resolve_indicies_for_insert(
 
 /// Populates the column registers with values for a single row
 fn populate_column_registers(
+    array_idx: usize,
     program: &mut ProgramBuilder,
     value: &[Expr],
     column_mappings: &[ColumnMapping],
@@ -607,8 +612,12 @@ fn populate_column_registers(
             } else {
                 target_reg
             };
-            // set the value index to make it available to the translator
-            program.parameters.set_value_index(value_index);
+            // we have to flatten the value index by multiplying it by the array index.
+            // e.g. (?,?), (?,?)
+            // value_index here needs to be 1,2,3,4 instead of 1,2,1,2
+            program
+                .parameters
+                .set_value_index(value_index * (array_idx + 1));
             translate_expr_no_constant_opt(
                 program,
                 None,
@@ -647,7 +656,6 @@ fn populate_column_registers(
             }
         }
     }
-    program.parameters.sort_and_build_remap();
     Ok(())
 }
 
@@ -673,12 +681,17 @@ fn translate_virtual_table_insert(
         InsertBody::DefaultValues => &vec![],
         _ => crate::bail_parse_error!("Unsupported INSERT body for virtual tables"),
     };
-
+    // set expected parameter value_indexes, so we can keep track of which value_index
+    // maps to each index of a variable in translate_expr
+    program
+        .parameters
+        .set_parameter_positions(expected_param_indexes(values));
     let table = Table::Virtual(virtual_table.clone());
     let column_mappings = resolve_columns_for_insert(&table, columns, values)?;
 
     let value_registers_start = program.alloc_registers(values[0].len());
     for (i, expr) in values[0].iter().enumerate() {
+        program.parameters.set_value_index(i + 1);
         translate_expr_no_constant_opt(
             program,
             None,
