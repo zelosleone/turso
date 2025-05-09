@@ -243,6 +243,13 @@ func buildArgs(args []driver.Value) ([]limboValue, func(), error) {
 		case float64:
 			limboVal.Type = realVal
 			limboVal.Value = *(*[8]byte)(unsafe.Pointer(&val))
+		case bool:
+			limboVal.Type = intVal
+			boolAsInt := int64(0)
+			if val {
+				boolAsInt = 1
+			}
+			limboVal.Value = *(*[8]byte)(unsafe.Pointer(&boolAsInt))
 		case string:
 			limboVal.Type = textVal
 			cstr := CString(val)
