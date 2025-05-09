@@ -259,6 +259,7 @@ impl PseudoTable {
             is_rowid_alias: false,
             notnull: false,
             default: None,
+            unique: false,
         });
     }
     pub fn get_column(&self, name: &str) -> Option<(usize, &Column)> {
@@ -365,6 +366,7 @@ fn create_table(
                 let mut primary_key = false;
                 let mut notnull = false;
                 let mut order = SortOrder::Asc;
+                let mut unique = false;
                 for c_def in &col_def.constraints {
                     match &c_def.constraint {
                         limbo_sqlite3_parser::ast::ColumnConstraint::PrimaryKey {
@@ -381,6 +383,10 @@ fn create_table(
                         }
                         limbo_sqlite3_parser::ast::ColumnConstraint::Default(expr) => {
                             default = Some(expr.clone())
+                        }
+                        // TODO: for now we don't check Resolve type of unique
+                        limbo_sqlite3_parser::ast::ColumnConstraint::Unique(..) => {
+                            unique = true;
                         }
                         _ => {}
                     }
@@ -403,6 +409,7 @@ fn create_table(
                     is_rowid_alias: typename_exactly_integer && primary_key,
                     notnull,
                     default,
+                    unique,
                 });
             }
             if options.contains(TableOptions::WITHOUT_ROWID) {
@@ -456,6 +463,7 @@ pub struct Column {
     pub is_rowid_alias: bool,
     pub notnull: bool,
     pub default: Option<Expr>,
+    pub unique: bool,
 }
 
 impl Column {
@@ -658,6 +666,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 is_rowid_alias: false,
                 notnull: false,
                 default: None,
+                unique: false,
             },
             Column {
                 name: Some("name".to_string()),
@@ -667,6 +676,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 is_rowid_alias: false,
                 notnull: false,
                 default: None,
+                unique: false,
             },
             Column {
                 name: Some("tbl_name".to_string()),
@@ -676,6 +686,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 is_rowid_alias: false,
                 notnull: false,
                 default: None,
+                unique: false,
             },
             Column {
                 name: Some("rootpage".to_string()),
@@ -685,6 +696,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 is_rowid_alias: false,
                 notnull: false,
                 default: None,
+                unique: false,
             },
             Column {
                 name: Some("sql".to_string()),
@@ -694,6 +706,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 is_rowid_alias: false,
                 notnull: false,
                 default: None,
+                unique: false,
             },
         ],
     }
@@ -774,6 +787,8 @@ impl Index {
                 "Cannot create automatic index for table without primary key".to_string(),
             ));
         }
+
+        // let unique_columns =
 
         let index_columns = table
             .primary_key_columns
@@ -1188,6 +1203,7 @@ mod tests {
                 is_rowid_alias: false,
                 notnull: false,
                 default: None,
+                unique: false,
             }],
         };
 
