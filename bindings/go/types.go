@@ -155,7 +155,15 @@ func toGoValue(valPtr uintptr) interface{} {
 	case textVal:
 		textPtr := *(*uintptr)(unsafe.Pointer(&val.Value))
 		defer freeCString(textPtr)
-		return GoString(textPtr)
+		str := GoString(textPtr)
+
+		// Try to parse as RFC3339 time format
+		if t, err := time.Parse(time.RFC3339, str); err == nil {
+			return t
+		}
+
+		// If it doesn't parse as time, return as string
+		return str
 	case blobVal:
 		blobPtr := *(*uintptr)(unsafe.Pointer(&val.Value))
 		defer freeBlob(blobPtr)
@@ -245,7 +253,7 @@ func buildArgs(args []driver.Value) ([]limboValue, func(), error) {
 			blob := makeBlob(val)
 			pinner.Pin(blob)
 			*(*uintptr)(unsafe.Pointer(&limboVal.Value)) = uintptr(unsafe.Pointer(blob))
-		case time.Time: // Add this case
+		case time.Time:
 			limboVal.Type = textVal
 			timeStr := val.Format(time.RFC3339)
 			cstr := CString(timeStr)
