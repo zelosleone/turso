@@ -11,6 +11,7 @@ use std::{
 use crate::{
     function::AggFunc,
     schema::{BTreeTable, Column, Index, Table},
+    util::exprs_are_equivalent,
     vdbe::{
         builder::{CursorType, ProgramBuilder},
         BranchOffset, CursorID,
@@ -65,6 +66,7 @@ pub struct GroupBy {
     pub exprs: Vec<ast::Expr>,
     /// having clause split into a vec at 'AND' boundaries.
     pub having: Option<Vec<ast::Expr>>,
+    pub sort_order: Option<Vec<SortOrder>>,
 }
 
 /// In a query plan, WHERE clause conditions and JOIN conditions are all folded into a vector of WhereTerm.
@@ -306,6 +308,41 @@ pub struct SelectPlan {
     pub contains_constant_false_condition: bool,
     /// query type (top level or subquery)
     pub query_type: SelectQueryType,
+}
+
+impl SelectPlan {
+    pub fn agg_args_count(&self) -> usize {
+        self.aggregates.iter().map(|agg| agg.args.len()).sum()
+    }
+
+    pub fn group_by_col_count(&self) -> usize {
+        self.group_by
+            .as_ref()
+            .map_or(0, |group_by| group_by.exprs.len())
+    }
+
+    pub fn non_group_by_non_agg_columns(&self) -> impl Iterator<Item = &ast::Expr> {
+        self.result_columns
+            .iter()
+            .filter(|c| {
+                !c.contains_aggregates
+                    && !self.group_by.as_ref().map_or(false, |group_by| {
+                        group_by
+                            .exprs
+                            .iter()
+                            .any(|expr| exprs_are_equivalent(&c.expr, expr))
+                    })
+            })
+            .map(|c| &c.expr)
+    }
+
+    pub fn non_group_by_non_agg_column_count(&self) -> usize {
+        self.non_group_by_non_agg_columns().count()
+    }
+
+    pub fn group_by_sorter_column_count(&self) -> usize {
+        self.agg_args_count() + self.group_by_col_count() + self.non_group_by_non_agg_column_count()
+    }
 }
 
 #[allow(dead_code)]

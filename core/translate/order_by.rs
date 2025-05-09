@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    emitter::TranslateCtx,
+    emitter::{Resolver, TranslateCtx},
     expr::translate_expr,
     plan::{ResultSetColumn, SelectPlan},
     result_row::{emit_offset, emit_result_row_and_limit},
@@ -121,7 +121,7 @@ pub fn emit_order_by(
     });
     program.preassign_label_to_next_insn(sort_loop_start_label);
 
-    emit_offset(program, t_ctx, plan, sort_loop_next_label)?;
+    emit_offset(program, plan, sort_loop_next_label, t_ctx.reg_offset)?;
 
     program.emit_insn(Insn::SorterData {
         cursor_id: sort_cursor,
@@ -142,7 +142,15 @@ pub fn emit_order_by(
         });
     }
 
-    emit_result_row_and_limit(program, t_ctx, plan, start_reg, Some(sort_loop_end_label))?;
+    emit_result_row_and_limit(
+        program,
+        plan,
+        start_reg,
+        t_ctx.reg_limit,
+        t_ctx.reg_offset,
+        t_ctx.reg_limit_offset_sum,
+        Some(sort_loop_end_label),
+    )?;
 
     program.resolve_label(sort_loop_next_label, program.offset());
     program.emit_insn(Insn::SorterNext {
@@ -157,7 +165,9 @@ pub fn emit_order_by(
 /// Emits the bytecode for inserting a row into an ORDER BY sorter.
 pub fn order_by_sorter_insert(
     program: &mut ProgramBuilder,
-    t_ctx: &mut TranslateCtx,
+    resolver: &Resolver,
+    sort_metadata: &SortMetadata,
+    res_col_indexes_in_orderby_sorter: &mut Vec<usize>,
     plan: &SelectPlan,
 ) -> Result<()> {
     let order_by = plan.order_by.as_ref().unwrap();
@@ -181,7 +191,7 @@ pub fn order_by_sorter_insert(
             Some(&plan.table_references),
             expr,
             key_reg,
-            &t_ctx.resolver,
+            resolver,
         )?;
     }
     let mut cur_reg = start_reg + order_by_len;
@@ -191,9 +201,7 @@ pub fn order_by_sorter_insert(
             let found = v.iter().find(|(skipped_idx, _)| *skipped_idx == i);
             // If the result column is in the list of columns to skip, we need to know its new index in the ORDER BY sorter.
             if let Some((_, result_column_idx)) = found {
-                t_ctx
-                    .result_column_indexes_in_orderby_sorter
-                    .insert(i, *result_column_idx);
+                res_col_indexes_in_orderby_sorter.insert(i, *result_column_idx);
                 continue;
             }
         }
@@ -202,11 +210,9 @@ pub fn order_by_sorter_insert(
             Some(&plan.table_references),
             &rc.expr,
             cur_reg,
-            &t_ctx.resolver,
+            resolver,
         )?;
-        t_ctx
-            .result_column_indexes_in_orderby_sorter
-            .insert(i, cur_idx_in_orderby_sorter);
+        res_col_indexes_in_orderby_sorter.insert(i, cur_idx_in_orderby_sorter);
         cur_idx_in_orderby_sorter += 1;
         cur_reg += 1;
     }
@@ -214,14 +220,14 @@ pub fn order_by_sorter_insert(
     let SortMetadata {
         sort_cursor,
         reg_sorter_data,
-    } = *t_ctx.meta_sort.as_mut().unwrap();
+    } = sort_metadata;
 
     sorter_insert(
         program,
         start_reg,
         orderby_sorter_column_count,
-        sort_cursor,
-        reg_sorter_data,
+        *sort_cursor,
+        *reg_sorter_data,
     );
     Ok(())
 }
