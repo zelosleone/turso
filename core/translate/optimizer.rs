@@ -2140,7 +2140,7 @@ pub fn constraints_from_where_clause(
                             operator,
                             index_col_pos: position_in_index,
                             table_col_pos: {
-                                let ast::Expr::Column { column, .. } = lhs else {
+                                let ast::Expr::Column { column, .. } = unwrap_parens(lhs)? else {
                                     crate::bail_parse_error!("expected column in index constraint");
                                 };
                                 *column
@@ -2157,7 +2157,7 @@ pub fn constraints_from_where_clause(
                             operator: opposite_cmp_op(operator),
                             index_col_pos: position_in_index,
                             table_col_pos: {
-                                let ast::Expr::Column { column, .. } = rhs else {
+                                let ast::Expr::Column { column, .. } = unwrap_parens(rhs)? else {
                                     crate::bail_parse_error!("expected column in index constraint");
                                 };
                                 *column
