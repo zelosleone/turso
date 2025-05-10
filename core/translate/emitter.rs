@@ -842,6 +842,7 @@ fn emit_update_insns(
             key_reg: beg,
             record_reg,
             flag: 0,
+            table_name: table_ref.identifier.clone(),
         });
     } else if let Some(vtab) = table_ref.virtual_table() {
         let arg_count = table_ref.columns().len() + 2;

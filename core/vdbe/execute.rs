@@ -3700,6 +3700,7 @@ pub fn op_insert(
         key_reg,
         record_reg,
         flag: _,
+        table_name: _,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)

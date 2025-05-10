@@ -235,6 +235,7 @@ pub fn emit_schema_entry(
         key_reg: rowid_reg,
         record_reg,
         flag: 0,
+        table_name: tbl_name.to_string(),
     });
 }
 

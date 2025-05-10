@@ -387,6 +387,7 @@ pub fn translate_insert(
         key_reg: rowid_reg,
         record_reg: record_register,
         flag: 0,
+        table_name: table_name.to_string(),
     });
 
     if inserting_multiple_rows {
