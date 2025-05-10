@@ -2538,16 +2538,6 @@ pub fn maybe_apply_affinity(col_type: Type, target_register: usize, program: &mu
     }
 }
 
-/// Gather all the expected indicies of all Expr::Variable
-pub fn expected_param_indicies(cols: &[Vec<ast::Expr>]) -> Vec<usize> {
-    cols.iter()
-        .flat_map(|col| col.iter())
-        .enumerate()
-        .filter(|(_, col)| matches!(col, ast::Expr::Variable(_)))
-        .map(|(i, _)| i)
-        .collect::<Vec<_>>()
-}
-
 /// Sanitaizes a string literal by removing single quote at front and back
 /// and escaping double single quotes
 pub fn sanitize_string(input: &str) -> String {

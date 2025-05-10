@@ -21,7 +21,7 @@ use crate::{
 use crate::{Result, SymbolTable, VirtualTable};
 
 use super::emitter::Resolver;
-use super::expr::{expected_param_indicies, translate_expr_no_constant_opt, NoConstantOptReason};
+use super::expr::{translate_expr_no_constant_opt, NoConstantOptReason};
 
 #[allow(clippy::too_many_arguments)]
 pub fn translate_insert(
@@ -106,11 +106,8 @@ pub fn translate_insert(
         },
         InsertBody::DefaultValues => &vec![vec![]],
     };
-    // set expected parameter value_indexes, so we can keep track of which value_index
-    // maps to each index of a variable in translate_expr
-    program
-        .parameters
-        .set_parameter_positions(expected_param_indicies(values));
+    // prepare parameters by tracking the number of variables we will be binding to values later on
+    program.parameters.init_insert_parameters(values);
 
     let column_mappings = resolve_columns_for_insert(&table, columns, values)?;
     let index_col_mappings = resolve_indicies_for_insert(schema, table.as_ref(), &column_mappings)?;
@@ -587,6 +584,7 @@ fn resolve_indicies_for_insert(
 }
 
 /// Populates the column registers with values for a single row
+#[allow(clippy::too_many_arguments)]
 fn populate_column_registers(
     row_idx: usize,
     program: &mut ProgramBuilder,
@@ -612,11 +610,14 @@ fn populate_column_registers(
             } else {
                 target_reg
             };
-            // for setting parameter value index, for: values (?,?), (?,?)
-            // value_index here needs to be (1,2),(3,4) instead of (1,2),(1,2)
+            // We need the 'parameters' to be aware of the value_index of the current row
+            // so it can map it to the correct parameter index in the Variable opcode
+            // but we need to make sure the value_index is not overwritten if this is a multi-row
+            // insert. For 'insert into t values: (?,?), (?,?);'
+            // value_index should be (1,2),(3,4) instead of (1,2),(1,2), so multiply by col length
             program
                 .parameters
-                .set_value_index(value_index + (column_mappings.len() * row_idx));
+                .set_insert_value_index(value_index + (column_mappings.len() * row_idx));
             translate_expr_no_constant_opt(
                 program,
                 None,
@@ -680,9 +681,8 @@ fn translate_virtual_table_insert(
         InsertBody::DefaultValues => &vec![],
         _ => crate::bail_parse_error!("Unsupported INSERT body for virtual tables"),
     };
-    program
-        .parameters
-        .set_parameter_positions(expected_param_indicies(values));
+    // initiate parameters by tracking the number of variables we will be binding to values
+    program.parameters.init_insert_parameters(values);
     let table = Table::Virtual(virtual_table.clone());
     let column_mappings = resolve_columns_for_insert(&table, columns, values)?;
     let registers_start = program.alloc_registers(2);
