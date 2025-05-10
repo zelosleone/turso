@@ -815,10 +815,55 @@ impl Index {
         table: &BTreeTable,
         auto_indices: Vec<(String, usize)>,
     ) -> Result<Vec<Index>> {
+        assert!(!auto_indices.is_empty());
+
+        let mut indices = Vec::with_capacity(auto_indices.len());
+
         // The number of auto_indices in create table should match in the number of indices we calculate in this function
         let mut auto_indices = auto_indices.into_iter();
+
+        // TODO: see a better way to please Rust type system with iterators here
+        // I wanted to just chain the iterator above but Rust type system get's messy with Iterators.
+        // It would not allow me chain them even by using a core::iter::empty()
+        // To circumvent this, I'm having to allocate a second Vec, and extend the other from it.
+        if table.get_rowid_alias_column().is_none() && !table.primary_key_columns.is_empty() {
+            let (index_name, root_page) = auto_indices.next().expect(
+                "number of auto_indices in schema should be same number of indices calculated",
+            );
+
+            let primary_keys = table
+                .primary_key_columns
+                .iter()
+                .map(|(col_name, order)| {
+                    // Verify that each primary key column exists in the table
+                    let Some((pos_in_table, _)) = table.get_column(col_name) else {
+                        // This is clearly an invariant that should be maintained, so a panic seems more correct here
+                        panic!(
+                            "Column {} is in index {} but not found in table {}",
+                            col_name, index_name, table.name
+                        );
+                    };
+
+                    IndexColumn {
+                        name: normalize_ident(col_name),
+                        order: order.clone(),
+                        pos_in_table,
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            indices.push(Index {
+                name: normalize_ident(index_name.as_str()),
+                table_name: table.name.clone(),
+                root_page,
+                columns: primary_keys,
+                unique: true,
+                ephemeral: false,
+            });
+        }
+
         // Each unique col needs its own index
-        let mut indices = table
+        let unique_indices = table
             .columns
             .iter()
             .enumerate()
@@ -842,8 +887,9 @@ impl Index {
                 } else {
                     None
                 }
-            })
-            .collect::<Vec<_>>();
+            });
+
+        indices.extend(unique_indices);
 
         if table.primary_key_columns.is_empty() && indices.is_empty() && table.unique_sets.is_none()
         {
@@ -894,46 +940,6 @@ impl Index {
                 }
             });
             indices.extend(unique_set_indices);
-        }
-
-        // TODO: see a better way to please Rust type system with iterators here
-        // I wanted to just chain the iterator above but Rust type system get's messy with Iterators.
-        // It would not allow me chain them even by using a core::iter::empty()
-        // To circumvent this, I'm having to allocate a second Vec, and extend the other from it.
-        if table.get_rowid_alias_column().is_none() && !table.primary_key_columns.is_empty() {
-            let (index_name, root_page) = auto_indices.next().expect(
-                "number of auto_indices in schema should be same number of indices calculated",
-            );
-
-            let primary_keys = table
-                .primary_key_columns
-                .iter()
-                .map(|(col_name, order)| {
-                    // Verify that each primary key column exists in the table
-                    let Some((pos_in_table, _)) = table.get_column(col_name) else {
-                        // This is clearly an invariant that should be maintained, so a panic seems more correct here
-                        panic!(
-                            "Column {} is in index {} but not found in table {}",
-                            col_name, index_name, table.name
-                        );
-                    };
-
-                    IndexColumn {
-                        name: normalize_ident(col_name),
-                        order: order.clone(),
-                        pos_in_table,
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            indices.push(Index {
-                name: normalize_ident(index_name.as_str()),
-                table_name: table.name.clone(),
-                root_page,
-                columns: primary_keys,
-                unique: true,
-                ephemeral: false,
-            });
         }
 
         if auto_indices.next().is_some() {
@@ -1363,6 +1369,75 @@ mod tests {
         assert_eq!(index.columns.len(), 1);
         assert_eq!(index.columns[0].name, "y");
         assert!(matches!(index.columns[0].order, SortOrder::Asc));
+        Ok(())
+    }
+
+    #[test]
+    fn test_automatic_index_pkey_unique_column() -> Result<()> {
+        let sql = r#"CREATE TABLE t1 (x PRIMARY KEY, y UNIQUE);"#;
+        let table = BTreeTable::from_sql(sql, 0)?;
+        let auto_indices = vec![
+            ("sqlite_autoindex_t1_1".to_string(), 2),
+            ("sqlite_autoindex_t1_2".to_string(), 3),
+        ];
+        let indices = Index::automatic_from_primary_key_and_unique(&table, auto_indices.clone())?;
+
+        assert!(indices.len() == auto_indices.len());
+
+        for (pos, index) in indices.iter().enumerate() {
+            let (index_name, root_page) = &auto_indices[pos];
+            assert_eq!(index.name, *index_name);
+            assert_eq!(index.table_name, "t1");
+            assert_eq!(index.root_page, *root_page);
+            assert!(index.unique);
+            assert_eq!(index.columns.len(), 1);
+            if pos == 0 {
+                assert_eq!(index.columns[0].name, "x");
+            } else if pos == 1 {
+                assert_eq!(index.columns[0].name, "y");
+            }
+
+            assert!(matches!(index.columns[0].order, SortOrder::Asc));
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_automatic_index_pkey_many_unique_columns() -> Result<()> {
+        let sql = r#"CREATE TABLE t1 (a PRIMARY KEY, b UNIQUE, c, d, UNIQUE(c, d));"#;
+        let table = BTreeTable::from_sql(sql, 0)?;
+        let auto_indices = vec![
+            ("sqlite_autoindex_t1_1".to_string(), 2),
+            ("sqlite_autoindex_t1_2".to_string(), 3),
+            ("sqlite_autoindex_t1_2".to_string(), 4),
+        ];
+        let indices = Index::automatic_from_primary_key_and_unique(&table, auto_indices.clone())?;
+
+        assert!(indices.len() == auto_indices.len());
+
+        for (pos, index) in indices.iter().enumerate() {
+            let (index_name, root_page) = &auto_indices[pos];
+            assert_eq!(index.name, *index_name);
+            assert_eq!(index.table_name, "t1");
+            assert_eq!(index.root_page, *root_page);
+            assert!(index.unique);
+
+            if pos == 0 {
+                assert_eq!(index.columns.len(), 1);
+                assert_eq!(index.columns[0].name, "a");
+            } else if pos == 1 {
+                assert_eq!(index.columns.len(), 1);
+                assert_eq!(index.columns[0].name, "b");
+            } else if pos == 2 {
+                assert_eq!(index.columns.len(), 2);
+                assert_eq!(index.columns[0].name, "c");
+                assert_eq!(index.columns[1].name, "d");
+            }
+
+            assert!(matches!(index.columns[0].order, SortOrder::Asc));
+        }
+
         Ok(())
     }
 }
