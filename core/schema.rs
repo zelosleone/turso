@@ -314,9 +314,12 @@ fn create_table(
                         }
                     } else if let limbo_sqlite3_parser::ast::TableConstraint::Unique {
                         columns,
-                        conflict_clause: _, // TODO: ignore conflict_cause for now
+                        conflict_clause,
                     } = c.constraint
                     {
+                        if conflict_clause.is_some() {
+                            unimplemented!("ON CONFLICT not implemented");
+                        }
                         let unique_set: Vec<_> = columns
                             .into_iter()
                             .map(|column| {
@@ -412,7 +415,10 @@ fn create_table(
                             default = Some(expr.clone())
                         }
                         // TODO: for now we don't check Resolve type of unique
-                        limbo_sqlite3_parser::ast::ColumnConstraint::Unique(..) => {
+                        limbo_sqlite3_parser::ast::ColumnConstraint::Unique(on_conflict) => {
+                            if on_conflict.is_some() {
+                                unimplemented!("ON CONFLICT not implemented");
+                            }
                             unique = true;
                         }
                         _ => {}
