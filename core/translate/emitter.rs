@@ -23,6 +23,7 @@ use super::group_by::{
 use super::main_loop::{close_loop, emit_loop, init_loop, open_loop, LeftJoinMetadata, LoopLabels};
 use super::order_by::{emit_order_by, init_order_by, SortMetadata};
 use super::plan::{JoinOrderMember, Operation, SelectPlan, TableReference, UpdatePlan};
+use super::schema::ParseSchema;
 use super::subquery::emit_subqueries;
 
 #[derive(Debug)]
@@ -602,12 +603,24 @@ fn emit_program_for_update(
         &plan.where_clause,
     )?;
     emit_update_insns(&plan, &t_ctx, program, index_cursors)?;
+
+    match plan.parse_schema {
+        ParseSchema::None => {}
+        ParseSchema::Reload => {
+            program.emit_insn(crate::vdbe::insn::Insn::ParseSchema {
+                db: usize::MAX, // TODO: This value is unused, change when we do something with it
+                where_clause: None,
+            });
+        }
+    }
+
     close_loop(
         program,
         &mut t_ctx,
         &plan.table_references,
         &[JoinOrderMember::default()],
     )?;
+
     program.preassign_label_to_next_insn(after_main_loop_label);
 
     // Finalize program

@@ -1,0 +1,11 @@
+#!/usr/bin/env tclsh
+
+set testdir [file dirname $argv0]
+source $testdir/tester.tcl
+
+# ALTER TABLE _ RENAME TO _
+do_execsql_test_on_specific_db {:memory:} alter-table-rename-table {
+    CREATE TABLE t1(x INTEGER PRIMARY KEY);
+    ALTER TABLE t1 RENAME TO t2;
+    SELECT tbl_name FROM sqlite_schema;
+} { "t2" }

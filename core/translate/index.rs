@@ -227,7 +227,7 @@ pub fn translate_create_index(
     let parse_schema_where_clause = format!("name = '{}' AND type = 'index'", idx_name);
     program.emit_insn(Insn::ParseSchema {
         db: sqlite_schema_cursor_id,
-        where_clause: parse_schema_where_clause,
+        where_clause: Some(parse_schema_where_clause),
     });
     // Close the final sqlite_schema cursor
     program.emit_insn(Insn::Close {

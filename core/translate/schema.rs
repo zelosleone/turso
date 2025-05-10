@@ -19,6 +19,12 @@ use crate::{bail_parse_error, Result};
 use limbo_ext::VTabKind;
 use limbo_sqlite3_parser::ast::{fmt::ToTokens, CreateVirtualTable};
 
+#[derive(Debug, Clone, Copy)]
+pub enum ParseSchema {
+    None,
+    Reload,
+}
+
 pub fn translate_create_table(
     query_mode: QueryMode,
     tbl_name: ast::QualifiedName,
@@ -147,7 +153,7 @@ pub fn translate_create_table(
     let parse_schema_where_clause = format!("tbl_name = '{}' AND type != 'trigger'", tbl_name);
     program.emit_insn(Insn::ParseSchema {
         db: sqlite_schema_cursor_id,
-        where_clause: parse_schema_where_clause,
+        where_clause: Some(parse_schema_where_clause),
     });
 
     // TODO: SqlExec
@@ -542,7 +548,7 @@ pub fn translate_create_virtual_table(
     let parse_schema_where_clause = format!("tbl_name = '{}' AND type != 'trigger'", table_name);
     program.emit_insn(Insn::ParseSchema {
         db: sqlite_schema_cursor_id,
-        where_clause: parse_schema_where_clause,
+        where_clause: Some(parse_schema_where_clause),
     });
 
     program.emit_halt();

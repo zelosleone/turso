@@ -1,5 +1,6 @@
 #![allow(unused_variables)]
 use crate::numeric::{NullableInteger, Numeric};
+use crate::schema::Schema;
 use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::CreateBTreeFlags;
@@ -4316,20 +4317,42 @@ pub fn op_parse_schema(
     };
     let conn = program.connection.upgrade();
     let conn = conn.as_ref().unwrap();
-    let stmt = conn.prepare(format!(
-        "SELECT * FROM sqlite_schema WHERE {}",
-        where_clause
-    ))?;
-    let mut schema = conn.schema.write();
-    // TODO: This function below is synchronous, make it async
-    {
-        parse_schema_rows(
-            Some(stmt),
-            &mut schema,
-            conn.pager.io.clone(),
-            &conn.syms.borrow(),
-            state.mv_tx_id,
-        )?;
+
+    if let Some(where_clause) = where_clause {
+        let stmt = conn.prepare(format!(
+            "SELECT * FROM sqlite_schema WHERE {}",
+            where_clause
+        ))?;
+
+        let mut schema = conn.schema.write();
+
+        // TODO: This function below is synchronous, make it async
+        {
+            parse_schema_rows(
+                Some(stmt),
+                &mut schema,
+                conn.pager.io.clone(),
+                &conn.syms.borrow(),
+                state.mv_tx_id,
+            )?;
+        }
+    } else {
+        let stmt = conn.prepare("SELECT * FROM sqlite_schema")?;
+        let mut new = Schema::new();
+
+        // TODO: This function below is synchronous, make it async
+        {
+            parse_schema_rows(
+                Some(stmt),
+                &mut new,
+                conn.pager.io.clone(),
+                &conn.syms.borrow(),
+                state.mv_tx_id,
+            )?;
+        }
+
+        let mut schema = conn.schema.write();
+        *schema = new;
     }
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)

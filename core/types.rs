@@ -69,6 +69,7 @@ impl Text {
             subtype: TextSubtype::Text,
         }
     }
+
     #[cfg(feature = "json")]
     pub fn json(value: String) -> Self {
         Self {
@@ -131,8 +132,8 @@ pub enum RefValue {
 
 impl OwnedValue {
     // A helper function that makes building a text OwnedValue easier.
-    pub fn build_text(text: &str) -> Self {
-        Self::Text(Text::new(text))
+    pub fn build_text(text: impl AsRef<str>) -> Self {
+        Self::Text(Text::new(text.as_ref()))
     }
 
     pub fn to_blob(&self) -> Option<&[u8]> {
