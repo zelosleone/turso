@@ -588,7 +588,7 @@ fn resolve_indicies_for_insert(
 
 /// Populates the column registers with values for a single row
 fn populate_column_registers(
-    array_idx: usize,
+    row_idx: usize,
     program: &mut ProgramBuilder,
     value: &[Expr],
     column_mappings: &[ColumnMapping],
@@ -612,12 +612,10 @@ fn populate_column_registers(
             } else {
                 target_reg
             };
-            // we have to flatten the value index by multiplying it by the array index.
-            // e.g. (?,?), (?,?)
             // value_index here needs to be 1,2,3,4 instead of 1,2,1,2
             program
                 .parameters
-                .set_value_index(value_index * (array_idx + 1));
+                .set_value_index(value_index + (column_mappings.len() * row_idx));
             translate_expr_no_constant_opt(
                 program,
                 None,
