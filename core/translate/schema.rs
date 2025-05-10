@@ -1,4 +1,5 @@
 use std::fmt::Display;
+use std::ops::Range;
 use std::rc::Rc;
 
 use crate::ast;
@@ -99,13 +100,15 @@ pub fn translate_create_table(
     // https://github.com/sqlite/sqlite/blob/95f6df5b8d55e67d1e34d2bff217305a2f21b1fb/src/build.c#L2856-L2871
     // https://github.com/sqlite/sqlite/blob/95f6df5b8d55e67d1e34d2bff217305a2f21b1fb/src/build.c#L1334C5-L1336C65
 
-    let index_root_reg = check_automatic_pk_index_required(&body, &mut program, &tbl_name.name.0)?;
-    if let Some(index_root_reg) = index_root_reg {
-        program.emit_insn(Insn::CreateBtree {
-            db: 0,
-            root: index_root_reg,
-            flags: CreateBTreeFlags::new_index(),
-        });
+    let index_regs = check_automatic_pk_index_required(&body, &mut program, &tbl_name.name.0)?;
+    if let Some(index_regs) = index_regs.as_ref() {
+        for index_reg in index_regs.clone() {
+            program.emit_insn(Insn::CreateBtree {
+                db: 0,
+                root: index_reg,
+                flags: CreateBTreeFlags::new_index(),
+            });
+        }
     }
 
     let table = schema.get_btree_table(SQLITE_TABLEID).unwrap();
@@ -130,20 +133,24 @@ pub fn translate_create_table(
     );
 
     // If we need an automatic index, add its entry to sqlite_schema
-    if let Some(index_root_reg) = index_root_reg {
-        let index_name = format!(
-            "{}{}_1",
-            PRIMARY_KEY_AUTOMATIC_INDEX_NAME_PREFIX, tbl_name.name.0
-        );
-        emit_schema_entry(
-            &mut program,
-            sqlite_schema_cursor_id,
-            SchemaEntryType::Index,
-            &index_name,
-            &tbl_name.name.0,
-            index_root_reg,
-            None,
-        );
+    if let Some(index_regs) = index_regs {
+        for (idx, index_reg) in index_regs.into_iter().enumerate() {
+            let index_name = format!(
+                "{}{}_{}",
+                PRIMARY_KEY_AUTOMATIC_INDEX_NAME_PREFIX,
+                tbl_name.name.0,
+                idx + 1
+            );
+            emit_schema_entry(
+                &mut program,
+                sqlite_schema_cursor_id,
+                SchemaEntryType::Index,
+                &index_name,
+                &tbl_name.name.0,
+                index_reg,
+                None,
+            );
+        }
     }
 
     program.resolve_label(parse_schema_label, program.offset());
@@ -257,7 +264,7 @@ fn check_automatic_pk_index_required(
     body: &ast::CreateTableBody,
     program: &mut ProgramBuilder,
     tbl_name: &str,
-) -> Result<Option<usize>> {
+) -> Result<Option<Range<usize>>> {
     match body {
         ast::CreateTableBody::ColumnsAndConstraints {
             columns,
@@ -265,7 +272,7 @@ fn check_automatic_pk_index_required(
             options,
         } => {
             let mut primary_key_definition = None;
-            let mut has_unique_definition = false;
+            let mut unique_def_count = 0usize;
 
             // Check table constraints for PRIMARY KEY
             if let Some(constraints) = constraints {
@@ -338,7 +345,7 @@ fn check_automatic_pk_index_required(
                             is_descending: false,
                         });
                     } else if matches!(constraint.constraint, ast::ColumnConstraint::Unique(..)) {
-                        has_unique_definition = true;
+                        unique_def_count += 1;
                     }
                 }
             }
@@ -348,10 +355,10 @@ fn check_automatic_pk_index_required(
                 bail_parse_error!("WITHOUT ROWID tables are not supported yet");
             }
 
+            let mut total_indices = unique_def_count;
+
             // Check if we need an automatic index
-            let needs_auto_index = if has_unique_definition {
-                true
-            } else if let Some(primary_key_definition) = &primary_key_definition {
+            let auto_index_pk = if let Some(primary_key_definition) = &primary_key_definition {
                 match primary_key_definition {
                     PrimaryKeyDefinitionType::Simple {
                         typename,
@@ -366,10 +373,18 @@ fn check_automatic_pk_index_required(
             } else {
                 false
             };
+            if auto_index_pk {
+                total_indices += 1;
+            }
 
-            if needs_auto_index {
-                let index_root_reg = program.alloc_register();
-                Ok(Some(index_root_reg))
+            if total_indices > 0 {
+                if total_indices == 1 {
+                    let index_reg = program.alloc_register();
+                    Ok(Some(index_reg..index_reg + 1))
+                } else {
+                    let index_start_reg = program.alloc_registers(total_indices + 1);
+                    Ok(Some(index_start_reg..index_start_reg + total_indices + 1))
+                }
             } else {
                 Ok(None)
             }

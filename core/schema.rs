@@ -178,6 +178,7 @@ pub struct BTreeTable {
     pub columns: Vec<Column>,
     pub has_rowid: bool,
     pub is_strict: bool,
+    pub unique_sets: Option<Vec<Vec<(String, SortOrder)>>>,
 }
 
 impl BTreeTable {
@@ -284,6 +285,7 @@ fn create_table(
     let mut primary_key_columns = vec![];
     let mut cols = vec![];
     let is_strict: bool;
+    let mut unique_sets: Option<Vec<Vec<(String, SortOrder)>>> = None;
     match body {
         CreateTableBody::ColumnsAndConstraints {
             columns,
@@ -309,6 +311,31 @@ fn create_table(
                             };
                             primary_key_columns
                                 .push((col_name, column.order.unwrap_or(SortOrder::Asc)));
+                        }
+                    } else if let limbo_sqlite3_parser::ast::TableConstraint::Unique {
+                        columns,
+                        conflict_clause: _, // TODO: ignore conflict_cause for now
+                    } = c.constraint
+                    {
+                        let unique_set: Vec<_> = columns
+                            .into_iter()
+                            .map(|column| {
+                                let col_name = match column.expr {
+                                    Expr::Id(id) => normalize_ident(&id.0),
+                                    Expr::Literal(Literal::String(value)) => {
+                                        value.trim_matches('\'').to_owned()
+                                    }
+                                    _ => {
+                                        todo!("Unsupported primary key expression");
+                                    }
+                                };
+                                (col_name, column.order.unwrap_or(SortOrder::Asc))
+                            })
+                            .collect();
+                        if let Some(ref mut unique_sets) = unique_sets {
+                            unique_sets.push(unique_set);
+                        } else {
+                            unique_sets = Some(vec![unique_set]);
                         }
                     }
                 }
@@ -432,6 +459,7 @@ fn create_table(
         primary_key_columns,
         columns: cols,
         is_strict,
+        unique_sets,
     })
 }
 
@@ -709,6 +737,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
                 unique: false,
             },
         ],
+        unique_sets: None,
     }
 }
 
@@ -777,37 +806,47 @@ impl Index {
         }
     }
 
+    /// The order of index returned should be kept the same
+    ///
+    /// If the order of the index returned changes, this is a breaking change
+    ///
+    /// In the future when we support Alter Column, we should revisit a way to make this less dependent on ordering
     pub fn automatic_from_primary_key_and_unique(
         table: &BTreeTable,
-        index_name: &str,
-        root_page: usize,
-    ) -> Result<Index> {
-        let mut index_columns = table
+        auto_indices: Vec<(String, usize)>,
+    ) -> Result<Vec<Index>> {
+        // The number of auto_indices in create table should match in the number of indices we calculate in this function
+        let mut auto_indices = auto_indices.into_iter();
+        // Each unique col needs its own index
+        let mut indices = table
             .columns
             .iter()
-            .filter_map(|col| {
+            .enumerate()
+            .filter_map(|(pos_in_table, col)| {
                 if col.unique {
                     // Unique columns in Table should always be named
                     let col_name = col.name.as_ref().unwrap();
-                    // Verify that each primary key column exists in the table
-                    let Some((pos_in_table, _)) = table.get_column(col_name) else {
-                        return Some(Err(crate::LimboError::InternalError(format!(
-                            "Column {} is in index {} but not found in table {}",
-                            col_name, index_name, table.name
-                        ))));
-                    };
-                    Some(Ok(IndexColumn {
-                        name: normalize_ident(col_name),
-                        order: SortOrder::Asc, // Default Sort Order
-                        pos_in_table,
-                    }))
+                    let (index_name, root_page) = auto_indices.next().expect("number of auto_indices in schema should be same number of indices calculated");
+                    Some(Index {
+                        name: normalize_ident(index_name.as_str()),
+                        table_name: table.name.clone(),
+                        root_page,
+                        columns: vec![IndexColumn {
+                            name: normalize_ident(col_name),
+                            order: SortOrder::Asc, // Default Sort Order
+                            pos_in_table,
+                        }],
+                        unique: true,
+                        ephemeral: false,
+                    })
                 } else {
                     None
                 }
             })
-            .collect::<Result<Vec<_>>>()?;
+            .collect::<Vec<_>>();
 
-        if table.primary_key_columns.is_empty() && index_columns.is_empty() {
+        if table.primary_key_columns.is_empty() && indices.is_empty() && table.unique_sets.is_none()
+        {
             return Err(crate::LimboError::InternalError(
                 "Cannot create automatic index for table without primary key or unique constraint"
                     .to_string(),
@@ -818,44 +857,90 @@ impl Index {
         // and no Unique columns.
         // e.g CREATE TABLE t1 (a INTEGER PRIMARY KEY, b TEXT);
         // If this happens, the caller incorrectly called this function
-        if table.get_rowid_alias_column().is_some() && index_columns.is_empty() {
+        if table.get_rowid_alias_column().is_some()
+            && indices.is_empty()
+            && table.unique_sets.is_none()
+        {
             panic!("should not create an automatic index on table with a single column as rowid_alias and no UNIQUE columns");
+        }
+
+        if let Some(unique_sets) = table.unique_sets.as_ref() {
+            let unique_set_indices = unique_sets.iter().map(|set| {
+                let (index_name, root_page) = auto_indices.next().expect(
+                    "number of auto_indices in schema should be same number of indices calculated",
+                );
+
+                let index_cols = set.iter().map(|(col_name, order)| {
+                    let Some((pos_in_table, _)) = table.get_column(col_name) else {
+                        // This is clearly an invariant that should be maintained, so a panic seems more correct here
+                        panic!(
+                            "Column {} is in index {} but not found in table {}",
+                            col_name, index_name, table.name
+                        );
+                    };
+                    IndexColumn {
+                        name: normalize_ident(col_name),
+                        order: *order,
+                        pos_in_table,
+                    }
+                });
+                Index {
+                    name: normalize_ident(index_name.as_str()),
+                    table_name: table.name.clone(),
+                    root_page,
+                    columns: index_cols.collect(),
+                    unique: true,
+                    ephemeral: false,
+                }
+            });
+            indices.extend(unique_set_indices);
         }
 
         // TODO: see a better way to please Rust type system with iterators here
         // I wanted to just chain the iterator above but Rust type system get's messy with Iterators.
         // It would not allow me chain them even by using a core::iter::empty()
         // To circumvent this, I'm having to allocate a second Vec, and extend the other from it.
-        if table.get_rowid_alias_column().is_none() {
+        if table.get_rowid_alias_column().is_none() && !table.primary_key_columns.is_empty() {
+            let (index_name, root_page) = auto_indices.next().expect(
+                "number of auto_indices in schema should be same number of indices calculated",
+            );
+
             let primary_keys = table
                 .primary_key_columns
                 .iter()
                 .map(|(col_name, order)| {
                     // Verify that each primary key column exists in the table
                     let Some((pos_in_table, _)) = table.get_column(col_name) else {
-                        return Err(crate::LimboError::InternalError(format!(
+                        // This is clearly an invariant that should be maintained, so a panic seems more correct here
+                        panic!(
                             "Column {} is in index {} but not found in table {}",
                             col_name, index_name, table.name
-                        )));
+                        );
                     };
-                    Ok(IndexColumn {
+
+                    IndexColumn {
                         name: normalize_ident(col_name),
                         order: order.clone(),
                         pos_in_table,
-                    })
+                    }
                 })
-                .collect::<Result<Vec<_>>>()?;
-            index_columns.extend(primary_keys);
+                .collect::<Vec<_>>();
+
+            indices.push(Index {
+                name: normalize_ident(index_name.as_str()),
+                table_name: table.name.clone(),
+                root_page,
+                columns: primary_keys,
+                unique: true,
+                ephemeral: false,
+            });
         }
 
-        Ok(Index {
-            name: normalize_ident(index_name),
-            table_name: table.name.clone(),
-            root_page,
-            columns: index_columns,
-            unique: true, // Primary key indexes are always unique
-            ephemeral: false,
-        })
+        if auto_indices.next().is_some() {
+            panic!("number of auto_indices in schema should be same number of indices calculated");
+        }
+
+        Ok(indices)
     }
 
     /// Given a column position in the table, return the position in the index.
@@ -1183,18 +1268,24 @@ mod tests {
         // Without composite primary keys, we should not have an automatic index on a primary key that is a rowid alias
         let sql = r#"CREATE TABLE t1 (a INTEGER PRIMARY KEY, b TEXT);"#;
         let table = BTreeTable::from_sql(sql, 0).unwrap();
-        let _index =
-            Index::automatic_from_primary_key_and_unique(&table, "sqlite_autoindex_t1_1", 2)
-                .unwrap();
+        let _index = Index::automatic_from_primary_key_and_unique(
+            &table,
+            vec![("sqlite_autoindex_t1_1".to_string(), 2)],
+        )
+        .unwrap();
     }
 
     #[test]
     fn test_automatic_index_composite_key() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT, PRIMARY KEY(a, b));"#;
         let table = BTreeTable::from_sql(sql, 0)?;
-        let index =
-            Index::automatic_from_primary_key_and_unique(&table, "sqlite_autoindex_t1_1", 2)?;
+        let mut index = Index::automatic_from_primary_key_and_unique(
+            &table,
+            vec![("sqlite_autoindex_t1_1".to_string(), 2)],
+        )?;
 
+        assert!(index.len() == 1);
+        let index = index.pop().unwrap();
         assert_eq!(index.name, "sqlite_autoindex_t1_1");
         assert_eq!(index.table_name, "t1");
         assert_eq!(index.root_page, 2);
@@ -1211,8 +1302,10 @@ mod tests {
     fn test_automatic_index_no_primary_key() -> Result<()> {
         let sql = r#"CREATE TABLE t1 (a INTEGER, b TEXT);"#;
         let table = BTreeTable::from_sql(sql, 0)?;
-        let result =
-            Index::automatic_from_primary_key_and_unique(&table, "sqlite_autoindex_t1_1", 2);
+        let result = Index::automatic_from_primary_key_and_unique(
+            &table,
+            vec![("sqlite_autoindex_t1_1".to_string(), 2)],
+        );
 
         assert!(result.is_err());
         assert!(matches!(
@@ -1223,7 +1316,8 @@ mod tests {
     }
 
     #[test]
-    fn test_automatic_index_nonexistent_column() -> Result<()> {
+    #[should_panic]
+    fn test_automatic_index_nonexistent_column() {
         // Create a table with a primary key column that doesn't exist in the table
         let table = BTreeTable {
             root_page: 0,
@@ -1241,25 +1335,26 @@ mod tests {
                 default: None,
                 unique: false,
             }],
+            unique_sets: None,
         };
 
-        let result =
-            Index::automatic_from_primary_key_and_unique(&table, "sqlite_autoindex_t1_1", 2);
-
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            LimboError::InternalError(msg) if msg.contains("not found in table")
-        ));
-        Ok(())
+        let _result = Index::automatic_from_primary_key_and_unique(
+            &table,
+            vec![("sqlite_autoindex_t1_1".to_string(), 2)],
+        );
     }
 
     #[test]
     fn test_automatic_index_unique_column() -> Result<()> {
         let sql = r#"CREATE table t1 (x INTEGER, y INTEGER UNIQUE);"#;
         let table = BTreeTable::from_sql(sql, 0)?;
-        let index =
-            Index::automatic_from_primary_key_and_unique(&table, "sqlite_autoindex_t1_1", 2)?;
+        let mut index = Index::automatic_from_primary_key_and_unique(
+            &table,
+            vec![("sqlite_autoindex_t1_1".to_string(), 2)],
+        )?;
+
+        assert!(index.len() == 1);
+        let index = index.pop().unwrap();
 
         assert_eq!(index.name, "sqlite_autoindex_t1_1");
         assert_eq!(index.table_name, "t1");

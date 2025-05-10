@@ -36,19 +36,13 @@ pub fn normalize_ident(identifier: &str) -> String {
 
 pub const PRIMARY_KEY_AUTOMATIC_INDEX_NAME_PREFIX: &str = "sqlite_autoindex_";
 
-enum UnparsedIndex {
-    /// CREATE INDEX idx ON table_name(sql)
-    FromSql {
-        table_name: String,
-        root_page: usize,
-        sql: String,
-    },
-    /// Implicitly created index due to primary key constraints (or UNIQUE, but not implemented)
-    FromConstraint {
-        name: String,
-        table_name: String,
-        root_page: usize,
-    },
+/// Unparsed index that comes from a sql query, i.e not an automatic index
+///
+/// CREATE INDEX idx ON table_name(sql)
+struct UnparsedFromSqlIndex {
+    table_name: String,
+    root_page: usize,
+    sql: String,
 }
 
 pub fn parse_schema_rows(
@@ -60,7 +54,11 @@ pub fn parse_schema_rows(
 ) -> Result<()> {
     if let Some(mut rows) = rows {
         rows.set_mv_tx_id(mv_tx_id);
-        let mut unparsed_indexes = Vec::with_capacity(10);
+        // TODO: if we IO, this unparsed indexes is lost. Will probably need some state between
+        // IO runs
+        let mut from_sql_indexes = Vec::with_capacity(10);
+        let mut automatic_indices: std::collections::HashMap<String, Vec<(String, usize)>> =
+            std::collections::HashMap::with_capacity(10);
         loop {
             match rows.step()? {
                 StepResult::Row => {
@@ -114,7 +112,7 @@ pub fn parse_schema_rows(
                             let root_page: i64 = row.get::<i64>(3)?;
                             match row.get::<&str>(4) {
                                 Ok(sql) => {
-                                    unparsed_indexes.push(UnparsedIndex::FromSql {
+                                    from_sql_indexes.push(UnparsedFromSqlIndex {
                                         table_name: row.get::<&str>(2)?.to_string(),
                                         root_page: root_page as usize,
                                         sql: sql.to_string(),
@@ -127,11 +125,14 @@ pub fn parse_schema_rows(
                                     let index_name = row.get::<&str>(1)?.to_string();
                                     let table_name = row.get::<&str>(2)?.to_string();
                                     let root_page = row.get::<i64>(3)?;
-                                    unparsed_indexes.push(UnparsedIndex::FromConstraint {
-                                        name: index_name,
-                                        table_name,
-                                        root_page: root_page as usize,
-                                    });
+                                    match automatic_indices.entry(table_name) {
+                                        std::collections::hash_map::Entry::Vacant(e) => {
+                                            e.insert(vec![(index_name, root_page as usize)]);
+                                        }
+                                        std::collections::hash_map::Entry::Occupied(mut e) => {
+                                            e.get_mut().push((index_name, root_page as usize));
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -148,30 +149,22 @@ pub fn parse_schema_rows(
                 StepResult::Busy => break,
             }
         }
-        for unparsed_index in unparsed_indexes {
-            match unparsed_index {
-                UnparsedIndex::FromSql {
-                    table_name,
-                    root_page,
-                    sql,
-                } => {
-                    let table = schema.get_btree_table(&table_name).unwrap();
-                    let index = schema::Index::from_sql(&sql, root_page as usize, table.as_ref())?;
-                    schema.add_index(Arc::new(index));
-                }
-                UnparsedIndex::FromConstraint {
-                    name,
-                    table_name,
-                    root_page,
-                } => {
-                    let table = schema.get_btree_table(&table_name).unwrap();
-                    let index = schema::Index::automatic_from_primary_key_and_unique(
-                        table.as_ref(),
-                        &name,
-                        root_page as usize,
-                    )?;
-                    schema.add_index(Arc::new(index));
-                }
+        for UnparsedFromSqlIndex {
+            table_name,
+            root_page,
+            sql,
+        } in from_sql_indexes
+        {
+            let table = schema.get_btree_table(&table_name).unwrap();
+            let index = schema::Index::from_sql(&sql, root_page as usize, table.as_ref())?;
+            schema.add_index(Arc::new(index));
+        }
+        for (table_name, indices) in automatic_indices {
+            let table = schema.get_btree_table(&table_name).unwrap();
+            let ret_index =
+                schema::Index::automatic_from_primary_key_and_unique(table.as_ref(), indices)?;
+            for index in ret_index {
+                schema.add_index(Arc::new(index));
             }
         }
     }
