@@ -325,11 +325,8 @@ fn create_table(
                             .map(|column| {
                                 let col_name = match column.expr {
                                     Expr::Id(id) => normalize_ident(&id.0),
-                                    Expr::Literal(Literal::String(value)) => {
-                                        value.trim_matches('\'').to_owned()
-                                    }
                                     _ => {
-                                        todo!("Unsupported primary key expression");
+                                        todo!("Unsupported unique expression");
                                     }
                                 };
                                 (col_name, column.order.unwrap_or(SortOrder::Asc))
