@@ -1,7 +1,10 @@
 package tech.turso.jdbc4;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -40,7 +43,6 @@ class JDBC4StatementTest {
   }
 
   @Test
-  @Disabled("UPDATE not supported yet")
   void execute_update_should_return_false() throws Exception {
     stmt.execute("CREATE TABLE users (id INT PRIMARY KEY, username TEXT);");
     stmt.execute("INSERT INTO users VALUES (1, 'limbo');");
@@ -81,16 +83,15 @@ class JDBC4StatementTest {
   }
 
   @Test
-  @Disabled("Limbo update not yet supported")
+  @Disabled("limbo's total_changes() works differently from sqlite's total_changes()")
   void execute_update_should_return_number_of_updated_elements() throws Exception {
-    assertThat(stmt.executeUpdate("CREATE TABLE s1 (c1);")).isEqualTo(0);
+    assertThat(stmt.executeUpdate("CREATE TABLE s1 (c1 INT);")).isEqualTo(0);
     assertThat(stmt.executeUpdate("INSERT INTO s1 VALUES (1), (2), (3);")).isEqualTo(3);
 
     assertThat(stmt.executeUpdate("UPDATE s1 SET c1 = 0;")).isEqualTo(3);
   }
 
   @Test
-  @Disabled("Limbo delete has a bug")
   void execute_update_should_return_number_of_deleted_elements() throws Exception {
     assertThat(stmt.executeUpdate("CREATE TABLE s1 (c1);")).isEqualTo(0);
     assertThat(stmt.executeUpdate("INSERT INTO s1 VALUES (1), (2), (3);")).isEqualTo(3);
