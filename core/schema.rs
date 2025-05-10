@@ -7,7 +7,7 @@ use limbo_sqlite3_parser::{
     ast::{Cmd, CreateTableBody, QualifiedName, ResultColumn, Stmt},
     lexer::sql::Parser,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 use tracing::trace;
@@ -274,6 +274,30 @@ impl PseudoTable {
     }
 }
 
+#[derive(Debug, Eq)]
+struct UniqueColumnProps {
+    column_name: String,
+    order: SortOrder,
+}
+
+impl PartialEq for UniqueColumnProps {
+    fn eq(&self, other: &Self) -> bool {
+        self.column_name.eq(&other.column_name)
+    }
+}
+
+impl PartialOrd for UniqueColumnProps {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for UniqueColumnProps {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.column_name.cmp(&other.column_name)
+    }
+}
+
 fn create_table(
     tbl_name: QualifiedName,
     body: CreateTableBody,
@@ -285,7 +309,8 @@ fn create_table(
     let mut primary_key_columns = vec![];
     let mut cols = vec![];
     let is_strict: bool;
-    let mut unique_sets: Vec<Vec<(String, SortOrder)>> = vec![];
+    // BtreeSet here to preserve order of inserted keys
+    let mut unique_sets: Vec<BTreeSet<UniqueColumnProps>> = vec![];
     match body {
         CreateTableBody::ColumnsAndConstraints {
             columns,
@@ -320,16 +345,19 @@ fn create_table(
                         if conflict_clause.is_some() {
                             unimplemented!("ON CONFLICT not implemented");
                         }
-                        let unique_set: Vec<_> = columns
+                        let unique_set = columns
                             .into_iter()
                             .map(|column| {
-                                let col_name = match column.expr {
+                                let column_name = match column.expr {
                                     Expr::Id(id) => normalize_ident(&id.0),
                                     _ => {
                                         todo!("Unsupported unique expression");
                                     }
                                 };
-                                (col_name, column.order.unwrap_or(SortOrder::Asc))
+                                UniqueColumnProps {
+                                    column_name,
+                                    order: column.order.unwrap_or(SortOrder::Asc),
+                                }
                             })
                             .collect();
                         unique_sets.push(unique_set);
@@ -461,7 +489,18 @@ fn create_table(
         unique_sets: if unique_sets.is_empty() {
             None
         } else {
-            Some(unique_sets)
+            // Sort first so that dedup operation removes all duplicates
+            unique_sets.dedup();
+            Some(
+                unique_sets
+                    .into_iter()
+                    .map(|set| {
+                        set.into_iter()
+                            .map(|UniqueColumnProps { column_name, order }| (column_name, order))
+                            .collect()
+                    })
+                    .collect(),
+            )
         },
     })
 }
@@ -829,7 +868,8 @@ impl Index {
         // I wanted to just chain the iterator above but Rust type system get's messy with Iterators.
         // It would not allow me chain them even by using a core::iter::empty()
         // To circumvent this, I'm having to allocate a second Vec, and extend the other from it.
-        let has_primary_key_index = table.get_rowid_alias_column().is_none() && !table.primary_key_columns.is_empty();
+        let has_primary_key_index =
+            table.get_rowid_alias_column().is_none() && !table.primary_key_columns.is_empty();
         if has_primary_key_index {
             let (index_name, root_page) = auto_indices.next().expect(
                 "number of auto_indices in schema should be same number of indices calculated",
@@ -1441,6 +1481,31 @@ mod tests {
 
             assert!(matches!(index.columns[0].order, SortOrder::Asc));
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_automatic_index_unique_set_dedup() -> Result<()> {
+        let sql = r#"CREATE TABLE t1 (a, b, UNIQUE(a, b), UNIQUE(a, b));"#;
+        let table = BTreeTable::from_sql(sql, 0)?;
+        let mut index = Index::automatic_from_primary_key_and_unique(
+            &table,
+            vec![("sqlite_autoindex_t1_1".to_string(), 2)],
+        )?;
+
+        assert!(index.len() == 1);
+        let index = index.pop().unwrap();
+
+        assert_eq!(index.name, "sqlite_autoindex_t1_1");
+        assert_eq!(index.table_name, "t1");
+        assert_eq!(index.root_page, 2);
+        assert!(index.unique);
+        assert_eq!(index.columns.len(), 2);
+        assert_eq!(index.columns[0].name, "a");
+        assert!(matches!(index.columns[0].order, SortOrder::Asc));
+        assert_eq!(index.columns[1].name, "b");
+        assert!(matches!(index.columns[1].order, SortOrder::Asc));
 
         Ok(())
     }

@@ -1204,6 +1204,7 @@ mod tests {
             primary_key: false,
             notnull: false,
             default: None,
+            unique: false,
         }
     }
     fn _create_column_of_type(name: &str, ty: Type) -> Column {
@@ -1238,6 +1239,7 @@ mod tests {
             columns,
             has_rowid: true,
             is_strict: false,
+            unique_sets: None,
         })
     }
 

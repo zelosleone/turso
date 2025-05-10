@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fmt::Display;
 use std::ops::Range;
 use std::rc::Rc;
@@ -273,6 +274,8 @@ fn check_automatic_pk_index_required(
         } => {
             let mut primary_key_definition = None;
             let mut unique_def_count = 0usize;
+            // Used to dedup named unique constraints
+            let mut unique_sets = vec![];
 
             // Check table constraints for PRIMARY KEY
             if let Some(constraints) = constraints {
@@ -325,6 +328,26 @@ fn check_automatic_pk_index_required(
                                 });
                             }
                         }
+                    } else if let ast::TableConstraint::Unique {
+                        columns,
+                        conflict_clause,
+                    } = &constraint.constraint
+                    {
+                        if conflict_clause.is_some() {
+                            unimplemented!("ON CONFLICT not implemented");
+                        }
+                        let col_names: HashSet<String> = columns
+                            .iter()
+                            .map(|column| match &column.expr {
+                                limbo_sqlite3_parser::ast::Expr::Id(id) => {
+                                    crate::util::normalize_ident(&id.0)
+                                }
+                                _ => {
+                                    todo!("Unsupported unique expression");
+                                }
+                            })
+                            .collect();
+                        unique_sets.push(col_names);
                     }
                 }
             }
@@ -355,7 +378,8 @@ fn check_automatic_pk_index_required(
                 bail_parse_error!("WITHOUT ROWID tables are not supported yet");
             }
 
-            let mut total_indices = unique_def_count;
+            unique_sets.dedup();
+            let mut total_indices = unique_def_count + unique_sets.len();
 
             // Check if we need an automatic index
             let auto_index_pk = if let Some(primary_key_definition) = &primary_key_definition {
