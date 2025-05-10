@@ -1,6 +1,7 @@
 package limbo
 
 import (
+	"context"
 	"database/sql"
 	"database/sql/driver"
 	"errors"
@@ -136,7 +137,94 @@ func (c *limboConn) Prepare(query string) (driver.Stmt, error) {
 	return newStmt(stmtPtr, query), nil
 }
 
-// begin is needed to implement driver.Conn.. for now not implemented
+// limboTx implements driver.Tx
+type limboTx struct {
+	conn *limboConn
+}
+
+// Begin starts a new transaction with default isolation level
 func (c *limboConn) Begin() (driver.Tx, error) {
-	return nil, errors.New("transactions not implemented")
+	c.Lock()
+	defer c.Unlock()
+
+	if c.ctx == 0 {
+		return nil, errors.New("connection closed")
+	}
+
+	// Execute BEGIN statement
+	stmtPtr := connPrepare(c.ctx, "BEGIN")
+	if stmtPtr == 0 {
+		return nil, c.getError()
+	}
+
+	stmt := newStmt(stmtPtr, "BEGIN")
+	defer stmt.Close()
+
+	_, err := stmt.Exec(nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return &limboTx{conn: c}, nil
+}
+
+// BeginTx starts a transaction with the specified options.
+// Currently only supports default isolation level and non-read-only transactions.
+func (c *limboConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+	// Skip handling non-default isolation levels and read-only mode
+	// for now, letting database/sql package handle these cases
+	if opts.Isolation != driver.IsolationLevel(sql.LevelDefault) || opts.ReadOnly {
+		return nil, driver.ErrSkip
+	}
+
+	// Check for context cancellation
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	default:
+		return c.Begin()
+	}
+}
+
+// Commit commits the transaction
+func (tx *limboTx) Commit() error {
+	tx.conn.Lock()
+	defer tx.conn.Unlock()
+
+	if tx.conn.ctx == 0 {
+		return errors.New("connection closed")
+	}
+
+	stmtPtr := connPrepare(tx.conn.ctx, "COMMIT")
+	if stmtPtr == 0 {
+		return tx.conn.getError()
+	}
+
+	stmt := newStmt(stmtPtr, "COMMIT")
+	defer stmt.Close()
+
+	_, err := stmt.Exec(nil)
+	return err
+}
+
+// Rollback aborts the transaction.
+// Note: This operation is not currently fully supported by Limbo and will return an error.
+func (tx *limboTx) Rollback() error {
+	tx.conn.Lock()
+	defer tx.conn.Unlock()
+
+	if tx.conn.ctx == 0 {
+		return errors.New("connection closed")
+	}
+
+	stmtPtr := connPrepare(tx.conn.ctx, "ROLLBACK")
+	if stmtPtr == 0 {
+		return tx.conn.getError()
+	}
+
+	stmt := newStmt(stmtPtr, "ROLLBACK")
+	defer stmt.Close()
+
+	_, err := stmt.Exec(nil)
+	return err
 }
