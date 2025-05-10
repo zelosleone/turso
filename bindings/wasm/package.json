@@ -12,6 +12,7 @@
   "type": "module",
   "main": "./node/dist/index.cjs",
   "module": "./web/dist/index.js",
+  "types": "./web/dist/index.d.ts",
   "exports": {
     ".": {
       "node": "./node/dist/index.cjs",
