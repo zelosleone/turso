@@ -285,7 +285,7 @@ fn create_table(
     let mut primary_key_columns = vec![];
     let mut cols = vec![];
     let is_strict: bool;
-    let mut unique_sets: Option<Vec<Vec<(String, SortOrder)>>> = None;
+    let mut unique_sets: Vec<Vec<(String, SortOrder)>> = vec![];
     match body {
         CreateTableBody::ColumnsAndConstraints {
             columns,
@@ -332,11 +332,7 @@ fn create_table(
                                 (col_name, column.order.unwrap_or(SortOrder::Asc))
                             })
                             .collect();
-                        if let Some(ref mut unique_sets) = unique_sets {
-                            unique_sets.push(unique_set);
-                        } else {
-                            unique_sets = Some(vec![unique_set]);
-                        }
+                        unique_sets.push(unique_set);
                     }
                 }
             }
@@ -462,7 +458,11 @@ fn create_table(
         primary_key_columns,
         columns: cols,
         is_strict,
-        unique_sets,
+        unique_sets: if unique_sets.is_empty() {
+            None
+        } else {
+            Some(unique_sets)
+        },
     })
 }
 
