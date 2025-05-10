@@ -2538,8 +2538,8 @@ pub fn maybe_apply_affinity(col_type: Type, target_register: usize, program: &mu
     }
 }
 
-/// Gather all the expected indexes of variables
-pub fn expected_param_indexes(cols: &[Vec<ast::Expr>]) -> Vec<usize> {
+/// Gather all the expected indicies of all Expr::Variable
+pub fn expected_param_indicies(cols: &[Vec<ast::Expr>]) -> Vec<usize> {
     cols.iter()
         .flat_map(|col| col.iter())
         .enumerate()

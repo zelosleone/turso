@@ -21,7 +21,7 @@ use crate::{
 use crate::{Result, SymbolTable, VirtualTable};
 
 use super::emitter::Resolver;
-use super::expr::{expected_param_indexes, translate_expr_no_constant_opt, NoConstantOptReason};
+use super::expr::{expected_param_indicies, translate_expr_no_constant_opt, NoConstantOptReason};
 
 #[allow(clippy::too_many_arguments)]
 pub fn translate_insert(
@@ -110,7 +110,7 @@ pub fn translate_insert(
     // maps to each index of a variable in translate_expr
     program
         .parameters
-        .set_parameter_positions(expected_param_indexes(values));
+        .set_parameter_positions(expected_param_indicies(values));
 
     let column_mappings = resolve_columns_for_insert(&table, columns, values)?;
     let index_col_mappings = resolve_indicies_for_insert(schema, table.as_ref(), &column_mappings)?;
@@ -612,7 +612,8 @@ fn populate_column_registers(
             } else {
                 target_reg
             };
-            // value_index here needs to be 1,2,3,4 instead of 1,2,1,2
+            // for setting parameter value index, for: values (?,?), (?,?)
+            // value_index here needs to be (1,2),(3,4) instead of (1,2),(1,2)
             program
                 .parameters
                 .set_value_index(value_index + (column_mappings.len() * row_idx));
@@ -679,26 +680,13 @@ fn translate_virtual_table_insert(
         InsertBody::DefaultValues => &vec![],
         _ => crate::bail_parse_error!("Unsupported INSERT body for virtual tables"),
     };
-    // set expected parameter value_indexes, so we can keep track of which value_index
-    // maps to each index of a variable in translate_expr
     program
         .parameters
-        .set_parameter_positions(expected_param_indexes(values));
+        .set_parameter_positions(expected_param_indicies(values));
     let table = Table::Virtual(virtual_table.clone());
     let column_mappings = resolve_columns_for_insert(&table, columns, values)?;
+    let registers_start = program.alloc_registers(2);
 
-    let value_registers_start = program.alloc_registers(values[0].len());
-    for (i, expr) in values[0].iter().enumerate() {
-        program.parameters.set_value_index(i + 1);
-        translate_expr_no_constant_opt(
-            program,
-            None,
-            expr,
-            value_registers_start + i,
-            resolver,
-            NoConstantOptReason::RegisterReuse,
-        )?;
-    }
     /* *
      * Inserts for virtual tables are done in a single step.
      * argv[0] = (NULL for insert)
@@ -706,35 +694,22 @@ fn translate_virtual_table_insert(
      * argv[2..] = column values
      * */
 
-    let rowid_reg = program.alloc_registers(column_mappings.len() + 3);
-    let insert_rowid_reg = rowid_reg + 1; // argv[1] = insert_rowid
-    let data_start_reg = rowid_reg + 2; // argv[2..] = column values
-
     program.emit_insn(Insn::Null {
-        dest: rowid_reg,
-        dest_end: None,
-    });
-    program.emit_insn(Insn::Null {
-        dest: insert_rowid_reg,
-        dest_end: None,
+        dest: registers_start,
+        dest_end: Some(registers_start + 1),
     });
 
-    for (i, mapping) in column_mappings.iter().enumerate() {
-        let target_reg = data_start_reg + i;
-        if let Some(value_index) = mapping.value_index {
-            program.emit_insn(Insn::Copy {
-                src_reg: value_registers_start + value_index,
-                dst_reg: target_reg,
-                amount: 1,
-            });
-        } else {
-            program.emit_insn(Insn::Null {
-                dest: target_reg,
-                dest_end: None,
-            });
-        }
-    }
-
+    let values_reg = program.alloc_registers(column_mappings.len());
+    populate_column_registers(
+        0,
+        program,
+        &values[0],
+        &column_mappings,
+        values_reg,
+        false,
+        registers_start,
+        resolver,
+    )?;
     let conflict_action = on_conflict.as_ref().map(|c| c.bit_value()).unwrap_or(0) as u16;
 
     let cursor_id = program.alloc_cursor_id(
@@ -745,7 +720,7 @@ fn translate_virtual_table_insert(
     program.emit_insn(Insn::VUpdate {
         cursor_id,
         arg_count: column_mappings.len() + 2,
-        start_reg: rowid_reg,
+        start_reg: registers_start,
         vtab_ptr: virtual_table.implementation.as_ref().ctx as usize,
         conflict_action,
     });

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"os"
 	"testing"
 
 	_ "github.com/tursodatabase/limbo"
@@ -17,7 +16,6 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	log.SetOutput(os.Stdout)
 	conn, connErr = sql.Open("sqlite3", ":memory:")
 	if connErr != nil {
 		panic(connErr)
@@ -610,7 +608,6 @@ func TestJSONFunctions(t *testing.T) {
 	}
 }
 
-// TODO: make these pass, this is a separate issue
 func TestParameterOrdering(t *testing.T) {
 	newConn, err := sql.Open("sqlite3", ":memory:")
 	if err != nil {
@@ -685,62 +682,6 @@ func TestParameterOrdering(t *testing.T) {
 		}
 	}
 }
-
-// TODO: make this pass
-// func TestUpdateParameters(t *testing.T) {
-// 	db, err := sql.Open("sqlite3", ":memory:")
-// 	if err != nil {
-// 		t.Fatalf("failed to open database: %v", err)
-// 	}
-// 	defer db.Close()
-//
-// 	// Create test table
-// 	_, err = db.Exec(`CREATE TABLE test (id TEXT PRIMARY KEY, value INTEGER)`)
-// 	if err != nil {
-// 		t.Fatalf("failed to create table: %v", err)
-// 	}
-//
-// 	// Insert with parameters (works)
-// 	_, err = db.Exec("INSERT INTO test (id, value) VALUES (?, ?)", "test1", 1)
-// 	if err != nil {
-// 		t.Fatalf("failed to insert row: %v", err)
-// 	}
-//
-// 	// Verify initial value
-// 	var value int
-// 	err = db.QueryRow("SELECT value FROM test WHERE id = ?", "test1").Scan(&value)
-// 	if err != nil {
-// 		t.Fatalf("Error querying: %v", err)
-// 	}
-// 	fmt.Printf("Initial value = %d\n", value)
-//
-// 	// Update with parameters (reports success but doesn't update)
-// 	res, err := db.Prepare("UPDATE test SET value = ? WHERE id = ?")
-// 	if err != nil {
-// 		t.Fatalf("Error updating: %v", err)
-// 	}
-// 	_, err = res.Exec(2, "test1")
-//
-// 	// Verify if the update worked
-// 	var id int
-// 	err = db.QueryRow("SELECT value FROM test WHERE id = 'test1'").Scan(&id)
-// 	if err != nil {
-// 		t.Fatalf("Error querying: %v", err)
-// 	}
-// 	fmt.Printf("After parameterized update: value = %d (should be 2)\n", id)
-// 	if id != 2 {
-// 		t.Fatalf("Expected: 2, got %d", id)
-// 	}
-// 	// Try direct SQL update (works)
-// 	_, err = db.Exec("UPDATE test SET value = 3 WHERE id = 'test1'")
-// 	if err != nil {
-// 		t.Fatalf("Error direct updating: %v", err)
-// 	}
-//
-// 	// Verify direct update
-// 	err = db.QueryRow("SELECT value FROM test WHERE id = ?", "test1").Scan(&value)
-// 	fmt.Printf("After direct update: value = %d\n", value)
-// }
 
 func slicesAreEq(a, b []byte) bool {
 	if len(a) != len(b) {
