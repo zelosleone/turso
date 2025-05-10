@@ -1,12 +1,11 @@
-use limbo_sqlite3_parser::ast::{self, CreateTableBody, Expr, FunctionTail, Literal};
-use std::{rc::Rc, sync::Arc};
-
 use crate::{
     function::Func,
     schema::{self, Column, Schema, Type},
     types::{OwnedValue, OwnedValueType},
     LimboError, OpenFlags, Result, Statement, StepResult, SymbolTable, IO,
 };
+use limbo_sqlite3_parser::ast::{self, CreateTableBody, Expr, FunctionTail, Literal};
+use std::{rc::Rc, sync::Arc};
 
 pub trait RoundToPrecision {
     fn round_to_precision(self, precision: i32) -> f64;
@@ -882,25 +881,23 @@ pub fn checked_cast_text_to_numeric(text: &str) -> std::result::Result<OwnedValu
     // '-100234-2344.23e14' evaluates to -100234 instead of -100234.0
     let (kind, text) = parse_numeric_str(text)?;
     match kind {
-        OwnedValueType::Integer => {
-            match text.parse::<i64>() {
-                Ok(i) => Ok(OwnedValue::Integer(i)),
-                Err(e) => {
-                    if matches!(
-                        e.kind(),
-                        std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow
-                    ) {
-                        // if overflow, we return the representation as a real:
-                        // we have to match sqlite exactly here, so we match sqlite3AtoF
-                        let value = text.parse::<f64>().unwrap_or_default();
-                        let factor = 10f64.powi(15 - value.abs().log10().ceil() as i32);
-                        Ok(OwnedValue::Float((value * factor).round() / factor))
-                    } else {
-                        Err(())
-                    }
+        OwnedValueType::Integer => match text.parse::<i64>() {
+            Ok(i) => Ok(OwnedValue::Integer(i)),
+            Err(e) => {
+                if matches!(
+                    e.kind(),
+                    std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow
+                ) {
+                    // if overflow, we return the representation as a real.
+                    // we have to match sqlite exactly here, so we match sqlite3AtoF
+                    let value = text.parse::<f64>().unwrap_or_default();
+                    let factor = 10f64.powi(15 - value.abs().log10().ceil() as i32);
+                    Ok(OwnedValue::Float((value * factor).round() / factor))
+                } else {
+                    Err(())
                 }
             }
-        }
+        },
         OwnedValueType::Float => Ok(text
             .parse::<f64>()
             .map_or(OwnedValue::Float(0.0), OwnedValue::Float)),
@@ -975,6 +972,30 @@ pub fn cast_real_to_integer(float: f64) -> std::result::Result<i64, ()> {
         return Ok(i);
     }
     Err(())
+}
+
+// we don't need to verify the numeric literal here, as it is already verified by the parser
+pub fn parse_numeric_literal(text: &str) -> Result<OwnedValue> {
+    // a single extra underscore ("_") character can exist between any two digits
+    let text = text.replace("_", "");
+
+    if text.starts_with("0x") || text.starts_with("0X") {
+        let value = u64::from_str_radix(&text[2..], 16)? as i64;
+        return Ok(OwnedValue::Integer(value));
+    } else if text.starts_with("-0x") || text.starts_with("-0X") {
+        let value = u64::from_str_radix(&text[3..], 16)? as i64;
+        if value == i64::MIN {
+            return Err(LimboError::IntegerOverflow);
+        }
+        return Ok(OwnedValue::Integer(-value));
+    }
+
+    if let Ok(int_value) = text.parse::<i64>() {
+        return Ok(OwnedValue::Integer(int_value));
+    }
+
+    let float_value = text.parse::<f64>()?;
+    Ok(OwnedValue::Float(float_value))
 }
 
 // for TVF's we need these at planning time so we cannot emit translate_expr
@@ -1928,5 +1949,91 @@ pub mod tests {
         for arg in args {
             unsafe { arg.__free_internal_type() }
         }
+    }
+
+    #[test]
+    fn test_parse_numeric_literal_hex() {
+        assert_eq!(
+            parse_numeric_literal("0x1234").unwrap(),
+            OwnedValue::Integer(4660)
+        );
+        assert_eq!(
+            parse_numeric_literal("0xFFFFFFFF").unwrap(),
+            OwnedValue::Integer(4294967295)
+        );
+        assert_eq!(
+            parse_numeric_literal("0x7FFFFFFF").unwrap(),
+            OwnedValue::Integer(2147483647)
+        );
+        assert_eq!(
+            parse_numeric_literal("0x7FFFFFFFFFFFFFFF").unwrap(),
+            OwnedValue::Integer(9223372036854775807)
+        );
+        assert_eq!(
+            parse_numeric_literal("0xFFFFFFFFFFFFFFFF").unwrap(),
+            OwnedValue::Integer(-1)
+        );
+        assert_eq!(
+            parse_numeric_literal("0x8000000000000000").unwrap(),
+            OwnedValue::Integer(-9223372036854775808)
+        );
+
+        assert_eq!(
+            parse_numeric_literal("-0x1234").unwrap(),
+            OwnedValue::Integer(-4660)
+        );
+        // too big hex
+        assert!(parse_numeric_literal("-0x8000000000000000").is_err());
+    }
+
+    #[test]
+    fn test_parse_numeric_literal_integer() {
+        assert_eq!(
+            parse_numeric_literal("123").unwrap(),
+            OwnedValue::Integer(123)
+        );
+        assert_eq!(
+            parse_numeric_literal("9_223_372_036_854_775_807").unwrap(),
+            OwnedValue::Integer(9223372036854775807)
+        );
+    }
+
+    #[test]
+    fn test_parse_numeric_literal_float() {
+        assert_eq!(
+            parse_numeric_literal("123.456").unwrap(),
+            OwnedValue::Float(123.456)
+        );
+        assert_eq!(
+            parse_numeric_literal(".123").unwrap(),
+            OwnedValue::Float(0.123)
+        );
+        assert_eq!(
+            parse_numeric_literal("1.23e10").unwrap(),
+            OwnedValue::Float(1.23e10)
+        );
+        assert_eq!(
+            parse_numeric_literal("1e-10").unwrap(),
+            OwnedValue::Float(1e-10)
+        );
+        assert_eq!(
+            parse_numeric_literal("1.23E+10").unwrap(),
+            OwnedValue::Float(1.23e10)
+        );
+        assert_eq!(
+            parse_numeric_literal("1.1_1").unwrap(),
+            OwnedValue::Float(1.11)
+        );
+
+        // > i64::MAX, convert to float
+        assert_eq!(
+            parse_numeric_literal("9223372036854775808").unwrap(),
+            OwnedValue::Float(9.223372036854775808e+18)
+        );
+        // < i64::MIN, convert to float
+        assert_eq!(
+            parse_numeric_literal("-9223372036854775809").unwrap(),
+            OwnedValue::Float(-9.223372036854775809e+18)
+        );
     }
 }

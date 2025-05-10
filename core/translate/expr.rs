@@ -8,13 +8,13 @@ use crate::function::JsonFunc;
 use crate::function::{Func, FuncCtx, MathFuncArity, ScalarFunc, VectorFunc};
 use crate::functions::datetime;
 use crate::schema::{Table, Type};
-use crate::util::{exprs_are_equivalent, normalize_ident};
+use crate::util::{exprs_are_equivalent, normalize_ident, parse_numeric_literal};
 use crate::vdbe::{
     builder::ProgramBuilder,
     insn::{CmpInsFlags, Insn},
     BranchOffset,
 };
-use crate::Result;
+use crate::{OwnedValue, Result};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ConditionMetadata {
@@ -1967,24 +1967,20 @@ pub fn translate_expr(
         }
         ast::Expr::Literal(lit) => match lit {
             ast::Literal::Numeric(val) => {
-                if val.starts_with("0x") || val.starts_with("0X") {
-                    // must be a hex decimal
-                    let int_value = i64::from_str_radix(&val[2..], 16)?;
-                    program.emit_insn(Insn::Integer {
-                        value: int_value,
-                        dest: target_register,
-                    });
-                } else if let Ok(int_value) = val.parse::<i64>() {
-                    program.emit_insn(Insn::Integer {
-                        value: int_value,
-                        dest: target_register,
-                    });
-                } else {
-                    // must be a float
-                    program.emit_insn(Insn::Real {
-                        value: val.parse()?,
-                        dest: target_register,
-                    });
+                match parse_numeric_literal(val)? {
+                    OwnedValue::Integer(int_value) => {
+                        program.emit_insn(Insn::Integer {
+                            value: int_value,
+                            dest: target_register,
+                        });
+                    }
+                    OwnedValue::Float(real_value) => {
+                        program.emit_insn(Insn::Real {
+                            value: real_value,
+                            dest: target_register,
+                        });
+                    }
+                    _ => unreachable!(),
                 }
                 Ok(target_register)
             }
@@ -2073,36 +2069,21 @@ pub fn translate_expr(
                 translate_expr(program, referenced_tables, expr, target_register, resolver)
             }
             (UnaryOperator::Negative, ast::Expr::Literal(ast::Literal::Numeric(numeric_value))) => {
-                // Special case: if we're negating "9223372036854775808", this is exactly MIN_INT64
-                // If we don't do this -1 * 9223372036854775808 will overflow and parse will fail
-                // and trigger conversion to Real.
-                if numeric_value == "9223372036854775808"
-                    || numeric_value.eq_ignore_ascii_case("0x7fffffffffffffff")
-                {
-                    program.emit_insn(Insn::Integer {
-                        value: i64::MIN,
-                        dest: target_register,
-                    });
-                } else {
-                    if numeric_value.starts_with("0x") || numeric_value.starts_with("0X") {
-                        // must be a hex decimal
-                        let int_value = i64::from_str_radix(&numeric_value[2..], 16)?;
+                let numeric_value = "-".to_owned() + numeric_value;
+                match parse_numeric_literal(&numeric_value)? {
+                    OwnedValue::Integer(int_value) => {
                         program.emit_insn(Insn::Integer {
-                            value: -int_value,
-                            dest: target_register,
-                        });
-                    } else if let Ok(value) = numeric_value.parse::<i64>() {
-                        program.emit_insn(Insn::Integer {
-                            value: value * -1,
-                            dest: target_register,
-                        });
-                    } else {
-                        let value = numeric_value.parse::<f64>()?;
-                        program.emit_insn(Insn::Real {
-                            value: value * -1 as f64,
+                            value: int_value,
                             dest: target_register,
                         });
                     }
+                    OwnedValue::Float(real_value) => {
+                        program.emit_insn(Insn::Real {
+                            value: real_value,
+                            dest: target_register,
+                        });
+                    }
+                    _ => unreachable!(),
                 }
                 Ok(target_register)
             }
@@ -2125,23 +2106,20 @@ pub fn translate_expr(
                 Ok(target_register)
             }
             (UnaryOperator::BitwiseNot, ast::Expr::Literal(ast::Literal::Numeric(num_val))) => {
-                if num_val.starts_with("0x") || num_val.starts_with("0X") {
-                    let int_value = i64::from_str_radix(&num_val[2..], 16)?;
-                    program.emit_insn(Insn::Integer {
-                        value: !int_value,
-                        dest: target_register,
-                    });
-                } else if let Ok(val) = num_val.parse::<i64>() {
-                    program.emit_insn(Insn::Integer {
-                        value: !val,
-                        dest: target_register,
-                    });
-                } else {
-                    let num_val = num_val.parse::<f64>()? as i64;
-                    program.emit_insn(Insn::Integer {
-                        value: !num_val,
-                        dest: target_register,
-                    });
+                match parse_numeric_literal(num_val)? {
+                    OwnedValue::Integer(int_value) => {
+                        program.emit_insn(Insn::Integer {
+                            value: !int_value,
+                            dest: target_register,
+                        });
+                    }
+                    OwnedValue::Float(real_value) => {
+                        program.emit_insn(Insn::Integer {
+                            value: !(real_value as i64),
+                            dest: target_register,
+                        });
+                    }
+                    _ => unreachable!(),
                 }
                 Ok(target_register)
             }
