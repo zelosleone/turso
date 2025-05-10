@@ -403,3 +403,79 @@ fn test_insert_parameter_multiple_no_remap() -> anyhow::Result<()> {
     assert_eq!(ins.parameters().count(), 4);
     Ok(())
 }
+
+#[test]
+fn test_insert_parameter_multiple_row() -> anyhow::Result<()> {
+    // ───────────────────────  schema  ──────────────────────────────
+    // Table             a     b     c     d
+    // INSERT lists:     b ,   a ,   d ,   c
+    // VALUES list:     (?1 ,  ?2 ,  ?3 ,  ?4),
+    //                  (?5,   ?6,   ?7,   ?8);
+    //
+    // The row should be (111, 222, 333, 444), (555, 666, 777, 888)
+    // ───────────────────────────────────────────────────────────────
+
+    let tmp_db = TempDatabase::new_with_rusqlite(
+        "create table test (a integer, b integer, c integer, d integer);",
+    );
+    let conn = tmp_db.connect_limbo();
+    let mut ins = conn.prepare("insert into test (b,a,d,c) values (?, ?, ?, ?), (?, ?, ?, ?);")?;
+
+    let values = [
+        OwnedValue::Integer(222), // ?1 → b
+        OwnedValue::Integer(111), // ?2 → a
+        OwnedValue::Integer(444), // ?3 → d
+        OwnedValue::Integer(333), // ?4 → c
+        OwnedValue::Integer(666), // ?1 → b
+        OwnedValue::Integer(555), // ?2 → a
+        OwnedValue::Integer(888), // ?3 → d
+        OwnedValue::Integer(777), // ?4 → c
+    ];
+    for (i, value) in values.iter().enumerate() {
+        let idx = i + 1;
+        ins.bind_at(idx.try_into()?, value.clone());
+    }
+
+    // execute the insert (no rows returned)
+    loop {
+        match ins.step()? {
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+            _ => {}
+        }
+    }
+
+    let mut sel = conn.prepare("select a, b, c, d from test;")?;
+    let mut i = 0;
+    loop {
+        match sel.step()? {
+            StepResult::Row => {
+                let row = sel.row().unwrap();
+
+                assert_eq!(
+                    row.get::<&OwnedValue>(0).unwrap(),
+                    &OwnedValue::Integer(if i == 0 { 111 } else { 555 })
+                );
+                assert_eq!(
+                    row.get::<&OwnedValue>(1).unwrap(),
+                    &OwnedValue::Integer(if i == 0 { 222 } else { 666 })
+                );
+                assert_eq!(
+                    row.get::<&OwnedValue>(2).unwrap(),
+                    &OwnedValue::Integer(if i == 0 { 333 } else { 777 })
+                );
+                assert_eq!(
+                    row.get::<&OwnedValue>(3).unwrap(),
+                    &OwnedValue::Integer(if i == 0 { 444 } else { 888 })
+                );
+                i += 1;
+            }
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+        }
+    }
+    assert_eq!(ins.parameters().count(), 8);
+    Ok(())
+}
