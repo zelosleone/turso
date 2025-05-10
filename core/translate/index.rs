@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::vdbe::insn::CmpInsFlags;
 use crate::{
     schema::{BTreeTable, Column, Index, IndexColumn, PseudoTable, Schema},
     storage::pager::CreateBTreeFlags,
@@ -295,4 +296,178 @@ fn create_idx_stmt_to_sql(
     }
     sql.push(')');
     sql
+}
+
+pub fn translate_drop_index(
+    mode: QueryMode,
+    idx_name: &str,
+    if_exists: bool,
+    schema: &Schema,
+) -> crate::Result<ProgramBuilder> {
+    let idx_name = normalize_ident(idx_name);
+    let mut program = ProgramBuilder::new(crate::vdbe::builder::ProgramBuilderOpts {
+        query_mode: mode,
+        num_cursors: 5,
+        approx_num_insns: 40,
+        approx_num_labels: 5,
+    });
+
+    // Find the index in Schema
+    let mut maybe_index = None;
+    for val in schema.indexes.values() {
+        if maybe_index.is_some() {
+            break;
+        }
+        for idx in val {
+            if idx.name == idx_name {
+                maybe_index = Some(idx);
+                break;
+            }
+        }
+    }
+
+    // If there's no index if_exist is true,
+    // then return normaly, otherwise show an error.
+    if maybe_index.is_none() {
+        if if_exists {
+            let init_label = program.emit_init();
+            let start_offset = program.offset();
+            program.emit_halt();
+            program.resolve_label(init_label, program.offset());
+            program.emit_transaction(true);
+            program.emit_constant_insns();
+            program.emit_goto(start_offset);
+            return Ok(program);
+        } else {
+            return Err(crate::error::LimboError::InvalidArgument(format!(
+                "No such index: {}",
+                &idx_name
+            )));
+        }
+    }
+
+    // 1. Init
+    // 2. Goto
+    let init_label = program.emit_init();
+    let start_offset = program.offset();
+
+    // According to sqlite should emit Null instruction
+    // but why?
+    let null_reg = program.alloc_register();
+    program.emit_null(null_reg, None);
+
+    // String8; r[3] = 'some idx name'
+    let index_name_reg = program.emit_string8_new_reg(idx_name.to_string());
+    // String8; r[4] = 'index'
+    let index_str_reg = program.emit_string8_new_reg("index".to_string());
+
+    // for r[5]=rowid
+    let row_id_reg = program.alloc_register();
+
+    // We're going to use this cursor to search through sqlite_schema
+    let sqlite_table = schema.get_btree_table(SQLITE_TABLEID).unwrap();
+    let sqlite_schema_cursor_id = program.alloc_cursor_id(
+        Some(SQLITE_TABLEID.to_owned()),
+        CursorType::BTreeTable(sqlite_table.clone()),
+    );
+
+    // Open root=1 iDb=0; sqlite_schema for writing
+    program.emit_insn(Insn::OpenWrite {
+        cursor_id: sqlite_schema_cursor_id,
+        root_page: RegisterOrLiteral::Literal(sqlite_table.root_page),
+    });
+
+    let loop_start_label = program.allocate_label();
+    let loop_end_label = program.allocate_label();
+    program.emit_insn(Insn::Rewind {
+        cursor_id: sqlite_schema_cursor_id,
+        pc_if_empty: loop_end_label,
+    });
+    program.resolve_label(loop_start_label, program.offset());
+
+    // Read sqlite_schema.name into dest_reg
+    let dest_reg = program.alloc_register();
+    program.emit_insn(Insn::Column {
+        cursor_id: sqlite_schema_cursor_id,
+        column: 1, // sqlite_schema.name
+        dest: dest_reg,
+    });
+
+    // if current column is not index_name then jump to Next
+    // skip if sqlite_schema.name != index_name_reg
+    let next_label = program.allocate_label();
+    program.emit_insn(Insn::Ne {
+        lhs: index_name_reg,
+        rhs: dest_reg,
+        target_pc: next_label,
+        flags: CmpInsFlags::default(),
+    });
+
+    // read type of table
+    // skip if sqlite_schema.type != 'index' (index_str_reg)
+    program.emit_insn(Insn::Column {
+        cursor_id: sqlite_schema_cursor_id,
+        column: 0,
+        dest: dest_reg,
+    });
+    // if current column is not index then jump to Next
+    program.emit_insn(Insn::Ne {
+        lhs: index_str_reg,
+        rhs: dest_reg,
+        target_pc: next_label,
+        flags: CmpInsFlags::default(),
+    });
+
+    program.emit_insn(Insn::RowId {
+        cursor_id: sqlite_schema_cursor_id,
+        dest: row_id_reg,
+    });
+
+    let label_once_end = program.allocate_label();
+    program.emit_insn(Insn::Once {
+        target_pc_when_reentered: label_once_end,
+    });
+    program.resolve_label(label_once_end, program.offset());
+
+    program.emit_insn(Insn::Delete {
+        cursor_id: sqlite_schema_cursor_id,
+    });
+
+    program.resolve_label(next_label, program.offset());
+    program.emit_insn(Insn::Next {
+        cursor_id: sqlite_schema_cursor_id,
+        pc_if_next: loop_start_label,
+    });
+
+    program.resolve_label(loop_end_label, program.offset());
+
+    /* TODO do set cookie for real
+    program.emit_insn(Insn::SetCookie {
+        ...
+    });
+    */
+
+    // Destroy index btree
+    program.emit_insn(Insn::Destroy {
+        root: maybe_index.unwrap().root_page,
+        former_root_reg: 0,
+        is_temp: 0,
+    });
+
+    // Remove from the Schema any mention of the index
+    if let Some(idx) = maybe_index {
+        program.emit_insn(Insn::DropIndex {
+            index: idx.clone(),
+            db: 0,
+        });
+    }
+
+    // Epilogue:
+    program.emit_halt();
+    program.resolve_label(init_label, program.offset());
+    program.emit_transaction(true);
+    program.emit_constant_insns();
+    program.emit_goto(start_offset);
+
+    Ok(program)
 }

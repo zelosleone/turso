@@ -93,6 +93,14 @@ impl Schema {
         let name = normalize_ident(table_name);
         self.indexes.remove(&name);
     }
+
+    pub fn remove_index(&mut self, idx: &Index) {
+        let name = normalize_ident(&idx.table_name);
+        self.indexes
+            .get_mut(&name)
+            .expect("Must have the index")
+            .retain_mut(|other_idx| other_idx.name != idx.name);
+    }
 }
 
 #[derive(Clone, Debug)]

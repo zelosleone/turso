@@ -191,6 +191,24 @@ pub fn op_divide(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_drop_index(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::DropIndex { index, db: _ } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    if let Some(conn) = program.connection.upgrade() {
+        let mut schema = conn.schema.write();
+        schema.remove_index(&index);
+    }
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 pub fn op_remainder(
     program: &Program,
     state: &mut ProgramState,
@@ -4224,13 +4242,7 @@ pub fn op_drop_table(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::DropTable {
-        db,
-        _p2,
-        _p3,
-        table_name,
-    } = insn
-    else {
+    let Insn::DropTable { db, table_name, .. } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
     if *db > 0 {
