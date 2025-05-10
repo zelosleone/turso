@@ -829,7 +829,8 @@ impl Index {
         // I wanted to just chain the iterator above but Rust type system get's messy with Iterators.
         // It would not allow me chain them even by using a core::iter::empty()
         // To circumvent this, I'm having to allocate a second Vec, and extend the other from it.
-        if table.get_rowid_alias_column().is_none() && !table.primary_key_columns.is_empty() {
+        let has_primary_key_index = table.get_rowid_alias_column().is_none() && !table.primary_key_columns.is_empty();
+        if has_primary_key_index {
             let (index_name, root_page) = auto_indices.next().expect(
                 "number of auto_indices in schema should be same number of indices calculated",
             );
