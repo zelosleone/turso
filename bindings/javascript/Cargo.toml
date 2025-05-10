@@ -12,8 +12,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 limbo_core = { workspace = true }
-napi = { version = "2.12.2", default-features = false, features = ["napi4"] }
-napi-derive = "2.12.2"
+napi = { version = "2.16.17", default-features = false, features = ["napi4"] }
+napi-derive = { version = "2.16.13", default-features = false }
 
 [build-dependencies]
 napi-build = "2.0.1"

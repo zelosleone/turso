@@ -24,6 +24,16 @@ test("Statement.get() returns null when no data", async (t) => {
     t.is(result, undefined);
 });
 
+// run() isn't 100% compatible with better-sqlite3
+// it should return a result object, not a row object
+test("Statement.run() returns correct result object", async (t) => {
+  const [db] = await connect(":memory:");
+  db.prepare("CREATE TABLE users (name TEXT)").run();
+  db.prepare("INSERT INTO users (name) VALUES (?)").run(["Alice"]);
+  let rows = db.prepare("SELECT * FROM users").all()
+  t.deepEqual(rows, [{ name: "Alice" }]);
+});
+
 const connect = async (path) => {
     const db = new Database(path);
     return [db];
