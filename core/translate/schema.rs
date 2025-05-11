@@ -484,10 +484,12 @@ pub fn translate_create_virtual_table(
                 approx_num_labels: 1,
             });
             let init_label = program.emit_init();
+            let start_offset = program.offset();
             program.emit_halt();
             program.preassign_label_to_next_insn(init_label);
             program.emit_transaction(true);
             program.emit_constant_insns();
+            program.emit_goto(start_offset);
             return Ok(program);
         }
         bail_parse_error!("Table {} already exists", tbl_name);

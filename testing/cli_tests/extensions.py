@@ -593,12 +593,22 @@ def test_create_virtual_table():
         lambda res: "× Parse error: Table t1 already exists" == res,
         "create virtual table fails if virtual table with the same name already exists",
     )
+    limbo.run_test_fn(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS t1 USING kv_store;",
+        null,
+        "create virtual table with IF NOT EXISTS succeeds",
+    )
 
     limbo.debug_print("CREATE TABLE t2 (col INTEGER);")
     limbo.run_test_fn(
         "CREATE VIRTUAL TABLE t2 USING kv_store;",
         lambda res: "× Parse error: Table t2 already exists" == res,
         "create virtual table fails if regular table with the same name already exists",
+    )
+    limbo.run_test_fn(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS t2 USING kv_store;",
+        null,
+        "create virtual table with IF NOT EXISTS succeeds",
     )
 
     limbo.debug_print("CREATE VIRTUAL TABLE t3 USING kv_store;")
