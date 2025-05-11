@@ -347,6 +347,12 @@ enum CursorContext {
     IndexKeyRowId(ImmutableRecord),
 }
 
+// In the future, we may expand these general validity states
+enum CursorValidState {
+    Valid,
+    RequireSeek,
+}
+
 pub struct BTreeCursor {
     /// The multi-version cursor that is used to read and write to the database file.
     mv_cursor: Option<Rc<RefCell<MvCursor>>>,
@@ -377,6 +383,8 @@ pub struct BTreeCursor {
     count: usize,
     /// Stores the last record that was seen.
     context: Option<CursorContext>,
+    /// Store whether the Cursor is in a valid state
+    valid_state: CursorValidState,
 }
 
 impl BTreeCursor {
@@ -404,6 +412,7 @@ impl BTreeCursor {
             index_key_sort_order: IndexKeySortOrder::default(),
             count: 0,
             context: None,
+            valid_state: CursorValidState::Valid,
         }
     }
 
@@ -3550,7 +3559,6 @@ impl BTreeCursor {
     /// 8. Finish -> Delete operation is done. Return CursorResult(Ok())
     pub fn delete(&mut self) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
-        self.save_context();
 
         if let CursorState::None = &self.state {
             self.state = CursorState::Delete(DeleteInfo {
@@ -3764,13 +3772,14 @@ impl BTreeCursor {
                             write_info.state = WriteState::BalanceStart;
                             delete_info.balance_write_info = Some(write_info);
                         }
-
                         delete_info.state = DeleteState::WaitForBalancingToComplete { target_key }
                     } else {
                         self.stack.retreat();
                         self.state = CursorState::None;
                         return Ok(CursorResult::Ok(()));
                     }
+                    // Only reaches this function call if state = DeleteState::WaitForBalancingToComplete
+                    self.save_context();
                 }
 
                 DeleteState::WaitForBalancingToComplete { target_key } => {
@@ -4357,6 +4366,7 @@ impl BTreeCursor {
     /// Save cursor context, to be restored later
     pub fn save_context(&mut self) {
         if let Some(rowid) = self.rowid.get() {
+            self.valid_state = CursorValidState::RequireSeek;
             match self.stack.top().get_contents().page_type() {
                 PageType::TableInterior | PageType::TableLeaf => {
                     self.context = Some(CursorContext::TableRowId(rowid));
@@ -4376,7 +4386,7 @@ impl BTreeCursor {
 
     /// If context is defined, restore it and set it None on success
     fn restore_context(&mut self) -> Result<CursorResult<bool>> {
-        if self.context.is_none() {
+        if self.context.is_none() || !matches!(self.valid_state, CursorValidState::RequireSeek) {
             return Ok(CursorResult::Ok(false));
         }
         let ctx = self.context.as_ref().unwrap();
@@ -4389,6 +4399,7 @@ impl BTreeCursor {
             }
         }?;
         self.context = None;
+        self.valid_state = CursorValidState::Valid;
         Ok(res)
     }
 }

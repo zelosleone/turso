@@ -378,6 +378,7 @@ pub fn translate_drop_index(
     program.emit_insn(Insn::OpenWrite {
         cursor_id: sqlite_schema_cursor_id,
         root_page: RegisterOrLiteral::Literal(sqlite_table.root_page),
+        name: sqlite_table.name.clone(),
     });
 
     let loop_start_label = program.allocate_label();
