@@ -289,7 +289,7 @@ pub fn emit_query<'a>(
         OperationMode::SELECT,
     )?;
 
-    if plan.is_simple_count {
+    if plan.is_simple_count() {
         emit_simple_count(program, t_ctx, plan)?;
         return Ok(t_ctx.reg_result_cols_start.unwrap());
     }

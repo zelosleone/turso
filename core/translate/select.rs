@@ -106,7 +106,6 @@ pub fn prepare_select_plan<'a>(
                 offset: None,
                 contains_constant_false_condition: false,
                 query_type: SelectQueryType::TopLevel,
-                is_simple_count: false,
             };
 
             let mut aggregate_expressions = Vec::new();
@@ -388,8 +387,6 @@ pub fn prepare_select_plan<'a>(
             (plan.limit, plan.offset) =
                 select.limit.map_or(Ok((None, None)), |l| parse_limit(&l))?;
 
-            plan.is_simple_count = is_simple_count(&plan);
-
             // Return the unoptimized query plan
             Ok(Plan::Select(plan))
         }
@@ -487,47 +484,6 @@ fn estimate_num_labels(select: &SelectPlan) -> usize {
         init_halt_labels + table_labels + group_by_labels + order_by_labels + condition_labels;
 
     num_labels
-}
-
-/// Reference: https://github.com/sqlite/sqlite/blob/5db695197b74580c777b37ab1b787531f15f7f9f/src/select.c#L8613
-///
-/// Checks to see if the query is of the format `SELECT count(*) FROM <tbl>`
-pub fn is_simple_count(plan: &SelectPlan) -> bool {
-    if !plan.where_clause.is_empty()
-        || plan.aggregates.len() != 1
-        || matches!(plan.query_type, SelectQueryType::Subquery { .. })
-        || plan.table_references.len() != 1
-        || plan.result_columns.len() != 1
-        || plan.group_by.is_some()
-    // TODO: (pedrocarlo) maybe can optimize to use the count optmization with more columns
-    {
-        return false;
-    }
-    let table_ref = plan.table_references.first().unwrap();
-    if !matches!(table_ref.table, crate::schema::Table::BTree(..)) {
-        return false;
-    }
-    let agg = plan.aggregates.first().unwrap();
-    if !matches!(agg.func, AggFunc::Count0) {
-        return false;
-    }
-
-    let count = limbo_sqlite3_parser::ast::Expr::FunctionCall {
-        name: limbo_sqlite3_parser::ast::Id("count".to_string()),
-        distinctness: None,
-        args: None,
-        order_by: None,
-        filter_over: None,
-    };
-    let count_star = limbo_sqlite3_parser::ast::Expr::FunctionCallStar {
-        name: limbo_sqlite3_parser::ast::Id("count".to_string()),
-        filter_over: None,
-    };
-    let result_col_expr = &plan.result_columns.get(0).unwrap().expr;
-    if *result_col_expr != count && *result_col_expr != count_star {
-        return false;
-    }
-    true
 }
 
 pub fn emit_simple_count<'a>(
