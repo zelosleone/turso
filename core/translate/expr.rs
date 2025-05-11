@@ -1949,7 +1949,25 @@ pub fn translate_expr(
         ast::Expr::InList { .. } => todo!(),
         ast::Expr::InSelect { .. } => todo!(),
         ast::Expr::InTable { .. } => todo!(),
-        ast::Expr::IsNull(_) => todo!(),
+        ast::Expr::IsNull(expr) => {
+            let reg = program.alloc_register();
+            translate_expr(program, referenced_tables, expr, reg, resolver)?;
+            program.emit_insn(Insn::Integer {
+                value: 1,
+                dest: target_register,
+            });
+            let label = program.allocate_label();
+            program.emit_insn(Insn::IsNull {
+                reg,
+                target_pc: label,
+            });
+            program.emit_insn(Insn::Integer {
+                value: 0,
+                dest: target_register,
+            });
+            program.preassign_label_to_next_insn(label);
+            Ok(target_register)
+        }
         ast::Expr::Like { not, .. } => {
             let like_reg = if *not {
                 program.alloc_register()
@@ -2039,7 +2057,25 @@ pub fn translate_expr(
             }
         },
         ast::Expr::Name(_) => todo!(),
-        ast::Expr::NotNull(_) => todo!(),
+        ast::Expr::NotNull(expr) => {
+            let reg = program.alloc_register();
+            translate_expr(program, referenced_tables, expr, reg, resolver)?;
+            program.emit_insn(Insn::Integer {
+                value: 1,
+                dest: target_register,
+            });
+            let label = program.allocate_label();
+            program.emit_insn(Insn::NotNull {
+                reg,
+                target_pc: label,
+            });
+            program.emit_insn(Insn::Integer {
+                value: 0,
+                dest: target_register,
+            });
+            program.preassign_label_to_next_insn(label);
+            Ok(target_register)
+        }
         ast::Expr::Parenthesized(exprs) => {
             if exprs.is_empty() {
                 crate::bail_parse_error!("parenthesized expression with no arguments");
