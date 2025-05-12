@@ -1,6 +1,5 @@
 use std::{cell::RefCell, cmp::Ordering, collections::HashMap, sync::Arc};
 
-use access_method::AccessMethodKind;
 use constraints::{
     constraints_from_where_clause, usable_constraints_for_join_order, BinaryExprSide, Constraint,
     ConstraintRef,
@@ -215,131 +214,132 @@ fn optimize_table_access(
     // Mutate the Operations in `table_references` to use the selected access methods.
     for (i, join_order_member) in best_join_order.iter().enumerate() {
         let table_number = join_order_member.table_no;
-        let access_method_kind = access_methods_arena.borrow()[best_access_methods[i]]
-            .kind
-            .clone();
+        let access_method = &access_methods_arena.borrow()[best_access_methods[i]];
         if matches!(
             table_references[table_number].op,
             Operation::Subquery { .. }
         ) {
             // FIXME: Operation::Subquery shouldn't exist. It's not an operation, it's a kind of temporary table.
             assert!(
-                matches!(access_method_kind, AccessMethodKind::Scan { index: None, .. }),
+                access_method.is_scan(),
                 "nothing in the current optimizer should be able to optimize subqueries, but got {:?} for table {}",
-                access_method_kind,
+                access_method,
                 table_references[table_number].table.get_name()
             );
             continue;
         }
-        table_references[table_number].op = match access_method_kind {
-            AccessMethodKind::Scan { iter_dir, index } => {
-                if index.is_some() || i == 0 {
-                    Operation::Scan { iter_dir, index }
-                } else {
-                    // This branch means we have a full table scan for a non-outermost table.
-                    // Try to construct an ephemeral index since it's going to be better than a scan.
-                    let table_constraints = constraints_per_table
-                        .iter()
-                        .find(|c| c.table_no == table_number);
-                    if let Some(table_constraints) = table_constraints {
-                        let temp_constraint_refs = (0..table_constraints.constraints.len())
-                            .map(|i| ConstraintRef {
-                                constraint_vec_pos: i,
-                                index_col_pos: table_constraints.constraints[i].table_col_pos,
-                                sort_order: SortOrder::Asc,
-                            })
-                            .collect::<Vec<_>>();
-                        let usable_constraint_refs = usable_constraints_for_join_order(
-                            &table_constraints.constraints,
-                            &temp_constraint_refs,
-                            &best_join_order[..=i],
-                        );
-                        if usable_constraint_refs.is_empty() {
-                            Operation::Scan { iter_dir, index }
-                        } else {
-                            let ephemeral_index = ephemeral_index_build(
-                                &table_references[table_number],
-                                table_number,
-                                &table_constraints.constraints,
-                                &usable_constraint_refs,
-                            );
-                            let ephemeral_index = Arc::new(ephemeral_index);
-                            Operation::Search(Search::Seek {
-                                index: Some(ephemeral_index),
-                                seek_def: build_seek_def_from_constraints(
-                                    &table_constraints.constraints,
-                                    &usable_constraint_refs,
-                                    iter_dir,
-                                    where_clause,
-                                )?,
-                            })
-                        }
-                    } else {
-                        Operation::Scan { iter_dir, index }
-                    }
-                }
+        if access_method.is_scan() {
+            if access_method.index.is_some() || i == 0 {
+                table_references[table_number].op = Operation::Scan {
+                    iter_dir: access_method.iter_dir,
+                    index: access_method.index.clone(),
+                };
+                continue;
             }
-            AccessMethodKind::Search {
-                index,
-                constraint_refs,
-                iter_dir,
-            } => {
-                assert!(!constraint_refs.is_empty());
-                for cref in constraint_refs.iter() {
-                    let constraint =
-                        &constraints_per_table[table_number].constraints[cref.constraint_vec_pos];
-                    to_remove_from_where_clause.push(constraint.where_clause_pos.0);
-                }
-                if let Some(index) = index {
-                    Operation::Search(Search::Seek {
-                        index: Some(index),
-                        seek_def: build_seek_def_from_constraints(
-                            &constraints_per_table[table_number].constraints,
-                            &constraint_refs,
-                            iter_dir,
-                            where_clause,
-                        )?,
-                    })
-                } else {
-                    assert!(
-                        constraint_refs.len() == 1,
-                        "expected exactly one constraint for rowid seek, got {:?}",
-                        constraint_refs
-                    );
-                    let constraint = &constraints_per_table[table_number].constraints
-                        [constraint_refs[0].constraint_vec_pos];
-                    match constraint.operator {
-                        ast::Operator::Equals => Operation::Search(Search::RowidEq {
-                            cmp_expr: {
-                                let (idx, side) = constraint.where_clause_pos;
-                                let ast::Expr::Binary(lhs, _, rhs) =
-                                    unwrap_parens(&where_clause[idx].expr)?
-                                else {
-                                    panic!("Expected a binary expression");
-                                };
-                                let where_term = WhereTerm {
-                                    expr: match side {
-                                        BinaryExprSide::Lhs => lhs.as_ref().clone(),
-                                        BinaryExprSide::Rhs => rhs.as_ref().clone(),
-                                    },
-                                    from_outer_join: where_clause[idx].from_outer_join.clone(),
-                                };
-                                where_term
+            // This branch means we have a full table scan for a non-outermost table.
+            // Try to construct an ephemeral index since it's going to be better than a scan.
+            let table_constraints = constraints_per_table
+                .iter()
+                .find(|c| c.table_no == table_number);
+            let Some(table_constraints) = table_constraints else {
+                table_references[table_number].op = Operation::Scan {
+                    iter_dir: access_method.iter_dir,
+                    index: access_method.index.clone(),
+                };
+                continue;
+            };
+            let temp_constraint_refs = (0..table_constraints.constraints.len())
+                .map(|i| ConstraintRef {
+                    constraint_vec_pos: i,
+                    index_col_pos: table_constraints.constraints[i].table_col_pos,
+                    sort_order: SortOrder::Asc,
+                })
+                .collect::<Vec<_>>();
+            let usable_constraint_refs = usable_constraints_for_join_order(
+                &table_constraints.constraints,
+                &temp_constraint_refs,
+                &best_join_order[..=i],
+            );
+            if usable_constraint_refs.is_empty() {
+                table_references[table_number].op = Operation::Scan {
+                    iter_dir: access_method.iter_dir,
+                    index: access_method.index.clone(),
+                };
+                continue;
+            }
+            let ephemeral_index = ephemeral_index_build(
+                &table_references[table_number],
+                table_number,
+                &table_constraints.constraints,
+                &usable_constraint_refs,
+            );
+            let ephemeral_index = Arc::new(ephemeral_index);
+            table_references[table_number].op = Operation::Search(Search::Seek {
+                index: Some(ephemeral_index),
+                seek_def: build_seek_def_from_constraints(
+                    &table_constraints.constraints,
+                    &usable_constraint_refs,
+                    access_method.iter_dir,
+                    where_clause,
+                )?,
+            });
+        } else {
+            let constraint_refs = access_method.constraint_refs;
+            assert!(!constraint_refs.is_empty());
+            for cref in constraint_refs.iter() {
+                let constraint =
+                    &constraints_per_table[table_number].constraints[cref.constraint_vec_pos];
+                to_remove_from_where_clause.push(constraint.where_clause_pos.0);
+            }
+            if let Some(index) = &access_method.index {
+                table_references[table_number].op = Operation::Search(Search::Seek {
+                    index: Some(index.clone()),
+                    seek_def: build_seek_def_from_constraints(
+                        &constraints_per_table[table_number].constraints,
+                        &constraint_refs,
+                        access_method.iter_dir,
+                        where_clause,
+                    )?,
+                });
+                continue;
+            }
+            assert!(
+                constraint_refs.len() == 1,
+                "expected exactly one constraint for rowid seek, got {:?}",
+                constraint_refs
+            );
+            let constraint = &constraints_per_table[table_number].constraints
+                [constraint_refs[0].constraint_vec_pos];
+            table_references[table_number].op = match constraint.operator {
+                ast::Operator::Equals => Operation::Search(Search::RowidEq {
+                    cmp_expr: {
+                        let (idx, side) = constraint.where_clause_pos;
+                        let ast::Expr::Binary(lhs, _, rhs) =
+                            unwrap_parens(&where_clause[idx].expr)?
+                        else {
+                            panic!("Expected a binary expression");
+                        };
+                        let where_term = WhereTerm {
+                            expr: match side {
+                                BinaryExprSide::Lhs => lhs.as_ref().clone(),
+                                BinaryExprSide::Rhs => rhs.as_ref().clone(),
                             },
-                        }),
-                        _ => Operation::Search(Search::Seek {
-                            index: None,
-                            seek_def: build_seek_def_from_constraints(
-                                &constraints_per_table[table_number].constraints,
-                                &constraint_refs,
-                                iter_dir,
-                                where_clause,
-                            )?,
-                        }),
-                    }
-                }
-            }
-        };
+                            from_outer_join: where_clause[idx].from_outer_join.clone(),
+                        };
+                        where_term
+                    },
+                }),
+                _ => Operation::Search(Search::Seek {
+                    index: None,
+                    seek_def: build_seek_def_from_constraints(
+                        &constraints_per_table[table_number].constraints,
+                        &constraint_refs,
+                        access_method.iter_dir,
+                        where_clause,
+                    )?,
+                }),
+            };
+        }
     }
     to_remove_from_where_clause.sort_by_key(|c| *c);
     for position in to_remove_from_where_clause.iter().rev() {

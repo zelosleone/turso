@@ -481,10 +481,7 @@ mod tests {
     use crate::{
         schema::{BTreeTable, Column, Index, IndexColumn, Table, Type},
         translate::{
-            optimizer::{
-                access_method::AccessMethodKind,
-                constraints::{constraints_from_where_clause, BinaryExprSide},
-            },
+            optimizer::constraints::{constraints_from_where_clause, BinaryExprSide},
             plan::{ColumnUsedMask, IterationDirection, JoinInfo, Operation, WhereTerm},
             planner::TableMask,
         },
@@ -547,11 +544,9 @@ mod tests {
         .unwrap()
         .unwrap();
         // Should just be a table scan access method
-        assert!(matches!(
-            access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind,
-            AccessMethodKind::Scan { index: None, iter_dir }
-            if iter_dir == IterationDirection::Forwards
-        ));
+        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        assert!(access_method.is_scan());
+        assert!(access_method.iter_dir == IterationDirection::Forwards);
     }
 
     #[test]
@@ -584,18 +579,14 @@ mod tests {
         assert!(result.is_some());
         let BestJoinOrderResult { best_plan, .. } = result.unwrap();
         assert_eq!(best_plan.table_numbers, vec![0]);
+        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        assert!(access_method.is_search());
+        assert!(access_method.iter_dir == IterationDirection::Forwards);
+        assert!(access_method.constraint_refs.len() == 1);
         assert!(
-            matches!(
-                &access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind,
-                AccessMethodKind::Search {
-                    index: None,
-                    iter_dir,
-                    constraint_refs,
-                }
-                if *iter_dir == IterationDirection::Forwards && constraint_refs.len() == 1 && table_constraints[0].constraints[constraint_refs[0].constraint_vec_pos].where_clause_pos == (0, BinaryExprSide::Rhs),
-            ),
-            "expected rowid eq access method, got {:?}",
-            access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind
+            table_constraints[0].constraints[access_method.constraint_refs[0].constraint_vec_pos]
+                .where_clause_pos
+                == (0, BinaryExprSide::Rhs)
         );
     }
 
@@ -645,18 +636,15 @@ mod tests {
         assert!(result.is_some());
         let BestJoinOrderResult { best_plan, .. } = result.unwrap();
         assert_eq!(best_plan.table_numbers, vec![0]);
+        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        assert!(access_method.is_search());
+        assert!(access_method.iter_dir == IterationDirection::Forwards);
+        assert!(access_method.index.as_ref().unwrap().name == "sqlite_autoindex_test_table_1");
+        assert!(access_method.constraint_refs.len() == 1);
         assert!(
-            matches!(
-                &access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind,
-                AccessMethodKind::Search {
-                    index: Some(index),
-                    iter_dir,
-                    constraint_refs,
-                }
-                if *iter_dir == IterationDirection::Forwards && constraint_refs.len() == 1 && table_constraints[0].constraints[constraint_refs[0].constraint_vec_pos].lhs_mask.is_empty() && index.name == "sqlite_autoindex_test_table_1"
-            ),
-            "expected index search access method, got {:?}",
-            access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind
+            table_constraints[0].constraints[access_method.constraint_refs[0].constraint_vec_pos]
+                .where_clause_pos
+                == (0, BinaryExprSide::Rhs)
         );
     }
 
@@ -719,27 +707,19 @@ mod tests {
         assert!(result.is_some());
         let BestJoinOrderResult { best_plan, .. } = result.unwrap();
         assert_eq!(best_plan.table_numbers, vec![1, 0]);
+        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        assert!(access_method.is_scan());
+        assert!(access_method.iter_dir == IterationDirection::Forwards);
+        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[1]];
+        assert!(access_method.is_search());
+        assert!(access_method.iter_dir == IterationDirection::Forwards);
+        assert!(access_method.index.as_ref().unwrap().name == "index1");
+        assert!(access_method.constraint_refs.len() == 1);
         assert!(
-            matches!(
-                &access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind,
-                AccessMethodKind::Scan { index: None, iter_dir }
-                if *iter_dir == IterationDirection::Forwards
-            ),
-            "expected TableScan access method, got {:?}",
-            access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind
-        );
-        assert!(
-            matches!(
-                &access_methods_arena.borrow()[best_plan.best_access_methods[1]].kind,
-                AccessMethodKind::Search {
-                    index: Some(index),
-                    iter_dir,
-                    constraint_refs,
-                }
-                if *iter_dir == IterationDirection::Forwards && constraint_refs.len() == 1 && table_constraints[TABLE1].constraints[constraint_refs[0].constraint_vec_pos].where_clause_pos == (0, BinaryExprSide::Rhs) && index.name == "index1",
-            ),
-            "expected Search access method, got {:?}",
-            access_methods_arena.borrow()[best_plan.best_access_methods[1]].kind
+            table_constraints[TABLE1].constraints
+                [access_method.constraint_refs[0].constraint_vec_pos]
+                .where_clause_pos
+                == (0, BinaryExprSide::Rhs)
         );
     }
 
@@ -892,99 +872,32 @@ mod tests {
             vec![TABLE_NO_CUSTOMERS, TABLE_NO_ORDERS, TABLE_NO_ORDER_ITEMS]
         );
 
-        let AccessMethodKind::Search {
-            index: Some(index),
-            iter_dir,
-            constraint_refs,
-        } = &access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind
-        else {
-            panic!("expected Search access method with index for first table");
-        };
+        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        assert!(access_method.is_search());
+        assert!(access_method.iter_dir == IterationDirection::Forwards);
+        assert!(access_method.index.as_ref().unwrap().name == "sqlite_autoindex_customers_1");
+        assert!(access_method.constraint_refs.len() == 1);
+        let constraint = &table_constraints[TABLE_NO_CUSTOMERS].constraints
+            [access_method.constraint_refs[0].constraint_vec_pos];
+        assert!(constraint.lhs_mask.is_empty());
 
-        assert_eq!(
-            index.name, "sqlite_autoindex_customers_1",
-            "wrong index name"
-        );
-        assert_eq!(
-            *iter_dir,
-            IterationDirection::Forwards,
-            "wrong iteration direction"
-        );
-        assert_eq!(
-            constraint_refs.len(),
-            1,
-            "wrong number of constraint references"
-        );
-        assert!(
-            table_constraints[TABLE_NO_CUSTOMERS].constraints
-                [constraint_refs[0].constraint_vec_pos]
-                .lhs_mask
-                .is_empty(),
-            "wrong lhs mask: {:?}",
-            table_constraints[TABLE_NO_CUSTOMERS].constraints
-                [constraint_refs[0].constraint_vec_pos]
-                .lhs_mask
-        );
+        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[1]];
+        assert!(access_method.is_search());
+        assert!(access_method.iter_dir == IterationDirection::Forwards);
+        assert!(access_method.index.as_ref().unwrap().name == "orders_customer_id_idx");
+        assert!(access_method.constraint_refs.len() == 1);
+        let constraint = &table_constraints[TABLE_NO_ORDERS].constraints
+            [access_method.constraint_refs[0].constraint_vec_pos];
+        assert!(constraint.lhs_mask.contains_table(TABLE_NO_CUSTOMERS));
 
-        let AccessMethodKind::Search {
-            index: Some(index),
-            iter_dir,
-            constraint_refs,
-        } = &access_methods_arena.borrow()[best_plan.best_access_methods[1]].kind
-        else {
-            panic!("expected Search access method with index for second table");
-        };
-
-        assert_eq!(index.name, "orders_customer_id_idx", "wrong index name");
-        assert_eq!(
-            *iter_dir,
-            IterationDirection::Forwards,
-            "wrong iteration direction"
-        );
-        assert_eq!(
-            constraint_refs.len(),
-            1,
-            "wrong number of constraint references"
-        );
-        assert!(
-            table_constraints[TABLE_NO_ORDERS].constraints[constraint_refs[0].constraint_vec_pos]
-                .lhs_mask
-                .contains_table(TABLE_NO_CUSTOMERS),
-            "wrong lhs mask: {:?}",
-            table_constraints[TABLE_NO_ORDERS].constraints[constraint_refs[0].constraint_vec_pos]
-                .lhs_mask
-        );
-
-        let AccessMethodKind::Search {
-            index: Some(index),
-            iter_dir,
-            constraint_refs,
-        } = &access_methods_arena.borrow()[best_plan.best_access_methods[2]].kind
-        else {
-            panic!("expected Search access method with index for third table");
-        };
-
-        assert_eq!(index.name, "order_items_order_id_idx", "wrong index name");
-        assert_eq!(
-            *iter_dir,
-            IterationDirection::Forwards,
-            "wrong iteration direction"
-        );
-        assert_eq!(
-            constraint_refs.len(),
-            1,
-            "wrong number of constraint references"
-        );
-        assert!(
-            table_constraints[TABLE_NO_ORDER_ITEMS].constraints
-                [constraint_refs[0].constraint_vec_pos]
-                .lhs_mask
-                .contains_table(TABLE_NO_ORDERS),
-            "wrong lhs mask: {:?}",
-            table_constraints[TABLE_NO_ORDER_ITEMS].constraints
-                [constraint_refs[0].constraint_vec_pos]
-                .lhs_mask
-        );
+        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[2]];
+        assert!(access_method.is_search());
+        assert!(access_method.iter_dir == IterationDirection::Forwards);
+        assert!(access_method.index.as_ref().unwrap().name == "order_items_order_id_idx");
+        assert!(access_method.constraint_refs.len() == 1);
+        let constraint = &table_constraints[TABLE_NO_ORDER_ITEMS].constraints
+            [access_method.constraint_refs[0].constraint_vec_pos];
+        assert!(constraint.lhs_mask.contains_table(TABLE_NO_ORDERS));
     }
 
     struct TestColumn {
@@ -1060,23 +973,20 @@ mod tests {
         // Verify that t2 is chosen first due to its equality filter
         assert_eq!(best_plan.table_numbers[0], 1);
         // Verify table scan is used since there are no indexes
-        assert!(matches!(
-            access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind,
-            AccessMethodKind::Scan { index: None, iter_dir }
-            if iter_dir == IterationDirection::Forwards
-        ));
+        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        assert!(access_method.is_scan());
+        assert!(access_method.iter_dir == IterationDirection::Forwards);
+        assert!(access_method.index.is_none());
         // Verify that t1 is chosen next due to its inequality filter
-        assert!(matches!(
-            access_methods_arena.borrow()[best_plan.best_access_methods[1]].kind,
-            AccessMethodKind::Scan { index: None, iter_dir }
-            if iter_dir == IterationDirection::Forwards
-        ));
+        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[1]];
+        assert!(access_method.is_scan());
+        assert!(access_method.iter_dir == IterationDirection::Forwards);
+        assert!(access_method.index.is_none());
         // Verify that t3 is chosen last due to no filters
-        assert!(matches!(
-            access_methods_arena.borrow()[best_plan.best_access_methods[2]].kind,
-            AccessMethodKind::Scan { index: None, iter_dir }
-            if iter_dir == IterationDirection::Forwards
-        ));
+        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[2]];
+        assert!(access_method.is_scan());
+        assert!(access_method.iter_dir == IterationDirection::Forwards);
+        assert!(access_method.index.is_none());
     }
 
     #[test]
@@ -1166,43 +1076,22 @@ mod tests {
         );
 
         // Verify access methods
-        assert!(
-            matches!(
-                &access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind,
-                AccessMethodKind::Scan { index: None, iter_dir }
-                if *iter_dir == IterationDirection::Forwards
-            ),
-            "First table (fact) should use table scan due to column filter"
-        );
+        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        assert!(access_method.is_scan());
+        assert!(access_method.iter_dir == IterationDirection::Forwards);
+        assert!(access_method.index.is_none());
+        assert!(access_method.constraint_refs.is_empty());
 
         for (i, table_number) in best_plan.table_numbers.iter().enumerate().skip(1) {
-            let AccessMethodKind::Search {
-                index: None,
-                iter_dir,
-                constraint_refs,
-            } = &access_methods_arena.borrow()[best_plan.best_access_methods[i]].kind
-            else {
-                panic!("expected Search access method for table {}", table_number);
-            };
-
-            assert_eq!(
-                *iter_dir,
-                IterationDirection::Forwards,
-                "wrong iteration direction"
-            );
-            assert_eq!(
-                constraint_refs.len(),
-                1,
-                "wrong number of constraint references"
-            );
-            assert!(
-                table_constraints[*table_number].constraints[constraint_refs[0].constraint_vec_pos]
-                    .lhs_mask
-                    .contains_table(FACT_TABLE_IDX),
-                "wrong lhs mask: {:?}",
-                table_constraints[*table_number].constraints[constraint_refs[0].constraint_vec_pos]
-                    .lhs_mask
-            );
+            let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[i]];
+            assert!(access_method.is_search());
+            assert!(access_method.iter_dir == IterationDirection::Forwards);
+            assert!(access_method.index.is_none());
+            assert!(access_method.constraint_refs.len() == 1);
+            let constraint = &table_constraints[*table_number].constraints
+                [access_method.constraint_refs[0].constraint_vec_pos];
+            assert!(constraint.lhs_mask.contains_table(FACT_TABLE_IDX));
+            assert!(constraint.operator == ast::Operator::Equals);
         }
     }
 
@@ -1267,32 +1156,23 @@ mod tests {
 
         // Verify access methods:
         // - First table should use Table scan
-        assert!(
-            matches!(
-                &access_methods_arena.borrow()[best_plan.best_access_methods[0]].kind,
-                AccessMethodKind::Scan { index: None, iter_dir }
-                if *iter_dir == IterationDirection::Forwards
-            ),
-            "First table should use Table scan"
-        );
+        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        assert!(access_method.is_scan());
+        assert!(access_method.iter_dir == IterationDirection::Forwards);
+        assert!(access_method.index.is_none());
+        assert!(access_method.constraint_refs.is_empty());
 
         // all of the rest should use rowid equality
         for i in 1..NUM_TABLES {
-            let method = &access_methods_arena.borrow()[best_plan.best_access_methods[i]].kind;
-            assert!(
-                matches!(
-                    method,
-                    AccessMethodKind::Search {
-                        index: None,
-                        iter_dir,
-                        constraint_refs,
-                    }
-                    if *iter_dir == IterationDirection::Forwards && constraint_refs.len() == 1 && table_constraints[i].constraints[constraint_refs[0].constraint_vec_pos].lhs_mask.contains_table(i-1)
-                ),
-                "Table {} should use Search access method, got {:?}",
-                i + 1,
-                method
-            );
+            let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[i]];
+            assert!(access_method.is_search());
+            assert!(access_method.iter_dir == IterationDirection::Forwards);
+            assert!(access_method.index.is_none());
+            assert!(access_method.constraint_refs.len() == 1);
+            let constraint = &table_constraints[i].constraints
+                [access_method.constraint_refs[0].constraint_vec_pos];
+            assert!(constraint.lhs_mask.contains_table(i - 1));
+            assert!(constraint.operator == ast::Operator::Equals);
         }
     }
 

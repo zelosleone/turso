@@ -20,38 +20,34 @@ pub struct AccessMethod<'a> {
     /// The estimated number of page fetches.
     /// We are ignoring CPU cost for now.
     pub cost: Cost,
-    pub kind: AccessMethodKind<'a>,
+    /// The direction of iteration for the access method.
+    /// Typically this is backwards only if it helps satisfy an [OrderTarget].
+    pub iter_dir: IterationDirection,
+    /// The index that is being used, if any. For rowid based searches (and full table scans), this is None.
+    pub index: Option<Arc<Index>>,
+    /// The constraint references that are being used, if any.
+    /// An empty list of constraint refs means a scan (full table or index);
+    /// a non-empty list means a search.
+    pub constraint_refs: &'a [ConstraintRef],
 }
 
 impl<'a> AccessMethod<'a> {
-    pub fn index(&self) -> Option<&Index> {
-        match &self.kind {
-            AccessMethodKind::Scan { index, .. } => index.as_ref().map(|i| i.as_ref()),
-            AccessMethodKind::Search { index, .. } => index.as_ref().map(|i| i.as_ref()),
-        }
+    pub fn is_scan(&self) -> bool {
+        self.constraint_refs.is_empty()
     }
-    pub fn iter_dir(&self) -> IterationDirection {
-        match &self.kind {
-            AccessMethodKind::Scan { iter_dir, .. } => *iter_dir,
-            AccessMethodKind::Search { iter_dir, .. } => *iter_dir,
-        }
-    }
-}
 
-#[derive(Debug, Clone)]
-/// Represents the kind of access method.
-pub enum AccessMethodKind<'a> {
-    /// A full scan, which can be an index scan or a table scan.
-    Scan {
-        index: Option<Arc<Index>>,
-        iter_dir: IterationDirection,
-    },
-    /// A search, which can be an index seek or a rowid-based search.
-    Search {
-        index: Option<Arc<Index>>,
-        iter_dir: IterationDirection,
-        constraint_refs: &'a [ConstraintRef],
-    },
+    pub fn is_search(&self) -> bool {
+        !self.constraint_refs.is_empty()
+    }
+
+    pub fn new_table_scan(input_cardinality: f64, iter_dir: IterationDirection) -> Self {
+        Self {
+            cost: estimate_cost_for_scan_or_seek(None, &[], &[], input_cardinality),
+            iter_dir,
+            index: None,
+            constraint_refs: &[],
+        }
+    }
 }
 
 /// Return the best [AccessMethod] for a given join order.
@@ -63,14 +59,8 @@ pub fn find_best_access_method_for_join_order<'a>(
     input_cardinality: f64,
 ) -> Result<AccessMethod<'a>> {
     let table_no = join_order.last().unwrap().table_no;
-    let cost_of_full_table_scan = estimate_cost_for_scan_or_seek(None, &[], &[], input_cardinality);
-    let mut best_access_method = AccessMethod {
-        cost: cost_of_full_table_scan,
-        kind: AccessMethodKind::Scan {
-            index: None,
-            iter_dir: IterationDirection::Forwards,
-        },
-    };
+    let mut best_access_method =
+        AccessMethod::new_table_scan(input_cardinality, IterationDirection::Forwards);
     let rowid_column_idx = rhs_table.columns().iter().position(|c| c.is_rowid_alias);
 
     // Estimate cost for each candidate index (including the rowid index) and replace best_access_method if the cost is lower.
@@ -151,18 +141,9 @@ pub fn find_best_access_method_for_join_order<'a>(
         if cost < best_access_method.cost + order_satisfiability_bonus {
             best_access_method = AccessMethod {
                 cost,
-                kind: if usable_constraint_refs.is_empty() {
-                    AccessMethodKind::Scan {
-                        index: candidate.index.clone(),
-                        iter_dir,
-                    }
-                } else {
-                    AccessMethodKind::Search {
-                        index: candidate.index.clone(),
-                        iter_dir,
-                        constraint_refs: &usable_constraint_refs,
-                    }
-                },
+                index: candidate.index.clone(),
+                iter_dir,
+                constraint_refs: &usable_constraint_refs,
             };
         }
     }

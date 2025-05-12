@@ -155,8 +155,8 @@ pub fn plan_satisfies_order_target(
 
         // Check if this table has an access method that provides the right ordering.
         let access_method = &access_methods_arena.borrow()[plan.best_access_methods[i]];
-        let iter_dir = access_method.iter_dir();
-        let index = access_method.index();
+        let iter_dir = access_method.iter_dir;
+        let index = access_method.index.as_ref();
         match index {
             None => {
                 // No index, so the next required column must be the rowid alias column.
