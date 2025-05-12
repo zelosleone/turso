@@ -40,6 +40,7 @@ impl JoinN {
 }
 
 /// Join n-1 tables with the n'th table.
+/// Returns None if the plan is worse than the provided cost upper bound.
 pub fn join_lhs_and_rhs<'a>(
     lhs: Option<&JoinN>,
     rhs_table_reference: &TableReference,
@@ -47,7 +48,8 @@ pub fn join_lhs_and_rhs<'a>(
     join_order: &[JoinOrderMember],
     maybe_order_target: Option<&OrderTarget>,
     access_methods_arena: &'a RefCell<Vec<AccessMethod<'a>>>,
-) -> Result<JoinN> {
+    cost_upper_bound: Cost,
+) -> Result<Option<JoinN>> {
     // The input cardinality for this join is the output cardinality of the previous join.
     // For example, in a 2-way join, if the left table has 1000 rows, and the right table will return 2 rows for each of the left table's rows,
     // then the output cardinality of the join will be 2000.
@@ -63,6 +65,10 @@ pub fn join_lhs_and_rhs<'a>(
 
     let lhs_cost = lhs.map_or(Cost(0.0), |l| l.cost);
     let cost = lhs_cost + best_access_method.cost;
+
+    if cost > cost_upper_bound {
+        return Ok(None);
+    }
 
     access_methods_arena.borrow_mut().push(best_access_method);
 
@@ -91,11 +97,11 @@ pub fn join_lhs_and_rhs<'a>(
         * output_cardinality_multiplier)
         .ceil() as usize;
 
-    Ok(JoinN {
+    Ok(Some(JoinN {
         data: best_access_methods,
         output_cardinality,
         cost,
-    })
+    }))
 }
 
 /// The result of [compute_best_join_order].
@@ -164,13 +170,7 @@ pub fn compute_best_join_order<'a>(
     // Keep track of the current best cost so we can short-circuit planning for subplans
     // that already exceed the cost of the current best plan.
     let cost_upper_bound = best_plan.cost;
-    let cost_upper_bound_ordered = {
-        if best_plan_is_also_ordered {
-            cost_upper_bound
-        } else {
-            Cost(f64::MAX)
-        }
-    };
+    let cost_upper_bound_ordered = best_plan.cost;
 
     // Keep track of the best plan for a given subset of tables.
     // Consider this example: we have tables a,b,c,d to join.
@@ -198,8 +198,11 @@ pub fn compute_best_join_order<'a>(
             &join_order,
             maybe_order_target,
             access_methods_arena,
+            cost_upper_bound_ordered,
         )?;
-        best_plan_memo.insert(mask, rel);
+        if let Some(rel) = rel {
+            best_plan_memo.insert(mask, rel);
+        }
     }
     join_order.clear();
 
@@ -312,15 +315,13 @@ pub fn compute_best_join_order<'a>(
                     &join_order,
                     maybe_order_target,
                     access_methods_arena,
+                    cost_upper_bound_ordered,
                 )?;
                 join_order.clear();
 
-                // Since cost_upper_bound_ordered is always >= to cost_upper_bound,
-                // if the cost we calculated for this plan is worse than cost_upper_bound_ordered,
-                // this join subset is already worse than our best plan for the ENTIRE query, so skip.
-                if rel.cost >= cost_upper_bound_ordered {
+                let Some(rel) = rel else {
                     continue;
-                }
+                };
 
                 let satisfies_order_target = if let Some(ref order_target) = maybe_order_target {
                     plan_satisfies_order_target(
@@ -414,7 +415,9 @@ pub fn compute_naive_left_deep_plan<'a>(
         &join_order[..1],
         maybe_order_target,
         access_methods_arena,
-    )?;
+        Cost(f64::MAX),
+    )?
+    .expect("call to join_lhs_and_rhs in compute_naive_left_deep_plan always returns Some(JoinN)");
 
     // Add remaining tables one at a time from left to right
     for i in 1..n {
@@ -425,7 +428,11 @@ pub fn compute_naive_left_deep_plan<'a>(
             &join_order[..=i],
             maybe_order_target,
             access_methods_arena,
-        )?;
+            Cost(f64::MAX),
+        )?
+        .expect(
+            "call to join_lhs_and_rhs in compute_naive_left_deep_plan always returns Some(JoinN)",
+        );
     }
 
     Ok(best_plan)
