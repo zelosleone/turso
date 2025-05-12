@@ -66,7 +66,7 @@ pub fn join_lhs_and_rhs<'a>(
     best_access_methods.push(access_methods_arena.borrow().len() - 1);
 
     let lhs_mask = lhs.map_or(TableMask::new(), |l| {
-        TableMask::from_iter(l.table_numbers.iter().cloned())
+        TableMask::from_table_number_iter(l.table_numbers.iter().cloned())
     });
     // Output cardinality is reduced by the product of the selectivities of the constraints that can be used with this join order.
     let output_cardinality_multiplier = rhs_constraints

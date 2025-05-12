@@ -319,7 +319,7 @@ pub fn usable_constraints_for_join_order<'a>(
         if other_side_refers_to_self {
             break;
         }
-        let lhs_mask = TableMask::from_iter(
+        let lhs_mask = TableMask::from_table_number_iter(
             join_order
                 .iter()
                 .take(join_order.len() - 1)
