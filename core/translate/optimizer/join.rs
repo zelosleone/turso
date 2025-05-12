@@ -56,13 +56,15 @@ pub fn join_lhs_and_rhs<'a>(
 
     let rhs_table_number = join_order.last().unwrap().table_no;
     let new_numbers = lhs.map_or(vec![rhs_table_number], |l| {
-        let mut numbers = l.table_numbers.clone();
+        let mut numbers = Vec::with_capacity(l.table_numbers.len() + 1);
+        numbers.extend(l.table_numbers.iter().cloned());
         numbers.push(rhs_table_number);
         numbers
     });
 
     access_methods_arena.borrow_mut().push(best_access_method);
-    let mut best_access_methods = lhs.map_or(vec![], |l| l.best_access_methods.clone());
+    let mut best_access_methods = Vec::with_capacity(new_numbers.len());
+    best_access_methods.extend(lhs.map_or(vec![], |l| l.best_access_methods.clone()));
     best_access_methods.push(access_methods_arena.borrow().len() - 1);
 
     let lhs_mask = lhs.map_or(TableMask::new(), |l| {
