@@ -141,7 +141,7 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
             f"Actual:\n{repr(actual)}"
         )
 
-    def debug_print(self, sql: str):
+    def run_debug(self, sql: str):
         console.debug(f"debugging: {sql}", _stack_offset=2)
         actual = self.shell.execute(sql)
         console.debug(f"OUTPUT:\n{repr(actual)}", _stack_offset=2)
