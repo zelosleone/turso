@@ -177,7 +177,8 @@ pub fn compute_best_join_order<'a>(
     // if we find that 'b JOIN a' is better than 'a JOIN b', then we don't need to even try
     // to do 'a JOIN b JOIN c', because we know 'b JOIN a JOIN c' is going to be better.
     // This is due to the commutativity and associativity of inner joins.
-    let mut best_plan_memo: HashMap<TableMask, JoinN> = HashMap::new();
+    let mut best_plan_memo: HashMap<TableMask, JoinN> =
+        HashMap::with_capacity(2usize.pow(num_tables as u32 - 1));
 
     // Dynamic programming base case: calculate the best way to access each single table, as if
     // there were no other tables.
