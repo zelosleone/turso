@@ -31,7 +31,7 @@ Query optimization is obviously an important part of any SQL-based database engi
 2. Do as little CPU work as possible
 3. Retain query correctness.
 
-**The most important ways to achieve #1 and #2 are:**
+**The most important ways to achieve no. 1 and no. 2 are:**
 
 1. Choose the optimal access method for each table (e.g. an index or a rowid-based seek, or a full table scan if all else fails).
 2. Choose the best or near-best way to reorder the tables in the query so that those optimal access methods can be used.
@@ -40,16 +40,39 @@ Query optimization is obviously an important part of any SQL-based database engi
 ## Limbo's optimizer
 
 Limbo's optimizer is an implementation of an extremely traditional [IBM System R](https://www.cs.cmu.edu/~15721-f24/slides/02-Selinger-SystemR-opt.pdf) style optimizer,
-i.e. straight from the 70s! The main ideas are:
+i.e. straight from the 70s! The DP algorithm is explained below.
 
-1. Find the best (least `cost`) way to access any single table in the query (n=1). Estimate the `output cardinality` (row count) for this table.
-    - For example, if there is a WHERE clause condition `t1.x = 5` and we have an index on `t1.x`, that index is potentially going to be the best way to access `t1`. Assuming `t1` has `1,000,000` rows, we might estimate that the output cardinality of this will be `10,000` after all the filters on `t1` have been applied.
-2. For each result of #1, find the best way to join that result with each other table (n=2). Use the output cardinality of the previous step as the `input cardinality` of this step.
-3. For each result of #2, find the best way to join the result of that 2-way join with each other table (n=3)
-...
-n. Find the best way to join each (n-1)-way join with the remaining table.
+### Current high level flow of the optimizer
 
-The intermediate steps of the above algorithm are memoized, and finally the join order and access methods with the least cumulative cost is chosen.
+1. **SQL rewriting**
+  - Rewrite certain SQL expressions to another form (not a lot currently; e.g. rewrite BETWEEN as two comparisons)
+  - Eliminate constant conditions: e.g. `WHERE 1` is removed, `WHERE 0` short-circuits the whole query because it is trivially false.
+2. **Check whether there is an "interesting order"** that we should consider when evaluating indexes and join orders
+    - Is there a GROUP BY? an ORDER BY? Both?
+3. **Convert WHERE clause conjucts to Constraints**
+    - E.g. in `WHERE t.x = 5`, the expression `5` _constrains_  table `t` to values of `x` that are exactly `5`.
+    - E.g. in `Where t.x = u.x`, the expression `u.x` constrains `t`, AND `t.x` constrains `u`.
+    - Per table, each constraint has an estimated _selectivity_ (how much it filters the result set); this affects join order calculations, see the paragraph on _Estimation_  below.
+    - Per table, constraints are also analyzed for whether one or multiple of them can be used as an index seek key to avoid a full scan.
+4. **Compute the best join order using a dynamic programming algorithm:**
+  - `n` = number of tables considered
+  - `n=1`: find the lowest _cost_ way to access each single table, given the constraints of the query. Memoize the result.
+  - `n=2`: for each table found in the `n=1` step, find the best way to join that table with each other table. Memoize the result.
+  - `n=3`: for each 2-table subset found, find the best way to join that result to each other table. Memoize the result.
+  - `n=m`: for each `m-1` table subset found, find the best way to join that result to the `m'th` table
+  - **Use pruning to reduce search space:**
+    - Compute the literal query order first, and store its _cost_  as an upper threshold
+    - If at any point a considered join order exceeds the upper threshold, discard that search path since it cannot be better than the current best.
+      - For example, we have `SELECT * FROM a JOIN b JOIN c JOIN d`. Compute `JOIN(a,b,c,d)` first. If `JOIN (b,a)` is already worse than `JOIN(a,b,c,d)`, we don't have to even try `JOIN(b,a,c)`.
+    - Also keep track of the best plan per _subset_:
+      - If we find that `JOIN(b,a,c)` is better than any other permutation of the same tables, e.g. `JOIN(a,b,c)`, then we can discard _ALL_ of the other permutations for that subset. For example, we don't need to consider `JOIN(a,b,c,d)` because we know it's worse than `JOIN(b,a,c,d)`.
+      - This is possible due to the associativity and commutativity of INNER JOINs.
+  - Also keep track of the best _ordered plan_ , i.e. one that provides the "interesting order" mentioned above.
+  - At the end, apply a cost penalty to the best overall plan
+    - If it is now worse than the best sorted plan, then choose the sorted plan as the best plan for the query.
+      - This allows us to eliminate a sorting operation.
+    - If the best overall plan is still best even with the sorting penalty, then keep it. A sorting operation is later applied to sort the rows according to the desired order.
+5. **Mutate the plan's `join_order` and `Operation`s to match the computed best plan.**
 
 ### Estimation of cost and cardinalities + a note on table statistics
 
@@ -64,12 +87,7 @@ Currently, in the absence of `ANALYZE`, `sqlite_stat1` etc. we assume the follow
 From the above, we derive the following formula for estimating the cost of joining `t1` with `t2`
 
 ```
-JOIN_COST = COST(t1.rows) + t1.rows * COST(t2.rows) + E
-
-where
-  COST(rows) = PAGE_IO(rows)
-  and
-  E = one-time cost to build ephemeral index if needed (usually 0)
+JOIN_COST = PAGE_IO(t1.rows) + t1.rows * PAGE_IO(t2.rows)
 ```
 
 For example, let's take the query `SELECT * FROM t1 JOIN t2 USING(foo) WHERE t2.foo > 10`. Let's assume the following:
@@ -81,22 +99,22 @@ For example, let's take the query `SELECT * FROM t1 JOIN t2 USING(foo) WHERE t2.
 The best access method for both is a full table scan. The output cardinality of `t1` is the full table, because nothing is filtering it. Hence, the cost of `t1 JOIN t2` becomes:
 
 ```
-JOIN_COST = COST(t1.input_rows) + t1.output_rows * COST(t2.input_rows)
+JOIN_COST = PAGE_IO(t1.input_rows) + t1.output_rows * PAGE_IO(t2.input_rows)
 
 // plugging in the values:
 
-JOIN_COST = COST(6400) + 6400 * COST(8000)
+JOIN_COST = PAGE_IO(6400) + 6400 * PAGE_IO(8000)
 JOIN_COST = 80 + 6400 * 100 = 640080
 ```
 
 Now let's consider `t2 JOIN t1`. The best access method for both is still a full scan, but since we can filter on `t2.foo > 10`, its output cardinality decreases. Let's assume only 1/4 of the rows of `t2` match the condition `t2.foo > 10`. Hence, the cost of `t2 join t1` becomes:
 
 ```
-JOIN_COST = COST(t2.input_rows) + t2.output_rows * COST(t1.input_rows)
+JOIN_COST = PAGE_IO(t2.input_rows) + t2.output_rows * PAGE_IO(t1.input_rows)
 
 // plugging in the values:
 
-JOIN_COST = COST(8000) + 1/4 * 8000 * COST(6400)
+JOIN_COST = PAGE_IO(8000) + 1/4 * 8000 * PAGE_IO(6400)
 JOIN_COST = 100 + 2000 * 80 = 160100
 ```
 
