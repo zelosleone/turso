@@ -8,7 +8,7 @@ use crate::{
         },
     },
     translate::plan::IterationDirection,
-    types::IndexKeySortOrder,
+    types::{IndexKeySortOrder, SerialType, SerialTypeKind},
     MvCursor,
 };
 
@@ -815,20 +815,23 @@ impl BTreeCursor {
                 ));
             }
         };
-
         assert!(offset + amount <= payload_size as u32);
 
         let (local_size, _) =
             self.parse_cell_info(payload_size as usize, contents.page_type(), usable_size)?;
-
+        println!(
+            "local size: {}, offset: {}, amount: {}",
+            local_size, offset, amount
+        );
+        println!("cell");
         if offset < local_size as u32 {
             let mut a: u32 = amount;
             if a + offset > local_size as u32 {
                 a = local_size as u32 - offset;
-                self.read_write_payload_to_page(offset, page, buffer, amount, is_write);
-                offset = 0;
-                amount -= a;
             }
+            self.read_write_payload_to_page(offset, payload, page, buffer, amount, is_write);
+            offset = 0;
+            amount -= a;
         } else {
             offset -= local_size as u32;
         }
@@ -838,6 +841,7 @@ impl BTreeCursor {
     fn read_write_payload_to_page(
         &mut self,
         payload_offset: u32,
+        payload: &[u8],
         page: PageRef,
         buffer: &mut Vec<u8>,
         num_bytes: u32,
@@ -846,15 +850,24 @@ impl BTreeCursor {
         if copy_to_page {
             page.set_dirty();
             self.pager.add_dirty(page.get().id);
-            let page_contents = page.get().contents.as_mut().unwrap();
-            let page_buf = page_contents.as_ptr();
-            page_buf[payload_offset as usize..payload_offset as usize + num_bytes as usize]
+            let payload_mut = unsafe {
+                std::slice::from_raw_parts_mut(payload.as_ptr() as *mut u8, payload.len())
+            };
+            payload_mut[payload_offset as usize..payload_offset as usize + num_bytes as usize]
                 .copy_from_slice(&buffer[..num_bytes as usize]);
         } else {
+            println!("buffer: {:?}", buffer);
+            println!("payload slice: {:?}", String::from_utf8(payload.to_vec()));
+            println!("payload length: {}", payload.len());
             buffer.extend_from_slice(
-                &page.get().contents.as_ref().unwrap().as_ptr()
-                    [payload_offset as usize..payload_offset as usize + num_bytes as usize],
+                &payload[payload_offset as usize..(payload_offset + num_bytes) as usize],
             );
+            println!("buffer after: {:?}", buffer);
+            println!(
+                "buffer after to string: {}",
+                String::from_utf8_lossy(buffer)
+            );
+            println!("#################");
         }
     }
 
@@ -7074,6 +7087,88 @@ mod tests {
             let rowid = run_until_done(|| cursor.get_next_record(None), pager.deref()).unwrap();
             assert_eq!(rowid.unwrap(), i as u64, "got!=expected");
         }
+    }
+
+    #[test]
+    pub fn test_read_write_payload_with_offset() {
+        let (pager, root_page) = empty_btree();
+        let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
+        let offset = 2; // blobs data starts at offset 2
+        let initial_text = "hello world";
+        println!("initial_text: {}", initial_text);
+        let initial_blob = initial_text.as_bytes().to_vec();
+        println!(
+            "initial_blob: {:?}",
+            String::from_utf8(initial_blob.clone())
+        );
+        let value = ImmutableRecord::from_registers(&[Register::OwnedValue(OwnedValue::Blob(
+            initial_blob.clone(),
+        ))]);
+
+        run_until_done(
+            || {
+                let key = SeekKey::TableRowId(1);
+                cursor.move_to(key, SeekOp::EQ)
+            },
+            pager.deref(),
+        )
+        .unwrap();
+
+        run_until_done(
+            || cursor.insert(&BTreeKey::new_table_rowid(1, Some(&value)), true),
+            pager.deref(),
+        )
+        .unwrap();
+
+        cursor
+            .stack
+            .set_cell_index(cursor.stack.current_cell_index() + 1);
+
+        let mut read_buffer = Vec::new();
+        run_until_done(
+            || {
+                cursor.read_write_payload_with_offset(
+                    offset,
+                    &mut read_buffer,
+                    initial_blob.len() as u32,
+                    false,
+                )
+            },
+            pager.deref(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::str::from_utf8(&read_buffer).unwrap(),
+            initial_text,
+            "Read data doesn't match expected data"
+        );
+
+        let mut modified_hello = "olleh".as_bytes().to_vec();
+        run_until_done(
+            || cursor.read_write_payload_with_offset(offset, &mut modified_hello, 5, true),
+            pager.deref(),
+        )
+        .unwrap();
+        let mut verification_buffer = Vec::new();
+        run_until_done(
+            || {
+                cursor.read_write_payload_with_offset(
+                    offset,
+                    &mut verification_buffer,
+                    initial_blob.len() as u32,
+                    false,
+                )
+            },
+            pager.deref(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::str::from_utf8(&verification_buffer).unwrap(),
+            "olleh world",
+            "Modified data doesn't match expected result"
+        );
     }
 
     fn run_until_done<T>(
