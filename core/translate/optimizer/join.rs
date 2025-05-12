@@ -19,14 +19,24 @@ use super::{
 /// Represents an n-ary join, anywhere from 1 table to N tables.
 #[derive(Debug, Clone)]
 pub struct JoinN {
-    /// Identifiers of the tables in the best_plan
-    pub table_numbers: Vec<usize>,
-    /// The best access methods for the best_plans
-    pub best_access_methods: Vec<usize>,
+    /// Tuple: (table_number, access_method_index)
+    pub data: Vec<(usize, usize)>,
     /// The estimated number of rows returned by joining these n tables together.
     pub output_cardinality: usize,
     /// Estimated execution cost of this N-ary join.
     pub cost: Cost,
+}
+
+impl JoinN {
+    pub fn table_numbers(&self) -> impl Iterator<Item = usize> + use<'_> {
+        self.data.iter().map(|(table_number, _)| *table_number)
+    }
+
+    pub fn best_access_methods(&self) -> impl Iterator<Item = usize> + use<'_> {
+        self.data
+            .iter()
+            .map(|(_, access_method_index)| *access_method_index)
+    }
 }
 
 /// Join n-1 tables with the n'th table.
@@ -54,21 +64,16 @@ pub fn join_lhs_and_rhs<'a>(
     let lhs_cost = lhs.map_or(Cost(0.0), |l| l.cost);
     let cost = lhs_cost + best_access_method.cost;
 
-    let rhs_table_number = join_order.last().unwrap().table_no;
-    let new_numbers = lhs.map_or(vec![rhs_table_number], |l| {
-        let mut numbers = Vec::with_capacity(l.table_numbers.len() + 1);
-        numbers.extend(l.table_numbers.iter().cloned());
-        numbers.push(rhs_table_number);
-        numbers
-    });
-
     access_methods_arena.borrow_mut().push(best_access_method);
-    let mut best_access_methods = Vec::with_capacity(new_numbers.len());
-    best_access_methods.extend(lhs.map_or(vec![], |l| l.best_access_methods.clone()));
-    best_access_methods.push(access_methods_arena.borrow().len() - 1);
+
+    let mut best_access_methods = Vec::with_capacity(join_order.len());
+    best_access_methods.extend(lhs.map_or(vec![], |l| l.data.clone()));
+
+    let rhs_table_number = join_order.last().unwrap().table_no;
+    best_access_methods.push((rhs_table_number, access_methods_arena.borrow().len() - 1));
 
     let lhs_mask = lhs.map_or(TableMask::new(), |l| {
-        TableMask::from_table_number_iter(l.table_numbers.iter().cloned())
+        TableMask::from_table_number_iter(l.table_numbers())
     });
     // Output cardinality is reduced by the product of the selectivities of the constraints that can be used with this join order.
     let output_cardinality_multiplier = rhs_constraints
@@ -87,8 +92,7 @@ pub fn join_lhs_and_rhs<'a>(
         .ceil() as usize;
 
     Ok(JoinN {
-        table_numbers: new_numbers,
-        best_access_methods,
+        data: best_access_methods,
         output_cardinality,
         cost,
     })
@@ -281,10 +285,10 @@ pub fn compute_best_join_order<'a>(
                 };
 
                 // Build a JoinOrder out of the table bitmask we are now considering.
-                for table_no in lhs.table_numbers.iter() {
+                for table_no in lhs.table_numbers() {
                     join_order.push(JoinOrderMember {
-                        table_no: *table_no,
-                        is_outer: table_references[*table_no]
+                        table_no,
+                        is_outer: table_references[table_no]
                             .join_info
                             .as_ref()
                             .map_or(false, |j| j.outer),
@@ -546,7 +550,7 @@ mod tests {
         .unwrap()
         .unwrap();
         // Should just be a table scan access method
-        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        let access_method = &access_methods_arena.borrow()[best_plan.data[0].1];
         assert!(access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
     }
@@ -580,8 +584,8 @@ mod tests {
         .unwrap();
         assert!(result.is_some());
         let BestJoinOrderResult { best_plan, .. } = result.unwrap();
-        assert_eq!(best_plan.table_numbers, vec![0]);
-        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        assert_eq!(best_plan.table_numbers().collect::<Vec<_>>(), vec![0]);
+        let access_method = &access_methods_arena.borrow()[best_plan.data[0].1];
         assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.constraint_refs.len() == 1);
@@ -637,8 +641,8 @@ mod tests {
         .unwrap();
         assert!(result.is_some());
         let BestJoinOrderResult { best_plan, .. } = result.unwrap();
-        assert_eq!(best_plan.table_numbers, vec![0]);
-        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        assert_eq!(best_plan.table_numbers().collect::<Vec<_>>(), vec![0]);
+        let access_method = &access_methods_arena.borrow()[best_plan.data[0].1];
         assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.as_ref().unwrap().name == "sqlite_autoindex_test_table_1");
@@ -708,11 +712,11 @@ mod tests {
         .unwrap();
         assert!(result.is_some());
         let BestJoinOrderResult { best_plan, .. } = result.unwrap();
-        assert_eq!(best_plan.table_numbers, vec![1, 0]);
-        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        assert_eq!(best_plan.table_numbers().collect::<Vec<_>>(), vec![1, 0]);
+        let access_method = &access_methods_arena.borrow()[best_plan.data[0].1];
         assert!(access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
-        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[1]];
+        let access_method = &access_methods_arena.borrow()[best_plan.data[1].1];
         assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.as_ref().unwrap().name == "index1");
@@ -870,11 +874,11 @@ mod tests {
 
         // Customers (due to =42 filter) -> Orders (due to index on customer_id) -> Order_items (due to index on order_id)
         assert_eq!(
-            best_plan.table_numbers,
+            best_plan.table_numbers().collect::<Vec<_>>(),
             vec![TABLE_NO_CUSTOMERS, TABLE_NO_ORDERS, TABLE_NO_ORDER_ITEMS]
         );
 
-        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        let access_method = &access_methods_arena.borrow()[best_plan.data[0].1];
         assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.as_ref().unwrap().name == "sqlite_autoindex_customers_1");
@@ -883,7 +887,7 @@ mod tests {
             [access_method.constraint_refs[0].constraint_vec_pos];
         assert!(constraint.lhs_mask.is_empty());
 
-        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[1]];
+        let access_method = &access_methods_arena.borrow()[best_plan.data[1].1];
         assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.as_ref().unwrap().name == "orders_customer_id_idx");
@@ -892,7 +896,7 @@ mod tests {
             [access_method.constraint_refs[0].constraint_vec_pos];
         assert!(constraint.lhs_mask.contains_table(TABLE_NO_CUSTOMERS));
 
-        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[2]];
+        let access_method = &access_methods_arena.borrow()[best_plan.data[2].1];
         assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.as_ref().unwrap().name == "order_items_order_id_idx");
@@ -973,19 +977,19 @@ mod tests {
         .unwrap();
 
         // Verify that t2 is chosen first due to its equality filter
-        assert_eq!(best_plan.table_numbers[0], 1);
+        assert_eq!(best_plan.table_numbers().nth(0).unwrap(), 1);
         // Verify table scan is used since there are no indexes
-        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        let access_method = &access_methods_arena.borrow()[best_plan.data[0].1];
         assert!(access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.is_none());
         // Verify that t1 is chosen next due to its inequality filter
-        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[1]];
+        let access_method = &access_methods_arena.borrow()[best_plan.data[1].1];
         assert!(access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.is_none());
         // Verify that t3 is chosen last due to no filters
-        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[2]];
+        let access_method = &access_methods_arena.borrow()[best_plan.data[2].1];
         assert!(access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.is_none());
@@ -1072,20 +1076,22 @@ mod tests {
         // Expected optimal order: fact table as outer, with rowid seeks in any order on each dimension table
         // Verify fact table is selected as the outer table as all the other tables can use SeekRowid
         assert_eq!(
-            best_plan.table_numbers[0], FACT_TABLE_IDX,
+            best_plan.table_numbers().nth(0).unwrap(),
+            FACT_TABLE_IDX,
             "First table should be fact (table {}) due to available index, got table {} instead",
-            FACT_TABLE_IDX, best_plan.table_numbers[0]
+            FACT_TABLE_IDX,
+            best_plan.table_numbers().nth(0).unwrap()
         );
 
         // Verify access methods
-        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        let access_method = &access_methods_arena.borrow()[best_plan.data[0].1];
         assert!(access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.is_none());
         assert!(access_method.constraint_refs.is_empty());
 
-        for (i, table_number) in best_plan.table_numbers.iter().enumerate().skip(1) {
-            let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[i]];
+        for (table_number, access_method_index) in best_plan.data.iter().skip(1) {
+            let access_method = &access_methods_arena.borrow()[*access_method_index];
             assert!(!access_method.is_scan());
             assert!(access_method.iter_dir == IterationDirection::Forwards);
             assert!(access_method.index.is_none());
@@ -1150,15 +1156,18 @@ mod tests {
         // Verify the join order is exactly t1 -> t2 -> t3 -> t4 -> t5
         for i in 0..NUM_TABLES {
             assert_eq!(
-                best_plan.table_numbers[i], i,
+                best_plan.table_numbers().nth(i).unwrap(),
+                i,
                 "Expected table {} at position {}, got table {} instead",
-                i, i, best_plan.table_numbers[i]
+                i,
+                i,
+                best_plan.table_numbers().nth(i).unwrap()
             );
         }
 
         // Verify access methods:
         // - First table should use Table scan
-        let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
+        let access_method = &access_methods_arena.borrow()[best_plan.data[0].1];
         assert!(access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.is_none());
@@ -1166,7 +1175,7 @@ mod tests {
 
         // all of the rest should use rowid equality
         for i in 1..NUM_TABLES {
-            let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[i]];
+            let access_method = &access_methods_arena.borrow()[best_plan.data[i].1];
             assert!(!access_method.is_scan());
             assert!(access_method.iter_dir == IterationDirection::Forwards);
             assert!(access_method.index.is_none());

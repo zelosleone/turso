@@ -194,8 +194,10 @@ fn optimize_table_access(
         }
     }
 
-    let (best_access_methods, best_table_numbers) =
-        (best_plan.best_access_methods, best_plan.table_numbers);
+    let (best_access_methods, best_table_numbers) = (
+        best_plan.best_access_methods().collect::<Vec<_>>(),
+        best_plan.table_numbers().collect::<Vec<_>>(),
+    );
 
     let best_join_order: Vec<JoinOrderMember> = best_table_numbers
         .into_iter()

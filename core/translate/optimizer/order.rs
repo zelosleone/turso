@@ -145,7 +145,7 @@ pub fn plan_satisfies_order_target(
 ) -> bool {
     let mut target_col_idx = 0;
     let num_cols_in_order_target = order_target.0.len();
-    for (i, table_no) in plan.table_numbers.iter().enumerate() {
+    for (table_no, access_method_index) in plan.data.iter() {
         let target_col = &order_target.0[target_col_idx];
         let table_ref = &table_references[*table_no];
         let correct_table = target_col.table_no == *table_no;
@@ -154,7 +154,7 @@ pub fn plan_satisfies_order_target(
         }
 
         // Check if this table has an access method that provides the right ordering.
-        let access_method = &access_methods_arena.borrow()[plan.best_access_methods[i]];
+        let access_method = &access_methods_arena.borrow()[*access_method_index];
         let iter_dir = access_method.iter_dir;
         let index = access_method.index.as_ref();
         match index {
