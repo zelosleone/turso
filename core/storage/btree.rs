@@ -339,6 +339,8 @@ enum OverflowState {
     Done,
 }
 
+/// Holds a Record or RowId, so that these can be transformed into a SeekKey to restore
+/// cursor position to its previous location.
 enum CursorContext {
     TableRowId(u64),
 
@@ -347,9 +349,11 @@ enum CursorContext {
     IndexKeyRowId(ImmutableRecord),
 }
 
-// In the future, we may expand these general validity states
+/// In the future, we may expand these general validity states
 enum CursorValidState {
+    /// Cursor is pointing a to an existing location/cell in the Btree
     Valid,
+    /// Cursor may be pointing to a non-existent location/cell. This can happen after balancing operations
     RequireSeek,
 }
 
@@ -381,9 +385,9 @@ pub struct BTreeCursor {
     pub index_key_sort_order: IndexKeySortOrder,
     /// Maintain count of the number of records in the btree. Used for the `Count` opcode
     count: usize,
-    /// Stores the last record that was seen.
+    /// Stores the cursor context before rebalancing so that a seek can be done later
     context: Option<CursorContext>,
-    /// Store whether the Cursor is in a valid state
+    /// Store whether the Cursor is in a valid state. Meaning if it is pointing to a valid cell index or not
     valid_state: CursorValidState,
 }
 
@@ -4385,12 +4389,12 @@ impl BTreeCursor {
     }
 
     /// If context is defined, restore it and set it None on success
-    fn restore_context(&mut self) -> Result<CursorResult<bool>> {
+    fn restore_context(&mut self) -> Result<CursorResult<()>> {
         if self.context.is_none() || !matches!(self.valid_state, CursorValidState::RequireSeek) {
-            return Ok(CursorResult::Ok(false));
+            return Ok(CursorResult::Ok(()));
         }
         let ctx = self.context.as_ref().unwrap();
-        let res = match ctx {
+        let _ = match ctx {
             CursorContext::TableRowId(rowid) => self.seek(SeekKey::TableRowId(*rowid), SeekOp::EQ),
             CursorContext::IndexKeyRowId(record) => {
                 // TODO: see how to avoid clone here
@@ -4400,7 +4404,7 @@ impl BTreeCursor {
         }?;
         self.context = None;
         self.valid_state = CursorValidState::Valid;
-        Ok(res)
+        Ok(CursorResult::Ok(()))
     }
 }
 

@@ -848,80 +848,82 @@ fn emit_update_insns(
     }
 
     for (index, (idx_cursor_id, record_reg)) in plan.indexes_to_update.iter().zip(&index_cursors) {
-        if index.unique {
-            let num_cols = index.columns.len();
-            // allocate scratch registers for the index columns plus rowid
-            let idx_start_reg = program.alloc_registers(num_cols + 1);
+        if !index.unique {
+            continue;
+        }
 
-            let rowid_reg = beg;
-            let idx_cols_start_reg = beg + 1;
+        let num_cols = index.columns.len();
+        // allocate scratch registers for the index columns plus rowid
+        let idx_start_reg = program.alloc_registers(num_cols + 1);
 
-            // copy each index column from the table's column registers into these scratch regs
-            for (i, col) in index.columns.iter().enumerate() {
-                // copy from the table's column register over to the index's scratch register
+        let rowid_reg = beg;
+        let idx_cols_start_reg = beg + 1;
 
-                program.emit_insn(Insn::Copy {
-                    src_reg: idx_cols_start_reg + col.pos_in_table,
-                    dst_reg: idx_start_reg + i,
-                    amount: 0,
-                });
-            }
-            // last register is the rowid
+        // copy each index column from the table's column registers into these scratch regs
+        for (i, col) in index.columns.iter().enumerate() {
+            // copy from the table's column register over to the index's scratch register
+
             program.emit_insn(Insn::Copy {
-                src_reg: rowid_reg,
-                dst_reg: idx_start_reg + num_cols,
+                src_reg: idx_cols_start_reg + col.pos_in_table,
+                dst_reg: idx_start_reg + i,
                 amount: 0,
             });
-
-            program.emit_insn(Insn::MakeRecord {
-                start_reg: idx_start_reg,
-                count: num_cols + 1,
-                dest_reg: *record_reg,
-                index_name: Some(index.name.clone()),
-            });
-
-            let constraint_check = program.allocate_label();
-            program.emit_insn(Insn::NoConflict {
-                cursor_id: *idx_cursor_id,
-                target_pc: constraint_check,
-                record_reg: idx_start_reg,
-                num_regs: num_cols,
-            });
-
-            let column_names = index.columns.iter().enumerate().fold(
-                String::with_capacity(50),
-                |mut accum, (idx, col)| {
-                    if idx > 0 {
-                        accum.push_str(", ");
-                    }
-                    accum.push_str(&table_ref.table.get_name());
-                    accum.push('.');
-                    accum.push_str(&col.name);
-
-                    accum
-                },
-            );
-
-            let idx_rowid_reg = program.alloc_register();
-            program.emit_insn(Insn::IdxRowId {
-                cursor_id: *idx_cursor_id,
-                dest: idx_rowid_reg,
-            });
-
-            program.emit_insn(Insn::Eq {
-                lhs: rowid_reg,
-                rhs: idx_rowid_reg,
-                target_pc: constraint_check,
-                flags: CmpInsFlags::default(), // TODO: not sure what type of comparison flag is needed
-            });
-
-            program.emit_insn(Insn::Halt {
-                err_code: SQLITE_CONSTRAINT_PRIMARYKEY, // TODO: distinct between primary key and unique index for error code
-                description: column_names,
-            });
-
-            program.preassign_label_to_next_insn(constraint_check);
         }
+        // last register is the rowid
+        program.emit_insn(Insn::Copy {
+            src_reg: rowid_reg,
+            dst_reg: idx_start_reg + num_cols,
+            amount: 0,
+        });
+
+        program.emit_insn(Insn::MakeRecord {
+            start_reg: idx_start_reg,
+            count: num_cols + 1,
+            dest_reg: *record_reg,
+            index_name: Some(index.name.clone()),
+        });
+
+        let constraint_check = program.allocate_label();
+        program.emit_insn(Insn::NoConflict {
+            cursor_id: *idx_cursor_id,
+            target_pc: constraint_check,
+            record_reg: idx_start_reg,
+            num_regs: num_cols,
+        });
+
+        let column_names = index.columns.iter().enumerate().fold(
+            String::with_capacity(50),
+            |mut accum, (idx, col)| {
+                if idx > 0 {
+                    accum.push_str(", ");
+                }
+                accum.push_str(&table_ref.table.get_name());
+                accum.push('.');
+                accum.push_str(&col.name);
+
+                accum
+            },
+        );
+
+        let idx_rowid_reg = program.alloc_register();
+        program.emit_insn(Insn::IdxRowId {
+            cursor_id: *idx_cursor_id,
+            dest: idx_rowid_reg,
+        });
+
+        program.emit_insn(Insn::Eq {
+            lhs: rowid_reg,
+            rhs: idx_rowid_reg,
+            target_pc: constraint_check,
+            flags: CmpInsFlags::default(), // TODO: not sure what type of comparison flag is needed
+        });
+
+        program.emit_insn(Insn::Halt {
+            err_code: SQLITE_CONSTRAINT_PRIMARYKEY, // TODO: distinct between primary key and unique index for error code
+            description: column_names,
+        });
+
+        program.preassign_label_to_next_insn(constraint_check);
     }
 
     if let Some(btree_table) = table_ref.btree() {
