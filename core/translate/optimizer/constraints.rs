@@ -13,24 +13,47 @@ use limbo_sqlite3_parser::ast::{self, SortOrder};
 
 use super::cost::ESTIMATED_HARDCODED_ROWS_PER_TABLE;
 
+/// Represents a single condition derived from a `WHERE` clause term
+/// that constrains a specific column of a table.
+///
+/// Constraints are precomputed for each table involved in a query. They are used
+/// during query optimization to estimate the cost of different access paths (e.g., using an index)
+/// and to determine the optimal join order. A constraint can only be applied if all tables
+/// referenced in its expression (other than the constrained table itself) are already
+/// available in the current join context, i.e. on the left side in the join order
+/// relative to the table.
 #[derive(Debug, Clone)]
+///
 pub struct Constraint {
-    /// The position of the constraint in the WHERE clause, e.g. in SELECT * FROM t WHERE true AND t.x = 10, the position is (1, BinaryExprSide::Rhs),
-    /// since the RHS '10' is the constraining expression and it's part of the second term in the WHERE clause.
+    /// The position of the original `WHERE` clause term this constraint derives from,
+    /// and which side of the [ast::Expr::Binary] comparison contains the expression
+    /// that constrains the column.
+    /// E.g. in SELECT * FROM t WHERE t.x = 10, the constraint is (0, BinaryExprSide::Rhs)
+    /// because the RHS '10' is the constraining expression.
+    ///
+    /// This is tracked so we can:
+    ///
+    /// 1. Extract the constraining expression for use in an index seek key, and
+    /// 2. Remove the relevant binary expression from the WHERE clause, if used as an index seek key.
     pub where_clause_pos: (usize, BinaryExprSide),
-    /// The operator of the constraint, e.g. =, >, <
+    /// The comparison operator (e.g., `=`, `>`, `<`) used in the constraint.
     pub operator: ast::Operator,
-    /// The position of the constrained column in the table.
+    /// The zero-based index of the constrained column within the table's schema.
     pub table_col_pos: usize,
-    /// Bitmask of tables that are required to be on the left side of the constrained table,
-    /// e.g. in SELECT * FROM t1,t2,t3 WHERE t1.x = t2.x + t3.x, the lhs_mask contains t2 and t3.
+    /// A bitmask representing the set of tables that appear on the *constraining* side
+    /// of the comparison expression. For example, in SELECT * FROM t1,t2,t3 WHERE t1.x = t2.x + t3.x,
+    /// the lhs_mask contains t2 and t3. Thus, this constraint can only be used if t2 and t3
+    /// have already been joined (i.e. are on the left side of the join order relative to t1).
     pub lhs_mask: TableMask,
-    /// The selectivity of the constraint, i.e. the fraction of rows that will match the constraint.
+    /// An estimated selectivity factor (0.0 to 1.0) indicating the fraction of rows
+    /// expected to satisfy this constraint. Used for cost and cardinality estimation.
     pub selectivity: f64,
 }
 
 #[derive(Debug, Clone)]
 /// A reference to a [Constraint] in a [TableConstraints].
+///
+/// This is used to track which constraints may be used as an index seek key.
 pub struct ConstraintRef {
     /// The position of the constraint in the [TableConstraints::constraints] vector.
     pub constraint_vec_pos: usize,
@@ -41,6 +64,29 @@ pub struct ConstraintRef {
 }
 #[derive(Debug, Clone)]
 /// A collection of [ConstraintRef]s for a given index, or if index is None, for the table's rowid index.
+/// For example, given a table `T (x,y,z)` with an index `T_I (y desc,z)`, take the following query:
+/// ```sql
+/// SELECT * FROM T WHERE y = 10 AND z = 20;
+/// ```
+///
+/// This will produce the following [ConstraintUseCandidate]:
+///
+/// ConstraintUseCandidate {
+///     index: Some(T_I)
+///     refs: [
+///         ConstraintRef {
+///             constraint_vec_pos: 0, // y = 10
+///             index_col_pos: 0, // y
+///             sort_order: SortOrder::Desc,
+///         },
+///         ConstraintRef {
+///             constraint_vec_pos: 1, // z = 20
+///             index_col_pos: 1, // z
+///             sort_order: SortOrder::Asc,
+///         },
+///     ],
+/// }
+///
 pub struct ConstraintUseCandidate {
     /// The index that may be used to satisfy the constraints. If none, the table's rowid index is used.
     pub index: Option<Arc<Index>>,
