@@ -336,35 +336,29 @@ impl Connection {
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next()?;
         let syms = self.syms.borrow();
-        if let Some(cmd) = cmd {
-            match cmd {
-                Cmd::Stmt(stmt) => {
-                    let program = Rc::new(translate::translate(
-                        self.schema
-                            .try_read()
-                            .ok_or(LimboError::SchemaLocked)?
-                            .deref(),
-                        stmt,
-                        self.header.clone(),
-                        self.pager.clone(),
-                        Rc::downgrade(self),
-                        &syms,
-                        QueryMode::Normal,
-                    )?);
-                    Ok(Statement::new(
-                        program,
-                        self._db.mv_store.clone(),
-                        self.pager.clone(),
-                    ))
-                }
-                Cmd::Explain(_stmt) => todo!(),
-                Cmd::ExplainQueryPlan(_stmt) => todo!(),
+        let cmd = cmd.expect("Successful parse on nonempty input string should produce a command");
+        match cmd {
+            Cmd::Stmt(stmt) => {
+                let program = Rc::new(translate::translate(
+                    self.schema
+                        .try_read()
+                        .ok_or(LimboError::SchemaLocked)?
+                        .deref(),
+                    stmt,
+                    self.header.clone(),
+                    self.pager.clone(),
+                    Rc::downgrade(self),
+                    &syms,
+                    QueryMode::Normal,
+                )?);
+                Ok(Statement::new(
+                    program,
+                    self._db.mv_store.clone(),
+                    self.pager.clone(),
+                ))
             }
-        } else {
-            // Shouln't happen
-            Err(LimboError::ParseError(
-                "The supplied SQL string contains no statements".to_string(),
-            ))
+            Cmd::Explain(_stmt) => todo!(),
+            Cmd::ExplainQueryPlan(_stmt) => todo!(),
         }
     }
 
