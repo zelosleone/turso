@@ -4699,8 +4699,9 @@ fn page_free_array(
     let buf = &mut page.as_ptr()[page.offset..usable_space as usize];
     let buf_range = buf.as_ptr_range();
     let mut number_of_cells_removed = 0;
-    // TODO: implement fancy smart free block coalescing procedure instead of dumb free to
-    // then defragment
+    let mut number_of_cells_buffered = 0;
+    let mut buffered_cells_offsets: [u16; 10] = [0; 10];
+    let mut buffered_cells_ends: [u16; 10] = [0; 10];
     for i in first..first + count {
         let cell = &cell_array.cells[i];
         let cell_pointer = cell.as_ptr_range();
@@ -4713,11 +4714,61 @@ fn page_free_array(
             // TODO: remove pointer too
             let offset = (cell_pointer.start as usize - buf_range.start as usize) as u16;
             let len = (cell_pointer.end as usize - cell_pointer.start as usize) as u16;
-            free_cell_range(page, offset, len, usable_space)?;
-            page.write_u16(offset::BTREE_CELL_COUNT, page.cell_count() as u16 - 1);
+            assert!(len > 0, "cell size should be greater than 0");
+            let end = offset + len;
+
+            /* Try to merge the current cell with a contiguous buffered cell to reduce the number of
+             * `free_cell_range()` operations. Break on the first merge to avoid consuming too much time,
+             * `free_cell_range()` will try to merge contiguous cells anyway. */
+            let mut j = 0;
+            while j < number_of_cells_buffered {
+                // If the buffered cell is immediately after the current cell
+                if buffered_cells_offsets[j] == end {
+                    // Merge them by updating the buffered cell's offset to the current cell's offset
+                    buffered_cells_offsets[j] = offset;
+                    break;
+                // If the buffered cell is immediately before the current cell
+                } else if buffered_cells_ends[j] == offset {
+                    // Merge them by updating the buffered cell's end offset to the current cell's end offset
+                    buffered_cells_ends[j] = end;
+                    break;
+                }
+                j += 1;
+            }
+            // If no cells were merged
+            if j >= number_of_cells_buffered {
+                // If the buffered cells array is full, flush the buffered cells using `free_cell_range()` to empty the array
+                if number_of_cells_buffered >= buffered_cells_offsets.len() {
+                    for j in 0..number_of_cells_buffered {
+                        free_cell_range(
+                            page,
+                            buffered_cells_offsets[j],
+                            buffered_cells_ends[j] - buffered_cells_offsets[j],
+                            usable_space,
+                        )?;
+                    }
+                    number_of_cells_buffered = 0; // Reset array counter
+                }
+                // Buffer the current cell
+                buffered_cells_offsets[number_of_cells_buffered] = offset;
+                buffered_cells_ends[number_of_cells_buffered] = end;
+                number_of_cells_buffered += 1;
+            }
             number_of_cells_removed += 1;
         }
     }
+    for j in 0..number_of_cells_buffered {
+        free_cell_range(
+            page,
+            buffered_cells_offsets[j],
+            buffered_cells_ends[j] - buffered_cells_offsets[j],
+            usable_space,
+        )?;
+    }
+    page.write_u16(
+        offset::BTREE_CELL_COUNT,
+        page.cell_count() as u16 - number_of_cells_removed as u16,
+    );
     Ok(number_of_cells_removed)
 }
 fn page_insert_array(
