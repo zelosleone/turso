@@ -7,10 +7,7 @@ use crate::{
     util::exprs_are_equivalent,
 };
 
-use super::{
-    access_method::{AccessMethod, AccessMethodKind},
-    join::JoinN,
-};
+use super::{access_method::AccessMethod, join::JoinN};
 
 #[derive(Debug, PartialEq, Clone)]
 /// A convenience struct for representing a (table_no, column_no, [SortOrder]) tuple.
@@ -138,7 +135,8 @@ pub fn compute_order_target(
     }
 }
 
-/// Check if the plan's row iteration order matches the [OrderTarget]'s column order
+/// Check if the plan's row iteration order matches the [OrderTarget]'s column order.
+/// If yes, and this plan is selected, then a sort operation can be eliminated.
 pub fn plan_satisfies_order_target(
     plan: &JoinN,
     access_methods_arena: &RefCell<Vec<AccessMethod>>,
@@ -146,15 +144,22 @@ pub fn plan_satisfies_order_target(
     order_target: &OrderTarget,
 ) -> bool {
     let mut target_col_idx = 0;
+    let num_cols_in_order_target = order_target.0.len();
     for (i, table_no) in plan.table_numbers.iter().enumerate() {
+        let target_col = &order_target.0[target_col_idx];
         let table_ref = &table_references[*table_no];
-        // Check if this table has an access method that provides ordering
+        let correct_table = target_col.table_no == *table_no;
+        if !correct_table {
+            return false;
+        }
+
+        // Check if this table has an access method that provides the right ordering.
         let access_method = &access_methods_arena.borrow()[plan.best_access_methods[i]];
-        match &access_method.kind {
-            AccessMethodKind::Scan {
-                index: None,
-                iter_dir,
-            } => {
+        let iter_dir = access_method.iter_dir();
+        let index = access_method.index();
+        match index {
+            None => {
+                // No index, so the next required column must be the rowid alias column.
                 let rowid_alias_col = table_ref
                     .table
                     .columns()
@@ -163,92 +168,45 @@ pub fn plan_satisfies_order_target(
                 let Some(rowid_alias_col) = rowid_alias_col else {
                     return false;
                 };
-                let target_col = &order_target.0[target_col_idx];
-                let order_matches = if *iter_dir == IterationDirection::Forwards {
+                let correct_column = target_col.column_no == rowid_alias_col;
+                if !correct_column {
+                    return false;
+                }
+
+                // Btree table rows are always in ascending order of rowid.
+                let correct_order = if iter_dir == IterationDirection::Forwards {
                     target_col.order == SortOrder::Asc
                 } else {
                     target_col.order == SortOrder::Desc
                 };
-                if target_col.table_no != *table_no
-                    || target_col.column_no != rowid_alias_col
-                    || !order_matches
-                {
+                if !correct_order {
                     return false;
                 }
                 target_col_idx += 1;
-                if target_col_idx == order_target.0.len() {
+                // All order columns matched.
+                if target_col_idx == num_cols_in_order_target {
                     return true;
                 }
             }
-            AccessMethodKind::Scan {
-                index: Some(index),
-                iter_dir,
-            } => {
-                // The index columns must match the order target columns for this table
+            Some(index) => {
+                // All of the index columns must match the next required columns in the order target.
                 for index_col in index.columns.iter() {
                     let target_col = &order_target.0[target_col_idx];
-                    let order_matches = if *iter_dir == IterationDirection::Forwards {
+                    let correct_column = target_col.column_no == index_col.pos_in_table;
+                    if !correct_column {
+                        return false;
+                    }
+                    let correct_order = if iter_dir == IterationDirection::Forwards {
                         target_col.order == index_col.order
                     } else {
                         target_col.order != index_col.order
                     };
-                    if target_col.table_no != *table_no
-                        || target_col.column_no != index_col.pos_in_table
-                        || !order_matches
-                    {
+                    if !correct_order {
                         return false;
                     }
                     target_col_idx += 1;
-                    if target_col_idx == order_target.0.len() {
-                        return true;
-                    }
-                }
-            }
-            AccessMethodKind::Search {
-                index, iter_dir, ..
-            } => {
-                if let Some(index) = index {
-                    for index_col in index.columns.iter() {
-                        let target_col = &order_target.0[target_col_idx];
-                        let order_matches = if *iter_dir == IterationDirection::Forwards {
-                            target_col.order == index_col.order
-                        } else {
-                            target_col.order != index_col.order
-                        };
-                        if target_col.table_no != *table_no
-                            || target_col.column_no != index_col.pos_in_table
-                            || !order_matches
-                        {
-                            return false;
-                        }
-                        target_col_idx += 1;
-                        if target_col_idx == order_target.0.len() {
-                            return true;
-                        }
-                    }
-                } else {
-                    let rowid_alias_col = table_ref
-                        .table
-                        .columns()
-                        .iter()
-                        .position(|c| c.is_rowid_alias);
-                    let Some(rowid_alias_col) = rowid_alias_col else {
-                        return false;
-                    };
-                    let target_col = &order_target.0[target_col_idx];
-                    let order_matches = if *iter_dir == IterationDirection::Forwards {
-                        target_col.order == SortOrder::Asc
-                    } else {
-                        target_col.order == SortOrder::Desc
-                    };
-                    if target_col.table_no != *table_no
-                        || target_col.column_no != rowid_alias_col
-                        || !order_matches
-                    {
-                        return false;
-                    }
-                    target_col_idx += 1;
-                    if target_col_idx == order_target.0.len() {
+                    // All order columns matched.
+                    if target_col_idx == num_cols_in_order_target {
                         return true;
                     }
                 }

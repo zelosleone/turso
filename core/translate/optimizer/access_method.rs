@@ -23,6 +23,21 @@ pub struct AccessMethod<'a> {
     pub kind: AccessMethodKind<'a>,
 }
 
+impl<'a> AccessMethod<'a> {
+    pub fn index(&self) -> Option<&Index> {
+        match &self.kind {
+            AccessMethodKind::Scan { index, .. } => index.as_ref().map(|i| i.as_ref()),
+            AccessMethodKind::Search { index, .. } => index.as_ref().map(|i| i.as_ref()),
+        }
+    }
+    pub fn iter_dir(&self) -> IterationDirection {
+        match &self.kind {
+            AccessMethodKind::Scan { iter_dir, .. } => *iter_dir,
+            AccessMethodKind::Search { iter_dir, .. } => *iter_dir,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 /// Represents the kind of access method.
 pub enum AccessMethodKind<'a> {
