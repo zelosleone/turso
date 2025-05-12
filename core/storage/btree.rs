@@ -4607,18 +4607,28 @@ fn page_free_array(
             let len = (cell_pointer.end as usize - cell_pointer.start as usize) as u16;
             assert!(len > 0, "cell size should be greater than 0");
             let end = offset + len;
+
+            /* Try to merge the current cell with a contiguous buffered cell to reduce the number of
+             * `free_cell_range()` operations. Break on the first merge to avoid consuming too much time,
+             * `free_cell_range()` will try to merge contiguous cells anyway. */
             let mut j = 0;
             while j < number_of_cells_buffered {
+                // If the buffered cell is immediately after the current cell
                 if buffered_cells_offsets[j] == end {
+                    // Merge them by updating the buffered cell's offset to the current cell's offset
                     buffered_cells_offsets[j] = offset;
                     break;
+                // If the buffered cell is immediately before the current cell
                 } else if buffered_cells_ends[j] == offset {
+                    // Merge them by updating the buffered cell's end offset to the current cell's end offset
                     buffered_cells_ends[j] = end;
                     break;
                 }
                 j += 1;
             }
+            // If no cells were merged
             if j >= number_of_cells_buffered {
+                // If the buffered cells array is full, flush the buffered cells using `free_cell_range()` to empty the array
                 if number_of_cells_buffered >= buffered_cells_offsets.len() {
                     for j in 0..number_of_cells_buffered {
                         free_cell_range(
@@ -4628,8 +4638,9 @@ fn page_free_array(
                             usable_space,
                         )?;
                     }
-                    number_of_cells_buffered = 0;
+                    number_of_cells_buffered = 0; // Reset array counter
                 }
+                // Buffer the current cell
                 buffered_cells_offsets[number_of_cells_buffered] = offset;
                 buffered_cells_ends[number_of_cells_buffered] = end;
                 number_of_cells_buffered += 1;
