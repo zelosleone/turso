@@ -1851,11 +1851,8 @@ pub fn translate_expr(
                             } else {
                                 Some(program.resolve_cursor_id(&table_reference.identifier))
                             };
-                            let index_cursor_id = if let Some(index) = index {
-                                Some(program.resolve_cursor_id(&index.name))
-                            } else {
-                                None
-                            };
+                            let index_cursor_id =
+                                index.map(|index| program.resolve_cursor_id(&index.name));
                             if *is_rowid_alias {
                                 if let Some(index_cursor_id) = index_cursor_id {
                                     program.emit_insn(Insn::IdxRowId {
