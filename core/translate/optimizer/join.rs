@@ -580,7 +580,7 @@ mod tests {
         let BestJoinOrderResult { best_plan, .. } = result.unwrap();
         assert_eq!(best_plan.table_numbers, vec![0]);
         let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
-        assert!(access_method.is_search());
+        assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.constraint_refs.len() == 1);
         assert!(
@@ -637,7 +637,7 @@ mod tests {
         let BestJoinOrderResult { best_plan, .. } = result.unwrap();
         assert_eq!(best_plan.table_numbers, vec![0]);
         let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
-        assert!(access_method.is_search());
+        assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.as_ref().unwrap().name == "sqlite_autoindex_test_table_1");
         assert!(access_method.constraint_refs.len() == 1);
@@ -711,7 +711,7 @@ mod tests {
         assert!(access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[1]];
-        assert!(access_method.is_search());
+        assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.as_ref().unwrap().name == "index1");
         assert!(access_method.constraint_refs.len() == 1);
@@ -873,7 +873,7 @@ mod tests {
         );
 
         let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[0]];
-        assert!(access_method.is_search());
+        assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.as_ref().unwrap().name == "sqlite_autoindex_customers_1");
         assert!(access_method.constraint_refs.len() == 1);
@@ -882,7 +882,7 @@ mod tests {
         assert!(constraint.lhs_mask.is_empty());
 
         let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[1]];
-        assert!(access_method.is_search());
+        assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.as_ref().unwrap().name == "orders_customer_id_idx");
         assert!(access_method.constraint_refs.len() == 1);
@@ -891,7 +891,7 @@ mod tests {
         assert!(constraint.lhs_mask.contains_table(TABLE_NO_CUSTOMERS));
 
         let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[2]];
-        assert!(access_method.is_search());
+        assert!(!access_method.is_scan());
         assert!(access_method.iter_dir == IterationDirection::Forwards);
         assert!(access_method.index.as_ref().unwrap().name == "order_items_order_id_idx");
         assert!(access_method.constraint_refs.len() == 1);
@@ -1084,7 +1084,7 @@ mod tests {
 
         for (i, table_number) in best_plan.table_numbers.iter().enumerate().skip(1) {
             let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[i]];
-            assert!(access_method.is_search());
+            assert!(!access_method.is_scan());
             assert!(access_method.iter_dir == IterationDirection::Forwards);
             assert!(access_method.index.is_none());
             assert!(access_method.constraint_refs.len() == 1);
@@ -1165,7 +1165,7 @@ mod tests {
         // all of the rest should use rowid equality
         for i in 1..NUM_TABLES {
             let access_method = &access_methods_arena.borrow()[best_plan.best_access_methods[i]];
-            assert!(access_method.is_search());
+            assert!(!access_method.is_scan());
             assert!(access_method.iter_dir == IterationDirection::Forwards);
             assert!(access_method.index.is_none());
             assert!(access_method.constraint_refs.len() == 1);

@@ -36,10 +36,6 @@ impl<'a> AccessMethod<'a> {
         self.constraint_refs.is_empty()
     }
 
-    pub fn is_search(&self) -> bool {
-        !self.constraint_refs.is_empty()
-    }
-
     pub fn new_table_scan(input_cardinality: f64, iter_dir: IterationDirection) -> Self {
         Self {
             cost: estimate_cost_for_scan_or_seek(None, &[], &[], input_cardinality),
