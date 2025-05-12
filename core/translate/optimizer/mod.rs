@@ -12,14 +12,13 @@ use order::{compute_order_target, plan_satisfies_order_target, EliminatesSort};
 use crate::{
     parameters::PARAM_PREFIX,
     schema::{Index, IndexColumn, Schema},
-    translate::plan::TerminationKey,
+    translate::{expr::as_binary_components, plan::TerminationKey},
     types::SeekOp,
     Result,
 };
 
 use super::{
     emitter::Resolver,
-    expr::unwrap_parens,
     plan::{
         DeletePlan, GroupBy, IterationDirection, JoinOrderMember, Operation, Plan, Search, SeekDef,
         SeekKey, SelectPlan, TableReference, UpdatePlan, WhereTerm,
@@ -314,15 +313,14 @@ fn optimize_table_access(
                 ast::Operator::Equals => Operation::Search(Search::RowidEq {
                     cmp_expr: {
                         let (idx, side) = constraint.where_clause_pos;
-                        let ast::Expr::Binary(lhs, _, rhs) =
-                            unwrap_parens(&where_clause[idx].expr)?
+                        let Some((lhs, _, rhs)) = as_binary_components(&where_clause[idx].expr)?
                         else {
                             panic!("Expected a binary expression");
                         };
                         let where_term = WhereTerm {
                             expr: match side {
-                                BinaryExprSide::Lhs => lhs.as_ref().clone(),
-                                BinaryExprSide::Rhs => rhs.as_ref().clone(),
+                                BinaryExprSide::Lhs => lhs.clone(),
+                                BinaryExprSide::Rhs => rhs.clone(),
                             },
                             from_outer_join: where_clause[idx].from_outer_join.clone(),
                         };
@@ -822,13 +820,13 @@ pub fn build_seek_def_from_constraints(
         let constraint = &constraints[cref.constraint_vec_pos];
         let (where_idx, side) = constraint.where_clause_pos;
         let where_term = &where_clause[where_idx];
-        let ast::Expr::Binary(lhs, _, rhs) = unwrap_parens(where_term.expr.clone())? else {
-            crate::bail_parse_error!("expected binary expression");
+        let Some((lhs, _, rhs)) = as_binary_components(&where_term.expr)? else {
+            panic!("Expected a binary expression");
         };
         let cmp_expr = if side == BinaryExprSide::Lhs {
-            *lhs
+            lhs.clone()
         } else {
-            *rhs
+            rhs.clone()
         };
         key.push((cmp_expr, cref.sort_order));
     }
