@@ -782,7 +782,7 @@ pub struct TerminationKey {
 #[derive(Clone, Debug)]
 pub enum Search {
     /// A rowid equality point lookup. This is a special case that uses the SeekRowid bytecode instruction and does not loop.
-    RowidEq { cmp_expr: WhereTerm },
+    RowidEq { cmp_expr: ast::Expr },
     /// A search on a table btree (via `rowid`) or a secondary index search. Uses bytecode instructions like SeekGE, SeekGT etc.
     Seek {
         index: Option<Arc<Index>>,

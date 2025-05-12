@@ -433,13 +433,7 @@ pub fn open_loop(
                 // Rowid equality point lookups are handled with a SeekRowid instruction which does not loop, since it is a single row lookup.
                 if let Search::RowidEq { cmp_expr } = search {
                     let src_reg = program.alloc_register();
-                    translate_expr(
-                        program,
-                        Some(tables),
-                        &cmp_expr.expr,
-                        src_reg,
-                        &t_ctx.resolver,
-                    )?;
+                    translate_expr(program, Some(tables), cmp_expr, src_reg, &t_ctx.resolver)?;
                     program.emit_insn(Insn::SeekRowid {
                         cursor_id: table_cursor_id
                             .expect("Search::RowidEq requires a table cursor"),

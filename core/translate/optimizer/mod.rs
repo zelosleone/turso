@@ -1,8 +1,7 @@
 use std::{cell::RefCell, cmp::Ordering, collections::HashMap, sync::Arc};
 
 use constraints::{
-    constraints_from_where_clause, usable_constraints_for_join_order, BinaryExprSide, Constraint,
-    ConstraintRef,
+    constraints_from_where_clause, usable_constraints_for_join_order, Constraint, ConstraintRef,
 };
 use cost::Cost;
 use join::{compute_best_join_order, BestJoinOrderResult};
@@ -12,7 +11,7 @@ use order::{compute_order_target, plan_satisfies_order_target, EliminatesSort};
 use crate::{
     parameters::PARAM_PREFIX,
     schema::{Index, IndexColumn, Schema},
-    translate::{expr::as_binary_components, plan::TerminationKey},
+    translate::plan::TerminationKey,
     types::SeekOp,
     Result,
 };
@@ -311,21 +310,7 @@ fn optimize_table_access(
                 [constraint_refs[0].constraint_vec_pos];
             table_references[table_number].op = match constraint.operator {
                 ast::Operator::Equals => Operation::Search(Search::RowidEq {
-                    cmp_expr: {
-                        let (idx, side) = constraint.where_clause_pos;
-                        let Some((lhs, _, rhs)) = as_binary_components(&where_clause[idx].expr)?
-                        else {
-                            panic!("Expected a binary expression");
-                        };
-                        let where_term = WhereTerm {
-                            expr: match side {
-                                BinaryExprSide::Lhs => lhs.clone(),
-                                BinaryExprSide::Rhs => rhs.clone(),
-                            },
-                            from_outer_join: where_clause[idx].from_outer_join.clone(),
-                        };
-                        where_term
-                    },
+                    cmp_expr: constraint.get_constraining_expr(where_clause),
                 }),
                 _ => Operation::Search(Search::Seek {
                     index: None,
@@ -813,23 +798,10 @@ pub fn build_seek_def_from_constraints(
         "cannot build seek def from empty list of constraint refs"
     );
     // Extract the key values and operators
-    let mut key = Vec::with_capacity(constraint_refs.len());
-
-    for cref in constraint_refs {
-        // Extract the other expression from the binary WhereTerm (i.e. the one being compared to the index column)
-        let constraint = &constraints[cref.constraint_vec_pos];
-        let (where_idx, side) = constraint.where_clause_pos;
-        let where_term = &where_clause[where_idx];
-        let Some((lhs, _, rhs)) = as_binary_components(&where_term.expr)? else {
-            panic!("Expected a binary expression");
-        };
-        let cmp_expr = if side == BinaryExprSide::Lhs {
-            lhs.clone()
-        } else {
-            rhs.clone()
-        };
-        key.push((cmp_expr, cref.sort_order));
-    }
+    let key = constraint_refs
+        .iter()
+        .map(|cref| cref.as_seek_key_column(constraints, where_clause))
+        .collect();
 
     // We know all but potentially the last term is an equality, so we can use the operator of the last term
     // to form the SeekOp

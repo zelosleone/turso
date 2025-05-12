@@ -50,6 +50,28 @@ pub struct Constraint {
     pub selectivity: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BinaryExprSide {
+    Lhs,
+    Rhs,
+}
+
+impl Constraint {
+    /// Get the constraining expression, e.g. '2+3' from 't.x = 2+3'
+    pub fn get_constraining_expr(&self, where_clause: &[WhereTerm]) -> ast::Expr {
+        let (idx, side) = self.where_clause_pos;
+        let where_term = &where_clause[idx];
+        let Ok(Some((lhs, _, rhs))) = as_binary_components(&where_term.expr) else {
+            panic!("Expected a valid binary expression");
+        };
+        if side == BinaryExprSide::Lhs {
+            lhs.clone()
+        } else {
+            rhs.clone()
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 /// A reference to a [Constraint] in a [TableConstraints].
 ///
@@ -62,7 +84,20 @@ pub struct ConstraintRef {
     /// The sort order of the constrained column in the index. Always ascending for rowid indices.
     pub sort_order: SortOrder,
 }
-#[derive(Debug, Clone)]
+
+impl ConstraintRef {
+    /// Convert the constraint to a column usable in a [crate::translate::plan::SeekDef::key].
+    pub fn as_seek_key_column(
+        &self,
+        constraints: &[Constraint],
+        where_clause: &[WhereTerm],
+    ) -> (ast::Expr, SortOrder) {
+        let constraint = &constraints[self.constraint_vec_pos];
+        let constraining_expr = constraint.get_constraining_expr(where_clause);
+        (constraining_expr, self.sort_order)
+    }
+}
+
 /// A collection of [ConstraintRef]s for a given index, or if index is None, for the table's rowid index.
 /// For example, given a table `T (x,y,z)` with an index `T_I (y desc,z)`, take the following query:
 /// ```sql
@@ -87,6 +122,7 @@ pub struct ConstraintRef {
 ///     ],
 /// }
 ///
+#[derive(Debug)]
 pub struct ConstraintUseCandidate {
     /// The index that may be used to satisfy the constraints. If none, the table's rowid index is used.
     pub index: Option<Arc<Index>>,
@@ -102,16 +138,6 @@ pub struct TableConstraints {
     pub constraints: Vec<Constraint>,
     /// Candidates for indexes that may use the constraints to perform a lookup.
     pub candidates: Vec<ConstraintUseCandidate>,
-}
-
-/// Helper enum for [Constraint] to indicate which side of a binary comparison expression is being compared to the index column.
-/// For example, if the where clause is "WHERE x = 10" and there's an index on x,
-/// the [Constraint] for the where clause term "x = 10" will have a [BinaryExprSide::Rhs]
-/// because the right hand side expression "10" is being compared to the index column "x".
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BinaryExprSide {
-    Lhs,
-    Rhs,
 }
 
 /// In lieu of statistics, we estimate that an equality filter will reduce the output set to 1% of its size.
