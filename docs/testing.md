@@ -46,7 +46,7 @@ def test_uuid():
     limbo.quit()
 ```
 
-You can use run_test, run_test_fn, or debug_print to interact with the shell and validate results. 
+You can use run_test, run_test_fn, or run_debug to interact with the shell and validate results. 
 The constructor takes an optional argument with the `sql` you want to initiate the tests with.  You can also enable blob testing or override the executable and flags.
 
 Use these Python-based tests for validating:
