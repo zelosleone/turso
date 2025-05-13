@@ -1023,6 +1023,10 @@ impl BTreeCursor {
         }
     }
 
+    /// This function read from a page into a buffer or write from a buffer into a page.
+    /// copy_to_page: true if writing, false if reading
+    /// SAFETY: This function uses unsafe in the write path to write to the page payload directly.
+    /// - Make sure the page is pointing to valid data ie the page is not evicted from the page-cache.
     fn read_write_payload_to_page(
         &mut self,
         payload_offset: u32,
