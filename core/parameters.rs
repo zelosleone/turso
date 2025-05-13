@@ -78,11 +78,16 @@ impl Parameters {
 
     pub fn push(&mut self, name: impl AsRef<str>) -> NonZero<usize> {
         match name.as_ref() {
-            "" => {
+            param if param.is_empty() || param.starts_with(PARAM_PREFIX) => {
                 let index = self.next_index();
-                self.list.push(Parameter::Anonymous(index));
-                tracing::trace!("anonymous parameter at {index}");
-                index
+                let use_idx = if let Some(idx) = param.strip_prefix(PARAM_PREFIX) {
+                    idx.parse().unwrap()
+                } else {
+                    index
+                };
+                self.list.push(Parameter::Anonymous(use_idx));
+                tracing::trace!("anonymous parameter at {use_idx}");
+                use_idx
             }
             name if name.starts_with(['$', ':', '@', '#']) => {
                 match self
@@ -105,21 +110,14 @@ impl Parameters {
                 }
             }
             index => {
-                if let Some(idx) = index.strip_prefix(PARAM_PREFIX) {
-                    let idx: NonZero<usize> = idx.parse().unwrap();
-                    self.next_index();
-                    self.list.push(Parameter::Anonymous(idx));
-                    idx
-                } else {
-                    // SAFETY: Guaranteed from parser that the index is bigger than 0.
-                    let index: NonZero<usize> = index.parse().unwrap();
-                    if index > self.index {
-                        self.index = index.checked_add(1).unwrap();
-                    }
-                    self.list.push(Parameter::Indexed(index));
-                    tracing::trace!("indexed parameter at {index}");
-                    index
+                // SAFETY: Guaranteed from parser that the index is bigger than 0.
+                let index: NonZero<usize> = index.parse().unwrap();
+                if index > self.index {
+                    self.index = index.checked_add(1).unwrap();
                 }
+                self.list.push(Parameter::Indexed(index));
+                tracing::trace!("indexed parameter at {index}");
+                index
             }
         }
     }
