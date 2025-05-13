@@ -4393,18 +4393,22 @@ impl BTreeCursor {
         if self.context.is_none() || !matches!(self.valid_state, CursorValidState::RequireSeek) {
             return Ok(CursorResult::Ok(()));
         }
-        let ctx = self.context.as_ref().unwrap();
-        let _ = match ctx {
-            CursorContext::TableRowId(rowid) => self.seek(SeekKey::TableRowId(*rowid), SeekOp::EQ),
-            CursorContext::IndexKeyRowId(record) => {
-                // TODO: see how to avoid clone here
-                let record = record.clone();
-                self.seek(SeekKey::IndexKey(&record), SeekOp::EQ)
+        let ctx = self.context.take().unwrap();
+        let seek_key = match ctx {
+            CursorContext::TableRowId(rowid) => SeekKey::TableRowId(rowid),
+            CursorContext::IndexKeyRowId(ref record) => SeekKey::IndexKey(record),
+        };
+        let res = self.seek(seek_key, SeekOp::EQ)?;
+        match res {
+            CursorResult::Ok(_) => {
+                self.valid_state = CursorValidState::Valid;
+                Ok(CursorResult::Ok(()))
             }
-        }?;
-        self.context = None;
-        self.valid_state = CursorValidState::Valid;
-        Ok(CursorResult::Ok(()))
+            CursorResult::IO => {
+                self.context = Some(ctx);
+                Ok(CursorResult::IO)
+            }
+        }
     }
 }
 
