@@ -846,11 +846,6 @@ impl BTreeCursor {
 
         let (local_size, _) =
             self.parse_cell_info(payload_size as usize, contents.page_type(), usable_size)?;
-        println!(
-            "local size: {}, offset: {}, amount: {}",
-            local_size, offset, amount
-        );
-        println!("cell");
         let mut bytes_processed: u32 = 0;
         if offset < local_size as u32 {
             let mut local_amount: u32 = amount;
@@ -7350,7 +7345,7 @@ mod tests {
     pub fn test_read_write_payload_with_overflow_page() {
         let (pager, root_page) = empty_btree();
         let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
-        let mut large_blob = vec![b'A'; 8192 - 11];
+        let mut large_blob = vec![b'A'; 40960 - 11]; // insert large blob. 40960 = 10 page long.
         let hello_world = b"hello world";
         large_blob.extend_from_slice(hello_world);
         let value = ImmutableRecord::from_registers(&[Register::OwnedValue(OwnedValue::Blob(
