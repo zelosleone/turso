@@ -8,7 +8,7 @@ use crate::{
         },
     },
     translate::plan::IterationDirection,
-    types::{IndexKeySortOrder, SerialType, SerialTypeKind},
+    types::IndexKeySortOrder,
     MvCursor,
 };
 
@@ -780,6 +780,16 @@ impl BTreeCursor {
         Ok((n_local, payload_len))
     }
 
+    /// This function is used to read/write into the payload of a cell that
+    /// cursor is pointing to.
+    /// Parameters:
+    /// - offset: offset in the payload to start reading/writing
+    /// - buffer: buffer to read/write into
+    /// - amount: amount of bytes to read/write
+    /// - is_write: true if writing, false if reading
+    ///
+    /// If the cell has overflow pages, it will skip till the overflow page which
+    /// is at the offset given.
     pub fn read_write_payload_with_offset(
         &mut self,
         mut offset: u32,
@@ -1025,24 +1035,16 @@ impl BTreeCursor {
         if copy_to_page {
             page.set_dirty();
             self.pager.add_dirty(page.get().id);
+            // This is safe as long as the page is not evicted from the cache.
             let payload_mut = unsafe {
                 std::slice::from_raw_parts_mut(payload.as_ptr() as *mut u8, payload.len())
             };
             payload_mut[payload_offset as usize..payload_offset as usize + num_bytes as usize]
                 .copy_from_slice(&buffer[..num_bytes as usize]);
         } else {
-            println!("buffer: {:?}", buffer);
-            println!("payload slice: {:?}", String::from_utf8(payload.to_vec()));
-            println!("payload length: {}", payload.len());
             buffer.extend_from_slice(
                 &payload[payload_offset as usize..(payload_offset + num_bytes) as usize],
             );
-            println!("buffer after: {:?}", buffer);
-            println!(
-                "buffer after to string: {}",
-                String::from_utf8_lossy(buffer)
-            );
-            println!("#################");
         }
     }
 
@@ -5170,7 +5172,6 @@ fn insert_into_cell(
     cell_idx: usize,
     usable_space: u16,
 ) -> Result<()> {
-    println!("usable_space: {}", usable_space);
     debug_validate_cells!(page, usable_space);
     assert!(
         cell_idx <= page.cell_count() + page.overflow_cells.len(),
@@ -7270,12 +7271,7 @@ mod tests {
         let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
         let offset = 2; // blobs data starts at offset 2
         let initial_text = "hello world";
-        println!("initial_text: {}", initial_text);
         let initial_blob = initial_text.as_bytes().to_vec();
-        println!(
-            "initial_blob: {:?}",
-            String::from_utf8(initial_blob.clone())
-        );
         let value = ImmutableRecord::from_registers(&[Register::OwnedValue(OwnedValue::Blob(
             initial_blob.clone(),
         ))]);
@@ -7402,7 +7398,7 @@ mod tests {
                 cursor.read_write_payload_with_offset(
                     offset_to_hello_world,
                     &mut modified_hello,
-                    modified_hello.len() as u32,
+                    5,
                     true,
                 )
             },
