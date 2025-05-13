@@ -105,18 +105,21 @@ impl Parameters {
                 }
             }
             index => {
-                let index: NonZero<usize> = if let Some(idx) = index.strip_prefix(PARAM_PREFIX) {
-                    idx.parse().unwrap()
+                if let Some(idx) = index.strip_prefix(PARAM_PREFIX) {
+                    let idx: NonZero<usize> = idx.parse().unwrap();
+                    self.next_index();
+                    self.list.push(Parameter::Anonymous(idx));
+                    idx
                 } else {
                     // SAFETY: Guaranteed from parser that the index is bigger than 0.
-                    index.parse().unwrap()
-                };
-                if index > self.index {
-                    self.index = index.checked_add(1).unwrap();
+                    let index: NonZero<usize> = index.parse().unwrap();
+                    if index > self.index {
+                        self.index = index.checked_add(1).unwrap();
+                    }
+                    self.list.push(Parameter::Indexed(index));
+                    tracing::trace!("indexed parameter at {index}");
+                    index
                 }
-                self.list.push(Parameter::Indexed(index));
-                tracing::trace!("indexed parameter at {index}");
-                index
             }
         }
     }
