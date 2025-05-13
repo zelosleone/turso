@@ -7346,6 +7346,91 @@ mod tests {
         );
     }
 
+    #[test]
+    pub fn test_read_write_payload_with_overflow_page() {
+        let (pager, root_page) = empty_btree();
+        let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
+        let mut large_blob = vec![b'A'; 8192 - 11];
+        let hello_world = b"hello world";
+        large_blob.extend_from_slice(hello_world);
+        let value = ImmutableRecord::from_registers(&[Register::OwnedValue(OwnedValue::Blob(
+            large_blob.clone(),
+        ))]);
+
+        run_until_done(
+            || {
+                let key = SeekKey::TableRowId(1);
+                cursor.move_to(key, SeekOp::EQ)
+            },
+            pager.deref(),
+        )
+        .unwrap();
+
+        run_until_done(
+            || cursor.insert(&BTreeKey::new_table_rowid(1, Some(&value)), true),
+            pager.deref(),
+        )
+        .unwrap();
+
+        cursor
+            .stack
+            .set_cell_index(cursor.stack.current_cell_index() + 1);
+
+        let offset_to_hello_world = 4 + (large_blob.len() - 11) as u32; // this offset depends on the records type.
+        let mut read_buffer = Vec::new();
+        run_until_done(
+            || {
+                cursor.read_write_payload_with_offset(
+                    offset_to_hello_world,
+                    &mut read_buffer,
+                    11,
+                    false,
+                )
+            },
+            pager.deref(),
+        )
+        .unwrap();
+        assert_eq!(
+            std::str::from_utf8(&read_buffer).unwrap(),
+            "hello world",
+            "Failed to read 'hello world' from overflow page"
+        );
+
+        let mut modified_hello = "olleh".as_bytes().to_vec();
+        run_until_done(
+            || {
+                cursor.read_write_payload_with_offset(
+                    offset_to_hello_world,
+                    &mut modified_hello,
+                    modified_hello.len() as u32,
+                    true,
+                )
+            },
+            pager.deref(),
+        )
+        .unwrap();
+
+        let mut verification_buffer = Vec::new();
+        run_until_done(
+            || {
+                cursor.read_write_payload_with_offset(
+                    offset_to_hello_world,
+                    &mut verification_buffer,
+                    hello_world.len() as u32,
+                    false,
+                )
+            },
+            pager.deref(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::str::from_utf8(&verification_buffer).unwrap(),
+            "olleh world",
+            "Modified data doesn't match expected result"
+        );
+    }
+
     fn run_until_done<T>(
         mut action: impl FnMut() -> Result<CursorResult<T>>,
         pager: &Pager,
