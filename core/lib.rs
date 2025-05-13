@@ -325,37 +325,40 @@ pub struct Connection {
 
 impl Connection {
     pub fn prepare(self: &Rc<Connection>, sql: impl AsRef<str>) -> Result<Statement> {
+        if sql.as_ref().is_empty() {
+            return Err(LimboError::InvalidArgument(
+                "The supplied SQL string contains no statements".to_string(),
+            ));
+        }
+
         let sql = sql.as_ref();
         tracing::trace!("Preparing: {}", sql);
         let mut parser = Parser::new(sql.as_bytes());
         let cmd = parser.next()?;
         let syms = self.syms.borrow();
-        if let Some(cmd) = cmd {
-            match cmd {
-                Cmd::Stmt(stmt) => {
-                    let program = Rc::new(translate::translate(
-                        self.schema
-                            .try_read()
-                            .ok_or(LimboError::SchemaLocked)?
-                            .deref(),
-                        stmt,
-                        self.header.clone(),
-                        self.pager.clone(),
-                        Rc::downgrade(self),
-                        &syms,
-                        QueryMode::Normal,
-                    )?);
-                    Ok(Statement::new(
-                        program,
-                        self._db.mv_store.clone(),
-                        self.pager.clone(),
-                    ))
-                }
-                Cmd::Explain(_stmt) => todo!(),
-                Cmd::ExplainQueryPlan(_stmt) => todo!(),
+        let cmd = cmd.expect("Successful parse on nonempty input string should produce a command");
+        match cmd {
+            Cmd::Stmt(stmt) => {
+                let program = Rc::new(translate::translate(
+                    self.schema
+                        .try_read()
+                        .ok_or(LimboError::SchemaLocked)?
+                        .deref(),
+                    stmt,
+                    self.header.clone(),
+                    self.pager.clone(),
+                    Rc::downgrade(self),
+                    &syms,
+                    QueryMode::Normal,
+                )?);
+                Ok(Statement::new(
+                    program,
+                    self._db.mv_store.clone(),
+                    self.pager.clone(),
+                ))
             }
-        } else {
-            todo!()
+            Cmd::Explain(_stmt) => todo!(),
+            Cmd::ExplainQueryPlan(_stmt) => todo!(),
         }
     }
 

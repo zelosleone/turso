@@ -31,6 +31,13 @@ test("Statement.run() returns correct result object", async (t) => {
   t.deepEqual(rows, { changes: 1, lastInsertRowid: 1 });
 });
 
+test("Empty prepared statement should throw", async (t) => {
+    const [db] = await connect(":memory:");
+    t.throws(() => {
+        db.prepare("");
+    }, { instanceOf: Error });
+});
+
 const connect = async (path) => {
   const db = new Database(path);
   return [db];
