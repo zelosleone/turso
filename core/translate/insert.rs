@@ -1,4 +1,4 @@
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 use std::rc::Rc;
 
 use limbo_sqlite3_parser::ast::{
@@ -108,8 +108,8 @@ pub fn translate_insert(
         InsertBody::DefaultValues => &mut vec![vec![]],
     };
     let mut param_idx = 1;
-    for mut expr in values.iter_mut().flat_map(|v| v.iter_mut()) {
-        rewrite_expr(&mut expr, &mut param_idx)?;
+    for expr in values.iter_mut().flat_map(|v| v.iter_mut()) {
+        rewrite_expr(expr, &mut param_idx)?;
     }
 
     let column_mappings = resolve_columns_for_insert(&table, columns, values)?;
