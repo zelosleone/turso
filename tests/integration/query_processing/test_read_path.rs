@@ -479,3 +479,283 @@ fn test_insert_parameter_multiple_row() -> anyhow::Result<()> {
     assert_eq!(ins.parameters().count(), 8);
     Ok(())
 }
+
+#[test]
+fn test_bind_parameters_update_query() -> anyhow::Result<()> {
+    let tmp_db = TempDatabase::new_with_rusqlite("create table test (a integer, b text);");
+    let conn = tmp_db.connect_limbo();
+    let mut ins = conn.prepare("insert into test (a, b) values (3, 'test1');")?;
+    loop {
+        match ins.step()? {
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+            _ => {}
+        }
+    }
+    let mut ins = conn.prepare("update test set a = ? where b = ?;")?;
+    ins.bind_at(1.try_into()?, OwnedValue::Integer(222));
+    ins.bind_at(2.try_into()?, OwnedValue::build_text("test1"));
+    loop {
+        match ins.step()? {
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+            _ => {}
+        }
+    }
+
+    let mut sel = conn.prepare("select a, b from test;")?;
+    loop {
+        match sel.step()? {
+            StepResult::Row => {
+                let row = sel.row().unwrap();
+                assert_eq!(
+                    row.get::<&OwnedValue>(0).unwrap(),
+                    &OwnedValue::Integer(222)
+                );
+                assert_eq!(
+                    row.get::<&OwnedValue>(1).unwrap(),
+                    &OwnedValue::build_text("test1"),
+                );
+            }
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+        }
+    }
+    assert_eq!(ins.parameters().count(), 2);
+    Ok(())
+}
+
+#[test]
+fn test_bind_parameters_update_query_multiple_where() -> anyhow::Result<()> {
+    let tmp_db = TempDatabase::new_with_rusqlite(
+        "create table test (a integer, b text, c integer, d integer);",
+    );
+    let conn = tmp_db.connect_limbo();
+    let mut ins = conn.prepare("insert into test (a, b, c, d) values (3, 'test1', 4, 5);")?;
+    loop {
+        match ins.step()? {
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+            _ => {}
+        }
+    }
+    let mut ins = conn.prepare("update test set a = ? where b = ? and c = 4 and d = ?;")?;
+    ins.bind_at(1.try_into()?, OwnedValue::Integer(222));
+    ins.bind_at(2.try_into()?, OwnedValue::build_text("test1"));
+    ins.bind_at(3.try_into()?, OwnedValue::Integer(5));
+    loop {
+        match ins.step()? {
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+            _ => {}
+        }
+    }
+
+    let mut sel = conn.prepare("select a, b, c, d from test;")?;
+    loop {
+        match sel.step()? {
+            StepResult::Row => {
+                let row = sel.row().unwrap();
+                assert_eq!(
+                    row.get::<&OwnedValue>(0).unwrap(),
+                    &OwnedValue::Integer(222)
+                );
+                assert_eq!(
+                    row.get::<&OwnedValue>(1).unwrap(),
+                    &OwnedValue::build_text("test1"),
+                );
+                assert_eq!(row.get::<&OwnedValue>(2).unwrap(), &OwnedValue::Integer(4));
+                assert_eq!(row.get::<&OwnedValue>(3).unwrap(), &OwnedValue::Integer(5));
+            }
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+        }
+    }
+    assert_eq!(ins.parameters().count(), 3);
+    Ok(())
+}
+
+#[test]
+fn test_bind_parameters_update_rowid_alias() -> anyhow::Result<()> {
+    let tmp_db =
+        TempDatabase::new_with_rusqlite("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT);");
+    let conn = tmp_db.connect_limbo();
+    let mut ins = conn.prepare("insert into test (id, name) values (1, 'test');")?;
+    loop {
+        match ins.step()? {
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+            _ => {}
+        }
+    }
+
+    let mut sel = conn.prepare("select id, name from test;")?;
+    loop {
+        match sel.step()? {
+            StepResult::Row => {
+                let row = sel.row().unwrap();
+                assert_eq!(row.get::<&OwnedValue>(0).unwrap(), &OwnedValue::Integer(1));
+                assert_eq!(
+                    row.get::<&OwnedValue>(1).unwrap(),
+                    &OwnedValue::build_text("test"),
+                );
+            }
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+        }
+    }
+    let mut ins = conn.prepare("update test set name = ? where id = ?;")?;
+    ins.bind_at(1.try_into()?, OwnedValue::build_text("updated"));
+    ins.bind_at(2.try_into()?, OwnedValue::Integer(1));
+    loop {
+        match ins.step()? {
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+            _ => {}
+        }
+    }
+
+    let mut sel = conn.prepare("select id, name from test;")?;
+    loop {
+        match sel.step()? {
+            StepResult::Row => {
+                let row = sel.row().unwrap();
+                assert_eq!(row.get::<&OwnedValue>(0).unwrap(), &OwnedValue::Integer(1));
+                assert_eq!(
+                    row.get::<&OwnedValue>(1).unwrap(),
+                    &OwnedValue::build_text("updated"),
+                );
+            }
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+        }
+    }
+    assert_eq!(ins.parameters().count(), 2);
+    Ok(())
+}
+
+#[test]
+fn test_bind_parameters_update_rowid_alias_seek_rowid() -> anyhow::Result<()> {
+    let tmp_db = TempDatabase::new_with_rusqlite(
+        "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, age integer);",
+    );
+    let conn = tmp_db.connect_limbo();
+    conn.execute("insert into test (id, name, age) values (1, 'test', 4);")?;
+    conn.execute("insert into test (id, name, age) values (2, 'test', 11);")?;
+
+    let mut sel = conn.prepare("select id, name, age from test;")?;
+    let mut i = 0;
+    loop {
+        match sel.step()? {
+            StepResult::Row => {
+                let row = sel.row().unwrap();
+                assert_eq!(
+                    row.get::<&OwnedValue>(0).unwrap(),
+                    &OwnedValue::Integer(if i == 0 { 1 } else { 2 })
+                );
+                assert_eq!(
+                    row.get::<&OwnedValue>(1).unwrap(),
+                    &OwnedValue::build_text("test"),
+                );
+                assert_eq!(
+                    row.get::<&OwnedValue>(2).unwrap(),
+                    &OwnedValue::Integer(if i == 0 { 4 } else { 11 })
+                );
+            }
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+        }
+        i += 1;
+    }
+    let mut ins = conn.prepare("update test set name = ? where id < ? AND age between ? and ?;")?;
+    ins.bind_at(1.try_into()?, OwnedValue::build_text("updated"));
+    ins.bind_at(2.try_into()?, OwnedValue::Integer(2));
+    ins.bind_at(3.try_into()?, OwnedValue::Integer(3));
+    ins.bind_at(4.try_into()?, OwnedValue::Integer(5));
+    loop {
+        match ins.step()? {
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+            _ => {}
+        }
+    }
+
+    let mut sel = conn.prepare("select name from test;")?;
+    let mut i = 0;
+    loop {
+        match sel.step()? {
+            StepResult::Row => {
+                let row = sel.row().unwrap();
+                assert_eq!(
+                    row.get::<&OwnedValue>(0).unwrap(),
+                    &OwnedValue::build_text(if i == 0 { "updated" } else { "test" }),
+                );
+            }
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+        }
+        i += 1;
+    }
+
+    assert_eq!(ins.parameters().count(), 4);
+    Ok(())
+}
+
+#[test]
+fn test_bind_parameters_delete_rowid_alias_seek_out_of_order() -> anyhow::Result<()> {
+    let tmp_db = TempDatabase::new_with_rusqlite(
+        "CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT, age integer);",
+    );
+    let conn = tmp_db.connect_limbo();
+    conn.execute("insert into test (id, name, age) values (1, 'correct', 4);")?;
+    conn.execute("insert into test (id, name, age) values (5, 'test', 11);")?;
+
+    let mut ins =
+        conn.prepare("delete from test where age between ? and ? AND id > ? AND name = ?;")?;
+    ins.bind_at(1.try_into()?, OwnedValue::Integer(10));
+    ins.bind_at(2.try_into()?, OwnedValue::Integer(12));
+    ins.bind_at(3.try_into()?, OwnedValue::Integer(4));
+    ins.bind_at(4.try_into()?, OwnedValue::build_text("test"));
+    loop {
+        match ins.step()? {
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+            _ => {}
+        }
+    }
+
+    let mut sel = conn.prepare("select name from test;")?;
+    let mut i = 0;
+    loop {
+        match sel.step()? {
+            StepResult::Row => {
+                let row = sel.row().unwrap();
+                assert_eq!(
+                    row.get::<&OwnedValue>(0).unwrap(),
+                    &OwnedValue::build_text("correct"),
+                );
+            }
+            StepResult::IO => tmp_db.io.run_once()?,
+            StepResult::Done | StepResult::Interrupt => break,
+            StepResult::Busy => panic!("database busy"),
+        }
+        i += 1;
+    }
+    assert_eq!(i, 1);
+    assert_eq!(ins.parameters().count(), 4);
+    Ok(())
+}
