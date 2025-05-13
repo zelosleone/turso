@@ -1876,6 +1876,8 @@ pub fn rewrite_expr(expr: &mut ast::Expr, param_idx: &mut usize) -> Result<()> {
         }
         ast::Expr::Variable(var) => {
             if var.is_empty() {
+                // rewrite anonymous variables only, ensure that the `param_idx` starts at 1 and
+                // all the expressions are rewritten in the order they come in the statement
                 *expr = ast::Expr::Variable(format!("{}{param_idx}", PARAM_PREFIX));
                 *param_idx += 1;
             }
@@ -1933,6 +1935,42 @@ pub fn rewrite_expr(expr: &mut ast::Expr, param_idx: &mut usize) -> Result<()> {
         ast::Expr::Binary(lhs, _, rhs) => {
             rewrite_expr(lhs, param_idx)?;
             rewrite_expr(rhs, param_idx)?;
+            Ok(())
+        }
+        ast::Expr::Like {
+            lhs, rhs, escape, ..
+        } => {
+            rewrite_expr(lhs, param_idx)?;
+            rewrite_expr(rhs, param_idx)?;
+            if let Some(escape) = escape {
+                rewrite_expr(escape, param_idx)?;
+            }
+            Ok(())
+        }
+        ast::Expr::Case {
+            base,
+            when_then_pairs,
+            else_expr,
+        } => {
+            if let Some(base) = base {
+                rewrite_expr(base, param_idx)?;
+            }
+            for (lhs, rhs) in when_then_pairs.iter_mut() {
+                rewrite_expr(lhs, param_idx)?;
+                rewrite_expr(rhs, param_idx)?;
+            }
+            if let Some(else_expr) = else_expr {
+                rewrite_expr(else_expr, param_idx)?;
+            }
+            Ok(())
+        }
+        ast::Expr::InList { lhs, rhs, .. } => {
+            rewrite_expr(lhs, param_idx)?;
+            if let Some(rhs) = rhs {
+                for expr in rhs.iter_mut() {
+                    rewrite_expr(expr, param_idx)?;
+                }
+            }
             Ok(())
         }
         ast::Expr::FunctionCall { args, .. } => {
