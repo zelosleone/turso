@@ -7198,6 +7198,7 @@ mod tests {
 
             assert_eq!(removed, size);
             assert_eq!(contents.cell_count(), cells_before_free - size);
+            #[cfg(debug_assertions)]
             debug_validate_cells_core(contents, pager.usable_space() as u16);
             // check cells are correct
             let mut cell_idx_cloned = if prefix { size } else { 0 };
