@@ -581,11 +581,234 @@ pub fn determine_where_to_eval_term(
             join_order
                 .iter()
                 .position(|t| t.table_no == table_no)
-                .unwrap(),
+                .unwrap_or(usize::MAX),
         ));
     }
 
     return determine_where_to_eval_expr(&term.expr, join_order);
+}
+
+/// A bitmask representing a set of tables in a query plan.
+/// Tables are numbered by their index in [SelectPlan::table_references].
+/// In the bitmask, the first bit is unused so that a mask with all zeros
+/// can represent "no tables".
+///
+/// E.g. table 0 is represented by bit index 1, table 1 by bit index 2, etc.
+///
+/// Usage in Join Optimization
+///
+/// In join optimization, [TableMask] is used to:
+/// - Generate subsets of tables for dynamic programming in join optimization
+/// - Ensure tables are joined in valid orders (e.g., respecting LEFT JOIN order)
+///
+/// Usage with constraints (WHERE clause)
+///
+/// [TableMask] helps determine:
+/// - Which tables are referenced in a constraint
+/// - When a constraint can be applied as a join condition (all referenced tables must be on the left side of the table being joined)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TableMask(pub u128);
+
+impl std::ops::BitOrAssign for TableMask {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.0 |= rhs.0;
+    }
+}
+
+impl TableMask {
+    /// Creates a new empty table mask.
+    ///
+    /// The initial mask represents an empty set of tables.
+    pub fn new() -> Self {
+        Self(0)
+    }
+
+    /// Returns true if the mask represents an empty set of tables.
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+
+    /// Creates a new mask that is the same as this one but without the specified table.
+    pub fn without_table(&self, table_no: usize) -> Self {
+        assert!(table_no < 127, "table_no must be less than 127");
+        Self(self.0 ^ (1 << (table_no + 1)))
+    }
+
+    /// Creates a table mask from raw bits.
+    ///
+    /// The bits are shifted left by 1 to maintain the convention that table 0 is at bit 1.
+    pub fn from_bits(bits: u128) -> Self {
+        Self(bits << 1)
+    }
+
+    /// Creates a table mask from an iterator of table numbers.
+    pub fn from_table_number_iter(iter: impl Iterator<Item = usize>) -> Self {
+        iter.fold(Self::new(), |mut mask, table_no| {
+            assert!(table_no < 127, "table_no must be less than 127");
+            mask.add_table(table_no);
+            mask
+        })
+    }
+
+    /// Adds a table to the mask.
+    pub fn add_table(&mut self, table_no: usize) {
+        assert!(table_no < 127, "table_no must be less than 127");
+        self.0 |= 1 << (table_no + 1);
+    }
+
+    /// Returns true if the mask contains the specified table.
+    pub fn contains_table(&self, table_no: usize) -> bool {
+        assert!(table_no < 127, "table_no must be less than 127");
+        self.0 & (1 << (table_no + 1)) != 0
+    }
+
+    /// Returns true if this mask contains all tables in the other mask.
+    pub fn contains_all(&self, other: &TableMask) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// Returns the number of tables in the mask.
+    pub fn table_count(&self) -> usize {
+        self.0.count_ones() as usize
+    }
+
+    /// Returns true if this mask shares any tables with the other mask.
+    pub fn intersects(&self, other: &TableMask) -> bool {
+        self.0 & other.0 != 0
+    }
+}
+
+/// Returns a [TableMask] representing the tables referenced in the given expression.
+/// Used in the optimizer for constraint analysis.
+pub fn table_mask_from_expr(expr: &Expr) -> Result<TableMask> {
+    let mut mask = TableMask::new();
+    match expr {
+        Expr::Binary(e1, _, e2) => {
+            mask |= table_mask_from_expr(e1)?;
+            mask |= table_mask_from_expr(e2)?;
+        }
+        Expr::Column { table, .. } | Expr::RowId { table, .. } => {
+            mask.add_table(*table);
+        }
+        Expr::Between {
+            lhs,
+            not: _,
+            start,
+            end,
+        } => {
+            mask |= table_mask_from_expr(lhs)?;
+            mask |= table_mask_from_expr(start)?;
+            mask |= table_mask_from_expr(end)?;
+        }
+        Expr::Case {
+            base,
+            when_then_pairs,
+            else_expr,
+        } => {
+            if let Some(base) = base {
+                mask |= table_mask_from_expr(base)?;
+            }
+            for (when, then) in when_then_pairs {
+                mask |= table_mask_from_expr(when)?;
+                mask |= table_mask_from_expr(then)?;
+            }
+            if let Some(else_expr) = else_expr {
+                mask |= table_mask_from_expr(else_expr)?;
+            }
+        }
+        Expr::Cast { expr, .. } => {
+            mask |= table_mask_from_expr(expr)?;
+        }
+        Expr::Collate(expr, _) => {
+            mask |= table_mask_from_expr(expr)?;
+        }
+        Expr::DoublyQualified(_, _, _) => {
+            crate::bail_parse_error!(
+                "DoublyQualified should be resolved to a Column before resolving table mask"
+            );
+        }
+        Expr::Exists(_) => {
+            todo!();
+        }
+        Expr::FunctionCall {
+            args,
+            order_by,
+            filter_over: _,
+            ..
+        } => {
+            if let Some(args) = args {
+                for arg in args.iter() {
+                    mask |= table_mask_from_expr(arg)?;
+                }
+            }
+            if let Some(order_by) = order_by {
+                for term in order_by.iter() {
+                    mask |= table_mask_from_expr(&term.expr)?;
+                }
+            }
+        }
+        Expr::FunctionCallStar { .. } => {}
+        Expr::Id(_) => panic!("Id should be resolved to a Column before resolving table mask"),
+        Expr::InList { lhs, not: _, rhs } => {
+            mask |= table_mask_from_expr(lhs)?;
+            if let Some(rhs) = rhs {
+                for rhs_expr in rhs.iter() {
+                    mask |= table_mask_from_expr(rhs_expr)?;
+                }
+            }
+        }
+        Expr::InSelect { .. } => todo!(),
+        Expr::InTable {
+            lhs,
+            not: _,
+            rhs: _,
+            args,
+        } => {
+            mask |= table_mask_from_expr(lhs)?;
+            if let Some(args) = args {
+                for arg in args.iter() {
+                    mask |= table_mask_from_expr(arg)?;
+                }
+            }
+        }
+        Expr::IsNull(expr) => {
+            mask |= table_mask_from_expr(expr)?;
+        }
+        Expr::Like {
+            lhs,
+            not: _,
+            op: _,
+            rhs,
+            escape,
+        } => {
+            mask |= table_mask_from_expr(lhs)?;
+            mask |= table_mask_from_expr(rhs)?;
+            if let Some(escape) = escape {
+                mask |= table_mask_from_expr(escape)?;
+            }
+        }
+        Expr::Literal(_) => {}
+        Expr::Name(_) => {}
+        Expr::NotNull(expr) => {
+            mask |= table_mask_from_expr(expr)?;
+        }
+        Expr::Parenthesized(exprs) => {
+            for expr in exprs.iter() {
+                mask |= table_mask_from_expr(expr)?;
+            }
+        }
+        Expr::Qualified(_, _) => {
+            panic!("Qualified should be resolved to a Column before resolving table mask");
+        }
+        Expr::Raise(_, _) => todo!(),
+        Expr::Subquery(_) => todo!(),
+        Expr::Unary(_, expr) => {
+            mask |= table_mask_from_expr(expr)?;
+        }
+        Expr::Variable(_) => {}
+    }
+
+    Ok(mask)
 }
 
 pub fn determine_where_to_eval_expr<'a>(
@@ -602,7 +825,7 @@ pub fn determine_where_to_eval_expr<'a>(
             let join_idx = join_order
                 .iter()
                 .position(|t| t.table_no == *table)
-                .unwrap();
+                .unwrap_or(usize::MAX);
             eval_at = eval_at.max(EvalAt::Loop(join_idx));
         }
         ast::Expr::Id(_) => {

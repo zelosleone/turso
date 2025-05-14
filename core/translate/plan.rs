@@ -64,9 +64,10 @@ impl ResultSetColumn {
 #[derive(Debug, Clone)]
 pub struct GroupBy {
     pub exprs: Vec<ast::Expr>,
+    /// sort order, if a sorter is required (= the columns aren't already in the correct order)
+    pub sort_order: Option<Vec<SortOrder>>,
     /// having clause split into a vec at 'AND' boundaries.
     pub having: Option<Vec<ast::Expr>>,
-    pub sort_order: Option<Vec<SortOrder>>,
 }
 
 /// In a query plan, WHERE clause conditions and JOIN conditions are all folded into a vector of WhereTerm.
@@ -781,7 +782,7 @@ pub struct TerminationKey {
 #[derive(Clone, Debug)]
 pub enum Search {
     /// A rowid equality point lookup. This is a special case that uses the SeekRowid bytecode instruction and does not loop.
-    RowidEq { cmp_expr: WhereTerm },
+    RowidEq { cmp_expr: ast::Expr },
     /// A search on a table btree (via `rowid`) or a secondary index search. Uses bytecode instructions like SeekGE, SeekGT etc.
     Seek {
         index: Option<Arc<Index>>,
