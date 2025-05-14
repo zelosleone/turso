@@ -339,6 +339,24 @@ enum OverflowState {
     Done,
 }
 
+/// Holds a Record or RowId, so that these can be transformed into a SeekKey to restore
+/// cursor position to its previous location.
+enum CursorContext {
+    TableRowId(u64),
+
+    /// If we are in an index tree we can then reuse this field to save
+    /// our cursor information
+    IndexKeyRowId(ImmutableRecord),
+}
+
+/// In the future, we may expand these general validity states
+enum CursorValidState {
+    /// Cursor is pointing a to an existing location/cell in the Btree
+    Valid,
+    /// Cursor may be pointing to a non-existent location/cell. This can happen after balancing operations
+    RequireSeek,
+}
+
 pub struct BTreeCursor {
     /// The multi-version cursor that is used to read and write to the database file.
     mv_cursor: Option<Rc<RefCell<MvCursor>>>,
@@ -367,6 +385,10 @@ pub struct BTreeCursor {
     pub index_key_sort_order: IndexKeySortOrder,
     /// Maintain count of the number of records in the btree. Used for the `Count` opcode
     count: usize,
+    /// Stores the cursor context before rebalancing so that a seek can be done later
+    context: Option<CursorContext>,
+    /// Store whether the Cursor is in a valid state. Meaning if it is pointing to a valid cell index or not
+    valid_state: CursorValidState,
 }
 
 impl BTreeCursor {
@@ -393,6 +415,8 @@ impl BTreeCursor {
             empty_record: Cell::new(true),
             index_key_sort_order: IndexKeySortOrder::default(),
             count: 0,
+            context: None,
+            valid_state: CursorValidState::Valid,
         }
     }
 
@@ -756,8 +780,9 @@ impl BTreeCursor {
             let mem_page = mem_page_rc.get();
 
             let contents = mem_page.contents.as_ref().unwrap();
+            let cell_count = contents.cell_count();
 
-            if cell_idx == contents.cell_count() {
+            if cell_count == 0 || cell_idx == cell_count {
                 // do rightmost
                 let has_parent = self.stack.has_parent();
                 match contents.rightmost_pointer() {
@@ -3444,6 +3469,7 @@ impl BTreeCursor {
     }
 
     pub fn next(&mut self) -> Result<CursorResult<()>> {
+        let _ = self.restore_context()?;
         let rowid = return_if_io!(self.get_next_record(None));
         self.rowid.replace(rowid);
         self.empty_record.replace(rowid.is_none());
@@ -3590,7 +3616,9 @@ impl BTreeCursor {
                 DeleteState::FindCell => {
                     let page = self.stack.top();
                     let mut cell_idx = self.stack.current_cell_index() as usize;
-                    cell_idx -= 1;
+                    if cell_idx > 0 {
+                        cell_idx -= 1;
+                    }
 
                     let contents = page.get().contents.as_ref().unwrap();
                     if cell_idx >= contents.cell_count() {
@@ -3748,13 +3776,14 @@ impl BTreeCursor {
                             write_info.state = WriteState::BalanceStart;
                             delete_info.balance_write_info = Some(write_info);
                         }
-
                         delete_info.state = DeleteState::WaitForBalancingToComplete { target_key }
                     } else {
                         self.stack.retreat();
                         self.state = CursorState::None;
                         return Ok(CursorResult::Ok(()));
                     }
+                    // Only reaches this function call if state = DeleteState::WaitForBalancingToComplete
+                    self.save_context();
                 }
 
                 DeleteState::WaitForBalancingToComplete { target_key } => {
@@ -4337,6 +4366,50 @@ impl BTreeCursor {
             }
         }
     }
+
+    /// Save cursor context, to be restored later
+    pub fn save_context(&mut self) {
+        if let Some(rowid) = self.rowid.get() {
+            self.valid_state = CursorValidState::RequireSeek;
+            match self.stack.top().get_contents().page_type() {
+                PageType::TableInterior | PageType::TableLeaf => {
+                    self.context = Some(CursorContext::TableRowId(rowid));
+                }
+                PageType::IndexInterior | PageType::IndexLeaf => {
+                    self.context = Some(CursorContext::IndexKeyRowId(
+                        self.reusable_immutable_record
+                            .borrow()
+                            .as_ref()
+                            .unwrap()
+                            .clone(),
+                    ));
+                }
+            }
+        }
+    }
+
+    /// If context is defined, restore it and set it None on success
+    fn restore_context(&mut self) -> Result<CursorResult<()>> {
+        if self.context.is_none() || !matches!(self.valid_state, CursorValidState::RequireSeek) {
+            return Ok(CursorResult::Ok(()));
+        }
+        let ctx = self.context.take().unwrap();
+        let seek_key = match ctx {
+            CursorContext::TableRowId(rowid) => SeekKey::TableRowId(rowid),
+            CursorContext::IndexKeyRowId(ref record) => SeekKey::IndexKey(record),
+        };
+        let res = self.seek(seek_key, SeekOp::EQ)?;
+        match res {
+            CursorResult::Ok(_) => {
+                self.valid_state = CursorValidState::Valid;
+                Ok(CursorResult::Ok(()))
+            }
+            CursorResult::IO => {
+                self.context = Some(ctx);
+                Ok(CursorResult::IO)
+            }
+        }
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -4453,13 +4526,21 @@ impl PageStack {
     /// We usually advance after going traversing a new page
     fn advance(&self) {
         let current = self.current();
-        tracing::trace!("pagestack::advance {}", self.cell_indices.borrow()[current],);
+        tracing::trace!(
+            "pagestack::advance {}, cell_indices={:?}",
+            self.cell_indices.borrow()[current],
+            self.cell_indices
+        );
         self.cell_indices.borrow_mut()[current] += 1;
     }
 
     fn retreat(&self) {
         let current = self.current();
-        tracing::trace!("pagestack::retreat {}", self.cell_indices.borrow()[current]);
+        tracing::trace!(
+            "pagestack::retreat {}, cell_indices={:?}",
+            self.cell_indices.borrow()[current],
+            self.cell_indices
+        );
         self.cell_indices.borrow_mut()[current] -= 1;
     }
 
@@ -4477,7 +4558,7 @@ impl PageStack {
 
     fn set_cell_index(&self, idx: i32) {
         let current = self.current();
-        self.cell_indices.borrow_mut()[current] = idx
+        self.cell_indices.borrow_mut()[current] = idx;
     }
 
     fn has_parent(&self) -> bool {
