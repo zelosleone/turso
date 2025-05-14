@@ -248,6 +248,7 @@ pub enum Register {
 
 /// A row is a the list of registers that hold the values for a filtered row. This row is a pointer, therefore
 /// after stepping again, row will be invalidated to be sure it doesn't point to somewhere unexpected.
+#[derive(Debug)]
 pub struct Row {
     values: *const Register,
     count: usize,

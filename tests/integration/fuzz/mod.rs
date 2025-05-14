@@ -1192,6 +1192,7 @@ mod tests {
                 "CREATE TABLE {} ({})",
                 table.name, columns_with_first_column_as_pk
             );
+            dbg!(&query);
             let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
             let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
 
