@@ -4683,6 +4683,17 @@ fn edit_page(
     Ok(())
 }
 
+/// Shifts the cell pointers in the B-tree page to the left by a specified number of positions.
+///
+/// # Parameters
+/// - `page`: A mutable reference to the `PageContent` representing the B-tree page.
+/// - `count_cells`: The total number of cells currently in the page.
+/// - `number_to_shift`: The number of cell pointers to shift to the left.
+///
+/// # Behavior
+/// This function modifies the cell pointer array within the page by copying memory regions.
+/// It shifts the pointers starting from `number_to_shift` to the beginning of the array,
+/// effectively removing the first `number_to_shift` pointers.
 fn shift_cells_left(page: &mut PageContent, count_cells: usize, number_to_shift: usize) {
     let buf = page.as_ptr();
     let (start, _) = page.cell_pointer_array_offset_and_size();
