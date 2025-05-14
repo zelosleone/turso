@@ -5787,7 +5787,10 @@ mod tests {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs(),
-            |v| v.parse().expect("Failed to parse SEED environment variable as u64"),
+            |v| {
+                v.parse()
+                    .expect("Failed to parse SEED environment variable as u64")
+            },
         );
         let rng = ChaCha8Rng::seed_from_u64(seed);
         (rng, seed)
