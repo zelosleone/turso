@@ -3,6 +3,7 @@ use std::{cmp::Ordering, collections::HashMap, sync::Arc};
 use limbo_sqlite3_parser::ast::{self, Expr, SortOrder};
 
 use crate::{
+    parameters::PARAM_PREFIX,
     schema::{Index, IndexColumn, Schema},
     translate::plan::TerminationKey,
     types::SeekOp,
@@ -416,23 +417,24 @@ fn eliminate_constant_conditions(
 }
 
 fn rewrite_exprs_select(plan: &mut SelectPlan) -> Result<()> {
+    let mut param_count = 1;
     for rc in plan.result_columns.iter_mut() {
-        rewrite_expr(&mut rc.expr)?;
+        rewrite_expr(&mut rc.expr, &mut param_count)?;
     }
     for agg in plan.aggregates.iter_mut() {
-        rewrite_expr(&mut agg.original_expr)?;
+        rewrite_expr(&mut agg.original_expr, &mut param_count)?;
     }
     for cond in plan.where_clause.iter_mut() {
-        rewrite_expr(&mut cond.expr)?;
+        rewrite_expr(&mut cond.expr, &mut param_count)?;
     }
     if let Some(group_by) = &mut plan.group_by {
         for expr in group_by.exprs.iter_mut() {
-            rewrite_expr(expr)?;
+            rewrite_expr(expr, &mut param_count)?;
         }
     }
     if let Some(order_by) = &mut plan.order_by {
         for (expr, _) in order_by.iter_mut() {
-            rewrite_expr(expr)?;
+            rewrite_expr(expr, &mut param_count)?;
         }
     }
 
@@ -440,27 +442,29 @@ fn rewrite_exprs_select(plan: &mut SelectPlan) -> Result<()> {
 }
 
 fn rewrite_exprs_delete(plan: &mut DeletePlan) -> Result<()> {
+    let mut param_idx = 1;
     for cond in plan.where_clause.iter_mut() {
-        rewrite_expr(&mut cond.expr)?;
+        rewrite_expr(&mut cond.expr, &mut param_idx)?;
     }
     Ok(())
 }
 
 fn rewrite_exprs_update(plan: &mut UpdatePlan) -> Result<()> {
-    if let Some(rc) = plan.returning.as_mut() {
-        for rc in rc.iter_mut() {
-            rewrite_expr(&mut rc.expr)?;
-        }
-    }
+    let mut param_idx = 1;
     for (_, expr) in plan.set_clauses.iter_mut() {
-        rewrite_expr(expr)?;
+        rewrite_expr(expr, &mut param_idx)?;
     }
     for cond in plan.where_clause.iter_mut() {
-        rewrite_expr(&mut cond.expr)?;
+        rewrite_expr(&mut cond.expr, &mut param_idx)?;
     }
     if let Some(order_by) = &mut plan.order_by {
         for (expr, _) in order_by.iter_mut() {
-            rewrite_expr(expr)?;
+            rewrite_expr(expr, &mut param_idx)?;
+        }
+    }
+    if let Some(rc) = plan.returning.as_mut() {
+        for rc in rc.iter_mut() {
+            rewrite_expr(&mut rc.expr, &mut param_idx)?;
         }
     }
     Ok(())
@@ -1856,7 +1860,7 @@ pub fn try_extract_rowid_search_expression(
     }
 }
 
-fn rewrite_expr(expr: &mut ast::Expr) -> Result<()> {
+pub fn rewrite_expr(expr: &mut ast::Expr, param_idx: &mut usize) -> Result<()> {
     match expr {
         ast::Expr::Id(id) => {
             // Convert "true" and "false" to 1 and 0
@@ -1867,6 +1871,15 @@ fn rewrite_expr(expr: &mut ast::Expr) -> Result<()> {
             if id.0.eq_ignore_ascii_case("false") {
                 *expr = ast::Expr::Literal(ast::Literal::Numeric(0.to_string()));
                 return Ok(());
+            }
+            Ok(())
+        }
+        ast::Expr::Variable(var) => {
+            if var.is_empty() {
+                // rewrite anonymous variables only, ensure that the `param_idx` starts at 1 and
+                // all the expressions are rewritten in the order they come in the statement
+                *expr = ast::Expr::Variable(format!("{}{param_idx}", PARAM_PREFIX));
+                *param_idx += 1;
             }
             Ok(())
         }
@@ -1884,9 +1897,9 @@ fn rewrite_expr(expr: &mut ast::Expr) -> Result<()> {
                 (ast::Operator::LessEquals, ast::Operator::LessEquals)
             };
 
-            rewrite_expr(start)?;
-            rewrite_expr(lhs)?;
-            rewrite_expr(end)?;
+            rewrite_expr(start, param_idx)?;
+            rewrite_expr(lhs, param_idx)?;
+            rewrite_expr(end, param_idx)?;
 
             let start = start.take_ownership();
             let lhs = lhs.take_ownership();
@@ -1912,7 +1925,7 @@ fn rewrite_expr(expr: &mut ast::Expr) -> Result<()> {
         }
         ast::Expr::Parenthesized(ref mut exprs) => {
             for subexpr in exprs.iter_mut() {
-                rewrite_expr(subexpr)?;
+                rewrite_expr(subexpr, param_idx)?;
             }
             let exprs = std::mem::take(exprs);
             *expr = ast::Expr::Parenthesized(exprs);
@@ -1920,20 +1933,56 @@ fn rewrite_expr(expr: &mut ast::Expr) -> Result<()> {
         }
         // Process other expressions recursively
         ast::Expr::Binary(lhs, _, rhs) => {
-            rewrite_expr(lhs)?;
-            rewrite_expr(rhs)?;
+            rewrite_expr(lhs, param_idx)?;
+            rewrite_expr(rhs, param_idx)?;
+            Ok(())
+        }
+        ast::Expr::Like {
+            lhs, rhs, escape, ..
+        } => {
+            rewrite_expr(lhs, param_idx)?;
+            rewrite_expr(rhs, param_idx)?;
+            if let Some(escape) = escape {
+                rewrite_expr(escape, param_idx)?;
+            }
+            Ok(())
+        }
+        ast::Expr::Case {
+            base,
+            when_then_pairs,
+            else_expr,
+        } => {
+            if let Some(base) = base {
+                rewrite_expr(base, param_idx)?;
+            }
+            for (lhs, rhs) in when_then_pairs.iter_mut() {
+                rewrite_expr(lhs, param_idx)?;
+                rewrite_expr(rhs, param_idx)?;
+            }
+            if let Some(else_expr) = else_expr {
+                rewrite_expr(else_expr, param_idx)?;
+            }
+            Ok(())
+        }
+        ast::Expr::InList { lhs, rhs, .. } => {
+            rewrite_expr(lhs, param_idx)?;
+            if let Some(rhs) = rhs {
+                for expr in rhs.iter_mut() {
+                    rewrite_expr(expr, param_idx)?;
+                }
+            }
             Ok(())
         }
         ast::Expr::FunctionCall { args, .. } => {
             if let Some(args) = args {
                 for arg in args.iter_mut() {
-                    rewrite_expr(arg)?;
+                    rewrite_expr(arg, param_idx)?;
                 }
             }
             Ok(())
         }
         ast::Expr::Unary(_, arg) => {
-            rewrite_expr(arg)?;
+            rewrite_expr(arg, param_idx)?;
             Ok(())
         }
         _ => Ok(()),

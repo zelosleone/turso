@@ -198,7 +198,7 @@ pub fn translate(
                 or_conflict,
                 tbl_name,
                 columns,
-                body,
+                mut body,
                 returning,
             } = *insert;
             change_cnt_on = true;
@@ -209,7 +209,7 @@ pub fn translate(
                 &or_conflict,
                 &tbl_name,
                 &columns,
-                &body,
+                &mut body,
                 &returning,
                 syms,
             )?

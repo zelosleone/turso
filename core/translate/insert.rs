@@ -21,6 +21,7 @@ use crate::{Result, SymbolTable, VirtualTable};
 
 use super::emitter::Resolver;
 use super::expr::{translate_expr_no_constant_opt, NoConstantOptReason};
+use super::optimizer::rewrite_expr;
 
 #[allow(clippy::too_many_arguments)]
 pub fn translate_insert(
@@ -30,7 +31,7 @@ pub fn translate_insert(
     on_conflict: &Option<ResolveType>,
     tbl_name: &QualifiedName,
     columns: &Option<DistinctNames>,
-    body: &InsertBody,
+    body: &mut InsertBody,
     _returning: &Option<Vec<ResultColumn>>,
     syms: &SymbolTable,
 ) -> Result<ProgramBuilder> {
@@ -99,14 +100,16 @@ pub fn translate_insert(
         .collect::<Vec<(&String, usize, usize)>>();
     let root_page = btree_table.root_page;
     let values = match body {
-        InsertBody::Select(select, _) => match &select.body.select.deref() {
-            OneSelect::Values(values) => values,
+        InsertBody::Select(ref mut select, _) => match select.body.select.as_mut() {
+            OneSelect::Values(ref mut values) => values,
             _ => todo!(),
         },
-        InsertBody::DefaultValues => &vec![vec![]],
+        InsertBody::DefaultValues => &mut vec![vec![]],
     };
-    // prepare parameters by tracking the number of variables we will be binding to values later on
-    program.parameters.init_insert_parameters(values);
+    let mut param_idx = 1;
+    for expr in values.iter_mut().flat_map(|v| v.iter_mut()) {
+        rewrite_expr(expr, &mut param_idx)?;
+    }
 
     let column_mappings = resolve_columns_for_insert(&table, columns, values)?;
     let index_col_mappings = resolve_indicies_for_insert(schema, table.as_ref(), &column_mappings)?;
@@ -153,9 +156,8 @@ pub fn translate_insert(
 
         program.preassign_label_to_next_insn(start_offset_label);
 
-        for (i, value) in values.iter().enumerate() {
+        for value in values.iter() {
             populate_column_registers(
-                i,
                 &mut program,
                 value,
                 &column_mappings,
@@ -193,7 +195,6 @@ pub fn translate_insert(
         });
 
         populate_column_registers(
-            0,
             &mut program,
             &values[0],
             &column_mappings,
@@ -585,7 +586,6 @@ fn resolve_indicies_for_insert(
 /// Populates the column registers with values for a single row
 #[allow(clippy::too_many_arguments)]
 fn populate_column_registers(
-    row_idx: usize,
     program: &mut ProgramBuilder,
     value: &[Expr],
     column_mappings: &[ColumnMapping],
@@ -609,14 +609,6 @@ fn populate_column_registers(
             } else {
                 target_reg
             };
-            // We need the 'parameters' to be aware of the value_index of the current row
-            // so it can map it to the correct parameter index in the Variable opcode
-            // but we need to make sure the value_index is not overwritten if this is a multi-row
-            // insert. For 'insert into t values: (?,?), (?,?);'
-            // value_index should be (1,2),(3,4) instead of (1,2),(1,2), so multiply by col length
-            program
-                .parameters
-                .set_insert_value_index(value_index + (column_mappings.len() * row_idx));
             translate_expr_no_constant_opt(
                 program,
                 None,
@@ -680,8 +672,6 @@ fn translate_virtual_table_insert(
         InsertBody::DefaultValues => &vec![],
         _ => crate::bail_parse_error!("Unsupported INSERT body for virtual tables"),
     };
-    // initiate parameters by tracking the number of variables we will be binding to values
-    program.parameters.init_insert_parameters(values);
     let table = Table::Virtual(virtual_table.clone());
     let column_mappings = resolve_columns_for_insert(&table, columns, values)?;
     let registers_start = program.alloc_registers(2);
@@ -700,7 +690,6 @@ fn translate_virtual_table_insert(
 
     let values_reg = program.alloc_registers(column_mappings.len());
     populate_column_registers(
-        0,
         program,
         &values[0],
         &column_mappings,

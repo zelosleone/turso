@@ -379,7 +379,7 @@ impl SelectPlan {
             name: limbo_sqlite3_parser::ast::Id("count".to_string()),
             filter_over: None,
         };
-        let result_col_expr = &self.result_columns.get(0).unwrap().expr;
+        let result_col_expr = &self.result_columns.first().unwrap().expr;
         if *result_col_expr != count && *result_col_expr != count_star {
             return false;
         }
