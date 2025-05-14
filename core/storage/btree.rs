@@ -4622,12 +4622,7 @@ fn edit_page(
             usable_space,
         )?;
         // shift pointers left
-        let buf = page.as_ptr();
-        let (start, _) = page.cell_pointer_array_offset_and_size();
-        buf.copy_within(
-            start + (number_to_shift * 2)..start + (count_cells * 2),
-            start,
-        );
+        shift_cells_left(page, count_cells, number_to_shift);
         count_cells -= number_to_shift;
         debug_validate_cells!(page, usable_space);
     }
@@ -4686,6 +4681,15 @@ fn edit_page(
     // TODO: noverflow
     page.write_u16(offset::BTREE_CELL_COUNT, number_new_cells as u16);
     Ok(())
+}
+
+fn shift_cells_left(page: &mut PageContent, count_cells: usize, number_to_shift: usize) {
+    let buf = page.as_ptr();
+    let (start, _) = page.cell_pointer_array_offset_and_size();
+    buf.copy_within(
+        start + (number_to_shift * 2)..start + (count_cells * 2),
+        start,
+    );
 }
 
 fn page_free_array(
@@ -5766,11 +5770,14 @@ mod tests {
         }
     }
 
-    fn rng_from_time() -> (ChaCha8Rng, u64) {
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+    fn rng_from_time_or_env() -> (ChaCha8Rng, u64) {
+        let seed = std::env::var("SEED").map_or(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            |v| v.parse().unwrap(),
+        );
         let rng = ChaCha8Rng::seed_from_u64(seed);
         (rng, seed)
     }
@@ -5780,7 +5787,7 @@ mod tests {
         inserts: usize,
         size: impl Fn(&mut ChaCha8Rng) -> usize,
     ) {
-        let (mut rng, seed) = rng_from_time();
+        let (mut rng, seed) = rng_from_time_or_env();
         let mut seen = HashSet::new();
         tracing::info!("super seed: {}", seed);
         for _ in 0..attempts {
@@ -5879,7 +5886,7 @@ mod tests {
             let rng = ChaCha8Rng::seed_from_u64(seed);
             (rng, seed)
         } else {
-            rng_from_time()
+            rng_from_time_or_env()
         };
         let mut seen = HashSet::new();
         tracing::info!("super seed: {}", seed);
@@ -7107,5 +7114,114 @@ mod tests {
                 CursorResult::IO => pager.io.run_once().unwrap(),
             }
         }
+    }
+
+    #[test]
+    fn test_free_array() {
+        let (mut rng, seed) = rng_from_time_or_env();
+        tracing::info!("seed={}", seed);
+
+        const ITERATIONS: usize = 10000;
+        for _ in 0..ITERATIONS {
+            let mut cell_array = CellArray {
+                cells: Vec::new(),
+                number_of_cells_per_page: [0; 5],
+            };
+            let mut cells_cloned = Vec::new();
+            let (pager, _) = empty_btree();
+            let page_type = PageType::TableLeaf;
+            let page = pager.allocate_page().unwrap();
+            btree_init_page(&page, page_type, 0, pager.usable_space() as u16);
+            let mut size = (rng.next_u64() % 100) as u16;
+            let mut i = 0;
+            // add a bunch of cells
+            while compute_free_space(page.get_contents(), pager.usable_space() as u16) >= size + 10
+            {
+                insert_cell(i, size, page.get_contents(), pager.clone(), page_type);
+                i += 1;
+                size = (rng.next_u64() % 1024) as u16;
+            }
+
+            // Create cell array with references to cells inserted
+            let contents = page.get_contents();
+            for cell_idx in 0..contents.cell_count() {
+                let buf = contents.as_ptr();
+                let (start, len) = contents.cell_get_raw_region(
+                    cell_idx,
+                    payload_overflow_threshold_max(contents.page_type(), 4096),
+                    payload_overflow_threshold_min(contents.page_type(), 4096),
+                    pager.usable_space(),
+                );
+                cell_array
+                    .cells
+                    .push(to_static_buf(&mut buf[start..start + len]));
+                cells_cloned.push(buf[start..start + len].to_vec());
+            }
+
+            debug_validate_cells!(contents, pager.usable_space() as u16);
+
+            // now free a prefix or suffix of cells added
+            let cells_before_free = contents.cell_count();
+            let size = rng.next_u64() as usize % cells_before_free;
+            let prefix = rng.next_u64() % 2 == 0;
+            let start = if prefix {
+                0
+            } else {
+                contents.cell_count() - size
+            };
+            let removed = page_free_array(
+                contents,
+                start,
+                size as usize,
+                &cell_array,
+                pager.usable_space() as u16,
+            )
+            .unwrap();
+            // shift if needed
+            if prefix {
+                shift_cells_left(contents, cells_before_free, removed);
+            }
+
+            assert_eq!(removed, size);
+            assert_eq!(contents.cell_count(), cells_before_free - size);
+            debug_validate_cells_core(contents, pager.usable_space() as u16);
+            // check cells are correct
+            let mut cell_idx_cloned = if prefix { size } else { 0 };
+            for cell_idx in 0..contents.cell_count() {
+                let buf = contents.as_ptr();
+                let (start, len) = contents.cell_get_raw_region(
+                    cell_idx,
+                    payload_overflow_threshold_max(contents.page_type(), 4096),
+                    payload_overflow_threshold_min(contents.page_type(), 4096),
+                    pager.usable_space(),
+                );
+                let cell_in_page = &buf[start..start + len];
+                let cell_in_array = &cells_cloned[cell_idx_cloned];
+                assert_eq!(cell_in_page, cell_in_array);
+                cell_idx_cloned += 1;
+            }
+        }
+    }
+
+    fn insert_cell(
+        i: u64,
+        size: u16,
+        contents: &mut PageContent,
+        pager: Rc<Pager>,
+        page_type: PageType,
+    ) {
+        let mut payload = Vec::new();
+        let record = ImmutableRecord::from_registers(&[Register::OwnedValue(OwnedValue::Blob(
+            vec![0; size as usize],
+        ))]);
+        fill_cell_payload(
+            page_type,
+            Some(i),
+            &mut payload,
+            &record,
+            pager.usable_space() as u16,
+            pager.clone(),
+        );
+        insert_into_cell(contents, &payload, i as usize, pager.usable_space() as u16).unwrap();
     }
 }
