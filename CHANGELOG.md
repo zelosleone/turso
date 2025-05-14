@@ -1,7 +1,10 @@
+# Changelog
+
 ## Unreleased
 
 ### Added
 
+* Support isnull and notnull expr (meteorgan)
 * Add drop index (Anton Harniakou)
 * bindings/wasm: add types property for typescript setting (오병진)
 * Implement transaction support in Go adapter (Jonathan Ness)
@@ -29,6 +32,9 @@
 
 ### Updated
 
+* github: Ensure rustmft is installed (Pekka Enberg)
+* btree: Coalesce free blocks in `page_free_array()` (Mohamed Hossam)
+* Count optimization (Pedro Muniz)
 * bindings/java: Remove disabled annotation for UPDATE and DELETE (Kim Seon Woo)
 * Refactor numeric literal (meteorgan)
 * EXPLAIN should show a comment for the Insert opcode (Anton Harniakou)
@@ -63,6 +69,11 @@
 
 ### Fixed
 
+* testing/py: rename debug_print() to run_debug() (Jussi Saurio)
+* Fix handling of empty strings in prepared statements (Diego Reis)
+* CREATE VIRTUAL TABLE fixes (Piotr Rżysko)
+* Bindings/Go: Fix symbols for FFI calls (Preston Thorpe)
+* Fix bound parameters on insert statements with out of order column indexes (Preston Thorpe)
 * Fix memory leak caused by unclosed virtual table cursors (Piotr Rżysko)
 * Fix panic on async io due to reading locked page (Preston Thorpe)
 * Fix bug: we cant remove order by terms from the head of the list (Jussi Saurio)
@@ -76,8 +87,6 @@
 * Fix bug: left join null flag not being cleared (Jussi Saurio)
 * Fix out of bounds access on `parse_numeric_str` (Levy A.)
 * Fix post balance validation (Pere Diaz Bou)
-
-# Changelog
 
 ## 0.0.19 - 2025-04-16
 
