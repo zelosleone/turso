@@ -10,7 +10,6 @@ use crate::schema::{IndexColumn, Table};
 use crate::util::normalize_ident;
 use crate::vdbe::builder::{ProgramBuilderOpts, QueryMode};
 use crate::vdbe::insn::{IdxInsertFlags, RegisterOrLiteral};
-use crate::vdbe::BranchOffset;
 use crate::{
     schema::{Column, Schema},
     vdbe::{
@@ -137,7 +136,7 @@ pub fn translate_insert(
 
     let record_register = program.alloc_register();
     let halt_label = program.allocate_label();
-    let mut loop_start_offset = BranchOffset::Offset(0);
+    let loop_start_label = program.allocate_label();
 
     let inserting_multiple_rows = values.len() > 1;
 
@@ -152,7 +151,7 @@ pub fn translate_insert(
             start_offset: start_offset_label,
         });
 
-        program.resolve_label(start_offset_label, program.offset());
+        program.preassign_label_to_next_insn(start_offset_label);
 
         for (i, value) in values.iter().enumerate() {
             populate_column_registers(
@@ -181,7 +180,7 @@ pub fn translate_insert(
         // Main loop
         // FIXME: rollback is not implemented. E.g. if you insert 2 rows and one fails to unique constraint violation,
         // the other row will still be inserted.
-        loop_start_offset = program.offset();
+        program.resolve_label(loop_start_label, program.offset());
         program.emit_insn(Insn::Yield {
             yield_reg,
             end_offset: halt_label,
@@ -397,7 +396,7 @@ pub fn translate_insert(
     if inserting_multiple_rows {
         // For multiple rows, loop back
         program.emit_insn(Insn::Goto {
-            target_pc: loop_start_offset,
+            target_pc: loop_start_label,
         });
     }
 
