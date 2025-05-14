@@ -852,7 +852,11 @@ impl BTreeCursor {
             if local_amount + offset > local_size as u32 {
                 local_amount = local_size as u32 - offset;
             }
-            self.read_write_payload_to_page(offset, payload, page, buffer, amount, is_write);
+            if is_write {
+                self.write_payload_to_page(offset, local_amount, payload, buffer, page.clone());
+            } else {
+                self.read_payload_from_page(offset, local_amount, payload, buffer);
+            }
             offset = 0;
             amount -= local_amount;
             bytes_processed += local_amount;
@@ -979,14 +983,22 @@ impl BTreeCursor {
 
                     let payload_offset = 4 + page_offset;
                     let page_payload = contents.as_ptr();
-                    self.read_write_payload_to_page(
-                        payload_offset as u32,
-                        page_payload,
-                        page.clone(),
-                        buffer,
-                        bytes_to_process,
-                        *is_write,
-                    );
+                    if *is_write {
+                        self.write_payload_to_page(
+                            payload_offset as u32,
+                            bytes_to_process,
+                            page_payload,
+                            buffer,
+                            page.clone(),
+                        );
+                    } else {
+                        self.read_payload_from_page(
+                            payload_offset as u32,
+                            bytes_to_process,
+                            page_payload,
+                            buffer,
+                        );
+                    }
                     *remaining_to_read -= bytes_to_process;
                     *buffer_offset += bytes_to_process as usize;
 
@@ -1018,33 +1030,36 @@ impl BTreeCursor {
         }
     }
 
-    /// This function read from a page into a buffer or write from a buffer into a page.
-    /// copy_to_page: true if writing, false if reading
+    fn read_payload_from_page(
+        &self,
+        payload_offset: u32,
+        num_bytes: u32,
+        payload: &[u8],
+        buffer: &mut Vec<u8>,
+    ) {
+        buffer.extend_from_slice(
+            &payload[payload_offset as usize..(payload_offset + num_bytes) as usize],
+        );
+    }
+
+    /// This function write from a buffer into a page.
     /// SAFETY: This function uses unsafe in the write path to write to the page payload directly.
     /// - Make sure the page is pointing to valid data ie the page is not evicted from the page-cache.
-    fn read_write_payload_to_page(
+    fn write_payload_to_page(
         &mut self,
         payload_offset: u32,
-        payload: &[u8],
-        page: PageRef,
-        buffer: &mut Vec<u8>,
         num_bytes: u32,
-        copy_to_page: bool,
+        payload: &[u8],
+        buffer: &mut Vec<u8>,
+        page: PageRef,
     ) {
-        if copy_to_page {
-            page.set_dirty();
-            self.pager.add_dirty(page.get().id);
-            // This is safe as long as the page is not evicted from the cache.
-            let payload_mut = unsafe {
-                std::slice::from_raw_parts_mut(payload.as_ptr() as *mut u8, payload.len())
-            };
-            payload_mut[payload_offset as usize..payload_offset as usize + num_bytes as usize]
-                .copy_from_slice(&buffer[..num_bytes as usize]);
-        } else {
-            buffer.extend_from_slice(
-                &payload[payload_offset as usize..(payload_offset + num_bytes) as usize],
-            );
-        }
+        page.set_dirty();
+        self.pager.add_dirty(page.get().id);
+        // SAFETY: This is safe as long as the page is not evicted from the cache.
+        let payload_mut =
+            unsafe { std::slice::from_raw_parts_mut(payload.as_ptr() as *mut u8, payload.len()) };
+        payload_mut[payload_offset as usize..payload_offset as usize + num_bytes as usize]
+            .copy_from_slice(&buffer[..num_bytes as usize]);
     }
 
     /// Move the cursor to the next record and return it.
