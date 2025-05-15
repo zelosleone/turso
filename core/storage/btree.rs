@@ -7281,8 +7281,7 @@ mod tests {
         page_type: PageType,
     ) {
         let mut payload = Vec::new();
-        let record =
-            ImmutableRecord::from_registers(&[Register::Value(Value::Blob(vec![
+        let record = ImmutableRecord::from_registers(&[Register::Value(Value::Blob(vec![
                 0;
                 size as usize
             ]))]);
