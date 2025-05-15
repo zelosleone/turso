@@ -22,12 +22,12 @@ jobs:
       #   run: npm install && npm run build
 
       - name: Bench
-        run: cargo bench --output-format bencher | tee output.txt
+        run: cargo bench  2>&1 | tee output.txt
       - name: Analyze benchmark result with Nyrkiö
         uses: nyrkio/change-detection@HEAD
         with:
           name: turso
-          tool: cargo
+          tool: criterion
           output-file-path: output.txt
 
           # What to do if a change is immediately detected by Nyrkiö.
