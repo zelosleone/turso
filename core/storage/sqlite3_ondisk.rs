@@ -1616,42 +1616,42 @@ pub fn read_u32(buf: &[u8], pos: usize) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use crate::OwnedValue;
+    use crate::Value;
 
     use super::*;
     use rstest::rstest;
 
     #[rstest]
-    #[case(&[], SerialType::null(), OwnedValue::Null)]
-    #[case(&[255], SerialType::i8(), OwnedValue::Integer(-1))]
-    #[case(&[0x12, 0x34], SerialType::i16(), OwnedValue::Integer(0x1234))]
-    #[case(&[0xFE], SerialType::i8(), OwnedValue::Integer(-2))]
-    #[case(&[0x12, 0x34, 0x56], SerialType::i24(), OwnedValue::Integer(0x123456))]
-    #[case(&[0x12, 0x34, 0x56, 0x78], SerialType::i32(), OwnedValue::Integer(0x12345678))]
-    #[case(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], SerialType::i48(), OwnedValue::Integer(0x123456789ABC))]
-    #[case(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xFF], SerialType::i64(), OwnedValue::Integer(0x123456789ABCDEFF))]
-    #[case(&[0x40, 0x09, 0x21, 0xFB, 0x54, 0x44, 0x2D, 0x18], SerialType::f64(), OwnedValue::Float(std::f64::consts::PI))]
-    #[case(&[1, 2], SerialType::const_int0(), OwnedValue::Integer(0))]
-    #[case(&[65, 66], SerialType::const_int1(), OwnedValue::Integer(1))]
-    #[case(&[1, 2, 3], SerialType::blob(3), OwnedValue::Blob(vec![1, 2, 3].into()))]
-    #[case(&[], SerialType::blob(0), OwnedValue::Blob(vec![].into()))] // empty blob
-    #[case(&[65, 66, 67], SerialType::text(3), OwnedValue::build_text("ABC"))]
-    #[case(&[0x80], SerialType::i8(), OwnedValue::Integer(-128))]
-    #[case(&[0x80, 0], SerialType::i16(), OwnedValue::Integer(-32768))]
-    #[case(&[0x80, 0, 0], SerialType::i24(), OwnedValue::Integer(-8388608))]
-    #[case(&[0x80, 0, 0, 0], SerialType::i32(), OwnedValue::Integer(-2147483648))]
-    #[case(&[0x80, 0, 0, 0, 0, 0], SerialType::i48(), OwnedValue::Integer(-140737488355328))]
-    #[case(&[0x80, 0, 0, 0, 0, 0, 0, 0], SerialType::i64(), OwnedValue::Integer(-9223372036854775808))]
-    #[case(&[0x7f], SerialType::i8(), OwnedValue::Integer(127))]
-    #[case(&[0x7f, 0xff], SerialType::i16(), OwnedValue::Integer(32767))]
-    #[case(&[0x7f, 0xff, 0xff], SerialType::i24(), OwnedValue::Integer(8388607))]
-    #[case(&[0x7f, 0xff, 0xff, 0xff], SerialType::i32(), OwnedValue::Integer(2147483647))]
-    #[case(&[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff], SerialType::i48(), OwnedValue::Integer(140737488355327))]
-    #[case(&[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff], SerialType::i64(), OwnedValue::Integer(9223372036854775807))]
+    #[case(&[], SerialType::null(), Value::Null)]
+    #[case(&[255], SerialType::i8(), Value::Integer(-1))]
+    #[case(&[0x12, 0x34], SerialType::i16(), Value::Integer(0x1234))]
+    #[case(&[0xFE], SerialType::i8(), Value::Integer(-2))]
+    #[case(&[0x12, 0x34, 0x56], SerialType::i24(), Value::Integer(0x123456))]
+    #[case(&[0x12, 0x34, 0x56, 0x78], SerialType::i32(), Value::Integer(0x12345678))]
+    #[case(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC], SerialType::i48(), Value::Integer(0x123456789ABC))]
+    #[case(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xFF], SerialType::i64(), Value::Integer(0x123456789ABCDEFF))]
+    #[case(&[0x40, 0x09, 0x21, 0xFB, 0x54, 0x44, 0x2D, 0x18], SerialType::f64(), Value::Float(std::f64::consts::PI))]
+    #[case(&[1, 2], SerialType::const_int0(), Value::Integer(0))]
+    #[case(&[65, 66], SerialType::const_int1(), Value::Integer(1))]
+    #[case(&[1, 2, 3], SerialType::blob(3), Value::Blob(vec![1, 2, 3].into()))]
+    #[case(&[], SerialType::blob(0), Value::Blob(vec![].into()))] // empty blob
+    #[case(&[65, 66, 67], SerialType::text(3), Value::build_text("ABC"))]
+    #[case(&[0x80], SerialType::i8(), Value::Integer(-128))]
+    #[case(&[0x80, 0], SerialType::i16(), Value::Integer(-32768))]
+    #[case(&[0x80, 0, 0], SerialType::i24(), Value::Integer(-8388608))]
+    #[case(&[0x80, 0, 0, 0], SerialType::i32(), Value::Integer(-2147483648))]
+    #[case(&[0x80, 0, 0, 0, 0, 0], SerialType::i48(), Value::Integer(-140737488355328))]
+    #[case(&[0x80, 0, 0, 0, 0, 0, 0, 0], SerialType::i64(), Value::Integer(-9223372036854775808))]
+    #[case(&[0x7f], SerialType::i8(), Value::Integer(127))]
+    #[case(&[0x7f, 0xff], SerialType::i16(), Value::Integer(32767))]
+    #[case(&[0x7f, 0xff, 0xff], SerialType::i24(), Value::Integer(8388607))]
+    #[case(&[0x7f, 0xff, 0xff, 0xff], SerialType::i32(), Value::Integer(2147483647))]
+    #[case(&[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff], SerialType::i48(), Value::Integer(140737488355327))]
+    #[case(&[0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff], SerialType::i64(), Value::Integer(9223372036854775807))]
     fn test_read_value(
         #[case] buf: &[u8],
         #[case] serial_type: SerialType,
-        #[case] expected: OwnedValue,
+        #[case] expected: Value,
     ) {
         let result = read_value(buf, serial_type).unwrap();
         assert_eq!(result.0.to_owned(), expected);
