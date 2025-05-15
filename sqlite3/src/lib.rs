@@ -40,6 +40,7 @@ pub mod util;
 use util::sqlite3_safety_check_sick_or_ok;
 
 pub struct sqlite3 {
+    pub(crate) io: Arc<dyn limbo_core::IO>,
     pub(crate) _db: Arc<limbo_core::Database>,
     pub(crate) conn: Rc<limbo_core::Connection>,
     pub(crate) err_code: ffi::c_int,
@@ -50,8 +51,13 @@ pub struct sqlite3 {
 }
 
 impl sqlite3 {
-    pub fn new(db: Arc<limbo_core::Database>, conn: Rc<limbo_core::Connection>) -> Self {
+    pub fn new(
+        io: Arc<dyn limbo_core::IO>,
+        db: Arc<limbo_core::Database>,
+        conn: Rc<limbo_core::Connection>,
+    ) -> Self {
         Self {
+            io,
             _db: db,
             conn,
             err_code: SQLITE_OK,
@@ -64,12 +70,13 @@ impl sqlite3 {
 }
 
 pub struct sqlite3_stmt {
+    pub(crate) db: *mut sqlite3,
     pub(crate) stmt: limbo_core::Statement,
 }
 
 impl sqlite3_stmt {
-    pub fn new(stmt: limbo_core::Statement) -> Self {
-        Self { stmt }
+    pub fn new(db: *mut sqlite3, stmt: limbo_core::Statement) -> Self {
+        Self { db, stmt }
     }
 }
 
@@ -117,10 +124,10 @@ pub unsafe extern "C" fn sqlite3_open(
             Err(_) => return SQLITE_CANTOPEN,
         },
     };
-    match limbo_core::Database::open_file(io, filename, false) {
+    match limbo_core::Database::open_file(io.clone(), filename, false) {
         Ok(db) => {
             let conn = db.connect().unwrap();
-            *db_out = Box::leak(Box::new(sqlite3::new(db, conn)));
+            *db_out = Box::leak(Box::new(sqlite3::new(io, db, conn)));
             SQLITE_OK
         }
         Err(e) => {
@@ -219,7 +226,7 @@ pub unsafe extern "C" fn sqlite3_prepare_v2(
         Ok(stmt) => stmt,
         Err(_) => return SQLITE_ERROR,
     };
-    *out_stmt = Box::leak(Box::new(sqlite3_stmt::new(stmt)));
+    *out_stmt = Box::leak(Box::new(sqlite3_stmt::new(db, stmt)));
     SQLITE_OK
 }
 
@@ -235,16 +242,23 @@ pub unsafe extern "C" fn sqlite3_finalize(stmt: *mut sqlite3_stmt) -> ffi::c_int
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_step(stmt: *mut sqlite3_stmt) -> ffi::c_int {
     let stmt = &mut *stmt;
-    if let Ok(result) = stmt.stmt.step() {
-        match result {
-            limbo_core::StepResult::IO => SQLITE_BUSY,
-            limbo_core::StepResult::Done => SQLITE_DONE,
-            limbo_core::StepResult::Interrupt => SQLITE_INTERRUPT,
-            limbo_core::StepResult::Row => SQLITE_ROW,
-            limbo_core::StepResult::Busy => SQLITE_BUSY,
+    let db = &mut *stmt.db;
+    loop {
+        if let Ok(result) = stmt.stmt.step() {
+            match result {
+                limbo_core::StepResult::IO => {
+                    let io = db.io.clone();
+                    io.run_once().unwrap();
+                    continue;
+                }
+                limbo_core::StepResult::Done => return SQLITE_DONE,
+                limbo_core::StepResult::Interrupt => return SQLITE_INTERRUPT,
+                limbo_core::StepResult::Row => return SQLITE_ROW,
+                limbo_core::StepResult::Busy => return SQLITE_BUSY,
+            }
+        } else {
+            return SQLITE_ERROR;
         }
-    } else {
-        SQLITE_ERROR
     }
 }
 
