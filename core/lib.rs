@@ -486,6 +486,10 @@ impl Connection {
         Ok(())
     }
 
+    pub fn wal_frame_count(&self) -> Result<u64> {
+        self.pager.wal_frame_count()
+    }
+
     pub fn cacheflush(&self) -> Result<CheckpointStatus> {
         self.pager.cacheflush()
     }

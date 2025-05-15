@@ -1,4 +1,5 @@
 #![allow(non_camel_case_types)]
+#![allow(dead_code)]
 
 use std::ptr;
 
@@ -26,6 +27,7 @@ extern "C" {
         stmt: *mut *mut sqlite3_stmt,
         tail: *mut *const libc::c_char,
     ) -> i32;
+    fn sqlite3_step(stmt: *mut sqlite3_stmt) -> i32;
     fn sqlite3_finalize(stmt: *mut sqlite3_stmt) -> i32;
     fn sqlite3_wal_checkpoint(db: *mut sqlite3, db_name: *const libc::c_char) -> i32;
     fn sqlite3_wal_checkpoint_v2(
@@ -35,10 +37,13 @@ extern "C" {
         log_size: *mut i32,
         checkpoint_count: *mut i32,
     ) -> i32;
+    fn libsql_wal_frame_count(db: *mut sqlite3, p_frame_count: *mut u32) -> i32;
 }
 
 const SQLITE_OK: i32 = 0;
 const SQLITE_CANTOPEN: i32 = 14;
+const SQLITE_DONE: i32 = 101;
+
 const SQLITE_CHECKPOINT_PASSIVE: i32 = 0;
 const SQLITE_CHECKPOINT_FULL: i32 = 1;
 const SQLITE_CHECKPOINT_RESTART: i32 = 2;
@@ -193,6 +198,57 @@ mod tests {
             );
 
             assert_eq!(sqlite3_close(db), SQLITE_OK);
+        }
+    }
+
+    #[cfg(not(feature = "sqlite3"))]
+    mod libsql_ext {
+        use super::*;
+
+        #[test]
+        fn test_wal_frame_count() {
+            unsafe {
+                let mut db = ptr::null_mut();
+                assert_eq!(
+                    sqlite3_open(b"../testing/testing.db\0".as_ptr() as *const i8, &mut db),
+                    SQLITE_OK
+                );
+                // Ensure that WAL is initially empty.
+                let mut frame_count = 0;
+                assert_eq!(libsql_wal_frame_count(db, &mut frame_count), SQLITE_OK);
+                assert_eq!(frame_count, 0);
+                // Create a table and insert a row.
+                let mut stmt = ptr::null_mut();
+                assert_eq!(
+                    sqlite3_prepare_v2(
+                        db,
+                        b"CREATE TABLE test (id INTEGER PRIMARY KEY)\0".as_ptr() as *const i8,
+                        -1,
+                        &mut stmt,
+                        ptr::null_mut()
+                    ),
+                    SQLITE_OK
+                );
+                assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+                assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+                let mut stmt = ptr::null_mut();
+                assert_eq!(
+                    sqlite3_prepare_v2(
+                        db,
+                        b"INSERT INTO test (id) VALUES (1)\0".as_ptr() as *const i8,
+                        -1,
+                        &mut stmt,
+                        ptr::null_mut()
+                    ),
+                    SQLITE_OK
+                );
+                assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+                assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+                // Check that WAL has three frames.
+                assert_eq!(libsql_wal_frame_count(db, &mut frame_count), SQLITE_OK);
+                assert_eq!(frame_count, 3);
+                assert_eq!(sqlite3_close(db), SQLITE_OK);
+            }
         }
     }
 }
