@@ -266,6 +266,28 @@ int sqlite3_wal_checkpoint(sqlite3 *_db, const char *_db_name);
 
 int sqlite3_wal_checkpoint_v2(sqlite3 *db, const char *_db_name, int _mode, int *_log_size, int *_checkpoint_count);
 
+/**
+ * Get the number of frames in the WAL.
+ *
+ * The `libsql_wal_frame_count` function returns the number of frames
+ * in the WAL in the `p_frame_count` parameter.
+ *
+ * # Returns
+ *
+ * - `SQLITE_OK` if the number of frames in the WAL file is
+ *   successfully returned.
+ * - `SQLITE_MISUSE` if the `db` is `NULL`.
+ * - `SQLITE_ERROR` if an error occurs while getting the number of frames
+ *   in the WAL file.
+ *
+ * # Safety
+ *
+ * - The `db` must be a valid pointer to a `sqlite3` database connection.
+ * - The `p_frame_count` must be a valid pointer to a `u32` that will store
+ *   the number of frames in the WAL file.
+ */
+int libsql_wal_frame_count(sqlite3 *db, uint32_t *p_frame_count);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

@@ -398,6 +398,15 @@ impl Pager {
         dirty_pages.insert(page_id);
     }
 
+    pub fn wal_frame_count(&self) -> Result<u64> {
+        let mut frame_count = 0;
+        let wal = self.wal.clone();
+        if let Some(wal) = &wal {
+            frame_count = wal.borrow().get_max_frame_in_wal();
+        }
+        Ok(frame_count)
+    }
+
     pub fn cacheflush(&self) -> Result<CheckpointStatus> {
         let mut checkpoint_result = CheckpointResult::default();
         loop {

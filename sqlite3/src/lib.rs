@@ -1097,3 +1097,38 @@ pub unsafe extern "C" fn sqlite3_wal_checkpoint_v2(
     }
     SQLITE_OK
 }
+
+/// Get the number of frames in the WAL.
+///
+/// The `libsql_wal_frame_count` function returns the number of frames
+/// in the WAL in the `p_frame_count` parameter.
+///
+/// # Returns
+///
+/// - `SQLITE_OK` if the number of frames in the WAL file is
+///   successfully returned.
+/// - `SQLITE_MISUSE` if the `db` is `NULL`.
+/// - `SQLITE_ERROR` if an error occurs while getting the number of frames
+///   in the WAL file.
+///
+/// # Safety
+///
+/// - The `db` must be a valid pointer to a `sqlite3` database connection.
+/// - The `p_frame_count` must be a valid pointer to a `u32` that will store
+///   the number of frames in the WAL file.
+#[no_mangle]
+pub unsafe extern "C" fn libsql_wal_frame_count(
+    db: *mut sqlite3,
+    p_frame_count: *mut u32,
+) -> ffi::c_int {
+    if db.is_null() {
+        return SQLITE_MISUSE;
+    }
+    let db: &mut sqlite3 = &mut *db;
+    let frame_count = match db.conn.wal_frame_count() {
+        Ok(count) => count as u32,
+        Err(_) => return SQLITE_ERROR,
+    };
+    *p_frame_count = frame_count;
+    SQLITE_OK
+}
