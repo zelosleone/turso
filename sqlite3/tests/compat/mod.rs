@@ -38,7 +38,6 @@ extern "C" {
 }
 
 const SQLITE_OK: i32 = 0;
-const SQLITE_MISUSE: i32 = 21;
 const SQLITE_CANTOPEN: i32 = 14;
 const SQLITE_CHECKPOINT_PASSIVE: i32 = 0;
 const SQLITE_CHECKPOINT_FULL: i32 = 1;
