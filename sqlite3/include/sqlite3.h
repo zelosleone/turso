@@ -13,6 +13,8 @@
 
 #define SQLITE_NOMEM 7
 
+#define SQLITE_INTERRUPT 9
+
 #define SQLITE_NOTFOUND 12
 
 #define SQLITE_CANTOPEN 14
@@ -31,15 +33,19 @@
 
 #define SQLITE_STATE_BUSY 109
 
-/* WAL Checkpoint modes */
-#define SQLITE_CHECKPOINT_PASSIVE  0
-#define SQLITE_CHECKPOINT_FULL    1
+#define SQLITE_CHECKPOINT_PASSIVE 0
+
+#define SQLITE_CHECKPOINT_FULL 1
+
 #define SQLITE_CHECKPOINT_RESTART 2
+
 #define SQLITE_CHECKPOINT_TRUNCATE 3
 
 typedef struct sqlite3 sqlite3;
 
 typedef struct sqlite3_stmt sqlite3_stmt;
+
+typedef int (*exec_callback)(void *context, int n_column, char **argv, char **colv);
 
 #ifdef __cplusplus
 extern "C" {
@@ -76,7 +82,7 @@ int sqlite3_finalize(sqlite3_stmt *stmt);
 
 int sqlite3_step(sqlite3_stmt *stmt);
 
-int sqlite3_exec(sqlite3 *db, const char *sql, int (*_callback)(void), void *_context, char **_err);
+int sqlite3_exec(sqlite3 *db, const char *sql, exec_callback _callback, void *_context, char **_err);
 
 int sqlite3_reset(sqlite3_stmt *stmt);
 
@@ -174,6 +180,12 @@ int sqlite3_value_bytes(void *value);
 
 const unsigned char *sqlite3_column_text(sqlite3_stmt *stmt, int idx);
 
+int sqlite_get_table_cb(void *context, int n_column, char **argv, char **colv);
+
+int sqlite3_get_table(sqlite3 *db, const char *sql, char ***paz_result, int *pn_row, int *pn_column, char **pz_err_msg);
+
+void sqlite3_free_table(char ***paz_result);
+
 void sqlite3_result_null(void *_context);
 
 void sqlite3_result_int64(void *_context, int64_t _val);
@@ -250,16 +262,9 @@ const char *sqlite3_libversion(void);
 
 int sqlite3_libversion_number(void);
 
-/* WAL Checkpoint functions */
-int sqlite3_wal_checkpoint(sqlite3 *db, const char *db_name);
+int sqlite3_wal_checkpoint(sqlite3 *_db, const char *_db_name);
 
-int sqlite3_wal_checkpoint_v2(
-    sqlite3 *db,
-    const char *db_name,
-    int mode,
-    int *log_size,
-    int *checkpoint_count
-);
+int sqlite3_wal_checkpoint_v2(sqlite3 *db, const char *_db_name, int _mode, int *_log_size, int *_checkpoint_count);
 
 #ifdef __cplusplus
 }  // extern "C"
