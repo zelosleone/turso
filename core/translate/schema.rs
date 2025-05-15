@@ -275,7 +275,6 @@ fn check_automatic_pk_index_required(
             options,
         } => {
             let mut primary_key_definition = None;
-            let mut unique_def_count = 0usize;
             // Used to dedup named unique constraints
             let mut unique_sets = vec![];
 
@@ -286,6 +285,9 @@ fn check_automatic_pk_index_required(
                         columns: pk_cols, ..
                     } = &constraint.constraint
                     {
+                        if primary_key_definition.is_some() {
+                            bail_parse_error!("table {} has more than one primary key", tbl_name);
+                        }
                         let primary_key_column_results: Vec<Result<PrimaryKeyColumnInfo>> = pk_cols
                             .iter()
                             .map(|col| match &col.expr {
@@ -312,22 +314,28 @@ fn check_automatic_pk_index_required(
                                 bail_parse_error!("No such column: {}", column_name);
                             }
 
-                            if matches!(
-                                primary_key_definition,
-                                Some(PrimaryKeyDefinitionType::Simple { .. })
-                            ) {
-                                primary_key_definition = Some(PrimaryKeyDefinitionType::Composite);
-                                continue;
-                            }
-                            if primary_key_definition.is_none() {
-                                let column_def = column_def.unwrap();
-                                let typename =
-                                    column_def.col_type.as_ref().map(|t| t.name.as_str());
-                                let is_descending = pk_info.is_descending;
-                                primary_key_definition = Some(PrimaryKeyDefinitionType::Simple {
-                                    typename,
-                                    is_descending,
-                                });
+                            match &mut primary_key_definition {
+                                Some(PrimaryKeyDefinitionType::Simple { column, .. }) => {
+                                    let mut columns = HashSet::new();
+                                    columns.insert(column.clone());
+                                    primary_key_definition =
+                                        Some(PrimaryKeyDefinitionType::Composite { columns });
+                                }
+                                Some(PrimaryKeyDefinitionType::Composite { columns }) => {
+                                    columns.insert(column_name.clone());
+                                }
+                                None => {
+                                    let column_def: &ast::ColumnDefinition = column_def.unwrap();
+                                    let typename =
+                                        column_def.col_type.as_ref().map(|t| t.name.as_str());
+                                    let is_descending = pk_info.is_descending;
+                                    primary_key_definition =
+                                        Some(PrimaryKeyDefinitionType::Simple {
+                                            typename,
+                                            is_descending,
+                                            column: column_name.clone(),
+                                        });
+                                }
                             }
                         }
                     } else if let ast::TableConstraint::Unique {
@@ -354,7 +362,7 @@ fn check_automatic_pk_index_required(
                 }
             }
 
-            // Check column constraints for PRIMARY KEY
+            // Check column constraints for PRIMARY KEY and UNIQUE
             for (_, col_def) in columns.iter() {
                 for constraint in &col_def.constraints {
                     if matches!(
@@ -368,9 +376,12 @@ fn check_automatic_pk_index_required(
                         primary_key_definition = Some(PrimaryKeyDefinitionType::Simple {
                             typename,
                             is_descending: false,
+                            column: col_def.col_name.0.clone(),
                         });
                     } else if matches!(constraint.constraint, ast::ColumnConstraint::Unique(..)) {
-                        unique_def_count += 1;
+                        let mut single_set = HashSet::new();
+                        single_set.insert(col_def.col_name.0.clone());
+                        unique_sets.push(single_set);
                     }
                 }
             }
@@ -381,27 +392,37 @@ fn check_automatic_pk_index_required(
             }
 
             unique_sets.dedup();
-            let mut total_indices = unique_def_count + unique_sets.len();
 
             // Check if we need an automatic index
+            let mut pk_is_unique = false;
             let auto_index_pk = if let Some(primary_key_definition) = &primary_key_definition {
                 match primary_key_definition {
                     PrimaryKeyDefinitionType::Simple {
                         typename,
                         is_descending,
+                        column,
                     } => {
+                        pk_is_unique = unique_sets
+                            .iter()
+                            .any(|set| set.len() == 1 && set.contains(column));
                         let is_integer =
                             typename.is_some() && typename.unwrap().eq_ignore_ascii_case("INTEGER"); // Should match on any case of INTEGER
                         !is_integer || *is_descending
                     }
-                    PrimaryKeyDefinitionType::Composite => true,
+                    PrimaryKeyDefinitionType::Composite { columns } => {
+                        pk_is_unique = unique_sets.iter().any(|set| set == columns);
+                        true
+                    }
                 }
             } else {
                 false
             };
-            if auto_index_pk {
+            let mut total_indices = unique_sets.len();
+            // if pk needs and index, but we already found out we primary key is unique, we only need a single index since constraint pk == unique
+            if auto_index_pk && !pk_is_unique {
                 total_indices += 1;
             }
+            dbg!(total_indices);
 
             if total_indices > 0 {
                 if total_indices == 1 {
@@ -423,15 +444,19 @@ fn check_automatic_pk_index_required(
 
 enum PrimaryKeyDefinitionType<'a> {
     Simple {
+        column: String,
         typename: Option<&'a str>,
         is_descending: bool,
     },
-    Composite,
+    Composite {
+        columns: HashSet<String>,
+    },
 }
 
 struct TableFormatter<'a> {
     body: &'a ast::CreateTableBody,
 }
+
 impl Display for TableFormatter<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.body.to_fmt(f)
