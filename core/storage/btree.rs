@@ -7281,9 +7281,11 @@ mod tests {
         page_type: PageType,
     ) {
         let mut payload = Vec::new();
-        let record = ImmutableRecord::from_registers(&[Register::OwnedValue(OwnedValue::Blob(
-            vec![0; size as usize],
-        ))]);
+        let record =
+            ImmutableRecord::from_registers(&[Register::Value(Value::Blob(vec![
+                0;
+                size as usize
+            ]))]);
         fill_cell_payload(
             page_type,
             Some(i),
