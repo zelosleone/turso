@@ -49,9 +49,9 @@ jobs:
 
           # parameters of the algorithm. Note: These are global, so we only set them once and for all.
           # Smaller p-value = less change points found. Larger p-value = more, but also more false positives.
-          nyrkio-settings-pvalue: 0.01
+          nyrkio-settings-pvalue: 0.0001
           # Ignore changes smaller than this.
-          nyrkio-settings-threshold: 2%
+          nyrkio-settings-threshold: 0%
 
   clickbench:
     runs-on: ubuntu-latest
