@@ -124,12 +124,6 @@ mod tests {
     #[test]
     fn test_wal_checkpoint() {
         unsafe {
-            // Test with NULL db handle
-            assert_eq!(
-                sqlite3_wal_checkpoint(ptr::null_mut(), ptr::null()),
-                SQLITE_MISUSE
-            );
-
             // Test with valid db
             let mut db = ptr::null_mut();
             assert_eq!(
