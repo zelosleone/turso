@@ -22,7 +22,7 @@ jobs:
       #   run: npm install && npm run build
 
       - name: Bench
-        run: cargo bench | tee output.txt
+        run: cargo bench --output-format bencher | tee output.txt
       - name: Analyze benchmark result with Nyrkiö
         uses: nyrkio/change-detection@HEAD
         with:
