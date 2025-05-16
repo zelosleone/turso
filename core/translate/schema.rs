@@ -422,16 +422,10 @@ fn check_automatic_pk_index_required(
             if auto_index_pk && !pk_is_unique {
                 total_indices += 1;
             }
-            dbg!(total_indices);
 
             if total_indices > 0 {
-                if total_indices == 1 {
-                    let index_reg = program.alloc_register();
-                    Ok(Some(index_reg..index_reg + 1))
-                } else {
-                    let index_start_reg = program.alloc_registers(total_indices + 1);
-                    Ok(Some(index_start_reg..index_start_reg + total_indices + 1))
-                }
+                let index_start_reg = program.alloc_registers(total_indices);
+                Ok(Some(index_start_reg..index_start_reg + total_indices))
             } else {
                 Ok(None)
             }
