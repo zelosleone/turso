@@ -1,0 +1,39 @@
+#!/bin/bash
+# TPC-H benchmark script
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+RELEASE_BUILD_DIR="$REPO_ROOT/target/release"
+TPCH_DIR="$REPO_ROOT/perf/tpc-h"
+DB_FILE="$TPCH_DIR/TPC-H.db"
+
+# If sqlite3 doesn't exist, bail
+if ! command -v sqlite3 >/dev/null 2>&1; then
+    echo "Error: sqlite3 is not installed"
+    exit 1
+fi
+
+# Build Limbo in release mode if it's not already built
+if [ ! -f "$RELEASE_BUILD_DIR/limbo" ]; then
+    echo "Building Limbo..."
+    cargo build --bin limbo --release
+fi
+
+# Download the TPC-H database if it doesn't exist
+DB_URL="https://github.com/lovasoa/TPCH-sqlite/releases/download/v1.0/TPC-H.db"
+if [ ! -f "$DB_FILE" ]; then
+    echo "Downloading TPC-H database..."
+    if command -v wget >/dev/null 2>&1; then
+        wget -O "$DB_FILE" --no-verbose "$DB_URL"
+    elif command -v curl >/dev/null 2>&1; then
+        curl -sL -o "$DB_FILE" "$DB_URL"
+    else
+        echo "Error: Neither wget nor curl is available"
+        exit 1
+    fi
+else
+    echo "Using existing TPC-H.db file"
+fi
+
+# Run the benchmark
+echo "Running TPC-H benchmark..."
+"$TPCH_DIR/run.sh" 
