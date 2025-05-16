@@ -38,6 +38,7 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
       
+      - uses: "./.github/shared/install_sqlite"
       - name: Run ignored long tests
         run: cargo test -- --ignored fuzz_long
         env:
