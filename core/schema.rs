@@ -1573,4 +1573,38 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_automatic_index_unique_and_a_pk() -> Result<()> {
+        let sql = r#"CREATE TABLE t1 (a NUMERIC UNIQUE UNIQUE,  b TEXT PRIMARY KEY)"#;
+        let table = BTreeTable::from_sql(sql, 0)?;
+        let mut indexes = Index::automatic_from_primary_key_and_unique(
+            &table,
+            vec![
+                ("sqlite_autoindex_t1_1".to_string(), 2),
+                ("sqlite_autoindex_t1_2".to_string(), 3),
+                ],
+        )?;
+
+        assert!(indexes.len() == 2);
+        let index = indexes.pop().unwrap();
+        assert_eq!(index.name, "sqlite_autoindex_t1_2");
+        assert_eq!(index.table_name, "t1");
+        assert_eq!(index.root_page, 3);
+        assert!(index.unique);
+        assert_eq!(index.columns.len(), 1);
+        assert_eq!(index.columns[0].name, "a");
+        assert!(matches!(index.columns[0].order, SortOrder::Asc));
+
+        let index = indexes.pop().unwrap();
+        assert_eq!(index.name, "sqlite_autoindex_t1_1");
+        assert_eq!(index.table_name, "t1");
+        assert_eq!(index.root_page, 2);
+        assert!(index.unique);
+        assert_eq!(index.columns.len(), 1);
+        assert_eq!(index.columns[0].name, "b");
+        assert!(matches!(index.columns[0].order, SortOrder::Asc));
+
+        Ok(())
+    }
 }
