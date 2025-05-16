@@ -166,7 +166,7 @@ impl Database {
             None
         };
 
-        let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
+        let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(1000)));
         let schema = Arc::new(RwLock::new(Schema::new()));
         let db = Database {
             mv_store,
