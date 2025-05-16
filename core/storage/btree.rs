@@ -7,7 +7,7 @@ use crate::{
             TableLeafCell,
         },
     },
-    translate::plan::IterationDirection,
+    translate::{collate::CollationSeq, plan::IterationDirection},
     types::IndexKeySortOrder,
     MvCursor,
 };
@@ -610,6 +610,7 @@ impl BTreeCursor {
                             record_slice_same_num_cols,
                             index_key.get_values(),
                             self.index_key_sort_order,
+                            CollationSeq::Binary,
                         );
                         order
                     };
@@ -668,6 +669,7 @@ impl BTreeCursor {
                             record_slice_same_num_cols,
                             index_key.get_values(),
                             self.index_key_sort_order,
+                            CollationSeq::Binary,
                         );
                         order
                     };
@@ -1248,6 +1250,7 @@ impl BTreeCursor {
                             record_slice_same_num_cols,
                             index_key.get_values(),
                             self.index_key_sort_order,
+                            CollationSeq::Binary,
                         );
                         order
                     };
@@ -1308,6 +1311,7 @@ impl BTreeCursor {
                             record_slice_same_num_cols,
                             index_key.get_values(),
                             self.index_key_sort_order,
+                            CollationSeq::Binary,
                         );
                         order
                     };
@@ -1588,6 +1592,7 @@ impl BTreeCursor {
                     record_slice_equal_number_of_cols,
                     index_key.get_values(),
                     self.index_key_sort_order,
+                    CollationSeq::Binary,
                 );
                 // in sqlite btrees left child pages have <= keys.
                 // in general, in forwards iteration we want to find the first key that matches the seek condition.
@@ -1912,6 +1917,7 @@ impl BTreeCursor {
                 record_slice_equal_number_of_cols,
                 key.get_values(),
                 self.index_key_sort_order,
+                CollationSeq::Binary,
             );
             let found = match seek_op {
                 SeekOp::GT => cmp.is_gt(),
@@ -2079,6 +2085,7 @@ impl BTreeCursor {
                                     .unwrap()
                                     .get_values(),
                         self.index_key_sort_order,
+                        CollationSeq::Binary,
                         ) == Ordering::Equal {
 
                         tracing::debug!("insert_into_page: found exact match with cell_idx={cell_idx}, overwriting");
@@ -3725,6 +3732,7 @@ impl BTreeCursor {
                         key.to_index_key_values(),
                         self.get_immutable_record().as_ref().unwrap().get_values(),
                         self.index_key_sort_order,
+                        CollationSeq::Binary,
                     );
                     match order {
                         Ordering::Less | Ordering::Equal => {
