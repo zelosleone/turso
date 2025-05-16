@@ -23,14 +23,8 @@ jobs:
 
       - name: Bench
         run: cargo bench  2>&1 | tee output.txt
-      # - name: Bench (fake)
-      #   run: |
-      #       pwd
-      #       ls
-      #       cp .github/data/limbo-cargo-output.txt output.txt
-
       - name: Analyze benchmark result with Nyrkiö
-        uses: nyrkio/github-action-benchmark@HEAD
+        uses: nyrkio/change-detection@HEAD
         with:
           name: turso
           tool: criterion
@@ -45,24 +39,19 @@ jobs:
           comment-on-alert: true
           comment-always: false
           # Nyrkiö configuration
-          nyrkio-enable: true
           # Get yours from https://nyrkio.com/docs/getting-started
           nyrkio-token: ${{ secrets.NYRKIO_JWT_TOKEN }}
-          # You may not want share the NYRKIO_JWT_TOKEN token with pull requests, for example.
-          # In that case this task would unnecessarily fail for random contributors. Don't want that:
+          # HTTP requests will fail for all non-core contributors that don't have their own token.
+          # Don't want that to spoil the build, so:
           never-fail: true
           # Make results and change points public, so that any oss contributor can see them
           nyrkio-public: true
 
-          nyrkio-api-root: https://nyrkio.com/api/v0
-          # Make results and change points public, so that any oss contributor can see them
-          nyrkio-settings-pvalue: 0.01%
-          nyrkio-settings-threshold: 2%
-
-          # Old way...
-          # Explicitly set this to null. We don't want threshold based alerts today.
-          external-data-json-path: null
-          gh-repository: null
+          # parameters of the algorithm. Note: These are global, so we only set them once and for all.
+          # Smaller p-value = less change points found. Larger p-value = more, but also more false positives.
+          nyrkio-settings-pvalue: 0.0001
+          # Ignore changes smaller than this.
+          nyrkio-settings-threshold: 0%
 
   clickbench:
     runs-on: ubuntu-latest
@@ -76,7 +65,7 @@ jobs:
         run: make clickbench
 
       - name: Analyze LIMBO result with Nyrkiö
-        uses: nyrkio/github-action-benchmark@HEAD
+        uses: nyrkio/change-detection@HEAD
         with:
           name: clickbench/limbo
           tool: time
@@ -90,23 +79,13 @@ jobs:
           comment-on-alert: true
           comment-always: false
           # Nyrkiö configuration
-          nyrkio-enable: true
           # Get yours from https://nyrkio.com/docs/getting-started
           nyrkio-token: ${{ secrets.NYRKIO_JWT_TOKEN }}
-          # You may not want share the NYRKIO_JWT_TOKEN token with pull requests, for example.
-          # In that case this task would unnecessarily fail for random contributors. Don't want that:
+          # HTTP requests will fail for all non-core contributors that don't have their own token.
+          # Don't want that to spoil the build, so:
           never-fail: true
           # Make results and change points public, so that any oss contributor can see them
           nyrkio-public: true
-
-          nyrkio-api-root: https://nyrkio.com/api/v0
-          # Team support = results are visible and manageable to everyone in the same Github org
-          # nyrkio-org: tursodatabase
-
-          # Old way...
-          # Explicitly set this to null. We don't want threshold based alerts today.
-          external-data-json-path: null
-          gh-repository: null
 
       - name: Analyze SQLITE3 result with Nyrkiö
         uses: nyrkio/github-action-benchmark@HEAD
@@ -117,15 +96,10 @@ jobs:
           fail-on-alert: false
           comment-on-alert: true
           comment-always: false
-          nyrkio-enable: true
           nyrkio-token: ${{ secrets.NYRKIO_JWT_TOKEN }}
           never-fail: true
           nyrkio-public: true
-          nyrkio-api-root: https://nyrkio.com/api/v0
-          # nyrkio-org: tursodatabase
 
-          external-data-json-path: null
-          gh-repository: null
   tpc-h:
     runs-on: ubuntu-latest
     steps:
