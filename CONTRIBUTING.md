@@ -38,21 +38,21 @@ cargo test
 
 Running tests on Linux and getting them pass requires a few additional steps
 
-1. Install [SQLite](https://www.sqlite.org/index.html)
+1. Install [SQLite](https://www.sqlite.org/index.html) headers
 ```console
 sudo apt install sqlite3 libsqlite3-dev
 ```
-2. Build Cargo 
-```console
-cargo build -p limbo_sqlite3 --features capi
-```
-3. Install Python3
+2. Install Python3 dev files
 ```console
 sudo apt install python3.12 python3.12-dev
 ```
-4. Set env var for Maturin
+3. Set env var for Maturin
 ```console
 export PYO3_PYTHON=$(which python3)
+```
+4. Build Cargo 
+```console
+cargo build -p limbo_sqlite3 --features capi
 ```
 5. Run tests
 ```console
