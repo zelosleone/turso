@@ -28,7 +28,33 @@ cargo run --package limbo_cli --bin limbo database.db
 ```
 
 Run tests:
+```console
+cargo test
+```
 
+### Running Tests On Linux
+> [!NOTE]
+> These steps have been tested on Ubuntu Noble 24.04.2 LTS
+
+Running tests on Linux and getting them pass requires a few additional steps
+
+1. Install [SQLite](https://www.sqlite.org/index.html) headers
+```console
+sudo apt install sqlite3 libsqlite3-dev
+```
+2. Install Python3 dev files
+```console
+sudo apt install python3.12 python3.12-dev
+```
+3. Set env var for Maturin
+```console
+export PYO3_PYTHON=$(which python3)
+```
+4. Build Cargo 
+```console
+cargo build -p limbo_sqlite3 --features capi
+```
+5. Run tests
 ```console
 cargo test
 ```
