@@ -1,0 +1,44 @@
+name: Run long fuzz tests on Btree
+
+on:
+  push:
+    paths:
+      - 'core/storage/btree.rs'
+  pull_request:
+    paths:
+      - 'core/storage/btree.rs'
+
+jobs:
+  run-long-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 0 
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0 
+      
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: rustfmt, clippy
+      
+      - name: Cache dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      
+      - name: Run ignored long tests
+        run: cargo test -- --ignored fuzz_long
+        env:
+          RUST_BACKTRACE: 1  
