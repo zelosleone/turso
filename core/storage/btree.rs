@@ -6121,6 +6121,47 @@ mod tests {
         btree_insert_fuzz_run(64, 32, |rng| (rng.next_u32() % 32 * 1024) as usize);
     }
 
+    #[test]
+    #[ignore]
+    pub fn fuzz_long_btree_insert_fuzz_run_equal_size() {
+        for size in 1..8 {
+            tracing::info!("======= size:{} =======", size);
+            btree_insert_fuzz_run(2, 10_000, |_| size);
+        }
+    }
+
+    #[test]
+    #[ignore]
+    pub fn fuzz_long_btree_index_insert_fuzz_run_equal_size() {
+        btree_index_insert_fuzz_run(2, 10_000);
+    }
+
+    #[test]
+    #[ignore]
+    pub fn fuzz_long_btree_insert_fuzz_run_random() {
+        btree_insert_fuzz_run(128, 10_000, |rng| (rng.next_u32() % 4096) as usize);
+    }
+
+    #[test]
+    #[ignore]
+    pub fn fuzz_long_btree_insert_fuzz_run_small() {
+        btree_insert_fuzz_run(1, 10_000, |rng| (rng.next_u32() % 128) as usize);
+    }
+
+    #[test]
+    #[ignore]
+    pub fn fuzz_long_btree_insert_fuzz_run_big() {
+        btree_insert_fuzz_run(64, 10_000, |rng| {
+            3 * 1024 + (rng.next_u32() % 1024) as usize
+        });
+    }
+
+    #[test]
+    #[ignore]
+    pub fn fuzz_long_btree_insert_fuzz_run_overflow() {
+        btree_insert_fuzz_run(64, 10_000, |rng| (rng.next_u32() % 32 * 1024) as usize);
+    }
+
     #[allow(clippy::arc_with_non_send_sync)]
     fn setup_test_env(database_size: u32) -> (Rc<Pager>, Arc<SpinLock<DatabaseHeader>>) {
         let page_size = 512;
