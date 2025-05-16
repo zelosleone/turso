@@ -16,7 +16,7 @@ Extensions-Other:
 
 Fuzzing:
   - changed-files:
-      - any-glob-to-any-file: 'fuzz/*'
+      - any-glob-to-any-file: 'fuzz/**/*'
 
 Perf/Benchmarks:
   - changed-files:
@@ -60,6 +60,10 @@ Sqlite3:
   - changed-files:
     - any-glob-to-any-file: "sqlite3/**/*"
 
+Core:
+  - changed-files:
+    - any-glob-to-any-file: 'core/**/*'
+
 Optimizer:
   - changed-files:
     - any-glob-to-any-file: 'core/translate/optimizer/*'
@@ -70,7 +74,7 @@ Translation/Planning:
 
 IO:
   - changed-files:
-    - any-glob-to-any-file: 'core/io/*.rs'
+    - any-glob-to-any-file: 'core/io/*'
 
 MVCC:
   - changed-files:
@@ -78,9 +82,9 @@ MVCC:
 
 VDBE:
   - changed-files:
-    - any-glob-to-any-file: 'core/vdbe/**/*'
+    - any-glob-to-any-file: 'core/vdbe/*'
 
-Core-Json:
+Json:
   - changed-files:
     - any-glob-to-any-file: 'core/json/*'
 
@@ -92,13 +96,9 @@ Vector:
   - changed-files:
     - any-glob-to-any-file: 'core/vector/*'
 
-Core:
-  - changed-files:
-    - any-glob-to-any-file: 'core/**/*'
-
 Antithesis:
   - changed-files:
-    - any-glob-to-any-file: 'antithesis-tests/**/*'
+    - any-glob-to-any-file: ['antithesis-tests/**/*', 'scripts/antithesis/*', 'stress/**/*']
 
 CI-Actions:
   - changed-files:
