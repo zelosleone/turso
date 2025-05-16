@@ -78,6 +78,8 @@ use vdbe::{builder::QueryMode, VTabOpaqueCursor};
 pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 pub static DATABASE_VERSION: OnceLock<String> = OnceLock::new();
 
+const DEFAULT_PAGE_CACHE_SIZE_IN_PAGES: usize = 2000;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TransactionState {
     Write,
@@ -166,7 +168,9 @@ impl Database {
             None
         };
 
-        let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
+        let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(
+            DEFAULT_PAGE_CACHE_SIZE_IN_PAGES,
+        )));
         let schema = Arc::new(RwLock::new(Schema::new()));
         let db = Database {
             mv_store,
