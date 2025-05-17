@@ -249,6 +249,7 @@ pub fn emit_schema_entry(
     });
 }
 
+#[derive(Debug)]
 struct PrimaryKeyColumnInfo<'a> {
     name: &'a String,
     is_descending: bool,
@@ -288,16 +289,13 @@ fn check_automatic_pk_index_required(
                         if primary_key_definition.is_some() {
                             bail_parse_error!("table {} has more than one primary key", tbl_name);
                         }
-                        let primary_key_column_results: Vec<Result<PrimaryKeyColumnInfo>> = pk_cols
+                        let primary_key_column_results = pk_cols
                             .iter()
                             .map(|col| match &col.expr {
                                 ast::Expr::Id(name) => {
                                     let key: &ast::Name = unsafe { std::mem::transmute(name) };
                                     if !columns.contains_key(key) {
-                                        return Err(LimboError::ParseError(format!(
-                                            "no such column: {}",
-                                            name.0,
-                                        )));
+                                        bail_parse_error!("No such column: {}", name.0);
                                     }
                                     Ok(PrimaryKeyColumnInfo {
                                         name: &name.0,
@@ -312,21 +310,19 @@ fn check_automatic_pk_index_required(
                                         .to_string(),
                                 )),
                             })
-                            .collect();
+                            .collect::<Result<Vec<_>>>()?;
 
-                        for result in primary_key_column_results {
-                            let pk_info = result?;
-
+                        for pk_info in primary_key_column_results {
                             let column_name = pk_info.name;
-                            let column_def = columns.get(&ast::Name(column_name.clone()));
-                            if column_def.is_none() {
-                                bail_parse_error!("No such column: {}", column_name);
-                            }
+                            let key: &ast::Name = unsafe { std::mem::transmute(column_name) };
+                            let column_def = columns.get(key).unwrap();
 
                             match &mut primary_key_definition {
                                 Some(PrimaryKeyDefinitionType::Simple { column, .. }) => {
                                     let mut columns = HashSet::new();
-                                    columns.insert(column.clone());
+                                    columns.insert(std::mem::take(column));
+                                    // Have to also insert the current column_name we are iterating over in primary_key_column_results
+                                    columns.insert(column_name.clone());
                                     primary_key_definition =
                                         Some(PrimaryKeyDefinitionType::Composite { columns });
                                 }
@@ -334,7 +330,6 @@ fn check_automatic_pk_index_required(
                                     columns.insert(column_name.clone());
                                 }
                                 None => {
-                                    let column_def: &ast::ColumnDefinition = column_def.unwrap();
                                     let typename =
                                         column_def.col_type.as_ref().map(|t| t.name.as_str());
                                     let is_descending = pk_info.is_descending;
@@ -450,6 +445,7 @@ fn check_automatic_pk_index_required(
     }
 }
 
+#[derive(Debug)]
 enum PrimaryKeyDefinitionType<'a> {
     Simple {
         column: String,
