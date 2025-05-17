@@ -63,7 +63,7 @@ pub fn emit_ungrouped_aggregation<'a>(
 /// Emits the bytecode for handling duplicates in a distinct aggregate.
 /// This is used in both GROUP BY and non-GROUP BY aggregations to jump over
 /// the AggStep that would otherwise accumulate the same value multiple times.
-fn handle_distinct(program: &mut ProgramBuilder, agg: &Aggregate, agg_arg_reg: usize) {
+pub fn handle_distinct(program: &mut ProgramBuilder, agg: &Aggregate, agg_arg_reg: usize) {
     let AggDistinctness::Distinct { ctx } = &agg.distinctness else {
         return;
     };

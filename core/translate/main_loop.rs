@@ -29,7 +29,7 @@ use super::{
     optimizer::Optimizable,
     order_by::{order_by_sorter_insert, sorter_insert},
     plan::{
-        convert_where_to_vtab_constraint, Aggregate, IterationDirection, JoinOrderMember,
+        convert_where_to_vtab_constraint, Aggregate, GroupBy, IterationDirection, JoinOrderMember,
         Operation, Search, SeekDef, SelectPlan, SelectQueryType, TableReference, WhereTerm,
     },
 };
@@ -72,6 +72,7 @@ pub fn init_loop(
     t_ctx: &mut TranslateCtx,
     tables: &[TableReference],
     aggregates: &mut [Aggregate],
+    group_by: Option<&GroupBy>,
     mode: OperationMode,
 ) -> Result<()> {
     assert!(
@@ -105,10 +106,14 @@ pub fn init_loop(
             Some(index_name.clone()),
             CursorType::BTreeIndex(index.clone()),
         );
-        program.emit_insn(Insn::OpenEphemeral {
-            cursor_id,
-            is_table: false,
-        });
+        if group_by.is_none() {
+            // In GROUP BY, the ephemeral index is reinitialized for every group
+            // in the clear accumulator subroutine, so we only do it here if there is no GROUP BY.
+            program.emit_insn(Insn::OpenEphemeral {
+                cursor_id,
+                is_table: false,
+            });
+        }
         agg.distinctness = AggDistinctness::Distinct {
             ctx: Some(DistinctAggCtx {
                 cursor_id,
