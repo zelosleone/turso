@@ -291,10 +291,22 @@ fn check_automatic_pk_index_required(
                         let primary_key_column_results: Vec<Result<PrimaryKeyColumnInfo>> = pk_cols
                             .iter()
                             .map(|col| match &col.expr {
-                                ast::Expr::Id(name) => Ok(PrimaryKeyColumnInfo {
-                                    name: &name.0,
-                                    is_descending: matches!(col.order, Some(ast::SortOrder::Desc)),
-                                }),
+                                ast::Expr::Id(name) => {
+                                    let key: &ast::Name = unsafe { std::mem::transmute(name) };
+                                    if !columns.contains_key(key) {
+                                        return Err(LimboError::ParseError(format!(
+                                            "no such column: {}",
+                                            name.0,
+                                        )));
+                                    }
+                                    Ok(PrimaryKeyColumnInfo {
+                                        name: &name.0,
+                                        is_descending: matches!(
+                                            col.order,
+                                            Some(ast::SortOrder::Desc)
+                                        ),
+                                    })
+                                }
                                 _ => Err(LimboError::ParseError(
                                     "expressions prohibited in PRIMARY KEY and UNIQUE constraints"
                                         .to_string(),
@@ -303,9 +315,6 @@ fn check_automatic_pk_index_required(
                             .collect();
 
                         for result in primary_key_column_results {
-                            if let Err(e) = result {
-                                bail_parse_error!("{}", e);
-                            }
                             let pk_info = result?;
 
                             let column_name = pk_info.name;
@@ -339,24 +348,29 @@ fn check_automatic_pk_index_required(
                             }
                         }
                     } else if let ast::TableConstraint::Unique {
-                        columns,
+                        columns: unique_columns,
                         conflict_clause,
                     } = &constraint.constraint
                     {
                         if conflict_clause.is_some() {
                             unimplemented!("ON CONFLICT not implemented");
                         }
-                        let col_names: HashSet<String> = columns
+
+                        let col_names = unique_columns
                             .iter()
                             .map(|column| match &column.expr {
                                 limbo_sqlite3_parser::ast::Expr::Id(id) => {
-                                    crate::util::normalize_ident(&id.0)
+                                    let key: &ast::Name = unsafe { std::mem::transmute(id) };
+                                    if !columns.contains_key(key) {
+                                        crate::bail_parse_error!("no such column: {}", id.0);
+                                    }
+                                    Ok(crate::util::normalize_ident(&id.0))
                                 }
                                 _ => {
                                     todo!("Unsupported unique expression");
                                 }
                             })
-                            .collect();
+                            .collect::<Result<HashSet<String>>>()?;
                         unique_sets.push(col_names);
                     }
                 }
