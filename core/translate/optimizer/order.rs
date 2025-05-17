@@ -97,10 +97,11 @@ pub fn compute_order_target(
         // however in this case we must take the ASC/DESC from ORDER BY into account.
         (Some(order_by), Some(group_by)) => {
             // Does the group by contain all expressions in the order by?
-            let group_by_contains_all = group_by.exprs.iter().all(|expr| {
-                order_by
+            let group_by_contains_all = order_by.iter().all(|(expr, _)| {
+                group_by
+                    .exprs
                     .iter()
-                    .any(|(order_by_expr, _)| exprs_are_equivalent(expr, order_by_expr))
+                    .any(|group_by_expr| exprs_are_equivalent(expr, group_by_expr))
             });
             // If not, let's try to target an ordering that matches the group by -- we don't care about ASC/DESC
             if !group_by_contains_all {
