@@ -915,6 +915,12 @@ impl Index {
                 if col.unique {
                     // Unique columns in Table should always be named
                     let col_name = col.name.as_ref().unwrap();
+                    if has_primary_key_index
+                        && table.primary_key_columns.len() == 1
+                        && &table.primary_key_columns.first().as_ref().unwrap().0 == col_name {
+                            // skip unique columns that are satisfied with pk constraint
+                            return None;
+                    }
                     let (index_name, root_page) = auto_indices.next().expect("number of auto_indices in schema should be same number of indices calculated");
                     Some(Index {
                         name: normalize_ident(index_name.as_str()),
@@ -955,34 +961,50 @@ impl Index {
         }
 
         if let Some(unique_sets) = table.unique_sets.as_ref() {
-            let unique_set_indices = unique_sets.iter().map(|set| {
-                let (index_name, root_page) = auto_indices.next().expect(
+            let unique_set_indices = unique_sets
+                .iter()
+                .filter(|set| {
+                    if has_primary_key_index
+                        && table.primary_key_columns.len() == set.len()
+                        && table
+                            .primary_key_columns
+                            .iter()
+                            .all(|col| set.contains(col))
+                    {
+                        // skip unique columns that are satisfied with pk constraint
+                        return false;
+                    } else {
+                        true
+                    }
+                })
+                .map(|set| {
+                    let (index_name, root_page) = auto_indices.next().expect(
                     "number of auto_indices in schema should be same number of indices calculated",
                 );
 
-                let index_cols = set.iter().map(|(col_name, order)| {
-                    let Some((pos_in_table, _)) = table.get_column(col_name) else {
-                        // This is clearly an invariant that should be maintained, so a panic seems more correct here
-                        panic!(
-                            "Column {} is in index {} but not found in table {}",
-                            col_name, index_name, table.name
-                        );
-                    };
-                    IndexColumn {
-                        name: normalize_ident(col_name),
-                        order: *order,
-                        pos_in_table,
+                    let index_cols = set.iter().map(|(col_name, order)| {
+                        let Some((pos_in_table, _)) = table.get_column(col_name) else {
+                            // This is clearly an invariant that should be maintained, so a panic seems more correct here
+                            panic!(
+                                "Column {} is in index {} but not found in table {}",
+                                col_name, index_name, table.name
+                            );
+                        };
+                        IndexColumn {
+                            name: normalize_ident(col_name),
+                            order: *order,
+                            pos_in_table,
+                        }
+                    });
+                    Index {
+                        name: normalize_ident(index_name.as_str()),
+                        table_name: table.name.clone(),
+                        root_page,
+                        columns: index_cols.collect(),
+                        unique: true,
+                        ephemeral: false,
                     }
                 });
-                Index {
-                    name: normalize_ident(index_name.as_str()),
-                    table_name: table.name.clone(),
-                    root_page,
-                    columns: index_cols.collect(),
-                    unique: true,
-                    ephemeral: false,
-                }
-            });
             indices.extend(unique_set_indices);
         }
 
@@ -1506,6 +1528,87 @@ mod tests {
         assert!(matches!(index.columns[0].order, SortOrder::Asc));
         assert_eq!(index.columns[1].name, "b");
         assert!(matches!(index.columns[1].order, SortOrder::Asc));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_automatic_index_primary_key_is_unique() -> Result<()> {
+        let sql = r#"CREATE TABLE t1 (a primary key unique);"#;
+        let table = BTreeTable::from_sql(sql, 0)?;
+        let mut index = Index::automatic_from_primary_key_and_unique(
+            &table,
+            vec![("sqlite_autoindex_t1_1".to_string(), 2)],
+        )?;
+
+        assert!(index.len() == 1);
+        let index = index.pop().unwrap();
+
+        assert_eq!(index.name, "sqlite_autoindex_t1_1");
+        assert_eq!(index.table_name, "t1");
+        assert_eq!(index.root_page, 2);
+        assert!(index.unique);
+        assert_eq!(index.columns.len(), 1);
+        assert_eq!(index.columns[0].name, "a");
+        assert!(matches!(index.columns[0].order, SortOrder::Asc));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_automatic_index_primary_key_is_unique_and_composite() -> Result<()> {
+        let sql = r#"CREATE TABLE t1 (a, b, PRIMARY KEY(a, b), UNIQUE(a, b));"#;
+        let table = BTreeTable::from_sql(sql, 0)?;
+        let mut index = Index::automatic_from_primary_key_and_unique(
+            &table,
+            vec![("sqlite_autoindex_t1_1".to_string(), 2)],
+        )?;
+
+        assert!(index.len() == 1);
+        let index = index.pop().unwrap();
+
+        assert_eq!(index.name, "sqlite_autoindex_t1_1");
+        assert_eq!(index.table_name, "t1");
+        assert_eq!(index.root_page, 2);
+        assert!(index.unique);
+        assert_eq!(index.columns.len(), 2);
+        assert_eq!(index.columns[0].name, "a");
+        assert_eq!(index.columns[1].name, "b");
+        assert!(matches!(index.columns[0].order, SortOrder::Asc));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_automatic_index_unique_and_a_pk() -> Result<()> {
+        let sql = r#"CREATE TABLE t1 (a NUMERIC UNIQUE UNIQUE,  b TEXT PRIMARY KEY)"#;
+        let table = BTreeTable::from_sql(sql, 0)?;
+        let mut indexes = Index::automatic_from_primary_key_and_unique(
+            &table,
+            vec![
+                ("sqlite_autoindex_t1_1".to_string(), 2),
+                ("sqlite_autoindex_t1_2".to_string(), 3),
+            ],
+        )?;
+
+        assert!(indexes.len() == 2);
+        let index = indexes.pop().unwrap();
+        assert_eq!(index.name, "sqlite_autoindex_t1_2");
+        assert_eq!(index.table_name, "t1");
+        assert_eq!(index.root_page, 3);
+        assert!(index.unique);
+        assert_eq!(index.columns.len(), 1);
+        assert_eq!(index.columns[0].name, "a");
+        assert!(matches!(index.columns[0].order, SortOrder::Asc));
+
+        let index = indexes.pop().unwrap();
+        assert_eq!(index.name, "sqlite_autoindex_t1_1");
+        assert_eq!(index.table_name, "t1");
+        assert_eq!(index.root_page, 2);
+        assert!(index.unique);
+        assert_eq!(index.columns.len(), 1);
+        assert_eq!(index.columns[0].name, "b");
+        assert!(matches!(index.columns[0].order, SortOrder::Asc));
 
         Ok(())
     }
