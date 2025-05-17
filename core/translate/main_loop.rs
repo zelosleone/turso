@@ -764,6 +764,12 @@ fn emit_loop_source<'a>(
                     reg,
                     &t_ctx.resolver,
                 )?;
+                if let AggDistinctness::Distinct { ctx } = &agg.distinctness {
+                    let ctx = ctx
+                        .as_ref()
+                        .expect("distinct aggregate context not populated");
+                    program.preassign_label_to_next_insn(ctx.label_on_conflict);
+                }
             }
 
             let label_emit_nonagg_only_once = if let Some(flag) = t_ctx.reg_nonagg_emit_once_flag {
