@@ -287,6 +287,7 @@ pub fn emit_query<'a>(
         program,
         t_ctx,
         &plan.table_references,
+        &mut plan.aggregates,
         OperationMode::SELECT,
     )?;
 
@@ -396,6 +397,7 @@ fn emit_program_for_delete(
         program,
         &mut t_ctx,
         &plan.table_references,
+        &mut [],
         OperationMode::DELETE,
     )?;
 
@@ -588,6 +590,7 @@ fn emit_program_for_update(
         program,
         &mut t_ctx,
         &plan.table_references,
+        &mut [],
         OperationMode::UPDATE,
     )?;
     // Open indexes for update.
