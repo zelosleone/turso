@@ -5,9 +5,13 @@ Docs:
   - changed-files:
       - any-glob-to-any-file: 'docs/**/*'
 
-Extensions-Core:
+ExtensionLib:
   - changed-files:
       - any-glob-to-any-file: ['extensions/core/**/*', 'macros/src/ext/*', 'core/ext/*']
+
+Macros:
+  - changed-files:
+      - any-glob-to-any-file: ['macros/**/*']
 
 Extensions-Other:
   - changed-files:
