@@ -3589,12 +3589,15 @@ impl BTreeCursor {
                             Some(rowid) => rowid,
                             None => {
                                 self.state = CursorState::None;
+                                // I don't think its necessary to invalidate here, but its safer to do so if I'm wrong
+                                self.invalidate_record();
                                 return Ok(CursorResult::Ok(()));
                             }
                         };
                     } else {
                         if self.reusable_immutable_record.borrow().is_none() {
                             self.state = CursorState::None;
+                            // Record is None here so no need to invalidate
                             return Ok(CursorResult::Ok(()));
                         }
                     }
@@ -3778,6 +3781,7 @@ impl BTreeCursor {
                     } else {
                         self.stack.retreat();
                         self.state = CursorState::None;
+                        self.invalidate_record();
                         return Ok(CursorResult::Ok(()));
                     }
                     // Only reaches this function call if state = DeleteState::WaitForBalancingToComplete
@@ -3834,10 +3838,16 @@ impl BTreeCursor {
                     return_if_io!(self.seek(key, SeekOp::EQ));
 
                     self.state = CursorState::None;
+                    self.invalidate_record();
                     return Ok(CursorResult::Ok(()));
                 }
             }
         }
+    }
+
+    fn invalidate_record(&mut self) {
+        let mut record = self.get_immutable_record();
+        record.as_mut().map(|record| record.invalidate());
     }
 
     /// In outer joins, whenever the right-side table has no matching row, the query must still return a row
@@ -3863,21 +3873,24 @@ impl BTreeCursor {
                 // Existing record found — compare prefix
                 let existing_key = &record.get_values()[..record.count().saturating_sub(1)];
                 let inserted_key_vals = &key.get_values();
-                if existing_key
-                    .iter()
-                    .zip(inserted_key_vals.iter())
-                    .all(|(a, b)| a == b)
-                {
-                    return Ok(CursorResult::Ok(true)); // duplicate
+                // Need this check because .all returns True on an empty iterator,
+                // So when record_opt is invalidated, it would always indicate show up as a duplicate key
+                if existing_key.len() != inserted_key_vals.len() {
+                    return Ok(CursorResult::Ok(false));
                 }
+
+                Ok(CursorResult::Ok(
+                    existing_key
+                        .iter()
+                        .zip(inserted_key_vals.iter())
+                        .all(|(a, b)| a == b),
+                ))
             }
             None => {
                 // Cursor not pointing at a record — table is empty or past last
-                return Ok(CursorResult::Ok(false));
+                Ok(CursorResult::Ok(false))
             }
         }
-
-        Ok(CursorResult::Ok(false)) // not a duplicate
     }
 
     pub fn exists(&mut self, key: &Value) -> Result<CursorResult<bool>> {
