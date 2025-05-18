@@ -3589,15 +3589,12 @@ impl BTreeCursor {
                             Some(rowid) => rowid,
                             None => {
                                 self.state = CursorState::None;
-                                // I don't think its necessary to invalidate here, but its safer to do so if I'm wrong
-                                self.invalidate_record();
                                 return Ok(CursorResult::Ok(()));
                             }
                         };
                     } else {
                         if self.reusable_immutable_record.borrow().is_none() {
                             self.state = CursorState::None;
-                            // Record is None here so no need to invalidate
                             return Ok(CursorResult::Ok(()));
                         }
                     }
@@ -3781,7 +3778,6 @@ impl BTreeCursor {
                     } else {
                         self.stack.retreat();
                         self.state = CursorState::None;
-                        self.invalidate_record();
                         return Ok(CursorResult::Ok(()));
                     }
                     // Only reaches this function call if state = DeleteState::WaitForBalancingToComplete
@@ -3838,16 +3834,10 @@ impl BTreeCursor {
                     return_if_io!(self.seek(key, SeekOp::EQ));
 
                     self.state = CursorState::None;
-                    self.invalidate_record();
                     return Ok(CursorResult::Ok(()));
                 }
             }
         }
-    }
-
-    fn invalidate_record(&mut self) {
-        let mut record = self.get_immutable_record();
-        record.as_mut().map(|record| record.invalidate());
     }
 
     /// In outer joins, whenever the right-side table has no matching row, the query must still return a row
