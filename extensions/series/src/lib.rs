@@ -79,18 +79,6 @@ impl VTabModule for GenerateSeriesVTab {
 
         ResultCode::OK
     }
-
-    fn column(cursor: &Self::VCursor, idx: u32) -> Result<Value, Self::Error> {
-        cursor.column(idx)
-    }
-
-    fn next(cursor: &mut Self::VCursor) -> ResultCode {
-        cursor.next()
-    }
-
-    fn eof(cursor: &Self::VCursor) -> bool {
-        cursor.eof()
-    }
 }
 
 /// The cursor for iterating over the generated sequence
@@ -255,7 +243,7 @@ mod tests {
                     (series.stop - series.start) / series.step + 1
                 );
             }
-            match GenerateSeriesVTab::next(&mut cursor) {
+            match cursor.next() {
                 ResultCode::OK => (),
                 ResultCode::EOF => break,
                 err => return Err(err),
@@ -559,9 +547,9 @@ mod tests {
         GenerateSeriesVTab::filter(&mut cursor, &args, None);
 
         let mut rowids = vec![];
-        while !GenerateSeriesVTab::eof(&cursor) {
+        while !cursor.eof() {
             let cur_rowid = cursor.rowid();
-            match GenerateSeriesVTab::next(&mut cursor) {
+            match cursor.next() {
                 ResultCode::OK => rowids.push(cur_rowid),
                 ResultCode::EOF => break,
                 err => panic!(

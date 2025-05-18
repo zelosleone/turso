@@ -98,9 +98,6 @@ pub trait VTabModule: 'static {
         args: &[Value],
         idx_info: Option<(&str, i32)>,
     ) -> ResultCode;
-    fn column(cursor: &Self::VCursor, idx: u32) -> Result<Value, Self::Error>;
-    fn next(cursor: &mut Self::VCursor) -> ResultCode;
-    fn eof(cursor: &Self::VCursor) -> bool;
     fn update(&mut self, _rowid: i64, _args: &[Value]) -> Result<(), Self::Error> {
         Ok(())
     }

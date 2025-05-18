@@ -89,7 +89,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                     return ::limbo_ext::Value::error(::limbo_ext::ResultCode::Error);
                 }
                 let cursor = unsafe { &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor) };
-                match <#struct_name as ::limbo_ext::VTabModule>::column(cursor, idx) {
+                match <<#struct_name as ::limbo_ext::VTabModule>::VCursor as ::limbo_ext::VTabCursor>::column(cursor, idx) {
                     Ok(val) => val,
                     Err(e) => ::limbo_ext::Value::error_with_message(e.to_string())
                 }
@@ -103,7 +103,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                     return ::limbo_ext::ResultCode::Error;
                 }
                 let cursor = &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor);
-                <#struct_name as ::limbo_ext::VTabModule>::next(cursor)
+                <<#struct_name as ::limbo_ext::VTabModule>::VCursor as ::limbo_ext::VTabCursor>::next(cursor)
             }
 
             #[no_mangle]
@@ -114,7 +114,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                     return true;
                 }
                 let cursor = &mut *(cursor as *mut <#struct_name as ::limbo_ext::VTabModule>::VCursor);
-                <#struct_name as ::limbo_ext::VTabModule>::eof(cursor)
+                <<#struct_name as ::limbo_ext::VTabModule>::VCursor as ::limbo_ext::VTabCursor>::eof(cursor)
             }
 
             #[no_mangle]

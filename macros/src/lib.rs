@@ -264,23 +264,6 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
 ///   fn filter(_cursor: &mut Self::VCursor, _arg_count: i32, _args: &[Value]) -> ResultCode {
 ///       ResultCode::OK
 ///   }
-///   /// Return the value for a given column index
-///   fn column(cursor: &Self::VCursor, idx: u32) -> Value {
-///      cursor.column(idx)
-///  }
-///  /// Move the cursor to the next row
-///  fn next(cursor: &mut Self::VCursor) -> ResultCode {
-///      if cursor.index < cursor.rows.len() - 1 {
-///          cursor.index += 1;
-///          ResultCode::OK
-///      } else {
-///          ResultCode::EOF
-///      }
-///  }
-///  fn eof(cursor: &Self::VCursor) -> bool {
-///      cursor.index >= cursor.rows.len()
-///  }
-///
 /// /// **Optional** methods for non-readonly tables:
 ///
 ///  /// Update the row with the provided values, return the new rowid
@@ -317,12 +300,19 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
 ///   }
 /// // Implement the VTabCursor trait for your virtual cursor
 /// impl VTabCursor for CsvCursor {
+///   /// Move the cursor to the next row
 ///   fn next(&mut self) -> ResultCode {
-///       Self::next(self)
+///      if self.index < self.rows.len() - 1 {
+///          self.index += 1;
+///          ResultCode::OK
+///      } else {
+///          ResultCode::EOF
+///      }
 ///   }
 ///  fn eof(&self) -> bool {
 ///      self.index >= self.rows.len()
 ///  }
+///  /// Return the value for a given column index
 ///  fn column(&self, idx: u32) -> Value {
 ///      self.column(idx)
 ///  }

@@ -79,18 +79,6 @@ impl VTabModule for CompletionVTab {
         Ok(CompletionCursor::default())
     }
 
-    fn column(cursor: &Self::VCursor, idx: u32) -> Result<Value, ResultCode> {
-        cursor.column(idx)
-    }
-
-    fn next(cursor: &mut Self::VCursor) -> ResultCode {
-        cursor.next()
-    }
-
-    fn eof(cursor: &Self::VCursor) -> bool {
-        cursor.eof()
-    }
-
     fn filter(cursor: &mut Self::VCursor, args: &[Value], _: Option<(&str, i32)>) -> ResultCode {
         if args.is_empty() || args.len() > 2 {
             return ResultCode::InvalidArgs;
@@ -122,7 +110,7 @@ impl VTabModule for CompletionVTab {
         cursor.rowid = 0;
         cursor.phase = CompletionPhase::Keywords;
 
-        Self::next(cursor)
+        cursor.next()
     }
 }
 

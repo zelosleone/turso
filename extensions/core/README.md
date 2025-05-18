@@ -215,26 +215,6 @@ impl VTabModule for CsvVTable {
         ResultCode::OK
     }
 
-    /// Return the value for the column at the given index in the current row.
-    fn column(cursor: &Self::VCursor, idx: u32) -> Result<Value, Self::Error> {
-        cursor.column(idx)
-    }
-
-    /// Next advances the cursor to the next row.
-    fn next(cursor: &mut Self::VCursor) -> ResultCode {
-        if cursor.index < cursor.rows.len() - 1 {
-            cursor.index += 1;
-            ResultCode::OK
-        } else {
-            ResultCode::EOF
-        }
-    }
-
-    /// Return true if the cursor is at the end.
-    fn eof(cursor: &Self::VCursor) -> bool {
-        cursor.index >= cursor.rows.len()
-    }
-
     /// *Optional* methods for non-readonly tables
 
     /// Update the value at rowid
@@ -263,14 +243,22 @@ struct CsvCursor {
 impl VTabCursor for CsvCursor {
     type Error = &'static str;
 
+    /// Next advances the cursor to the next row.
     fn next(&mut self) -> ResultCode {
-        CsvCursor::next(self)
+        if self.index < self.rows.len() - 1 {
+            self.index += 1;
+            ResultCode::OK
+        } else {
+            ResultCode::EOF
+        }
     }
 
+    /// Return true if the cursor is at the end.
     fn eof(&self) -> bool {
         self.index >= self.rows.len()
     }
 
+    /// Return the value for the column at the given index in the current row.
     fn column(&self, idx: u32) -> Result<Value, Self::Error> {
         let row = &self.rows[self.index];
         if (idx as usize) < row.len() {

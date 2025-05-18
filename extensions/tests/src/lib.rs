@@ -169,33 +169,6 @@ impl VTabModule for KVStoreVTab {
         Ok(())
     }
 
-    fn eof(cursor: &Self::VCursor) -> bool {
-        cursor.index.is_some_and(|s| s >= cursor.rows.len()) || cursor.index.is_none()
-    }
-
-    fn next(cursor: &mut Self::VCursor) -> ResultCode {
-        cursor.index = Some(cursor.index.unwrap_or(0) + 1);
-        if cursor.index.is_some_and(|c| c >= cursor.rows.len()) {
-            return ResultCode::EOF;
-        }
-        ResultCode::OK
-    }
-
-    fn column(cursor: &Self::VCursor, idx: u32) -> Result<Value, Self::Error> {
-        if cursor.index.is_some_and(|c| c >= cursor.rows.len()) {
-            return Err("cursor out of range".into());
-        }
-        if let Some((_, ref key, ref val)) = cursor.rows.get(cursor.index.unwrap_or(0)) {
-            match idx {
-                0 => Ok(Value::from_text(key.clone())), // key
-                1 => Ok(Value::from_text(val.clone())), // value
-                _ => Err("Invalid column".into()),
-            }
-        } else {
-            Err("Invalid Column".into())
-        }
-    }
-
     fn destroy(&mut self) -> Result<(), Self::Error> {
         println!("VDestroy called");
         Ok(())
@@ -222,15 +195,30 @@ impl VTabCursor for KVStoreCursor {
     }
 
     fn column(&self, idx: u32) -> Result<Value, Self::Error> {
-        <KVStoreVTab as VTabModule>::column(self, idx)
+        if self.index.is_some_and(|c| c >= self.rows.len()) {
+            return Err("cursor out of range".into());
+        }
+        if let Some((_, ref key, ref val)) = self.rows.get(self.index.unwrap_or(0)) {
+            match idx {
+                0 => Ok(Value::from_text(key.clone())), // key
+                1 => Ok(Value::from_text(val.clone())), // value
+                _ => Err("Invalid column".into()),
+            }
+        } else {
+            Err("Invalid Column".into())
+        }
     }
 
     fn eof(&self) -> bool {
-        <KVStoreVTab as VTabModule>::eof(self)
+        self.index.is_some_and(|s| s >= self.rows.len()) || self.index.is_none()
     }
 
     fn next(&mut self) -> ResultCode {
-        <KVStoreVTab as VTabModule>::next(self)
+        self.index = Some(self.index.unwrap_or(0) + 1);
+        if self.index.is_some_and(|c| c >= self.rows.len()) {
+            return ResultCode::EOF;
+        }
+        ResultCode::OK
     }
 }
 
