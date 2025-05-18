@@ -4722,7 +4722,21 @@ pub fn op_open_ephemeral(
         }
         None => None,
     };
-    let mut cursor = BTreeCursor::new_table(mv_cursor, pager, root_page as usize);
+    let mut cursor = if let CursorType::BTreeIndex(index) = cursor_type {
+        BTreeCursor::new_index(
+            mv_cursor,
+            pager,
+            root_page as usize,
+            index,
+            index
+                .columns
+                .iter()
+                .map(|c| c.collation.unwrap_or_default())
+                .collect(),
+        )
+    } else {
+        BTreeCursor::new_table(mv_cursor, pager, root_page as usize)
+    };
     cursor.rewind()?; // Will never return io
 
     let mut cursors: std::cell::RefMut<'_, Vec<Option<Cursor>>> = state.cursors.borrow_mut();
