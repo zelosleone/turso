@@ -293,8 +293,7 @@ fn check_automatic_pk_index_required(
                             .iter()
                             .map(|col| match &col.expr {
                                 ast::Expr::Id(name) => {
-                                    let key: &ast::Name = unsafe { std::mem::transmute(name) };
-                                    if !columns.contains_key(key) {
+                                    if !columns.iter().any(|(k, _)| k.0 == name.0) {
                                         bail_parse_error!("No such column: {}", name.0);
                                     }
                                     Ok(PrimaryKeyColumnInfo {
@@ -314,8 +313,10 @@ fn check_automatic_pk_index_required(
 
                         for pk_info in primary_key_column_results {
                             let column_name = pk_info.name;
-                            let key: &ast::Name = unsafe { std::mem::transmute(column_name) };
-                            let column_def = columns.get(key).unwrap();
+                            let (_, column_def) = columns
+                                .iter()
+                                .find(|(k, _)| k.0 == *column_name)
+                                .expect("primary key column should be in Create Body columns");
 
                             match &mut primary_key_definition {
                                 Some(PrimaryKeyDefinitionType::Simple { column, .. }) => {
@@ -355,9 +356,8 @@ fn check_automatic_pk_index_required(
                             .iter()
                             .map(|column| match &column.expr {
                                 limbo_sqlite3_parser::ast::Expr::Id(id) => {
-                                    let key: &ast::Name = unsafe { std::mem::transmute(id) };
-                                    if !columns.contains_key(key) {
-                                        crate::bail_parse_error!("no such column: {}", id.0);
+                                    if !columns.iter().any(|(k, _)| k.0 == id.0) {
+                                        bail_parse_error!("No such column: {}", id.0);
                                     }
                                     Ok(crate::util::normalize_ident(&id.0))
                                 }

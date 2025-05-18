@@ -1034,7 +1034,6 @@ pub struct GroupBy {
 
 /// identifier or one of several keywords or `INDEXED`
 #[derive(Clone, Debug, PartialEq, Eq)]
-#[repr(transparent)] // Repr transparent needed as we do transmute between Name and Id
 pub struct Id(pub String);
 
 impl Id {
@@ -1048,7 +1047,6 @@ impl Id {
 
 /// identifier or string or `CROSS` or `FULL` or `INNER` or `LEFT` or `NATURAL` or `OUTER` or `RIGHT`.
 #[derive(Clone, Debug, Eq)]
-#[repr(transparent)] // Repr transparent needed as we do transmute between Name and Id
 pub struct Name(pub String); // TODO distinction between Name and "Name"/[Name]/`Name`
 
 impl Name {
