@@ -123,6 +123,19 @@ impl Connection {
         };
         Ok(statement)
     }
+
+    pub fn pragma_query<F>(&self, pragma_name: &str, mut f: F) -> Result<()>
+    where
+        F: FnMut(&) -> Result<()>,
+    {
+        let conn = self
+            .inner
+            .lock()
+            .map_err(|e| Error::MutexError(e.to_string()))?;
+
+        conn.pragma_query(pragma_name, f)
+            .map_err(|e| Error::SqlExecutionFailure(e.to_string()))
+    }
 }
 
 pub struct Statement {

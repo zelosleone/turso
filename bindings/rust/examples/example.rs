@@ -12,6 +12,12 @@ async fn main() {
         .await
         .unwrap();
 
+    conn.pragma_query("journal_mode", |&mut row| {
+        println!("{:?}", row);
+        Ok(())
+    })
+    .unwrap();
+
     let mut stmt = conn
         .prepare("INSERT INTO users (email) VALUES (?1)")
         .await
