@@ -8,7 +8,7 @@ use crate::{
         },
     },
     translate::{collate::CollationSeq, plan::IterationDirection},
-    types::IndexKeySortOrder,
+    types::{IndexKeyInfo, IndexKeySortOrder},
     MvCursor,
 };
 
@@ -400,7 +400,7 @@ pub struct BTreeCursor {
     /// Reusable immutable record, used to allow better allocation strategy.
     reusable_immutable_record: RefCell<Option<ImmutableRecord>>,
     empty_record: Cell<bool>,
-    pub index_key_sort_order: IndexKeySortOrder,
+    pub index_key_info: Option<IndexKeyInfo>,
     /// Maintain count of the number of records in the btree. Used for the `Count` opcode
     count: usize,
     /// Stores the cursor context before rebalancing so that a seek can be done later
@@ -436,7 +436,7 @@ impl BTreeCursor {
             },
             reusable_immutable_record: RefCell::new(None),
             empty_record: Cell::new(true),
-            index_key_sort_order: IndexKeySortOrder::default(),
+            index_key_info: None,
             count: 0,
             context: None,
             valid_state: CursorValidState::Valid,
@@ -459,10 +459,23 @@ impl BTreeCursor {
         index: &Index,
         collations: Vec<CollationSeq>,
     ) -> Self {
-        let index_key_sort_order = IndexKeySortOrder::from_index(index);
         let mut cursor = Self::new(mv_cursor, pager, root_page, collations);
-        cursor.index_key_sort_order = index_key_sort_order;
+        cursor.index_key_info = Some(IndexKeyInfo::new_from_index(index));
         cursor
+    }
+
+    pub fn key_sort_order(&self) -> IndexKeySortOrder {
+        match &self.index_key_info {
+            Some(index_key_info) => index_key_info.sort_order,
+            None => IndexKeySortOrder::default(),
+        }
+    }
+
+    pub fn has_rowid(&self) -> bool {
+        match &self.index_key_info {
+            Some(index_key_info) => index_key_info.has_rowid,
+            None => true, // currently we don't support WITHOUT ROWID tables
+        }
     }
 
     /// Check if the table is empty.
@@ -624,7 +637,7 @@ impl BTreeCursor {
                         let order = compare_immutable(
                             record_slice_same_num_cols,
                             index_key.get_values(),
-                            self.index_key_sort_order,
+                            self.key_sort_order(),
                             &self.collations,
                         );
                         order
@@ -683,7 +696,7 @@ impl BTreeCursor {
                         let order = compare_immutable(
                             record_slice_same_num_cols,
                             index_key.get_values(),
-                            self.index_key_sort_order,
+                            self.key_sort_order(),
                             &self.collations,
                         );
                         order
@@ -1264,7 +1277,7 @@ impl BTreeCursor {
                         let order = compare_immutable(
                             record_slice_same_num_cols,
                             index_key.get_values(),
-                            self.index_key_sort_order,
+                            self.key_sort_order(),
                             &self.collations,
                         );
                         order
@@ -1325,7 +1338,7 @@ impl BTreeCursor {
                         let order = compare_immutable(
                             record_slice_same_num_cols,
                             index_key.get_values(),
-                            self.index_key_sort_order,
+                            self.key_sort_order(),
                             &self.collations,
                         );
                         order
@@ -1606,7 +1619,7 @@ impl BTreeCursor {
                 let interior_cell_vs_index_key = compare_immutable(
                     record_slice_equal_number_of_cols,
                     index_key.get_values(),
-                    self.index_key_sort_order,
+                    self.key_sort_order(),
                     &self.collations,
                 );
                 // in sqlite btrees left child pages have <= keys.
@@ -1931,7 +1944,7 @@ impl BTreeCursor {
             let cmp = compare_immutable(
                 record_slice_equal_number_of_cols,
                 key.get_values(),
-                self.index_key_sort_order,
+                self.key_sort_order(),
                 &self.collations,
             );
             let found = match seek_op {
@@ -2099,8 +2112,8 @@ impl BTreeCursor {
                                     .as_ref()
                                     .unwrap()
                                     .get_values(),
-                        self.index_key_sort_order,
-                        &self.collations,
+                                    self.key_sort_order(),
+                            &self.collations,
                         ) == Ordering::Equal {
 
                         tracing::debug!("insert_into_page: found exact match with cell_idx={cell_idx}, overwriting");
@@ -3746,7 +3759,7 @@ impl BTreeCursor {
                     let order = compare_immutable(
                         key.to_index_key_values(),
                         self.get_immutable_record().as_ref().unwrap().get_values(),
-                        self.index_key_sort_order,
+                        self.key_sort_order(),
                         &self.collations,
                     );
                     match order {

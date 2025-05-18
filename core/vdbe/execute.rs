@@ -2182,7 +2182,7 @@ pub fn op_idx_ge(
             let ord = compare_immutable(
                 &idx_values,
                 &record_values,
-                cursor.index_key_sort_order,
+                cursor.key_sort_order(),
                 cursor.collations(),
             );
             if ord.is_ge() {
@@ -2246,7 +2246,7 @@ pub fn op_idx_le(
             let ord = compare_immutable(
                 &idx_values,
                 &record_values,
-                cursor.index_key_sort_order,
+                cursor.key_sort_order(),
                 cursor.collations(),
             );
             if ord.is_le() {
@@ -2292,7 +2292,7 @@ pub fn op_idx_gt(
             let ord = compare_immutable(
                 &idx_values,
                 &record_values,
-                cursor.index_key_sort_order,
+                cursor.key_sort_order(),
                 cursor.collations(),
             );
             if ord.is_gt() {
@@ -2338,7 +2338,7 @@ pub fn op_idx_lt(
             let ord = compare_immutable(
                 &idx_values,
                 &record_values,
-                cursor.index_key_sort_order,
+                cursor.key_sort_order(),
                 cursor.collations(),
             );
             if ord.is_lt() {

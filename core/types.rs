@@ -1100,6 +1100,23 @@ impl Default for IndexKeySortOrder {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct IndexKeyInfo {
+    pub sort_order: IndexKeySortOrder,
+    pub has_rowid: bool,
+    pub num_cols: usize,
+}
+
+impl IndexKeyInfo {
+    pub fn new_from_index(index: &Index) -> Self {
+        Self {
+            sort_order: IndexKeySortOrder::from_index(index),
+            has_rowid: index.has_rowid,
+            num_cols: index.columns.len() + (index.has_rowid as usize),
+        }
+    }
+}
+
 pub fn compare_immutable(
     l: &[RefValue],
     r: &[RefValue],
