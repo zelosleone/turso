@@ -786,6 +786,10 @@ fn ephemeral_index_build(
         ephemeral: true,
         table_name: table_reference.table.get_name().to_string(),
         root_page: 0,
+        has_rowid: table_reference
+            .table
+            .btree()
+            .map_or(false, |btree| btree.has_rowid),
     };
 
     ephemeral_index

@@ -633,6 +633,7 @@ mod tests {
             unique: true,
             ephemeral: false,
             root_page: 1,
+            has_rowid: true,
         });
         available_indexes.insert("test_table".to_string(), vec![index]);
 
@@ -697,6 +698,7 @@ mod tests {
             unique: true,
             ephemeral: false,
             root_page: 1,
+            has_rowid: true,
         });
         available_indexes.insert("table1".to_string(), vec![index1]);
 
@@ -807,6 +809,7 @@ mod tests {
                     unique: true,
                     ephemeral: false,
                     root_page: 1,
+                    has_rowid: true,
                 });
                 available_indexes.insert(table_name.to_string(), vec![index]);
             });
@@ -822,6 +825,7 @@ mod tests {
             unique: false,
             ephemeral: false,
             root_page: 1,
+            has_rowid: true,
         });
         let order_id_idx = Arc::new(Index {
             name: "order_items_order_id_idx".to_string(),
@@ -835,6 +839,7 @@ mod tests {
             unique: false,
             ephemeral: false,
             root_page: 1,
+            has_rowid: true,
         });
 
         available_indexes
