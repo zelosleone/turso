@@ -3863,21 +3863,24 @@ impl BTreeCursor {
                 // Existing record found — compare prefix
                 let existing_key = &record.get_values()[..record.count().saturating_sub(1)];
                 let inserted_key_vals = &key.get_values();
-                if existing_key
-                    .iter()
-                    .zip(inserted_key_vals.iter())
-                    .all(|(a, b)| a == b)
-                {
-                    return Ok(CursorResult::Ok(true)); // duplicate
+                // Need this check because .all returns True on an empty iterator,
+                // So when record_opt is invalidated, it would always indicate show up as a duplicate key
+                if existing_key.len() != inserted_key_vals.len() {
+                    return Ok(CursorResult::Ok(false));
                 }
+
+                Ok(CursorResult::Ok(
+                    existing_key
+                        .iter()
+                        .zip(inserted_key_vals.iter())
+                        .all(|(a, b)| a == b),
+                ))
             }
             None => {
                 // Cursor not pointing at a record — table is empty or past last
-                return Ok(CursorResult::Ok(false));
+                Ok(CursorResult::Ok(false))
             }
         }
-
-        Ok(CursorResult::Ok(false)) // not a duplicate
     }
 
     pub fn exists(&mut self, key: &Value) -> Result<CursorResult<bool>> {
