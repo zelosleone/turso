@@ -1839,6 +1839,7 @@ dependencies = [
  "rusqlite",
  "rustix 1.0.7",
  "ryu",
+ "sorted-vec",
  "strum",
  "tempfile",
  "test-log",
@@ -3300,6 +3301,12 @@ dependencies = [
  "libc",
  "windows-sys 0.52.0",
 ]
+
+[[package]]
+name = "sorted-vec"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d372029cb5195f9ab4e4b9aef550787dce78b124fcaee8d82519925defcd6f0d"
 
 [[package]]
 name = "sqlparser_bench"
