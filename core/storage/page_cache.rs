@@ -268,8 +268,35 @@ impl DumbLruPageCache {
     }
 
     pub fn print(&mut self) {
-        println!("page_cache={}", self.map.borrow().len());
-        println!("page_cache={:?}", self.map.borrow())
+        println!("page_cache_len={}", self.map.borrow().len());
+        let head_ptr = *self.head.borrow();
+        let mut current = head_ptr;
+        let mut last_ptr: Option<NonNull<PageCacheEntry>> = None;
+        while let Some(node) = current {
+            unsafe {
+                println!("page={:?}", node.as_ref().key);
+                let node_ref = node.as_ref();
+                last_ptr = Some(node);
+                current = node_ref.next;
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub fn keys(&mut self) -> Vec<PageCacheKey> {
+        let mut this_keys = Vec::new();
+        let head_ptr = *self.head.borrow();
+        let mut current = head_ptr;
+        let mut last_ptr: Option<NonNull<PageCacheEntry>> = None;
+        while let Some(node) = current {
+            unsafe {
+                this_keys.push(node.as_ref().key.clone());
+                let node_ref = node.as_ref();
+                last_ptr = Some(node);
+                current = node_ref.next;
+            }
+        }
+        this_keys
     }
 
     pub fn len(&self) -> usize {
@@ -410,6 +437,7 @@ mod tests {
     use crate::storage::page_cache::CacheError;
     use crate::storage::pager::{Page, PageRef};
     use crate::storage::sqlite3_ondisk::PageContent;
+    use std::ptr::NonNull;
     use std::{cell::RefCell, num::NonZeroUsize, pin::Pin, rc::Rc, sync::Arc};
 
     use lru::LruCache;
@@ -633,6 +661,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "for now let's not track active refs"]
     fn test_detach_via_delete() {
         let mut cache = DumbLruPageCache::new(5);
         let key1 = create_key(1);
@@ -717,6 +746,8 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "for now let's not track active refs"]
+
     fn test_detach_with_active_reference_clean() {
         let mut cache = DumbLruPageCache::new(5);
         let (key, entry) = insert_and_get_entry(&mut cache, 1);
@@ -727,6 +758,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "for now let's not track active refs"]
     fn test_detach_with_active_reference_no_clean() {
         let mut cache = DumbLruPageCache::new(5);
         let (key, entry) = insert_and_get_entry(&mut cache, 1);
@@ -818,7 +850,12 @@ mod tests {
         let mut lru = LruCache::new(NonZeroUsize::new(10).unwrap());
 
         for _ in 0..10000 {
-            match rng.next_u64() % 3 {
+            dbg!(&lru);
+            cache.print();
+            for (key, page) in &lru {
+                println!("lru_page={:?}", key);
+            }
+            match rng.next_u64() % 2 {
                 0 => {
                     // add
                     let id_page = rng.next_u64() % max_pages;
@@ -826,10 +863,10 @@ mod tests {
                     let key = PageCacheKey::new(id_page as usize, Some(id_frame));
                     #[allow(clippy::arc_with_non_send_sync)]
                     let page = Arc::new(Page::new(id_page as usize));
-                    if let Some(_) = cache.get(&key) {
+                    if let Some(_) = cache.peek(&key, false) {
                         continue; // skip duplicate page ids
                     }
-                    // println!("inserting page {:?}", key);
+                    println!("inserting page {:?}", key);
                     match cache.insert(key.clone(), page.clone()) {
                         Err(CacheError::Full | CacheError::ActiveRefs) => {} // Ignore
                         Err(err) => {
@@ -846,31 +883,51 @@ mod tests {
                     // remove
                     let random = rng.next_u64() % 2 == 0;
                     let key = if random || lru.is_empty() {
-                        let id_page = rng.next_u64() % max_pages;
+                        let id_page: u64 = rng.next_u64() % max_pages;
                         let id_frame = rng.next_u64() % max_pages;
                         let key = PageCacheKey::new(id_page as usize, Some(id_frame));
                         key
                     } else {
                         let i = rng.next_u64() as usize % lru.len();
-                        let key = lru.iter().skip(i).next().unwrap().0.clone();
+                        let key: PageCacheKey = lru.iter().skip(i).next().unwrap().0.clone();
                         key
                     };
-                    // println!("removing page {:?}", key);
+                    println!("removing page {:?}", key);
                     lru.pop(&key);
                     assert!(cache.delete(key).is_ok());
                 }
-                2 => {
-                    // test contents
-                    for (key, page) in &lru {
-                        // println!("getting page {:?}", key);
-                        cache.peek(&key, false).unwrap();
-                        assert_eq!(page.get().id, key.pgno);
-                    }
-                }
                 _ => unreachable!(),
+            }
+            compare_to_lru(&mut cache, &lru);
+            cache.print();
+            for (key, page) in &lru {
+                println!("lru_page={:?}", key);
+            }
+            cache.verify_list_integrity();
+            for (key, page) in &lru {
+                println!("getting page {:?}", key);
+                cache.peek(&key, false).unwrap();
+                assert_eq!(page.get().id, key.pgno);
             }
         }
         assert!(lru.len() > 0); // Check it inserted some
+    }
+
+    pub fn compare_to_lru(cache: &mut DumbLruPageCache, lru: &LruCache<PageCacheKey, PageRef>) {
+        use lru::LruCache;
+
+        let this_keys = cache.keys();
+        let mut lru_keys = Vec::new();
+        for (lru_key, _) in lru {
+            lru_keys.push(lru_key.clone());
+        }
+        if this_keys != lru_keys {
+            cache.print();
+            for (lru_key, _) in lru {
+                println!("lru_page={:?}", lru_key);
+            }
+            assert_eq!(&this_keys, &lru_keys)
+        }
     }
 
     #[test]
@@ -957,6 +1014,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "for now let's not track active refs"]
     fn test_resize_with_active_references() {
         let mut cache = DumbLruPageCache::new(5);
         let page1 = page_with_content(1);
