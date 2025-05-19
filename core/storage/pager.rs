@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tracing::trace;
 
-use super::page_cache::{CacheError, DumbLruPageCache, PageCacheKey, CacheResizeResult};
+use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCacheKey};
 use super::wal::{CheckpointMode, CheckpointStatus};
 
 pub struct PageInner {
@@ -333,8 +333,15 @@ impl Pager {
                 match page_cache.insert(page_key, page.clone()) {
                     Ok(_) => {}
                     Err(CacheError::Full) => return Err(LimboError::CacheFull),
-                    Err(CacheError::KeyExists) => unreachable!("Page should not exist in cache after get() miss"),
-                    Err(e) => return Err(LimboError::InternalError(format!("Failed to insert page into cache: {:?}", e))),
+                    Err(CacheError::KeyExists) => {
+                        unreachable!("Page should not exist in cache after get() miss")
+                    }
+                    Err(e) => {
+                        return Err(LimboError::InternalError(format!(
+                            "Failed to insert page into cache: {:?}",
+                            e
+                        )))
+                    }
                 }
                 return Ok(page);
             }
@@ -348,8 +355,15 @@ impl Pager {
         match page_cache.insert(page_key, page.clone()) {
             Ok(_) => {}
             Err(CacheError::Full) => return Err(LimboError::CacheFull),
-            Err(CacheError::KeyExists) => unreachable!("Page should not exist in cache after get() miss"),
-            Err(e) => return Err(LimboError::InternalError(format!("Failed to insert page into cache: {:?}", e))),
+            Err(CacheError::KeyExists) => {
+                unreachable!("Page should not exist in cache after get() miss")
+            }
+            Err(e) => {
+                return Err(LimboError::InternalError(format!(
+                    "Failed to insert page into cache: {:?}",
+                    e
+                )))
+            }
         }
         Ok(page)
     }
@@ -373,9 +387,14 @@ impl Pager {
                     page.set_uptodate();
                 }
                 match page_cache.insert(page_key, page.clone()) {
-                    Err(CacheError::KeyExists) => {}, // Exists but same page, not error
+                    Err(CacheError::KeyExists) => {} // Exists but same page, not error
                     Err(CacheError::Full) => return Err(LimboError::CacheFull),
-                    Err(e) => return Err(LimboError::InternalError(format!("Failed to insert page into cache during load: {:?}", e))),
+                    Err(e) => {
+                        return Err(LimboError::InternalError(format!(
+                            "Failed to insert page into cache during load: {:?}",
+                            e
+                        )))
+                    }
                     Ok(_) => {}
                 }
                 return Ok(());
@@ -383,10 +402,15 @@ impl Pager {
         }
 
         match page_cache.insert(page_key, page.clone()) {
-             Err(CacheError::KeyExists) => {}, // Ensures same page
-             Err(CacheError::Full) => return Err(LimboError::CacheFull),
-             Err(e) => return Err(LimboError::InternalError(format!("Failed to insert page into cache during load: {:?}", e))),
-             Ok(_) => {}
+            Err(CacheError::KeyExists) => {} // Ensures same page
+            Err(CacheError::Full) => return Err(LimboError::CacheFull),
+            Err(e) => {
+                return Err(LimboError::InternalError(format!(
+                    "Failed to insert page into cache during load: {:?}",
+                    e
+                )))
+            }
+            Ok(_) => {}
         };
 
         sqlite3_ondisk::begin_read_page(
@@ -440,8 +464,8 @@ impl Pager {
                     for page_id in self.dirty_pages.borrow().iter() {
                         let mut cache = self.page_cache.write();
                         let page_key = PageCacheKey::new(*page_id, Some(max_frame));
+                        let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
                         if let Some(wal) = &self.wal {
-                            let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
                             let page_type = page.get().contents.as_ref().unwrap().maybe_page_type();
                             trace!("cacheflush(page={}, page_type={:?}", page_id, page_type);
                             wal.borrow_mut().append_frame(
@@ -450,6 +474,7 @@ impl Pager {
                                 self.flush_info.borrow().in_flight_writes.clone(),
                             )?;
                         }
+                        page.clear_dirty();
                         // This page is no longer valid.
                         // For example:
                         // We took page with key (page_num, max_frame) -- this page is no longer valid for that max_frame
@@ -579,7 +604,10 @@ impl Pager {
             }
         }
         // TODO: only clear cache of things that are really invalidated
-        self.page_cache.write().clear().expect("Failed to clear page cache");
+        self.page_cache
+            .write()
+            .clear()
+            .expect("Failed to clear page cache");
         checkpoint_result
     }
 
@@ -731,7 +759,8 @@ impl Pager {
 
         cache.insert(page_key, page.clone()).map_err(|e| {
             LimboError::InternalError(format!(
-                "Failed to insert loaded page {} into cache: {:?}", id, e
+                "Failed to insert loaded page {} into cache: {:?}",
+                id, e
             ))
         })?;
 
@@ -807,7 +836,7 @@ mod tests {
             std::thread::spawn(move || {
                 let mut cache = cache.write();
                 let page_key = PageCacheKey::new(1, None);
-                cache.insert(page_key, Arc::new(Page::new(1)));
+                cache.insert(page_key, Arc::new(Page::new(1))).unwrap();
             })
         };
         let _ = thread.join();
