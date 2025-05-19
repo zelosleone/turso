@@ -6171,7 +6171,7 @@ mod tests {
         let wal_file = WalFile::new(io.clone(), page_size, wal_shared, buffer_pool.clone());
         let wal = Rc::new(RefCell::new(wal_file));
 
-        let page_cache = Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(10)));
+        let page_cache = Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(100)));
         let pager = {
             let db_header = Arc::new(SpinLock::new(db_header.clone()));
             Pager::finish_open(db_header, db_file, Some(wal), io, page_cache, buffer_pool).unwrap()
