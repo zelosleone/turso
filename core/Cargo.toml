@@ -35,7 +35,7 @@ io-uring = { version = "0.7.5", optional = true }
 
 [target.'cfg(target_family = "unix")'.dependencies]
 polling = "3.7.4"
-rustix = { version = "1.0.5", features = ["fs"]}
+rustix = { version = "1.0.5", features = ["fs"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 mimalloc = { version = "0.1.46", default-features = false }
@@ -99,6 +99,7 @@ rand_chacha = "0.9.0"
 env_logger = "0.11.6"
 test-log = { version = "0.2.17", features = ["trace"] }
 lru = "0.14.0"
+sorted-vec = "0.8.6"
 
 [[bench]]
 name = "benchmark"

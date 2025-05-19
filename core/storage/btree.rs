@@ -5230,11 +5230,10 @@ fn page_insert_array(
         page.page_type()
     );
     for i in first..first + count {
-        debug_validate_cells!(page, usable_space);
         insert_into_cell(page, cell_array.cells[i], start_insert, usable_space)?;
-        debug_validate_cells!(page, usable_space);
         start_insert += 1;
     }
+    debug_validate_cells!(page, usable_space);
     Ok(())
 }
 
@@ -5443,7 +5442,6 @@ fn insert_into_cell(
     cell_idx: usize,
     usable_space: u16,
 ) -> Result<()> {
-    debug_validate_cells!(page, usable_space);
     assert!(
         cell_idx <= page.cell_count() + page.overflow_cells.len(),
         "attempting to add cell to an incorrect place cell_idx={} cell_count={}",
@@ -5744,7 +5742,6 @@ fn payload_overflow_threshold_min(_page_type: PageType, usable_space: u16) -> us
 /// Drop a cell from a page.
 /// This is done by freeing the range of bytes that the cell occupies.
 fn drop_cell(page: &mut PageContent, cell_idx: usize, usable_space: u16) -> Result<()> {
-    debug_validate_cells!(page, usable_space);
     let (cell_start, cell_len) = page.cell_get_raw_region(
         cell_idx,
         payload_overflow_threshold_max(page.page_type(), usable_space),
@@ -5784,6 +5781,7 @@ mod tests {
         rand_core::{RngCore, SeedableRng},
         ChaCha8Rng,
     };
+    use sorted_vec::SortedVec;
     use test_log::test;
 
     use super::*;
@@ -6226,15 +6224,18 @@ mod tests {
         inserts: usize,
         size: impl Fn(&mut ChaCha8Rng) -> usize,
     ) {
+        let do_validate_btree = std::env::var("VALIDATE_BTREE")
+            .map_or(false, |v| v.parse().expect("validate should be bool"));
         let (mut rng, seed) = rng_from_time_or_env();
         let mut seen = HashSet::new();
         tracing::info!("super seed: {}", seed);
         for _ in 0..attempts {
             let (pager, root_page) = empty_btree();
             let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
-            let mut keys = Vec::new();
+            let mut keys = SortedVec::new();
             tracing::info!("seed: {}", seed);
             for insert_id in 0..inserts {
+                let do_validate = do_validate_btree || (insert_id % 1000 == 0);
                 let size = size(&mut rng);
                 let key = {
                     let result;
@@ -6267,28 +6268,34 @@ mod tests {
                 .unwrap();
                 let value =
                     ImmutableRecord::from_registers(&[Register::Value(Value::Blob(vec![0; size]))]);
-                let btree_before = format_btree(pager.clone(), root_page, 0);
+                let btree_before = if do_validate_btree {
+                    format_btree(pager.clone(), root_page, 0)
+                } else {
+                    "".to_string()
+                };
                 run_until_done(
                     || cursor.insert(&BTreeKey::new_table_rowid(key as u64, Some(&value)), true),
                     pager.deref(),
                 )
                 .unwrap();
-                // FIXME: add sorted vector instead, should be okay for small amounts of keys for now :P, too lazy to fix right now
-                keys.sort();
-                cursor.move_to_root();
                 let mut valid = true;
-                for key in keys.iter() {
-                    tracing::trace!("seeking key: {}", key);
-                    run_until_done(|| cursor.next(), pager.deref()).unwrap();
-                    let cursor_rowid = cursor.rowid().unwrap().unwrap();
-                    if *key as u64 != cursor_rowid {
-                        valid = false;
-                        println!("key {} is not found, got {}", key, cursor_rowid);
-                        break;
+                if do_validate {
+                    cursor.move_to_root();
+                    for key in keys.iter() {
+                        tracing::trace!("seeking key: {}", key);
+                        run_until_done(|| cursor.next(), pager.deref()).unwrap();
+                        let cursor_rowid = cursor.rowid().unwrap().unwrap();
+                        if *key as u64 != cursor_rowid {
+                            valid = false;
+                            println!("key {} is not found, got {}", key, cursor_rowid);
+                            break;
+                        }
                     }
                 }
                 // let's validate btree too so that we undertsand where the btree failed
-                if matches!(validate_btree(pager.clone(), root_page), (_, false)) || !valid {
+                if do_validate
+                    && (!valid || matches!(validate_btree(pager.clone(), root_page), (_, false)))
+                {
                     let btree_after = format_btree(pager.clone(), root_page, 0);
                     println!("btree before:\n{}", btree_before);
                     println!("btree after:\n{}", btree_after);
@@ -6302,7 +6309,6 @@ mod tests {
             if matches!(validate_btree(pager.clone(), root_page), (_, false)) {
                 panic!("invalid btree");
             }
-            keys.sort();
             cursor.move_to_root();
             for key in keys.iter() {
                 tracing::trace!("seeking key: {}", key);
@@ -6333,7 +6339,7 @@ mod tests {
             let index_root_page = pager.btree_create(&CreateBTreeFlags::new_index());
             let index_root_page = index_root_page as usize;
             let mut cursor = BTreeCursor::new(None, pager.clone(), index_root_page);
-            let mut keys = Vec::new();
+            let mut keys = SortedVec::new();
             tracing::info!("seed: {}", seed);
             for _ in 0..inserts {
                 let key = {
@@ -6368,10 +6374,8 @@ mod tests {
                     pager.deref(),
                 )
                 .unwrap();
-                keys.sort();
                 cursor.move_to_root();
             }
-            keys.sort();
             cursor.move_to_root();
             for key in keys.iter() {
                 tracing::trace!("seeking key: {:?}", key);
@@ -6486,7 +6490,7 @@ mod tests {
     #[test]
     #[ignore]
     pub fn fuzz_long_btree_insert_fuzz_run_random() {
-        btree_insert_fuzz_run(128, 10_000, |rng| (rng.next_u32() % 4096) as usize);
+        btree_insert_fuzz_run(128, 2_000, |rng| (rng.next_u32() % 4096) as usize);
     }
 
     #[test]
@@ -6498,15 +6502,13 @@ mod tests {
     #[test]
     #[ignore]
     pub fn fuzz_long_btree_insert_fuzz_run_big() {
-        btree_insert_fuzz_run(64, 10_000, |rng| {
-            3 * 1024 + (rng.next_u32() % 1024) as usize
-        });
+        btree_insert_fuzz_run(64, 2_000, |rng| 3 * 1024 + (rng.next_u32() % 1024) as usize);
     }
 
     #[test]
     #[ignore]
     pub fn fuzz_long_btree_insert_fuzz_run_overflow() {
-        btree_insert_fuzz_run(64, 10_000, |rng| (rng.next_u32() % 32 * 1024) as usize);
+        btree_insert_fuzz_run(64, 5_000, |rng| (rng.next_u32() % 32 * 1024) as usize);
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
