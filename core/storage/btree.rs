@@ -7592,7 +7592,7 @@ mod tests {
     #[test]
     pub fn test_read_write_payload_with_offset() {
         let (pager, root_page) = empty_btree();
-        let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
+        let mut cursor = BTreeCursor::new(None, pager.clone(), root_page, vec![]);
         let offset = 2; // blobs data starts at offset 2
         let initial_text = "hello world";
         let initial_blob = initial_text.as_bytes().to_vec();
@@ -7668,7 +7668,7 @@ mod tests {
     #[test]
     pub fn test_read_write_payload_with_overflow_page() {
         let (pager, root_page) = empty_btree();
-        let mut cursor = BTreeCursor::new(None, pager.clone(), root_page);
+        let mut cursor = BTreeCursor::new(None, pager.clone(), root_page, vec![]);
         let mut large_blob = vec![b'A'; 40960 - 11]; // insert large blob. 40960 = 10 page long.
         let hello_world = b"hello world";
         large_blob.extend_from_slice(hello_world);
