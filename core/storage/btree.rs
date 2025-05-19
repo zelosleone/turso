@@ -408,7 +408,7 @@ pub struct BTreeCursor {
     /// Store whether the Cursor is in a valid state. Meaning if it is pointing to a valid cell index or not
     valid_state: CursorValidState,
     /// Colations for Index Btree constraint checks
-    /// Contains the Collation Seq for the whole Table
+    /// Contains the Collation Seq for the whole Index
     /// This Vec should be empty for Table Btree
     collations: Vec<CollationSeq>,
 }

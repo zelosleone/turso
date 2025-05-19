@@ -940,10 +940,17 @@ pub fn op_open_read(
                 .get_table(&index.table_name)
                 .map_or(None, |table| table.btree());
             let collations = table.map_or(Vec::new(), |table| {
-                table
-                    .column_collations()
-                    .into_iter()
-                    .map(|c| c.unwrap_or_default())
+                index
+                    .columns
+                    .iter()
+                    .map(|c| {
+                        table
+                            .columns
+                            .get(c.pos_in_table)
+                            .unwrap()
+                            .collation
+                            .unwrap_or_default()
+                    })
                     .collect()
             });
             let cursor = BTreeCursor::new_index(
@@ -4245,10 +4252,17 @@ pub fn op_open_write(
             .get_table(&index.table_name)
             .map_or(None, |table| table.btree());
         let collations = table.map_or(Vec::new(), |table| {
-            table
-                .column_collations()
-                .into_iter()
-                .map(|c| c.unwrap_or_default())
+            index
+                .columns
+                .iter()
+                .map(|c| {
+                    table
+                        .columns
+                        .get(c.pos_in_table)
+                        .unwrap()
+                        .collation
+                        .unwrap_or_default()
+                })
                 .collect()
         });
         let cursor = BTreeCursor::new_index(
