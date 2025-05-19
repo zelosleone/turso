@@ -461,7 +461,7 @@ fn emit_delete_insns(
         dest: key_reg,
     });
 
-    if let Some(vtab) = table_reference.virtual_table() {
+    if let Some(_) = table_reference.virtual_table() {
         let conflict_action = 0u16;
         let start_reg = key_reg;
 
@@ -474,7 +474,6 @@ fn emit_delete_insns(
             cursor_id,
             arg_count: 2,
             start_reg,
-            vtab_ptr: vtab.implementation.as_ref().ctx as usize,
             conflict_action,
         });
     } else {
@@ -1039,13 +1038,12 @@ fn emit_update_insns(
             flag: 0,
             table_name: table_ref.identifier.clone(),
         });
-    } else if let Some(vtab) = table_ref.virtual_table() {
+    } else if let Some(_) = table_ref.virtual_table() {
         let arg_count = table_ref.columns().len() + 2;
         program.emit_insn(Insn::VUpdate {
             cursor_id,
             arg_count,
             start_reg: beg,
-            vtab_ptr: vtab.implementation.as_ref().ctx as usize,
             conflict_action: 0u16,
         });
     }

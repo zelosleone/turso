@@ -323,8 +323,7 @@ pub enum Insn {
         cursor_id: usize,     // P1: Virtual table cursor number
         arg_count: usize,     // P2: Number of arguments in argv[]
         start_reg: usize,     // P3: Start register for argv[]
-        vtab_ptr: usize,      // P4: vtab pointer
-        conflict_action: u16, // P5: Conflict resolution flags
+        conflict_action: u16, // P4: Conflict resolution flags
     },
 
     /// Advance the virtual table cursor to the next row.

@@ -505,7 +505,7 @@ fn create_vtable_body_to_str(vtab: &CreateVirtualTable, module: Rc<VTabImpl>) ->
         .collect::<Vec<_>>();
     let schema = module
         .implementation
-        .init_schema(ext_args)
+        .create_schema(ext_args)
         .unwrap_or_default();
     let vtab_args = if let Some(first_paren) = schema.find('(') {
         let closing_paren = schema.rfind(')').unwrap_or_default();
