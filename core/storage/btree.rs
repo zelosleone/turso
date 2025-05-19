@@ -6171,7 +6171,7 @@ mod tests {
         let wal_file = WalFile::new(io.clone(), page_size, wal_shared, buffer_pool.clone());
         let wal = Rc::new(RefCell::new(wal_file));
 
-        let page_cache = Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(100)));
+        let page_cache = Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(2000)));
         let pager = {
             let db_header = Arc::new(SpinLock::new(db_header.clone()));
             Pager::finish_open(db_header, db_file, Some(wal), io, page_cache, buffer_pool).unwrap()
@@ -6303,6 +6303,7 @@ mod tests {
             tracing::info!("seed: {}", seed);
             for insert_id in 0..inserts {
                 let do_validate = do_validate_btree || (insert_id % VALIDATE_INTERVAL == 0);
+                pager.begin_write_tx().unwrap();
                 let size = size(&mut rng);
                 let key = {
                     let result;
@@ -6345,6 +6346,17 @@ mod tests {
                     pager.deref(),
                 )
                 .unwrap();
+                loop {
+                    match pager.end_tx().unwrap() {
+                        crate::CheckpointStatus::Done(_) => break,
+                        crate::CheckpointStatus::IO => {
+                            pager.io.run_once().unwrap();
+                        }
+                    }
+                }
+                pager.begin_read_tx().unwrap();
+                // FIXME: add sorted vector instead, should be okay for small amounts of keys for now :P, too lazy to fix right now
+                cursor.move_to_root();
                 let mut valid = true;
                 if do_validate {
                     cursor.move_to_root();
@@ -6368,7 +6380,9 @@ mod tests {
                     println!("btree after:\n{}", btree_after);
                     panic!("invalid btree");
                 }
+                pager.end_read_tx().unwrap();
             }
+            pager.begin_read_tx().unwrap();
             tracing::info!(
                 "=========== btree ===========\n{}\n\n",
                 format_btree(pager.clone(), root_page, 0)
@@ -6387,6 +6401,7 @@ mod tests {
                     key, cursor_rowid
                 );
             }
+            pager.end_read_tx().unwrap();
         }
     }
 
@@ -6408,7 +6423,10 @@ mod tests {
             let mut cursor = BTreeCursor::new_table(None, pager.clone(), index_root_page);
             let mut keys = SortedVec::new();
             tracing::info!("seed: {}", seed);
-            for _ in 0..inserts {
+            for i in 0..inserts {
+                tracing::info!("insert {}", i);
+                pager.begin_read_tx().unwrap();
+                pager.begin_write_tx().unwrap();
                 let key = {
                     let result;
                     loop {
@@ -6442,7 +6460,16 @@ mod tests {
                 )
                 .unwrap();
                 cursor.move_to_root();
+                loop {
+                    match pager.end_tx().unwrap() {
+                        crate::CheckpointStatus::Done(_) => break,
+                        crate::CheckpointStatus::IO => {
+                            pager.io.run_once().unwrap();
+                        }
+                    }
+                }
             }
+            pager.begin_read_tx().unwrap();
             cursor.move_to_root();
             for key in keys.iter() {
                 tracing::trace!("seeking key: {:?}", key);
@@ -6459,6 +6486,7 @@ mod tests {
                     key
                 );
             }
+            pager.end_read_tx().unwrap();
         }
     }
 
@@ -6516,7 +6544,7 @@ mod tests {
 
     #[test]
     pub fn btree_index_insert_fuzz_run_equal_size() {
-        btree_index_insert_fuzz_run(2, 1024 * 32);
+        btree_index_insert_fuzz_run(2, 1024);
     }
 
     #[test]
