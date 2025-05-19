@@ -6224,6 +6224,7 @@ mod tests {
         inserts: usize,
         size: impl Fn(&mut ChaCha8Rng) -> usize,
     ) {
+        const VALIDATE_INTERVAL: usize = 1000;
         let do_validate_btree = std::env::var("VALIDATE_BTREE")
             .map_or(false, |v| v.parse().expect("validate should be bool"));
         let (mut rng, seed) = rng_from_time_or_env();
@@ -6235,7 +6236,7 @@ mod tests {
             let mut keys = SortedVec::new();
             tracing::info!("seed: {}", seed);
             for insert_id in 0..inserts {
-                let do_validate = do_validate_btree || (insert_id % 1000 == 0);
+                let do_validate = do_validate_btree || (insert_id % VALIDATE_INTERVAL == 0);
                 let size = size(&mut rng);
                 let key = {
                     let result;
@@ -6268,7 +6269,7 @@ mod tests {
                 .unwrap();
                 let value =
                     ImmutableRecord::from_registers(&[Register::Value(Value::Blob(vec![0; size]))]);
-                let btree_before = if do_validate_btree {
+                let btree_before = if do_validate {
                     format_btree(pager.clone(), root_page, 0)
                 } else {
                     "".to_string()
