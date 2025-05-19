@@ -750,7 +750,11 @@ impl Pager {
         }
     }
 
-    pub fn put_loaded_page(&self, id: usize, page: PageRef) -> Result<(), LimboError> {
+    pub fn update_dirty_loaded_page_in_cache(
+        &self,
+        id: usize,
+        page: PageRef,
+    ) -> Result<(), LimboError> {
         let mut cache = self.page_cache.write();
         let max_frame = match &self.wal {
             Some(wal) => wal.borrow().get_max_frame(),
@@ -758,26 +762,16 @@ impl Pager {
         };
         let page_key = PageCacheKey::new(id, Some(max_frame));
 
-        // FIXME: is this correct? Why would there be another version of the page?
-        // Check if there's an existing page at this key and remove it
-        // This can happen when a page is being updated during a transaction
-        // or when WAL frames are being managed
-        if let Some(_existing_page_ref) = cache.get(&page_key) {
-            cache.delete(page_key.clone()).map_err(|e| {
+        // FIXME: use specific page key for writer instead of max frame, this will make readers not conflict
+        assert!(page.is_dirty());
+        cache
+            .insert_ignore_existing(page_key, page.clone())
+            .map_err(|e| {
                 LimboError::InternalError(format!(
-                    "put_loaded_page failed to remove old version of page {:?}: {:?}.",
-                    page_key, e
+                    "Failed to insert loaded page {} into cache: {:?}",
+                    id, e
                 ))
             })?;
-        }
-
-        cache.insert(page_key, page.clone()).map_err(|e| {
-            LimboError::InternalError(format!(
-                "Failed to insert loaded page {} into cache: {:?}",
-                id, e
-            ))
-        })?;
-
         page.set_loaded();
         Ok(())
     }
