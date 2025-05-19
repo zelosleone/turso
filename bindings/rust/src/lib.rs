@@ -124,9 +124,9 @@ impl Connection {
         Ok(statement)
     }
 
-    pub fn pragma_query<F>(&self, pragma_name: &str, mut f: F) -> Result<()>
+    pub fn pragma_query<F>(&self, pragma_name: &str, f: F) -> Result<()>
     where
-        F: FnMut(&) -> Result<()>,
+        F: FnMut(&limbo_core::Row) -> limbo_core::Result<()>,
     {
         let conn = self
             .inner

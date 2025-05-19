@@ -12,8 +12,8 @@ async fn main() {
         .await
         .unwrap();
 
-    conn.pragma_query("journal_mode", |&mut row| {
-        println!("{:?}", row);
+    conn.pragma_query("journal_mode", |row| {
+        println!("{}", row.get_value(0));
         Ok(())
     })
     .unwrap();

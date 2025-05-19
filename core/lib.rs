@@ -89,6 +89,10 @@ pub(crate) type MvStore = mvcc::MvStore<mvcc::LocalClock>;
 
 pub(crate) type MvCursor = mvcc::cursor::ScanCursor<mvcc::LocalClock>;
 
+// Not so sure if we should expose this row to the user
+// or make a wrapper around it to sharp some corners
+pub type Row = vdbe::Row;
+
 pub struct Database {
     mv_store: Option<Rc<MvStore>>,
     schema: Arc<RwLock<Schema>>,
@@ -581,6 +585,24 @@ impl Connection {
         }
         Ok(())
     }
+
+    pub fn pragma_query<F>(self: &Rc<Connection>, pragma_name: &str, mut f: F) -> Result<()>
+    where
+        F: FnMut(&Row) -> Result<()>,
+    {
+        let pragma = format!("PRAGMA {}", pragma_name);
+        let mut stmt = self.prepare(pragma)?;
+        loop {
+            match stmt.step()? {
+                vdbe::StepResult::Row => {
+                    let row = stmt.row().unwrap();
+                    f(row)?;
+                }
+                _ => break,
+            }
+        }
+        Ok(())
+    }
 }
 
 pub struct Statement {
@@ -658,8 +680,6 @@ impl Statement {
         self.program.explain()
     }
 }
-
-pub type Row = vdbe::Row;
 
 pub type StepResult = vdbe::StepResult;
 
