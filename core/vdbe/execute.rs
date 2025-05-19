@@ -4692,7 +4692,7 @@ pub fn op_open_ephemeral(
 
     let db_header = Pager::begin_open(db_file.clone())?;
     let buffer_pool = Rc::new(BufferPool::new(db_header.lock().get_page_size() as usize));
-    let page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
+    let page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
 
     let pager = Rc::new(Pager::finish_open(
         db_header,

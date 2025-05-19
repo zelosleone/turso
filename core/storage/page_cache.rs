@@ -5,6 +5,8 @@ use tracing::{debug, trace};
 
 use super::pager::PageRef;
 
+const DEFAULT_PAGE_CACHE_SIZE_IN_PAGES: usize = 2000;
+
 // In limbo, page cache is shared by default, meaning that multiple frames from WAL can reside in
 // the cache, meaning, we need a way to differentiate between pages cached in different
 // connections. For this we include the max_frame that a connection will read from so that if two
@@ -327,7 +329,7 @@ impl DumbLruPageCache {
     fn verify_list_integrity(&self) {
         let map_len = self.map.borrow().len();
         let head_ptr = *self.head.borrow();
-        let tail_ptr = *self.tail.borrow();
+        let tail_ptr: Option<NonNull<PageCacheEntry>> = *self.tail.borrow();
 
         if map_len == 0 {
             assert!(head_ptr.is_none(), "Head should be None when map is empty");
@@ -453,6 +455,12 @@ impl DumbLruPageCache {
                 entry.page.clear_dirty()
             };
         }
+    }
+}
+
+impl Default for DumbLruPageCache {
+    fn default() -> Self {
+        DumbLruPageCache::new(DEFAULT_PAGE_CACHE_SIZE_IN_PAGES)
     }
 }
 
