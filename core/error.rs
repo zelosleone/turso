@@ -53,6 +53,8 @@ pub enum LimboError {
     SchemaLocked,
     #[error("Database Connection is read-only")]
     ReadOnly,
+    #[error("Database is busy")]
+    Busy,
 }
 
 #[macro_export]

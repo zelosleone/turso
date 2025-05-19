@@ -89,10 +89,6 @@ pub(crate) type MvStore = mvcc::MvStore<mvcc::LocalClock>;
 
 pub(crate) type MvCursor = mvcc::cursor::ScanCursor<mvcc::LocalClock>;
 
-// Not so sure if we should expose this row to the user
-// or make a wrapper around it to sharp some corners
-pub type Row = vdbe::Row;
-
 pub struct Database {
     mv_store: Option<Rc<MvStore>>,
     schema: Arc<RwLock<Schema>>,
@@ -586,22 +582,30 @@ impl Connection {
         Ok(())
     }
 
-    pub fn pragma_query<F>(self: &Rc<Connection>, pragma_name: &str, mut f: F) -> Result<()>
-    where
-        F: FnMut(&Row) -> Result<()>,
-    {
+    // Clearly there is something to improve here, Vec<Vec<Value>> isn't a couple of tea
+    pub fn pragma_query(self: &Rc<Connection>, pragma_name: &str) -> Result<Vec<Vec<Value>>> {
         let pragma = format!("PRAGMA {}", pragma_name);
         let mut stmt = self.prepare(pragma)?;
+        let mut results = Vec::new();
         loop {
             match stmt.step()? {
                 vdbe::StepResult::Row => {
-                    let row = stmt.row().unwrap();
-                    f(row)?;
+                    let row: Vec<Value> = stmt
+                        .row()
+                        .unwrap()
+                        .get_values()
+                        .map(|v| v.clone())
+                        .collect();
+                    results.push(row);
+                }
+                vdbe::StepResult::Interrupt | vdbe::StepResult::Busy => {
+                    return Err(LimboError::Busy);
                 }
                 _ => break,
             }
         }
-        Ok(())
+
+        Ok(results)
     }
 }
 
@@ -680,6 +684,8 @@ impl Statement {
         self.program.explain()
     }
 }
+
+pub type Row = vdbe::Row;
 
 pub type StepResult = vdbe::StepResult;
 

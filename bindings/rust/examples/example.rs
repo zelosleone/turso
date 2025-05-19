@@ -13,7 +13,7 @@ async fn main() {
         .unwrap();
 
     conn.pragma_query("journal_mode", |row| {
-        println!("{}", row.get_value(0));
+        println!("{:?}", row.get_value(0));
         Ok(())
     })
     .unwrap();
