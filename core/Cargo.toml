@@ -29,6 +29,7 @@ completion = ["limbo_completion/static"]
 testvfs = ["limbo_ext_tests/static"]
 static = ["limbo_ext/static"]
 fuzz = []
+csv = ["limbo_csv/static"]
 
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.7.5", optional = true }
@@ -68,6 +69,7 @@ limbo_series = { workspace = true, optional = true, features = ["static"] }
 limbo_ipaddr = { workspace = true, optional = true, features = ["static"] }
 limbo_completion = { workspace = true, optional = true, features = ["static"] }
 limbo_ext_tests = { workspace = true, optional = true, features = ["static"] }
+limbo_csv = { workspace = true, optional = true, features = ["static"] }
 miette = "7.6.0"
 strum = { workspace = true }
 parking_lot = "0.12.3"
