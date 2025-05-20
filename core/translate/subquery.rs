@@ -1,4 +1,5 @@
 use crate::{
+    schema::Table,
     vdbe::{builder::ProgramBuilder, insn::Insn},
     Result,
 };
@@ -6,7 +7,7 @@ use crate::{
 use super::{
     emitter::{emit_query, Resolver, TranslateCtx},
     main_loop::LoopLabels,
-    plan::{Operation, SelectPlan, SelectQueryType, TableReference},
+    plan::{SelectPlan, SelectQueryType, TableReference},
 };
 
 /// Emit the subqueries contained in the FROM clause.
@@ -16,18 +17,15 @@ pub fn emit_subqueries(
     t_ctx: &mut TranslateCtx,
     tables: &mut [TableReference],
 ) -> Result<()> {
-    for table in tables.iter_mut() {
-        if let Operation::Subquery {
-            plan,
-            result_columns_start_reg,
-        } = &mut table.op
-        {
+    for table_reference in tables.iter_mut() {
+        if let Table::FromClauseSubquery(from_clause_subquery) = &mut table_reference.table {
             // Emit the subquery and get the start register of the result columns.
-            let result_columns_start = emit_subquery(program, plan, t_ctx)?;
+            let result_columns_start =
+                emit_subquery(program, &mut from_clause_subquery.plan, t_ctx)?;
             // Set the start register of the subquery's result columns.
             // This is done so that translate_expr() can read the result columns of the subquery,
             // as if it were reading from a regular table.
-            *result_columns_start_reg = result_columns_start;
+            from_clause_subquery.result_columns_start_reg = Some(result_columns_start);
         }
     }
     Ok(())

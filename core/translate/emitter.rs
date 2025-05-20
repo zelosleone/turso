@@ -451,7 +451,6 @@ fn emit_delete_insns(
                 index: Some(index), ..
             } => program.resolve_cursor_id(&index.name),
         },
-        _ => return Ok(()),
     };
     let main_table_cursor_id = program.resolve_cursor_id(table_reference.table.get_name());
 
@@ -674,7 +673,6 @@ fn emit_update_insns(
                 false,
             ),
         },
-        _ => return Ok(()),
     };
 
     for cond in plan
