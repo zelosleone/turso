@@ -16,10 +16,11 @@ use crate::{
 };
 
 use super::{
+    aggregation::handle_distinct,
     emitter::{Resolver, TranslateCtx},
     expr::{translate_condition_expr, translate_expr, ConditionMetadata},
     order_by::order_by_sorter_insert,
-    plan::{Aggregate, GroupBy, SelectPlan, TableReference},
+    plan::{AggDistinctness, Aggregate, GroupBy, SelectPlan, TableReference},
     result_row::emit_select_result,
 };
 
@@ -397,6 +398,14 @@ impl<'a> GroupByAggArgumentSource<'a> {
             aggregate,
         }
     }
+
+    pub fn aggregate(&self) -> &Aggregate {
+        match self {
+            GroupByAggArgumentSource::PseudoCursor { aggregate, .. } => aggregate,
+            GroupByAggArgumentSource::Register { aggregate, .. } => aggregate,
+        }
+    }
+
     pub fn agg_func(&self) -> &AggFunc {
         match self {
             GroupByAggArgumentSource::PseudoCursor { aggregate, .. } => &aggregate.func,
@@ -567,6 +576,12 @@ pub fn group_by_process_single_group(
             agg_result_reg,
             &t_ctx.resolver,
         )?;
+        if let AggDistinctness::Distinct { ctx } = &agg.distinctness {
+            let ctx = ctx
+                .as_ref()
+                .expect("distinct aggregate context not populated");
+            program.preassign_label_to_next_insn(ctx.label_on_conflict);
+        }
         offset += agg.args.len();
     }
 
@@ -905,6 +920,26 @@ pub fn group_by_emit_row_phase<'a>(
         dest_end: Some(start_reg + plan.group_by_sorter_column_count() - 1),
     });
 
+    // Reopen ephemeral indexes for distinct aggregates (effectively clearing them).
+    plan.aggregates
+        .iter()
+        .filter_map(|agg| {
+            if let AggDistinctness::Distinct { ctx } = &agg.distinctness {
+                Some(ctx)
+            } else {
+                None
+            }
+        })
+        .for_each(|ctx| {
+            let ctx = ctx
+                .as_ref()
+                .expect("distinct aggregate context not populated");
+            program.emit_insn(Insn::OpenEphemeral {
+                cursor_id: ctx.cursor_id,
+                is_table: false,
+            });
+        });
+
     program.emit_insn(Insn::Integer {
         value: 0,
         dest: registers.reg_data_in_acc_flag,
@@ -936,6 +971,7 @@ pub fn translate_aggregation_step_groupby(
                 crate::bail_parse_error!("avg bad number of arguments");
             }
             let expr_reg = agg_arg_source.translate(program, 0)?;
+            handle_distinct(program, agg_arg_source.aggregate(), expr_reg);
             program.emit_insn(Insn::AggStep {
                 acc_reg: target_register,
                 col: expr_reg,
@@ -946,6 +982,7 @@ pub fn translate_aggregation_step_groupby(
         }
         AggFunc::Count | AggFunc::Count0 => {
             let expr_reg = agg_arg_source.translate(program, 0)?;
+            handle_distinct(program, agg_arg_source.aggregate(), expr_reg);
             program.emit_insn(Insn::AggStep {
                 acc_reg: target_register,
                 col: expr_reg,
@@ -983,6 +1020,7 @@ pub fn translate_aggregation_step_groupby(
             }
 
             let expr_reg = agg_arg_source.translate(program, 0)?;
+            handle_distinct(program, agg_arg_source.aggregate(), expr_reg);
             translate_expr(
                 program,
                 Some(referenced_tables),
@@ -1005,6 +1043,7 @@ pub fn translate_aggregation_step_groupby(
                 crate::bail_parse_error!("max bad number of arguments");
             }
             let expr_reg = agg_arg_source.translate(program, 0)?;
+            handle_distinct(program, agg_arg_source.aggregate(), expr_reg);
             program.emit_insn(Insn::AggStep {
                 acc_reg: target_register,
                 col: expr_reg,
@@ -1018,6 +1057,7 @@ pub fn translate_aggregation_step_groupby(
                 crate::bail_parse_error!("min bad number of arguments");
             }
             let expr_reg = agg_arg_source.translate(program, 0)?;
+            handle_distinct(program, agg_arg_source.aggregate(), expr_reg);
             program.emit_insn(Insn::AggStep {
                 acc_reg: target_register,
                 col: expr_reg,
@@ -1032,6 +1072,7 @@ pub fn translate_aggregation_step_groupby(
                 crate::bail_parse_error!("min bad number of arguments");
             }
             let expr_reg = agg_arg_source.translate(program, 0)?;
+            handle_distinct(program, agg_arg_source.aggregate(), expr_reg);
             program.emit_insn(Insn::AggStep {
                 acc_reg: target_register,
                 col: expr_reg,
@@ -1047,6 +1088,7 @@ pub fn translate_aggregation_step_groupby(
             }
 
             let expr_reg = agg_arg_source.translate(program, 0)?;
+            handle_distinct(program, agg_arg_source.aggregate(), expr_reg);
             let value_reg = agg_arg_source.translate(program, 1)?;
 
             program.emit_insn(Insn::AggStep {
@@ -1073,6 +1115,7 @@ pub fn translate_aggregation_step_groupby(
             };
 
             let expr_reg = agg_arg_source.translate(program, 0)?;
+            handle_distinct(program, agg_arg_source.aggregate(), expr_reg);
             translate_expr(
                 program,
                 Some(referenced_tables),
@@ -1095,6 +1138,7 @@ pub fn translate_aggregation_step_groupby(
                 crate::bail_parse_error!("sum bad number of arguments");
             }
             let expr_reg = agg_arg_source.translate(program, 0)?;
+            handle_distinct(program, agg_arg_source.aggregate(), expr_reg);
             program.emit_insn(Insn::AggStep {
                 acc_reg: target_register,
                 col: expr_reg,
@@ -1108,6 +1152,7 @@ pub fn translate_aggregation_step_groupby(
                 crate::bail_parse_error!("total bad number of arguments");
             }
             let expr_reg = agg_arg_source.translate(program, 0)?;
+            handle_distinct(program, agg_arg_source.aggregate(), expr_reg);
             program.emit_insn(Insn::AggStep {
                 acc_reg: target_register,
                 col: expr_reg,
