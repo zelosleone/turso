@@ -5,6 +5,7 @@ use constraints::{
 };
 use cost::Cost;
 use join::{compute_best_join_order, BestJoinOrderResult};
+use lift_common_subexpressions::lift_common_subexpressions_from_binary_or_terms;
 use limbo_sqlite3_parser::ast::{self, Expr, SortOrder};
 use order::{compute_order_target, plan_satisfies_order_target, EliminatesSort};
 
@@ -28,6 +29,7 @@ pub(crate) mod access_method;
 pub(crate) mod constraints;
 pub(crate) mod cost;
 pub(crate) mod join;
+pub(crate) mod lift_common_subexpressions;
 pub(crate) mod order;
 
 pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
@@ -375,6 +377,7 @@ fn rewrite_exprs_select(plan: &mut SelectPlan) -> Result<()> {
     for agg in plan.aggregates.iter_mut() {
         rewrite_expr(&mut agg.original_expr, &mut param_count)?;
     }
+    lift_common_subexpressions_from_binary_or_terms(&mut plan.where_clause)?;
     for cond in plan.where_clause.iter_mut() {
         rewrite_expr(&mut cond.expr, &mut param_count)?;
     }
