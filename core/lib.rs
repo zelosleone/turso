@@ -49,6 +49,7 @@ use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
     collections::HashMap,
+    fmt::Display,
     io::Write,
     num::NonZero,
     ops::Deref,
@@ -583,8 +584,77 @@ impl Connection {
     }
 
     // Clearly there is something to improve here, Vec<Vec<Value>> isn't a couple of tea
+    /// Query the current rows/values of `pragma_name`.
     pub fn pragma_query(self: &Rc<Connection>, pragma_name: &str) -> Result<Vec<Vec<Value>>> {
         let pragma = format!("PRAGMA {}", pragma_name);
+        let mut stmt = self.prepare(pragma)?;
+        let mut results = Vec::new();
+        loop {
+            match stmt.step()? {
+                vdbe::StepResult::Row => {
+                    let row: Vec<Value> = stmt
+                        .row()
+                        .unwrap()
+                        .get_values()
+                        .map(|v| v.clone())
+                        .collect();
+                    results.push(row);
+                }
+                vdbe::StepResult::Interrupt | vdbe::StepResult::Busy => {
+                    return Err(LimboError::Busy);
+                }
+                _ => break,
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Set a new value to `pragma_name`.
+    ///
+    /// Some pragmas will return the updated value which cannot be retrieved
+    /// with this method.
+    pub fn pragma_update<V: Display>(
+        self: &Rc<Connection>,
+        pragma_name: &str,
+        pragma_value: V,
+    ) -> Result<Vec<Vec<Value>>> {
+        let pragma = format!("PRAGMA {} = {}", pragma_name, pragma_value);
+        let mut stmt = self.prepare(pragma)?;
+        let mut results = Vec::new();
+        loop {
+            match stmt.step()? {
+                vdbe::StepResult::Row => {
+                    let row: Vec<Value> = stmt
+                        .row()
+                        .unwrap()
+                        .get_values()
+                        .map(|v| v.clone())
+                        .collect();
+                    results.push(row);
+                }
+                vdbe::StepResult::Interrupt | vdbe::StepResult::Busy => {
+                    return Err(LimboError::Busy);
+                }
+                _ => break,
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Query the current value(s) of `pragma_name` associated to
+    /// `pragma_value`.
+    ///
+    /// This method can be used with query-only pragmas which need an argument
+    /// (e.g. `table_info('one_tbl')`) or pragmas which returns value(s)
+    /// (e.g. `integrity_check`).
+    pub fn pragma<V: Display>(
+        self: &Rc<Connection>,
+        pragma_name: &str,
+        pragma_value: V,
+    ) -> Result<Vec<Vec<Value>>> {
+        let pragma = format!("PRAGMA {}({})", pragma_name, pragma_value);
         let mut stmt = self.prepare(pragma)?;
         let mut results = Vec::new();
         loop {
