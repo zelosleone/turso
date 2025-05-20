@@ -99,6 +99,7 @@ pub fn init_loop(
                 name: agg.args[0].to_string(),
                 order: SortOrder::Asc,
                 pos_in_table: 0,
+                collation: None, // FIXME: this should be inferred from the expression
             }],
             unique: false,
         });
