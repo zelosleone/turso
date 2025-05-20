@@ -2,6 +2,7 @@ use super::emitter::{emit_program, TranslateCtx};
 use super::plan::{select_star, JoinOrderMember, Operation, Search, SelectQueryType};
 use super::planner::Scope;
 use crate::function::{AggFunc, ExtFunc, Func};
+use crate::schema::Table;
 use crate::translate::optimizer::optimize_plan;
 use crate::translate::plan::{Aggregate, GroupBy, Plan, ResultSetColumn, SelectPlan};
 use crate::translate::planner::{
@@ -428,8 +429,11 @@ fn count_plan_required_cursors(plan: &SelectPlan) -> usize {
             Operation::Search(search) => match search {
                 Search::RowidEq { .. } => 1,
                 Search::Seek { index, .. } => 1 + index.is_some() as usize,
-            },
-            Operation::Subquery { plan, .. } => count_plan_required_cursors(plan),
+            }
+        } + if let Table::FromClauseSubquery(from_clause_subquery) = &t.table {
+            count_plan_required_cursors(&from_clause_subquery.plan)
+        } else {
+            0
         })
         .sum();
     let num_sorter_cursors = plan.group_by.is_some() as usize + plan.order_by.is_some() as usize;
@@ -445,7 +449,10 @@ fn estimate_num_instructions(select: &SelectPlan) -> usize {
         .map(|t| match &t.op {
             Operation::Scan { .. } => 10,
             Operation::Search(_) => 15,
-            Operation::Subquery { plan, .. } => 10 + estimate_num_instructions(plan),
+        } + if let Table::FromClauseSubquery(from_clause_subquery) = &t.table {
+            10 + estimate_num_instructions(&from_clause_subquery.plan)
+        } else {
+            0
         })
         .sum();
 
@@ -471,7 +478,10 @@ fn estimate_num_labels(select: &SelectPlan) -> usize {
         .map(|t| match &t.op {
             Operation::Scan { .. } => 3,
             Operation::Search(_) => 3,
-            Operation::Subquery { plan, .. } => 3 + estimate_num_labels(plan),
+        } + if let Table::FromClauseSubquery(from_clause_subquery) = &t.table {
+            3 + estimate_num_labels(&from_clause_subquery.plan)
+        } else {
+            0
         })
         .sum::<usize>()
         + 1;

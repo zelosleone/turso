@@ -2,7 +2,7 @@ use limbo_sqlite3_parser::ast::{self, UnaryOperator};
 
 use super::emitter::Resolver;
 use super::optimizer::Optimizable;
-use super::plan::{Operation, TableReference};
+use super::plan::TableReference;
 #[cfg(feature = "json")]
 use crate::function::JsonFunc;
 use crate::function::{Func, FuncCtx, MathFuncArity, ScalarFunc, VectorFunc};
@@ -1799,84 +1799,87 @@ pub fn translate_expr(
             };
             // Counter intuitive but a column always needs to have a collation
             program.set_collation(Some((table_column.collation.unwrap_or_default(), false)));
-            match table_reference.op {
-                // If we are reading a column from a table, we find the cursor that corresponds to
-                // the table and read the column from the cursor.
-                // If we have a covering index, we don't have an open table cursor so we read from the index cursor.
-                Operation::Scan { .. } | Operation::Search(_) => {
-                    match &table_reference.table {
-                        Table::BTree(_) => {
-                            let table_cursor_id = if use_covering_index {
-                                None
-                            } else {
-                                Some(program.resolve_cursor_id(&table_reference.identifier))
-                            };
-                            let index_cursor_id =
-                                index.map(|index| program.resolve_cursor_id(&index.name));
-                            if *is_rowid_alias {
-                                if let Some(index_cursor_id) = index_cursor_id {
-                                    program.emit_insn(Insn::IdxRowId {
-                                        cursor_id: index_cursor_id,
-                                        dest: target_register,
-                                    });
-                                } else if let Some(table_cursor_id) = table_cursor_id {
-                                    program.emit_insn(Insn::RowId {
-                                        cursor_id: table_cursor_id,
-                                        dest: target_register,
-                                    });
-                                } else {
-                                    unreachable!("Either index or table cursor must be opened");
-                                }
-                            } else {
-                                let read_cursor = if use_covering_index {
-                                    index_cursor_id
-                                    .expect("index cursor should be opened when use_covering_index=true")
-                                } else {
-                                    table_cursor_id
-                                    .expect("table cursor should be opened when use_covering_index=false")
-                                };
-                                let column = if use_covering_index {
-                                    let index = index.expect("index cursor should be opened when use_covering_index=true");
-                                    index.column_table_pos_to_index_pos(*column).unwrap_or_else(|| {
-                                        panic!("covering index {} does not contain column number {} of table {}", index.name, column, table_reference.identifier)
-                                    })
-                                } else {
-                                    *column
-                                };
-                                program.emit_insn(Insn::Column {
-                                    cursor_id: read_cursor,
-                                    column,
-                                    dest: target_register,
-                                });
-                            }
-                            maybe_apply_affinity(table_column.ty, target_register, program);
-                            Ok(target_register)
-                        }
-                        Table::Virtual(_) => {
-                            let cursor_id = program.resolve_cursor_id(&table_reference.identifier);
-                            program.emit_insn(Insn::VColumn {
-                                cursor_id,
-                                column: *column,
+
+            // If we are reading a column from a table, we find the cursor that corresponds to
+            // the table and read the column from the cursor.
+            // If we have a covering index, we don't have an open table cursor so we read from the index cursor.
+            match &table_reference.table {
+                Table::BTree(_) => {
+                    let table_cursor_id = if use_covering_index {
+                        None
+                    } else {
+                        Some(program.resolve_cursor_id(&table_reference.identifier))
+                    };
+                    let index_cursor_id = index.map(|index| program.resolve_cursor_id(&index.name));
+                    if *is_rowid_alias {
+                        if let Some(index_cursor_id) = index_cursor_id {
+                            program.emit_insn(Insn::IdxRowId {
+                                cursor_id: index_cursor_id,
                                 dest: target_register,
                             });
-                            Ok(target_register)
+                        } else if let Some(table_cursor_id) = table_cursor_id {
+                            program.emit_insn(Insn::RowId {
+                                cursor_id: table_cursor_id,
+                                dest: target_register,
+                            });
+                        } else {
+                            unreachable!("Either index or table cursor must be opened");
                         }
-                        _ => unreachable!(),
+                    } else {
+                        let read_cursor = if use_covering_index {
+                            index_cursor_id.expect(
+                                "index cursor should be opened when use_covering_index=true",
+                            )
+                        } else {
+                            table_cursor_id.expect(
+                                "table cursor should be opened when use_covering_index=false",
+                            )
+                        };
+                        let column = if use_covering_index {
+                            let index = index.expect(
+                                "index cursor should be opened when use_covering_index=true",
+                            );
+                            index.column_table_pos_to_index_pos(*column).unwrap_or_else(|| {
+                                        panic!("covering index {} does not contain column number {} of table {}", index.name, column, table_reference.identifier)
+                                    })
+                        } else {
+                            *column
+                        };
+                        program.emit_insn(Insn::Column {
+                            cursor_id: read_cursor,
+                            column,
+                            dest: target_register,
+                        });
                     }
+                    let Some(column) = table_reference.table.get_column_at(*column) else {
+                        crate::bail_parse_error!("column index out of bounds");
+                    };
+                    maybe_apply_affinity(column.ty, target_register, program);
+                    Ok(target_register)
                 }
-                // If we are reading a column from a subquery, we instead copy the column from the
-                // subquery's result registers.
-                Operation::Subquery {
-                    result_columns_start_reg,
-                    ..
-                } => {
+                Table::FromClauseSubquery(from_clause_subquery) => {
+                    // If we are reading a column from a subquery, we instead copy the column from the
+                    // subquery's result registers.
                     program.emit_insn(Insn::Copy {
-                        src_reg: result_columns_start_reg + *column,
+                        src_reg: from_clause_subquery
+                            .result_columns_start_reg
+                            .expect("Subquery result_columns_start_reg must be set")
+                            + *column,
                         dst_reg: target_register,
                         amount: 0,
                     });
                     Ok(target_register)
                 }
+                Table::Virtual(_) => {
+                    let cursor_id = program.resolve_cursor_id(&table_reference.identifier);
+                    program.emit_insn(Insn::VColumn {
+                        cursor_id,
+                        column: *column,
+                        dest: target_register,
+                    });
+                    Ok(target_register)
+                }
+                Table::Pseudo(_) => panic!("Column access on pseudo table"),
             }
         }
         ast::Expr::RowId { database: _, table } => {

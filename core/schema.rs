@@ -1,4 +1,5 @@
 use crate::translate::collate::CollationSeq;
+use crate::translate::plan::SelectPlan;
 use crate::{util::normalize_ident, Result};
 use crate::{LimboError, VirtualTable};
 use core::fmt;
@@ -109,6 +110,7 @@ pub enum Table {
     BTree(Rc<BTreeTable>),
     Pseudo(Rc<PseudoTable>),
     Virtual(Rc<VirtualTable>),
+    FromClauseSubquery(FromClauseSubquery),
 }
 
 impl Table {
@@ -117,6 +119,7 @@ impl Table {
             Table::BTree(table) => table.root_page,
             Table::Pseudo(_) => unimplemented!(),
             Table::Virtual(_) => unimplemented!(),
+            Table::FromClauseSubquery(_) => unimplemented!(),
         }
     }
 
@@ -125,6 +128,7 @@ impl Table {
             Self::BTree(table) => &table.name,
             Self::Pseudo(_) => "",
             Self::Virtual(table) => &table.name,
+            Self::FromClauseSubquery(from_clause_subquery) => &from_clause_subquery.name,
         }
     }
 
@@ -133,6 +137,9 @@ impl Table {
             Self::BTree(table) => table.columns.get(index),
             Self::Pseudo(table) => table.columns.get(index),
             Self::Virtual(table) => table.columns.get(index),
+            Self::FromClauseSubquery(from_clause_subquery) => {
+                from_clause_subquery.columns.get(index)
+            }
         }
     }
 
@@ -141,6 +148,7 @@ impl Table {
             Self::BTree(table) => &table.columns,
             Self::Pseudo(table) => &table.columns,
             Self::Virtual(table) => &table.columns,
+            Self::FromClauseSubquery(from_clause_subquery) => &from_clause_subquery.columns,
         }
     }
 
@@ -149,6 +157,7 @@ impl Table {
             Self::BTree(table) => Some(table.clone()),
             Self::Pseudo(_) => None,
             Self::Virtual(_) => None,
+            Self::FromClauseSubquery(_) => None,
         }
     }
 
@@ -278,6 +287,20 @@ impl PseudoTable {
         }
         None
     }
+}
+
+/// A derived table from a FROM clause subquery.
+#[derive(Debug, Clone)]
+pub struct FromClauseSubquery {
+    /// The name of the derived table; uses the alias if available.
+    pub name: String,
+    /// The query plan for the derived table.
+    pub plan: Box<SelectPlan>,
+    /// The columns of the derived table.
+    pub columns: Vec<Column>,
+    /// The start register for the result columns of the derived table;
+    /// must be set before data is read from it.
+    pub result_columns_start_reg: Option<usize>,
 }
 
 #[derive(Debug, Eq)]

@@ -793,6 +793,7 @@ pub fn translate_drop_table(
             });
         }
         Table::Pseudo(..) => unimplemented!(),
+        Table::FromClauseSubquery(..) => panic!("FromClauseSubquery can't be dropped"),
     };
 
     let r6 = program.alloc_register();

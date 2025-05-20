@@ -10,7 +10,7 @@ use std::{
 
 use crate::{
     function::AggFunc,
-    schema::{BTreeTable, Column, Index, Table},
+    schema::{BTreeTable, Column, FromClauseSubquery, Index, Table},
     util::exprs_are_equivalent,
     vdbe::{
         builder::{CursorType, ProgramBuilder},
@@ -18,11 +18,7 @@ use crate::{
     },
     Result, VirtualTable,
 };
-use crate::{
-    schema::{PseudoTable, Type},
-    types::SeekOp,
-    util::can_pushdown_predicate,
-};
+use crate::{schema::Type, types::SeekOp, util::can_pushdown_predicate};
 
 use super::{emitter::OperationMode, planner::determine_where_to_eval_term, schema::ParseSchema};
 
@@ -561,13 +557,6 @@ pub enum Operation {
     // This operation is used to search for a row in a table using an index
     // (i.e. a primary key or a secondary index)
     Search(Search),
-    /// Subquery operation
-    /// This operation is used to represent a subquery in the query plan.
-    /// The subquery itself (recursively) contains an arbitrary SelectPlan.
-    Subquery {
-        plan: Box<SelectPlan>,
-        result_columns_start_reg: usize,
-    },
 }
 
 impl Operation {
@@ -576,7 +565,6 @@ impl Operation {
             Operation::Scan { index, .. } => index.as_ref(),
             Operation::Search(Search::RowidEq { .. }) => None,
             Operation::Search(Search::Seek { index, .. }) => index.as_ref(),
-            Operation::Subquery { .. } => None,
         }
     }
 }
@@ -598,29 +586,35 @@ impl TableReference {
 
     /// Creates a new TableReference for a subquery.
     pub fn new_subquery(identifier: String, plan: SelectPlan, join_info: Option<JoinInfo>) -> Self {
-        let table = Table::Pseudo(Rc::new(PseudoTable::new_with_columns(
-            plan.result_columns
-                .iter()
-                .map(|rc| Column {
-                    name: rc.name(&plan.table_references).map(String::from),
-                    ty: Type::Text, // FIXME: infer proper type
-                    ty_str: "TEXT".to_string(),
-                    is_rowid_alias: false,
-                    primary_key: false,
-                    notnull: false,
-                    default: None,
-                    unique: false,
-                    collation: None,
-                })
-                .collect(),
-        )));
+        let columns = plan
+            .result_columns
+            .iter()
+            .map(|rc| Column {
+                name: rc.name(&plan.table_references).map(String::from),
+                ty: Type::Blob, // FIXME: infer proper type
+                ty_str: "BLOB".to_string(),
+                is_rowid_alias: false,
+                primary_key: false,
+                notnull: false,
+                default: None,
+                unique: false,
+                collation: None, // FIXME: infer collation from subquery
+            })
+            .collect();
+
+        let table = Table::FromClauseSubquery(FromClauseSubquery {
+            name: identifier.clone(),
+            plan: Box::new(plan),
+            columns,
+            result_columns_start_reg: None,
+        });
         Self {
-            op: Operation::Subquery {
-                plan: Box::new(plan),
-                result_columns_start_reg: 0, // Will be set in the bytecode emission phase
+            op: Operation::Scan {
+                iter_dir: IterationDirection::Forwards,
+                index: None,
             },
             table,
-            identifier: identifier.clone(),
+            identifier,
             join_info,
             col_used_mask: ColumnUsedMask::new(),
         }
@@ -678,6 +672,7 @@ impl TableReference {
                 Ok((table_cursor_id, index_cursor_id))
             }
             Table::Pseudo(_) => Ok((None, None)),
+            Table::FromClauseSubquery(..) => Ok((None, None)),
         }
     }
 
@@ -879,13 +874,6 @@ impl Display for SelectPlan {
                         )?;
                     }
                 },
-                Operation::Subquery { plan, .. } => {
-                    writeln!(f, "{}SUBQUERY {}", indent, reference.identifier)?;
-                    // Indent and format the subquery plan
-                    for line in format!("{}", plan).lines() {
-                        writeln!(f, "{}   {}", indent, line)?;
-                    }
-                }
             }
         }
         Ok(())
@@ -912,9 +900,6 @@ impl Display for DeletePlan {
                 }
                 Operation::Search { .. } => {
                     panic!("DELETE plans should not contain search operations");
-                }
-                Operation::Subquery { .. } => {
-                    panic!("DELETE plans should not contain subqueries");
                 }
             }
         }
@@ -970,12 +955,6 @@ impl fmt::Display for UpdatePlan {
                         )?;
                     }
                 },
-                Operation::Subquery { plan, .. } => {
-                    writeln!(f, "{}SUBQUERY {}", indent, reference.identifier)?;
-                    for line in format!("{}", plan).lines() {
-                        writeln!(f, "{}   {}", indent, line)?;
-                    }
-                }
             }
         }
         if let Some(order_by) = &self.order_by {

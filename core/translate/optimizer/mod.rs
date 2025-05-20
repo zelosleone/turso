@@ -10,7 +10,7 @@ use order::{compute_order_target, plan_satisfies_order_target, EliminatesSort};
 
 use crate::{
     parameters::PARAM_PREFIX,
-    schema::{Index, IndexColumn, Schema},
+    schema::{Index, IndexColumn, Schema, Table},
     translate::plan::TerminationKey,
     types::SeekOp,
     Result,
@@ -108,8 +108,8 @@ fn optimize_update_plan(plan: &mut UpdatePlan, schema: &Schema) -> Result<()> {
 
 fn optimize_subqueries(plan: &mut SelectPlan, schema: &Schema) -> Result<()> {
     for table in plan.table_references.iter_mut() {
-        if let Operation::Subquery { plan, .. } = &mut table.op {
-            optimize_select_plan(&mut *plan, schema)?;
+        if let Table::FromClauseSubquery(from_clause_subquery) = &mut table.table {
+            optimize_select_plan(&mut from_clause_subquery.plan, schema)?;
         }
     }
 
@@ -213,21 +213,17 @@ fn optimize_table_access(
     for (i, join_order_member) in best_join_order.iter().enumerate() {
         let table_number = join_order_member.table_no;
         let access_method = &access_methods_arena.borrow()[best_access_methods[i]];
-        if matches!(
-            table_references[table_number].op,
-            Operation::Subquery { .. }
-        ) {
-            // FIXME: Operation::Subquery shouldn't exist. It's not an operation, it's a kind of temporary table.
-            assert!(
-                access_method.is_scan(),
-                "nothing in the current optimizer should be able to optimize subqueries, but got {:?} for table {}",
-                access_method,
-                table_references[table_number].table.get_name()
-            );
-            continue;
-        }
         if access_method.is_scan() {
-            if access_method.index.is_some() || i == 0 {
+            let is_leftmost_table = i == 0;
+            let uses_index = access_method.index.is_some();
+            let source_table_is_from_clause_subquery = matches!(
+                &table_references[table_number].table,
+                Table::FromClauseSubquery(_)
+            );
+
+            let try_to_build_ephemeral_index =
+                !is_leftmost_table && !uses_index && !source_table_is_from_clause_subquery;
+            if !try_to_build_ephemeral_index {
                 table_references[table_number].op = Operation::Scan {
                     iter_dir: access_method.iter_dir,
                     index: access_method.index.clone(),
