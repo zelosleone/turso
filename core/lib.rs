@@ -56,7 +56,7 @@ use std::{
     rc::Rc,
     sync::{Arc, OnceLock},
 };
-use storage::btree::btree_init_page;
+use storage::btree::{btree_init_page, BTreePageInner};
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
 pub use storage::{
@@ -271,6 +271,9 @@ pub fn maybe_init_database_file(file: &Arc<dyn File>, io: &Arc<dyn IO>) -> Resul
             &Rc::new(BufferPool::new(db_header.get_page_size() as usize)),
             DATABASE_HEADER_SIZE,
         );
+        let page1 = Arc::new(BTreePageInner {
+            page: RefCell::new(page1),
+        });
         {
             // Create the sqlite_schema table, for this we just need to create the btree page
             // for the first page of the database which is basically like any other btree page
@@ -283,6 +286,7 @@ pub fn maybe_init_database_file(file: &Arc<dyn File>, io: &Arc<dyn IO>) -> Resul
                 (db_header.get_page_size() - db_header.reserved_space as u32) as u16,
             );
 
+            let page1 = page1.get();
             let contents = page1.get().contents.as_mut().unwrap();
             contents.write_database_header(&db_header);
             // write the first page to disk synchronously

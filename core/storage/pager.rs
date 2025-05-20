@@ -1,5 +1,6 @@
 use crate::fast_lock::SpinLock;
 use crate::result::LimboResult;
+use crate::storage::btree::BTreePageInner;
 use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
 use crate::storage::sqlite3_ondisk::{self, DatabaseHeader, PageContent, PageType};
@@ -13,6 +14,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tracing::trace;
 
+use super::btree::BTreePage;
 use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCacheKey};
 use super::wal::{CheckpointMode, CheckpointStatus};
 
@@ -222,7 +224,7 @@ impl Pager {
             _ => unreachable!("Invalid flags state"),
         };
         let page = self.do_allocate_page(page_type, 0);
-        let id = page.get().id;
+        let id = page.get().get().id;
         id as u32
     }
 
@@ -244,13 +246,16 @@ impl Pager {
     /// Allocate a new page to the btree via the pager.
     /// This marks the page as dirty and writes the page header.
     // FIXME: handle no room in page cache
-    pub fn do_allocate_page(&self, page_type: PageType, offset: usize) -> PageRef {
+    pub fn do_allocate_page(&self, page_type: PageType, offset: usize) -> BTreePage {
         let page = self.allocate_page().unwrap();
+        let page = Arc::new(BTreePageInner {
+            page: RefCell::new(page),
+        });
         crate::btree_init_page(&page, page_type, offset, self.usable_space() as u16);
         tracing::debug!(
             "do_allocate_page(id={}, page_type={:?})",
-            page.get().id,
-            page.get_contents().page_type()
+            page.get().get().id,
+            page.get().get_contents().page_type()
         );
         page
     }
@@ -368,61 +373,6 @@ impl Pager {
         Ok(page)
     }
 
-    /// Loads pages if not loaded
-    pub fn load_page(&self, page: PageRef) -> Result<()> {
-        let id = page.get().id;
-        trace!("load_page(page_idx = {})", id);
-        let mut page_cache = self.page_cache.write();
-        page.set_locked();
-        let max_frame = match &self.wal {
-            Some(wal) => wal.borrow().get_max_frame(),
-            None => 0,
-        };
-        let page_key = PageCacheKey::new(id, Some(max_frame));
-        if let Some(wal) = &self.wal {
-            if let Some(frame_id) = wal.borrow().find_frame(id as u64)? {
-                wal.borrow()
-                    .read_frame(frame_id, page.clone(), self.buffer_pool.clone())?;
-                {
-                    page.set_uptodate();
-                }
-                match page_cache.insert(page_key, page.clone()) {
-                    Err(CacheError::KeyExists) => {} // Exists but same page, not error
-                    Err(CacheError::Full) => return Err(LimboError::CacheFull),
-                    Err(e) => {
-                        return Err(LimboError::InternalError(format!(
-                            "Failed to insert page into cache during load: {:?}",
-                            e
-                        )))
-                    }
-                    Ok(_) => {}
-                }
-                return Ok(());
-            }
-        }
-
-        match page_cache.insert(page_key, page.clone()) {
-            Err(CacheError::KeyExists) => {} // Ensures same page
-            Err(CacheError::Full) => return Err(LimboError::CacheFull),
-            Err(e) => {
-                return Err(LimboError::InternalError(format!(
-                    "Failed to insert page into cache during load: {:?}",
-                    e
-                )))
-            }
-            Ok(_) => {}
-        };
-
-        sqlite3_ondisk::begin_read_page(
-            self.db_file.clone(),
-            self.buffer_pool.clone(),
-            page.clone(),
-            id,
-        )?;
-
-        Ok(())
-    }
-
     /// Writes the database header.
     pub fn write_database_header(&self, header: &DatabaseHeader) {
         sqlite3_ondisk::begin_write_database_header(header, self).expect("failed to write header");
@@ -464,6 +414,8 @@ impl Pager {
                     let max_frame_after_append = self.wal.as_ref().map(|wal| {
                         wal.borrow().get_max_frame() + self.dirty_pages.borrow().len() as u64
                     });
+                    tracing::error!("start flush");
+                    tracing::error!("pages={:?}", self.dirty_pages.borrow());
                     for page_id in self.dirty_pages.borrow().iter() {
                         let mut cache = self.page_cache.write();
                         let page_key = PageCacheKey::new(*page_id, Some(max_frame));
