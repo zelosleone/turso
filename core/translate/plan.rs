@@ -264,6 +264,13 @@ impl Ord for EvalAt {
 #[derive(Debug, Clone)]
 pub enum Plan {
     Select(SelectPlan),
+    CompoundSelect {
+        first: SelectPlan,
+        rest: Vec<(SelectPlan, ast::CompoundOperator)>,
+        limit: Option<isize>,
+        offset: Option<isize>,
+        order_by: Option<Vec<(ast::Expr, SortOrder)>>,
+    },
     Delete(DeletePlan),
     Update(UpdatePlan),
 }
@@ -909,6 +916,41 @@ impl Display for Plan {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Select(select_plan) => select_plan.fmt(f),
+            Self::CompoundSelect {
+                first,
+                rest,
+                limit,
+                offset,
+                order_by,
+            } => {
+                first.fmt(f)?;
+                for (plan, operator) in rest {
+                    writeln!(f, "{}", operator)?;
+                    plan.fmt(f)?;
+                }
+                if let Some(limit) = limit {
+                    writeln!(f, "LIMIT: {}", limit)?;
+                }
+                if let Some(offset) = offset {
+                    writeln!(f, "OFFSET: {}", offset)?;
+                }
+                if let Some(order_by) = order_by {
+                    writeln!(f, "ORDER BY:")?;
+                    for (expr, dir) in order_by {
+                        writeln!(
+                            f,
+                            "  - {} {}",
+                            expr,
+                            if *dir == SortOrder::Asc {
+                                "ASC"
+                            } else {
+                                "DESC"
+                            }
+                        )?;
+                    }
+                }
+                Ok(())
+            }
             Self::Delete(delete_plan) => delete_plan.fmt(f),
             Self::Update(update_plan) => update_plan.fmt(f),
         }

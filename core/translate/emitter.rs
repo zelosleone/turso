@@ -152,7 +152,70 @@ pub fn emit_program(program: &mut ProgramBuilder, plan: Plan, syms: &SymbolTable
         Plan::Select(plan) => emit_program_for_select(program, plan, syms),
         Plan::Delete(plan) => emit_program_for_delete(program, plan, syms),
         Plan::Update(plan) => emit_program_for_update(program, plan, syms),
+        Plan::CompoundSelect { .. } => emit_program_for_compound_select(program, plan, syms),
     }
+}
+
+fn emit_program_for_compound_select(
+    program: &mut ProgramBuilder,
+    plan: Plan,
+    syms: &SymbolTable,
+) -> Result<()> {
+    let Plan::CompoundSelect {
+        mut first,
+        mut rest,
+        limit,
+        ..
+    } = plan
+    else {
+        crate::bail_parse_error!("expected compound select plan");
+    };
+
+    let mut t_ctx_list = Vec::with_capacity(rest.len() + 1);
+    t_ctx_list.push(TranslateCtx::new(
+        program,
+        syms,
+        first.table_references.len(),
+        first.result_columns.len(),
+    ));
+
+    for (select, _) in rest.iter() {
+        t_ctx_list.push(TranslateCtx::new(
+            program,
+            syms,
+            select.table_references.len(),
+            select.result_columns.len(),
+        ));
+    }
+
+    // Trivial exit on LIMIT 0
+    if let Some(limit) = limit {
+        if limit == 0 {
+            program.epilogue(TransactionMode::Read);
+            program.result_columns = first.result_columns;
+            program.table_references = first.table_references;
+            return Ok(());
+        }
+    }
+
+    let mut first_t_ctx = t_ctx_list.remove(0);
+    emit_query(program, &mut first, &mut first_t_ctx)?;
+
+    // TODO: add support for UNION, EXCEPT, INTERSECT
+    while !t_ctx_list.is_empty() {
+        let mut t_ctx = t_ctx_list.remove(0);
+        let (mut select, operator) = rest.remove(0);
+        if operator != ast::CompoundOperator::UnionAll {
+            crate::bail_parse_error!("unimplemented compound select operator: {:?}", operator);
+        }
+        emit_query(program, &mut select, &mut t_ctx)?;
+    }
+
+    program.epilogue(TransactionMode::Read);
+    program.result_columns = first.result_columns;
+    program.table_references = first.table_references;
+
+    Ok(())
 }
 
 fn emit_program_for_select(

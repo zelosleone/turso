@@ -14,7 +14,7 @@ use crate::vdbe::builder::{ProgramBuilderOpts, QueryMode};
 use crate::vdbe::insn::Insn;
 use crate::SymbolTable;
 use crate::{schema::Schema, vdbe::builder::ProgramBuilder, Result};
-use limbo_sqlite3_parser::ast::{self, SortOrder};
+use limbo_sqlite3_parser::ast::{self, CompoundSelect, SortOrder};
 use limbo_sqlite3_parser::ast::{ResultColumn, SelectInner};
 
 pub fn translate_select(
@@ -26,16 +26,34 @@ pub fn translate_select(
 ) -> Result<ProgramBuilder> {
     let mut select_plan = prepare_select_plan(schema, select, syms, None)?;
     optimize_plan(&mut select_plan, schema)?;
-    let Plan::Select(ref select) = select_plan else {
-        panic!("select_plan is not a SelectPlan");
+    let opts = match &select_plan {
+        Plan::Select(select) => ProgramBuilderOpts {
+            query_mode,
+            num_cursors: count_plan_required_cursors(select),
+            approx_num_insns: estimate_num_instructions(select),
+            approx_num_labels: estimate_num_labels(select),
+        },
+        Plan::CompoundSelect { first, rest, .. } => ProgramBuilderOpts {
+            query_mode,
+            num_cursors: count_plan_required_cursors(first)
+                + rest
+                    .iter()
+                    .map(|(plan, _)| count_plan_required_cursors(plan))
+                    .sum::<usize>(),
+            approx_num_insns: estimate_num_instructions(first)
+                + rest
+                    .iter()
+                    .map(|(plan, _)| estimate_num_instructions(plan))
+                    .sum::<usize>(),
+            approx_num_labels: estimate_num_labels(first)
+                + rest
+                    .iter()
+                    .map(|(plan, _)| estimate_num_labels(plan))
+                    .sum::<usize>(),
+        },
+        other => panic!("plan is not a SelectPlan: {:?}", other),
     };
 
-    let opts = ProgramBuilderOpts {
-        query_mode,
-        num_cursors: count_plan_required_cursors(select),
-        approx_num_insns: estimate_num_instructions(select),
-        approx_num_labels: estimate_num_labels(select),
-    };
     program.extend(&opts);
     emit_program(&mut program, select_plan, syms)?;
     Ok(program)
@@ -43,11 +61,91 @@ pub fn translate_select(
 
 pub fn prepare_select_plan<'a>(
     schema: &Schema,
-    select: ast::Select,
+    mut select: ast::Select,
     syms: &SymbolTable,
     outer_scope: Option<&'a Scope<'a>>,
 ) -> Result<Plan> {
-    match *select.body.select {
+    let compounds = select.body.compounds.take();
+    match compounds {
+        None => {
+            let limit = select.limit.take();
+            Ok(Plan::Select(prepare_one_select_plan(
+                schema,
+                *select.body.select,
+                limit.as_deref(),
+                select.order_by.take(),
+                select.with.take(),
+                syms,
+                outer_scope,
+            )?))
+        }
+        Some(compounds) => {
+            let mut first = prepare_one_select_plan(
+                schema,
+                *select.body.select,
+                None,
+                None,
+                None,
+                syms,
+                outer_scope,
+            )?;
+            let mut rest = Vec::with_capacity(compounds.len());
+            for CompoundSelect { select, operator } in compounds {
+                // TODO: add support for UNION, EXCEPT and INTERSECT
+                if operator != ast::CompoundOperator::UnionAll {
+                    crate::bail_parse_error!("only UNION ALL is supported for compound SELECTs");
+                }
+                let plan =
+                    prepare_one_select_plan(schema, *select, None, None, None, syms, outer_scope)?;
+                rest.push((plan, operator));
+            }
+            // Ensure all subplans have same number of result columns
+            let first_num_result_columns = first.result_columns.len();
+            for (plan, operator) in rest.iter() {
+                if plan.result_columns.len() != first_num_result_columns {
+                    crate::bail_parse_error!("SELECTs to the left and right of {} do not have the same number of result columns", operator);
+                }
+            }
+            let (limit, offset) = select.limit.map_or(Ok((None, None)), |l| parse_limit(&l))?;
+
+            first.limit = limit.clone();
+            for (plan, _) in rest.iter_mut() {
+                plan.limit = limit.clone();
+            }
+
+            // FIXME: handle OFFSET for compound selects
+            if offset.is_some() {
+                crate::bail_parse_error!("OFFSET is not supported for compound SELECTs yet");
+            }
+            // FIXME: handle ORDER BY for compound selects
+            if select.order_by.is_some() {
+                crate::bail_parse_error!("ORDER BY is not supported for compound SELECTs yet");
+            }
+            // FIXME: handle WITH for compound selects
+            if select.with.is_some() {
+                crate::bail_parse_error!("WITH is not supported for compound SELECTs yet");
+            }
+            Ok(Plan::CompoundSelect {
+                first,
+                rest,
+                limit,
+                offset,
+                order_by: None,
+            })
+        }
+    }
+}
+
+fn prepare_one_select_plan<'a>(
+    schema: &Schema,
+    select: ast::OneSelect,
+    limit: Option<&ast::Limit>,
+    order_by: Option<Vec<ast::SortedColumn>>,
+    with: Option<ast::With>,
+    syms: &SymbolTable,
+    outer_scope: Option<&'a Scope<'a>>,
+) -> Result<SelectPlan> {
+    match select {
         ast::OneSelect::Select(select_inner) => {
             let SelectInner {
                 mut columns,
@@ -63,8 +161,6 @@ pub fn prepare_select_plan<'a>(
             }
 
             let mut where_predicates = vec![];
-
-            let with = select.with;
 
             // Parse the FROM clause into a vec of TableReferences. Fold all the join conditions expressions into the WHERE clause.
             let table_references =
@@ -375,7 +471,7 @@ pub fn prepare_select_plan<'a>(
             plan.aggregates = aggregate_expressions;
 
             // Parse the ORDER BY clause
-            if let Some(order_by) = select.order_by {
+            if let Some(order_by) = order_by {
                 let mut key = Vec::new();
 
                 for mut o in order_by {
@@ -397,11 +493,10 @@ pub fn prepare_select_plan<'a>(
             }
 
             // Parse the LIMIT/OFFSET clause
-            (plan.limit, plan.offset) =
-                select.limit.map_or(Ok((None, None)), |l| parse_limit(&l))?;
+            (plan.limit, plan.offset) = limit.map_or(Ok((None, None)), |l| parse_limit(l))?;
 
             // Return the unoptimized query plan
-            Ok(Plan::Select(plan))
+            Ok(plan)
         }
         ast::OneSelect::Values(values) => {
             let len = values[0].len();
@@ -430,7 +525,7 @@ pub fn prepare_select_plan<'a>(
                 values,
             };
 
-            Ok(Plan::Select(plan))
+            Ok(plan)
         }
     }
 }
