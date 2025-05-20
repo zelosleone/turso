@@ -823,6 +823,7 @@ pub struct IndexColumn {
     /// CREATE INDEX idx ON t(b)
     /// b.pos_in_table == 1
     pub pos_in_table: usize,
+    pub collation: Option<CollationSeq>,
 }
 
 impl Index {
@@ -847,10 +848,12 @@ impl Index {
                             name, index_name, table.name
                         )));
                     };
+                    let collation = table.get_column(&name).unwrap().1.collation;
                     index_columns.push(IndexColumn {
                         name,
                         order: col.order.unwrap_or(SortOrder::Asc),
                         pos_in_table,
+                        collation,
                     });
                 }
                 Ok(Index {
@@ -910,6 +913,7 @@ impl Index {
                         name: normalize_ident(col_name),
                         order: order.clone(),
                         pos_in_table,
+                        collation: table.get_column(col_name).unwrap().1.collation,
                     }
                 })
                 .collect::<Vec<_>>();
@@ -948,6 +952,7 @@ impl Index {
                             name: normalize_ident(col_name),
                             order: SortOrder::Asc, // Default Sort Order
                             pos_in_table,
+                            collation: table.get_column(col_name).unwrap().1.collation,
                         }],
                         unique: true,
                         ephemeral: false,
@@ -1012,6 +1017,7 @@ impl Index {
                             name: normalize_ident(col_name),
                             order: *order,
                             pos_in_table,
+                            collation: table.get_column(col_name).unwrap().1.collation,
                         }
                     });
                     Index {

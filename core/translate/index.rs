@@ -58,6 +58,7 @@ pub fn translate_create_index(
                 name: col.name.as_ref().unwrap().clone(),
                 order: *order,
                 pos_in_table: *pos_in_table,
+                collation: col.collation,
             })
             .collect(),
         unique: unique_if_not_exists.0,
@@ -256,6 +257,8 @@ fn resolve_sorted_columns<'a>(
     let mut resolved = Vec::with_capacity(cols.len());
     for sc in cols {
         let ident = normalize_ident(match &sc.expr {
+            // SQLite supports indexes on arbitrary expressions, but we don't (yet).
+            // See "How to use indexes on expressions" in https://www.sqlite.org/expridx.html
             Expr::Id(Id(col_name)) | Expr::Name(ast::Name(col_name)) => col_name,
             _ => crate::bail_parse_error!("Error: cannot use expressions in CREATE INDEX"),
         });
