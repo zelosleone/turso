@@ -355,6 +355,7 @@ impl Connection {
                     Rc::downgrade(self),
                     &syms,
                     QueryMode::Normal,
+                    None,
                 )?);
                 Ok(Statement::new(
                     program,
@@ -393,6 +394,7 @@ impl Connection {
                     Rc::downgrade(self),
                     &syms,
                     cmd.into(),
+                    None,
                 )?;
                 let stmt = Statement::new(
                     program.into(),
@@ -454,6 +456,7 @@ impl Connection {
                         Rc::downgrade(self),
                         &syms,
                         QueryMode::Explain,
+                        None,
                     )?;
                     let _ = std::io::stdout().write_all(program.explain().as_bytes());
                 }
@@ -470,6 +473,7 @@ impl Connection {
                         Rc::downgrade(self),
                         &syms,
                         QueryMode::Normal,
+                        None,
                     )?;
 
                     let mut state =
