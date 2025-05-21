@@ -100,6 +100,32 @@ pub struct TranslateCtx<'a> {
     pub resolver: Resolver<'a>,
 }
 
+impl<'a> TranslateCtx<'a> {
+    pub fn new(
+        program: &mut ProgramBuilder,
+        syms: &'a SymbolTable,
+        table_count: usize,
+        result_column_count: usize,
+    ) -> Self {
+        TranslateCtx {
+            labels_main_loop: (0..table_count).map(|_| LoopLabels::new(program)).collect(),
+            label_main_loop_end: None,
+            reg_agg_start: None,
+            reg_nonagg_emit_once_flag: None,
+            reg_limit: None,
+            reg_offset: None,
+            reg_limit_offset_sum: None,
+            reg_result_cols_start: None,
+            meta_group_by: None,
+            meta_left_joins: (0..table_count).map(|_| None).collect(),
+            meta_sort: None,
+            result_column_indexes_in_orderby_sorter: (0..result_column_count).collect(),
+            result_columns_to_skip_in_orderby_sorter: None,
+            resolver: Resolver::new(syms),
+        }
+    }
+}
+
 /// Used to distinguish database operations
 #[allow(clippy::upper_case_acronyms, dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,8 +158,14 @@ fn emit_program_for_select(
     mut plan: SelectPlan,
     syms: &SymbolTable,
 ) -> Result<()> {
-    let (mut t_ctx, init_label, start_offset) =
-        program.prologue(syms, plan.table_references.len(), plan.result_columns.len());
+    let (init_label, start_offset) = program.prologue();
+
+    let mut t_ctx = TranslateCtx::new(
+        program,
+        syms,
+        plan.table_references.len(),
+        plan.result_columns.len(),
+    );
 
     // Trivial exit on LIMIT 0
     if let Some(limit) = plan.limit {
@@ -299,8 +331,14 @@ fn emit_program_for_delete(
     mut plan: DeletePlan,
     syms: &SymbolTable,
 ) -> Result<()> {
-    let (mut t_ctx, init_label, start_offset) =
-        program.prologue(syms, plan.table_references.len(), plan.result_columns.len());
+    let (init_label, start_offset) = program.prologue();
+
+    let mut t_ctx = TranslateCtx::new(
+        program,
+        syms,
+        plan.table_references.len(),
+        plan.result_columns.len(),
+    );
 
     // exit early if LIMIT 0
     if let Some(0) = plan.limit {
@@ -466,7 +504,10 @@ fn emit_program_for_update(
     mut plan: UpdatePlan,
     syms: &SymbolTable,
 ) -> Result<()> {
-    let (mut t_ctx, init_label, start_offset) = program.prologue(
+    let (init_label, start_offset) = program.prologue();
+
+    let mut t_ctx = TranslateCtx::new(
+        program,
         syms,
         plan.table_references.len(),
         plan.returning.as_ref().map_or(0, |r| r.len()),

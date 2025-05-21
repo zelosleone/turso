@@ -14,11 +14,10 @@ use crate::{
     storage::sqlite3_ondisk::DatabaseHeader,
     translate::{
         collate::CollationSeq,
-        emitter::{Resolver, TransactionMode, TranslateCtx},
-        main_loop::LoopLabels,
+        emitter::TransactionMode,
         plan::{ResultSetColumn, TableReference},
     },
-    Connection, SymbolTable, VirtualTable,
+    Connection, VirtualTable,
 };
 
 use super::{BranchOffset, CursorID, Insn, InsnFunction, InsnReference, JumpTarget, Program};
@@ -640,12 +639,7 @@ impl ProgramBuilder {
     }
 
     /// Initialize the program with basic setup and return initial metadata and labels
-    pub fn prologue<'a>(
-        &mut self,
-        syms: &'a SymbolTable,
-        table_count: usize,
-        result_column_count: usize,
-    ) -> (TranslateCtx<'a>, BranchOffset, BranchOffset) {
+    pub fn prologue<'a>(&mut self) -> (BranchOffset, BranchOffset) {
         let init_label = self.allocate_label();
 
         if self.nested_level == 0 {
@@ -656,24 +650,7 @@ impl ProgramBuilder {
 
         let start_offset = self.offset();
 
-        let t_ctx = TranslateCtx {
-            labels_main_loop: (0..table_count).map(|_| LoopLabels::new(self)).collect(),
-            label_main_loop_end: None,
-            reg_agg_start: None,
-            reg_nonagg_emit_once_flag: None,
-            reg_limit: None,
-            reg_offset: None,
-            reg_limit_offset_sum: None,
-            reg_result_cols_start: None,
-            meta_group_by: None,
-            meta_left_joins: (0..table_count).map(|_| None).collect(),
-            meta_sort: None,
-            result_column_indexes_in_orderby_sorter: (0..result_column_count).collect(),
-            result_columns_to_skip_in_orderby_sorter: None,
-            resolver: Resolver::new(syms),
-        };
-
-        (t_ctx, init_label, start_offset)
+        (init_label, start_offset)
     }
 
     /// Clean up and finalize the program, resolving any remaining labels

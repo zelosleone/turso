@@ -32,7 +32,7 @@ pub fn translate_insert(
     tbl_name: &QualifiedName,
     columns: &Option<DistinctNames>,
     body: &mut InsertBody,
-    returning: &Option<Vec<ResultColumn>>,
+    _returning: &Option<Vec<ResultColumn>>,
     syms: &SymbolTable,
     program: Option<ProgramBuilder>,
 ) -> Result<ProgramBuilder> {
@@ -60,9 +60,9 @@ pub fn translate_insert(
         Some(table) => table,
         None => crate::bail_corrupt_error!("Parse error: no such table: {}", table_name),
     };
-    // TODO: see if table_count for prologue should be 0
-    let (t_ctx, init_label, start_offset) =
-        program.prologue(syms, 0, returning.as_ref().map_or(0, |r| r.len()));
+    let (init_label, start_offset) = program.prologue();
+
+    let resolver = Resolver::new(syms);
 
     if let Some(virtual_table) = &table.virtual_table() {
         translate_virtual_table_insert(
@@ -71,7 +71,7 @@ pub fn translate_insert(
             columns,
             body,
             on_conflict,
-            &t_ctx.resolver,
+            &resolver,
         )?;
         program.epilogue(
             init_label,
@@ -174,7 +174,7 @@ pub fn translate_insert(
                 column_registers_start,
                 true,
                 rowid_reg,
-                &t_ctx.resolver,
+                &resolver,
             )?;
             program.emit_insn(Insn::Yield {
                 yield_reg,
@@ -213,7 +213,7 @@ pub fn translate_insert(
             column_registers_start,
             false,
             rowid_reg,
-            &t_ctx.resolver,
+            &resolver,
         )?;
     }
     // Open all the index btrees for writing
