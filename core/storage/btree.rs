@@ -6111,6 +6111,8 @@ mod tests {
             pager.io.run_once().unwrap();
         }
         let page = page.get();
+        // Pin page in order to not drop it in between
+        page.set_dirty();
         let contents = page.get().contents.as_ref().unwrap();
         let page_type = contents.page_type();
         let mut previous_key = None;
@@ -6154,6 +6156,7 @@ mod tests {
             };
             if current_depth >= 100 {
                 tracing::error!("depth is too big");
+                page.clear_dirty();
                 return (100, false);
             }
             depth = Some(depth.unwrap_or(current_depth + 1));
@@ -6214,6 +6217,7 @@ mod tests {
         if contents.rightmost_pointer().is_none() && contents.cell_count() == 0 {
             valid = false;
         }
+        page.clear_dirty();
         (depth.unwrap(), valid)
     }
 
@@ -6224,6 +6228,8 @@ mod tests {
             pager.io.run_once().unwrap();
         }
         let page = page.get();
+        // Pin page in order to not drop it in between loading of different pages. If not contents will be a dangling reference.
+        page.set_dirty();
         let contents = page.get().contents.as_ref().unwrap();
         let page_type = contents.page_type();
         let mut current = Vec::new();
@@ -6271,6 +6277,7 @@ mod tests {
             " ".repeat(depth),
             current.join(", ")
         );
+        page.clear_dirty();
         if child.is_empty() {
             current
         } else {
@@ -6711,19 +6718,19 @@ mod tests {
     #[test]
     #[ignore]
     pub fn fuzz_long_btree_insert_fuzz_run_random() {
-        btree_insert_fuzz_run(128, 2_000, |rng| (rng.next_u32() % 4096) as usize);
+        btree_insert_fuzz_run(2, 10_000, |rng| (rng.next_u32() % 4096) as usize);
     }
 
     #[test]
     #[ignore]
     pub fn fuzz_long_btree_insert_fuzz_run_small() {
-        btree_insert_fuzz_run(1, 10_000, |rng| (rng.next_u32() % 128) as usize);
+        btree_insert_fuzz_run(2, 10_000, |rng| (rng.next_u32() % 128) as usize);
     }
 
     #[test]
     #[ignore]
     pub fn fuzz_long_btree_insert_fuzz_run_big() {
-        btree_insert_fuzz_run(64, 2_000, |rng| 3 * 1024 + (rng.next_u32() % 1024) as usize);
+        btree_insert_fuzz_run(2, 10_000, |rng| 3 * 1024 + (rng.next_u32() % 1024) as usize);
     }
 
     #[test]
