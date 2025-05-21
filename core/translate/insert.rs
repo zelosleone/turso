@@ -32,7 +32,7 @@ pub fn translate_insert(
     tbl_name: &QualifiedName,
     columns: &Option<DistinctNames>,
     body: &mut InsertBody,
-    _returning: &Option<Vec<ResultColumn>>,
+    returning: &Option<Vec<ResultColumn>>,
     syms: &SymbolTable,
     program: Option<ProgramBuilder>,
 ) -> Result<ProgramBuilder> {
@@ -60,7 +60,10 @@ pub fn translate_insert(
         Some(table) => table,
         None => crate::bail_corrupt_error!("Parse error: no such table: {}", table_name),
     };
-    let resolver = Resolver::new(syms);
+    // TODO: see if table_count for prologue should be 0
+    let (t_ctx, init_label, start_offset) =
+        program.prologue(syms, 0, returning.as_ref().map_or(0, |r| r.len()));
+
     if let Some(virtual_table) = &table.virtual_table() {
         translate_virtual_table_insert(
             &mut program,
@@ -68,15 +71,15 @@ pub fn translate_insert(
             columns,
             body,
             on_conflict,
-            &resolver,
+            &t_ctx.resolver,
         )?;
+        program.epilogue(
+            init_label,
+            start_offset,
+            super::emitter::TransactionMode::Write,
+        );
         return Ok(program);
     }
-    let init_label = program.allocate_label();
-    program.emit_insn(Insn::Init {
-        target_pc: init_label,
-    });
-    let start_offset = program.offset();
 
     let Some(btree_table) = table.btree() else {
         crate::bail_corrupt_error!("Parse error: no such table: {}", table_name);
@@ -171,7 +174,7 @@ pub fn translate_insert(
                 column_registers_start,
                 true,
                 rowid_reg,
-                &resolver,
+                &t_ctx.resolver,
             )?;
             program.emit_insn(Insn::Yield {
                 yield_reg,
@@ -210,7 +213,7 @@ pub fn translate_insert(
             column_registers_start,
             false,
             rowid_reg,
-            &resolver,
+            &t_ctx.resolver,
         )?;
     }
     // Open all the index btrees for writing
@@ -414,17 +417,11 @@ pub fn translate_insert(
     }
 
     program.resolve_label(halt_label, program.offset());
-    program.emit_insn(Insn::Halt {
-        err_code: 0,
-        description: String::new(),
-    });
-    program.preassign_label_to_next_insn(init_label);
-
-    program.emit_insn(Insn::Transaction { write: true });
-    program.emit_constant_insns();
-    program.emit_insn(Insn::Goto {
-        target_pc: start_offset,
-    });
+    program.epilogue(
+        init_label,
+        start_offset,
+        super::emitter::TransactionMode::Write,
+    );
 
     Ok(program)
 }
@@ -670,12 +667,6 @@ fn translate_virtual_table_insert(
     on_conflict: &Option<ResolveType>,
     resolver: &Resolver,
 ) -> Result<()> {
-    let init_label = program.allocate_label();
-    program.emit_insn(Insn::Init {
-        target_pc: init_label,
-    });
-    let start_offset = program.offset();
-
     let values = match body {
         InsertBody::Select(select, None) => match &select.body.select.deref() {
             OneSelect::Values(values) => values,
@@ -727,16 +718,6 @@ fn translate_virtual_table_insert(
 
     let halt_label = program.allocate_label();
     program.resolve_label(halt_label, program.offset());
-    program.emit_insn(Insn::Halt {
-        err_code: 0,
-        description: String::new(),
-    });
-
-    program.resolve_label(init_label, program.offset());
-
-    program.emit_insn(Insn::Goto {
-        target_pc: start_offset,
-    });
 
     Ok(())
 }
