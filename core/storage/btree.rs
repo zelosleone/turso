@@ -2384,6 +2384,12 @@ impl BTreeCursor {
                 let current_sibling = sibling_pointer;
                 for i in (0..=current_sibling).rev() {
                     let page = self.read_page(pgno as usize)?;
+                    {
+                        // mark as dirty
+                        let sibling_page = page.get();
+                        sibling_page.set_dirty();
+                        self.pager.add_dirty(sibling_page.get().id);
+                    }
                     #[cfg(debug_assertions)]
                     {
                         return_if_locked!(page.get());
@@ -2462,13 +2468,13 @@ impl BTreeCursor {
                 let write_info = self.state.write_info().unwrap();
                 let mut balance_info = write_info.balance_info.borrow_mut();
                 let balance_info = balance_info.as_mut().unwrap();
-                let all_loaded = balance_info
+                for page in balance_info
                     .pages_to_balance
                     .iter()
                     .take(balance_info.sibling_count)
-                    .all(|page| !page.as_ref().unwrap().get().is_locked());
-                if !all_loaded {
-                    return Ok(CursorResult::IO);
+                {
+                    let page = page.as_ref().unwrap();
+                    return_if_locked_maybe_load!(self.pager, page);
                 }
                 // Now do real balancing
                 let parent_page_btree = self.stack.top();
@@ -2489,9 +2495,8 @@ impl BTreeCursor {
                 for i in (0..balance_info.sibling_count).rev() {
                     let sibling_page = balance_info.pages_to_balance[i].as_ref().unwrap();
                     let sibling_page = sibling_page.get();
+                    assert!(sibling_page.is_loaded());
                     let sibling_contents = sibling_page.get_contents();
-                    sibling_page.set_dirty();
-                    self.pager.add_dirty(sibling_page.get().id);
                     max_cells += sibling_contents.cell_count();
                     max_cells += sibling_contents.overflow_cells.len();
 
@@ -6422,6 +6427,7 @@ mod tests {
             tracing::info!("seed: {}", seed);
             for insert_id in 0..inserts {
                 let do_validate = do_validate_btree || (insert_id % VALIDATE_INTERVAL == 0);
+                pager.begin_read_tx().unwrap();
                 pager.begin_write_tx().unwrap();
                 let size = size(&mut rng);
                 let key = {
