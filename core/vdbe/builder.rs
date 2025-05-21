@@ -46,6 +46,8 @@ pub struct ProgramBuilder {
     collation: Option<(CollationSeq, bool)>,
     /// Current parsing nesting level
     nested_level: usize,
+    init_label: BranchOffset,
+    start_offset: BranchOffset,
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +107,9 @@ impl ProgramBuilder {
             table_references: Vec::new(),
             collation: None,
             nested_level: 0,
+            // These labels will be filled when `prologue()` is called
+            init_label: BranchOffset::Placeholder,
+            start_offset: BranchOffset::Placeholder,
         }
     }
 
@@ -639,35 +644,28 @@ impl ProgramBuilder {
     }
 
     /// Initialize the program with basic setup and return initial metadata and labels
-    pub fn prologue<'a>(&mut self) -> (BranchOffset, BranchOffset) {
-        let init_label = self.allocate_label();
-
+    pub fn prologue<'a>(&mut self) {
         if self.nested_level == 0 {
+            self.init_label = self.allocate_label();
+
             self.emit_insn(Insn::Init {
-                target_pc: init_label,
+                target_pc: self.init_label,
             });
+
+            self.start_offset = self.offset();
         }
-
-        let start_offset = self.offset();
-
-        (init_label, start_offset)
     }
 
     /// Clean up and finalize the program, resolving any remaining labels
     /// Note that although these are the final instructions, typically an SQLite
     /// query will jump to the Transaction instruction via init_label.
-    pub fn epilogue(
-        &mut self,
-        init_label: BranchOffset,
-        start_offset: BranchOffset,
-        txn_mode: TransactionMode,
-    ) {
+    pub fn epilogue(&mut self, txn_mode: TransactionMode) {
         if self.nested_level == 0 {
             self.emit_insn(Insn::Halt {
                 err_code: 0,
                 description: String::new(),
             });
-            self.preassign_label_to_next_insn(init_label);
+            self.preassign_label_to_next_insn(self.init_label);
 
             match txn_mode {
                 TransactionMode::Read => self.emit_insn(Insn::Transaction { write: false }),
@@ -677,7 +675,7 @@ impl ProgramBuilder {
 
             self.emit_constant_insns();
             self.emit_insn(Insn::Goto {
-                target_pc: start_offset,
+                target_pc: self.start_offset,
             });
         }
     }

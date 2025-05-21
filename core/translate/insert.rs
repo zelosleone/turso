@@ -60,7 +60,6 @@ pub fn translate_insert(
         Some(table) => table,
         None => crate::bail_corrupt_error!("Parse error: no such table: {}", table_name),
     };
-    let (init_label, start_offset) = program.prologue();
 
     let resolver = Resolver::new(syms);
 
@@ -73,11 +72,7 @@ pub fn translate_insert(
             on_conflict,
             &resolver,
         )?;
-        program.epilogue(
-            init_label,
-            start_offset,
-            super::emitter::TransactionMode::Write,
-        );
+        program.epilogue(super::emitter::TransactionMode::Write);
         return Ok(program);
     }
 
@@ -417,11 +412,7 @@ pub fn translate_insert(
     }
 
     program.resolve_label(halt_label, program.offset());
-    program.epilogue(
-        init_label,
-        start_offset,
-        super::emitter::TransactionMode::Write,
-    );
+    program.epilogue(super::emitter::TransactionMode::Write);
 
     Ok(program)
 }

@@ -65,7 +65,17 @@ pub fn translate(
         ast::Stmt::CreateIndex { .. } | ast::Stmt::Delete(..) | ast::Stmt::Insert(..)
     );
 
-    let program = match stmt {
+    // These options will be extended whithin each translate program
+    let mut program = ProgramBuilder::new(ProgramBuilderOpts {
+        query_mode,
+        num_cursors: 1,
+        approx_num_insns: 2,
+        approx_num_labels: 2,
+    });
+
+    program.prologue();
+
+    program = match stmt {
         // There can be no nesting with pragma, so lift it up here
         ast::Stmt::Pragma(name, body) => pragma::translate_pragma(
             query_mode,
@@ -74,10 +84,12 @@ pub fn translate(
             body.map(|b| *b),
             database_header.clone(),
             pager,
-            None,
+            Some(program),
         )?,
-        stmt => translate_inner(schema, stmt, syms, query_mode, None)?,
+        stmt => translate_inner(schema, stmt, syms, query_mode, Some(program))?,
     };
+
+    // TODO: bring epilogue here when I can sort out what instructions correspond to a Write or a Read transaction
 
     Ok(program.build(database_header, connection, change_cnt_on))
 }
