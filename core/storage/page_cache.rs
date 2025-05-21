@@ -60,6 +60,7 @@ impl PageCacheKey {
 }
 impl DumbLruPageCache {
     pub fn new(capacity: usize) -> Self {
+        assert!(capacity >= 10, "capacity of cache should be at least 10");
         Self {
             capacity,
             map: RefCell::new(HashMap::new()),
@@ -288,7 +289,7 @@ impl DumbLruPageCache {
         Ok(())
     }
 
-    pub fn print(&mut self) {
+    pub fn print(&self) {
         tracing::debug!("page_cache_len={}", self.map.borrow().len());
         let head_ptr = *self.head.borrow();
         let mut current = head_ptr;
@@ -524,7 +525,7 @@ mod tests {
 
     #[test]
     fn test_detach_only_element() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let key1 = insert_page(&mut cache, 1);
         cache.verify_list_integrity();
         assert_eq!(cache.len(), 1);
@@ -550,7 +551,7 @@ mod tests {
 
     #[test]
     fn test_detach_head() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let _key1 = insert_page(&mut cache, 1); // Tail
         let key2 = insert_page(&mut cache, 2); // Middle
         let key3 = insert_page(&mut cache, 3); // Head
@@ -594,7 +595,7 @@ mod tests {
 
     #[test]
     fn test_detach_tail() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let key1 = insert_page(&mut cache, 1); // Tail
         let key2 = insert_page(&mut cache, 2); // Middle
         let _key3 = insert_page(&mut cache, 3); // Head
@@ -648,7 +649,7 @@ mod tests {
 
     #[test]
     fn test_detach_middle() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let key1 = insert_page(&mut cache, 1); // Tail
         let key2 = insert_page(&mut cache, 2); // Middle
         let key3 = insert_page(&mut cache, 3); // Middle
@@ -697,7 +698,7 @@ mod tests {
     #[test]
     #[ignore = "for now let's not track active refs"]
     fn test_detach_via_delete() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let key1 = create_key(1);
         let page1 = page_with_content(1);
         assert!(cache.insert(key1.clone(), page1.clone()).is_ok());
@@ -718,7 +719,7 @@ mod tests {
 
     #[test]
     fn test_insert_same_id_different_frame() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let key1_1 = PageCacheKey::new(1, Some(1 as u64));
         let key1_2 = PageCacheKey::new(1, Some(2 as u64));
         let page1_1 = page_with_content(1);
@@ -733,7 +734,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Attempted to insert different page with same key")]
     fn test_insert_existing_key_fail() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let key1 = create_key(1);
         let page1_v1 = page_with_content(1);
         let page1_v2 = page_with_content(1);
@@ -745,7 +746,7 @@ mod tests {
 
     #[test]
     fn test_detach_nonexistent_key() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let key_nonexist = create_key(99);
 
         assert!(cache.delete(key_nonexist.clone()).is_ok()); // no-op
@@ -762,7 +763,7 @@ mod tests {
 
     #[test]
     fn test_detach_locked_page() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let (_, mut entry) = insert_and_get_entry(&mut cache, 1);
         unsafe { entry.as_mut().page.set_locked() };
         assert_eq!(cache.detach(entry, false), Err(CacheError::Locked));
@@ -771,7 +772,7 @@ mod tests {
 
     #[test]
     fn test_detach_dirty_page() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let (key, mut entry) = insert_and_get_entry(&mut cache, 1);
         cache.get(&key).expect("Page should exist");
         unsafe { entry.as_mut().page.set_dirty() };
@@ -783,7 +784,7 @@ mod tests {
     #[ignore = "for now let's not track active refs"]
 
     fn test_detach_with_active_reference_clean() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let (key, entry) = insert_and_get_entry(&mut cache, 1);
         let page_ref = cache.get(&key);
         assert_eq!(cache.detach(entry, true), Err(CacheError::ActiveRefs));
@@ -794,7 +795,7 @@ mod tests {
     #[test]
     #[ignore = "for now let's not track active refs"]
     fn test_detach_with_active_reference_no_clean() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let (key, entry) = insert_and_get_entry(&mut cache, 1);
         cache.get(&key).expect("Page should exist");
         assert!(cache.detach(entry, false).is_ok());
@@ -804,7 +805,7 @@ mod tests {
 
     #[test]
     fn test_detach_without_cleaning() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let (key, entry) = insert_and_get_entry(&mut cache, 1);
         assert!(cache.detach(entry, false).is_ok());
         assert!(cache.map.borrow_mut().remove(&key).is_some());
@@ -814,7 +815,7 @@ mod tests {
 
     #[test]
     fn test_detach_with_cleaning() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let (key, entry) = insert_and_get_entry(&mut cache, 1);
         let page = cache.get(&key).expect("Page should exist");
         assert!(page_has_content(&page));
@@ -829,7 +830,7 @@ mod tests {
 
     #[test]
     fn test_detach_only_element_preserves_integrity() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let (_, entry) = insert_and_get_entry(&mut cache, 1);
         assert!(cache.detach(entry, false).is_ok());
         assert!(
@@ -844,7 +845,7 @@ mod tests {
 
     #[test]
     fn test_detach_with_multiple_pages() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let (key1, _) = insert_and_get_entry(&mut cache, 1);
         let (key2, entry2) = insert_and_get_entry(&mut cache, 2);
         let (key3, _) = insert_and_get_entry(&mut cache, 3);
@@ -880,7 +881,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         tracing::info!("super seed: {}", seed);
         let max_pages = 10;
-        let mut cache = DumbLruPageCache::new(10);
+        let mut cache = DumbLruPageCache::default();
         let mut lru = LruCache::new(NonZeroUsize::new(10).unwrap());
 
         for _ in 0..10000 {
@@ -963,7 +964,7 @@ mod tests {
 
     #[test]
     fn test_page_cache_insert_and_get() {
-        let mut cache = DumbLruPageCache::new(2);
+        let mut cache = DumbLruPageCache::default();
         let key1 = insert_page(&mut cache, 1);
         let key2 = insert_page(&mut cache, 2);
         assert_eq!(cache.get(&key1).unwrap().get().id, 1);
@@ -972,7 +973,7 @@ mod tests {
 
     #[test]
     fn test_page_cache_over_capacity() {
-        let mut cache = DumbLruPageCache::new(2);
+        let mut cache = DumbLruPageCache::default();
         let key1 = insert_page(&mut cache, 1);
         let key2 = insert_page(&mut cache, 2);
         let key3 = insert_page(&mut cache, 3);
@@ -983,7 +984,7 @@ mod tests {
 
     #[test]
     fn test_page_cache_delete() {
-        let mut cache = DumbLruPageCache::new(2);
+        let mut cache = DumbLruPageCache::default();
         let key1 = insert_page(&mut cache, 1);
         assert!(cache.delete(key1.clone()).is_ok());
         assert!(cache.get(&key1).is_none());
@@ -991,7 +992,7 @@ mod tests {
 
     #[test]
     fn test_page_cache_clear() {
-        let mut cache = DumbLruPageCache::new(2);
+        let mut cache = DumbLruPageCache::default();
         let key1 = insert_page(&mut cache, 1);
         let key2 = insert_page(&mut cache, 2);
         assert!(cache.clear().is_ok());
@@ -1001,7 +1002,7 @@ mod tests {
 
     #[test]
     fn test_page_cache_insert_sequential() {
-        let mut cache = DumbLruPageCache::new(2);
+        let mut cache = DumbLruPageCache::default();
         for i in 0..10000 {
             let key = insert_page(&mut cache, i);
             assert_eq!(cache.peek(&key, false).unwrap().get().id, i);
@@ -1010,7 +1011,7 @@ mod tests {
 
     #[test]
     fn test_resize_smaller_success() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         for i in 1..=5 {
             let _ = insert_page(&mut cache, i);
         }
@@ -1025,7 +1026,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Attempted to insert different page with same key")]
     fn test_resize_larger() {
-        let mut cache = DumbLruPageCache::new(2);
+        let mut cache = DumbLruPageCache::default();
         let _ = insert_page(&mut cache, 1);
         let _ = insert_page(&mut cache, 2);
         assert_eq!(cache.len(), 2);
@@ -1047,7 +1048,7 @@ mod tests {
     #[test]
     #[ignore = "for now let's not track active refs"]
     fn test_resize_with_active_references() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         let page1 = page_with_content(1);
         let page2 = page_with_content(2);
         let page3 = page_with_content(3);
@@ -1069,7 +1070,7 @@ mod tests {
 
     #[test]
     fn test_resize_to_zero() {
-        let mut cache = DumbLruPageCache::new(5);
+        let mut cache = DumbLruPageCache::default();
         for i in 1..=3 {
             let _ = insert_page(&mut cache, i);
         }
