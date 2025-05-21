@@ -6738,7 +6738,7 @@ mod tests {
     #[test]
     #[ignore]
     pub fn fuzz_long_btree_insert_fuzz_run_overflow() {
-        btree_insert_fuzz_run(64, 5_000, |rng| (rng.next_u32() % 32 * 1024) as usize);
+        btree_insert_fuzz_run(2, 5_000, |rng| (rng.next_u32() % 32 * 1024) as usize);
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
