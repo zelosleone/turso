@@ -294,10 +294,22 @@ impl DumbLruPageCache {
     }
 
     pub fn clear(&mut self) -> Result<(), CacheError> {
-        let keys_to_remove: Vec<PageCacheKey> = self.map.borrow().keys_cloned();
-        for key in keys_to_remove {
-            self.delete(key)?;
+        let mut current = *self.head.borrow();
+        while let Some(current_entry) = current {
+            unsafe {
+                self.map.borrow_mut().remove(&current_entry.as_ref().key);
+            }
+            let next = unsafe { current_entry.as_ref().next };
+            self.detach(current_entry, true)?;
+            unsafe {
+                assert!(!current_entry.as_ref().page.is_dirty());
+            }
+            unsafe { std::ptr::drop_in_place(current_entry.as_ptr()) };
+            current = next;
         }
+        let _ = self.head.take();
+        let _ = self.tail.take();
+
         assert!(self.head.borrow().is_none());
         assert!(self.tail.borrow().is_none());
         assert!(self.map.borrow().is_empty());
@@ -584,6 +596,13 @@ impl PageHashMap {
             new_hash_map.insert(node.key.clone(), node.value);
         }
         new_hash_map
+    }
+
+    pub fn clear(&mut self) {
+        for bucket in &mut self.buckets {
+            bucket.clear();
+        }
+        self.size = 0;
     }
 }
 
