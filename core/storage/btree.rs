@@ -8,7 +8,7 @@ use crate::{
         },
     },
     translate::{collate::CollationSeq, plan::IterationDirection},
-    types::IndexKeySortOrder,
+    types::{IndexKeyInfo, IndexKeySortOrder},
     MvCursor,
 };
 
@@ -298,6 +298,15 @@ impl WriteInfo {
     }
 }
 
+/// Whether the cursor is currently pointing to a record.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum CursorHasRecord {
+    Yes {
+        rowid: Option<u64>, // not all indexes and btrees have rowids, so this is optional.
+    },
+    No,
+}
+
 /// Holds the state machine for the operation that was in flight when the cursor
 /// was suspended due to IO.
 enum CursorState {
@@ -383,7 +392,7 @@ pub struct BTreeCursor {
     /// Page id of the root page used to go back up fast.
     root_page: usize,
     /// Rowid and record are stored before being consumed.
-    rowid: Cell<Option<u64>>,
+    has_record: Cell<CursorHasRecord>,
     null_flag: bool,
     /// Index internal pages are consumed on the way up, so we store going upwards flag in case
     /// we just moved to a parent page and the parent page is an internal index page which requires
@@ -399,8 +408,7 @@ pub struct BTreeCursor {
     stack: PageStack,
     /// Reusable immutable record, used to allow better allocation strategy.
     reusable_immutable_record: RefCell<Option<ImmutableRecord>>,
-    empty_record: Cell<bool>,
-    pub index_key_sort_order: IndexKeySortOrder,
+    pub index_key_info: Option<IndexKeyInfo>,
     /// Maintain count of the number of records in the btree. Used for the `Count` opcode
     count: usize,
     /// Stores the cursor context before rebalancing so that a seek can be done later
@@ -424,7 +432,7 @@ impl BTreeCursor {
             mv_cursor,
             pager,
             root_page,
-            rowid: Cell::new(None),
+            has_record: Cell::new(CursorHasRecord::No),
             null_flag: false,
             going_upwards: false,
             state: CursorState::None,
@@ -435,8 +443,7 @@ impl BTreeCursor {
                 stack: RefCell::new([const { None }; BTCURSOR_MAX_DEPTH + 1]),
             },
             reusable_immutable_record: RefCell::new(None),
-            empty_record: Cell::new(true),
-            index_key_sort_order: IndexKeySortOrder::default(),
+            index_key_info: None,
             count: 0,
             context: None,
             valid_state: CursorValidState::Valid,
@@ -459,10 +466,36 @@ impl BTreeCursor {
         index: &Index,
         collations: Vec<CollationSeq>,
     ) -> Self {
-        let index_key_sort_order = IndexKeySortOrder::from_index(index);
         let mut cursor = Self::new(mv_cursor, pager, root_page, collations);
-        cursor.index_key_sort_order = index_key_sort_order;
+        cursor.index_key_info = Some(IndexKeyInfo::new_from_index(index));
         cursor
+    }
+
+    pub fn key_sort_order(&self) -> IndexKeySortOrder {
+        match &self.index_key_info {
+            Some(index_key_info) => index_key_info.sort_order,
+            None => IndexKeySortOrder::default(),
+        }
+    }
+
+    pub fn has_rowid(&self) -> bool {
+        match &self.index_key_info {
+            Some(index_key_info) => index_key_info.has_rowid,
+            None => true, // currently we don't support WITHOUT ROWID tables
+        }
+    }
+
+    pub fn get_index_rowid_from_record(&self) -> Option<u64> {
+        if !self.has_rowid() {
+            return None;
+        }
+        let rowid = match self.get_immutable_record().as_ref().unwrap().last_value() {
+            Some(RefValue::Integer(rowid)) => *rowid as u64,
+            _ => unreachable!(
+                "index where has_rowid() is true should have an integer rowid as the last value"
+            ),
+        };
+        Some(rowid)
     }
 
     /// Check if the table is empty.
@@ -484,7 +517,7 @@ impl BTreeCursor {
     fn get_prev_record(
         &mut self,
         predicate: Option<(SeekKey<'_>, SeekOp)>,
-    ) -> Result<CursorResult<Option<u64>>> {
+    ) -> Result<CursorResult<CursorHasRecord>> {
         loop {
             let page = self.stack.top();
             let cell_idx = self.stack.current_cell_index();
@@ -501,7 +534,7 @@ impl BTreeCursor {
                         self.stack.pop();
                     } else {
                         // moved to begin of btree
-                        return Ok(CursorResult::Ok(None));
+                        return Ok(CursorResult::Ok(CursorHasRecord::No));
                     }
                 }
                 // continue to next loop to get record from the new page
@@ -566,7 +599,9 @@ impl BTreeCursor {
                         )?
                     };
                     self.stack.retreat();
-                    return Ok(CursorResult::Ok(Some(_rowid)));
+                    return Ok(CursorResult::Ok(CursorHasRecord::Yes {
+                        rowid: Some(_rowid),
+                    }));
                 }
                 BTreeCell::IndexInteriorCell(IndexInteriorCell {
                     payload,
@@ -603,12 +638,9 @@ impl BTreeCursor {
                     // We then mark going_upwards=false so that we go back down the tree on the next invocation.
                     self.going_upwards = false;
                     if predicate.is_none() {
-                        let rowid = match self.get_immutable_record().as_ref().unwrap().last_value()
-                        {
-                            Some(RefValue::Integer(rowid)) => *rowid as u64,
-                            _ => unreachable!("index cells should have an integer rowid"),
-                        };
-                        return Ok(CursorResult::Ok(Some(rowid)));
+                        return Ok(CursorResult::Ok(CursorHasRecord::Yes {
+                            rowid: self.get_index_rowid_from_record(),
+                        }));
                     }
 
                     let (key, op) = predicate.as_ref().unwrap();
@@ -624,7 +656,7 @@ impl BTreeCursor {
                         let order = compare_immutable(
                             record_slice_same_num_cols,
                             index_key.get_values(),
-                            self.index_key_sort_order,
+                            self.key_sort_order(),
                             &self.collations,
                         );
                         order
@@ -637,12 +669,9 @@ impl BTreeCursor {
                         _ => unreachable!("Seek GT/GE should not happen in get_prev_record() because we are iterating backwards"),
                     };
                     if found {
-                        let rowid = match self.get_immutable_record().as_ref().unwrap().last_value()
-                        {
-                            Some(RefValue::Integer(rowid)) => *rowid as u64,
-                            _ => unreachable!("index cells should have an integer rowid"),
-                        };
-                        return Ok(CursorResult::Ok(Some(rowid)));
+                        return Ok(CursorResult::Ok(CursorHasRecord::Yes {
+                            rowid: self.get_index_rowid_from_record(),
+                        }));
                     } else {
                         continue;
                     }
@@ -663,12 +692,9 @@ impl BTreeCursor {
 
                     self.stack.retreat();
                     if predicate.is_none() {
-                        let rowid = match self.get_immutable_record().as_ref().unwrap().last_value()
-                        {
-                            Some(RefValue::Integer(rowid)) => *rowid as u64,
-                            _ => unreachable!("index cells should have an integer rowid"),
-                        };
-                        return Ok(CursorResult::Ok(Some(rowid)));
+                        return Ok(CursorResult::Ok(CursorHasRecord::Yes {
+                            rowid: self.get_index_rowid_from_record(),
+                        }));
                     }
                     let (key, op) = predicate.as_ref().unwrap();
                     let SeekKey::IndexKey(index_key) = key else {
@@ -683,7 +709,7 @@ impl BTreeCursor {
                         let order = compare_immutable(
                             record_slice_same_num_cols,
                             index_key.get_values(),
-                            self.index_key_sort_order,
+                            self.key_sort_order(),
                             &self.collations,
                         );
                         order
@@ -695,12 +721,9 @@ impl BTreeCursor {
                         _ => unreachable!("Seek GT/GE should not happen in get_prev_record() because we are iterating backwards"),
                     };
                     if found {
-                        let rowid = match self.get_immutable_record().as_ref().unwrap().last_value()
-                        {
-                            Some(RefValue::Integer(rowid)) => *rowid as u64,
-                            _ => unreachable!("index cells should have an integer rowid"),
-                        };
-                        return Ok(CursorResult::Ok(Some(rowid)));
+                        return Ok(CursorResult::Ok(CursorHasRecord::Yes {
+                            rowid: self.get_index_rowid_from_record(),
+                        }));
                     } else {
                         continue;
                     }
@@ -1109,7 +1132,7 @@ impl BTreeCursor {
     fn get_next_record(
         &mut self,
         predicate: Option<(SeekKey<'_>, SeekOp)>,
-    ) -> Result<CursorResult<Option<u64>>> {
+    ) -> Result<CursorResult<CursorHasRecord>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             let mut mv_cursor = mv_cursor.borrow_mut();
             let rowid = mv_cursor.current_row_id();
@@ -1121,9 +1144,11 @@ impl BTreeCursor {
                         self.get_immutable_record_or_create().as_mut().unwrap(),
                     )?;
                     mv_cursor.forward();
-                    return Ok(CursorResult::Ok(Some(rowid.row_id)));
+                    return Ok(CursorResult::Ok(CursorHasRecord::Yes {
+                        rowid: Some(rowid.row_id),
+                    }));
                 }
-                None => return Ok(CursorResult::Ok(None)),
+                None => return Ok(CursorResult::Ok(CursorHasRecord::No)),
             }
         }
         loop {
@@ -1158,7 +1183,7 @@ impl BTreeCursor {
                             self.stack.pop();
                             continue;
                         } else {
-                            return Ok(CursorResult::Ok(None));
+                            return Ok(CursorResult::Ok(CursorHasRecord::No));
                         }
                     }
                 }
@@ -1173,7 +1198,7 @@ impl BTreeCursor {
                     self.stack.pop();
                     continue;
                 } else {
-                    return Ok(CursorResult::Ok(None));
+                    return Ok(CursorResult::Ok(CursorHasRecord::No));
                 }
             }
             assert!(cell_idx < contents.cell_count());
@@ -1215,7 +1240,9 @@ impl BTreeCursor {
                         )?
                     };
                     self.stack.advance();
-                    return Ok(CursorResult::Ok(Some(*_rowid)));
+                    return Ok(CursorResult::Ok(CursorHasRecord::Yes {
+                        rowid: Some(*_rowid),
+                    }));
                 }
                 BTreeCell::IndexInteriorCell(IndexInteriorCell {
                     payload,
@@ -1244,12 +1271,10 @@ impl BTreeCursor {
                     self.going_upwards = false;
                     self.stack.advance();
                     if predicate.is_none() {
-                        let rowid = match self.get_immutable_record().as_ref().unwrap().last_value()
-                        {
-                            Some(RefValue::Integer(rowid)) => *rowid as u64,
-                            _ => unreachable!("index cells should have an integer rowid"),
+                        let cursor_has_record = CursorHasRecord::Yes {
+                            rowid: self.get_index_rowid_from_record(),
                         };
-                        return Ok(CursorResult::Ok(Some(rowid)));
+                        return Ok(CursorResult::Ok(cursor_has_record));
                     }
 
                     let (key, op) = predicate.as_ref().unwrap();
@@ -1264,7 +1289,7 @@ impl BTreeCursor {
                         let order = compare_immutable(
                             record_slice_same_num_cols,
                             index_key.get_values(),
-                            self.index_key_sort_order,
+                            self.key_sort_order(),
                             &self.collations,
                         );
                         order
@@ -1276,12 +1301,9 @@ impl BTreeCursor {
                         _ => unreachable!("Seek LE/LT should not happen in get_next_record() because we are iterating forwards"),
                     };
                     if found {
-                        let rowid = match self.get_immutable_record().as_ref().unwrap().last_value()
-                        {
-                            Some(RefValue::Integer(rowid)) => *rowid as u64,
-                            _ => unreachable!("index cells should have an integer rowid"),
-                        };
-                        return Ok(CursorResult::Ok(Some(rowid)));
+                        return Ok(CursorResult::Ok(CursorHasRecord::Yes {
+                            rowid: self.get_index_rowid_from_record(),
+                        }));
                     } else {
                         continue;
                     }
@@ -1306,12 +1328,10 @@ impl BTreeCursor {
 
                     self.stack.advance();
                     if predicate.is_none() {
-                        let rowid = match self.get_immutable_record().as_ref().unwrap().last_value()
-                        {
-                            Some(RefValue::Integer(rowid)) => *rowid as u64,
-                            _ => unreachable!("index cells should have an integer rowid"),
+                        let cursor_has_record = CursorHasRecord::Yes {
+                            rowid: self.get_index_rowid_from_record(),
                         };
-                        return Ok(CursorResult::Ok(Some(rowid)));
+                        return Ok(CursorResult::Ok(cursor_has_record));
                     }
                     let (key, op) = predicate.as_ref().unwrap();
                     let SeekKey::IndexKey(index_key) = key else {
@@ -1325,7 +1345,7 @@ impl BTreeCursor {
                         let order = compare_immutable(
                             record_slice_same_num_cols,
                             index_key.get_values(),
-                            self.index_key_sort_order,
+                            self.key_sort_order(),
                             &self.collations,
                         );
                         order
@@ -1337,12 +1357,10 @@ impl BTreeCursor {
                         _ => todo!("not implemented: {:?}", op),
                     };
                     if found {
-                        let rowid = match self.get_immutable_record().as_ref().unwrap().last_value()
-                        {
-                            Some(RefValue::Integer(rowid)) => *rowid as u64,
-                            _ => unreachable!("index cells should have an integer rowid"),
+                        let cursor_has_record = CursorHasRecord::Yes {
+                            rowid: self.get_index_rowid_from_record(),
                         };
-                        return Ok(CursorResult::Ok(Some(rowid)));
+                        return Ok(CursorResult::Ok(cursor_has_record));
                     } else {
                         continue;
                     }
@@ -1355,7 +1373,7 @@ impl BTreeCursor {
     /// This may be used to seek to a specific record in a point query (e.g. SELECT * FROM table WHERE col = 10)
     /// or e.g. find the first record greater than the seek key in a range query (e.g. SELECT * FROM table WHERE col > 10).
     /// We don't include the rowid in the comparison and that's why the last value from the record is not included.
-    fn do_seek(&mut self, key: SeekKey<'_>, op: SeekOp) -> Result<CursorResult<Option<u64>>> {
+    fn do_seek(&mut self, key: SeekKey<'_>, op: SeekOp) -> Result<CursorResult<CursorHasRecord>> {
         match key {
             SeekKey::TableRowId(rowid) => {
                 return self.tablebtree_seek(rowid, op);
@@ -1606,7 +1624,7 @@ impl BTreeCursor {
                 let interior_cell_vs_index_key = compare_immutable(
                     record_slice_equal_number_of_cols,
                     index_key.get_values(),
-                    self.index_key_sort_order,
+                    self.key_sort_order(),
                     &self.collations,
                 );
                 // in sqlite btrees left child pages have <= keys.
@@ -1663,7 +1681,7 @@ impl BTreeCursor {
         &mut self,
         rowid: u64,
         seek_op: SeekOp,
-    ) -> Result<CursorResult<Option<u64>>> {
+    ) -> Result<CursorResult<CursorHasRecord>> {
         assert!(self.mv_cursor.is_none());
         self.move_to_root();
         return_if_io!(self.tablebtree_move_to(rowid, seek_op));
@@ -1686,7 +1704,7 @@ impl BTreeCursor {
         loop {
             if min > max {
                 let Some(nearest_matching_cell) = nearest_matching_cell else {
-                    return Ok(CursorResult::Ok(None));
+                    return Ok(CursorResult::Ok(CursorHasRecord::No));
                 };
                 let matching_cell = contents.cell_get(
                     nearest_matching_cell,
@@ -1722,7 +1740,9 @@ impl BTreeCursor {
                     nearest_matching_cell as i32 - 1
                 };
                 self.stack.set_cell_index(cell_idx as i32);
-                return Ok(CursorResult::Ok(Some(cell_rowid)));
+                return Ok(CursorResult::Ok(CursorHasRecord::Yes {
+                    rowid: Some(cell_rowid),
+                }));
             }
 
             let cur_cell_idx = (min + max) >> 1; // rustc generates extra insns for (min+max)/2 due to them being isize. we know min&max are >=0 here.
@@ -1773,7 +1793,9 @@ impl BTreeCursor {
                     cur_cell_idx - 1
                 };
                 self.stack.set_cell_index(cell_idx as i32);
-                return Ok(CursorResult::Ok(Some(cell_rowid)));
+                return Ok(CursorResult::Ok(CursorHasRecord::Yes {
+                    rowid: Some(cell_rowid),
+                }));
             }
 
             if found {
@@ -1810,7 +1832,7 @@ impl BTreeCursor {
         &mut self,
         key: &ImmutableRecord,
         seek_op: SeekOp,
-    ) -> Result<CursorResult<Option<u64>>> {
+    ) -> Result<CursorResult<CursorHasRecord>> {
         self.move_to_root();
         return_if_io!(self.indexbtree_move_to(key, seek_op));
 
@@ -1887,15 +1909,12 @@ impl BTreeCursor {
                         self.get_immutable_record_or_create().as_mut().unwrap(),
                     )?
                 }
-                let record = self.get_immutable_record();
-                let record = record.as_ref().unwrap();
-                let rowid = match record.last_value() {
-                    Some(RefValue::Integer(rowid)) => *rowid as u64,
-                    _ => unreachable!("index cells should have an integer rowid"),
+                let cursor_has_record = CursorHasRecord::Yes {
+                    rowid: self.get_index_rowid_from_record(),
                 };
                 self.stack.set_cell_index(nearest_matching_cell as i32);
                 self.stack.next_cell_in_direction(iter_dir);
-                return Ok(CursorResult::Ok(Some(rowid)));
+                return Ok(CursorResult::Ok(cursor_has_record));
             }
 
             let cur_cell_idx = (min + max) >> 1; // rustc generates extra insns for (min+max)/2 due to them being isize. we know min&max are >=0 here.
@@ -1931,7 +1950,7 @@ impl BTreeCursor {
             let cmp = compare_immutable(
                 record_slice_equal_number_of_cols,
                 key.get_values(),
-                self.index_key_sort_order,
+                self.key_sort_order(),
                 &self.collations,
             );
             let found = match seek_op {
@@ -2099,8 +2118,8 @@ impl BTreeCursor {
                                     .as_ref()
                                     .unwrap()
                                     .get_values(),
-                        self.index_key_sort_order,
-                        &self.collations,
+                                    self.key_sort_order(),
+                            &self.collations,
                         ) == Ordering::Equal {
 
                         tracing::debug!("insert_into_page: found exact match with cell_idx={cell_idx}, overwriting");
@@ -3746,7 +3765,7 @@ impl BTreeCursor {
                     let order = compare_immutable(
                         key.to_index_key_values(),
                         self.get_immutable_record().as_ref().unwrap().get_values(),
-                        self.index_key_sort_order,
+                        self.key_sort_order(),
                         &self.collations,
                     );
                     match order {
@@ -3792,18 +3811,18 @@ impl BTreeCursor {
 
     pub fn seek_to_last(&mut self) -> Result<CursorResult<()>> {
         return_if_io!(self.move_to_rightmost());
-        let rowid = return_if_io!(self.get_next_record(None));
-        if rowid.is_none() {
+        let cursor_has_record = return_if_io!(self.get_next_record(None));
+        if cursor_has_record == CursorHasRecord::No {
             let is_empty = return_if_io!(self.is_empty_table());
             assert!(is_empty);
             return Ok(CursorResult::Ok(()));
         }
-        self.rowid.replace(rowid);
+        self.has_record.replace(cursor_has_record);
         Ok(CursorResult::Ok(()))
     }
 
     pub fn is_empty(&self) -> bool {
-        self.empty_record.get()
+        CursorHasRecord::No == self.has_record.get()
     }
 
     pub fn root_page(&self) -> usize {
@@ -3812,15 +3831,13 @@ impl BTreeCursor {
 
     pub fn rewind(&mut self) -> Result<CursorResult<()>> {
         if self.mv_cursor.is_some() {
-            let rowid = return_if_io!(self.get_next_record(None));
-            self.rowid.replace(rowid);
-            self.empty_record.replace(rowid.is_none());
+            let cursor_has_record = return_if_io!(self.get_next_record(None));
+            self.has_record.replace(cursor_has_record);
         } else {
             self.move_to_root();
 
-            let rowid = return_if_io!(self.get_next_record(None));
-            self.rowid.replace(rowid);
-            self.empty_record.replace(rowid.is_none());
+            let cursor_has_record = return_if_io!(self.get_next_record(None));
+            self.has_record.replace(cursor_has_record);
         }
         Ok(CursorResult::Ok(()))
     }
@@ -3835,18 +3852,16 @@ impl BTreeCursor {
 
     pub fn next(&mut self) -> Result<CursorResult<()>> {
         let _ = self.restore_context()?;
-        let rowid = return_if_io!(self.get_next_record(None));
-        self.rowid.replace(rowid);
-        self.empty_record.replace(rowid.is_none());
+        let cursor_has_record = return_if_io!(self.get_next_record(None));
+        self.has_record.replace(cursor_has_record);
         Ok(CursorResult::Ok(()))
     }
 
     pub fn prev(&mut self) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
         match self.get_prev_record(None)? {
-            CursorResult::Ok(rowid) => {
-                self.rowid.replace(rowid);
-                self.empty_record.replace(rowid.is_none());
+            CursorResult::Ok(cursor_has_record) => {
+                self.has_record.replace(cursor_has_record);
                 Ok(CursorResult::Ok(()))
             }
             CursorResult::IO => Ok(CursorResult::IO),
@@ -3858,7 +3873,10 @@ impl BTreeCursor {
             let mv_cursor = mv_cursor.borrow();
             return Ok(mv_cursor.current_row_id().map(|rowid| rowid.row_id));
         }
-        Ok(self.rowid.get())
+        Ok(match self.has_record.get() {
+            CursorHasRecord::Yes { rowid: Some(rowid) } => Some(rowid),
+            _ => None,
+        })
     }
 
     pub fn seek(&mut self, key: SeekKey<'_>, op: SeekOp) -> Result<CursorResult<bool>> {
@@ -3867,10 +3885,12 @@ impl BTreeCursor {
         // because it might have been set to false by an unmatched left-join row during the previous iteration
         // on the outer loop.
         self.set_null_flag(false);
-        let rowid = return_if_io!(self.do_seek(key, op));
-        self.rowid.replace(rowid);
-        self.empty_record.replace(rowid.is_none());
-        Ok(CursorResult::Ok(rowid.is_some()))
+        let cursor_has_record = return_if_io!(self.do_seek(key, op));
+        self.has_record.replace(cursor_has_record);
+        Ok(CursorResult::Ok(matches!(
+            cursor_has_record,
+            CursorHasRecord::Yes { .. }
+        )))
     }
 
     pub fn record(&self) -> Ref<Option<ImmutableRecord>> {
@@ -3909,7 +3929,9 @@ impl BTreeCursor {
                 return_if_io!(self.insert_into_page(key));
                 if key.maybe_rowid().is_some() {
                     let int_key = key.to_rowid();
-                    self.rowid.replace(Some(int_key));
+                    self.has_record.replace(CursorHasRecord::Yes {
+                        rowid: Some(int_key),
+                    });
                 }
             }
         };
@@ -3952,9 +3974,9 @@ impl BTreeCursor {
                         page.get_contents().page_type(),
                         PageType::TableLeaf | PageType::TableInterior
                     ) {
-                        let _target_rowid = match self.rowid.get() {
-                            Some(rowid) => rowid,
-                            None => {
+                        let _target_rowid = match self.has_record.get() {
+                            CursorHasRecord::Yes { rowid: Some(rowid) } => rowid,
+                            _ => {
                                 self.state = CursorState::None;
                                 return Ok(CursorResult::Ok(()));
                             }
@@ -4131,7 +4153,11 @@ impl BTreeCursor {
                     let target_key = if page.is_index() {
                         DeleteSavepoint::Payload(self.record().as_ref().unwrap().clone())
                     } else {
-                        DeleteSavepoint::Rowid(self.rowid.get().unwrap())
+                        let CursorHasRecord::Yes { rowid: Some(rowid) } = self.has_record.get()
+                        else {
+                            panic!("cursor should be pointing to a record with a rowid");
+                        };
+                        DeleteSavepoint::Rowid(rowid)
                     };
 
                     let delete_info = self.state.mut_delete_info().unwrap();
@@ -4556,9 +4582,12 @@ impl BTreeCursor {
         // build the new payload
         let page_type = page_ref.get().contents.as_ref().unwrap().page_type();
         let mut new_payload = Vec::with_capacity(record.len());
+        let CursorHasRecord::Yes { rowid } = self.has_record.get() else {
+            panic!("cursor should be pointing to a record");
+        };
         fill_cell_payload(
             page_type,
-            self.rowid.get(),
+            rowid,
             &mut new_payload,
             record,
             self.usable_space() as u16,
@@ -4737,11 +4766,13 @@ impl BTreeCursor {
 
     /// Save cursor context, to be restored later
     pub fn save_context(&mut self) {
-        if let Some(rowid) = self.rowid.get() {
+        if let CursorHasRecord::Yes { rowid } = self.has_record.get() {
             self.valid_state = CursorValidState::RequireSeek;
             match self.stack.top().get_contents().page_type() {
                 PageType::TableInterior | PageType::TableLeaf => {
-                    self.context = Some(CursorContext::TableRowId(rowid));
+                    self.context = Some(CursorContext::TableRowId(rowid.expect(
+                        "table cells should have a rowid since we don't support WITHOUT ROWID tables",
+                    )));
                 }
                 PageType::IndexInterior | PageType::IndexLeaf => {
                     self.context = Some(CursorContext::IndexKeyRowId(
@@ -7587,8 +7618,12 @@ mod tests {
         let mut cursor = BTreeCursor::new_table(None, pager.clone(), root_page);
         cursor.move_to_root();
         for i in 0..iterations {
-            let rowid = run_until_done(|| cursor.get_next_record(None), pager.deref()).unwrap();
-            assert_eq!(rowid.unwrap(), i as u64, "got!=expected");
+            let CursorHasRecord::Yes { rowid: Some(rowid) } =
+                run_until_done(|| cursor.get_next_record(None), pager.deref()).unwrap()
+            else {
+                panic!("expected Some(rowid) but got {:?}", cursor.has_record.get());
+            };
+            assert_eq!(rowid, i as u64, "got!=expected");
         }
     }
 

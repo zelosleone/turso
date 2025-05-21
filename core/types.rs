@@ -1100,6 +1100,31 @@ impl Default for IndexKeySortOrder {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// Metadata about an index, used for handling and comparing index keys.
+///
+/// This struct provides information about the sorting order of columns,
+/// whether the index includes a row ID, and the total number of columns
+/// in the index.
+pub struct IndexKeyInfo {
+    /// Specifies the sorting order (ascending or descending) for each column in the index.
+    pub sort_order: IndexKeySortOrder,
+    /// Indicates whether the index includes a row ID column.
+    pub has_rowid: bool,
+    /// The total number of columns in the index, including the row ID column if present.
+    pub num_cols: usize,
+}
+
+impl IndexKeyInfo {
+    pub fn new_from_index(index: &Index) -> Self {
+        Self {
+            sort_order: IndexKeySortOrder::from_index(index),
+            has_rowid: index.has_rowid,
+            num_cols: index.columns.len() + (index.has_rowid as usize),
+        }
+    }
+}
+
 pub fn compare_immutable(
     l: &[RefValue],
     r: &[RefValue],

@@ -833,6 +833,12 @@ pub struct Index {
     pub columns: Vec<IndexColumn>,
     pub unique: bool,
     pub ephemeral: bool,
+    /// Does the index have a rowid as the last column?
+    /// This is the case for btree indexes (persistent or ephemeral) that
+    /// have been created based on a table with a rowid.
+    /// For example, WITHOUT ROWID tables (not supported in Limbo yet),
+    /// and  SELECT DISTINCT ephemeral indexes will not have a rowid.
+    pub has_rowid: bool,
 }
 
 #[allow(dead_code)]
@@ -886,6 +892,7 @@ impl Index {
                     columns: index_columns,
                     unique,
                     ephemeral: false,
+                    has_rowid: table.has_rowid,
                 })
             }
             _ => todo!("Expected create index statement"),
@@ -948,6 +955,7 @@ impl Index {
                 columns: primary_keys,
                 unique: true,
                 ephemeral: false,
+                has_rowid: table.has_rowid,
             });
         }
 
@@ -979,6 +987,7 @@ impl Index {
                         }],
                         unique: true,
                         ephemeral: false,
+                        has_rowid: table.has_rowid,
                     })
                 } else {
                     None
@@ -1050,6 +1059,7 @@ impl Index {
                         columns: index_cols.collect(),
                         unique: true,
                         ephemeral: false,
+                        has_rowid: table.has_rowid,
                     }
                 });
             indices.extend(unique_set_indices);

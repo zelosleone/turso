@@ -101,6 +101,7 @@ pub fn init_loop(
                 pos_in_table: 0,
                 collation: None, // FIXME: this should be inferred from the expression
             }],
+            has_rowid: false,
             unique: false,
         });
         let cursor_id = program.alloc_cursor_id(
