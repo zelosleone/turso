@@ -5,8 +5,11 @@ use std::rc::Rc;
 
 use crate::ast;
 use crate::ext::VTabImpl;
+use crate::schema::BTreeTable;
+use crate::schema::Column;
 use crate::schema::Schema;
 use crate::schema::Table;
+use crate::schema::Type;
 use crate::storage::pager::CreateBTreeFlags;
 use crate::translate::ProgramBuilder;
 use crate::translate::ProgramBuilderOpts;
@@ -626,9 +629,9 @@ pub fn translate_drop_table(
 ) -> Result<ProgramBuilder> {
     let opts = ProgramBuilderOpts {
         query_mode,
-        num_cursors: 1,
-        approx_num_insns: 30,
-        approx_num_labels: 1,
+        num_cursors: 3,
+        approx_num_insns: 40,
+        approx_num_labels: 4,
     };
     program.extend(&opts);
     let table = schema.get_table(tbl_name.name.0.as_str());
@@ -645,23 +648,23 @@ pub fn translate_drop_table(
 
     let null_reg = program.alloc_register(); //  r1
     program.emit_null(null_reg, None);
-    let tbl_name_reg = program.alloc_register(); //  r2
+    let r2_reg = program.alloc_register(); //  r2
     let table_reg = program.emit_string8_new_reg(tbl_name.name.0.clone()); //  r3
     program.mark_last_insn_constant();
     let table_type = program.emit_string8_new_reg("trigger".to_string()); //  r4
     program.mark_last_insn_constant();
     let row_id_reg = program.alloc_register(); //  r5
 
-    let table_name = "sqlite_schema";
-    let schema_table = schema.get_btree_table(table_name).unwrap();
-    let sqlite_schema_cursor_id = program.alloc_cursor_id(
-        Some(table_name.to_string()),
+    let schema_table = schema.get_btree_table(SQLITE_TABLEID).unwrap();
+    let sqlite_schema_cursor_id_0 = program.alloc_cursor_id(
+        //  cursor 0
+        Some(SQLITE_TABLEID.to_string()),
         CursorType::BTreeTable(schema_table.clone()),
     );
     program.emit_insn(Insn::OpenWrite {
-        cursor_id: sqlite_schema_cursor_id,
+        cursor_id: sqlite_schema_cursor_id_0,
         root_page: 1usize.into(),
-        name: tbl_name.name.0.clone(),
+        name: SQLITE_TABLEID.to_string(),
     });
 
     //  1. Remove all entries from the schema table related to the table we are dropping, except for triggers
@@ -669,48 +672,48 @@ pub fn translate_drop_table(
     let end_metadata_label = program.allocate_label();
     let metadata_loop = program.allocate_label();
     program.emit_insn(Insn::Rewind {
-        cursor_id: sqlite_schema_cursor_id,
+        cursor_id: sqlite_schema_cursor_id_0,
         pc_if_empty: end_metadata_label,
     });
     program.preassign_label_to_next_insn(metadata_loop);
 
     //  start loop on schema table
     program.emit_insn(Insn::Column {
-        cursor_id: sqlite_schema_cursor_id,
+        cursor_id: sqlite_schema_cursor_id_0,
         column: 2,
-        dest: tbl_name_reg,
+        dest: r2_reg,
     });
     let next_label = program.allocate_label();
     program.emit_insn(Insn::Ne {
-        lhs: tbl_name_reg,
+        lhs: r2_reg,
         rhs: table_reg,
         target_pc: next_label,
         flags: CmpInsFlags::default(),
         collation: program.curr_collation(),
     });
     program.emit_insn(Insn::Column {
-        cursor_id: sqlite_schema_cursor_id,
+        cursor_id: sqlite_schema_cursor_id_0,
         column: 0,
-        dest: tbl_name_reg,
+        dest: r2_reg,
     });
     program.emit_insn(Insn::Eq {
-        lhs: tbl_name_reg,
+        lhs: r2_reg,
         rhs: table_type,
         target_pc: next_label,
         flags: CmpInsFlags::default(),
         collation: program.curr_collation(),
     });
     program.emit_insn(Insn::RowId {
-        cursor_id: sqlite_schema_cursor_id,
+        cursor_id: sqlite_schema_cursor_id_0,
         dest: row_id_reg,
     });
     program.emit_insn(Insn::Delete {
-        cursor_id: sqlite_schema_cursor_id,
+        cursor_id: sqlite_schema_cursor_id_0,
     });
 
     program.resolve_label(next_label, program.offset());
     program.emit_insn(Insn::Next {
-        cursor_id: sqlite_schema_cursor_id,
+        cursor_id: sqlite_schema_cursor_id_0,
         pc_if_next: metadata_loop,
     });
     program.preassign_label_to_next_insn(end_metadata_label);
@@ -724,9 +727,6 @@ pub fn translate_drop_table(
             former_root_reg: 0, //  no autovacuum (https://www.sqlite.org/opcode.html#Destroy)
             is_temp: 0,
         });
-        let null_reg_1 = program.alloc_register();
-        let null_reg_2 = program.alloc_register();
-        program.emit_null(null_reg_1, Some(null_reg_2));
 
         //  3. TODO: Open an ephemeral table, and read over triggers from schema table into ephemeral table
         //  Requires support via https://github.com/tursodatabase/limbo/pull/768
@@ -740,7 +740,7 @@ pub fn translate_drop_table(
         Table::BTree(table) => {
             program.emit_insn(Insn::Destroy {
                 root: table.root_page,
-                former_root_reg: 0, //  no autovacuum (https://www.sqlite.org/opcode.html#Destroy)
+                former_root_reg: r2_reg,
                 is_temp: 0,
             });
         }
@@ -767,11 +767,183 @@ pub fn translate_drop_table(
     let r7 = program.alloc_register();
     program.emit_null(r6, Some(r7));
 
-    //  3. TODO: Open an ephemeral table, and read over triggers from schema table into ephemeral table
-    //  Requires support via https://github.com/tursodatabase/limbo/pull/768
+    //  3. Open an ephemeral table, and read over entries from the schema table for entries of the table whose root page was moved in the destroy operation
 
-    //  4. TODO: Open a write cursor to the schema table and re-insert all triggers into the sqlite schema table from the ephemeral table and delete old trigger
-    //  Requires support via https://github.com/tursodatabase/limbo/pull/768
+    //  cursor id 1
+    let sqlite_schema_cursor_id_1 = program.alloc_cursor_id(
+        Some(SQLITE_TABLEID.to_owned()),
+        CursorType::BTreeTable(schema_table.clone()),
+    );
+    let simple_table_rc = Rc::new(BTreeTable {
+        root_page: 0, // Not relevant for ephemeral table definition
+        name: "ephemeral_scratch".to_string(),
+        has_rowid: true,
+        primary_key_columns: vec![],
+        columns: vec![Column {
+            name: Some("rowid".to_string()),
+            ty: Type::Integer,
+            ty_str: "INTEGER".to_string(),
+            primary_key: false,
+            is_rowid_alias: false,
+            notnull: false,
+            default: None,
+            unique: false,
+            collation: None,
+        }],
+        is_strict: false,
+        unique_sets: None,
+    });
+    //  cursor id 2
+    let ephemeral_cursor_id = program.alloc_cursor_id(
+        Some("scratch_table".to_string()),
+        CursorType::BTreeTable(simple_table_rc),
+    );
+    program.emit_insn(Insn::OpenEphemeral {
+        cursor_id: ephemeral_cursor_id,
+        is_table: true,
+    });
+    let if_not_label = program.allocate_label();
+    program.emit_insn(Insn::IfNot {
+        reg: r2_reg,
+        target_pc: if_not_label,
+        jump_if_null: true, //  jump anyway
+    });
+    program.emit_insn(Insn::OpenRead {
+        cursor_id: sqlite_schema_cursor_id_1,
+        root_page: 1usize.into(),
+    });
+
+    let r8 = program.alloc_register();
+    let r9 = program.alloc_register();
+    let r10 = program.alloc_register();
+    let r11 = program.alloc_register();
+    let r12 = program.alloc_register();
+    let r13 = program.alloc_register();
+    let _r14 = program.alloc_register(); //  Unsure why this register is allocated but putting it in here to make comparison with SQLite easier
+    let r15 = program.alloc_register();
+
+    //  Loop to copy over row id's from the schema table for rows that have the same root page as the one that was moved
+    let end_metadata_label = program.allocate_label();
+    let metadata_loop = program.allocate_label();
+    program.emit_insn(Insn::Rewind {
+        cursor_id: sqlite_schema_cursor_id_1,
+        pc_if_empty: end_metadata_label,
+    });
+    program.preassign_label_to_next_insn(metadata_loop);
+    //  start loop on schema table
+    program.emit_insn(Insn::Column {
+        cursor_id: sqlite_schema_cursor_id_1,
+        column: 3,
+        dest: r13,
+    });
+    let next_label = program.allocate_label();
+    program.emit_insn(Insn::Ne {
+        lhs: r13,
+        rhs: r2_reg,
+        target_pc: next_label,
+        flags: CmpInsFlags::default(),
+        collation: program.curr_collation(),
+    });
+    program.emit_insn(Insn::RowId {
+        cursor_id: sqlite_schema_cursor_id_1,
+        dest: r7,
+    });
+    program.emit_insn(Insn::Insert {
+        cursor: ephemeral_cursor_id,
+        key_reg: r7,
+        record_reg: r6,
+        flag: 0,
+        table_name: "scratch_table".to_string(),
+    });
+
+    program.resolve_label(next_label, program.offset());
+    program.emit_insn(Insn::Next {
+        cursor_id: sqlite_schema_cursor_id_1,
+        pc_if_next: metadata_loop,
+    });
+    program.preassign_label_to_next_insn(end_metadata_label);
+    //  End loop to copy over row id's from the schema table for rows that have the same root page as the one that was moved
+
+    program.resolve_label(if_not_label, program.offset());
+
+    //  4. Open a write cursor to the schema table and re-insert the records placed in the ephemeral table but insert the correct root page now
+    program.emit_insn(Insn::OpenWrite {
+        cursor_id: sqlite_schema_cursor_id_1,
+        root_page: 1usize.into(),
+        name: SQLITE_TABLEID.to_string(),
+    });
+
+    //  Loop to copy over row id's from the ephemeral table and then re-insert into the schema table with the correct root page
+    let end_metadata_label = program.allocate_label();
+    let metadata_loop = program.allocate_label();
+    program.emit_insn(Insn::Rewind {
+        cursor_id: ephemeral_cursor_id,
+        pc_if_empty: end_metadata_label,
+    });
+    program.preassign_label_to_next_insn(metadata_loop);
+    //  start loop on schema table
+    program.emit_insn(Insn::RowId {
+        cursor_id: ephemeral_cursor_id,
+        dest: r7,
+    });
+    let next_label = program.allocate_label();
+    program.emit_insn(Insn::NotExists {
+        cursor: sqlite_schema_cursor_id_1,
+        rowid_reg: r7,
+        target_pc: next_label,
+    });
+    program.emit_insn(Insn::Column {
+        cursor_id: sqlite_schema_cursor_id_1,
+        column: 0,
+        dest: r8,
+    });
+    program.emit_insn(Insn::Column {
+        cursor_id: sqlite_schema_cursor_id_1,
+        column: 1,
+        dest: r9,
+    });
+    program.emit_insn(Insn::Column {
+        cursor_id: sqlite_schema_cursor_id_1,
+        column: 2,
+        dest: r10,
+    });
+    let root_page = table
+        .get_root_page()
+        .try_into()
+        .expect("Failed to cast the root page to an i64");
+    program.emit_insn(Insn::Integer {
+        value: root_page,
+        dest: r11,
+    });
+    program.emit_insn(Insn::Column {
+        cursor_id: sqlite_schema_cursor_id_1,
+        column: 4,
+        dest: r12,
+    });
+    program.emit_insn(Insn::MakeRecord {
+        start_reg: r8,
+        count: 5,
+        dest_reg: r15,
+        index_name: None,
+    });
+    program.emit_insn(Insn::Delete {
+        cursor_id: sqlite_schema_cursor_id_1,
+    });
+    program.emit_insn(Insn::Insert {
+        cursor: sqlite_schema_cursor_id_1,
+        key_reg: r7,
+        record_reg: r15,
+        flag: 0,
+        table_name: SQLITE_TABLEID.to_string(),
+    });
+
+    program.resolve_label(next_label, program.offset());
+    program.emit_insn(Insn::Next {
+        cursor_id: ephemeral_cursor_id,
+        pc_if_next: metadata_loop,
+    });
+    program.preassign_label_to_next_insn(end_metadata_label);
+    //  End loop to copy over row id's from the ephemeral table and then re-insert into the schema table with the correct root page
 
     //  Drop the in-memory structures for the table
     program.emit_insn(Insn::DropTable {

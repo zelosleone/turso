@@ -4453,7 +4453,11 @@ impl BTreeCursor {
     /// ```
     ///
     /// The destruction order would be: [4',4,5,2,6,7,3,1]
-    pub fn btree_destroy(&mut self) -> Result<CursorResult<()>> {
+    pub fn btree_destroy(&mut self, former_root_page: &mut usize) -> Result<CursorResult<()>> {
+        //  TODO: For now, set the former_root_page to 0 always. This will change once [AUTO_VACUUM](https://www.sqlite.org/lang_vacuum.html) is introduced
+        //  At that point, the last root page(call this x) will be moved into the position of the root page of this table and the value of former_root_page will be set to x
+        *former_root_page = 0;
+
         if let CursorState::None = &self.state {
             self.move_to_root();
             self.state = CursorState::Destroy(DestroyInfo {
@@ -7020,7 +7024,11 @@ mod tests {
         let initial_free_pages = db_header.lock().freelist_pages;
         assert_eq!(initial_free_pages, 0, "should start with no free pages");
 
-        run_until_done(|| cursor.btree_destroy(), pager.deref())?;
+        let mut former_root_page = 0;
+        run_until_done(
+            || cursor.btree_destroy(&mut former_root_page),
+            pager.deref(),
+        )?;
 
         let pages_freed = db_header.lock().freelist_pages - initial_free_pages;
         assert_eq!(pages_freed, 3, "should free 3 pages (root + 2 leaves)");

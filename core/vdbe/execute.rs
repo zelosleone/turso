@@ -4339,7 +4339,7 @@ pub fn op_destroy(
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Destroy {
         root,
-        former_root_reg: _,
+        former_root_reg,
         is_temp,
     } = insn
     else {
@@ -4350,7 +4350,9 @@ pub fn op_destroy(
     }
     // TODO not sure if should be BTreeCursor::new_table or BTreeCursor::new_index here or neither and just pass an emtpy vec
     let mut cursor = BTreeCursor::new(None, pager.clone(), *root, Vec::new());
-    cursor.btree_destroy()?;
+    let mut former_root_page = 0;
+    cursor.btree_destroy(&mut former_root_page)?;
+    state.registers[*former_root_reg] = Register::Value(Value::Integer(former_root_page as i64));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
