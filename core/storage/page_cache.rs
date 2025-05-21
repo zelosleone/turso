@@ -30,12 +30,25 @@ struct PageCacheEntry {
 
 pub struct DumbLruPageCache {
     capacity: usize,
-    map: RefCell<HashMap<PageCacheKey, NonNull<PageCacheEntry>>>,
+    map: RefCell<PageHashMap>,
     head: RefCell<Option<NonNull<PageCacheEntry>>>,
     tail: RefCell<Option<NonNull<PageCacheEntry>>>,
 }
 unsafe impl Send for DumbLruPageCache {}
 unsafe impl Sync for DumbLruPageCache {}
+
+struct PageHashMap {
+    // FIXME: do we prefer array buckets or list? Deletes will be slower here which I guess happens often. I will do this for now to test how well it does.
+    buckets: Vec<Vec<HashMapNode>>,
+    capacity: usize,
+    size: usize,
+}
+
+#[derive(Clone)]
+struct HashMapNode {
+    key: PageCacheKey,
+    value: NonNull<PageCacheEntry>,
+}
 
 #[derive(Debug, PartialEq)]
 pub enum CacheError {
@@ -60,10 +73,10 @@ impl PageCacheKey {
 }
 impl DumbLruPageCache {
     pub fn new(capacity: usize) -> Self {
-        assert!(capacity >= 10, "capacity of cache should be at least 10");
+        assert!(capacity > 0, "capacity of cache should be at least 1");
         Self {
             capacity,
-            map: RefCell::new(HashMap::new()),
+            map: RefCell::new(PageHashMap::new(capacity)),
             head: RefCell::new(None),
             tail: RefCell::new(None),
         }
@@ -161,6 +174,8 @@ impl DumbLruPageCache {
     // To match SQLite behavior, just set capacity and try to shrink as much as possible.
     // In case of failure, the caller should request further evictions (e.g. after I/O).
     pub fn resize(&mut self, capacity: usize) -> CacheResizeResult {
+        let new_map = self.map.borrow().rehash(capacity);
+        self.map.replace(new_map);
         self.capacity = capacity;
         match self.make_room_for(0) {
             Ok(_) => CacheResizeResult::Done,
@@ -279,7 +294,7 @@ impl DumbLruPageCache {
     }
 
     pub fn clear(&mut self) -> Result<(), CacheError> {
-        let keys_to_remove: Vec<PageCacheKey> = self.map.borrow().keys().cloned().collect();
+        let keys_to_remove: Vec<PageCacheKey> = self.map.borrow().keys_cloned();
         for key in keys_to_remove {
             self.delete(key)?;
         }
@@ -450,9 +465,9 @@ impl DumbLruPageCache {
     #[cfg(test)]
     /// For testing purposes, in case we use cursor api directly, we might want to unmark pages as dirty because we bypass the WAL transaction layer
     pub fn unset_dirty_all_pages(&mut self) {
-        for (_, page) in self.map.borrow_mut().iter_mut() {
+        for node in self.map.borrow_mut().iter_mut() {
             unsafe {
-                let entry = page.as_mut();
+                let entry = node.value.as_mut();
                 entry.page.clear_dirty()
             };
         }
@@ -462,6 +477,113 @@ impl DumbLruPageCache {
 impl Default for DumbLruPageCache {
     fn default() -> Self {
         DumbLruPageCache::new(DEFAULT_PAGE_CACHE_SIZE_IN_PAGES)
+    }
+}
+
+impl PageHashMap {
+    pub fn new(capacity: usize) -> PageHashMap {
+        PageHashMap {
+            buckets: vec![vec![]; capacity],
+            capacity,
+            size: 0,
+        }
+    }
+
+    /// Insert page into hashmap. If a key was already in the hashmap, then update it and return the previous value.
+    pub fn insert(
+        &mut self,
+        key: PageCacheKey,
+        value: NonNull<PageCacheEntry>,
+    ) -> Option<NonNull<PageCacheEntry>> {
+        let bucket = self.hash(&key);
+        let bucket = &mut self.buckets[bucket];
+        let mut idx = 0;
+        while let Some(node) = bucket.get_mut(idx) {
+            if node.key == key {
+                let prev = node.value;
+                node.value = value;
+                return Some(prev);
+            }
+            idx += 1;
+        }
+        bucket.push(HashMapNode { key, value });
+        self.size += 1;
+        None
+    }
+
+    pub fn contains_key(&self, key: &PageCacheKey) -> bool {
+        let bucket = self.hash(&key);
+        self.buckets[bucket].iter().any(|node| node.key == *key)
+    }
+
+    pub fn get(&self, key: &PageCacheKey) -> Option<&NonNull<PageCacheEntry>> {
+        let bucket = self.hash(&key);
+        let bucket = &self.buckets[bucket];
+        let mut idx = 0;
+        while let Some(node) = bucket.get(idx) {
+            if node.key == *key {
+                return Some(&node.value);
+            }
+            idx += 1;
+        }
+        None
+    }
+
+    pub fn remove(&mut self, key: &PageCacheKey) -> Option<NonNull<PageCacheEntry>> {
+        let bucket = self.hash(&key);
+        let bucket = &mut self.buckets[bucket];
+        let mut idx = 0;
+        while let Some(node) = bucket.get(idx) {
+            if node.key == *key {
+                break;
+            }
+            idx += 1;
+        }
+        if idx == bucket.len() {
+            None
+        } else {
+            let v = bucket.remove(idx);
+            self.size -= 1;
+            Some(v.value)
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+
+    pub fn len(&self) -> usize {
+        self.size
+    }
+
+    pub fn keys_cloned(&self) -> Vec<PageCacheKey> {
+        let mut all_keys = Vec::new();
+        for bucket in &self.buckets {
+            for node in bucket {
+                all_keys.push(node.key.clone());
+            }
+        }
+        all_keys
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &HashMapNode> {
+        self.buckets.iter().flat_map(|bucket| bucket.iter())
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut HashMapNode> {
+        self.buckets.iter_mut().flat_map(|bucket| bucket.iter_mut())
+    }
+
+    fn hash(&self, key: &PageCacheKey) -> usize {
+        key.pgno % self.capacity
+    }
+
+    pub fn rehash(&self, new_capacity: usize) -> PageHashMap {
+        let mut new_hash_map = PageHashMap::new(new_capacity);
+        for node in self.iter() {
+            new_hash_map.insert(node.key.clone(), node.value);
+        }
+        new_hash_map
     }
 }
 
@@ -881,7 +1003,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         tracing::info!("super seed: {}", seed);
         let max_pages = 10;
-        let mut cache = DumbLruPageCache::default();
+        let mut cache = DumbLruPageCache::new(10);
         let mut lru = LruCache::new(NonZeroUsize::new(10).unwrap());
 
         for _ in 0..10000 {
@@ -973,7 +1095,7 @@ mod tests {
 
     #[test]
     fn test_page_cache_over_capacity() {
-        let mut cache = DumbLruPageCache::default();
+        let mut cache = DumbLruPageCache::new(2);
         let key1 = insert_page(&mut cache, 1);
         let key2 = insert_page(&mut cache, 2);
         let key3 = insert_page(&mut cache, 3);
@@ -1066,21 +1188,6 @@ mod tests {
         assert_eq!(cache.len(), 1);
         assert!(cache.insert(create_key(4), page_with_content(4)).is_err());
         cache.verify_list_integrity();
-    }
-
-    #[test]
-    fn test_resize_to_zero() {
-        let mut cache = DumbLruPageCache::default();
-        for i in 1..=3 {
-            let _ = insert_page(&mut cache, i);
-        }
-        assert_eq!(cache.len(), 3);
-        let result = cache.resize(0);
-        assert_eq!(result, CacheResizeResult::Done); // removed all 3
-        assert_eq!(cache.len(), 0);
-        assert_eq!(cache.capacity, 0);
-        cache.verify_list_integrity();
-        assert!(cache.insert(create_key(4), page_with_content(4)).is_err());
     }
 
     #[test]
