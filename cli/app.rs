@@ -154,7 +154,7 @@ impl Limbo {
             input_buff: String::new(),
             opts: Settings::from(opts),
             rl: None,
-            config: None,
+            config: Some(Config::default()),
         };
         app.first_run(sql, quiet)?;
         Ok(app)
