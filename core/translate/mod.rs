@@ -84,9 +84,9 @@ pub fn translate(
             body.map(|b| *b),
             database_header.clone(),
             pager,
-            Some(program),
+            program,
         )?,
-        stmt => translate_inner(schema, stmt, syms, query_mode, Some(program))?,
+        stmt => translate_inner(schema, stmt, syms, query_mode, program)?,
     };
 
     // TODO: bring epilogue here when I can sort out what instructions correspond to a Write or a Read transaction
@@ -102,7 +102,7 @@ pub fn translate_inner(
     stmt: ast::Stmt,
     syms: &SymbolTable,
     query_mode: QueryMode,
-    program: Option<ProgramBuilder>,
+    program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     let program = match stmt {
         ast::Stmt::AlterTable(a) => {
@@ -159,8 +159,8 @@ pub fn translate_inner(
         }
         ast::Stmt::Analyze(_) => bail_parse_error!("ANALYZE not supported yet"),
         ast::Stmt::Attach { .. } => bail_parse_error!("ATTACH not supported yet"),
-        ast::Stmt::Begin(tx_type, tx_name) => translate_tx_begin(tx_type, tx_name)?,
-        ast::Stmt::Commit(tx_name) => translate_tx_commit(tx_name)?,
+        ast::Stmt::Begin(tx_type, tx_name) => translate_tx_begin(tx_type, tx_name, program)?,
+        ast::Stmt::Commit(tx_name) => translate_tx_commit(tx_name, program)?,
         ast::Stmt::CreateIndex {
             unique,
             if_not_exists,

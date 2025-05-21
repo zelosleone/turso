@@ -34,7 +34,7 @@ pub fn translate_insert(
     body: &mut InsertBody,
     _returning: &Option<Vec<ResultColumn>>,
     syms: &SymbolTable,
-    program: Option<ProgramBuilder>,
+    mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     let opts = ProgramBuilderOpts {
         query_mode,
@@ -42,12 +42,7 @@ pub fn translate_insert(
         approx_num_insns: 30,
         approx_num_labels: 5,
     };
-    let mut program = if let Some(mut program) = program {
-        program.extend(&opts);
-        program
-    } else {
-        ProgramBuilder::new(opts)
-    };
+    program.extend(&opts);
     if with.is_some() {
         crate::bail_parse_error!("WITH clause is not supported");
     }

@@ -24,7 +24,7 @@ pub fn translate_select(
     schema: &Schema,
     select: ast::Select,
     syms: &SymbolTable,
-    program: Option<ProgramBuilder>,
+    mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     let mut select_plan = prepare_select_plan(schema, select, syms, None)?;
     optimize_plan(&mut select_plan, schema)?;
@@ -38,12 +38,7 @@ pub fn translate_select(
         approx_num_insns: estimate_num_instructions(select),
         approx_num_labels: estimate_num_labels(select),
     };
-    let mut program = if let Some(mut program) = program {
-        program.extend(&opts);
-        program
-    } else {
-        ProgramBuilder::new(opts)
-    };
+    program.extend(&opts);
     emit_program(&mut program, select_plan, syms)?;
     Ok(program)
 }

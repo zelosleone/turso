@@ -13,25 +13,17 @@ use crate::storage::wal::CheckpointMode;
 use crate::util::normalize_ident;
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
 use crate::vdbe::insn::{Cookie, Insn};
-use crate::vdbe::BranchOffset;
 use crate::{bail_parse_error, Pager};
 use std::str::FromStr;
 use strum::IntoEnumIterator;
 
-fn list_pragmas(
-    program: &mut ProgramBuilder,
-    init_label: BranchOffset,
-    start_offset: BranchOffset,
-) {
+fn list_pragmas(program: &mut ProgramBuilder) {
     for x in PragmaName::iter() {
         let register = program.emit_string8_new_reg(x.to_string());
         program.emit_result_row(register, 1);
     }
 
-    program.emit_halt();
-    program.preassign_label_to_next_insn(init_label);
-    program.emit_constant_insns();
-    program.emit_goto(start_offset);
+    program.epilogue(crate::translate::emitter::TransactionMode::None);
 }
 
 pub fn translate_pragma(
@@ -41,7 +33,7 @@ pub fn translate_pragma(
     body: Option<ast::PragmaBody>,
     database_header: Arc<SpinLock<DatabaseHeader>>,
     pager: Rc<Pager>,
-    program: Option<ProgramBuilder>,
+    mut program: ProgramBuilder,
 ) -> crate::Result<ProgramBuilder> {
     let opts = ProgramBuilderOpts {
         query_mode,
@@ -49,18 +41,11 @@ pub fn translate_pragma(
         approx_num_insns: 20,
         approx_num_labels: 0,
     };
-    let mut program = if let Some(mut program) = program {
-        program.extend(&opts);
-        program
-    } else {
-        ProgramBuilder::new(opts)
-    };
-    let init_label = program.emit_init();
-    let start_offset = program.offset();
+    program.extend(&opts);
     let mut write = false;
 
     if name.name.0.to_lowercase() == "pragma_list" {
-        list_pragmas(&mut program, init_label, start_offset);
+        list_pragmas(&mut program);
         return Ok(program);
     }
 
@@ -110,11 +95,10 @@ pub fn translate_pragma(
             }
         },
     };
-    program.emit_halt();
-    program.preassign_label_to_next_insn(init_label);
-    program.emit_transaction(write);
-    program.emit_constant_insns();
-    program.emit_goto(start_offset);
+    program.epilogue(match write {
+        false => super::emitter::TransactionMode::Read,
+        true => super::emitter::TransactionMode::Write,
+    });
 
     Ok(program)
 }

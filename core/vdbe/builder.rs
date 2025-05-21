@@ -234,7 +234,7 @@ impl ProgramBuilder {
         self.emit_insn(Insn::ResultRow { start_reg, count });
     }
 
-    pub fn emit_halt(&mut self) {
+    fn emit_halt(&mut self) {
         self.emit_insn(Insn::Halt {
             err_code: 0,
             description: String::new(),
@@ -250,20 +250,6 @@ impl ProgramBuilder {
             err_code,
             description,
         });
-    }
-
-    pub fn emit_init(&mut self) -> BranchOffset {
-        let target_pc = self.allocate_label();
-        self.emit_insn(Insn::Init { target_pc });
-        target_pc
-    }
-
-    pub fn emit_transaction(&mut self, write: bool) {
-        self.emit_insn(Insn::Transaction { write });
-    }
-
-    pub fn emit_goto(&mut self, target_pc: BranchOffset) {
-        self.emit_insn(Insn::Goto { target_pc });
     }
 
     pub fn add_comment(&mut self, insn_index: BranchOffset, comment: &'static str) {
@@ -282,7 +268,7 @@ impl ProgramBuilder {
         self.constant_spans.push((prev, prev));
     }
 
-    pub fn emit_constant_insns(&mut self) {
+    fn emit_constant_insns(&mut self) {
         // move compile-time constant instructions to the end of the program, where they are executed once after Init jumps to it.
         // any label_to_resolved_offset that points to an instruction within any moved constant span should be updated to point to the new location.
 
@@ -661,10 +647,7 @@ impl ProgramBuilder {
     /// query will jump to the Transaction instruction via init_label.
     pub fn epilogue(&mut self, txn_mode: TransactionMode) {
         if self.nested_level == 0 {
-            self.emit_insn(Insn::Halt {
-                err_code: 0,
-                description: String::new(),
-            });
+            self.emit_halt();
             self.preassign_label_to_next_insn(self.init_label);
 
             match txn_mode {
