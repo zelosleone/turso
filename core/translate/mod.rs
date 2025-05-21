@@ -51,9 +51,6 @@ use std::sync::Arc;
 use transaction::{translate_tx_begin, translate_tx_commit};
 use update::translate_update;
 
-// TODO: for now leaving the return value as a Program. But ideally to support nested parsing of arbitraty
-// statements, we would have to return a program builder instead
-/// Translate SQL statement into bytecode program.
 pub fn translate(
     schema: &Schema,
     stmt: ast::Stmt,
@@ -62,10 +59,37 @@ pub fn translate(
     connection: Weak<Connection>,
     syms: &SymbolTable,
     query_mode: QueryMode,
-    program: Option<ProgramBuilder>,
 ) -> Result<Program> {
-    let mut change_cnt_on = false;
+    let change_cnt_on = matches!(
+        stmt,
+        ast::Stmt::CreateIndex { .. } | ast::Stmt::Delete(..) | ast::Stmt::Insert(..)
+    );
 
+    let program = translate_inner(
+        schema,
+        stmt,
+        database_header.clone(),
+        pager,
+        syms,
+        query_mode,
+        None,
+    )?;
+
+    Ok(program.build(database_header, connection, change_cnt_on))
+}
+
+// TODO: for now leaving the return value as a Program. But ideally to support nested parsing of arbitraty
+// statements, we would have to return a program builder instead
+/// Translate SQL statement into bytecode program.
+pub fn translate_inner(
+    schema: &Schema,
+    stmt: ast::Stmt,
+    database_header: Arc<SpinLock<DatabaseHeader>>,
+    pager: Rc<Pager>,
+    syms: &SymbolTable,
+    query_mode: QueryMode,
+    program: Option<ProgramBuilder>,
+) -> Result<ProgramBuilder> {
     let program = match stmt {
         ast::Stmt::AlterTable(a) => {
             let (table_name, alter_table) = a.as_ref();
@@ -130,18 +154,15 @@ pub fn translate(
             tbl_name,
             columns,
             ..
-        } => {
-            change_cnt_on = true;
-            translate_create_index(
-                query_mode,
-                (unique, if_not_exists),
-                &idx_name.name.0,
-                &tbl_name.0,
-                &columns,
-                schema,
-                program,
-            )?
-        }
+        } => translate_create_index(
+            query_mode,
+            (unique, if_not_exists),
+            &idx_name.name.0,
+            &tbl_name.0,
+            &columns,
+            schema,
+            program,
+        )?,
         ast::Stmt::CreateTable {
             temporary,
             if_not_exists,
@@ -168,7 +189,6 @@ pub fn translate(
                 limit,
                 ..
             } = *delete;
-            change_cnt_on = true;
             translate_delete(
                 query_mode,
                 schema,
@@ -222,7 +242,6 @@ pub fn translate(
                 mut body,
                 returning,
             } = *insert;
-            change_cnt_on = true;
             translate_insert(
                 query_mode,
                 schema,
@@ -238,5 +257,5 @@ pub fn translate(
         }
     };
 
-    Ok(program.build(database_header, connection, change_cnt_on))
+    Ok(program)
 }
