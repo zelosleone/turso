@@ -65,15 +65,19 @@ pub fn translate(
         ast::Stmt::CreateIndex { .. } | ast::Stmt::Delete(..) | ast::Stmt::Insert(..)
     );
 
-    let program = translate_inner(
-        schema,
-        stmt,
-        database_header.clone(),
-        pager,
-        syms,
-        query_mode,
-        None,
-    )?;
+    let program = match stmt {
+        // There can be no nesting with pragma, so lift it up here
+        ast::Stmt::Pragma(name, body) => pragma::translate_pragma(
+            query_mode,
+            schema,
+            &name,
+            body.map(|b| *b),
+            database_header.clone(),
+            pager,
+            None,
+        )?,
+        stmt => translate_inner(schema, stmt, syms, query_mode, None)?,
+    };
 
     Ok(program.build(database_header, connection, change_cnt_on))
 }
@@ -84,8 +88,6 @@ pub fn translate(
 pub fn translate_inner(
     schema: &Schema,
     stmt: ast::Stmt,
-    database_header: Arc<SpinLock<DatabaseHeader>>,
-    pager: Rc<Pager>,
     syms: &SymbolTable,
     query_mode: QueryMode,
     program: Option<ProgramBuilder>,
@@ -210,15 +212,9 @@ pub fn translate_inner(
         } => translate_drop_table(query_mode, tbl_name, if_exists, schema, program)?,
         ast::Stmt::DropTrigger { .. } => bail_parse_error!("DROP TRIGGER not supported yet"),
         ast::Stmt::DropView { .. } => bail_parse_error!("DROP VIEW not supported yet"),
-        ast::Stmt::Pragma(name, body) => pragma::translate_pragma(
-            query_mode,
-            schema,
-            &name,
-            body.map(|b| *b),
-            database_header.clone(),
-            pager,
-            program,
-        )?,
+        ast::Stmt::Pragma(..) => {
+            bail_parse_error!("PRAGMA statement cannot be evaluated in a nested context")
+        }
         ast::Stmt::Reindex { .. } => bail_parse_error!("REINDEX not supported yet"),
         ast::Stmt::Release(_) => bail_parse_error!("RELEASE not supported yet"),
         ast::Stmt::Rollback { .. } => bail_parse_error!("ROLLBACK not supported yet"),
