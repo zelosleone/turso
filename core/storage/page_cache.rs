@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, ptr::NonNull};
+use std::{cell::RefCell, ptr::NonNull};
 
 use std::sync::Arc;
 use tracing::{debug, trace};
@@ -568,20 +568,11 @@ impl PageHashMap {
         self.size
     }
 
-    pub fn keys_cloned(&self) -> Vec<PageCacheKey> {
-        let mut all_keys = Vec::new();
-        for bucket in &self.buckets {
-            for node in bucket {
-                all_keys.push(node.key.clone());
-            }
-        }
-        all_keys
-    }
-
     pub fn iter(&self) -> impl Iterator<Item = &HashMapNode> {
         self.buckets.iter().flat_map(|bucket| bucket.iter())
     }
 
+    #[cfg(test)]
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut HashMapNode> {
         self.buckets.iter_mut().flat_map(|bucket| bucket.iter_mut())
     }
@@ -596,13 +587,6 @@ impl PageHashMap {
             new_hash_map.insert(node.key.clone(), node.value);
         }
         new_hash_map
-    }
-
-    pub fn clear(&mut self) {
-        for bucket in &mut self.buckets {
-            bucket.clear();
-        }
-        self.size = 0;
     }
 }
 
@@ -626,6 +610,7 @@ mod tests {
         PageCacheKey::new(id, Some(id as u64))
     }
 
+    #[allow(clippy::arc_with_non_send_sync)]
     pub fn page_with_content(page_id: usize) -> PageRef {
         let page = Arc::new(Page::new(page_id));
         {
@@ -923,7 +908,6 @@ mod tests {
 
     #[test]
     #[ignore = "for now let's not track active refs"]
-
     fn test_detach_with_active_reference_clean() {
         let mut cache = DumbLruPageCache::default();
         let (key, entry) = insert_and_get_entry(&mut cache, 1);

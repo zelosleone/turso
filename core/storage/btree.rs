@@ -137,6 +137,8 @@ pub struct BTreePageInner {
 }
 
 pub type BTreePage = Arc<BTreePageInner>;
+unsafe impl Send for BTreePageInner {}
+unsafe impl Sync for BTreePageInner {}
 /// State machine of destroy operations
 /// Keep track of traversal so that it can be resumed when IO is encountered
 #[derive(Debug, Clone)]
