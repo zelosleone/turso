@@ -386,6 +386,8 @@ pub struct SelectPlan {
     pub query_type: SelectQueryType,
     /// whether the query is DISTINCT
     pub distinctness: Distinctness,
+    /// values: https://sqlite.org/syntax/select-core.html
+    pub values: Vec<Vec<Expr>>,
 }
 
 impl SelectPlan {

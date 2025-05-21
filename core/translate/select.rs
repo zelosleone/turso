@@ -111,6 +111,7 @@ pub fn prepare_select_plan<'a>(
                 contains_constant_false_condition: false,
                 query_type: SelectQueryType::TopLevel,
                 distinctness: Distinctness::from_ast(distinctness.as_ref()),
+                values: vec![],
             };
 
             let mut aggregate_expressions = Vec::new();
@@ -402,7 +403,25 @@ pub fn prepare_select_plan<'a>(
             // Return the unoptimized query plan
             Ok(Plan::Select(plan))
         }
-        _ => todo!(),
+        ast::OneSelect::Values(values) => {
+            let plan = SelectPlan {
+                join_order: vec![],
+                table_references: vec![],
+                result_columns: vec![],
+                where_clause: vec![],
+                group_by: None,
+                order_by: None,
+                aggregates: vec![],
+                limit: None,
+                offset: None,
+                contains_constant_false_condition: false,
+                query_type: SelectQueryType::TopLevel,
+                distinctness: Distinctness::NonDistinct,
+                values,
+            };
+
+            Ok(Plan::Select(plan))
+        }
     }
 }
 
