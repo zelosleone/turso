@@ -177,7 +177,7 @@ pub fn emit_order_by(
         program,
         plan,
         start_reg,
-        t_ctx.reg_limit,
+        t_ctx.limit_ctx,
         t_ctx.reg_offset,
         t_ctx.reg_limit_offset_sum,
         Some(sort_loop_end_label),

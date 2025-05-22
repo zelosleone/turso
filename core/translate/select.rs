@@ -114,7 +114,7 @@ pub fn prepare_select_plan<'a>(
             }
 
             // FIXME: handle OFFSET for compound selects
-            if offset.is_some() {
+            if offset.map_or(false, |o| o > 0) {
                 crate::bail_parse_error!("OFFSET is not supported for compound SELECTs yet");
             }
             // FIXME: handle ORDER BY for compound selects

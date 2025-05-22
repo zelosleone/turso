@@ -5,7 +5,7 @@ use crate::{
 };
 
 use super::{
-    emitter::{emit_query, Resolver, TranslateCtx},
+    emitter::{emit_query, LimitCtx, Resolver, TranslateCtx},
     main_loop::LoopLabels,
     plan::{SelectPlan, SelectQueryType, TableReference},
 };
@@ -77,7 +77,7 @@ pub fn emit_subquery<'a>(
         reg_result_cols_start: None,
         result_column_indexes_in_orderby_sorter: (0..plan.result_columns.len()).collect(),
         result_columns_to_skip_in_orderby_sorter: None,
-        reg_limit: plan.limit.map(|_| program.alloc_register()),
+        limit_ctx: plan.limit.map(|_| LimitCtx::new(program)),
         reg_offset: plan.offset.map(|_| program.alloc_register()),
         reg_limit_offset_sum: plan.offset.map(|_| program.alloc_register()),
         resolver: Resolver::new(t_ctx.resolver.symbol_table),
@@ -95,7 +95,7 @@ pub fn emit_subquery<'a>(
     if let Some(limit) = plan.limit {
         program.emit_insn(Insn::Integer {
             value: limit as i64,
-            dest: metadata.reg_limit.unwrap(),
+            dest: metadata.limit_ctx.unwrap().reg_limit,
         });
     }
     let result_column_start_reg = emit_query(program, plan, &mut metadata)?;

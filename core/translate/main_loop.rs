@@ -883,7 +883,7 @@ fn emit_loop_source<'a>(
                 t_ctx.reg_nonagg_emit_once_flag,
                 t_ctx.reg_offset,
                 t_ctx.reg_result_cols_start.unwrap(),
-                t_ctx.reg_limit,
+                t_ctx.limit_ctx,
                 t_ctx.reg_limit_offset_sum,
             )?;
 
