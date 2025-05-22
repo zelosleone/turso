@@ -768,7 +768,7 @@ pub fn translate_drop_table(
     program.emit_null(r6, Some(r7));
 
     if table.btree().is_some() {
-        //  4. Open an ephemeral table, and read over entries from the schema table for entries of the table whose root page was moved in the destroy operation
+        //  4. Open an ephemeral table, and read over the entry from the schema table whose root page was moved in the destroy operation
 
         //  cursor id 1
         let sqlite_schema_cursor_id_1 = program.alloc_cursor_id(
