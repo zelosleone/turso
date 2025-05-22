@@ -2369,10 +2369,10 @@ pub fn op_decr_jump_zero(
     match state.registers[*reg].get_owned_value() {
         Value::Integer(n) => {
             let n = n - 1;
+            state.registers[*reg] = Register::Value(Value::Integer(n));
             if n == 0 {
                 state.pc = target_pc.to_offset_int();
             } else {
-                state.registers[*reg] = Register::Value(Value::Integer(n));
                 state.pc += 1;
             }
         }
