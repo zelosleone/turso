@@ -4323,6 +4323,7 @@ pub fn op_create_btree(
         // TODO: implement temp databases
         todo!("temp databases not implemented yet");
     }
+    // FIXME: handle page cache is full
     let root_page = pager.btree_create(flags);
     state.registers[*root] = Register::Value(Value::Integer(root_page as i64));
     state.pc += 1;
@@ -4691,7 +4692,7 @@ pub fn op_open_ephemeral(
 
     let db_header = Pager::begin_open(db_file.clone())?;
     let buffer_pool = Rc::new(BufferPool::new(db_header.lock().get_page_size() as usize));
-    let page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(10)));
+    let page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
 
     let pager = Rc::new(Pager::finish_open(
         db_header,
@@ -4708,6 +4709,7 @@ pub fn op_open_ephemeral(
         &CreateBTreeFlags::new_index()
     };
 
+    // FIXME: handle page cache is full
     let root_page = pager.btree_create(flag);
 
     let (_, cursor_type) = program.cursor_ref.get(cursor_id).unwrap();

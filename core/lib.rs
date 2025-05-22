@@ -57,7 +57,7 @@ use std::{
     rc::Rc,
     sync::{Arc, OnceLock},
 };
-use storage::btree::btree_init_page;
+use storage::btree::{btree_init_page, BTreePageInner};
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
 pub use storage::{
@@ -79,8 +79,6 @@ use util::{columns_from_create_table_body, parse_schema_rows};
 use vdbe::{builder::QueryMode, VTabOpaqueCursor};
 pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 pub static DATABASE_VERSION: OnceLock<String> = OnceLock::new();
-
-const DEFAULT_PAGE_CACHE_SIZE_IN_PAGES: usize = 2000;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum TransactionState {
@@ -170,9 +168,7 @@ impl Database {
             None
         };
 
-        let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(
-            DEFAULT_PAGE_CACHE_SIZE_IN_PAGES,
-        )));
+        let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
         let schema = Arc::new(RwLock::new(Schema::new()));
         let db = Database {
             mv_store,
@@ -276,6 +272,9 @@ pub fn maybe_init_database_file(file: &Arc<dyn File>, io: &Arc<dyn IO>) -> Resul
             &Rc::new(BufferPool::new(db_header.get_page_size() as usize)),
             DATABASE_HEADER_SIZE,
         );
+        let page1 = Arc::new(BTreePageInner {
+            page: RefCell::new(page1),
+        });
         {
             // Create the sqlite_schema table, for this we just need to create the btree page
             // for the first page of the database which is basically like any other btree page
@@ -288,6 +287,7 @@ pub fn maybe_init_database_file(file: &Arc<dyn File>, io: &Arc<dyn IO>) -> Resul
                 (db_header.get_page_size() - db_header.reserved_space as u32) as u16,
             );
 
+            let page1 = page1.get();
             let contents = page1.get().contents.as_mut().unwrap();
             contents.write_database_header(&db_header);
             // write the first page to disk synchronously

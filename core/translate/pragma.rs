@@ -305,5 +305,7 @@ fn update_cache_size(value: i64, header: Arc<SpinLock<DatabaseHeader>>, pager: R
     pager.write_database_header(&header_copy);
 
     // update cache size
-    pager.change_page_cache_size(cache_size);
+    pager
+        .change_page_cache_size(cache_size)
+        .expect("couldn't update page cache size");
 }
