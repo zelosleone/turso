@@ -416,14 +416,13 @@ pub fn insn_to_str(
                 cursor_id,
                 arg_count,       // P2: Number of arguments in argv[]
                 start_reg,       // P3: Start register for argv[]
-                vtab_ptr,        // P4: vtab pointer
-                conflict_action, // P5: Conflict resolution flags
+                conflict_action, // P4: Conflict resolution flags
             } => (
                 "VUpdate",
                 *cursor_id as i32,
                 *arg_count as i32,
                 *start_reg as i32,
-                Value::build_text(&format!("vtab:{}", vtab_ptr)),
+                Value::build_text(""),
                 *conflict_action,
                 format!("args=r[{}..{}]", start_reg, start_reg + arg_count - 1),
             ),

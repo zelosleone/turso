@@ -13,7 +13,8 @@ members = [
     "core", 
     "extensions/completion",
     "extensions/core",
-    "extensions/crypto", 
+    "extensions/crypto",
+    "extensions/csv",
     "extensions/percentile",
     "extensions/regexp",
     "extensions/series",
@@ -40,6 +41,7 @@ repository = "https://github.com/tursodatabase/limbo"
 limbo_completion = { path = "extensions/completion", version = "0.0.20" }
 limbo_core = { path = "core", version = "0.0.20" }
 limbo_crypto = { path = "extensions/crypto", version = "0.0.20" }
+limbo_csv = { path = "extensions/csv", version = "0.0.20" }
 limbo_ext = { path = "extensions/core", version = "0.0.20" }
 limbo_ext_tests = { path = "extensions/tests", version = "0.0.20" }
 limbo_ipaddr = { path = "extensions/ipaddr", version = "0.0.20" }

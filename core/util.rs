@@ -502,7 +502,7 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
             }
             let column =
                 Column {
-                    name: Some(name.0.clone()),
+                    name: Some(normalize_ident(&name.0)),
                     ty: match column_def.col_type {
                         Some(ref data_type) => {
                             // https://www.sqlite.org/datatype3.html

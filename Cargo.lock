@@ -1813,6 +1813,7 @@ dependencies = [
  "libm",
  "limbo_completion",
  "limbo_crypto",
+ "limbo_csv",
  "limbo_ext",
  "limbo_ext_tests",
  "limbo_ipaddr",
@@ -1860,6 +1861,16 @@ dependencies = [
  "mimalloc",
  "ring",
  "urlencoding",
+]
+
+[[package]]
+name = "limbo_csv"
+version = "0.0.20"
+dependencies = [
+ "csv",
+ "limbo_ext",
+ "mimalloc",
+ "tempfile",
 ]
 
 [[package]]

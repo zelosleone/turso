@@ -45,6 +45,7 @@ use limbo_ext::{ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabKind, VT
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::{Column, Schema};
+use std::ffi::c_void;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
@@ -770,6 +771,7 @@ pub struct VirtualTable {
     pub implementation: Rc<VTabModuleImpl>,
     columns: Vec<Column>,
     kind: VTabKind,
+    table_ptr: *const c_void,
 }
 
 impl VirtualTable {
@@ -815,7 +817,7 @@ impl VirtualTable {
                 )));
             }
         };
-        let schema = module.implementation.as_ref().init_schema(args)?;
+        let (schema, table_ptr) = module.implementation.as_ref().create(args)?;
         let mut parser = Parser::new(schema.as_bytes());
         if let ast::Cmd::Stmt(ast::Stmt::CreateTable { body, .. }) = parser.next()?.ok_or(
             LimboError::ParseError("Failed to parse schema from virtual table module".to_string()),
@@ -827,6 +829,7 @@ impl VirtualTable {
                 columns,
                 args: exprs,
                 kind,
+                table_ptr,
             });
             return Ok(vtab);
         }
@@ -836,7 +839,7 @@ impl VirtualTable {
     }
 
     pub fn open(&self) -> crate::Result<VTabOpaqueCursor> {
-        let cursor = unsafe { (self.implementation.open)(self.implementation.ctx) };
+        let cursor = unsafe { (self.implementation.open)(self.table_ptr) };
         VTabOpaqueCursor::new(cursor, self.implementation.close)
     }
 
@@ -893,10 +896,9 @@ impl VirtualTable {
         let arg_count = args.len();
         let ext_args = args.iter().map(|arg| arg.to_ffi()).collect::<Vec<_>>();
         let newrowid = 0i64;
-        let implementation = self.implementation.as_ref();
         let rc = unsafe {
             (self.implementation.update)(
-                implementation as *const VTabModuleImpl as *const std::ffi::c_void,
+                self.table_ptr,
                 arg_count as i32,
                 ext_args.as_ptr(),
                 &newrowid as *const _ as *mut i64,
@@ -915,12 +917,7 @@ impl VirtualTable {
     }
 
     pub fn destroy(&self) -> Result<()> {
-        let implementation = self.implementation.as_ref();
-        let rc = unsafe {
-            (self.implementation.destroy)(
-                implementation as *const VTabModuleImpl as *const std::ffi::c_void,
-            )
-        };
+        let rc = unsafe { (self.implementation.destroy)(self.table_ptr) };
         match rc {
             ResultCode::OK => Ok(()),
             _ => Err(LimboError::ExtensionError(rc.to_string())),

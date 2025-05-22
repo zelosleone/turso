@@ -714,7 +714,6 @@ fn translate_virtual_table_insert(
         cursor_id,
         arg_count: column_mappings.len() + 2,
         start_reg: registers_start,
-        vtab_ptr: virtual_table.implementation.as_ref().ctx as usize,
         conflict_action,
     });
 
