@@ -142,8 +142,27 @@ fn update_pragma(
             Ok(())
         }
         PragmaName::UserVersion => {
-            // TODO: Implement updating user_version
-            todo!("updating user_version not yet implemented")
+            let version_value = match value {
+                ast::Expr::Literal(ast::Literal::Numeric(numeric_value)) => {
+                    numeric_value.parse::<i32>()?
+                }
+                ast::Expr::Unary(ast::UnaryOperator::Negative, expr) => match *expr {
+                    ast::Expr::Literal(ast::Literal::Numeric(numeric_value)) => {
+                        -numeric_value.parse::<i32>()?
+                    }
+                    _ => bail_parse_error!("Not a valid value"),
+                },
+                _ => bail_parse_error!("Not a valid value"),
+            };
+
+            // update in-memory
+            header.lock().user_version = version_value;
+
+            // update in disk
+            let header_copy = header.lock().clone();
+            pager.write_database_header(&header_copy);
+
+            Ok(())
         }
         PragmaName::SchemaVersion => {
             // TODO: Implement updating schema_version
