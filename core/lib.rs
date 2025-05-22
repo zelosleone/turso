@@ -925,7 +925,7 @@ impl VirtualTable {
     }
 }
 
-pub(crate) struct SymbolTable {
+pub struct SymbolTable {
     pub functions: HashMap<String, Rc<function::ExternalFunc>>,
     pub vtabs: HashMap<String, Rc<VirtualTable>>,
     pub vtab_modules: HashMap<String, Rc<crate::ext::VTabImpl>>,

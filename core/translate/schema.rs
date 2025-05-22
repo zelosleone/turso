@@ -34,25 +34,21 @@ pub fn translate_create_table(
     body: ast::CreateTableBody,
     if_not_exists: bool,
     schema: &Schema,
+    mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     if temporary {
         bail_parse_error!("TEMPORARY table not supported yet");
     }
-    let mut program = ProgramBuilder::new(ProgramBuilderOpts {
+    let opts = ProgramBuilderOpts {
         query_mode,
         num_cursors: 1,
         approx_num_insns: 30,
         approx_num_labels: 1,
-    });
+    };
+    program.extend(&opts);
     if schema.get_table(tbl_name.name.0.as_str()).is_some() {
         if if_not_exists {
-            let init_label = program.emit_init();
-            let start_offset = program.offset();
-            program.emit_halt();
-            program.preassign_label_to_next_insn(init_label);
-            program.emit_transaction(true);
-            program.emit_constant_insns();
-            program.emit_goto(start_offset);
+            program.epilogue(crate::translate::emitter::TransactionMode::Write);
 
             return Ok(program);
         }
@@ -62,8 +58,6 @@ pub fn translate_create_table(
     let sql = create_table_body_to_str(&tbl_name, &body);
 
     let parse_schema_label = program.allocate_label();
-    let init_label = program.emit_init();
-    let start_offset = program.offset();
     // TODO: ReadCookie
     // TODO: If
     // TODO: SetCookie
@@ -166,11 +160,7 @@ pub fn translate_create_table(
     });
 
     // TODO: SqlExec
-    program.emit_halt();
-    program.preassign_label_to_next_insn(init_label);
-    program.emit_transaction(true);
-    program.emit_constant_insns();
-    program.emit_goto(start_offset);
+    program.epilogue(super::emitter::TransactionMode::Write);
 
     Ok(program)
 }
@@ -533,6 +523,7 @@ pub fn translate_create_virtual_table(
     schema: &Schema,
     query_mode: QueryMode,
     syms: &SymbolTable,
+    mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     let ast::CreateVirtualTable {
         if_not_exists,
@@ -552,32 +543,19 @@ pub fn translate_create_virtual_table(
     };
     if schema.get_table(&table_name).is_some() {
         if *if_not_exists {
-            let mut program = ProgramBuilder::new(ProgramBuilderOpts {
-                query_mode,
-                num_cursors: 1,
-                approx_num_insns: 5,
-                approx_num_labels: 1,
-            });
-            let init_label = program.emit_init();
-            let start_offset = program.offset();
-            program.emit_halt();
-            program.preassign_label_to_next_insn(init_label);
-            program.emit_transaction(true);
-            program.emit_constant_insns();
-            program.emit_goto(start_offset);
+            program.epilogue(crate::translate::emitter::TransactionMode::Write);
             return Ok(program);
         }
         bail_parse_error!("Table {} already exists", tbl_name);
     }
 
-    let mut program = ProgramBuilder::new(ProgramBuilderOpts {
+    let opts = ProgramBuilderOpts {
         query_mode,
         num_cursors: 2,
         approx_num_insns: 40,
         approx_num_labels: 2,
-    });
-    let init_label = program.emit_init();
-    let start_offset = program.offset();
+    };
+    program.extend(&opts);
     let module_name_reg = program.emit_string8_new_reg(module_name_str.clone());
     let table_name_reg = program.emit_string8_new_reg(table_name.clone());
     let args_reg = if !args_vec.is_empty() {
@@ -634,11 +612,7 @@ pub fn translate_create_virtual_table(
         where_clause: Some(parse_schema_where_clause),
     });
 
-    program.emit_halt();
-    program.preassign_label_to_next_insn(init_label);
-    program.emit_transaction(true);
-    program.emit_constant_insns();
-    program.emit_goto(start_offset);
+    program.epilogue(super::emitter::TransactionMode::Write);
 
     Ok(program)
 }
@@ -648,23 +622,19 @@ pub fn translate_drop_table(
     tbl_name: ast::QualifiedName,
     if_exists: bool,
     schema: &Schema,
+    mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
-    let mut program = ProgramBuilder::new(ProgramBuilderOpts {
+    let opts = ProgramBuilderOpts {
         query_mode,
         num_cursors: 1,
         approx_num_insns: 30,
         approx_num_labels: 1,
-    });
+    };
+    program.extend(&opts);
     let table = schema.get_table(tbl_name.name.0.as_str());
     if table.is_none() {
         if if_exists {
-            let init_label = program.emit_init();
-            let start_offset = program.offset();
-            program.emit_halt();
-            program.preassign_label_to_next_insn(init_label);
-            program.emit_transaction(true);
-            program.emit_constant_insns();
-            program.emit_goto(start_offset);
+            program.epilogue(crate::translate::emitter::TransactionMode::Write);
 
             return Ok(program);
         }
@@ -672,9 +642,6 @@ pub fn translate_drop_table(
     }
 
     let table = table.unwrap(); // safe since we just checked for None
-
-    let init_label = program.emit_init();
-    let start_offset = program.offset();
 
     let null_reg = program.alloc_register(); //  r1
     program.emit_null(null_reg, None);
@@ -815,12 +782,7 @@ pub fn translate_drop_table(
     });
 
     //  end of the program
-    program.emit_halt();
-    program.preassign_label_to_next_insn(init_label);
-    program.emit_transaction(true);
-    program.emit_constant_insns();
-
-    program.emit_goto(start_offset);
+    program.epilogue(super::emitter::TransactionMode::Write);
 
     Ok(program)
 }

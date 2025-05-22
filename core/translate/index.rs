@@ -21,15 +21,17 @@ pub fn translate_create_index(
     tbl_name: &str,
     columns: &[SortedColumn],
     schema: &Schema,
+    mut program: ProgramBuilder,
 ) -> crate::Result<ProgramBuilder> {
     let idx_name = normalize_ident(idx_name);
     let tbl_name = normalize_ident(tbl_name);
-    let mut program = ProgramBuilder::new(crate::vdbe::builder::ProgramBuilderOpts {
+    let opts = crate::vdbe::builder::ProgramBuilderOpts {
         query_mode: mode,
         num_cursors: 5,
         approx_num_insns: 40,
         approx_num_labels: 5,
-    });
+    };
+    program.extend(&opts);
 
     // Check if the index is being created on a valid btree table and
     // the name is globally unique in the schema.
@@ -43,10 +45,6 @@ pub fn translate_create_index(
         crate::bail_parse_error!("Error: table '{tbl_name}' is not a b-tree table.");
     };
     let columns = resolve_sorted_columns(&tbl, columns)?;
-
-    // Prologue:
-    let init_label = program.emit_init();
-    let start_offset = program.offset();
 
     let idx = Arc::new(Index {
         name: idx_name.clone(),
@@ -242,11 +240,7 @@ pub fn translate_create_index(
     });
 
     // Epilogue:
-    program.emit_halt();
-    program.preassign_label_to_next_insn(init_label);
-    program.emit_transaction(true);
-    program.emit_constant_insns();
-    program.emit_goto(start_offset);
+    program.epilogue(super::emitter::TransactionMode::Write);
 
     Ok(program)
 }
@@ -311,14 +305,16 @@ pub fn translate_drop_index(
     idx_name: &str,
     if_exists: bool,
     schema: &Schema,
+    mut program: ProgramBuilder,
 ) -> crate::Result<ProgramBuilder> {
     let idx_name = normalize_ident(idx_name);
-    let mut program = ProgramBuilder::new(crate::vdbe::builder::ProgramBuilderOpts {
+    let opts = crate::vdbe::builder::ProgramBuilderOpts {
         query_mode: mode,
         num_cursors: 5,
         approx_num_insns: 40,
         approx_num_labels: 5,
-    });
+    };
+    program.extend(&opts);
 
     // Find the index in Schema
     let mut maybe_index = None;
@@ -338,13 +334,7 @@ pub fn translate_drop_index(
     // then return normaly, otherwise show an error.
     if maybe_index.is_none() {
         if if_exists {
-            let init_label = program.emit_init();
-            let start_offset = program.offset();
-            program.emit_halt();
-            program.resolve_label(init_label, program.offset());
-            program.emit_transaction(true);
-            program.emit_constant_insns();
-            program.emit_goto(start_offset);
+            program.epilogue(super::emitter::TransactionMode::Write);
             return Ok(program);
         } else {
             return Err(crate::error::LimboError::InvalidArgument(format!(
@@ -353,11 +343,6 @@ pub fn translate_drop_index(
             )));
         }
     }
-
-    // 1. Init
-    // 2. Goto
-    let init_label = program.emit_init();
-    let start_offset = program.offset();
 
     // According to sqlite should emit Null instruction
     // but why?
@@ -474,11 +459,7 @@ pub fn translate_drop_index(
     }
 
     // Epilogue:
-    program.emit_halt();
-    program.resolve_label(init_label, program.offset());
-    program.emit_transaction(true);
-    program.emit_constant_insns();
-    program.emit_goto(start_offset);
+    program.epilogue(super::emitter::TransactionMode::Write);
 
     Ok(program)
 }
