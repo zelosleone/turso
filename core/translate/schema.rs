@@ -767,6 +767,7 @@ pub fn translate_drop_table(
     let r7 = program.alloc_register();
     program.emit_null(r6, Some(r7));
 
+    //  All of the following processing needs to be done only if the table is not a virtual table
     if table.btree().is_some() {
         //  4. Open an ephemeral table, and read over the entry from the schema table whose root page was moved in the destroy operation
 
@@ -824,19 +825,20 @@ pub fn translate_drop_table(
         let r15 = program.alloc_register();
 
         //  Loop to copy over row id's from the schema table for rows that have the same root page as the one that was moved
-        let end_metadata_label = program.allocate_label();
-        let metadata_loop = program.allocate_label();
+        let copy_schema_to_temp_table_loop_end_label = program.allocate_label();
+        let copy_schema_to_temp_table_loop = program.allocate_label();
         program.emit_insn(Insn::Rewind {
             cursor_id: sqlite_schema_cursor_id_1,
-            pc_if_empty: end_metadata_label,
+            pc_if_empty: copy_schema_to_temp_table_loop_end_label,
         });
-        program.preassign_label_to_next_insn(metadata_loop);
+        program.preassign_label_to_next_insn(copy_schema_to_temp_table_loop);
         //  start loop on schema table
         program.emit_insn(Insn::Column {
             cursor_id: sqlite_schema_cursor_id_1,
             column: 3,
             dest: r13,
         });
+        //  The label and Insn::Ne are used to skip over any rows in the schema table that don't have the root page that was moved
         let next_label = program.allocate_label();
         program.emit_insn(Insn::Ne {
             lhs: r13,
@@ -860,9 +862,9 @@ pub fn translate_drop_table(
         program.resolve_label(next_label, program.offset());
         program.emit_insn(Insn::Next {
             cursor_id: sqlite_schema_cursor_id_1,
-            pc_if_next: metadata_loop,
+            pc_if_next: copy_schema_to_temp_table_loop,
         });
-        program.preassign_label_to_next_insn(end_metadata_label);
+        program.preassign_label_to_next_insn(copy_schema_to_temp_table_loop_end_label);
         //  End loop to copy over row id's from the schema table for rows that have the same root page as the one that was moved
 
         program.resolve_label(if_not_label, program.offset());
@@ -875,18 +877,19 @@ pub fn translate_drop_table(
         });
 
         //  Loop to copy over row id's from the ephemeral table and then re-insert into the schema table with the correct root page
-        let end_metadata_label = program.allocate_label();
-        let metadata_loop = program.allocate_label();
+        let copy_temp_table_to_schema_loop_end_label = program.allocate_label();
+        let copy_temp_table_to_schema_loop = program.allocate_label();
         program.emit_insn(Insn::Rewind {
             cursor_id: ephemeral_cursor_id,
-            pc_if_empty: end_metadata_label,
+            pc_if_empty: copy_temp_table_to_schema_loop_end_label,
         });
-        program.preassign_label_to_next_insn(metadata_loop);
+        program.preassign_label_to_next_insn(copy_temp_table_to_schema_loop);
         //  start loop on schema table
         program.emit_insn(Insn::RowId {
             cursor_id: ephemeral_cursor_id,
             dest: r7,
         });
+        //  the next_label and Insn::NotExists are used to skip patching any rows in the schema table that don't have the row id that was written to the ephemeral table
         let next_label = program.allocate_label();
         program.emit_insn(Insn::NotExists {
             cursor: sqlite_schema_cursor_id_1,
@@ -941,9 +944,9 @@ pub fn translate_drop_table(
         program.resolve_label(next_label, program.offset());
         program.emit_insn(Insn::Next {
             cursor_id: ephemeral_cursor_id,
-            pc_if_next: metadata_loop,
+            pc_if_next: copy_temp_table_to_schema_loop,
         });
-        program.preassign_label_to_next_insn(end_metadata_label);
+        program.preassign_label_to_next_insn(copy_temp_table_to_schema_loop_end_label);
         //  End loop to copy over row id's from the ephemeral table and then re-insert into the schema table with the correct root page
     }
 
