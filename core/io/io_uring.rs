@@ -1,3 +1,5 @@
+#![allow(clippy::arc_with_non_send_sync)]
+
 use super::{common, Completion, File, OpenFlags, WriteCompletion, IO};
 use crate::io::clock::{Clock, Instant};
 use crate::{LimboError, MemoryIO, Result};
@@ -93,7 +95,7 @@ impl InnerUringIO {
 }
 
 impl WrappedIOUring {
-    fn submit_entry(&mut self, entry: &io_uring::squeue::Entry, c: Completion) {
+    fn submit_entry(&mut self, entry: &io_uring::squeue::Entry, c: Arc<Completion>) {
         trace!("submit_entry({:?})", entry);
         self.pending[entry.get_user_data() as usize] = Some(c);
         unsafe {
@@ -263,7 +265,7 @@ impl File for UringFile {
         Ok(())
     }
 
-    fn pread(&self, pos: usize, c: Completion) -> Result<()> {
+    fn pread(&self, pos: usize, c: Arc<Completion>) -> Result<()> {
         let r = c.as_read();
         trace!("pread(pos = {}, length = {})", pos, r.buf().len());
         let fd = io_uring::types::Fd(self.file.as_raw_fd());
@@ -282,7 +284,7 @@ impl File for UringFile {
         Ok(())
     }
 
-    fn pwrite(&self, pos: usize, buffer: Arc<RefCell<crate::Buffer>>, c: Completion) -> Result<()> {
+    fn pwrite(&self, pos: usize, buffer: Arc<RefCell<crate::Buffer>>, c: Arc<Completion>) -> Result<()> {
         let mut io = self.io.borrow_mut();
         let fd = io_uring::types::Fd(self.file.as_raw_fd());
         let write = {

@@ -41,6 +41,8 @@
 //!
 //! https://www.sqlite.org/fileformat.html
 
+#![allow(clippy::arc_with_non_send_sync)]
+
 use crate::error::LimboError;
 use crate::fast_lock::SpinLock;
 use crate::io::{Buffer, Complete, Completion, ReadCompletion, SyncCompletion, WriteCompletion};
@@ -293,7 +295,8 @@ pub fn begin_read_database_header(
         finish_read_database_header(buf, header).unwrap();
     });
     let c = Completion::Read(ReadCompletion::new(buf, complete));
-    db_file.read_page(1, c)?;
+    #[allow(clippy::arc_with_non_send_sync)]
+    db_file.read_page(1, Arc::new(c))?;
     Ok(result)
 }
 
@@ -355,7 +358,8 @@ pub fn begin_write_database_header(header: &DatabaseHeader, pager: &Pager) -> Re
     #[allow(clippy::arc_with_non_send_sync)]
     let buf = Arc::new(RefCell::new(Buffer::allocate(512, drop_fn)));
     let c = Completion::Read(ReadCompletion::new(buf, read_complete));
-    page_source.read_page(1, c)?;
+    #[allow(clippy::arc_with_non_send_sync)]
+    page_source.read_page(1, Arc::new(c))?;
     // run get header block
     pager.io.run_once()?;
 
@@ -369,7 +373,7 @@ pub fn begin_write_database_header(header: &DatabaseHeader, pager: &Pager) -> Re
     });
 
     let c = Completion::Write(WriteCompletion::new(write_complete));
-    page_source.write_page(1, buffer_to_copy, c)?;
+    page_source.write_page(1, buffer_to_copy, Arc::new(c))?;
 
     Ok(())
 }
@@ -819,7 +823,7 @@ pub fn begin_read_page(
         }
     });
     let c = Completion::Read(ReadCompletion::new(buf, complete));
-    db_file.read_page(page_idx, c)?;
+    db_file.read_page(page_idx, Arc::new(c))?;
     Ok(())
 }
 
@@ -877,7 +881,7 @@ pub fn begin_write_btree_page(
         })
     };
     let c = Completion::Write(WriteCompletion::new(write_complete));
-    page_source.write_page(page_id, buffer.clone(), c)?;
+    page_source.write_page(page_id, buffer.clone(), Arc::new(c))?;
     Ok(())
 }
 
@@ -889,7 +893,8 @@ pub fn begin_sync(db_file: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>)
             *syncing.borrow_mut() = false;
         }),
     });
-    db_file.sync(completion)?;
+    #[allow(clippy::arc_with_non_send_sync)]
+    db_file.sync(Arc::new(completion))?;
     Ok(())
 }
 
@@ -1519,7 +1524,7 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
         wfs_data.loaded.store(true, Ordering::SeqCst);
     });
     let c = Completion::Read(ReadCompletion::new(buf_for_pread, complete));
-    file.pread(0, c)?;
+    file.pread(0, Arc::new(c))?;
 
     Ok(wal_file_shared_ret)
 }
@@ -1536,9 +1541,9 @@ pub fn begin_read_wal_frame(
         let buffer_pool = buffer_pool.clone();
         buffer_pool.put(buf);
     });
-    #[allow(clippy::arc_with_non_send_sync)]
     let buf = Arc::new(RefCell::new(Buffer::new(buf, drop_fn)));
-    let c = Completion::Read(ReadCompletion::new(buf, complete));
+    #[allow(clippy::arc_with_non_send_sync)]
+    let c = Arc::new(Completion::Read(ReadCompletion::new(buf, complete)));
     io.pread(offset, c)?;
     Ok(())
 }
@@ -1622,7 +1627,8 @@ pub fn begin_write_wal_frame(
             }
         })
     };
-    let c = Completion::Write(WriteCompletion::new(write_complete));
+    #[allow(clippy::arc_with_non_send_sync)]
+    let c = Arc::new(Completion::Write(WriteCompletion::new(write_complete)));
     io.pwrite(offset, buffer.clone(), c)?;
     trace!("Frame written and synced at offset={offset}");
     Ok(checksums)
@@ -1657,7 +1663,8 @@ pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<
             }
         })
     };
-    let c = Completion::Write(WriteCompletion::new(write_complete));
+    #[allow(clippy::arc_with_non_send_sync)]
+    let c = Arc::new(Completion::Write(WriteCompletion::new(write_complete)));
     io.pwrite(0, buffer.clone(), c)?;
     Ok(())
 }

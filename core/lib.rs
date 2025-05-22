@@ -1,3 +1,5 @@
+#![allow(clippy::arc_with_non_send_sync)]
+
 mod error;
 mod ext;
 mod fast_lock;
@@ -302,7 +304,8 @@ pub fn maybe_init_database_file(file: &Arc<dyn File>, io: &Arc<dyn IO>) -> Resul
                 let completion = Completion::Write(WriteCompletion::new(Box::new(move |_| {
                     *flag_complete.borrow_mut() = true;
                 })));
-                file.pwrite(0, contents.buffer.clone(), completion)?;
+                #[allow(clippy::arc_with_non_send_sync)]
+                file.pwrite(0, contents.buffer.clone(), Arc::new(completion))?;
             }
             let mut limit = 100;
             loop {

@@ -1,3 +1,5 @@
+#![allow(clippy::arc_with_non_send_sync)]
+
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use tracing::{debug, trace};
@@ -750,7 +752,7 @@ impl Wal for WalFile {
                             *syncing.borrow_mut() = false;
                         }),
                     });
-                    shared.file.sync(completion)?;
+                    shared.file.sync(Arc::new(completion))?;
                 }
                 self.sync_state.replace(SyncState::Syncing);
                 Ok(WalFsyncStatus::IO)
