@@ -892,6 +892,7 @@ pub fn begin_sync(db_file: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>)
         complete: Box::new(move |_| {
             *syncing.borrow_mut() = false;
         }),
+        is_completed: RefCell::new(false),
     });
     #[allow(clippy::arc_with_non_send_sync)]
     db_file.sync(Arc::new(completion))?;

@@ -283,6 +283,13 @@ impl limbo_core::IO for PlatformIO {
         }))
     }
 
+    fn wait_for_completion(&self, c: Arc<limbo_core::Completion>) -> Result<()> {
+        while !c.is_completed() {
+            self.run_once()?;
+        }
+        Ok(())
+    }
+
     fn run_once(&self) -> Result<()> {
         Ok(())
     }

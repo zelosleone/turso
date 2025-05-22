@@ -35,6 +35,13 @@ impl IO for GenericIO {
         }))
     }
 
+    fn wait_for_completion(&self, c: Arc<Completion>) -> Result<()> {
+        while !c.is_completed() {
+            self.run_once()?;
+        }
+        Ok(())
+    }
+
     fn run_once(&self) -> Result<()> {
         Ok(())
     }

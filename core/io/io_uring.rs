@@ -45,7 +45,7 @@ unsafe impl Sync for UringIO {}
 struct WrappedIOUring {
     ring: io_uring::IoUring,
     pending_ops: usize,
-    pub pending: [Option<Completion>; MAX_IOVECS as usize + 1],
+    pub pending: [Option<Arc<Completion>>; MAX_IOVECS as usize + 1],
     key: u64,
 }
 
@@ -167,6 +167,13 @@ impl IO for UringIO {
             uring_file.lock_file(!flags.contains(OpenFlags::ReadOnly))?;
         }
         Ok(uring_file)
+    }
+
+    fn wait_for_completion(&self, c: Arc<Completion>) -> Result<()> {
+        while !c.is_completed() {
+            self.run_once()?;
+        }
+        Ok(())
     }
 
     fn run_once(&self) -> Result<()> {
@@ -298,16 +305,16 @@ impl File for UringFile {
         };
         io.ring.submit_entry(
             &write,
-            Completion::Write(WriteCompletion::new(Box::new(move |result| {
+            Arc::new(Completion::Write(WriteCompletion::new(Box::new(move |result| {
                 c.complete(result);
                 // NOTE: Explicitly reference buffer to ensure it lives until here
                 let _ = buffer.borrow();
-            }))),
+            })))),
         );
         Ok(())
     }
 
-    fn sync(&self, c: Completion) -> Result<()> {
+    fn sync(&self, c: Arc<Completion>) -> Result<()> {
         let fd = io_uring::types::Fd(self.file.as_raw_fd());
         let mut io = self.io.borrow_mut();
         trace!("sync()");
