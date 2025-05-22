@@ -1,6 +1,6 @@
 import test from "ava";
 
-import { Database } from "../index.js";
+import { Database } from "../wrapper.js";
 
 test("Open in-memory database", async (t) => {
   const [db] = await connect(":memory:");
@@ -28,16 +28,26 @@ test("Statement.get() returns null when no data", async (t) => {
 test("Statement.run() returns correct result object", async (t) => {
   const [db] = await connect(":memory:");
   db.prepare("CREATE TABLE users (name TEXT, age INTEGER)").run();
-  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run(["Alice", 42]);
+  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Alice", 42);
   let rows = db.prepare("SELECT * FROM users").all();
   t.deepEqual(rows, [{ name: "Alice", age: 42 }]);
 });
 
 test("Statment.iterate() should correctly return an iterable object", async (t) => {
   const [db] = await connect(":memory:");
-  db.prepare("CREATE TABLE users (name TEXT, age INTEGER)").run();
-  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run(["Alice", 42]);
-  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run(["Bob", 24]);
+  db.prepare(
+    "CREATE TABLE users (name TEXT, age INTEGER, nationality TEXT)",
+  ).run();
+  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run(
+    ["Alice", 42],
+    "UK",
+  );
+  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run(
+    "Bob",
+    24,
+    "USA",
+  );
+
   let rows = db.prepare("SELECT * FROM users").iterate();
   for (const row of rows) {
     t.truthy(row.name);

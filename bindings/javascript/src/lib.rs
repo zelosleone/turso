@@ -158,9 +158,17 @@ impl Statement {
     }
 
     #[napi]
-    pub fn get(&self, env: Env) -> napi::Result<JsUnknown> {
+    pub fn get(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<JsUnknown> {
         let mut stmt = self.inner.borrow_mut();
         stmt.reset();
+
+        if let Some(args) = args {
+            for (i, elem) in args.into_iter().enumerate() {
+                let value = from_js_value(elem)?;
+                stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
+            }
+        }
+
         let step = stmt.step().map_err(into_napi_error)?;
         match step {
             limbo_core::StepResult::Row => {
@@ -182,35 +190,52 @@ impl Statement {
     }
 
     // TODO: Return Info object (https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md#runbindparameters---object)
-    // The original function is variadic, check if we can do the same
     #[napi]
     pub fn run(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<JsUnknown> {
+        let mut stmt = self.inner.borrow_mut();
+        stmt.reset();
         if let Some(args) = args {
             for (i, elem) in args.into_iter().enumerate() {
                 let value = from_js_value(elem)?;
-                self.inner
-                    .borrow_mut()
-                    .bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
+                stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
             }
         }
 
-        let stmt = self.inner.borrow_mut();
         self.internal_all(env, stmt)
     }
 
     #[napi]
-    pub fn iterate(&self, env: Env) -> IteratorStatement {
-        IteratorStatement {
+    pub fn iterate(
+        &self,
+        env: Env,
+        args: Option<Vec<JsUnknown>>,
+    ) -> napi::Result<IteratorStatement> {
+        let mut stmt = self.inner.borrow_mut();
+        stmt.reset();
+        if let Some(args) = args {
+            for (i, elem) in args.into_iter().enumerate() {
+                let value = from_js_value(elem)?;
+                stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
+            }
+        }
+
+        Ok(IteratorStatement {
             stmt: Rc::clone(&self.inner),
             database: self.database.clone(),
             env,
-        }
+        })
     }
 
     #[napi]
-    pub fn all(&self, env: Env) -> napi::Result<JsUnknown> {
+    pub fn all(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<JsUnknown> {
         let mut stmt = self.inner.borrow_mut();
         stmt.reset();
+        if let Some(args) = args {
+            for (i, elem) in args.into_iter().enumerate() {
+                let value = from_js_value(elem)?;
+                stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
+            }
+        }
 
         self.internal_all(env, stmt)
     }

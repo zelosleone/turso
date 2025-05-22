@@ -178,11 +178,7 @@ class Statement {
    * Executes the SQL statement and returns an info object.
    */
   run(...bindParameters) {
-    try {
-      return this.stmt.run(...bindParameters);
-    } catch (err) {
-      throw convertError(err);
-    }
+    return this.stmt.run(bindParameters.flat());
   }
 
   /**
@@ -191,11 +187,7 @@ class Statement {
    * @param bindParameters - The bind parameters for executing the statement.
    */
   get(...bindParameters) {
-    try {
-      return this.stmt.get(...bindParameters);
-    } catch (err) {
-      throw convertError(err);
-    }
+    return this.stmt.get(bindParameters.flat());
   }
 
   /**
@@ -204,11 +196,7 @@ class Statement {
    * @param bindParameters - The bind parameters for executing the statement.
    */
   iterate(...bindParameters) {
-    try {
-      return this.stmt.iterate(...bindParameters);
-    } catch (err) {
-      throw convertError(err);
-    }
+    return this.stmt.iterate(bindParameters.flat());
   }
 
   /**
@@ -217,11 +205,7 @@ class Statement {
    * @param bindParameters - The bind parameters for executing the statement.
    */
   all(...bindParameters) {
-    try {
-      return this.stmt.all(...bindParameters);
-    } catch (err) {
-      throw convertError(err);
-    }
+    return this.stmt.all(bindParameters.flat());
   }
 
   /**
@@ -240,4 +224,4 @@ class Statement {
   }
 }
 
-module.exports = Database;
+module.exports.Database = Database;
