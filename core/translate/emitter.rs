@@ -196,6 +196,11 @@ pub fn emit_query<'a>(
     plan: &'a mut SelectPlan,
     t_ctx: &'a mut TranslateCtx<'a>,
 ) -> Result<usize> {
+    if !plan.values.is_empty() {
+        let reg_result_cols_start = emit_values(program, &plan, &t_ctx.resolver)?;
+        return Ok(reg_result_cols_start);
+    }
+
     // Emit subqueries first so the results can be read in the main query loop.
     emit_subqueries(program, t_ctx, &mut plan.table_references)?;
 
@@ -291,12 +296,8 @@ pub fn emit_query<'a>(
         &mut plan.where_clause,
     )?;
 
-    if !plan.values.is_empty() {
-        emit_values(program, &plan.values, &t_ctx.resolver)?;
-    } else {
-        // Process result columns and expressions in the inner loop
-        emit_loop(program, t_ctx, plan)?;
-    }
+    // Process result columns and expressions in the inner loop
+    emit_loop(program, t_ctx, plan)?;
 
     // Clean up and close the main execution loop
     close_loop(program, t_ctx, &plan.table_references, &plan.join_order)?;

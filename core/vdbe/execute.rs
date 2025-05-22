@@ -1557,7 +1557,7 @@ pub fn op_result_row(
     };
     state.result_row = Some(row);
     state.pc += 1;
-    return Ok(InsnFunctionStepResult::Row);
+    Ok(InsnFunctionStepResult::Row)
 }
 
 pub fn op_next(

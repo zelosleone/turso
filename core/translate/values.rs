@@ -1,24 +1,22 @@
 use crate::translate::emitter::Resolver;
 use crate::translate::expr::{translate_expr_no_constant_opt, NoConstantOptReason};
+use crate::translate::plan::{SelectPlan, SelectQueryType};
 use crate::vdbe::builder::ProgramBuilder;
 use crate::vdbe::insn::Insn;
 use crate::vdbe::BranchOffset;
-use limbo_sqlite3_parser::ast::Expr;
+use crate::Result;
 
 pub fn emit_values(
     program: &mut ProgramBuilder,
-    values: &Vec<Vec<Expr>>,
+    plan: &SelectPlan,
     resolver: &Resolver,
-) -> crate::Result<()> {
-    if values.is_empty() {
-        return Ok(());
-    }
-
+) -> Result<usize> {
+    let values = &plan.values;
     if values.len() == 1 {
-        let value = &values[0];
-        let value_size = value.len();
-        let start_reg = program.alloc_registers(value_size);
-        for (i, v) in value.iter().enumerate() {
+        let first_row = &values[0];
+        let row_len = first_row.len();
+        let start_reg = program.alloc_registers(row_len);
+        for (i, v) in first_row.iter().enumerate() {
             translate_expr_no_constant_opt(
                 program,
                 None,
@@ -28,11 +26,8 @@ pub fn emit_values(
                 NoConstantOptReason::RegisterReuse,
             )?;
         }
-        program.emit_insn(Insn::ResultRow {
-            start_reg,
-            count: value_size,
-        });
-        return Ok(());
+        emit_result_row(program, plan, start_reg, row_len)?;
+        return Ok(start_reg);
     }
 
     let yield_reg = program.alloc_register();
@@ -45,8 +40,8 @@ pub fn emit_values(
     });
 
     program.preassign_label_to_next_insn(start_offset_label);
-    let value_size = values[0].len();
-    let start_reg = program.alloc_registers(value_size);
+    let row_len = values[0].len();
+    let start_reg = program.alloc_registers(row_len);
     for value in values {
         for (i, v) in value.iter().enumerate() {
             translate_expr_no_constant_opt(
@@ -78,20 +73,40 @@ pub fn emit_values(
         yield_reg,
         end_offset: end_label,
     });
-    let copy_reg = program.alloc_registers(value_size);
-    for i in 0..value_size {
+    let copy_start_reg = program.alloc_registers(row_len);
+    for i in 0..row_len {
         program.emit_insn(Insn::Copy {
             src_reg: start_reg + i,
-            dst_reg: copy_reg + i,
+            dst_reg: copy_start_reg + i,
             amount: 0,
         });
     }
-    program.emit_insn(Insn::ResultRow {
-        start_reg: copy_reg,
-        count: value_size,
+    emit_result_row(program, plan, copy_start_reg, row_len)?;
+    program.emit_insn(Insn::Goto {
+        target_pc: goto_label,
     });
-    program.emit_goto(goto_label);
     program.preassign_label_to_next_insn(end_label);
 
-    Ok(())
+    Ok(copy_start_reg)
+}
+
+fn emit_result_row(
+    program: &mut ProgramBuilder,
+    plan: &SelectPlan,
+    start_reg: usize,
+    count: usize,
+) -> Result<()> {
+    match plan.query_type {
+        SelectQueryType::TopLevel => {
+            program.emit_insn(Insn::ResultRow { start_reg, count });
+            Ok(())
+        }
+        SelectQueryType::Subquery { yield_reg, .. } => {
+            program.emit_insn(Insn::Yield {
+                yield_reg,
+                end_offset: BranchOffset::Offset(0),
+            });
+            Ok(())
+        }
+    }
 }
