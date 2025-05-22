@@ -2,8 +2,8 @@
 #![allow(non_camel_case_types)]
 
 use limbo_core::Value;
-use tracing::trace;
 use std::ffi::{self, CStr, CString};
+use tracing::trace;
 
 use std::rc::Rc;
 use std::sync::Arc;
