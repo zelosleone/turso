@@ -4350,9 +4350,11 @@ pub fn op_destroy(
     }
     // TODO not sure if should be BTreeCursor::new_table or BTreeCursor::new_index here or neither and just pass an emtpy vec
     let mut cursor = BTreeCursor::new(None, pager.clone(), *root, Vec::new());
-    let mut former_root_page = 0;
-    cursor.btree_destroy(&mut former_root_page)?;
-    state.registers[*former_root_reg] = Register::Value(Value::Integer(former_root_page as i64));
+    let former_root_page_result = cursor.btree_destroy()?;
+    if let CursorResult::Ok(former_root_page) = former_root_page_result {
+        state.registers[*former_root_reg] =
+            Register::Value(Value::Integer(former_root_page.unwrap_or(0) as i64));
+    }
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
