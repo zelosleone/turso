@@ -1976,7 +1976,9 @@ dependencies = [
  "env_logger 0.11.7",
  "libc",
  "limbo_core",
- "log",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]
