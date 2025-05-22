@@ -170,7 +170,7 @@ Limbo aims to be fully compatible with SQLite, with opt-in features not supporte
 | PRAGMA temp_store_directory      | Not Needed | deprecated in SQLite                         |
 | PRAGMA threads                   | No         |                                              |
 | PRAGMA trusted_schema            | No         |                                              |
-| PRAGMA user_version              | Partial    | Only read implemented                        |
+| PRAGMA user_version              | Yes        |                                              |
 | PRAGMA vdbe_addoptrace           | No         |                                              |
 | PRAGMA vdbe_debug                | No         |                                              |
 | PRAGMA vdbe_listing              | No         |                                              |
