@@ -4453,7 +4453,7 @@ impl BTreeCursor {
     /// ```
     ///
     /// The destruction order would be: [4',4,5,2,6,7,3,1]
-    pub fn btree_destroy(&mut self) -> Result<CursorResult<()>> {
+    pub fn btree_destroy(&mut self) -> Result<CursorResult<Option<usize>>> {
         if let CursorState::None = &self.state {
             self.move_to_root();
             self.state = CursorState::Destroy(DestroyInfo {
@@ -4634,7 +4634,9 @@ impl BTreeCursor {
                         destroy_info.state = DestroyState::ProcessPage;
                     } else {
                         self.state = CursorState::None;
-                        return Ok(CursorResult::Ok(()));
+                        //  TODO: For now, no-op the result return None always. This will change once [AUTO_VACUUM](https://www.sqlite.org/lang_vacuum.html) is introduced
+                        //  At that point, the last root page(call this x) will be moved into the position of the root page of this table and the value returned will be x
+                        return Ok(CursorResult::Ok(None));
                     }
                 }
             }
