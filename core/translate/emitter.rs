@@ -6,16 +6,6 @@ use std::sync::Arc;
 
 use limbo_sqlite3_parser::ast::{self};
 
-use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
-use crate::function::Func;
-use crate::schema::Index;
-use crate::translate::plan::{DeletePlan, Plan, Search};
-use crate::util::exprs_are_equivalent;
-use crate::vdbe::builder::{CursorType, ProgramBuilder};
-use crate::vdbe::insn::{CmpInsFlags, IdxInsertFlags, RegisterOrLiteral};
-use crate::vdbe::{insn::Insn, BranchOffset};
-use crate::{Result, SymbolTable};
-
 use super::aggregation::emit_ungrouped_aggregation;
 use super::expr::{translate_condition_expr, translate_expr, ConditionMetadata};
 use super::group_by::{
@@ -29,6 +19,16 @@ use super::plan::{JoinOrderMember, Operation, SelectPlan, TableReference, Update
 use super::schema::ParseSchema;
 use super::select::emit_simple_count;
 use super::subquery::emit_subqueries;
+use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
+use crate::function::Func;
+use crate::schema::Index;
+use crate::translate::plan::{DeletePlan, Plan, Search};
+use crate::translate::values::emit_values;
+use crate::util::exprs_are_equivalent;
+use crate::vdbe::builder::{CursorType, ProgramBuilder};
+use crate::vdbe::insn::{CmpInsFlags, IdxInsertFlags, RegisterOrLiteral};
+use crate::vdbe::{insn::Insn, BranchOffset};
+use crate::{Result, SymbolTable};
 
 #[derive(Debug)]
 pub struct Resolver<'a> {
@@ -196,6 +196,11 @@ pub fn emit_query<'a>(
     plan: &'a mut SelectPlan,
     t_ctx: &'a mut TranslateCtx<'a>,
 ) -> Result<usize> {
+    if !plan.values.is_empty() {
+        let reg_result_cols_start = emit_values(program, &plan, &t_ctx.resolver)?;
+        return Ok(reg_result_cols_start);
+    }
+
     // Emit subqueries first so the results can be read in the main query loop.
     emit_subqueries(program, t_ctx, &mut plan.table_references)?;
 

@@ -27,6 +27,7 @@ pub(crate) mod select;
 pub(crate) mod subquery;
 pub(crate) mod transaction;
 pub(crate) mod update;
+mod values;
 
 use crate::fast_lock::SpinLock;
 use crate::schema::Schema;
