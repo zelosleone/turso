@@ -142,8 +142,28 @@ fn update_pragma(
             Ok(())
         }
         PragmaName::UserVersion => {
-            // TODO: Implement updating user_version
-            todo!("updating user_version not yet implemented")
+            let version_value = match value {
+                ast::Expr::Literal(ast::Literal::Numeric(numeric_value)) => {
+                    numeric_value.parse::<i32>()?
+                }
+                ast::Expr::Unary(ast::UnaryOperator::Negative, expr) => match *expr {
+                    ast::Expr::Literal(ast::Literal::Numeric(numeric_value)) => {
+                        -numeric_value.parse::<i32>()?
+                    }
+                    _ => bail_parse_error!("Not a valid value"),
+                },
+                _ => bail_parse_error!("Not a valid value"),
+            };
+
+            let mut header_guard = header.lock();
+
+            // update in-memory
+            header_guard.user_version = version_value;
+
+            // update in disk
+            pager.write_database_header(&header_guard);
+
+            Ok(())
         }
         PragmaName::SchemaVersion => {
             // TODO: Implement updating schema_version
@@ -286,14 +306,15 @@ fn update_cache_size(value: i64, header: Arc<SpinLock<DatabaseHeader>>, pager: R
         cache_size_unformatted = MIN_PAGE_CACHE_SIZE as i64;
     }
 
+    let mut header_guard = header.lock();
+
     // update in-memory header
-    header.lock().default_page_cache_size = cache_size_unformatted
+    header_guard.default_page_cache_size = cache_size_unformatted
         .try_into()
         .unwrap_or_else(|_| panic!("invalid value, too big for a i32 {}", value));
 
     // update in disk
-    let header_copy = header.lock().clone();
-    pager.write_database_header(&header_copy);
+    pager.write_database_header(&header_guard);
 
     // update cache size
     pager
