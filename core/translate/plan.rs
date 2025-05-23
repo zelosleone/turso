@@ -161,14 +161,14 @@ pub fn convert_where_to_vtab_constraint(
     term: &WhereTerm,
     table_index: usize,
     pred_idx: usize,
-) -> Option<ConstraintInfo> {
+) -> Result<Option<ConstraintInfo>> {
     if term.from_outer_join.is_some() {
-        return None;
+        return Ok(None);
     }
     let Expr::Binary(lhs, op, rhs) = &term.expr else {
-        return None;
+        return Ok(None);
     };
-    let expr_is_ready = |e: &Expr| -> bool { can_pushdown_predicate(e, table_index) };
+    let expr_is_ready = |e: &Expr| -> Result<bool> { can_pushdown_predicate(e, table_index) };
     let (vcol_idx, op_for_vtab, usable, is_rhs) = match (&**lhs, &**rhs) {
         (
             Expr::Column {
@@ -186,7 +186,7 @@ pub fn convert_where_to_vtab_constraint(
             let vtab_on_l = *tbl_l == table_index;
             let vtab_on_r = *tbl_r == table_index;
             if vtab_on_l == vtab_on_r {
-                return None; // either both or none -> not convertible
+                return Ok(None); // either both or none -> not convertible
             }
 
             if vtab_on_l {
@@ -203,26 +203,30 @@ pub fn convert_where_to_vtab_constraint(
             (
                 column,
                 op,
-                expr_is_ready(other), // literal / earlier‑table / deterministic func ?
+                expr_is_ready(other)?, // literal / earlier‑table / deterministic func ?
                 false,
             )
         }
         (other, Expr::Column { table, column, .. }) if *table == table_index => (
             column,
             &reverse_operator(op).unwrap_or(*op),
-            expr_is_ready(other),
+            expr_is_ready(other)?,
             true,
         ),
 
-        _ => return None, // does not involve the virtual table at all
+        _ => return Ok(None), // does not involve the virtual table at all
     };
 
-    Some(ConstraintInfo {
+    let Some(op) = to_ext_constraint_op(op_for_vtab) else {
+        return Ok(None);
+    };
+
+    Ok(Some(ConstraintInfo {
         column_index: *vcol_idx as u32,
-        op: to_ext_constraint_op(op_for_vtab)?,
+        op,
         usable,
         plan_info: ConstraintInfo::pack_plan_info(pred_idx as u32, is_rhs),
-    })
+    }))
 }
 /// The loop index where to evaluate the condition.
 /// For example, in `SELECT * FROM u JOIN p WHERE u.id = 5`, the condition can already be evaluated at the first loop (idx 0),
