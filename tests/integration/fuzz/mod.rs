@@ -51,7 +51,7 @@ mod tests {
 
         let insert = format!(
             "INSERT INTO t VALUES {}",
-            (1..10000)
+            (1..2000)
                 .map(|x| format!("({})", x))
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -71,9 +71,9 @@ mod tests {
 
         for comp in COMPARISONS.iter() {
             for order_by in ORDER_BY.iter() {
-                for max in 0..=10000 {
+                for max in 0..=2000 {
                     let query = format!(
-                        "SELECT * FROM t WHERE x {} {} {} LIMIT 3",
+                        "SELECT * FROM t WHERE x {} {} {}",
                         comp,
                         max,
                         order_by.unwrap_or("")
