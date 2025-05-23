@@ -365,6 +365,7 @@ pub fn open_loop(
                                     .filter_map(|(i, p)| {
                                         // Build ConstraintInfo from the predicates
                                         convert_where_to_vtab_constraint(p, table_index, i)
+                                            .unwrap_or(None)
                                     })
                                     .collect::<Vec<_>>();
                                 // TODO: get proper order_by information to pass to the vtab.
