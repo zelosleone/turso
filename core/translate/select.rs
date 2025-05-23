@@ -30,6 +30,7 @@ pub fn translate_select(
     select: ast::Select,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
+    query_destination: QueryDestination,
 ) -> Result<TranslateSelectResult> {
     let mut select_plan = prepare_select_plan(
         schema,
@@ -37,6 +38,7 @@ pub fn translate_select(
         syms,
         None,
         &mut program.table_reference_counter,
+        query_destination,
     )?;
     optimize_plan(&mut select_plan, schema)?;
     let opts = match &select_plan {
@@ -82,6 +84,7 @@ pub fn prepare_select_plan<'a>(
     syms: &SymbolTable,
     outer_scope: Option<&'a Scope<'a>>,
     table_ref_counter: &mut TableRefIdCounter,
+    query_destination: QueryDestination,
 ) -> Result<Plan> {
     let compounds = select.body.compounds.take();
     match compounds {
@@ -96,6 +99,7 @@ pub fn prepare_select_plan<'a>(
                 syms,
                 outer_scope,
                 table_ref_counter,
+                query_destination,
             )?))
         }
         Some(compounds) => {
@@ -108,6 +112,7 @@ pub fn prepare_select_plan<'a>(
                 syms,
                 outer_scope,
                 table_ref_counter,
+                query_destination.clone(),
             )?;
             let mut rest = Vec::with_capacity(compounds.len());
             for CompoundSelect { select, operator } in compounds {
@@ -128,6 +133,7 @@ pub fn prepare_select_plan<'a>(
                     syms,
                     outer_scope,
                     table_ref_counter,
+                    query_destination.clone(),
                 )?;
                 rest.push((plan, operator));
             }
@@ -177,6 +183,7 @@ fn prepare_one_select_plan<'a>(
     syms: &SymbolTable,
     outer_scope: Option<&'a Scope<'a>>,
     table_ref_counter: &mut TableRefIdCounter,
+    query_destination: QueryDestination,
 ) -> Result<SelectPlan> {
     match select {
         ast::OneSelect::Select(select_inner) => {
@@ -246,7 +253,7 @@ fn prepare_one_select_plan<'a>(
                 limit: None,
                 offset: None,
                 contains_constant_false_condition: false,
-                query_destination: QueryDestination::ResultRows,
+                query_destination,
                 distinctness: Distinctness::from_ast(distinctness.as_ref()),
                 values: vec![],
             };
@@ -560,7 +567,7 @@ fn prepare_one_select_plan<'a>(
                 limit: None,
                 offset: None,
                 contains_constant_false_condition: false,
-                query_destination: QueryDestination::ResultRows,
+                query_destination,
                 distinctness: Distinctness::NonDistinct,
                 values,
             };
