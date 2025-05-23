@@ -558,11 +558,15 @@ pub struct JoinInfo {
 }
 
 /// A table reference in the query plan.
-/// For example, SELECT * FROM users u JOIN products p JOIN (SELECT * FROM users) sub
-/// has three table references:
-/// 1. operation=Scan, table=users, table_identifier=u, reference_type=BTreeTable, join_info=None
-/// 2. operation=Scan, table=products, table_identifier=p, reference_type=BTreeTable, join_info=Some(JoinInfo { outer: false, using: None }),
-/// 3. operation=Subquery, table=users, table_identifier=sub, reference_type=Subquery, join_info=None
+/// For example,
+/// ```sql
+/// SELECT * FROM users u JOIN products p JOIN (SELECT * FROM users) sub;
+/// ```
+/// has three table references where
+/// - all have [Operation::Scan]
+/// - identifiers are `t`, `p`, `sub`
+/// - `t` and `p` are [Table::BTree] while `sub` is [Table::FromClauseSubquery]
+/// - join_info is None for the first table reference, and Some(JoinInfo { outer: false, using: None }) for the second and third table references
 #[derive(Debug, Clone)]
 pub struct TableReference {
     /// The operation that this table reference performs.
