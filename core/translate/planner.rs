@@ -613,119 +613,23 @@ pub fn table_mask_from_expr(top_level_expr: &Expr) -> Result<TableMask> {
 }
 
 pub fn determine_where_to_eval_expr<'a>(
-    expr: &'a Expr,
+    top_level_expr: &'a Expr,
     join_order: &[JoinOrderMember],
 ) -> Result<EvalAt> {
     let mut eval_at: EvalAt = EvalAt::BeforeLoop;
-    match expr {
-        ast::Expr::Binary(e1, _, e2) => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(e1, join_order)?);
-            eval_at = eval_at.max(determine_where_to_eval_expr(e2, join_order)?);
-        }
-        ast::Expr::Column { table, .. } | ast::Expr::RowId { table, .. } => {
-            let join_idx = join_order
-                .iter()
-                .position(|t| t.table_no == *table)
-                .unwrap_or(usize::MAX);
-            eval_at = eval_at.max(EvalAt::Loop(join_idx));
-        }
-        ast::Expr::Id(_) => {
-            /* Id referring to column will already have been rewritten as an Expr::Column */
-            /* we only get here with literal 'true' or 'false' etc  */
-        }
-        ast::Expr::Qualified(_, _) => {
-            unreachable!("Qualified should be resolved to a Column before resolving eval_at")
-        }
-        ast::Expr::Literal(_) => {}
-        ast::Expr::Like { lhs, rhs, .. } => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(lhs, join_order)?);
-            eval_at = eval_at.max(determine_where_to_eval_expr(rhs, join_order)?);
-        }
-        ast::Expr::FunctionCall {
-            args: Some(args), ..
-        } => {
-            for arg in args {
-                eval_at = eval_at.max(determine_where_to_eval_expr(arg, join_order)?);
+    walk_expr(top_level_expr, &mut |expr: &Expr| -> Result<()> {
+        match expr {
+            Expr::Column { table, .. } | Expr::RowId { table, .. } => {
+                let join_idx = join_order
+                    .iter()
+                    .position(|t| t.table_no == *table)
+                    .unwrap_or(usize::MAX);
+                eval_at = eval_at.max(EvalAt::Loop(join_idx));
             }
+            _ => {}
         }
-        ast::Expr::InList { lhs, rhs, .. } => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(lhs, join_order)?);
-            if let Some(rhs_list) = rhs {
-                for rhs_expr in rhs_list {
-                    eval_at = eval_at.max(determine_where_to_eval_expr(rhs_expr, join_order)?);
-                }
-            }
-        }
-        Expr::Between {
-            lhs, start, end, ..
-        } => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(lhs, join_order)?);
-            eval_at = eval_at.max(determine_where_to_eval_expr(start, join_order)?);
-            eval_at = eval_at.max(determine_where_to_eval_expr(end, join_order)?);
-        }
-        Expr::Case {
-            base,
-            when_then_pairs,
-            else_expr,
-        } => {
-            if let Some(base) = base {
-                eval_at = eval_at.max(determine_where_to_eval_expr(base, join_order)?);
-            }
-            for (when, then) in when_then_pairs {
-                eval_at = eval_at.max(determine_where_to_eval_expr(when, join_order)?);
-                eval_at = eval_at.max(determine_where_to_eval_expr(then, join_order)?);
-            }
-            if let Some(else_expr) = else_expr {
-                eval_at = eval_at.max(determine_where_to_eval_expr(else_expr, join_order)?);
-            }
-        }
-        Expr::Cast { expr, .. } => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(expr, join_order)?);
-        }
-        Expr::Collate(expr, _) => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(expr, join_order)?);
-        }
-        Expr::DoublyQualified(_, _, _) => {
-            unreachable!("DoublyQualified should be resolved to a Column before resolving eval_at")
-        }
-        Expr::Exists(_) => {
-            todo!("exists not supported yet")
-        }
-        Expr::FunctionCall { args, .. } => {
-            for arg in args.as_ref().unwrap_or(&vec![]).iter() {
-                eval_at = eval_at.max(determine_where_to_eval_expr(arg, join_order)?);
-            }
-        }
-        Expr::FunctionCallStar { .. } => {}
-        Expr::InSelect { .. } => {
-            todo!("in select not supported yet")
-        }
-        Expr::InTable { .. } => {
-            todo!("in table not supported yet")
-        }
-        Expr::IsNull(expr) => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(expr, join_order)?);
-        }
-        Expr::Name(_) => {}
-        Expr::NotNull(expr) => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(expr, join_order)?);
-        }
-        Expr::Parenthesized(exprs) => {
-            for expr in exprs.iter() {
-                eval_at = eval_at.max(determine_where_to_eval_expr(expr, join_order)?);
-            }
-        }
-        Expr::Raise(_, _) => {
-            todo!("raise not supported yet")
-        }
-        Expr::Subquery(_) => {
-            todo!("subquery not supported yet")
-        }
-        Expr::Unary(_, expr) => {
-            eval_at = eval_at.max(determine_where_to_eval_expr(expr, join_order)?);
-        }
-        Expr::Variable(_) => {}
-    }
+        Ok(())
+    })?;
 
     Ok(eval_at)
 }
