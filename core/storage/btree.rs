@@ -576,6 +576,7 @@ impl BTreeCursor {
             } else {
                 cell_idx
             };
+
             let cell = contents.cell_get(
                 cell_idx,
                 payload_overflow_threshold_max(contents.page_type(), self.usable_space() as u16),
@@ -589,6 +590,7 @@ impl BTreeCursor {
                     _rowid,
                 }) => {
                     let mem_page = self.read_page(_left_child_page as usize)?;
+                    self.stack.retreat();
                     self.stack.push_backwards(mem_page);
                     continue;
                 }
