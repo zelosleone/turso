@@ -408,6 +408,7 @@ pub fn prepare_select_plan<'a>(
             let mut result_columns = Vec::with_capacity(len);
             for i in 0..len {
                 result_columns.push(ResultSetColumn {
+                    // these result_columns work as placeholders for the values, so the expr doesn't matter
                     expr: ast::Expr::Literal(ast::Literal::Numeric(i.to_string())),
                     alias: None,
                     contains_aggregates: false,
