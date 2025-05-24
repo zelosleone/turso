@@ -516,6 +516,9 @@ impl Statement {
 
     /// Close the statement
     pub fn close(&self) {
+        if self._ctx.is_null() {
+            return;
+        }
         unsafe { (*self._ctx).close() }
     }
 }
@@ -566,6 +569,10 @@ impl Stmt {
 
     /// Close the statement
     pub fn close(&self) {
+        // null check to prevent double free
+        if self._ctx.is_null() {
+            return;
+        }
         unsafe { (self._close)(self as *const Stmt as *mut Stmt) };
     }
 
