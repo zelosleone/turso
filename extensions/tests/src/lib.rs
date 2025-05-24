@@ -370,6 +370,7 @@ impl VTabCursor for StatsCursor {
             }
             tables.push(tbl);
         }
+        master.close();
         for tbl in tables {
             // count rows for each table
             if let Ok(mut count_stmt) = conn.prepare(&format!("SELECT COUNT(*) FROM {};", tbl)) {
@@ -378,6 +379,7 @@ impl VTabCursor for StatsCursor {
                     _ => 0,
                 };
                 self.rows.push((tbl, count));
+                count_stmt.close();
             }
         }
         if conn
@@ -403,6 +405,7 @@ impl VTabCursor for StatsCursor {
                 assert_eq!(val.to_integer(), Some(42));
             }
         }
+        stmt.close();
         ResultCode::OK
     }
 

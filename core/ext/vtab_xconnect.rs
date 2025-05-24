@@ -89,7 +89,7 @@ pub unsafe extern "C" fn execute(
 
 /// Wraps core Connection::prepare with a custom Stmt object with the necessary function pointers.
 /// This object is boxed/leaked and the caller is responsible for freeing the memory.
-pub unsafe extern "C" fn prepare_stmt(ctx: *mut ExtConn, sql: *const c_char) -> *const Stmt {
+pub unsafe extern "C" fn prepare_stmt(ctx: *mut ExtConn, sql: *const c_char) -> *mut Stmt {
     let c_str = unsafe { CStr::from_ptr(sql as *mut c_char) };
     let sql_str = match c_str.to_str() {
         Ok(s) => s.to_string(),
@@ -120,7 +120,7 @@ pub unsafe extern "C" fn prepare_stmt(ctx: *mut ExtConn, sql: *const c_char) -> 
                 stmt_get_column_names,
                 stmt_free_current_row,
                 stmt_close,
-            ))) as *const Stmt
+            )))
         }
         Err(e) => {
             tracing::error!("prepare_stmt: failed to prepare statement: {:?}", e);
