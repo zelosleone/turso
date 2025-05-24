@@ -1,14 +1,15 @@
 use lazy_static::lazy_static;
 use limbo_ext::{
-    register_extension, scalar, ConstraintInfo, ConstraintOp, ConstraintUsage, ExtResult,
-    IndexInfo, OrderByInfo, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive, VTable,
-    Value,
+    register_extension, scalar, Connection, ConstraintInfo, ConstraintOp, ConstraintUsage,
+    ExtResult, IndexInfo, OrderByInfo, ResultCode, VTabCursor, VTabKind, VTabModule,
+    VTabModuleDerive, VTable, Value,
 };
 #[cfg(not(target_family = "wasm"))]
 use limbo_ext::{VfsDerive, VfsExtension, VfsFile};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::rc::Rc;
 use std::sync::Mutex;
 
 register_extension! {
@@ -137,7 +138,7 @@ impl VTable for KVStoreTable {
     type Cursor = KVStoreCursor;
     type Error = String;
 
-    fn open(&self) -> Result<Self::Cursor, Self::Error> {
+    fn open(&self, _conn: Option<Rc<Connection>>) -> Result<Self::Cursor, Self::Error> {
         let _ = env_logger::try_init();
         Ok(KVStoreCursor {
             rows: Vec::new(),

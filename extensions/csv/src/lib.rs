@@ -21,11 +21,12 @@
 //! - `columns` — number of columns
 //! - `schema` — optional custom SQL `CREATE TABLE` schema
 use limbo_ext::{
-    register_extension, ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabCursor, VTabKind,
-    VTabModule, VTabModuleDerive, VTable, Value,
+    register_extension, Connection, ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabCursor,
+    VTabKind, VTabModule, VTabModuleDerive, VTable, Value,
 };
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::rc::Rc;
 
 register_extension! {
     vtabs: { CsvVTabModule }
@@ -259,7 +260,7 @@ impl VTable for CsvTable {
     type Cursor = CsvCursor;
     type Error = ResultCode;
 
-    fn open(&self) -> Result<Self::Cursor, Self::Error> {
+    fn open(&self, _conn: Option<Rc<Connection>>) -> Result<Self::Cursor, Self::Error> {
         match self.new_reader() {
             Ok(reader) => Ok(CsvCursor::new(reader, self)),
             Err(_) => Err(ResultCode::Error),
