@@ -2,7 +2,7 @@ use crate::{types::StepResult, ExtResult, ResultCode, Value};
 use std::{
     ffi::{c_char, c_void, CStr, CString},
     num::NonZeroUsize,
-    rc::{Rc, Weak},
+    rc::Rc,
 };
 
 pub type RegisterModuleFn = unsafe extern "C" fn(
@@ -475,13 +475,17 @@ impl Connection {
 }
 
 impl Statement {
-    /// Bind a value to a parameter in the prepared statement
+    /// Bind a value to a parameter in the prepared statement.
     ///```ignore
     /// let stmt = conn.prepare_stmt("select * from users where name = ?");
-    /// stmt.bind(1, Value::from_text("test".into()));
-    pub fn bind(&self, idx: NonZeroUsize, arg: &Value) {
-        let arg = arg as *const Value;
-        unsafe { (*self._ctx).bind_args(idx, arg) }
+    /// stmt.bind_at(1, Value::from_text("test".into()));
+    pub fn bind_at(&self, idx: NonZeroUsize, arg: Value) {
+        let arg_ref = &arg;
+        let arg_ptr = arg_ref as *const Value;
+        unsafe {
+            (*self._ctx).bind_args(idx, arg_ptr);
+            arg.__free_internal_type();
+        }
     }
 
     /// Execute the statement and return the next row
