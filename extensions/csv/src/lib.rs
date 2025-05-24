@@ -687,7 +687,7 @@ mod tests {
                 &format!("header={}", val),
             ]);
             assert!(result.is_ok(), "Expected Ok for header='{}'", val);
-            assert!(!result.unwrap().1.header, "Expected true for '{}'", val);
+            assert!(result.unwrap().1.header, "Expected true for '{}'", val);
         }
 
         for &val in &false_values {
