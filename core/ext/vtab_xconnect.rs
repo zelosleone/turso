@@ -8,16 +8,20 @@ use std::{
     rc::Weak,
 };
 
+/// Free memory for the internal context of the connection.
+/// This function does not close the core connection itself,
+/// it only frees the memory the table is responsible for.
 pub unsafe extern "C" fn close(ctx: *mut c_void) {
     if ctx.is_null() {
         return;
     }
     // only free the memory for the boxed connection, we don't upgrade
-    // and actually close the core connection.
+    // or actually close the core connection, as we were 'sharing' it.
     let _ = Box::from_raw(ctx as *mut Weak<Connection>);
 }
 
-/// This function takes ownership of the optional limbo_ext::Value array if provided
+/// Wrapper around core Connection::execute with optional arguments to bind
+/// to the statment This function takes ownership of the optional limbo_ext::Value array if provided
 pub unsafe extern "C" fn execute(
     ctx: *mut ExtConn,
     sql: *const c_char,
@@ -83,6 +87,8 @@ pub unsafe extern "C" fn execute(
     ResultCode::Error
 }
 
+/// Wraps core Connection::prepare with a custom Stmt object with the necessary function pointers.
+/// This object is boxed/leaked and the caller is responsible for freeing the memory.
 pub unsafe extern "C" fn prepare_stmt(ctx: *mut ExtConn, sql: *const c_char) -> *const Stmt {
     let c_str = unsafe { CStr::from_ptr(sql as *mut c_char) };
     let sql_str = match c_str.to_str() {
@@ -120,7 +126,8 @@ pub unsafe extern "C" fn prepare_stmt(ctx: *mut ExtConn, sql: *const c_char) -> 
     }
 }
 
-/// expected 1 based indexing
+/// This function expects 1 based indexing. Wraps core statement bind_at functionality
+/// this function does not take ownership of the provided arg value
 pub unsafe extern "C" fn stmt_bind_args_fn(
     ctx: *mut Stmt,
     idx: i32,
@@ -143,6 +150,9 @@ pub unsafe extern "C" fn stmt_bind_args_fn(
     ResultCode::OK
 }
 
+/// Wraps the functionality of the core Statement::step function,
+/// preferring to handle the IO step result internally to prevent having to expose
+/// run_once. Returns the equivalent ResultCode which then maps to an external StepResult.
 pub unsafe extern "C" fn stmt_step(stmt: *mut Stmt) -> ResultCode {
     let Ok(stmt) = Stmt::from_ptr(stmt) else {
         tracing::error!("stmt_step: failed to convert stmt to Stmt");
@@ -170,6 +180,8 @@ pub unsafe extern "C" fn stmt_step(stmt: *mut Stmt) -> ResultCode {
     ResultCode::Error
 }
 
+/// Instead of returning a pointer to the row, sets the Stmt's 'cursor'/current_row
+/// to the next result row, and then the caller can access the resulting value on the Stmt.
 pub unsafe extern "C" fn stmt_get_row(ctx: *mut Stmt) {
     let Ok(stmt) = Stmt::from_ptr(ctx) else {
         tracing::error!("stmt_get_row: failed to convert stmt to Stmt");
@@ -192,6 +204,7 @@ pub unsafe extern "C" fn stmt_get_row(ctx: *mut Stmt) {
     }
 }
 
+/// Free the memory of the current row/cursor of the Stmt object.
 pub unsafe extern "C" fn stmt_free_current_row(ctx: *mut Stmt) {
     let Ok(stmt) = Stmt::from_ptr(ctx) else {
         return;
@@ -207,6 +220,8 @@ pub unsafe extern "C" fn stmt_free_current_row(ctx: *mut Stmt) {
     }
 }
 
+/// Provides an easier API to get all the result column names associated with
+/// the prepared Statement. The caller is responsible for freeing the memory
 pub unsafe extern "C" fn stmt_get_column_names(
     ctx: *mut Stmt,
     count: *mut i32,
@@ -233,17 +248,22 @@ pub unsafe extern "C" fn stmt_get_column_names(
     Box::into_raw(names_array) as *mut *mut c_char
 }
 
-pub unsafe extern "C" fn stmt_close(ctx: *mut Stmt) {
-    let Ok(stmt) = Stmt::from_ptr(ctx) else {
+/// Ffi/extension wrapper around core Statement::reset and
+/// cleans up resources associated with the Statement
+pub unsafe extern "C" fn stmt_close(stmt: *mut Stmt) {
+    if stmt.is_null() {
         return;
-    };
-    if !stmt.current_row.is_null() {
-        stmt.free_current_row();
     }
-    // take ownership of internal statement
-    let wrapper = Box::from_raw(stmt as *mut Stmt);
-    if !wrapper._ctx.is_null() {
-        let mut _stmt: Box<Statement> = Box::from_raw(wrapper._ctx as *mut Statement);
-        _stmt.reset()
+    let mut wrapper = Box::from_raw(stmt);
+    if wrapper._ctx.is_null() {
+        // already closed
+        return;
     }
+    // clean up the current row if it exists
+    if !wrapper.current_row.is_null() {
+        wrapper.free_current_row();
+    }
+    // free the managed internal context
+    let mut internal = Box::<Statement>::from_raw(wrapper._ctx.cast());
+    internal.reset();
 }
