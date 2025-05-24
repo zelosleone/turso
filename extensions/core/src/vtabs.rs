@@ -353,8 +353,7 @@ pub type ExecuteFn = unsafe extern "C" fn(
 ) -> ResultCode;
 pub type GetColumnNamesFn =
     unsafe extern "C" fn(ctx: *mut Stmt, count: *mut i32) -> *mut *mut c_char;
-pub type BindArgsFn =
-    unsafe extern "C" fn(ctx: *mut Stmt, idx: i32, arg: *const Value) -> ResultCode;
+pub type BindArgsFn = unsafe extern "C" fn(ctx: *mut Stmt, idx: i32, arg: Value) -> ResultCode;
 pub type StmtStepFn = unsafe extern "C" fn(ctx: *mut Stmt) -> ResultCode;
 pub type StmtGetRowValuesFn = unsafe extern "C" fn(ctx: *mut Stmt);
 pub type FreeCurrentRowFn = unsafe extern "C" fn(ctx: *mut Stmt);
@@ -398,6 +397,9 @@ impl Conn {
     }
 
     pub fn close(&self) {
+        if self._ctx.is_null() {
+            return;
+        }
         unsafe { (self._close)(self._ctx) };
     }
 
@@ -433,14 +435,15 @@ impl Conn {
 }
 
 /// Prepared statement for querying a core database connection public API for extensions
+/// Statements can be manually closed.
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct Statement(*const Stmt);
 
-/// The Database connection that opened the VTable:
-/// Public API to expose methods for extensions
+/// Public API for methods to allow extensions to query other tables for
+/// the connection that opened the VTable.
 #[derive(Debug)]
-#[repr(C)]
+#[repr(transparent)]
 pub struct Connection(*mut Conn);
 
 impl Connection {
@@ -460,12 +463,10 @@ impl Connection {
     /// Execute a SQL statement with the given arguments.
     /// Optionally returns the last inserted rowid for the query.
     pub fn execute(self: &Rc<Self>, sql: &str, args: &[Value]) -> crate::ExtResult<Option<usize>> {
+        if self.0.is_null() {
+            return Err(ResultCode::Error);
+        }
         unsafe { (*self.0).execute(sql, args) }
-    }
-
-    /// Close the connection to the database.
-    pub fn close(self) {
-        unsafe { ((*self.0)._close)(self.0 as *mut c_void) };
     }
 }
 
@@ -474,12 +475,10 @@ impl Statement {
     ///```ignore
     /// let stmt = conn.prepare_stmt("select * from users where name = ?");
     /// stmt.bind_at(1, Value::from_text("test".into()));
+    ///```
     pub fn bind_at(&self, idx: NonZeroUsize, arg: Value) {
-        let arg_ref = &arg;
-        let arg_ptr = arg_ref as *const Value;
         unsafe {
-            (*self.0).bind_args(idx, arg_ptr);
-            arg.__free_internal_type();
+            (*self.0).bind_args(idx, arg);
         }
     }
 
@@ -509,8 +508,8 @@ impl Statement {
         unsafe { (*self.0).get_column_names() }
     }
 
-    /// Close the statement
-    pub fn close(&self) {
+    /// Close the statement and clean up resources.
+    pub fn close(self) {
         if self.0.is_null() {
             return;
         }
@@ -586,8 +585,11 @@ impl Stmt {
     }
 
     /// Bind a value to a parameter in the prepared statement
-    fn bind_args(&self, idx: NonZeroUsize, arg: *const Value) {
-        unsafe { (self._bind_args_fn)(self.to_ptr() as *mut Stmt, idx.get() as i32, arg) };
+    /// Own the value so it can be freed in core
+    fn bind_args(&self, idx: NonZeroUsize, arg: Value) {
+        unsafe {
+            (self._bind_args_fn)(self.to_ptr() as *mut Stmt, idx.get() as i32, arg);
+        };
     }
 
     /// Execute the statement to attempt to retrieve the next result row.
@@ -596,6 +598,8 @@ impl Stmt {
     }
 
     /// Free the memory for the values obtained from the `get_row` method.
+    /// This is easier done on core side because __free_internal_type is 'core_only'
+    /// feature to prevent extensions causing memory issues.
     /// # Safety
     /// This fn is unsafe because it derefs a raw pointer after null and
     /// length checks. This fn should only be called with the pointer returned from get_row.

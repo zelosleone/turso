@@ -131,17 +131,14 @@ pub unsafe extern "C" fn prepare_stmt(ctx: *mut ExtConn, sql: *const c_char) -> 
 
 /// This function expects 1 based indexing. Wraps core statement bind_at functionality
 /// this function does not take ownership of the provided arg value
-pub unsafe extern "C" fn stmt_bind_args_fn(
-    ctx: *mut Stmt,
-    idx: i32,
-    arg: *const ExtValue,
-) -> ResultCode {
+pub unsafe extern "C" fn stmt_bind_args_fn(ctx: *mut Stmt, idx: i32, arg: ExtValue) -> ResultCode {
     let Ok(stmt) = Stmt::from_ptr(ctx) else {
         tracing::error!("prepare_stmt: null stmt pointer");
         return ResultCode::Error;
     };
     let stmt_ctx: &mut Statement = unsafe { &mut *(stmt._ctx as *mut Statement) };
-    let Ok(owned_val) = Value::from_ffi_ptr(arg) else {
+    // from_ffi takes ownership
+    let Ok(owned_val) = Value::from_ffi(arg) else {
         tracing::error!("stmt_bind_args_fn: failed to convert arg to Value");
         return ResultCode::Error;
     };
@@ -229,26 +226,39 @@ pub unsafe extern "C" fn stmt_get_column_names(
     ctx: *mut Stmt,
     count: *mut i32,
 ) -> *mut *mut c_char {
-    let Ok(stmt) = Stmt::from_ptr(ctx) else {
+    if !count.is_null() {
         *count = 0;
+    }
+    let Ok(stmt) = Stmt::from_ptr(ctx) else {
+        tracing::error!("stmt_get_column_names: null Stmt pointer");
         return ptr::null_mut();
     };
     let stmt_ctx: &mut Statement = unsafe { &mut *(stmt._ctx as *mut Statement) };
     let num_cols = stmt_ctx.num_columns();
     if num_cols == 0 {
-        *count = 0;
+        tracing::info!("stmt_get_column_names: no columns");
         return ptr::null_mut();
     }
-    let mut c_names: Vec<*mut c_char> = Vec::with_capacity(num_cols);
+    let mut names: Vec<*mut c_char> = Vec::with_capacity(num_cols);
+    // collect all the column names and convert them to C strings to send back
     for i in 0..num_cols {
         let name = stmt_ctx.get_column_name(i);
-        let c_str = CString::new(name.as_bytes()).unwrap();
-        c_names.push(c_str.into_raw());
+        match CString::new(name.as_bytes()) {
+            Ok(cstr) => names.push(cstr.into_raw()),
+            Err(_) => {
+                // fall-back: free what we allocated so far
+                for p in names {
+                    let _ = CString::from_raw(p);
+                }
+                return std::ptr::null_mut();
+            }
+        }
     }
 
-    *count = c_names.len() as i32;
-    let names_array = c_names.into_boxed_slice();
-    Box::into_raw(names_array) as *mut *mut c_char
+    if !count.is_null() {
+        *count = names.len() as i32;
+    }
+    Box::into_raw(names.into_boxed_slice()) as *mut *mut c_char
 }
 
 /// Ffi/extension wrapper around core Statement::reset and

@@ -779,10 +779,15 @@ pub struct VirtualTable {
 impl Drop for VirtualTable {
     fn drop(&mut self) {
         if let Some(conn) = self.connection_ptr.borrow_mut().take() {
-            // free the memory for the limbo_ext::Conn
+            if conn.is_null() {
+                return;
+            }
+            // free the memory for the limbo_ext::Conn itself
             let conn = unsafe { Box::from_raw(conn) };
+            // frees the boxed Weak pointer
             conn.close();
         }
+        *self.connection_ptr.borrow_mut() = None;
     }
 }
 
