@@ -993,7 +993,7 @@ pub fn op_vopen(
     let CursorType::VirtualTable(virtual_table) = cursor_type else {
         panic!("VOpen on non-virtual table cursor");
     };
-    let cursor = virtual_table.open()?;
+    let cursor = virtual_table.open(program.connection.clone())?;
     state
         .cursors
         .borrow_mut()

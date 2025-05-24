@@ -46,6 +46,7 @@ use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::{Column, Schema};
 use std::ffi::c_void;
+use std::rc::Weak;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
@@ -772,6 +773,7 @@ pub struct VirtualTable {
     columns: Vec<Column>,
     kind: VTabKind,
     table_ptr: *const c_void,
+    connection_ptr: RefCell<*mut limbo_ext::Conn>,
 }
 
 impl VirtualTable {
@@ -817,7 +819,7 @@ impl VirtualTable {
                 )));
             }
         };
-        let (schema, table_ptr) = module.implementation.as_ref().create(args)?;
+        let (schema, table_ptr) = module.implementation.create(args)?;
         let mut parser = Parser::new(schema.as_bytes());
         if let ast::Cmd::Stmt(ast::Stmt::CreateTable { body, .. }) = parser.next()?.ok_or(
             LimboError::ParseError("Failed to parse schema from virtual table module".to_string()),
@@ -825,6 +827,7 @@ impl VirtualTable {
             let columns = columns_from_create_table_body(&body)?;
             let vtab = Rc::new(VirtualTable {
                 name: tbl_name.unwrap_or(module_name).to_owned(),
+                connection_ptr: RefCell::new(std::ptr::null_mut()),
                 implementation: module.implementation.clone(),
                 columns,
                 args: exprs,
@@ -838,8 +841,14 @@ impl VirtualTable {
         ))
     }
 
-    pub fn open(&self) -> crate::Result<VTabOpaqueCursor> {
-        let cursor = unsafe { (self.implementation.open)(self.table_ptr) };
+    pub fn open(&self, conn: Weak<Connection>) -> crate::Result<VTabOpaqueCursor> {
+        let conn = conn.as_ptr() as *mut c_void;
+        // prepare a pointer to the Weak<Connection> and function pointers to box up
+        // and send to the extension.
+        let conn = limbo_ext::Conn::new(conn, crate::ext::prepare_stmt, crate::ext::close);
+        let conn = Box::into_raw(Box::new(conn)) as *mut limbo_ext::Conn;
+        *self.connection_ptr.borrow_mut() = conn;
+        let cursor = unsafe { (self.implementation.open)(self.table_ptr, conn) };
         VTabOpaqueCursor::new(cursor, self.implementation.close)
     }
 
