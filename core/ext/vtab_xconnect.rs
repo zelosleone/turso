@@ -122,7 +122,10 @@ pub unsafe extern "C" fn prepare_stmt(ctx: *mut ExtConn, sql: *const c_char) -> 
                 stmt_close,
             ))) as *const Stmt
         }
-        Err(_) => ptr::null_mut(),
+        Err(e) => {
+            tracing::error!("prepare_stmt: failed to prepare statement: {:?}", e);
+            ptr::null_mut()
+        }
     }
 }
 

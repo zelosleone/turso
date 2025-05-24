@@ -318,7 +318,6 @@ impl VTabModule for TableStatsVtabModule {
     }
 }
 
-/// implement the module
 impl VTable for StatsTable {
     type Cursor = StatsCursor;
     type Error = String;
@@ -340,6 +339,7 @@ impl VTabCursor for StatsCursor {
         self.pos = 0;
 
         let Some(conn) = &self.conn else {
+            log::error!("no connection present");
             return ResultCode::Error;
         };
 
@@ -387,7 +387,7 @@ impl VTabCursor for StatsCursor {
             )
             .is_err()
         {
-            println!("failed to insert into xConnect table");
+            log::error!("failed to insert into xConnect table");
         }
         let mut stmt = conn
             .prepare("select price from products where name = ? limit 1;")
