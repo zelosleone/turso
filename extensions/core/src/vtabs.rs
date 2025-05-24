@@ -366,7 +366,7 @@ pub type CloseStmtFn = unsafe extern "C" fn(ctx: *mut Stmt);
 #[repr(C)]
 #[derive(Debug, Clone)]
 pub struct Conn {
-    // Rc::Weak from core::Connection
+    // boxed Rc::Weak from core::Connection
     pub _ctx: *mut c_void,
     pub _prepare_stmt: PrepareStmtFn,
     pub _execute: ExecuteFn,
@@ -432,45 +432,40 @@ impl Conn {
     }
 }
 
-/// Prepared statement for querying a core database connection
-/// public API with wrapper methods for extensions
+/// Prepared statement for querying a core database connection public API for extensions
 #[derive(Debug)]
-#[repr(C)]
-pub struct Statement {
-    _ctx: *const Stmt,
-}
+#[repr(transparent)]
+pub struct Statement(*const Stmt);
 
 /// The Database connection that opened the VTable:
 /// Public API to expose methods for extensions
 #[derive(Debug)]
 #[repr(C)]
-pub struct Connection {
-    _ctx: *mut Conn,
-}
+pub struct Connection(*mut Conn);
 
 impl Connection {
     pub fn new(ctx: *mut Conn) -> Self {
-        Connection { _ctx: ctx }
+        Connection(ctx)
     }
 
     /// From the included SQL string, prepare a statement for execution.
     pub fn prepare(self: &Rc<Self>, sql: &str) -> ExtResult<Statement> {
-        let stmt = unsafe { (*self._ctx).prepare_stmt(sql) };
+        let stmt = unsafe { (*self.0).prepare_stmt(sql) };
         if stmt.is_null() {
             return Err(ResultCode::Error);
         }
-        Ok(Statement { _ctx: stmt })
+        Ok(Statement(stmt))
     }
 
     /// Execute a SQL statement with the given arguments.
     /// Optionally returns the last inserted rowid for the query.
     pub fn execute(self: &Rc<Self>, sql: &str, args: &[Value]) -> crate::ExtResult<Option<usize>> {
-        unsafe { (*self._ctx).execute(sql, args) }
+        unsafe { (*self.0).execute(sql, args) }
     }
 
     /// Close the connection to the database.
     pub fn close(self) {
-        unsafe { ((*self._ctx)._close)(self._ctx as *mut c_void) };
+        unsafe { ((*self.0)._close)(self.0 as *mut c_void) };
     }
 }
 
@@ -483,7 +478,7 @@ impl Statement {
         let arg_ref = &arg;
         let arg_ptr = arg_ref as *const Value;
         unsafe {
-            (*self._ctx).bind_args(idx, arg_ptr);
+            (*self.0).bind_args(idx, arg_ptr);
             arg.__free_internal_type();
         }
     }
@@ -496,7 +491,7 @@ impl Statement {
     /// }
     /// ```
     pub fn step(&self) -> StepResult {
-        unsafe { (*self._ctx).step() }
+        unsafe { (*self.0).step() }
     }
 
     // Get the current row values
@@ -506,20 +501,20 @@ impl Statement {
     ///    println!("row: {:?}", row);
     ///```
     pub fn get_row(&mut self) -> &[Value] {
-        unsafe { (*self._ctx).get_row() }
+        unsafe { (*self.0).get_row() }
     }
 
     /// Get the result column names for the prepared statement
     pub fn get_column_names(&self) -> Vec<String> {
-        unsafe { (*self._ctx).get_column_names() }
+        unsafe { (*self.0).get_column_names() }
     }
 
     /// Close the statement
     pub fn close(&self) {
-        if self._ctx.is_null() {
+        if self.0.is_null() {
             return;
         }
-        unsafe { (*self._ctx).close() }
+        unsafe { (*self.0).close() }
     }
 }
 
