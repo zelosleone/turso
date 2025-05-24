@@ -111,6 +111,11 @@ pub struct Value {
     value_type: ValueType,
     value: ValueData,
 }
+impl Default for Value {
+    fn default() -> Self {
+        Self::null()
+    }
+}
 
 #[repr(C)]
 union ValueData {
