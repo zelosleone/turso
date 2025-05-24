@@ -9,6 +9,7 @@ use limbo_ext::{VfsDerive, VfsExtension, VfsFile};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::num::NonZeroUsize;
 use std::rc::Rc;
 use std::sync::Mutex;
 
@@ -379,30 +380,29 @@ impl VTabCursor for StatsCursor {
                 self.rows.push((tbl, count));
             }
         }
-        let sql = "create table xConnect(col text);";
-        if conn.execute(sql, &[]).is_err() {
-            println!("failed to create xConnect table");
-        }
         if conn
             .execute(
-                "insert into xConnect(col) values(?);",
-                &[Value::from_text("test".into())],
+                "insert into products (name, price) values(?, ?);",
+                &[Value::from_text("xConnect".into()), Value::from_integer(42)],
             )
             .is_err()
         {
             println!("failed to insert into xConnect table");
         }
         let mut stmt = conn
-            .prepare("select col from xConnect;")
+            .prepare("select price from products where name = ? limit 1;")
             .map_err(|_| ResultCode::Error)
             .unwrap();
+        stmt.bind_at(
+            NonZeroUsize::new(1).expect("1 to be not zero"),
+            Value::from_text("xConnect".into()),
+        );
         while let StepResult::Row = stmt.step() {
             let row = stmt.get_row();
             if let Some(val) = row.first() {
-                assert_eq!(val.to_text().unwrap(), "test");
+                assert_eq!(val.to_integer(), Some(42));
             }
         }
-
         ResultCode::OK
     }
 
