@@ -62,6 +62,32 @@ impl<'a> Resolver<'a> {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct LimitCtx {
+    /// Register holding the LIMIT value (e.g. LIMIT 5)
+    pub reg_limit: usize,
+    /// Whether to initialize the LIMIT counter to the LIMIT value;
+    /// There are cases like compound SELECTs where all the sub-selects
+    /// utilize the same limit register, but it is initialized only once.
+    pub initialize_counter: bool,
+}
+
+impl LimitCtx {
+    pub fn new(program: &mut ProgramBuilder) -> Self {
+        Self {
+            reg_limit: program.alloc_register(),
+            initialize_counter: true,
+        }
+    }
+
+    pub fn new_shared(reg_limit: usize) -> Self {
+        Self {
+            reg_limit,
+            initialize_counter: false,
+        }
+    }
+}
+
 /// The TranslateCtx struct holds various information and labels used during bytecode generation.
 /// It is used for maintaining state and control flow during the bytecode
 /// generation process.
@@ -80,8 +106,7 @@ pub struct TranslateCtx<'a> {
     pub reg_nonagg_emit_once_flag: Option<usize>,
     // First register of the result columns of the query
     pub reg_result_cols_start: Option<usize>,
-    // The register holding the limit value, if any.
-    pub reg_limit: Option<usize>,
+    pub limit_ctx: Option<LimitCtx>,
     // The register holding the offset value, if any.
     pub reg_offset: Option<usize>,
     // The register holding the limit+offset value, if any.
@@ -114,7 +139,7 @@ impl<'a> TranslateCtx<'a> {
             label_main_loop_end: None,
             reg_agg_start: None,
             reg_nonagg_emit_once_flag: None,
-            reg_limit: None,
+            limit_ctx: None,
             reg_offset: None,
             reg_limit_offset_sum: None,
             reg_result_cols_start: None,
@@ -152,7 +177,103 @@ pub fn emit_program(program: &mut ProgramBuilder, plan: Plan, syms: &SymbolTable
         Plan::Select(plan) => emit_program_for_select(program, plan, syms),
         Plan::Delete(plan) => emit_program_for_delete(program, plan, syms),
         Plan::Update(plan) => emit_program_for_update(program, plan, syms),
+        Plan::CompoundSelect { .. } => emit_program_for_compound_select(program, plan, syms),
     }
+}
+
+fn emit_program_for_compound_select(
+    program: &mut ProgramBuilder,
+    plan: Plan,
+    syms: &SymbolTable,
+) -> Result<()> {
+    let Plan::CompoundSelect {
+        mut first,
+        mut rest,
+        limit,
+        ..
+    } = plan
+    else {
+        crate::bail_parse_error!("expected compound select plan");
+    };
+
+    // Trivial exit on LIMIT 0
+    if let Some(limit) = limit {
+        if limit == 0 {
+            program.epilogue(TransactionMode::Read);
+            program.result_columns = first.result_columns;
+            program.table_references = first.table_references;
+            return Ok(());
+        }
+    }
+
+    // Each subselect gets their own TranslateCtx, but they share the same limit_ctx
+    // because the LIMIT applies to the entire compound select, not just a single subselect.
+    let mut t_ctx_list = Vec::with_capacity(rest.len() + 1);
+    let reg_limit = if let Some(limit) = limit {
+        let reg = program.alloc_register();
+        program.emit_insn(Insn::Integer {
+            value: limit as i64,
+            dest: reg,
+        });
+        Some(reg)
+    } else {
+        None
+    };
+    let limit_ctx = if let Some(reg_limit) = reg_limit {
+        Some(LimitCtx::new_shared(reg_limit))
+    } else {
+        None
+    };
+    let mut t_ctx_first = TranslateCtx::new(
+        program,
+        syms,
+        first.table_references.len(),
+        first.result_columns.len(),
+    );
+    t_ctx_first.limit_ctx = limit_ctx;
+    t_ctx_list.push(t_ctx_first);
+
+    for (select, _) in rest.iter() {
+        let mut t_ctx = TranslateCtx::new(
+            program,
+            syms,
+            select.table_references.len(),
+            select.result_columns.len(),
+        );
+        t_ctx.limit_ctx = limit_ctx;
+        t_ctx_list.push(t_ctx);
+    }
+
+    let mut first_t_ctx = t_ctx_list.remove(0);
+    emit_query(program, &mut first, &mut first_t_ctx)?;
+
+    // TODO: add support for UNION, EXCEPT, INTERSECT
+    while !t_ctx_list.is_empty() {
+        let label_next_select = program.allocate_label();
+        // If the LIMIT is reached in any subselect, jump to either:
+        // a) the IfNot of the next subselect, or
+        // b) the end of the program
+        if let Some(reg_limit) = reg_limit {
+            program.emit_insn(Insn::IfNot {
+                reg: reg_limit,
+                target_pc: label_next_select,
+                jump_if_null: true,
+            });
+        }
+        let mut t_ctx = t_ctx_list.remove(0);
+        let (mut select, operator) = rest.remove(0);
+        if operator != ast::CompoundOperator::UnionAll {
+            crate::bail_parse_error!("unimplemented compound select operator: {:?}", operator);
+        }
+        emit_query(program, &mut select, &mut t_ctx)?;
+        program.preassign_label_to_next_insn(label_next_select);
+    }
+
+    program.epilogue(TransactionMode::Read);
+    program.result_columns = first.result_columns;
+    program.table_references = first.table_references;
+
+    Ok(())
 }
 
 fn emit_program_for_select(
@@ -204,16 +325,20 @@ pub fn emit_query<'a>(
     // Emit subqueries first so the results can be read in the main query loop.
     emit_subqueries(program, t_ctx, &mut plan.table_references)?;
 
-    if t_ctx.reg_limit.is_none() {
-        t_ctx.reg_limit = plan.limit.map(|_| program.alloc_register());
+    if t_ctx.limit_ctx.is_none() {
+        t_ctx.limit_ctx = plan.limit.map(|_| LimitCtx::new(program));
     }
 
     if t_ctx.reg_offset.is_none() {
-        t_ctx.reg_offset = plan.offset.map(|_| program.alloc_register());
+        t_ctx.reg_offset = t_ctx
+            .reg_offset
+            .or_else(|| plan.offset.map(|_| program.alloc_register()));
     }
 
     if t_ctx.reg_limit_offset_sum.is_none() {
-        t_ctx.reg_limit_offset_sum = plan.offset.map(|_| program.alloc_register());
+        t_ctx.reg_limit_offset_sum = t_ctx
+            .reg_limit_offset_sum
+            .or_else(|| plan.offset.map(|_| program.alloc_register()));
     }
 
     // No rows will be read from source table loops if there is a constant false condition eg. WHERE 0
@@ -522,12 +647,11 @@ fn emit_program_for_update(
         program.table_references = plan.table_references;
         return Ok(());
     }
-    if t_ctx.reg_limit.is_none() && plan.limit.is_some() {
-        let reg = program.alloc_register();
-        t_ctx.reg_limit = Some(reg);
+    if t_ctx.limit_ctx.is_none() && plan.limit.is_some() {
+        t_ctx.limit_ctx = Some(LimitCtx::new(program));
         program.emit_insn(Insn::Integer {
             value: plan.limit.unwrap() as i64,
-            dest: reg,
+            dest: t_ctx.limit_ctx.unwrap().reg_limit,
         });
         program.mark_last_insn_constant();
         if t_ctx.reg_offset.is_none() && plan.offset.is_some_and(|n| n.ne(&0)) {
@@ -541,7 +665,7 @@ fn emit_program_for_update(
             let combined_reg = program.alloc_register();
             t_ctx.reg_limit_offset_sum = Some(combined_reg);
             program.emit_insn(Insn::OffsetLimit {
-                limit_reg: t_ctx.reg_limit.unwrap(),
+                limit_reg: t_ctx.limit_ctx.unwrap().reg_limit,
                 offset_reg: reg,
                 combined_reg,
             });
@@ -1019,9 +1143,9 @@ fn emit_update_insns(
         });
     }
 
-    if let Some(limit_reg) = t_ctx.reg_limit {
+    if let Some(limit_ctx) = t_ctx.limit_ctx {
         program.emit_insn(Insn::DecrJumpZero {
-            reg: limit_reg,
+            reg: limit_ctx.reg_limit,
             target_pc: t_ctx.label_main_loop_end.unwrap(),
         })
     }

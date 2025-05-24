@@ -280,7 +280,7 @@ fn parse_from_clause_table<'a>(
             let Plan::Select(mut subplan) =
                 prepare_select_plan(schema, *subselect, syms, Some(scope))?
             else {
-                unreachable!();
+                crate::bail_parse_error!("Only non-compound SELECT queries are currently supported in FROM clause subqueries");
             };
             subplan.query_type = SelectQueryType::Subquery {
                 yield_reg: usize::MAX, // will be set later in bytecode emission
