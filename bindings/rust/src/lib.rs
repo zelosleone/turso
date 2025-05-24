@@ -396,4 +396,102 @@ mod tests {
         let _ = std::fs::remove_file(format!("{}-wal", db_path));
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_database_persistence_many_frames() -> Result<()> {
+        let db_path = "test_persistence_many_frames.db";
+        // Ensure a clean state by removing the database file if it exists from a previous run
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_file(format!("{}-wal", db_path));
+
+        const NUM_INSERTS: usize = 100;
+        const TARGET_STRING_LEN: usize = 1024; // 1KB
+
+        let mut original_data = Vec::with_capacity(NUM_INSERTS);
+        for i in 0..NUM_INSERTS {
+            let prefix = format!("test_string_{:04}_", i);
+            let padding_len = TARGET_STRING_LEN.saturating_sub(prefix.len());
+            let padding: String = std::iter::repeat('A').take(padding_len).collect();
+            original_data.push(format!("{}{}", prefix, padding));
+        }
+
+        // First, create the database, a table, and insert many large strings
+        {
+            let db = Builder::new_local(db_path).build().await?;
+            let conn = db.connect()?;
+            conn.execute(
+                "CREATE TABLE test_large_persistence (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL);",
+                (),
+            )
+            .await?;
+
+            for data_val in &original_data {
+                conn.execute(
+                    "INSERT INTO test_large_persistence (data) VALUES (?);",
+                    params::Params::Positional(vec![Value::Text(data_val.clone())]),
+                )
+                .await?;
+            }
+        } // db and conn are dropped here, simulating closing
+
+        // Now, re-open the database and check if the data is still there
+        let db = Builder::new_local(db_path).build().await?;
+        let conn = db.connect()?;
+
+        let mut rows = conn
+            .query("SELECT data FROM test_large_persistence ORDER BY id;", ())
+            .await?;
+
+        for i in 0..NUM_INSERTS {
+            let row = rows
+                .next()
+                .await?
+                .expect(&format!("Expected row {} but found None", i));
+            assert_eq!(
+                row.get_value(0)?,
+                Value::Text(original_data[i].clone()),
+                "Mismatch in retrieved data for row {}",
+                i
+            );
+        }
+
+        assert!(
+            rows.next().await?.is_none(),
+            "Expected no more rows after retrieving all inserted data"
+        );
+
+        // Delete the WAL file only and try to re-open and query
+        let wal_path = format!("{}-wal", db_path);
+        std::fs::remove_file(&wal_path)
+            .map_err(|e| eprintln!("Warning: Failed to delete WAL file for test: {}", e))
+            .unwrap();
+
+        // Attempt to re-open the database after deleting WAL and assert that table is missing.
+        let db_after_wal_delete = Builder::new_local(db_path).build().await?;
+        let conn_after_wal_delete = db_after_wal_delete.connect()?;
+
+        let query_result_after_wal_delete = conn_after_wal_delete
+            .query("SELECT data FROM test_large_persistence ORDER BY id;", ())
+            .await;
+
+        match query_result_after_wal_delete {
+            Ok(_) => panic!("Query succeeded after WAL deletion and DB reopen, but was expected to fail because the table definition should have been in the WAL."),
+            Err(Error::SqlExecutionFailure(msg)) => {
+                assert!(
+                    msg.contains("test_large_persistence not found"),
+                    "Expected 'test_large_persistence not found' error, but got: {}",
+                    msg
+                );
+            }
+            Err(e) => panic!(
+                "Expected SqlExecutionFailure for 'no such table', but got a different error: {:?}",
+                e
+            ),
+        }
+
+        // Clean up the database file
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_file(format!("{}-wal", db_path));
+        Ok(())
+    }
 }
