@@ -15,7 +15,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
-pub use vtab_xconnect::{close, prepare_stmt};
+pub use vtab_xconnect::{close, execute, prepare_stmt};
 type ExternAggFunc = (InitAggFunction, StepFunction, FinalizeFunction);
 
 #[derive(Clone)]

@@ -2,7 +2,7 @@ use crate::{types::StepResult, ExtResult, ResultCode, Value};
 use std::{
     ffi::{c_char, c_void, CStr, CString},
     num::NonZeroUsize,
-    rc::Rc,
+    rc::{Rc, Weak},
 };
 
 pub type RegisterModuleFn = unsafe extern "C" fn(
@@ -343,8 +343,14 @@ impl ConstraintInfo {
     }
 }
 
-pub type ConnectFn = unsafe extern "C" fn(ctx: *mut c_void) -> *mut Conn;
 pub type PrepareStmtFn = unsafe extern "C" fn(api: *mut Conn, sql: *const c_char) -> *const Stmt;
+pub type ExecuteFn = unsafe extern "C" fn(
+    ctx: *mut Conn,
+    sql: *const c_char,
+    args: *mut Value,
+    arg_count: i32,
+    last_insert_rowid: *mut i64,
+) -> ResultCode;
 pub type GetColumnNamesFn =
     unsafe extern "C" fn(ctx: *mut Stmt, count: *mut i32) -> *mut *mut c_char;
 pub type BindArgsFn =
@@ -363,18 +369,27 @@ pub struct Conn {
     // Rc::Weak from core::Connection
     pub _ctx: *mut c_void,
     pub _prepare_stmt: PrepareStmtFn,
+    pub _execute: ExecuteFn,
     pub _close: CloseConnectionFn,
 }
 
 impl Conn {
-    pub fn new(ctx: *mut c_void, prepare_stmt: PrepareStmtFn, close: CloseConnectionFn) -> Self {
+    pub fn new(
+        ctx: *mut c_void,
+        prepare_stmt: PrepareStmtFn,
+        exec_fn: ExecuteFn,
+        close: CloseConnectionFn,
+    ) -> Self {
         Conn {
             _ctx: ctx,
             _prepare_stmt: prepare_stmt,
+            _execute: exec_fn,
             _close: close,
         }
     }
+
     /// # Safety
+    /// Dereferences a null pointer with a null check
     pub unsafe fn from_ptr(ptr: *mut Conn) -> crate::ExtResult<&'static mut Self> {
         if ptr.is_null() {
             return Err(ResultCode::Error);
@@ -386,11 +401,34 @@ impl Conn {
         unsafe { (self._close)(self._ctx) };
     }
 
+    /// execute a SQL statement with the given arguments.
+    /// optionally returns the last inserted rowid for the query
+    pub fn execute(&self, sql: &str, args: &[Value]) -> crate::ExtResult<Option<usize>> {
+        let Ok(sql) = CString::new(sql) else {
+            return Err(ResultCode::Error);
+        };
+        let arg_count = args.len() as i32;
+        let args = args.as_ptr();
+        let last_insert_rowid = 0;
+        if let ResultCode::OK = unsafe {
+            (self._execute)(
+                self as *const _ as *mut Conn,
+                sql.as_ptr(),
+                args as *mut Value,
+                arg_count,
+                &last_insert_rowid as *const _ as *mut i64,
+            )
+        } {
+            return Ok(Some(last_insert_rowid as usize));
+        }
+        Err(ResultCode::Error)
+    }
+
     pub fn prepare_stmt(&self, sql: &str) -> *const Stmt {
         let Ok(sql) = CString::new(sql) else {
             return std::ptr::null();
         };
-        unsafe { (self._prepare_stmt)(self as *const Conn as *mut Conn, sql.as_ptr()) }
+        unsafe { (self._prepare_stmt)(self as *const _ as *mut Conn, sql.as_ptr()) }
     }
 }
 
@@ -422,6 +460,12 @@ impl Connection {
             return Err(ResultCode::Error);
         }
         Ok(Statement { _ctx: stmt })
+    }
+
+    /// Execute a SQL statement with the given arguments.
+    /// Optionally returns the last inserted rowid for the query.
+    pub fn execute(self: &Rc<Self>, sql: &str, args: &[Value]) -> crate::ExtResult<Option<usize>> {
+        unsafe { (*self._ctx).execute(sql, args) }
     }
 
     /// Close the connection to the database.

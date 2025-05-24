@@ -773,7 +773,17 @@ pub struct VirtualTable {
     columns: Vec<Column>,
     kind: VTabKind,
     table_ptr: *const c_void,
-    connection_ptr: RefCell<*mut limbo_ext::Conn>,
+    connection_ptr: RefCell<Option<*mut limbo_ext::Conn>>,
+}
+
+impl Drop for VirtualTable {
+    fn drop(&mut self) {
+        if let Some(conn) = self.connection_ptr.borrow_mut().take() {
+            // free the memory for the limbo_ext::Conn
+            let conn = unsafe { Box::from_raw(conn) };
+            conn.close();
+        }
+    }
 }
 
 impl VirtualTable {
@@ -795,6 +805,7 @@ impl VirtualTable {
             ))
         }
     }
+
     /// takes ownership of the provided Args
     pub(crate) fn from_args(
         tbl_name: Option<&str>,
@@ -827,7 +838,7 @@ impl VirtualTable {
             let columns = columns_from_create_table_body(&body)?;
             let vtab = Rc::new(VirtualTable {
                 name: tbl_name.unwrap_or(module_name).to_owned(),
-                connection_ptr: RefCell::new(std::ptr::null_mut()),
+                connection_ptr: RefCell::new(None),
                 implementation: module.implementation.clone(),
                 columns,
                 args: exprs,
@@ -841,14 +852,21 @@ impl VirtualTable {
         ))
     }
 
+    /// Accepts a Weak pointer to the connection that owns the VTable, that the module
+    /// can optionally use to query the other tables.
     pub fn open(&self, conn: Weak<Connection>) -> crate::Result<VTabOpaqueCursor> {
-        let conn = conn.as_ptr() as *mut c_void;
-        // prepare a pointer to the Weak<Connection> and function pointers to box up
-        // and send to the extension.
-        let conn = limbo_ext::Conn::new(conn, crate::ext::prepare_stmt, crate::ext::close);
-        let conn = Box::into_raw(Box::new(conn)) as *mut limbo_ext::Conn;
-        *self.connection_ptr.borrow_mut() = conn;
-        let cursor = unsafe { (self.implementation.open)(self.table_ptr, conn) };
+        // we need a Weak<Connection> to upgrade and call from the extension.
+        let weak_box: *mut Weak<Connection> = Box::into_raw(Box::new(conn));
+        let conn = limbo_ext::Conn::new(
+            weak_box.cast(),
+            crate::ext::prepare_stmt,
+            crate::ext::execute,
+            crate::ext::close,
+        );
+        let ext_conn_ptr = Box::into_raw(Box::new(conn));
+        // store the leaked connection pointer on the table so it can be freed on drop
+        *self.connection_ptr.borrow_mut() = Some(ext_conn_ptr);
+        let cursor = unsafe { (self.implementation.open)(self.table_ptr, ext_conn_ptr) };
         VTabOpaqueCursor::new(cursor, self.implementation.close)
     }
 
