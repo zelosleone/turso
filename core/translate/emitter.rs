@@ -273,6 +273,16 @@ fn emit_program_for_compound_select(
     };
 
     // Emit the first SELECT
+
+    let mut registers_subqery = None;
+    if matches!(
+        first.query_destination,
+        crate::translate::plan::QueryDestination::CoroutineYield { .. }
+    ) {
+        registers_subqery = Some(program.alloc_registers(first.result_columns.len()));
+        first_t_ctx.reg_result_cols_start = registers_subqery.clone();
+    }
+
     emit_query(program, &mut first, &mut first_t_ctx)?;
 
     // Emit the remaining SELECTs. Any selects on the left side of a UNION must deduplicate their
@@ -321,6 +331,13 @@ fn emit_program_for_compound_select(
                 limit_ctx,
                 label_next_select,
             );
+        }
+        if matches!(
+            select.query_destination,
+            crate::translate::plan::QueryDestination::CoroutineYield { .. }
+        ) {
+            // Need to reuse the same registers when you are yielding
+            t_ctx.reg_result_cols_start = registers_subqery.clone();
         }
         emit_query(program, &mut select, &mut t_ctx)?;
         program.preassign_label_to_next_insn(label_next_select);
@@ -512,7 +529,9 @@ pub fn emit_query<'a>(
     }
 
     // Allocate registers for result columns
-    t_ctx.reg_result_cols_start = Some(program.alloc_registers(plan.result_columns.len()));
+    if t_ctx.reg_result_cols_start.is_none() {
+        t_ctx.reg_result_cols_start = Some(program.alloc_registers(plan.result_columns.len()));
+    }
 
     // Initialize cursors and other resources needed for query execution
     if let Some(ref mut order_by) = plan.order_by {
