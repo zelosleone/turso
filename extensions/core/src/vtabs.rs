@@ -396,11 +396,12 @@ impl Conn {
         Ok(unsafe { &mut *(ptr) })
     }
 
-    pub fn close(&self) {
+    pub fn close(&mut self) {
         if self._ctx.is_null() {
             return;
         }
         unsafe { (self._close)(self._ctx) };
+        self._ctx = std::ptr::null_mut();
     }
 
     /// execute a SQL statement with the given arguments.
@@ -448,8 +449,10 @@ impl Drop for Statement {
         unsafe { (*self.0).close() }
     }
 }
+
 /// Public API for methods to allow extensions to query other tables for
-/// the connection that opened the VTable.
+/// the connection that opened the VTable. This value and its resources are cleaned up when
+/// the VTable is dropped, so there is no need to manually close the connection.
 #[derive(Debug)]
 #[repr(transparent)]
 pub struct Connection(*mut Conn);

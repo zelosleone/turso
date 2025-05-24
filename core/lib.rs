@@ -783,7 +783,7 @@ impl Drop for VirtualTable {
                 return;
             }
             // free the memory for the limbo_ext::Conn itself
-            let conn = unsafe { Box::from_raw(conn) };
+            let mut conn = unsafe { Box::from_raw(conn) };
             // frees the boxed Weak pointer
             conn.close();
         }
