@@ -1,7 +1,7 @@
 use lazy_static::lazy_static;
 use limbo_ext::{
     register_extension, scalar, Connection, ConstraintInfo, ConstraintOp, ConstraintUsage,
-    ExtResult, IndexInfo, OrderByInfo, ResultCode, VTabCursor, VTabKind, VTabModule,
+    ExtResult, IndexInfo, OrderByInfo, ResultCode, StepResult, VTabCursor, VTabKind, VTabModule,
     VTabModuleDerive, VTable, Value,
 };
 #[cfg(not(target_family = "wasm"))]
@@ -13,7 +13,7 @@ use std::rc::Rc;
 use std::sync::Mutex;
 
 register_extension! {
-    vtabs: { KVStoreVTabModule },
+    vtabs: { KVStoreVTabModule, TableStatsVtabModule },
     scalars: { test_scalar },
     vfs: { TestFS },
 }
@@ -293,5 +293,143 @@ impl VfsFile for TestFile {
 
     fn size(&self) -> i64 {
         self.file.metadata().map(|m| m.len() as i64).unwrap_or(-1)
+    }
+}
+
+#[derive(VTabModuleDerive, Default)]
+pub struct TableStatsVtabModule;
+
+pub struct StatsCursor {
+    pos: usize,
+    rows: Vec<(String, i64)>,
+    conn: Option<Rc<Connection>>,
+}
+
+pub struct StatsTable {}
+impl VTabModule for TableStatsVtabModule {
+    type Table = StatsTable;
+    const VTAB_KIND: VTabKind = VTabKind::VirtualTable;
+    const NAME: &'static str = "tablestats";
+
+    fn create(_args: &[Value]) -> Result<(String, Self::Table), ResultCode> {
+        let schema = "CREATE TABLE x(name TEXT, rows INT);".to_string();
+        Ok((schema, StatsTable {}))
+    }
+}
+
+/// implement the module
+impl VTable for StatsTable {
+    type Cursor = StatsCursor;
+    type Error = String;
+
+    fn open(&self, conn: Option<Rc<Connection>>) -> Result<Self::Cursor, Self::Error> {
+        Ok(StatsCursor {
+            pos: 0,
+            rows: Vec::new(),
+            conn,
+        })
+    }
+}
+
+impl VTabCursor for StatsCursor {
+    type Error = String;
+
+    fn filter(&mut self, _args: &[Value], _idx_info: Option<(&str, i32)>) -> ResultCode {
+        self.rows.clear();
+        self.pos = 0;
+
+        let Some(conn) = &self.conn else {
+            return ResultCode::Error;
+        };
+
+        // discover application tables
+        let mut master = conn
+            .prepare(
+                "SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%';",
+            )
+            .map_err(|_| ResultCode::Error)
+            .unwrap();
+
+        let mut tables = Vec::new();
+        while let StepResult::Row = master.step() {
+            let row = master.get_row();
+            let tbl = if let Some(val) = row.first() {
+                val.to_text().unwrap_or("").to_string()
+            } else {
+                "".to_string()
+            };
+            if tbl.is_empty() {
+                continue;
+            };
+            if row
+                .get(1)
+                .is_some_and(|v| v.to_text().unwrap().contains("CREATE VIRTUAL TABLE"))
+            {
+                continue;
+            }
+            tables.push(tbl);
+        }
+        for tbl in tables {
+            // count rows for each table
+            if let Ok(mut count_stmt) = conn.prepare(&format!("SELECT COUNT(*) FROM {};", tbl)) {
+                let count = match count_stmt.step() {
+                    StepResult::Row => count_stmt.get_row()[0].to_integer().unwrap_or(0),
+                    _ => 0,
+                };
+                self.rows.push((tbl, count));
+            }
+        }
+        let sql = "create table xConnect(col text);";
+        if conn.execute(sql, &[]).is_err() {
+            println!("failed to create xConnect table");
+        }
+        if conn
+            .execute(
+                "insert into xConnect(col) values(?);",
+                &[Value::from_text("test".into())],
+            )
+            .is_err()
+        {
+            println!("failed to insert into xConnect table");
+        }
+        let mut stmt = conn
+            .prepare("select col from xConnect;")
+            .map_err(|_| ResultCode::Error)
+            .unwrap();
+        while let StepResult::Row = stmt.step() {
+            let row = stmt.get_row();
+            if let Some(val) = row.first() {
+                assert_eq!(val.to_text().unwrap(), "test");
+            }
+        }
+
+        ResultCode::OK
+    }
+
+    fn column(&self, idx: u32) -> Result<Value, Self::Error> {
+        self.rows
+            .get(self.pos)
+            .ok_or("row out of range".to_string())
+            .and_then(|(name, cnt)| match idx {
+                0 => Ok(Value::from_text(name.clone())),
+                1 => Ok(Value::from_integer(*cnt)),
+                _ => Err("bad column".into()),
+            })
+    }
+
+    fn next(&mut self) -> ResultCode {
+        self.pos += 1;
+        if self.pos >= self.rows.len() {
+            ResultCode::EOF
+        } else {
+            ResultCode::OK
+        }
+    }
+
+    fn eof(&self) -> bool {
+        self.pos >= self.rows.len()
+    }
+    fn rowid(&self) -> i64 {
+        self.pos as i64
     }
 }
