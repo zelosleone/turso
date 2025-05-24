@@ -103,6 +103,7 @@ class TestLimboShell:
         init_commands: Optional[str] = None,
         init_blobs_table: bool = False,
         exec_name: Optional[str] = None,
+        use_testing_db: bool = False,
         flags="",
     ):
         if exec_name is None:
@@ -110,6 +111,9 @@ class TestLimboShell:
             if flags == "":
                 flags = "-q"
         self.config = ShellConfig(exe_name=exec_name, flags=flags)
+        if use_testing_db:
+            self.init_test_db()
+            init_commands = ".open testing/testing_clone.db"
         if init_commands is None:
             # Default initialization
             init_commands = """
@@ -129,6 +133,7 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
         self.shell = LimboShell(self.config, init_commands)
 
     def quit(self):
+        self.cleanup_test_db()
         self.shell.quit()
 
     def run_test(self, name: str, sql: str, expected: str) -> None:
@@ -159,9 +164,28 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
     def execute_dot(self, dot_command: str) -> None:
         self.shell._write_to_pipe(dot_command)
 
+    def init_test_db(self) -> None:
+        self.cleanup_test_db()
+        path = os.path.join("testing", "testing_clone.db")
+        if os.path.exists(path):
+            os.remove(path)
+        cmd = "sqlite3 testing/testing.db '.clone testing/testing_clone.db'"
+        subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if not os.path.exists("testing/testing_clone.db"):
+            raise RuntimeError("Failed to clone testing.db to testing/testing_clone.db")
+
+    def cleanup_test_db(self) -> None:
+        path = os.path.join("testing", "testing_clone.db")
+        if os.path.exists(path):
+            os.remove(path)
+        walpath = os.path.join("testing", "testing.db-wal")
+        if os.path.exists(walpath):
+            os.remove(walpath)
+
     # Enables the use of `with` syntax
     def __enter__(self):
         return self
 
     def __exit__(self, exception_type, exception_value, exception_traceback):
+        self.cleanup_test_db()
         self.quit()
