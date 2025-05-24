@@ -391,6 +391,10 @@ pub fn open_loop(
                                                 // translate the opposite side of the referenced vtab column
                                                 let expr = if is_rhs { lhs } else { rhs };
                                                 // argv_index is 1-based; adjust to get the proper register offset.
+                                                if argv_index == 0 {
+                                                    // invalid since argv_index is 1-based
+                                                    continue;
+                                                }
                                                 let target_reg =
                                                     start_reg + (argv_index - 1) as usize;
                                                 translate_expr(
