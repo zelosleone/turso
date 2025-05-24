@@ -411,7 +411,7 @@ mod tests {
         for i in 0..NUM_INSERTS {
             let prefix = format!("test_string_{:04}_", i);
             let padding_len = TARGET_STRING_LEN.saturating_sub(prefix.len());
-            let padding: String = std::iter::repeat('A').take(padding_len).collect();
+            let padding: String = "A".repeat(padding_len);
             original_data.push(format!("{}{}", prefix, padding));
         }
 
@@ -446,7 +446,7 @@ mod tests {
             let row = rows
                 .next()
                 .await?
-                .expect(&format!("Expected row {} but found None", i));
+                .unwrap_or_else(|| panic!("Expected row {} but found None", i));
             assert_eq!(
                 row.get_value(0)?,
                 Value::Text(original_data[i].clone()),
