@@ -41,36 +41,47 @@ pub fn translate_select(
         query_destination,
     )?;
     optimize_plan(&mut select_plan, schema)?;
+    let num_result_cols;
     let opts = match &select_plan {
-        Plan::Select(select) => ProgramBuilderOpts {
-            query_mode,
-            num_cursors: count_plan_required_cursors(select),
-            approx_num_insns: estimate_num_instructions(select),
-            approx_num_labels: estimate_num_labels(select),
-        },
-        Plan::CompoundSelect { first, rest, .. } => ProgramBuilderOpts {
-            query_mode,
-            num_cursors: count_plan_required_cursors(first)
+        Plan::Select(select) => {
+            num_result_cols = select.result_columns.len();
+            ProgramBuilderOpts {
+                query_mode,
+                num_cursors: count_plan_required_cursors(select),
+                approx_num_insns: estimate_num_instructions(select),
+                approx_num_labels: estimate_num_labels(select),
+            }
+        }
+        Plan::CompoundSelect { first, rest, .. } => {
+            num_result_cols = first.result_columns.len()
                 + rest
                     .iter()
-                    .map(|(plan, _)| count_plan_required_cursors(plan))
-                    .sum::<usize>(),
-            approx_num_insns: estimate_num_instructions(first)
-                + rest
-                    .iter()
-                    .map(|(plan, _)| estimate_num_instructions(plan))
-                    .sum::<usize>(),
-            approx_num_labels: estimate_num_labels(first)
-                + rest
-                    .iter()
-                    .map(|(plan, _)| estimate_num_labels(plan))
-                    .sum::<usize>(),
-        },
+                    .map(|(plan, _)| plan.result_columns.len())
+                    .sum::<usize>();
+
+            ProgramBuilderOpts {
+                query_mode,
+                num_cursors: count_plan_required_cursors(first)
+                    + rest
+                        .iter()
+                        .map(|(plan, _)| count_plan_required_cursors(plan))
+                        .sum::<usize>(),
+                approx_num_insns: estimate_num_instructions(first)
+                    + rest
+                        .iter()
+                        .map(|(plan, _)| estimate_num_instructions(plan))
+                        .sum::<usize>(),
+                approx_num_labels: estimate_num_labels(first)
+                    + rest
+                        .iter()
+                        .map(|(plan, _)| estimate_num_labels(plan))
+                        .sum::<usize>(),
+            }
+        }
         other => panic!("plan is not a SelectPlan: {:?}", other),
     };
 
     program.extend(&opts);
-    let num_result_cols = select.result_columns.len();
     emit_program(&mut program, select_plan, syms)?;
     Ok(TranslateSelectResult {
         program,
