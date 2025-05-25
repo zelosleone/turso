@@ -10,7 +10,7 @@ use crate::{
 use super::{
     emitter::{LimitCtx, Resolver},
     expr::translate_expr,
-    plan::{Distinctness, SelectPlan, SelectQueryType},
+    plan::{Distinctness, QueryDestination, SelectPlan},
 };
 
 /// Emits the bytecode for:
@@ -85,16 +85,16 @@ pub fn emit_result_row_and_limit(
     reg_limit_offset_sum: Option<usize>,
     label_on_limit_reached: Option<BranchOffset>,
 ) -> Result<()> {
-    match &plan.query_type {
-        SelectQueryType::TopLevel => {
+    match &plan.query_destination {
+        QueryDestination::ResultRows => {
             program.emit_insn(Insn::ResultRow {
                 start_reg: result_columns_start_reg,
                 count: plan.result_columns.len(),
             });
         }
-        SelectQueryType::UnionArm {
-            index_cursor_id,
-            dedupe_index,
+        QueryDestination::EphemeralIndex {
+            cursor_id: index_cursor_id,
+            index: dedupe_index,
         } => {
             let record_reg = program.alloc_register();
             program.emit_insn(Insn::MakeRecord {
@@ -111,7 +111,7 @@ pub fn emit_result_row_and_limit(
                 flags: IdxInsertFlags::new(),
             });
         }
-        SelectQueryType::Subquery { yield_reg, .. } => {
+        QueryDestination::CoroutineYield { yield_reg, .. } => {
             program.emit_insn(Insn::Yield {
                 yield_reg: *yield_reg,
                 end_offset: BranchOffset::Offset(0),

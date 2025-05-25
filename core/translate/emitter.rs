@@ -16,7 +16,7 @@ use super::main_loop::{
 };
 use super::order_by::{emit_order_by, init_order_by, SortMetadata};
 use super::plan::{
-    JoinOrderMember, Operation, SelectPlan, SelectQueryType, TableReference, UpdatePlan,
+    JoinOrderMember, Operation, QueryDestination, SelectPlan, TableReference, UpdatePlan,
 };
 use super::schema::ParseSchema;
 use super::select::emit_simple_count;
@@ -263,9 +263,9 @@ fn emit_program_for_compound_select(
 
     let mut union_dedupe_index = if requires_union_deduplication {
         let dedupe_index = get_union_dedupe_index(program, &first);
-        first.query_type = SelectQueryType::UnionArm {
-            index_cursor_id: dedupe_index.0,
-            dedupe_index: dedupe_index.1.clone(),
+        first.query_destination = QueryDestination::EphemeralIndex {
+            cursor_id: dedupe_index.0,
+            index: dedupe_index.1.clone(),
         };
         Some(dedupe_index)
     } else {
@@ -307,9 +307,9 @@ fn emit_program_for_compound_select(
         }
 
         if requires_union_deduplication {
-            select.query_type = SelectQueryType::UnionArm {
-                index_cursor_id: union_dedupe_index.as_ref().unwrap().0,
-                dedupe_index: union_dedupe_index.as_ref().unwrap().1.clone(),
+            select.query_destination = QueryDestination::EphemeralIndex {
+                cursor_id: union_dedupe_index.as_ref().unwrap().0,
+                index: union_dedupe_index.as_ref().unwrap().1.clone(),
             };
         } else if let Some((dedupe_cursor_id, dedupe_index)) = union_dedupe_index.take() {
             // When there are no more UNION operators left, all the deduplicated rows from the preceding union arms need to be emitted

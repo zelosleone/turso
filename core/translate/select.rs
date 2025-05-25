@@ -1,5 +1,7 @@
 use super::emitter::{emit_program, TranslateCtx};
-use super::plan::{select_star, Distinctness, JoinOrderMember, Operation, Search, SelectQueryType};
+use super::plan::{
+    select_star, Distinctness, JoinOrderMember, Operation, QueryDestination, Search,
+};
 use super::planner::Scope;
 use crate::function::{AggFunc, ExtFunc, Func};
 use crate::schema::Table;
@@ -235,7 +237,7 @@ fn prepare_one_select_plan<'a>(
                 limit: None,
                 offset: None,
                 contains_constant_false_condition: false,
-                query_type: SelectQueryType::TopLevel,
+                query_destination: QueryDestination::ResultRows,
                 distinctness: Distinctness::from_ast(distinctness.as_ref()),
                 values: vec![],
             };
@@ -549,7 +551,7 @@ fn prepare_one_select_plan<'a>(
                 limit: None,
                 offset: None,
                 contains_constant_false_condition: false,
-                query_type: SelectQueryType::TopLevel,
+                query_destination: QueryDestination::ResultRows,
                 distinctness: Distinctness::NonDistinct,
                 values,
             };

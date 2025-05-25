@@ -2,7 +2,7 @@ use super::{
     expr::walk_expr,
     plan::{
         Aggregate, ColumnUsedMask, Distinctness, EvalAt, IterationDirection, JoinInfo,
-        JoinOrderMember, Operation, Plan, ResultSetColumn, SelectPlan, SelectQueryType,
+        JoinOrderMember, Operation, Plan, QueryDestination, ResultSetColumn, SelectPlan,
         TableReference, WhereTerm,
     },
     select::prepare_select_plan,
@@ -298,7 +298,7 @@ fn parse_from_clause_table<'a>(
             else {
                 crate::bail_parse_error!("Only non-compound SELECT queries are currently supported in FROM clause subqueries");
             };
-            subplan.query_type = SelectQueryType::Subquery {
+            subplan.query_destination = QueryDestination::CoroutineYield {
                 yield_reg: usize::MAX, // will be set later in bytecode emission
                 coroutine_implementation_start: BranchOffset::Placeholder, // will be set later in bytecode emission
             };
@@ -455,8 +455,7 @@ pub fn parse_from<'a>(
             let Plan::Select(mut cte_plan) = cte_plan else {
                 crate::bail_parse_error!("Only SELECT queries are currently supported in CTEs");
             };
-            // CTE can be rewritten as a subquery.
-            cte_plan.query_type = SelectQueryType::Subquery {
+            cte_plan.query_destination = QueryDestination::CoroutineYield {
                 yield_reg: usize::MAX, // will be set later in bytecode emission
                 coroutine_implementation_start: BranchOffset::Placeholder, // will be set later in bytecode emission
             };

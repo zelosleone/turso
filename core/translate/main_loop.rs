@@ -30,7 +30,7 @@ use super::{
     order_by::{order_by_sorter_insert, sorter_insert},
     plan::{
         convert_where_to_vtab_constraint, Aggregate, GroupBy, IterationDirection, JoinOrderMember,
-        Operation, Search, SeekDef, SelectPlan, SelectQueryType, TableReference, WhereTerm,
+        Operation, QueryDestination, Search, SeekDef, SelectPlan, TableReference, WhereTerm,
     },
 };
 
@@ -466,8 +466,8 @@ pub fn open_loop(
                     }
                     Table::FromClauseSubquery(from_clause_subquery) => {
                         let (yield_reg, coroutine_implementation_start) =
-                            match &from_clause_subquery.plan.query_type {
-                                SelectQueryType::Subquery {
+                            match &from_clause_subquery.plan.query_destination {
+                                QueryDestination::CoroutineYield {
                                     yield_reg,
                                     coroutine_implementation_start,
                                 } => (*yield_reg, *coroutine_implementation_start),
