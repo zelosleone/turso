@@ -1449,9 +1449,7 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
 
         let wfs_data = unsafe { &mut *wal_file_shared_for_completion.get() };
 
-        while current_offset + WAL_FRAME_HEADER_SIZE <= buf_slice.len()
-            && current_offset + WAL_FRAME_HEADER_SIZE + page_size <= buf_slice.len()
-        {
+        while current_offset + WAL_FRAME_HEADER_SIZE + page_size <= buf_slice.len() {
             let frame_header_slice =
                 &buf_slice[current_offset..current_offset + WAL_FRAME_HEADER_SIZE];
             let page_data_slice = &buf_slice[current_offset + WAL_FRAME_HEADER_SIZE
