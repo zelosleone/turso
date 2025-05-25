@@ -424,11 +424,11 @@ mod tests {
         log::info!("compound_select_fuzz seed: {}", seed);
 
         // Constants for fuzzing parameters
-        const MAX_TABLES: usize = 5;
+        const MAX_TABLES: usize = 7;
         const MIN_TABLES: usize = 1;
-        const MAX_ROWS_PER_TABLE: usize = 15;
+        const MAX_ROWS_PER_TABLE: usize = 40;
         const MIN_ROWS_PER_TABLE: usize = 5;
-        const NUM_FUZZ_ITERATIONS: usize = 1000;
+        const NUM_FUZZ_ITERATIONS: usize = 2000;
         // How many more SELECTs than tables can be in a UNION (e.g., if 2 tables, max 2+2=4 SELECTs)
         const MAX_SELECTS_IN_UNION_EXTRA: usize = 2;
         const MAX_LIMIT_VALUE: usize = 50;
@@ -440,12 +440,16 @@ mod tests {
         let mut table_names = Vec::new();
         let num_tables = rng.random_range(MIN_TABLES..=MAX_TABLES);
 
+        const COLS: [&str; 3] = ["c1", "c2", "c3"];
         for i in 0..num_tables {
             let table_name = format!("t{}", i);
-            // Schema: c1 INTEGER, c2 INTEGER, c3 INTEGER for simplicity and UNION ALL compatibility
             let create_table_sql = format!(
-                "CREATE TABLE {} (c1 INTEGER, c2 INTEGER, c3 INTEGER)",
-                table_name
+                "CREATE TABLE {} ({})",
+                table_name,
+                COLS.iter()
+                    .map(|c| format!("{} INTEGER", c))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
 
             limbo_exec_rows(&db, &limbo_conn, &create_table_sql);
@@ -453,9 +457,9 @@ mod tests {
 
             let num_rows_to_insert = rng.random_range(MIN_ROWS_PER_TABLE..=MAX_ROWS_PER_TABLE);
             for _ in 0..num_rows_to_insert {
-                let c1_val: i64 = rng.random_range(-1000..1000);
-                let c2_val: i64 = rng.random_range(-1000..1000);
-                let c3_val: i64 = rng.random_range(-1000..1000);
+                let c1_val: i64 = rng.random_range(-3..3);
+                let c2_val: i64 = rng.random_range(-3..3);
+                let c3_val: i64 = rng.random_range(-3..3);
 
                 let insert_sql = format!(
                     "INSERT INTO {} VALUES ({}, {}, {})",
@@ -473,10 +477,21 @@ mod tests {
                 rng.random_range(1..=(table_names.len() + MAX_SELECTS_IN_UNION_EXTRA));
             let mut select_statements = Vec::new();
 
+            // Randomly pick a subset of columns to select from
+            let num_cols_to_select = rng.random_range(1..=COLS.len());
+            let cols_to_select = COLS
+                .choose_multiple(&mut rng, num_cols_to_select)
+                .map(|c| c.to_string())
+                .collect::<Vec<_>>();
+
             for _ in 0..num_selects_in_union {
                 // Randomly pick a table
                 let table_to_select_from = &table_names[rng.random_range(0..table_names.len())];
-                select_statements.push(format!("SELECT c1, c2, c3 FROM {}", table_to_select_from));
+                select_statements.push(format!(
+                    "SELECT {} FROM {}",
+                    cols_to_select.join(", "),
+                    table_to_select_from
+                ));
             }
 
             const COMPOUND_OPERATORS: [&str; 2] = [" UNION ALL ", " UNION "];
