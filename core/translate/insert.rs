@@ -601,7 +601,7 @@ fn resolve_columns_for_insert<'a>(
     let table_columns = table.columns();
     // Case 1: No columns specified - map values to columns in order
     if columns.is_none() {
-        if num_values > table_columns.len() {
+        if num_values != table_columns.len() {
             crate::bail_parse_error!(
                 "table {} has {} columns but {} values were supplied",
                 &table.get_name(),
@@ -739,7 +739,7 @@ fn populate_columns_multiple_rows(
                 program.emit_insn(Insn::Column {
                     cursor_id: temp_table_ctx.cursor_id,
                     column: value_index_seen,
-                    dest: column_registers_start + value_index_seen,
+                    dest: column_registers_start + i,
                 });
             } else {
                 program.emit_insn(Insn::Copy {
