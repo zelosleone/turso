@@ -758,7 +758,7 @@ impl WalFileShared {
         let header = if file.size()? > 0 {
             let wal_file_shared = sqlite3_ondisk::read_entire_wal_dumb(&file)?;
             // TODO: Return a completion instead.
-            let mut max_loops = 1000;
+            let mut max_loops = 100000;
             while !unsafe { &*wal_file_shared.get() }
                 .loaded
                 .load(Ordering::SeqCst)
