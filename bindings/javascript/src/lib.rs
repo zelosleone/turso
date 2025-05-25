@@ -80,12 +80,7 @@ impl Database {
     #[napi]
     pub fn prepare(&self, sql: String) -> napi::Result<Statement> {
         let stmt = self.conn.prepare(&sql).map_err(into_napi_error)?;
-        Ok(Statement::new(RefCell::new(stmt), self.clone()))
-    }
-
-    #[napi]
-    pub fn transaction(&self) {
-        todo!()
+        Ok(Statement::new(RefCell::new(stmt), self.clone(), sql))
     }
 
     #[napi]
@@ -144,16 +139,19 @@ pub struct Statement {
     // pub readonly: bool,
     // #[napi(writable = false)]
     // pub busy: bool,
+    #[napi(writable = false)]
+    pub source: String,
     database: Database,
     inner: Rc<RefCell<limbo_core::Statement>>,
 }
 
 #[napi]
 impl Statement {
-    pub fn new(inner: RefCell<limbo_core::Statement>, database: Database) -> Self {
+    pub fn new(inner: RefCell<limbo_core::Statement>, database: Database, source: String) -> Self {
         Self {
             inner: Rc::new(inner),
             database,
+            source,
         }
     }
 
