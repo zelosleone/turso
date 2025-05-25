@@ -124,8 +124,9 @@ impl Database {
     }
 
     #[napi]
-    pub fn close(&self) {
-        todo!()
+    pub fn close(&self) -> napi::Result<()> {
+        self.conn.close().map_err(into_napi_error)?;
+        Ok(())
     }
 }
 
