@@ -352,13 +352,12 @@ impl<'a> FromIterator<&'a limbo_core::Value> for Row {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::NamedTempFile;
 
     #[tokio::test]
     async fn test_database_persistence() -> Result<()> {
-        let db_path = "test_persistence.db";
-        // Ensure a clean state by removing the database file if it exists from a previous run
-        let _ = std::fs::remove_file(db_path);
-        let _ = std::fs::remove_file(format!("{}-wal", db_path));
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path().to_str().unwrap();
 
         // First, create the database, a table, and insert some data
         {
@@ -391,18 +390,13 @@ mod tests {
 
         assert!(rows.next().await?.is_none(), "Expected no more rows");
 
-        // Clean up the database file
-        let _ = std::fs::remove_file(db_path);
-        let _ = std::fs::remove_file(format!("{}-wal", db_path));
         Ok(())
     }
 
     #[tokio::test]
     async fn test_database_persistence_many_frames() -> Result<()> {
-        let db_path = "test_persistence_many_frames.db";
-        // Ensure a clean state by removing the database file if it exists from a previous run
-        let _ = std::fs::remove_file(db_path);
-        let _ = std::fs::remove_file(format!("{}-wal", db_path));
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path().to_str().unwrap();
 
         const NUM_INSERTS: usize = 100;
         const TARGET_STRING_LEN: usize = 1024; // 1KB
@@ -489,9 +483,6 @@ mod tests {
             ),
         }
 
-        // Clean up the database file
-        let _ = std::fs::remove_file(db_path);
-        let _ = std::fs::remove_file(format!("{}-wal", db_path));
         Ok(())
     }
 }
