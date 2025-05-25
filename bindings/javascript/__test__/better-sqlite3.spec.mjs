@@ -52,6 +52,12 @@ test("Empty prepared statement should throw", async (t) => {
   );
 });
 
+test("Test pragma", async (t) => {
+  const [db] = await connect(":memory:");
+  t.deepEqual(typeof db.pragma("cache_size")[0].cache_size, "number");
+  t.deepEqual(typeof db.pragma("cache_size", { simple: true }), "number");
+});
+
 const connect = async (path) => {
   const db = new Database(path);
   return [db];
