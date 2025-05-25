@@ -1512,7 +1512,9 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
             current_offset += WAL_FRAME_HEADER_SIZE + page_size;
         }
 
-        wfs_data.max_frame.store(frame_idx, Ordering::SeqCst);
+        wfs_data
+            .max_frame
+            .store(frame_idx.saturating_sub(1), Ordering::SeqCst);
         wfs_data.last_checksum = cumulative_checksum;
         wfs_data.loaded.store(true, Ordering::SeqCst);
     });
