@@ -200,7 +200,7 @@ impl VTable for CsvTable {
     type Error = &'static str;
 
     /// Open to return a new cursor: In this simple example, the CSV file is read completely into memory on connect.
-    fn open(&self) -> Result<Self::Cursor, Self::Error> {
+    fn open(&self, conn: Option<Rc<Connection>>) -> Result<Self::Cursor, Self::Error> {
         // Read CSV file contents from "data.csv"
         let csv_content = fs::read_to_string("data.csv").unwrap_or_default();
         // For simplicity, we'll ignore the header row.
@@ -213,7 +213,9 @@ impl VTable for CsvTable {
                     .collect()
             })
             .collect();
-        Ok(CsvCursor { rows, index: 0 })
+        // store the connection for later use. Connection is Option to allow writing tests for your module
+        // but will be available to use by storing on your Cursor implementation
+        Ok(CsvCursor { rows, index: 0, connection: conn.unwrap() })
     }
 
     /// *Optional* methods for non-readonly tables
@@ -238,6 +240,7 @@ impl VTable for CsvTable {
 struct CsvCursor {
     rows: Vec<Vec<String>>,
     index: usize,
+    connection: Rc<Connection>,
 }
 
 /// Implement the VTabCursor trait for your cursor type
@@ -245,7 +248,7 @@ impl VTabCursor for CsvCursor {
     type Error = &'static str;
 
     /// Filter through result columns. (not used in this simple example)
-    fn filter(&mut self, _args: &[Value], _idx_info: Option<(&str, i32)>) -> ResultCode {
+    fn filter(&mut self, args: &[Value], _idx_info: Option<(&str, i32)>) -> ResultCode {
         ResultCode::OK
     }
 
@@ -279,6 +282,35 @@ impl VTabCursor for CsvCursor {
     }
 }
 ```
+
+
+### Using the core Connection:
+
+You can use the `Rc<Connection>` to query the same underlying connection that creates the VTable:
+
+```rust
+
+ let mut stmt = self.connection.prepare("SELECT col FROM table where name = ?;");
+ stmt.bind_at(NonZeroUsize::new(1).unwrap(), args[0]);
+
+ /// use the connection similarly to the API of the core library
+ while let StepResult::Row = stmt.step() {
+       let row = stmt.get_row();
+       if let Some(val) = row.first() {
+           // access values
+           println!("result: {:?}", val);
+       }
+   }
+  stmt.close();
+
+  if let Ok(Some(last_insert_rowid)) = conn.execute("INSERT INTO table (col, name) VALUES ('test', 'data')") {
+      println!("rowid of insert: {:?}", last_insert_rowid);
+  }
+
+```       
+
+
+
 
 ### VFS Example
 

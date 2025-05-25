@@ -46,6 +46,7 @@ use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::{Column, Schema};
 use std::ffi::c_void;
+use std::rc::Weak;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
@@ -775,6 +776,22 @@ pub struct VirtualTable {
     columns: Vec<Column>,
     kind: VTabKind,
     table_ptr: *const c_void,
+    connection_ptr: RefCell<Option<*mut limbo_ext::Conn>>,
+}
+
+impl Drop for VirtualTable {
+    fn drop(&mut self) {
+        if let Some(conn) = self.connection_ptr.borrow_mut().take() {
+            if conn.is_null() {
+                return;
+            }
+            // free the memory for the limbo_ext::Conn itself
+            let mut conn = unsafe { Box::from_raw(conn) };
+            // frees the boxed Weak pointer
+            conn.close();
+        }
+        *self.connection_ptr.borrow_mut() = None;
+    }
 }
 
 impl VirtualTable {
@@ -796,6 +813,7 @@ impl VirtualTable {
             ))
         }
     }
+
     /// takes ownership of the provided Args
     pub(crate) fn from_args(
         tbl_name: Option<&str>,
@@ -820,7 +838,7 @@ impl VirtualTable {
                 )));
             }
         };
-        let (schema, table_ptr) = module.implementation.as_ref().create(args)?;
+        let (schema, table_ptr) = module.implementation.create(args)?;
         let mut parser = Parser::new(schema.as_bytes());
         if let ast::Cmd::Stmt(ast::Stmt::CreateTable { body, .. }) = parser.next()?.ok_or(
             LimboError::ParseError("Failed to parse schema from virtual table module".to_string()),
@@ -828,6 +846,7 @@ impl VirtualTable {
             let columns = columns_from_create_table_body(&body)?;
             let vtab = Rc::new(VirtualTable {
                 name: tbl_name.unwrap_or(module_name).to_owned(),
+                connection_ptr: RefCell::new(None),
                 implementation: module.implementation.clone(),
                 columns,
                 args: exprs,
@@ -841,8 +860,21 @@ impl VirtualTable {
         ))
     }
 
-    pub fn open(&self) -> crate::Result<VTabOpaqueCursor> {
-        let cursor = unsafe { (self.implementation.open)(self.table_ptr) };
+    /// Accepts a Weak pointer to the connection that owns the VTable, that the module
+    /// can optionally use to query the other tables.
+    pub fn open(&self, conn: Weak<Connection>) -> crate::Result<VTabOpaqueCursor> {
+        // we need a Weak<Connection> to upgrade and call from the extension.
+        let weak_box: *mut Weak<Connection> = Box::into_raw(Box::new(conn));
+        let conn = limbo_ext::Conn::new(
+            weak_box.cast(),
+            crate::ext::prepare_stmt,
+            crate::ext::execute,
+            crate::ext::close,
+        );
+        let ext_conn_ptr = Box::into_raw(Box::new(conn));
+        // store the leaked connection pointer on the table so it can be freed on drop
+        *self.connection_ptr.borrow_mut() = Some(ext_conn_ptr);
+        let cursor = unsafe { (self.implementation.open)(self.table_ptr, ext_conn_ptr) };
         VTabOpaqueCursor::new(cursor, self.implementation.close)
     }
 

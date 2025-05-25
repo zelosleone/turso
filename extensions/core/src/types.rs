@@ -23,6 +23,9 @@ pub enum ResultCode {
     EOF = 15,
     ReadOnly = 16,
     RowID = 17,
+    Row = 18,
+    Interrupt = 19,
+    Busy = 20,
 }
 
 impl ResultCode {
@@ -60,6 +63,34 @@ impl Display for ResultCode {
             ResultCode::EOF => write!(f, "EOF"),
             ResultCode::ReadOnly => write!(f, "Read Only"),
             ResultCode::RowID => write!(f, "RowID"),
+            ResultCode::Row => write!(f, "Row"),
+            ResultCode::Interrupt => write!(f, "Interrupt"),
+            ResultCode::Busy => write!(f, "Busy"),
+        }
+    }
+}
+#[repr(C)]
+#[derive(PartialEq, Debug, Eq, Clone, Copy)]
+/// StepResult is used to represent the state of a query as it is exposed
+/// to the public API of a connection in a virtual table extension.
+/// the IO variant is always handled internally and therefore is not included here.
+pub enum StepResult {
+    Error,
+    Row,
+    Done,
+    Interrupt,
+    Busy,
+}
+
+impl From<ResultCode> for StepResult {
+    fn from(code: ResultCode) -> Self {
+        match code {
+            ResultCode::Error => StepResult::Error,
+            ResultCode::Row => StepResult::Row,
+            ResultCode::EOF => StepResult::Done,
+            ResultCode::Interrupt => StepResult::Interrupt,
+            ResultCode::Busy => StepResult::Busy,
+            _ => StepResult::Error,
         }
     }
 }
@@ -79,6 +110,11 @@ pub enum ValueType {
 pub struct Value {
     value_type: ValueType,
     value: ValueData,
+}
+impl Default for Value {
+    fn default() -> Self {
+        Self::null()
+    }
 }
 
 #[repr(C)]

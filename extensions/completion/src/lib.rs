@@ -3,9 +3,12 @@
 
 mod keywords;
 
+use std::rc::Rc;
+
 use keywords::KEYWORDS;
 use limbo_ext::{
-    register_extension, ResultCode, VTabCursor, VTabModule, VTabModuleDerive, VTable, Value,
+    register_extension, Connection, ResultCode, VTabCursor, VTabModule, VTabModuleDerive, VTable,
+    Value,
 };
 
 register_extension! {
@@ -84,7 +87,7 @@ impl VTable for CompletionTable {
     type Cursor = CompletionCursor;
     type Error = ResultCode;
 
-    fn open(&self) -> Result<Self::Cursor, Self::Error> {
+    fn open(&self, _conn: Option<Rc<Connection>>) -> Result<Self::Cursor, Self::Error> {
         Ok(CompletionCursor::default())
     }
 }

@@ -11,13 +11,14 @@ use functions::{RegisterAggFn, RegisterScalarFn};
 pub use limbo_macros::VfsDerive;
 pub use limbo_macros::{register_extension, scalar, AggregateDerive, VTabModuleDerive};
 use std::os::raw::c_void;
-pub use types::{ResultCode, Value, ValueType};
+pub use types::{ResultCode, StepResult, Value, ValueType};
 #[cfg(feature = "vfs")]
 pub use vfs_modules::{RegisterVfsFn, VfsExtension, VfsFile, VfsFileImpl, VfsImpl, VfsInterface};
 use vtabs::RegisterModuleFn;
 pub use vtabs::{
-    ConstraintInfo, ConstraintOp, ConstraintUsage, ExtIndexInfo, IndexInfo, OrderByInfo,
-    VTabCreateResult, VTabCursor, VTabKind, VTabModule, VTabModuleImpl, VTable,
+    Conn, Connection, ConstraintInfo, ConstraintOp, ConstraintUsage, ExtIndexInfo, IndexInfo,
+    OrderByInfo, Statement, Stmt, VTabCreateResult, VTabCursor, VTabKind, VTabModule,
+    VTabModuleImpl, VTable,
 };
 
 pub type ExtResult<T> = std::result::Result<T, ResultCode>;

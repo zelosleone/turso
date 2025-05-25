@@ -629,76 +629,72 @@ def test_csv():
     limbo.run_test_fn(
         "CREATE VIRTUAL TABLE temp.csv USING csv(filename=./testing/test_files/test.csv);",
         null,
-        "Create virtual table from CSV file"
+        "Create virtual table from CSV file",
     )
     limbo.run_test_fn(
         "SELECT * FROM temp.csv;",
         lambda res: res == "1|2.0|String'1\n3|4.0|String2",
-        "Read all rows from CSV table"
+        "Read all rows from CSV table",
     )
     limbo.run_test_fn(
         "SELECT * FROM temp.csv WHERE c2 = 'String2';",
         lambda res: res == "3|4.0|String2",
-        "Filter rows with WHERE clause"
+        "Filter rows with WHERE clause",
     )
     limbo.run_test_fn(
         "INSERT INTO temp.csv VALUES (5, 6.0, 'String3');",
         lambda res: "Virtual table update failed" in res,
-        "INSERT into CSV table should fail"
+        "INSERT into CSV table should fail",
     )
     limbo.run_test_fn(
         "UPDATE temp.csv SET c0 = 10 WHERE c1 = '2.0';",
         lambda res: "Virtual table update failed" in res,
-        "UPDATE on CSV table should fail"
+        "UPDATE on CSV table should fail",
     )
     limbo.run_test_fn(
         "DELETE FROM temp.csv WHERE c1 = '2.0';",
         lambda res: "Virtual table update failed" in res,
-        "DELETE on CSV table should fail"
+        "DELETE on CSV table should fail",
     )
-    limbo.run_test_fn(
-        "DROP TABLE temp.csv;",
-        null,
-        "Drop CSV table"
-    )
+    limbo.run_test_fn("DROP TABLE temp.csv;", null, "Drop CSV table")
     limbo.run_test_fn(
         "SELECT * FROM temp.csv;",
         lambda res: "Parse error: Table csv not found" in res,
-        "Query dropped CSV table should fail"
+        "Query dropped CSV table should fail",
     )
     limbo.run_test_fn(
         "create virtual table t1 using csv(data='1'\\'2');",
         lambda res: "unrecognized token at" in res,
-        "Create CSV table with malformed escape sequence"
+        "Create CSV table with malformed escape sequence",
     )
     limbo.run_test_fn(
         "create virtual table t1 using csv(data=\"12');",
         lambda res: "non-terminated literal at" in res,
-        "Create CSV table with unterminated quoted string"
+        "Create CSV table with unterminated quoted string",
     )
 
     limbo.run_debug("create virtual table t1 using csv(data='');")
     limbo.run_test_fn(
         "SELECT c0 FROM t1;",
         lambda res: res == "",
-        "Empty CSV table without a header should have one column: 'c0'"
+        "Empty CSV table without a header should have one column: 'c0'",
     )
     limbo.run_test_fn(
         "SELECT c1 FROM t1;",
         lambda res: "Parse error: Column c1 not found" in res,
-        "Empty CSV table without header should not have columns other than 'c0'"
+        "Empty CSV table without header should not have columns other than 'c0'",
     )
 
     limbo.run_debug("create virtual table t2 using csv(data='', header=true);")
     limbo.run_test_fn(
-        "SELECT \"(NULL)\" FROM t2;",
+        'SELECT "(NULL)" FROM t2;',
         lambda res: res == "",
-        "Empty CSV table with header should have one column named '(NULL)'"
+        "Empty CSV table with header should have one column named '(NULL)'",
     )
     limbo.run_test_fn(
         "SELECT c0 FROM t2;",
         lambda res: "Parse error: Column c0 not found" in res,
-        "Empty CSV table with header should not have columns other than '(NULL)'"
+        "Empty CSV table with header should not have columns other than '(NULL)'",
     )
 
     limbo.quit()
@@ -709,6 +705,94 @@ def cleanup():
         os.remove("testing/vfs.db")
     if os.path.exists("testing/vfs.db-wal"):
         os.remove("testing/vfs.db-wal")
+
+
+def test_tablestats():
+    ext_path = "target/debug/liblimbo_ext_tests"
+    limbo = TestLimboShell(use_testing_db=True)
+    limbo.execute_dot("CREATE TABLE people(id INTEGER PRIMARY KEY, name TEXT);")
+    limbo.execute_dot("INSERT INTO people(name) VALUES ('Ada'), ('Grace'), ('Linus');")
+
+    limbo.execute_dot("CREATE TABLE logs(ts INT, msg TEXT);")
+    limbo.execute_dot("INSERT INTO logs VALUES (1,'boot ok');")
+
+    # verify counts
+    limbo.run_test_fn(
+        "SELECT COUNT(*) FROM people;",
+        lambda res: res == "3",
+        "three people rowsverify user count",
+    )
+    limbo.run_test_fn(
+        "SELECT COUNT(*) FROM logs;",
+        lambda res: res == "1",
+        "one logs rowverify logs count",
+    )
+    # load extension
+    limbo.execute_dot(f".load {ext_path}")
+    limbo.execute_dot("CREATE VIRTUAL TABLE stats USING tablestats;")
+
+    def _split(res):
+        return [ln.strip() for ln in res.splitlines() if ln.strip()]
+
+    limbo.run_test_fn(
+        "SELECT * FROM stats ORDER BY name;",
+        lambda res: sorted(_split(res))
+        == sorted(["logs|1", "people|3", "products|11", "users|10000"]),
+        "stats shows correct initial counts (and skips itself)",
+    )
+
+    limbo.execute_dot("INSERT INTO logs VALUES (2,'panic'), (3,'recovery');")
+    limbo.execute_dot("DELETE FROM people WHERE name='Linus';")
+
+    limbo.run_test_fn(
+        "SELECT * FROM stats WHERE name='logs';",
+        lambda res: res == "logs|3",
+        "row‑count grows after INSERT",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM stats WHERE name='people';",
+        lambda res: res == "people|2",
+        "row‑count shrinks after DELETE",
+    )
+
+    # existing tables in the testing database (users, products)
+    # the test extension is also doing a testing insert on every query
+    # as part of its own testing, so we cannot assert 'products|11'
+    # we need to add 3 for the 3 queries we did above.
+    limbo.run_test_fn(
+        "SELECT * FROM stats WHERE name='products';",
+        lambda x: x == "products|14",
+        "products table reflects changes",
+    )
+    # an insert to products with (name,price) ('xConnect', 42)
+    # has happened on each query (4 so far) in the testing extension.
+    # so at this point the sum should be 168
+    limbo.run_test_fn(
+        "SELECT sum(price) FROM products WHERE name = 'xConnect';",
+        lambda x: x == "168.0",
+        "price sum for 'xConnect' inserts happenning in the testing extension",
+    )
+
+    limbo.run_test_fn(
+        "SELECT * FROM stats WHERE name='users';",
+        lambda x: x == "users|10000",
+        "users table unchanged",
+    )
+
+    limbo.execute_dot("CREATE TABLE misc(x);")
+    limbo.run_test_fn(
+        "SELECT * FROM stats WHERE name='misc';",
+        lambda res: res == "misc|0",
+        "newly‑created table shows up with zero rows",
+    )
+
+    limbo.execute_dot("DROP TABLE logs;")
+    limbo.run_test_fn(
+        "SELECT name FROM stats WHERE name='logs';",
+        lambda res: res == "",
+        "dropped table disappears from stats",
+    )
+    limbo.quit()
 
 
 def main():
@@ -725,6 +809,7 @@ def main():
         test_drop_virtual_table()
         test_create_virtual_table()
         test_csv()
+        test_tablestats()
     except Exception as e:
         console.error(f"Test FAILED: {e}")
         cleanup()

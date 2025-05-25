@@ -21,11 +21,12 @@
 //! - `columns` — number of columns
 //! - `schema` — optional custom SQL `CREATE TABLE` schema
 use limbo_ext::{
-    register_extension, ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabCursor, VTabKind,
-    VTabModule, VTabModuleDerive, VTable, Value,
+    register_extension, Connection, ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabCursor,
+    VTabKind, VTabModule, VTabModuleDerive, VTable, Value,
 };
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::rc::Rc;
 
 register_extension! {
     vtabs: { CsvVTabModule }
@@ -220,7 +221,7 @@ impl VTabModule for CsvVTabModule {
                     sql.push_str(", ");
                 }
             }
-            sql.push_str(")");
+            sql.push(')');
             schema = Some(sql);
         }
 
@@ -259,7 +260,7 @@ impl VTable for CsvTable {
     type Cursor = CsvCursor;
     type Error = ResultCode;
 
-    fn open(&self) -> Result<Self::Cursor, Self::Error> {
+    fn open(&self, _conn: Option<Rc<Connection>>) -> Result<Self::Cursor, Self::Error> {
         match self.new_reader() {
             Ok(reader) => Ok(CsvCursor::new(reader, self)),
             Err(_) => Err(ResultCode::Error),
@@ -455,7 +456,7 @@ mod tests {
             &format!("filename={}", file.path().to_string_lossy()),
             "header=true",
         ]);
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert_eq!(
             rows,
@@ -469,7 +470,7 @@ mod tests {
     #[test]
     fn test_data_with_header() {
         let table = new_table(vec!["data=id,name\n1,Alice\n2,Bob\n", "header=true"]);
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert_eq!(
             rows,
@@ -487,7 +488,7 @@ mod tests {
             &format!("filename={}", file.path().to_string_lossy()),
             "header=false",
         ]);
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert_eq!(
             rows,
@@ -501,7 +502,7 @@ mod tests {
     #[test]
     fn test_data_without_header() {
         let table = new_table(vec!["data=1,Alice\n2,Bob\n", "header=false"]);
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert_eq!(
             rows,
@@ -519,7 +520,7 @@ mod tests {
             &format!("filename={}", file.path().to_string_lossy()),
             "header=true",
         ]);
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert!(rows.is_empty());
     }
@@ -527,7 +528,7 @@ mod tests {
     #[test]
     fn test_empty_data_with_header() {
         let table = new_table(vec!["data=id,name\n", "header=true"]);
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert!(rows.is_empty());
     }
@@ -540,7 +541,7 @@ mod tests {
             "header=false",
         ])
         .unwrap();
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert!(rows.is_empty());
         assert_eq!(schema, "CREATE TABLE x(\"c0\" TEXT)");
@@ -549,7 +550,7 @@ mod tests {
     #[test]
     fn test_empty_data_no_header() {
         let (schema, table) = try_new_table(vec!["data=", "header=false"]).unwrap();
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert!(rows.is_empty());
         assert_eq!(schema, "CREATE TABLE x(\"c0\" TEXT)");
@@ -563,7 +564,7 @@ mod tests {
             "header=true",
         ])
         .unwrap();
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert!(rows.is_empty());
         assert_eq!(schema, "CREATE TABLE x(\"(NULL)\" TEXT)");
@@ -572,7 +573,7 @@ mod tests {
     #[test]
     fn test_empty_data_with_header_enabled() {
         let (schema, table) = try_new_table(vec!["data=", "header=true"]).unwrap();
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert!(rows.is_empty());
         assert_eq!(schema, "CREATE TABLE x(\"(NULL)\" TEXT)");
@@ -585,7 +586,7 @@ mod tests {
             &format!("filename={}", file.path().to_string_lossy()),
             "header=true",
         ]);
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert_eq!(rows, vec![vec![cell!("1"), cell!("A,l,i,c,e")],]);
     }
@@ -597,7 +598,7 @@ mod tests {
             &format!("filename={}", file.path().to_string_lossy()),
             "header=false",
         ]);
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 3);
         assert_eq!(
             rows,
@@ -613,7 +614,7 @@ mod tests {
             "header=false",
             "schema=CREATE TABLE x(id INT, name TEXT)",
         ]);
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert_eq!(
             rows,
@@ -686,12 +687,7 @@ mod tests {
                 &format!("header={}", val),
             ]);
             assert!(result.is_ok(), "Expected Ok for header='{}'", val);
-            assert_eq!(
-                result.unwrap().1.header,
-                true,
-                "Expected true for '{}'",
-                val
-            );
+            assert!(result.unwrap().1.header, "Expected true for '{}'", val);
         }
 
         for &val in &false_values {
@@ -700,12 +696,7 @@ mod tests {
                 &format!("header={}", val),
             ]);
             assert!(result.is_ok(), "Expected Ok for header='{}'", val);
-            assert_eq!(
-                result.unwrap().1.header,
-                false,
-                "Expected false for '{}'",
-                val
-            );
+            assert!(!result.unwrap().1.header, "Expected false for '{}'", val);
         }
     }
 
@@ -728,7 +719,7 @@ mod tests {
             " data =    id,name\n1,Alice\n2,Bob\n ",
             "   header  =   true    ",
         ]);
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert_eq!(
             rows,
@@ -763,7 +754,7 @@ mod tests {
                 "data={}aa{}{}bb{}",
                 quote, quote, quote, quote
             )]);
-            let cursor = table.open().unwrap();
+            let cursor = table.open(None).unwrap();
             let rows = read_rows(cursor, 1);
             assert_eq!(rows, vec![vec![cell!(format!("aa{}bb", quote))]]);
         }
@@ -779,7 +770,7 @@ mod tests {
                 "data={}aa{}{}bb{}",
                 outer, inner, inner, outer
             )]);
-            let cursor = table.open().unwrap();
+            let cursor = table.open(None).unwrap();
             let rows = read_rows(cursor, 1);
             assert_eq!(rows, vec![vec![cell!(format!("aa{}{}bb", inner, inner))]]);
         }
@@ -812,7 +803,7 @@ mod tests {
             "header=false",
             "columns=4",
         ]);
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 4);
         assert_eq!(
             rows,
@@ -831,7 +822,7 @@ mod tests {
             "header=false",
             "columns=1",
         ]);
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 1);
         assert_eq!(rows, vec![vec![cell!("1")], vec![cell!("2")]]);
     }
@@ -845,7 +836,7 @@ mod tests {
             "columns=1",
             "schema='CREATE TABLE x(id INT, name TEXT)'",
         ]);
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert_eq!(rows, vec![vec![cell!("1"), None], vec![cell!("2"), None]]);
     }
@@ -859,7 +850,7 @@ mod tests {
             "columns=5",
             "schema='CREATE TABLE x(id INT, name TEXT)'",
         ]);
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert_eq!(
             rows,
@@ -878,7 +869,7 @@ mod tests {
             "header=true",
         ])
         .unwrap();
-        let cursor = table.open().unwrap();
+        let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert_eq!(
             rows,

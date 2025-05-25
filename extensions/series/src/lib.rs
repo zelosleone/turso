@@ -1,6 +1,8 @@
+use std::rc::Rc;
+
 use limbo_ext::{
-    register_extension, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive, VTable,
-    Value,
+    register_extension, Connection, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive,
+    VTable, Value,
 };
 
 register_extension! {
@@ -43,7 +45,7 @@ impl VTable for GenerateSeriesTable {
     type Cursor = GenerateSeriesCursor;
     type Error = ResultCode;
 
-    fn open(&self) -> Result<Self::Cursor, Self::Error> {
+    fn open(&self, _conn: Option<Rc<Connection>>) -> Result<Self::Cursor, Self::Error> {
         Ok(GenerateSeriesCursor {
             start: 0,
             stop: 0,
@@ -225,7 +227,7 @@ mod tests {
     // Helper function to collect all values from a cursor, returns Result with error code
     fn collect_series(series: Series) -> Result<Vec<i64>, ResultCode> {
         let tbl = GenerateSeriesTable {};
-        let mut cursor = tbl.open()?;
+        let mut cursor = tbl.open(None)?;
 
         // Create args array for filter
         let args = vec![
@@ -542,7 +544,7 @@ mod tests {
         let stop = series.stop;
         let step = series.step;
         let tbl = GenerateSeriesTable {};
-        let mut cursor = tbl.open().unwrap();
+        let mut cursor = tbl.open(None).unwrap();
 
         let args = vec![
             Value::from_integer(start),

@@ -1,18 +1,20 @@
 use lazy_static::lazy_static;
 use limbo_ext::{
-    register_extension, scalar, ConstraintInfo, ConstraintOp, ConstraintUsage, ExtResult,
-    IndexInfo, OrderByInfo, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive, VTable,
-    Value,
+    register_extension, scalar, Connection, ConstraintInfo, ConstraintOp, ConstraintUsage,
+    ExtResult, IndexInfo, OrderByInfo, ResultCode, StepResult, VTabCursor, VTabKind, VTabModule,
+    VTabModuleDerive, VTable, Value,
 };
 #[cfg(not(target_family = "wasm"))]
 use limbo_ext::{VfsDerive, VfsExtension, VfsFile};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::num::NonZeroUsize;
+use std::rc::Rc;
 use std::sync::Mutex;
 
 register_extension! {
-    vtabs: { KVStoreVTabModule },
+    vtabs: { KVStoreVTabModule, TableStatsVtabModule },
     scalars: { test_scalar },
     vfs: { TestFS },
 }
@@ -137,7 +139,7 @@ impl VTable for KVStoreTable {
     type Cursor = KVStoreCursor;
     type Error = String;
 
-    fn open(&self) -> Result<Self::Cursor, Self::Error> {
+    fn open(&self, _conn: Option<Rc<Connection>>) -> Result<Self::Cursor, Self::Error> {
         let _ = env_logger::try_init();
         Ok(KVStoreCursor {
             rows: Vec::new(),
@@ -292,5 +294,145 @@ impl VfsFile for TestFile {
 
     fn size(&self) -> i64 {
         self.file.metadata().map(|m| m.len() as i64).unwrap_or(-1)
+    }
+}
+
+#[derive(VTabModuleDerive, Default)]
+pub struct TableStatsVtabModule;
+
+pub struct StatsCursor {
+    pos: usize,
+    rows: Vec<(String, i64)>,
+    conn: Option<Rc<Connection>>,
+}
+
+pub struct StatsTable {}
+impl VTabModule for TableStatsVtabModule {
+    type Table = StatsTable;
+    const VTAB_KIND: VTabKind = VTabKind::VirtualTable;
+    const NAME: &'static str = "tablestats";
+
+    fn create(_args: &[Value]) -> Result<(String, Self::Table), ResultCode> {
+        let schema = "CREATE TABLE x(name TEXT, rows INT);".to_string();
+        Ok((schema, StatsTable {}))
+    }
+}
+
+impl VTable for StatsTable {
+    type Cursor = StatsCursor;
+    type Error = String;
+
+    fn open(&self, conn: Option<Rc<Connection>>) -> Result<Self::Cursor, Self::Error> {
+        Ok(StatsCursor {
+            pos: 0,
+            rows: Vec::new(),
+            conn,
+        })
+    }
+}
+
+impl VTabCursor for StatsCursor {
+    type Error = String;
+
+    fn filter(&mut self, _args: &[Value], _idx_info: Option<(&str, i32)>) -> ResultCode {
+        self.rows.clear();
+        self.pos = 0;
+
+        let Some(conn) = &self.conn else {
+            log::error!("no connection present");
+            return ResultCode::Error;
+        };
+
+        // discover application tables
+        let mut master = conn
+            .prepare(
+                "SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%';",
+            )
+            .map_err(|_| ResultCode::Error)
+            .unwrap();
+
+        let mut tables = Vec::new();
+        while let StepResult::Row = master.step() {
+            let row = master.get_row();
+            let tbl = if let Some(val) = row.first() {
+                val.to_text().unwrap_or("").to_string()
+            } else {
+                "".to_string()
+            };
+            if tbl.is_empty() {
+                continue;
+            };
+            if row
+                .get(1)
+                .is_some_and(|v| v.to_text().unwrap().contains("CREATE VIRTUAL TABLE"))
+            {
+                continue;
+            }
+            tables.push(tbl);
+        }
+        master.close();
+        for tbl in tables {
+            // count rows for each table
+            if let Ok(mut count_stmt) = conn.prepare(&format!("SELECT COUNT(*) FROM {};", tbl)) {
+                let count = match count_stmt.step() {
+                    StepResult::Row => count_stmt.get_row()[0].to_integer().unwrap_or(0),
+                    _ => 0,
+                };
+                self.rows.push((tbl, count));
+                count_stmt.close();
+            }
+        }
+        if conn
+            .execute(
+                "insert into products (name, price) values(?, ?);",
+                &[Value::from_text("xConnect".into()), Value::from_integer(42)],
+            )
+            .is_err()
+        {
+            log::error!("failed to insert into xConnect table");
+        }
+        let mut stmt = conn
+            .prepare("select price from products where name = ? limit 1;")
+            .map_err(|_| ResultCode::Error)
+            .unwrap();
+        stmt.bind_at(
+            NonZeroUsize::new(1).expect("1 to be not zero"),
+            Value::from_text("xConnect".into()),
+        );
+        while let StepResult::Row = stmt.step() {
+            let row = stmt.get_row();
+            if let Some(val) = row.first() {
+                assert_eq!(val.to_integer(), Some(42));
+            }
+        }
+        stmt.close();
+        ResultCode::OK
+    }
+
+    fn column(&self, idx: u32) -> Result<Value, Self::Error> {
+        self.rows
+            .get(self.pos)
+            .ok_or("row out of range".to_string())
+            .and_then(|(name, cnt)| match idx {
+                0 => Ok(Value::from_text(name.clone())),
+                1 => Ok(Value::from_integer(*cnt)),
+                _ => Err("bad column".into()),
+            })
+    }
+
+    fn next(&mut self) -> ResultCode {
+        self.pos += 1;
+        if self.pos >= self.rows.len() {
+            ResultCode::EOF
+        } else {
+            ResultCode::OK
+        }
+    }
+
+    fn eof(&self) -> bool {
+        self.pos >= self.rows.len()
+    }
+    fn rowid(&self) -> i64 {
+        self.pos as i64
     }
 }

@@ -1,5 +1,6 @@
 #[cfg(feature = "fs")]
 mod dynamic;
+mod vtab_xconnect;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 use crate::UringIO;
 use crate::{function::ExternalFunc, Connection, Database, LimboError, IO};
@@ -14,6 +15,7 @@ use std::{
     rc::Rc,
     sync::Arc,
 };
+pub use vtab_xconnect::{close, execute, prepare_stmt};
 type ExternAggFunc = (InitAggFunction, StepFunction, FinalizeFunction);
 
 #[derive(Clone)]
