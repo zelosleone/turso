@@ -1,5 +1,7 @@
 use super::emitter::{emit_program, TranslateCtx};
-use super::plan::{select_star, Distinctness, JoinOrderMember, Operation, Search, SelectQueryType};
+use super::plan::{
+    select_star, Distinctness, JoinOrderMember, Operation, QueryDestination, Search,
+};
 use super::planner::Scope;
 use crate::function::{AggFunc, ExtFunc, Func};
 use crate::schema::Table;
@@ -100,9 +102,13 @@ pub fn prepare_select_plan<'a>(
             )?;
             let mut rest = Vec::with_capacity(compounds.len());
             for CompoundSelect { select, operator } in compounds {
-                // TODO: add support for UNION, EXCEPT and INTERSECT
-                if operator != ast::CompoundOperator::UnionAll {
-                    crate::bail_parse_error!("only UNION ALL is supported for compound SELECTs");
+                // TODO: add support for EXCEPT and INTERSECT
+                if operator != ast::CompoundOperator::UnionAll
+                    && operator != ast::CompoundOperator::Union
+                {
+                    crate::bail_parse_error!(
+                        "only UNION ALL and UNION are supported for compound SELECTs"
+                    );
                 }
                 let plan = prepare_one_select_plan(
                     schema,
@@ -231,7 +237,7 @@ fn prepare_one_select_plan<'a>(
                 limit: None,
                 offset: None,
                 contains_constant_false_condition: false,
-                query_type: SelectQueryType::TopLevel,
+                query_destination: QueryDestination::ResultRows,
                 distinctness: Distinctness::from_ast(distinctness.as_ref()),
                 values: vec![],
             };
@@ -545,7 +551,7 @@ fn prepare_one_select_plan<'a>(
                 limit: None,
                 offset: None,
                 contains_constant_false_condition: false,
-                query_type: SelectQueryType::TopLevel,
+                query_destination: QueryDestination::ResultRows,
                 distinctness: Distinctness::NonDistinct,
                 values,
             };

@@ -7,7 +7,7 @@ use crate::{
 use super::{
     emitter::{emit_query, LimitCtx, Resolver, TranslateCtx},
     main_loop::LoopLabels,
-    plan::{SelectPlan, SelectQueryType, TableReference},
+    plan::{QueryDestination, SelectPlan, TableReference},
 };
 
 /// Emit the subqueries contained in the FROM clause.
@@ -51,8 +51,8 @@ pub fn emit_subquery<'a>(
 ) -> Result<usize> {
     let yield_reg = program.alloc_register();
     let coroutine_implementation_start_offset = program.allocate_label();
-    match &mut plan.query_type {
-        SelectQueryType::Subquery {
+    match &mut plan.query_destination {
+        QueryDestination::CoroutineYield {
             yield_reg: y,
             coroutine_implementation_start,
         } => {

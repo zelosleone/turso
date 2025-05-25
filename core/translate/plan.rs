@@ -309,15 +309,29 @@ pub enum Plan {
     Update(UpdatePlan),
 }
 
-/// The type of the query, either top level or subquery
+/// The destination of the results of a query.
+/// Typically, the results of a query are returned to the caller.
+/// However, there are some cases where the results are not returned to the caller,
+/// but rather are yielded to a parent query via coroutine, or stored in a temp table,
+/// later used by the parent query.
 #[derive(Debug, Clone)]
-pub enum SelectQueryType {
-    TopLevel,
-    Subquery {
-        /// The register that holds the program offset that handles jumping to/from the subquery.
+pub enum QueryDestination {
+    /// The results of the query are returned to the caller.
+    ResultRows,
+    /// The results of the query are yielded to a parent query via coroutine.
+    CoroutineYield {
+        /// The register that holds the program offset that handles jumping to/from the coroutine.
         yield_reg: usize,
-        /// The index of the first instruction in the bytecode that implements the subquery.
+        /// The index of the first instruction in the bytecode that implements the coroutine.
         coroutine_implementation_start: BranchOffset,
+    },
+    /// The results of the query are stored in an ephemeral index,
+    /// later used by the parent query.
+    EphemeralIndex {
+        /// The cursor ID of the ephemeral index that will be used to store the results.
+        cursor_id: CursorID,
+        /// The index that will be used to store the results.
+        index: Arc<Index>,
     },
 }
 
@@ -431,8 +445,8 @@ pub struct SelectPlan {
     pub offset: Option<isize>,
     /// query contains a constant condition that is always false
     pub contains_constant_false_condition: bool,
-    /// query type (top level or subquery)
-    pub query_type: SelectQueryType,
+    /// the destination of the resulting rows from this plan.
+    pub query_destination: QueryDestination,
     /// whether the query is DISTINCT
     pub distinctness: Distinctness,
     /// values: https://sqlite.org/syntax/select-core.html
@@ -479,7 +493,10 @@ impl SelectPlan {
     pub fn is_simple_count(&self) -> bool {
         if !self.where_clause.is_empty()
             || self.aggregates.len() != 1
-            || matches!(self.query_type, SelectQueryType::Subquery { .. })
+            || matches!(
+                self.query_destination,
+                QueryDestination::CoroutineYield { .. }
+            )
             || self.table_references.len() != 1
             || self.result_columns.len() != 1
             || self.group_by.is_some()
