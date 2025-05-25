@@ -348,3 +348,141 @@ impl<'a> FromIterator<&'a limbo_core::Value> for Row {
         Row { values }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    #[tokio::test]
+    async fn test_database_persistence() -> Result<()> {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path().to_str().unwrap();
+
+        // First, create the database, a table, and insert some data
+        {
+            let db = Builder::new_local(db_path).build().await?;
+            let conn = db.connect()?;
+            conn.execute(
+                "CREATE TABLE test_persistence (id INTEGER PRIMARY KEY, name TEXT NOT NULL);",
+                (),
+            )
+            .await?;
+            conn.execute("INSERT INTO test_persistence (name) VALUES ('Alice');", ())
+                .await?;
+            conn.execute("INSERT INTO test_persistence (name) VALUES ('Bob');", ())
+                .await?;
+        } // db and conn are dropped here, simulating closing
+
+        // Now, re-open the database and check if the data is still there
+        let db = Builder::new_local(db_path).build().await?;
+        let conn = db.connect()?;
+
+        let mut rows = conn
+            .query("SELECT name FROM test_persistence ORDER BY id;", ())
+            .await?;
+
+        let row1 = rows.next().await?.expect("Expected first row");
+        assert_eq!(row1.get_value(0)?, Value::Text("Alice".to_string()));
+
+        let row2 = rows.next().await?.expect("Expected second row");
+        assert_eq!(row2.get_value(0)?, Value::Text("Bob".to_string()));
+
+        assert!(rows.next().await?.is_none(), "Expected no more rows");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_database_persistence_many_frames() -> Result<()> {
+        let temp_file = NamedTempFile::new().unwrap();
+        let db_path = temp_file.path().to_str().unwrap();
+
+        const NUM_INSERTS: usize = 100;
+        const TARGET_STRING_LEN: usize = 1024; // 1KB
+
+        let mut original_data = Vec::with_capacity(NUM_INSERTS);
+        for i in 0..NUM_INSERTS {
+            let prefix = format!("test_string_{:04}_", i);
+            let padding_len = TARGET_STRING_LEN.saturating_sub(prefix.len());
+            let padding: String = "A".repeat(padding_len);
+            original_data.push(format!("{}{}", prefix, padding));
+        }
+
+        // First, create the database, a table, and insert many large strings
+        {
+            let db = Builder::new_local(db_path).build().await?;
+            let conn = db.connect()?;
+            conn.execute(
+                "CREATE TABLE test_large_persistence (id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL);",
+                (),
+            )
+            .await?;
+
+            for data_val in &original_data {
+                conn.execute(
+                    "INSERT INTO test_large_persistence (data) VALUES (?);",
+                    params::Params::Positional(vec![Value::Text(data_val.clone())]),
+                )
+                .await?;
+            }
+        } // db and conn are dropped here, simulating closing
+
+        // Now, re-open the database and check if the data is still there
+        let db = Builder::new_local(db_path).build().await?;
+        let conn = db.connect()?;
+
+        let mut rows = conn
+            .query("SELECT data FROM test_large_persistence ORDER BY id;", ())
+            .await?;
+
+        for i in 0..NUM_INSERTS {
+            let row = rows
+                .next()
+                .await?
+                .unwrap_or_else(|| panic!("Expected row {} but found None", i));
+            assert_eq!(
+                row.get_value(0)?,
+                Value::Text(original_data[i].clone()),
+                "Mismatch in retrieved data for row {}",
+                i
+            );
+        }
+
+        assert!(
+            rows.next().await?.is_none(),
+            "Expected no more rows after retrieving all inserted data"
+        );
+
+        // Delete the WAL file only and try to re-open and query
+        let wal_path = format!("{}-wal", db_path);
+        std::fs::remove_file(&wal_path)
+            .map_err(|e| eprintln!("Warning: Failed to delete WAL file for test: {}", e))
+            .unwrap();
+
+        // Attempt to re-open the database after deleting WAL and assert that table is missing.
+        let db_after_wal_delete = Builder::new_local(db_path).build().await?;
+        let conn_after_wal_delete = db_after_wal_delete.connect()?;
+
+        let query_result_after_wal_delete = conn_after_wal_delete
+            .query("SELECT data FROM test_large_persistence ORDER BY id;", ())
+            .await;
+
+        match query_result_after_wal_delete {
+            Ok(_) => panic!("Query succeeded after WAL deletion and DB reopen, but was expected to fail because the table definition should have been in the WAL."),
+            Err(Error::SqlExecutionFailure(msg)) => {
+                assert!(
+                    msg.contains("test_large_persistence not found"),
+                    "Expected 'test_large_persistence not found' error, but got: {}",
+                    msg
+                );
+            }
+            Err(e) => panic!(
+                "Expected SqlExecutionFailure for 'no such table', but got a different error: {:?}",
+                e
+            ),
+        }
+
+        Ok(())
+    }
+}
