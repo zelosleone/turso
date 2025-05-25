@@ -132,10 +132,9 @@ impl Database {
         let mut stmt = stmt.inner.borrow_mut();
         let pragma_name = pragma
             .split("PRAGMA")
-            .filter(|s| !s.trim().is_empty())
-            .next()
-            .map(str::trim)
+            .find(|s| !s.trim().is_empty())
             .unwrap();
+
         let mut results = env.create_empty_array()?;
 
         let step = stmt.step().map_err(into_napi_error)?;
@@ -143,14 +142,14 @@ impl Database {
             limbo_core::StepResult::Row => {
                 let row = stmt.row().unwrap();
                 let mut obj = env.create_object()?;
-                for (_, value) in row.get_values().enumerate() {
+                for value in row.get_values() {
                     let js_value = to_js_value(&env, value)?;
 
                     if simple {
                         return Ok(js_value);
                     }
 
-                    obj.set_named_property(&pragma_name, js_value)?;
+                    obj.set_named_property(pragma_name, js_value)?;
                 }
 
                 results.set_element(0, obj)?;
