@@ -370,7 +370,11 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(""),
                 0,
-                "".to_string(),
+                program.cursor_ref[*cursor_id]
+                    .0
+                    .as_ref()
+                    .unwrap()
+                    .to_string(),
             ),
             Insn::VCreate {
                 table_name,
