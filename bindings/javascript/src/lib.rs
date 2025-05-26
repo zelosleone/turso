@@ -80,17 +80,7 @@ impl Database {
     #[napi]
     pub fn prepare(&self, sql: String) -> napi::Result<Statement> {
         let stmt = self.conn.prepare(&sql).map_err(into_napi_error)?;
-        Ok(Statement::new(RefCell::new(stmt), self.clone()))
-    }
-
-    #[napi]
-    pub fn transaction(&self) {
-        todo!()
-    }
-
-    #[napi]
-    pub fn pragma(&self) {
-        todo!()
+        Ok(Statement::new(RefCell::new(stmt), self.clone(), sql))
     }
 
     #[napi]
@@ -119,18 +109,64 @@ impl Database {
     }
 
     #[napi]
-    pub fn load_extension(&self) {
-        todo!()
+    pub fn load_extension(&self, path: String) -> napi::Result<()> {
+        let ext_path = limbo_core::resolve_ext_path(path.as_str()).map_err(into_napi_error)?;
+        self.conn
+            .load_extension(ext_path)
+            .map_err(into_napi_error)?;
+        Ok(())
     }
 
     #[napi]
-    pub fn exec(&self) {
-        todo!()
+    pub fn exec(&self, sql: String) -> napi::Result<()> {
+        self.conn.execute(sql).map_err(into_napi_error)?;
+        Ok(())
     }
 
     #[napi]
-    pub fn close(&self) {
-        todo!()
+    pub fn close(&self) -> napi::Result<()> {
+        self.conn.close().map_err(into_napi_error)?;
+        Ok(())
+    }
+
+    // We assume that every pragma only returns one result, which isn't
+    // true.
+    #[napi]
+    pub fn pragma(&self, env: Env, pragma: String, simple: bool) -> napi::Result<JsUnknown> {
+        let stmt = self.prepare(pragma.clone())?;
+        let mut stmt = stmt.inner.borrow_mut();
+        let pragma_name = pragma
+            .split("PRAGMA")
+            .find(|s| !s.trim().is_empty())
+            .unwrap()
+            .trim();
+
+        let mut results = env.create_empty_array()?;
+
+        let step = stmt.step().map_err(into_napi_error)?;
+        match step {
+            limbo_core::StepResult::Row => {
+                let row = stmt.row().unwrap();
+                let mut obj = env.create_object()?;
+                for value in row.get_values() {
+                    let js_value = to_js_value(&env, value)?;
+
+                    if simple {
+                        return Ok(js_value);
+                    }
+
+                    obj.set_named_property(pragma_name, js_value)?;
+                }
+
+                results.set_element(0, obj)?;
+                Ok(results.into_unknown())
+            }
+            limbo_core::StepResult::Done => Ok(env.get_undefined()?.into_unknown()),
+            limbo_core::StepResult::IO => todo!(),
+            limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => Err(
+                napi::Error::new(napi::Status::GenericFailure, format!("{:?}", step)),
+            ),
+        }
     }
 }
 
@@ -144,23 +180,37 @@ pub struct Statement {
     // pub readonly: bool,
     // #[napi(writable = false)]
     // pub busy: bool,
+    #[napi(writable = false)]
+    pub source: String,
+
+    toggle: bool,
     database: Database,
     inner: Rc<RefCell<limbo_core::Statement>>,
 }
 
 #[napi]
 impl Statement {
-    pub fn new(inner: RefCell<limbo_core::Statement>, database: Database) -> Self {
+    pub fn new(inner: RefCell<limbo_core::Statement>, database: Database, source: String) -> Self {
         Self {
             inner: Rc::new(inner),
             database,
+            source,
+            toggle: false,
         }
     }
 
     #[napi]
-    pub fn get(&self, env: Env) -> napi::Result<JsUnknown> {
+    pub fn get(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<JsUnknown> {
         let mut stmt = self.inner.borrow_mut();
         stmt.reset();
+
+        if let Some(args) = args {
+            for (i, elem) in args.into_iter().enumerate() {
+                let value = from_js_value(elem)?;
+                stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
+            }
+        }
+
         let step = stmt.step().map_err(into_napi_error)?;
         match step {
             limbo_core::StepResult::Row => {
@@ -182,35 +232,52 @@ impl Statement {
     }
 
     // TODO: Return Info object (https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md#runbindparameters---object)
-    // The original function is variadic, check if we can do the same
     #[napi]
     pub fn run(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<JsUnknown> {
+        let mut stmt = self.inner.borrow_mut();
+        stmt.reset();
         if let Some(args) = args {
             for (i, elem) in args.into_iter().enumerate() {
                 let value = from_js_value(elem)?;
-                self.inner
-                    .borrow_mut()
-                    .bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
+                stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
             }
         }
 
-        let stmt = self.inner.borrow_mut();
         self.internal_all(env, stmt)
     }
 
     #[napi]
-    pub fn iterate(&self, env: Env) -> IteratorStatement {
-        IteratorStatement {
+    pub fn iterate(
+        &self,
+        env: Env,
+        args: Option<Vec<JsUnknown>>,
+    ) -> napi::Result<IteratorStatement> {
+        let mut stmt = self.inner.borrow_mut();
+        stmt.reset();
+        if let Some(args) = args {
+            for (i, elem) in args.into_iter().enumerate() {
+                let value = from_js_value(elem)?;
+                stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
+            }
+        }
+
+        Ok(IteratorStatement {
             stmt: Rc::clone(&self.inner),
             database: self.database.clone(),
             env,
-        }
+        })
     }
 
     #[napi]
-    pub fn all(&self, env: Env) -> napi::Result<JsUnknown> {
+    pub fn all(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<JsUnknown> {
         let mut stmt = self.inner.borrow_mut();
         stmt.reset();
+        if let Some(args) = args {
+            for (i, elem) in args.into_iter().enumerate() {
+                let value = from_js_value(elem)?;
+                stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
+            }
+        }
 
         self.internal_all(env, stmt)
     }
@@ -254,9 +321,14 @@ impl Statement {
     }
 
     #[napi]
-    pub fn pluck() {
-        todo!()
+    pub fn pluck(&mut self, toggle: Option<bool>) {
+        if let Some(false) = toggle {
+            self.toggle = false;
+        }
+
+        self.toggle = true;
     }
+
     #[napi]
     pub fn expand() {
         todo!()
