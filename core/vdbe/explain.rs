@@ -1373,6 +1373,20 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
+            Insn::SetCookie {
+                db,
+                cookie,
+                value,
+                p5,
+            } => (
+                "SetCookie",
+                *db as i32,
+                *cookie as i32,
+                *value,
+                Value::build_text(""),
+                *p5,
+                "".to_string(),
+            ),
             Insn::AutoCommit {
                 auto_commit,
                 rollback,
