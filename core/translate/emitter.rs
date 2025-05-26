@@ -261,6 +261,16 @@ fn emit_program_for_compound_select(
         first_t_ctx.limit_ctx = limit_ctx;
     }
 
+    let mut registers_subqery = None;
+    let yield_reg = match first.query_destination {
+        QueryDestination::CoroutineYield { yield_reg, .. } => {
+            registers_subqery = Some(program.alloc_registers(first.result_columns.len()));
+            first_t_ctx.reg_result_cols_start = registers_subqery.clone();
+            Some(yield_reg)
+        }
+        _ => None,
+    };
+
     let mut union_dedupe_index = if requires_union_deduplication {
         let dedupe_index = get_union_dedupe_index(program, &first);
         first.query_destination = QueryDestination::EphemeralIndex {
@@ -273,16 +283,6 @@ fn emit_program_for_compound_select(
     };
 
     // Emit the first SELECT
-
-    let mut registers_subqery = None;
-    if matches!(
-        first.query_destination,
-        crate::translate::plan::QueryDestination::CoroutineYield { .. }
-    ) {
-        registers_subqery = Some(program.alloc_registers(first.result_columns.len()));
-        first_t_ctx.reg_result_cols_start = registers_subqery.clone();
-    }
-
     emit_query(program, &mut first, &mut first_t_ctx)?;
 
     // Emit the remaining SELECTs. Any selects on the left side of a UNION must deduplicate their
@@ -330,6 +330,7 @@ fn emit_program_for_compound_select(
                 dedupe_index.as_ref(),
                 limit_ctx,
                 label_next_select,
+                yield_reg.clone(),
             );
         }
         if matches!(
@@ -351,6 +352,7 @@ fn emit_program_for_compound_select(
             dedupe_index.as_ref(),
             limit_ctx,
             label_jump_over_dedupe,
+            yield_reg,
         );
         program.preassign_label_to_next_insn(label_jump_over_dedupe);
     }
@@ -407,6 +409,7 @@ fn read_deduplicated_union_rows(
     dedupe_index: &Index,
     limit_ctx: Option<LimitCtx>,
     label_limit_reached: BranchOffset,
+    yield_reg: Option<usize>,
 ) {
     let label_dedupe_next = program.allocate_label();
     let label_dedupe_loop_start = program.allocate_label();
@@ -417,16 +420,30 @@ fn read_deduplicated_union_rows(
     });
     program.preassign_label_to_next_insn(label_dedupe_loop_start);
     for col_idx in 0..dedupe_index.columns.len() {
+        let start_reg = if let Some(yield_reg) = yield_reg {
+            // Need to reuse the yield_reg for the column being emitted
+            yield_reg + 1
+        } else {
+            dedupe_cols_start_reg
+        };
         program.emit_insn(Insn::Column {
             cursor_id: dedupe_cursor_id,
             column: col_idx,
-            dest: dedupe_cols_start_reg + col_idx,
+            dest: start_reg + col_idx,
         });
     }
-    program.emit_insn(Insn::ResultRow {
-        start_reg: dedupe_cols_start_reg,
-        count: dedupe_index.columns.len(),
-    });
+    if let Some(yield_reg) = yield_reg {
+        program.emit_insn(Insn::Yield {
+            yield_reg,
+            end_offset: BranchOffset::Offset(0),
+        });
+    } else {
+        program.emit_insn(Insn::ResultRow {
+            start_reg: dedupe_cols_start_reg,
+            count: dedupe_index.columns.len(),
+        });
+    }
+
     if let Some(limit_ctx) = limit_ctx {
         program.emit_insn(Insn::DecrJumpZero {
             reg: limit_ctx.reg_limit,
