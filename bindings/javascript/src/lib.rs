@@ -214,6 +214,10 @@ impl Statement {
                     let key = stmt.get_column_name(idx);
                     let js_value = to_js_value(&env, value);
                     obj.set_named_property(&key, js_value)?;
+
+                    if self.pluck {
+                        return Ok(obj.into_unknown());
+                    }
                 }
                 Ok(obj.into_unknown())
             }
@@ -245,6 +249,7 @@ impl Statement {
             stmt: Rc::clone(&self.inner),
             database: self.database.clone(),
             env,
+            plucked: self.pluck,
         })
     }
 
@@ -271,6 +276,10 @@ impl Statement {
                         let key = stmt.get_column_name(idx);
                         let js_value = to_js_value(&env, value);
                         obj.set_named_property(&key, js_value)?;
+
+                        if self.pluck {
+                            break;
+                        }
                     }
                     results.set_element(index, obj)?;
                     index += 1;
@@ -356,6 +365,7 @@ pub struct IteratorStatement {
     stmt: Rc<RefCell<limbo_core::Statement>>,
     database: Database,
     env: Env,
+    plucked: bool,
 }
 
 impl Generator for IteratorStatement {
@@ -377,6 +387,10 @@ impl Generator for IteratorStatement {
                     let key = stmt.get_column_name(idx);
                     let js_value = to_js_value(&self.env, value);
                     js_row.set_named_property(&key, js_value).ok()?;
+
+                    if self.plucked {
+                        break;
+                    }
                 }
 
                 Some(js_row)
