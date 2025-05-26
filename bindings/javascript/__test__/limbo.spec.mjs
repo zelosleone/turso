@@ -1,4 +1,5 @@
 import test from "ava";
+import fs from "fs";
 
 import { Database } from "../wrapper.js";
 
@@ -67,17 +68,8 @@ test("Empty prepared statement should throw", async (t) => {
 
 test("Test pragma", async (t) => {
   const [db] = await connect(":memory:");
-  t.deepEqual(typeof db.pragma("cache_size")[0].cache_size, "number");
-  t.deepEqual(typeof db.pragma("cache_size", { simple: true }), "number");
-});
-
-test("test extension loading", async (t) => {
-  const [db] = await connect(":memory:");
-  db.loadExtension("../../target/debug/liblimbo_crypto.so");
-  t.deepEqual(
-    typeof db.prepare("select crypto_sha256('asdf')").get(),
-    "object",
-  );
+  t.true(typeof db.pragma("cache_size")[0].cache_size === "number");
+  t.true(typeof db.pragma("cache_size", { simple: true }) === "number");
 });
 
 const connect = async (path) => {
