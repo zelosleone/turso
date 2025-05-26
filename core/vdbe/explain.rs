@@ -625,11 +625,14 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
-            Insn::Return { return_reg } => (
+            Insn::Return {
+                return_reg,
+                can_fallthrough,
+            } => (
                 "Return",
                 *return_reg as i32,
                 0,
-                0,
+                *can_fallthrough as i32,
                 Value::build_text(""),
                 0,
                 "".to_string(),

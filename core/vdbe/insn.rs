@@ -429,8 +429,11 @@ pub enum Insn {
     },
 
     /// Returns to the program counter stored in register 'return_reg'.
+    /// If can_fallthrough is true, fall through to the next instruction
+    /// if return_reg does not contain an integer value. Otherwise raise an error.
     Return {
         return_reg: usize,
+        can_fallthrough: bool,
     },
 
     /// Write an integer value into a register.
