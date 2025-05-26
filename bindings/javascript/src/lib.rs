@@ -119,7 +119,7 @@ impl Database {
 
     #[napi]
     pub fn exec(&self, sql: String) -> napi::Result<()> {
-        self.conn.query(sql).map_err(into_napi_error)?;
+        self.conn.execute(sql).map_err(into_napi_error)?;
         Ok(())
     }
 
