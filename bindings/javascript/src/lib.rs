@@ -170,8 +170,8 @@ impl Database {
     }
 }
 
-// TODO: Add the (parent) 'database' property
 #[napi]
+#[derive(Clone)]
 pub struct Statement {
     // TODO: implement each property when core supports it
     // #[napi(able = false)]
@@ -183,8 +183,9 @@ pub struct Statement {
     #[napi(writable = false)]
     pub source: String,
 
-    toggle: bool,
     database: Database,
+    pluck: bool,
+    binded: bool,
     inner: Rc<RefCell<limbo_core::Statement>>,
 }
 
@@ -195,7 +196,8 @@ impl Statement {
             inner: Rc::new(inner),
             database,
             source,
-            toggle: false,
+            pluck: false,
+            binded: false,
         }
     }
 
@@ -321,29 +323,49 @@ impl Statement {
     }
 
     #[napi]
-    pub fn pluck(&mut self, toggle: Option<bool>) {
-        if let Some(false) = toggle {
-            self.toggle = false;
+    pub fn pluck(&mut self, pluck: Option<bool>) {
+        if let Some(false) = pluck {
+            self.pluck = false;
         }
 
-        self.toggle = true;
+        self.pluck = true;
     }
 
     #[napi]
     pub fn expand() {
         todo!()
     }
+
     #[napi]
     pub fn raw() {
         todo!()
     }
+
     #[napi]
     pub fn columns() {
         todo!()
     }
+
     #[napi]
-    pub fn bind() {
-        todo!()
+    pub fn bind(&mut self, args: Option<Vec<JsUnknown>>) -> napi::Result<Self> {
+        let mut stmt = self.inner.borrow_mut();
+        stmt.reset();
+        if self.binded {
+            return Err(napi::Error::new(
+                napi::Status::InvalidArg,
+                "This statement already has bound parameters",
+            ));
+        }
+        if let Some(args) = args {
+            for (i, elem) in args.into_iter().enumerate() {
+                let value = from_js_value(elem)?;
+                stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
+            }
+        }
+
+        self.binded = true;
+
+        Ok(self.clone())
     }
 }
 
