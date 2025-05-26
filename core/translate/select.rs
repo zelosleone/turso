@@ -79,7 +79,7 @@ pub fn translate_select(
     };
 
     program.extend(&opts);
-    emit_program(&mut program, select_plan, syms)?;
+    emit_program(&mut program, select_plan, schema, syms)?;
     Ok(TranslateSelectResult {
         program,
         num_result_cols,

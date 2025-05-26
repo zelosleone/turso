@@ -64,7 +64,7 @@ pub fn translate_insert(
         None => crate::bail_corrupt_error!("Parse error: no such table: {}", table_name),
     };
 
-    let resolver = Resolver::new(syms);
+    let resolver = Resolver::new(schema, syms);
 
     if let Some(virtual_table) = &table.virtual_table() {
         program = translate_virtual_table_insert(

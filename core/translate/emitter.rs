@@ -23,7 +23,7 @@ use super::select::emit_simple_count;
 use super::subquery::emit_subqueries;
 use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
 use crate::function::Func;
-use crate::schema::{Index, IndexColumn};
+use crate::schema::{Index, IndexColumn, Schema};
 use crate::translate::plan::{DeletePlan, Plan, Search};
 use crate::translate::values::emit_values;
 use crate::util::exprs_are_equivalent;
@@ -32,15 +32,16 @@ use crate::vdbe::insn::{CmpInsFlags, IdxInsertFlags, RegisterOrLiteral};
 use crate::vdbe::{insn::Insn, BranchOffset};
 use crate::{Result, SymbolTable};
 
-#[derive(Debug)]
 pub struct Resolver<'a> {
+    pub schema: &'a Schema,
     pub symbol_table: &'a SymbolTable,
     pub expr_to_reg_cache: Vec<(&'a ast::Expr, usize)>,
 }
 
 impl<'a> Resolver<'a> {
-    pub fn new(symbol_table: &'a SymbolTable) -> Self {
+    pub fn new(schema: &'a Schema, symbol_table: &'a SymbolTable) -> Self {
         Self {
+            schema,
             symbol_table,
             expr_to_reg_cache: Vec::new(),
         }
@@ -93,7 +94,6 @@ impl LimitCtx {
 /// The TranslateCtx struct holds various information and labels used during bytecode generation.
 /// It is used for maintaining state and control flow during the bytecode
 /// generation process.
-#[derive(Debug)]
 pub struct TranslateCtx<'a> {
     // A typical query plan is a nested loop. Each loop has its own LoopLabels (see the definition of LoopLabels for more details)
     pub labels_main_loop: Vec<LoopLabels>,
@@ -132,6 +132,7 @@ pub struct TranslateCtx<'a> {
 impl<'a> TranslateCtx<'a> {
     pub fn new(
         program: &mut ProgramBuilder,
+        schema: &'a Schema,
         syms: &'a SymbolTable,
         table_count: usize,
         result_column_count: usize,
@@ -150,7 +151,7 @@ impl<'a> TranslateCtx<'a> {
             meta_sort: None,
             result_column_indexes_in_orderby_sorter: (0..result_column_count).collect(),
             result_columns_to_skip_in_orderby_sorter: None,
-            resolver: Resolver::new(syms),
+            resolver: Resolver::new(schema, syms),
         }
     }
 }
@@ -174,18 +175,26 @@ pub enum TransactionMode {
 
 /// Main entry point for emitting bytecode for a SQL query
 /// Takes a query plan and generates the corresponding bytecode program
-pub fn emit_program(program: &mut ProgramBuilder, plan: Plan, syms: &SymbolTable) -> Result<()> {
+pub fn emit_program(
+    program: &mut ProgramBuilder,
+    plan: Plan,
+    schema: &Schema,
+    syms: &SymbolTable,
+) -> Result<()> {
     match plan {
-        Plan::Select(plan) => emit_program_for_select(program, plan, syms),
-        Plan::Delete(plan) => emit_program_for_delete(program, plan, syms),
-        Plan::Update(plan) => emit_program_for_update(program, plan, syms),
-        Plan::CompoundSelect { .. } => emit_program_for_compound_select(program, plan, syms),
+        Plan::Select(plan) => emit_program_for_select(program, plan, schema, syms),
+        Plan::Delete(plan) => emit_program_for_delete(program, plan, schema, syms),
+        Plan::Update(plan) => emit_program_for_update(program, plan, schema, syms),
+        Plan::CompoundSelect { .. } => {
+            emit_program_for_compound_select(program, plan, schema, syms)
+        }
     }
 }
 
 fn emit_program_for_compound_select(
     program: &mut ProgramBuilder,
     plan: Plan,
+    schema: &Schema,
     syms: &SymbolTable,
 ) -> Result<()> {
     let Plan::CompoundSelect {
@@ -227,6 +236,7 @@ fn emit_program_for_compound_select(
     let mut t_ctx_list = Vec::with_capacity(rest.len() + 1);
     t_ctx_list.push(TranslateCtx::new(
         program,
+        schema,
         syms,
         first.table_references.len(),
         first.result_columns.len(),
@@ -234,6 +244,7 @@ fn emit_program_for_compound_select(
     rest.iter().for_each(|(select, _)| {
         let t_ctx = TranslateCtx::new(
             program,
+            schema,
             syms,
             select.table_references.len(),
             select.result_columns.len(),
@@ -460,10 +471,12 @@ fn read_deduplicated_union_rows(
 fn emit_program_for_select(
     program: &mut ProgramBuilder,
     mut plan: SelectPlan,
+    schema: &Schema,
     syms: &SymbolTable,
 ) -> Result<()> {
     let mut t_ctx = TranslateCtx::new(
         program,
+        schema,
         syms,
         plan.table_references.len(),
         plan.result_columns.len(),
@@ -644,10 +657,12 @@ pub fn emit_query<'a>(
 fn emit_program_for_delete(
     program: &mut ProgramBuilder,
     mut plan: DeletePlan,
+    schema: &Schema,
     syms: &SymbolTable,
 ) -> Result<()> {
     let mut t_ctx = TranslateCtx::new(
         program,
+        schema,
         syms,
         plan.table_references.len(),
         plan.result_columns.len(),
@@ -814,10 +829,12 @@ fn emit_delete_insns(
 fn emit_program_for_update(
     program: &mut ProgramBuilder,
     mut plan: UpdatePlan,
+    schema: &Schema,
     syms: &SymbolTable,
 ) -> Result<()> {
     let mut t_ctx = TranslateCtx::new(
         program,
+        schema,
         syms,
         plan.table_references.len(),
         plan.returning.as_ref().map_or(0, |r| r.len()),
