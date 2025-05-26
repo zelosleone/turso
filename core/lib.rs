@@ -61,6 +61,7 @@ use std::{
 use storage::btree::{btree_init_page, BTreePageInner};
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
+pub use storage::pager::PagerCacheflushStatus;
 pub use storage::{
     buffer_pool::BufferPool,
     database::DatabaseStorage,
@@ -216,7 +217,7 @@ impl Database {
         let pager = Rc::new(Pager::finish_open(
             self.header.clone(),
             self.db_file.clone(),
-            Some(wal),
+            wal,
             self.io.clone(),
             Arc::new(RwLock::new(DumbLruPageCache::default())),
             buffer_pool,
@@ -503,7 +504,11 @@ impl Connection {
         self.pager.wal_frame_count()
     }
 
-    pub fn cacheflush(&self) -> Result<CheckpointStatus> {
+    /// Flush dirty pages to disk.
+    /// This will write the dirty pages to the WAL and then fsync the WAL.
+    /// If the WAL size is over the checkpoint threshold, it will checkpoint the WAL to
+    /// the database file and then fsync the database file.
+    pub fn cacheflush(&self) -> Result<PagerCacheflushStatus> {
         self.pager.cacheflush()
     }
 

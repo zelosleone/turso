@@ -4,6 +4,7 @@ use crate::schema::Schema;
 use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::CreateBTreeFlags;
+use crate::storage::wal::DummyWAL;
 use crate::types::ImmutableRecord;
 use crate::{
     error::{LimboError, SQLITE_CONSTRAINT, SQLITE_CONSTRAINT_PRIMARYKEY},
@@ -49,7 +50,7 @@ use crate::{
 
 use super::{
     insn::{Cookie, RegisterOrLiteral},
-    HaltState,
+    CommitState,
 };
 use parking_lot::RwLock;
 use rand::thread_rng;
@@ -1651,7 +1652,7 @@ pub fn op_halt(
             )));
         }
     }
-    match program.halt(pager.clone(), state, mv_store)? {
+    match program.commit_txn(pager.clone(), state, mv_store)? {
         StepResult::Done => Ok(InsnFunctionStepResult::Done),
         StepResult::IO => Ok(InsnFunctionStepResult::IO),
         StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1726,8 +1727,8 @@ pub fn op_auto_commit(
         unreachable!("unexpected Insn {:?}", insn)
     };
     let conn = program.connection.upgrade().unwrap();
-    if matches!(state.halt_state, Some(HaltState::Checkpointing)) {
-        return match program.halt(pager.clone(), state, mv_store)? {
+    if state.commit_state == CommitState::Committing {
+        return match program.commit_txn(pager.clone(), state, mv_store)? {
             super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
             super::StepResult::IO => Ok(InsnFunctionStepResult::IO),
             super::StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1755,7 +1756,7 @@ pub fn op_auto_commit(
             "cannot commit - no transaction is active".to_string(),
         ));
     }
-    return match program.halt(pager.clone(), state, mv_store)? {
+    return match program.commit_txn(pager.clone(), state, mv_store)? {
         super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
         super::StepResult::IO => Ok(InsnFunctionStepResult::IO),
         super::StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -4701,7 +4702,7 @@ pub fn op_open_ephemeral(
     let pager = Rc::new(Pager::finish_open(
         db_header,
         db_file,
-        None,
+        Rc::new(RefCell::new(DummyWAL)),
         io,
         page_cache,
         buffer_pool,

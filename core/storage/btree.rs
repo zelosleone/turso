@@ -6308,7 +6308,7 @@ mod tests {
         let page_cache = Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(2000)));
         let pager = {
             let db_header = Arc::new(SpinLock::new(db_header.clone()));
-            Pager::finish_open(db_header, db_file, Some(wal), io, page_cache, buffer_pool).unwrap()
+            Pager::finish_open(db_header, db_file, wal, io, page_cache, buffer_pool).unwrap()
         };
         let pager = Rc::new(pager);
         // FIXME: handle page cache is full
@@ -6486,8 +6486,8 @@ mod tests {
                 .unwrap();
                 loop {
                     match pager.end_tx().unwrap() {
-                        crate::CheckpointStatus::Done(_) => break,
-                        crate::CheckpointStatus::IO => {
+                        crate::PagerCacheflushStatus::Done(_) => break,
+                        crate::PagerCacheflushStatus::IO => {
                             pager.io.run_once().unwrap();
                         }
                     }
@@ -6600,8 +6600,8 @@ mod tests {
                 cursor.move_to_root();
                 loop {
                     match pager.end_tx().unwrap() {
-                        crate::CheckpointStatus::Done(_) => break,
-                        crate::CheckpointStatus::IO => {
+                        crate::PagerCacheflushStatus::Done(_) => break,
+                        crate::PagerCacheflushStatus::IO => {
                             pager.io.run_once().unwrap();
                         }
                     }
@@ -6790,7 +6790,7 @@ mod tests {
             Pager::finish_open(
                 db_header.clone(),
                 db_file,
-                Some(wal),
+                wal,
                 io,
                 Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(10))),
                 buffer_pool,

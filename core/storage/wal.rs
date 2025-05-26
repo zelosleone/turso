@@ -190,10 +190,87 @@ pub trait Wal {
         write_counter: Rc<RefCell<usize>>,
         mode: CheckpointMode,
     ) -> Result<CheckpointStatus>;
-    fn sync(&mut self) -> Result<CheckpointStatus>;
+    fn sync(&mut self) -> Result<WalFsyncStatus>;
     fn get_max_frame_in_wal(&self) -> u64;
     fn get_max_frame(&self) -> u64;
     fn get_min_frame(&self) -> u64;
+}
+
+/// A dummy WAL implementation that does nothing.
+/// This is used for ephemeral indexes where a WAL is not really
+/// needed, and is preferable to passing an Option<dyn Wal> around
+/// everywhere.
+pub struct DummyWAL;
+
+impl Wal for DummyWAL {
+    fn begin_read_tx(&mut self) -> Result<LimboResult> {
+        Ok(LimboResult::Ok)
+    }
+
+    fn end_read_tx(&self) -> Result<LimboResult> {
+        Ok(LimboResult::Ok)
+    }
+
+    fn begin_write_tx(&mut self) -> Result<LimboResult> {
+        Ok(LimboResult::Ok)
+    }
+
+    fn end_write_tx(&self) -> Result<LimboResult> {
+        Ok(LimboResult::Ok)
+    }
+
+    fn find_frame(&self, _page_id: u64) -> Result<Option<u64>> {
+        Ok(None)
+    }
+
+    fn read_frame(
+        &self,
+        _frame_id: u64,
+        _page: crate::PageRef,
+        _buffer_pool: Rc<BufferPool>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn append_frame(
+        &mut self,
+        _page: crate::PageRef,
+        _db_size: u32,
+        _write_counter: Rc<RefCell<usize>>,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn should_checkpoint(&self) -> bool {
+        false
+    }
+
+    fn checkpoint(
+        &mut self,
+        _pager: &Pager,
+        _write_counter: Rc<RefCell<usize>>,
+        _mode: crate::CheckpointMode,
+    ) -> Result<crate::CheckpointStatus> {
+        Ok(crate::CheckpointStatus::Done(
+            crate::CheckpointResult::default(),
+        ))
+    }
+
+    fn sync(&mut self) -> Result<crate::storage::wal::WalFsyncStatus> {
+        Ok(crate::storage::wal::WalFsyncStatus::Done)
+    }
+
+    fn get_max_frame_in_wal(&self) -> u64 {
+        0
+    }
+
+    fn get_max_frame(&self) -> u64 {
+        0
+    }
+
+    fn get_min_frame(&self) -> u64 {
+        0
+    }
 }
 
 // Syncing requires a state machine because we need to schedule a sync and then wait until it is
@@ -212,6 +289,12 @@ pub enum CheckpointState {
     WritePage,
     WaitWritePage,
     Done,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum WalFsyncStatus {
+    Done,
+    IO,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -646,7 +729,7 @@ impl Wal for WalFile {
         }
     }
 
-    fn sync(&mut self) -> Result<CheckpointStatus> {
+    fn sync(&mut self) -> Result<WalFsyncStatus> {
         let state = *self.sync_state.borrow();
         match state {
             SyncState::NotSyncing => {
@@ -664,18 +747,14 @@ impl Wal for WalFile {
                     shared.file.sync(completion)?;
                 }
                 self.sync_state.replace(SyncState::Syncing);
-                Ok(CheckpointStatus::IO)
+                Ok(WalFsyncStatus::IO)
             }
             SyncState::Syncing => {
                 if *self.syncing.borrow() {
-                    Ok(CheckpointStatus::IO)
+                    Ok(WalFsyncStatus::IO)
                 } else {
                     self.sync_state.replace(SyncState::NotSyncing);
-                    let checkpoint_result = CheckpointResult {
-                        num_wal_frames: self.max_frame,
-                        num_checkpointed_frames: self.ongoing_checkpoint.max_frame,
-                    };
-                    Ok(CheckpointStatus::Done(checkpoint_result))
+                    Ok(WalFsyncStatus::Done)
                 }
             }
         }
