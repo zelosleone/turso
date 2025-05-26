@@ -203,15 +203,7 @@ impl Statement {
 
     #[napi]
     pub fn get(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<JsUnknown> {
-        let mut stmt = self.inner.borrow_mut();
-        stmt.reset();
-
-        if let Some(args) = args {
-            for (i, elem) in args.into_iter().enumerate() {
-                let value = from_js_value(elem)?;
-                stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
-            }
-        }
+        let mut stmt = self.check_and_bind(args)?;
 
         let step = stmt.step().map_err(into_napi_error)?;
         match step {
@@ -236,14 +228,7 @@ impl Statement {
     // TODO: Return Info object (https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md#runbindparameters---object)
     #[napi]
     pub fn run(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<JsUnknown> {
-        let mut stmt = self.inner.borrow_mut();
-        stmt.reset();
-        if let Some(args) = args {
-            for (i, elem) in args.into_iter().enumerate() {
-                let value = from_js_value(elem)?;
-                stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
-            }
-        }
+        let stmt = self.check_and_bind(args)?;
 
         self.internal_all(env, stmt)
     }
@@ -254,14 +239,7 @@ impl Statement {
         env: Env,
         args: Option<Vec<JsUnknown>>,
     ) -> napi::Result<IteratorStatement> {
-        let mut stmt = self.inner.borrow_mut();
-        stmt.reset();
-        if let Some(args) = args {
-            for (i, elem) in args.into_iter().enumerate() {
-                let value = from_js_value(elem)?;
-                stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
-            }
-        }
+        self.check_and_bind(args)?;
 
         Ok(IteratorStatement {
             stmt: Rc::clone(&self.inner),
@@ -272,14 +250,7 @@ impl Statement {
 
     #[napi]
     pub fn all(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<JsUnknown> {
-        let mut stmt = self.inner.borrow_mut();
-        stmt.reset();
-        if let Some(args) = args {
-            for (i, elem) in args.into_iter().enumerate() {
-                let value = from_js_value(elem)?;
-                stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
-            }
-        }
+        let stmt = self.check_and_bind(args)?;
 
         self.internal_all(env, stmt)
     }
@@ -348,24 +319,35 @@ impl Statement {
 
     #[napi]
     pub fn bind(&mut self, args: Option<Vec<JsUnknown>>) -> napi::Result<Self> {
+        self.check_and_bind(args)?;
+        self.binded = true;
+
+        Ok(self.clone())
+    }
+
+    /// Check if the Statement is already binded by the `bind()` method
+    /// and bind values do variables. The expected type for args is `Option<Vec<JsUnknown>>`
+    fn check_and_bind(
+        &self,
+        args: Option<Vec<JsUnknown>>,
+    ) -> napi::Result<RefMut<'_, limbo_core::Statement>> {
         let mut stmt = self.inner.borrow_mut();
         stmt.reset();
-        if self.binded {
-            return Err(napi::Error::new(
-                napi::Status::InvalidArg,
-                "This statement already has bound parameters",
-            ));
-        }
         if let Some(args) = args {
+            if self.binded {
+                return Err(napi::Error::new(
+                    napi::Status::InvalidArg,
+                    "This statement already has bound parameters",
+                ));
+            }
+
             for (i, elem) in args.into_iter().enumerate() {
                 let value = from_js_value(elem)?;
                 stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
             }
         }
 
-        self.binded = true;
-
-        Ok(self.clone())
+        Ok(stmt)
     }
 }
 
