@@ -109,13 +109,18 @@ impl Database {
     }
 
     #[napi]
-    pub fn load_extension(&self) {
-        todo!()
+    pub fn load_extension(&self, path: String) -> napi::Result<()> {
+        let ext_path = limbo_core::resolve_ext_path(path.as_str()).map_err(into_napi_error)?;
+        self.conn
+            .load_extension(ext_path)
+            .map_err(into_napi_error)?;
+        Ok(())
     }
 
     #[napi]
-    pub fn exec(&self) {
-        todo!()
+    pub fn exec(&self, sql: String) -> napi::Result<()> {
+        self.conn.query(sql).map_err(into_napi_error)?;
+        Ok(())
     }
 
     #[napi]
@@ -133,7 +138,8 @@ impl Database {
         let pragma_name = pragma
             .split("PRAGMA")
             .find(|s| !s.trim().is_empty())
-            .unwrap();
+            .unwrap()
+            .trim();
 
         let mut results = env.create_empty_array()?;
 

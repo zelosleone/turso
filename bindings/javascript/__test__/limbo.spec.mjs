@@ -71,6 +71,15 @@ test("Test pragma", async (t) => {
   t.deepEqual(typeof db.pragma("cache_size", { simple: true }), "number");
 });
 
+test("test extension loading", async (t) => {
+  const [db] = await connect(":memory:");
+  db.loadExtension("../../target/debug/liblimbo_crypto.so");
+  t.deepEqual(
+    typeof db.prepare("select crypto_sha256('asdf')").get(),
+    "object",
+  );
+});
+
 const connect = async (path) => {
   const db = new Database(path);
   return [db];

@@ -112,8 +112,8 @@ class Database {
     throw new Error("not implemented");
   }
 
-  loadExtension(...args) {
-    throw new Error("not implemented");
+  loadExtension(path) {
+    this.db.loadExtension(path);
   }
 
   maxWriteReplicationIndex() {
@@ -126,11 +126,7 @@ class Database {
    * @param {string} sql - The SQL statement string to execute.
    */
   exec(sql) {
-    try {
-      this.db.exec(sql);
-    } catch (err) {
-      throw convertError(err);
-    }
+    this.db.exec(sql);
   }
 
   /**
