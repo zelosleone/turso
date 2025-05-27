@@ -10,7 +10,7 @@ use crate::fast_lock::SpinLock;
 use crate::schema::Schema;
 use crate::storage::sqlite3_ondisk::{DatabaseHeader, MIN_PAGE_CACHE_SIZE};
 use crate::storage::wal::CheckpointMode;
-use crate::util::{normalize_ident, parse_numeric_literal};
+use crate::util::{normalize_ident, parse_signed_number};
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
 use crate::vdbe::insn::{Cookie, Insn};
 use crate::{bail_parse_error, Pager, Value};
@@ -142,19 +142,7 @@ fn update_pragma(
             Ok(())
         }
         PragmaName::UserVersion => {
-            let data = match value {
-                ast::Expr::Literal(ast::Literal::Numeric(numeric_value)) => {
-                    parse_numeric_literal(&numeric_value)?
-                }
-                ast::Expr::Unary(ast::UnaryOperator::Negative, expr) => match *expr {
-                    ast::Expr::Literal(ast::Literal::Numeric(numeric_value)) => {
-                        let data = "-".to_owned() + numeric_value.as_str();
-                        parse_numeric_literal(&data)?
-                    }
-                    _ => bail_parse_error!("Not a valid value"),
-                },
-                _ => bail_parse_error!("Not a valid value"),
-            };
+            let data = parse_signed_number(&value)?;
             let version_value = match data {
                 Value::Integer(i) => i as i32,
                 Value::Float(f) => f as i32,
