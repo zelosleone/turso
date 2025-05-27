@@ -6776,7 +6776,7 @@ mod tests {
 
         let write_complete = Box::new(|_| {});
         let c = Completion::Write(WriteCompletion::new(write_complete));
-        db_file.write_page(1, buf.clone(), c).unwrap();
+        db_file.write_page(1, buf.clone(), Arc::new(c)).unwrap();
 
         let wal_shared = WalFileShared::open_shared(&io, "test.wal", page_size).unwrap();
         let wal = Rc::new(RefCell::new(WalFile::new(
@@ -6826,9 +6826,10 @@ mod tests {
             )));
             let write_complete = Box::new(|_| {});
             let c = Completion::Write(WriteCompletion::new(write_complete));
+            #[allow(clippy::arc_with_non_send_sync)]
             pager
                 .db_file
-                .write_page(current_page as usize, buf.clone(), c)?;
+                .write_page(current_page as usize, buf.clone(), Arc::new(c))?;
             pager.io.run_once()?;
 
             let page = cursor.read_page(current_page as usize)?;
