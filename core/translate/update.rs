@@ -70,7 +70,7 @@ pub fn translate_update(
         approx_num_labels: 4,
     };
     program.extend(&opts);
-    emit_program(&mut program, plan, syms)?;
+    emit_program(&mut program, plan, schema, syms)?;
     Ok(program)
 }
 

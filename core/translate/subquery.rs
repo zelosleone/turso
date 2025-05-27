@@ -80,7 +80,7 @@ pub fn emit_subquery<'a>(
         limit_ctx: plan.limit.map(|_| LimitCtx::new(program)),
         reg_offset: plan.offset.map(|_| program.alloc_register()),
         reg_limit_offset_sum: plan.offset.map(|_| program.alloc_register()),
-        resolver: Resolver::new(t_ctx.resolver.symbol_table),
+        resolver: Resolver::new(t_ctx.resolver.schema, t_ctx.resolver.symbol_table),
     };
     let subquery_body_end_label = program.allocate_label();
     program.emit_insn(Insn::InitCoroutine {
