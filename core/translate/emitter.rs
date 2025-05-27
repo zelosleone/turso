@@ -1318,6 +1318,9 @@ fn emit_update_insns(
     Ok(())
 }
 
+/// Initialize the limit/offset counters and registers.
+/// In case of compound SELECTs, the limit counter is initialized only once,
+/// hence [LimitCtx::initialize_counter] being false in those cases.
 fn init_limit(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx,
