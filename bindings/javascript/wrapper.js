@@ -224,6 +224,16 @@ class Statement {
   columns() {
     return this.stmt.columns();
   }
+
+  /**
+   * Binds the given parameters to the statement _permanently_
+   *
+   * @param bindParameters - The bind parameters for binding the statement.
+   * @returns this - Statement with binded parameters
+   */
+  bind(...bindParameters) {
+    return this.stmt.bind(bindParameters.flat());
+  }
 }
 
 module.exports.Database = Database;

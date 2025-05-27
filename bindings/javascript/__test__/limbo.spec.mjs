@@ -1,5 +1,4 @@
 import test from "ava";
-import fs from "fs";
 
 import { Database } from "../wrapper.js";
 
@@ -66,10 +65,42 @@ test("Empty prepared statement should throw", async (t) => {
   );
 });
 
-test("Test pragma", async (t) => {
+test("Test pragma()", async (t) => {
   const [db] = await connect(":memory:");
   t.true(typeof db.pragma("cache_size")[0].cache_size === "number");
   t.true(typeof db.pragma("cache_size", { simple: true }) === "number");
+});
+
+test("Statement binded with bind() shouldn't be binded again", async (t) => {
+  const [db] = await connect(":memory:");
+  db.prepare("CREATE TABLE users (name TEXT, age INTEGER)").run();
+  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Alice", 42);
+  let stmt = db.prepare("SELECT * FROM users WHERE name = ?").bind("Alice");
+
+  for (const row of stmt.iterate()) {
+    t.truthy(row.name);
+    t.true(typeof row.age === "number");
+  }
+
+  t.throws(
+    () => {
+      db.bind("Bob");
+    },
+    { instanceOf: Error },
+  );
+});
+
+test("Test pluck(): Rows should only have the values of the first column", async (t) => {
+  const [db] = await connect(":memory:");
+  db.prepare("CREATE TABLE users (name TEXT, age INTEGER)").run();
+  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Alice", 42);
+  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Bob", 24);
+  let stmt = db.prepare("SELECT * FROM users").pluck();
+
+  for (const row of stmt.iterate()) {
+    t.truthy(row.name);
+    t.true(typeof row.age === "undefined");
+  }
 });
 
 const connect = async (path) => {
