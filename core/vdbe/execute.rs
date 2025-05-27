@@ -998,7 +998,9 @@ pub fn op_vopen(
     state
         .cursors
         .borrow_mut()
-        .insert(*cursor_id, Some(Cursor::Virtual(cursor)));
+        .get_mut(*cursor_id)
+        .unwrap_or_else(|| panic!("cursor id {} out of bounds", *cursor_id))
+        .replace(Cursor::Virtual(cursor));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
