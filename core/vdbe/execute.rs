@@ -322,15 +322,17 @@ pub fn op_null(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Null { dest, dest_end } = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    if let Some(dest_end) = dest_end {
-        for i in *dest..=*dest_end {
-            state.registers[i] = Register::Value(Value::Null);
+    match insn {
+        Insn::Null { dest, dest_end } | Insn::BeginSubrtn { dest, dest_end } => {
+            if let Some(dest_end) = dest_end {
+                for i in *dest..=*dest_end {
+                    state.registers[i] = Register::Value(Value::Null);
+                }
+            } else {
+                state.registers[*dest] = Register::Value(Value::Null);
+            }
         }
-    } else {
-        state.registers[*dest] = Register::Value(Value::Null);
+        _ => unreachable!("unexpected Insn {:?}", insn),
     }
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
