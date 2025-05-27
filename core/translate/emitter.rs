@@ -519,21 +519,7 @@ pub fn emit_query<'a>(
     // Emit subqueries first so the results can be read in the main query loop.
     emit_subqueries(program, t_ctx, &mut plan.table_references)?;
 
-    if t_ctx.limit_ctx.is_none() {
-        t_ctx.limit_ctx = plan.limit.map(|_| LimitCtx::new(program));
-    }
-
-    if t_ctx.reg_offset.is_none() {
-        t_ctx.reg_offset = t_ctx
-            .reg_offset
-            .or_else(|| plan.offset.map(|_| program.alloc_register()));
-    }
-
-    if t_ctx.reg_limit_offset_sum.is_none() {
-        t_ctx.reg_limit_offset_sum = t_ctx
-            .reg_limit_offset_sum
-            .or_else(|| plan.offset.map(|_| program.alloc_register()));
-    }
+    init_limit(program, t_ctx, plan.limit, plan.offset);
 
     // No rows will be read from source table loops if there is a constant false condition eg. WHERE 0
     // however an aggregation might still happen,
@@ -748,6 +734,8 @@ fn emit_delete_insns(
     };
     let main_table_cursor_id = program.resolve_cursor_id(table_reference.table.get_name());
 
+    init_limit(program, t_ctx, *limit, None);
+
     // Emit the instructions to delete the row
     let key_reg = program.alloc_register();
     program.emit_insn(Insn::RowId {
@@ -810,15 +798,9 @@ fn emit_delete_insns(
             cursor_id: main_table_cursor_id,
         });
     }
-    if let Some(limit) = limit {
-        let limit_reg = program.alloc_register();
-        program.emit_insn(Insn::Integer {
-            value: *limit as i64,
-            dest: limit_reg,
-        });
-        program.mark_last_insn_constant();
+    if let Some(limit_ctx) = t_ctx.limit_ctx {
         program.emit_insn(Insn::DecrJumpZero {
-            reg: limit_reg,
+            reg: limit_ctx.reg_limit,
             target_pc: t_ctx.label_main_loop_end.unwrap(),
         })
     }
@@ -847,30 +829,8 @@ fn emit_program_for_update(
         program.table_references = plan.table_references;
         return Ok(());
     }
-    if t_ctx.limit_ctx.is_none() && plan.limit.is_some() {
-        t_ctx.limit_ctx = Some(LimitCtx::new(program));
-        program.emit_insn(Insn::Integer {
-            value: plan.limit.unwrap() as i64,
-            dest: t_ctx.limit_ctx.unwrap().reg_limit,
-        });
-        program.mark_last_insn_constant();
-        if t_ctx.reg_offset.is_none() && plan.offset.is_some_and(|n| n.ne(&0)) {
-            let reg = program.alloc_register();
-            t_ctx.reg_offset = Some(reg);
-            program.emit_insn(Insn::Integer {
-                value: plan.offset.unwrap() as i64,
-                dest: reg,
-            });
-            program.mark_last_insn_constant();
-            let combined_reg = program.alloc_register();
-            t_ctx.reg_limit_offset_sum = Some(combined_reg);
-            program.emit_insn(Insn::OffsetLimit {
-                limit_reg: t_ctx.limit_ctx.unwrap().reg_limit,
-                offset_reg: reg,
-                combined_reg,
-            });
-        }
-    }
+
+    init_limit(program, &mut t_ctx, plan.limit, plan.offset);
     let after_main_loop_label = program.allocate_label();
     t_ctx.label_main_loop_end = Some(after_main_loop_label);
     if plan.contains_constant_false_condition {
@@ -1356,4 +1316,39 @@ fn emit_update_insns(
     }
 
     Ok(())
+}
+
+fn init_limit(
+    program: &mut ProgramBuilder,
+    t_ctx: &mut TranslateCtx,
+    limit: Option<isize>,
+    offset: Option<isize>,
+) {
+    if t_ctx.limit_ctx.is_none() {
+        t_ctx.limit_ctx = limit.map(|_| LimitCtx::new(program));
+    }
+    let Some(limit_ctx) = t_ctx.limit_ctx else {
+        return;
+    };
+    if limit_ctx.initialize_counter {
+        program.emit_insn(Insn::Integer {
+            value: limit.expect("limit must be Some if limit_ctx is Some") as i64,
+            dest: limit_ctx.reg_limit,
+        });
+    }
+    if t_ctx.reg_offset.is_none() && offset.is_some_and(|n| n.ne(&0)) {
+        let reg = program.alloc_register();
+        t_ctx.reg_offset = Some(reg);
+        program.emit_insn(Insn::Integer {
+            value: offset.unwrap() as i64,
+            dest: reg,
+        });
+        let combined_reg = program.alloc_register();
+        t_ctx.reg_limit_offset_sum = Some(combined_reg);
+        program.emit_insn(Insn::OffsetLimit {
+            limit_reg: t_ctx.limit_ctx.unwrap().reg_limit,
+            offset_reg: reg,
+            combined_reg,
+        });
+    }
 }
