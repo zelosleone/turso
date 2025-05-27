@@ -421,6 +421,7 @@ impl Connection {
                             &syms,
                             None,
                             &mut table_ref_counter,
+                            translate::plan::QueryDestination::ResultRows,
                         )?;
                         optimize_plan(
                             &mut plan,

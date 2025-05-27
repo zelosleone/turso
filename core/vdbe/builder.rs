@@ -10,7 +10,7 @@ use limbo_sqlite3_parser::ast::{self, TableInternalId};
 use crate::{
     fast_lock::SpinLock,
     parameters::Parameters,
-    schema::{BTreeTable, Index, PseudoTable},
+    schema::{BTreeTable, Index, PseudoTable, Schema, Table},
     storage::sqlite3_ondisk::DatabaseHeader,
     translate::{
         collate::CollationSeq,
@@ -37,7 +37,10 @@ impl TableRefIdCounter {
     }
 }
 
-use super::{BranchOffset, CursorID, Insn, InsnFunction, InsnReference, JumpTarget, Program};
+use super::{
+    insn::RegisterOrLiteral, BranchOffset, CursorID, Insn, InsnFunction, InsnReference, JumpTarget,
+    Program,
+};
 #[allow(dead_code)]
 pub struct ProgramBuilder {
     pub table_reference_counter: TableRefIdCounter,
@@ -680,6 +683,66 @@ impl ProgramBuilder {
                 target_pc: self.start_offset,
             });
         }
+    }
+
+    /// Checks whether `table` or any of its indices has been opened in the program
+    pub fn is_table_open(&self, table: &Table, schema: &Schema) -> bool {
+        let btree = table.btree();
+        let vtab = table.virtual_table();
+        for (insn, ..) in self.insns.iter() {
+            match insn {
+                Insn::OpenRead {
+                    cursor_id,
+                    root_page,
+                    ..
+                } => {
+                    if let Some(btree) = &btree {
+                        if btree.root_page == *root_page {
+                            return true;
+                        }
+                    }
+                    let name = self.cursor_ref[*cursor_id].0.as_ref();
+                    if name.is_none() {
+                        continue;
+                    }
+                    let name = name.unwrap();
+                    let indices = schema.get_indices(name);
+                    for index in indices {
+                        if index.root_page == *root_page {
+                            return true;
+                        }
+                    }
+                }
+                Insn::OpenWrite {
+                    root_page, name, ..
+                } => {
+                    let RegisterOrLiteral::Literal(root_page) = root_page else {
+                        unreachable!("root page can only be a literal");
+                    };
+                    if let Some(btree) = &btree {
+                        if btree.root_page == *root_page {
+                            return true;
+                        }
+                    }
+                    let indices = schema.get_indices(name);
+                    for index in indices {
+                        if index.root_page == *root_page {
+                            return true;
+                        }
+                    }
+                }
+                Insn::VOpen { cursor_id, .. } => {
+                    if let Some(vtab) = &vtab {
+                        let name = self.cursor_ref[*cursor_id].0.as_ref().unwrap();
+                        if vtab.name == *name {
+                            return true;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     pub fn build(

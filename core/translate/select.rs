@@ -19,52 +19,71 @@ use crate::{schema::Schema, vdbe::builder::ProgramBuilder, Result};
 use limbo_sqlite3_parser::ast::{self, CompoundSelect, SortOrder};
 use limbo_sqlite3_parser::ast::{ResultColumn, SelectInner};
 
+pub struct TranslateSelectResult {
+    pub program: ProgramBuilder,
+    pub num_result_cols: usize,
+}
+
 pub fn translate_select(
     query_mode: QueryMode,
     schema: &Schema,
     select: ast::Select,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
-) -> Result<ProgramBuilder> {
+    query_destination: QueryDestination,
+) -> Result<TranslateSelectResult> {
     let mut select_plan = prepare_select_plan(
         schema,
         select,
         syms,
         None,
         &mut program.table_reference_counter,
+        query_destination,
     )?;
     optimize_plan(&mut select_plan, schema)?;
+    let num_result_cols;
     let opts = match &select_plan {
-        Plan::Select(select) => ProgramBuilderOpts {
-            query_mode,
-            num_cursors: count_plan_required_cursors(select),
-            approx_num_insns: estimate_num_instructions(select),
-            approx_num_labels: estimate_num_labels(select),
-        },
-        Plan::CompoundSelect { first, rest, .. } => ProgramBuilderOpts {
-            query_mode,
-            num_cursors: count_plan_required_cursors(first)
-                + rest
-                    .iter()
-                    .map(|(plan, _)| count_plan_required_cursors(plan))
-                    .sum::<usize>(),
-            approx_num_insns: estimate_num_instructions(first)
-                + rest
-                    .iter()
-                    .map(|(plan, _)| estimate_num_instructions(plan))
-                    .sum::<usize>(),
-            approx_num_labels: estimate_num_labels(first)
-                + rest
-                    .iter()
-                    .map(|(plan, _)| estimate_num_labels(plan))
-                    .sum::<usize>(),
-        },
+        Plan::Select(select) => {
+            num_result_cols = select.result_columns.len();
+            ProgramBuilderOpts {
+                query_mode,
+                num_cursors: count_plan_required_cursors(select),
+                approx_num_insns: estimate_num_instructions(select),
+                approx_num_labels: estimate_num_labels(select),
+            }
+        }
+        Plan::CompoundSelect { first, rest, .. } => {
+            // Compound Selects must return the same number of columns
+            num_result_cols = first.result_columns.len();
+
+            ProgramBuilderOpts {
+                query_mode,
+                num_cursors: count_plan_required_cursors(first)
+                    + rest
+                        .iter()
+                        .map(|(plan, _)| count_plan_required_cursors(plan))
+                        .sum::<usize>(),
+                approx_num_insns: estimate_num_instructions(first)
+                    + rest
+                        .iter()
+                        .map(|(plan, _)| estimate_num_instructions(plan))
+                        .sum::<usize>(),
+                approx_num_labels: estimate_num_labels(first)
+                    + rest
+                        .iter()
+                        .map(|(plan, _)| estimate_num_labels(plan))
+                        .sum::<usize>(),
+            }
+        }
         other => panic!("plan is not a SelectPlan: {:?}", other),
     };
 
     program.extend(&opts);
     emit_program(&mut program, select_plan, syms)?;
-    Ok(program)
+    Ok(TranslateSelectResult {
+        program,
+        num_result_cols,
+    })
 }
 
 pub fn prepare_select_plan<'a>(
@@ -73,6 +92,7 @@ pub fn prepare_select_plan<'a>(
     syms: &SymbolTable,
     outer_scope: Option<&'a Scope<'a>>,
     table_ref_counter: &mut TableRefIdCounter,
+    query_destination: QueryDestination,
 ) -> Result<Plan> {
     let compounds = select.body.compounds.take();
     match compounds {
@@ -87,6 +107,7 @@ pub fn prepare_select_plan<'a>(
                 syms,
                 outer_scope,
                 table_ref_counter,
+                query_destination,
             )?))
         }
         Some(compounds) => {
@@ -99,6 +120,7 @@ pub fn prepare_select_plan<'a>(
                 syms,
                 outer_scope,
                 table_ref_counter,
+                query_destination.clone(),
             )?;
             let mut rest = Vec::with_capacity(compounds.len());
             for CompoundSelect { select, operator } in compounds {
@@ -119,6 +141,7 @@ pub fn prepare_select_plan<'a>(
                     syms,
                     outer_scope,
                     table_ref_counter,
+                    query_destination.clone(),
                 )?;
                 rest.push((plan, operator));
             }
@@ -168,6 +191,7 @@ fn prepare_one_select_plan<'a>(
     syms: &SymbolTable,
     outer_scope: Option<&'a Scope<'a>>,
     table_ref_counter: &mut TableRefIdCounter,
+    query_destination: QueryDestination,
 ) -> Result<SelectPlan> {
     match select {
         ast::OneSelect::Select(select_inner) => {
@@ -237,7 +261,7 @@ fn prepare_one_select_plan<'a>(
                 limit: None,
                 offset: None,
                 contains_constant_false_condition: false,
-                query_destination: QueryDestination::ResultRows,
+                query_destination,
                 distinctness: Distinctness::from_ast(distinctness.as_ref()),
                 values: vec![],
             };
@@ -551,7 +575,7 @@ fn prepare_one_select_plan<'a>(
                 limit: None,
                 offset: None,
                 contains_constant_false_condition: false,
-                query_destination: QueryDestination::ResultRows,
+                query_destination,
                 distinctness: Distinctness::NonDistinct,
                 values,
             };
