@@ -4,7 +4,9 @@ use crate::{
     types::{Value, ValueType},
     LimboError, OpenFlags, Result, Statement, StepResult, SymbolTable, IO,
 };
-use limbo_sqlite3_parser::ast::{self, CreateTableBody, Expr, FunctionTail, Literal};
+use limbo_sqlite3_parser::ast::{
+    self, CreateTableBody, Expr, FunctionTail, Literal, UnaryOperator,
+};
 use std::{rc::Rc, sync::Arc};
 
 pub trait RoundToPrecision {
@@ -1009,6 +1011,27 @@ pub fn parse_numeric_literal(text: &str) -> Result<Value> {
 
     let float_value = text.parse::<f64>()?;
     Ok(Value::Float(float_value))
+}
+
+pub fn parse_signed_number(expr: &Expr) -> Result<Value> {
+    match expr {
+        Expr::Literal(Literal::Numeric(num)) => parse_numeric_literal(num),
+        Expr::Unary(op, expr) => match (op, expr.as_ref()) {
+            (UnaryOperator::Negative, Expr::Literal(Literal::Numeric(num))) => {
+                let data = "-".to_owned() + &num.to_string();
+                parse_numeric_literal(&data)
+            }
+            (UnaryOperator::Positive, Expr::Literal(Literal::Numeric(num))) => {
+                parse_numeric_literal(num)
+            }
+            _ => Err(LimboError::InvalidArgument(
+                "signed-number must follow the format: ([+|-] numeric-literal)".to_string(),
+            )),
+        },
+        _ => Err(LimboError::InvalidArgument(
+            "signed-number must follow the format: ([+|-] numeric-literal)".to_string(),
+        )),
+    }
 }
 
 // for TVF's we need these at planning time so we cannot emit translate_expr

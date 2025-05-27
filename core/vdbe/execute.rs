@@ -4520,6 +4520,37 @@ pub fn op_read_cookie(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_set_cookie(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::SetCookie {
+        db,
+        cookie,
+        value,
+        p5,
+    } = insn
+    else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+    if *db > 0 {
+        todo!("temp databases not implemented yet");
+    }
+    match cookie {
+        Cookie::UserVersion => {
+            let mut header_guard = pager.db_header.lock();
+            header_guard.user_version = *value;
+            pager.write_database_header(&*header_guard);
+        }
+        cookie => todo!("{cookie:?} is not yet implement for SetCookie"),
+    }
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 pub fn op_shift_right(
     program: &Program,
     state: &mut ProgramState,
