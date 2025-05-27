@@ -53,7 +53,7 @@ use crate::types::{
     ImmutableRecord, RawSlice, RefValue, SerialType, SerialTypeKind, TextRef, TextSubtype,
 };
 use crate::{File, Result, WalFileShared};
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::HashMap;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
@@ -892,7 +892,7 @@ pub fn begin_sync(db_file: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>)
         complete: Box::new(move |_| {
             *syncing.borrow_mut() = false;
         }),
-        is_completed: RefCell::new(false),
+        is_completed: Cell::new(false),
     });
     #[allow(clippy::arc_with_non_send_sync)]
     db_file.sync(Arc::new(completion))?;

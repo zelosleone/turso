@@ -4,7 +4,7 @@ use cfg_block::cfg_block;
 use std::fmt;
 use std::sync::Arc;
 use std::{
-    cell::{Ref, RefCell, RefMut},
+    cell::{Cell, Ref, RefCell, RefMut},
     fmt::Debug,
     mem::ManuallyDrop,
     pin::Pin,
@@ -62,15 +62,15 @@ pub enum Completion {
 pub struct ReadCompletion {
     pub buf: Arc<RefCell<Buffer>>,
     pub complete: Box<Complete>,
-    pub is_completed: RefCell<bool>,
+    pub is_completed: Cell<bool>,
 }
 
 impl Completion {
     pub fn is_completed(&self) -> bool {
         match self {
-            Self::Read(r) => *r.is_completed.borrow(),
-            Self::Write(w) => *w.is_completed.borrow(),
-            Self::Sync(s) => *s.is_completed.borrow(),
+            Self::Read(r) => r.is_completed.get(),
+            Self::Write(w) => w.is_completed.get(),
+            Self::Sync(s) => s.is_completed.get(),
         }
     }
 
@@ -94,12 +94,12 @@ impl Completion {
 
 pub struct WriteCompletion {
     pub complete: Box<WriteComplete>,
-    pub is_completed: RefCell<bool>,
+    pub is_completed: Cell<bool>,
 }
 
 pub struct SyncCompletion {
     pub complete: Box<SyncComplete>,
-    pub is_completed: RefCell<bool>,
+    pub is_completed: Cell<bool>,
 }
 
 impl ReadCompletion {
@@ -107,7 +107,7 @@ impl ReadCompletion {
         Self {
             buf,
             complete,
-            is_completed: RefCell::new(false),
+            is_completed: Cell::new(false),
         }
     }
 
@@ -121,7 +121,7 @@ impl ReadCompletion {
 
     pub fn complete(&self) {
         (self.complete)(self.buf.clone());
-        *self.is_completed.borrow_mut() = true;
+        self.is_completed.set(true);
     }
 }
 
@@ -129,13 +129,13 @@ impl WriteCompletion {
     pub fn new(complete: Box<WriteComplete>) -> Self {
         Self {
             complete,
-            is_completed: RefCell::new(false),
+            is_completed: Cell::new(false),
         }
     }
 
     pub fn complete(&self, bytes_written: i32) {
         (self.complete)(bytes_written);
-        *self.is_completed.borrow_mut() = true;
+        self.is_completed.set(true);
     }
 }
 
@@ -143,13 +143,13 @@ impl SyncCompletion {
     pub fn new(complete: Box<SyncComplete>) -> Self {
         Self {
             complete,
-            is_completed: RefCell::new(false),
+            is_completed: Cell::new(false),
         }
     }
 
     pub fn complete(&self, res: i32) {
         (self.complete)(res);
-        *self.is_completed.borrow_mut() = true;
+        self.is_completed.set(true);
     }
 }
 

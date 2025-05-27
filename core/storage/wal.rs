@@ -7,7 +7,12 @@ use tracing::{debug, trace};
 
 use std::fmt::Formatter;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::{cell::RefCell, fmt, rc::Rc, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    fmt,
+    rc::Rc,
+    sync::Arc,
+};
 
 use crate::fast_lock::SpinLock;
 use crate::io::{File, SyncCompletion, IO};
@@ -796,7 +801,7 @@ impl Wal for WalFile {
                             debug!("wal_sync finish");
                             *syncing.borrow_mut() = false;
                         }),
-                        is_completed: RefCell::new(false),
+                        is_completed: Cell::new(false),
                     });
                     shared.file.sync(Arc::new(completion))?;
                 }
