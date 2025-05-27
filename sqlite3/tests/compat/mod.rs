@@ -259,7 +259,7 @@ mod tests {
                 let mut db = ptr::null_mut();
                 let mut temp_file = tempfile::NamedTempFile::new().unwrap();
                 let path = temp_file.path();
-                let c_path = CString::new(path.to_str().unwrap()).unwrap();
+                let c_path = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
                 assert_eq!(sqlite3_open(c_path.as_ptr(), &mut db), SQLITE_OK);
                 // Create a table and insert a row.
                 let mut stmt = ptr::null_mut();
