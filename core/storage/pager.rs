@@ -5,6 +5,7 @@ use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
 use crate::storage::sqlite3_ondisk::{self, DatabaseHeader, PageContent, PageType};
 use crate::storage::wal::{CheckpointResult, Wal, WalFsyncStatus};
+use crate::Completion;
 use crate::{Buffer, LimboError, Result};
 use parking_lot::RwLock;
 use std::cell::{RefCell, UnsafeCell};
@@ -484,6 +485,21 @@ impl Pager {
         Ok(PagerCacheflushStatus::Done(
             PagerCacheflushResult::Checkpointed(checkpoint_result),
         ))
+    }
+
+    pub fn wal_get_frame(
+        &self,
+        frame_no: u32,
+        p_frame: *mut u8,
+        frame_len: u32,
+    ) -> Result<Arc<Completion>> {
+        let wal = self.wal.borrow();
+        return wal.read_frame_raw(
+            frame_no.into(),
+            self.buffer_pool.clone(),
+            p_frame,
+            frame_len,
+        );
     }
 
     pub fn checkpoint(&self) -> Result<CheckpointStatus> {

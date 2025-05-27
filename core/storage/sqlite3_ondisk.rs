@@ -1535,7 +1535,7 @@ pub fn begin_read_wal_frame(
     offset: usize,
     buffer_pool: Rc<BufferPool>,
     complete: Box<dyn Fn(Arc<RefCell<Buffer>>) -> ()>,
-) -> Result<()> {
+) -> Result<Arc<Completion>> {
     trace!("begin_read_wal_frame(offset={})", offset);
     let buf = buffer_pool.get();
     let drop_fn = Rc::new(move |buf| {
@@ -1545,8 +1545,8 @@ pub fn begin_read_wal_frame(
     let buf = Arc::new(RefCell::new(Buffer::new(buf, drop_fn)));
     #[allow(clippy::arc_with_non_send_sync)]
     let c = Arc::new(Completion::Read(ReadCompletion::new(buf, complete)));
-    io.pread(offset, c)?;
-    Ok(())
+    io.pread(offset, c.clone())?;
+    Ok(c)
 }
 
 pub fn begin_write_wal_frame(

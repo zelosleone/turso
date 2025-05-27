@@ -507,6 +507,15 @@ impl Connection {
         self.pager.wal_frame_count()
     }
 
+    pub fn wal_get_frame(
+        &self,
+        frame_no: u32,
+        p_frame: *mut u8,
+        frame_len: u32,
+    ) -> Result<Arc<Completion>> {
+        self.pager.wal_get_frame(frame_no, p_frame, frame_len)
+    }
+
     /// Flush dirty pages to disk.
     /// This will write the dirty pages to the WAL and then fsync the WAL.
     /// If the WAL size is over the checkpoint threshold, it will checkpoint the WAL to
