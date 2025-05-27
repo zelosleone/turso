@@ -1,6 +1,7 @@
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
 
+use std::ffi::CString;
 use std::ptr;
 
 #[repr(C)]
@@ -203,6 +204,8 @@ mod tests {
 
     #[cfg(not(feature = "sqlite3"))]
     mod libsql_ext {
+        use libc::tm;
+
         use super::*;
 
         #[test]
@@ -255,10 +258,10 @@ mod tests {
         fn test_read_frame() {
             unsafe {
                 let mut db = ptr::null_mut();
-                assert_eq!(
-                    sqlite3_open(c"../testing/test_read_frame.db".as_ptr(), &mut db),
-                    SQLITE_OK
-                );
+                let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+                let path = temp_file.path();
+                let c_path = CString::new(path.to_str().unwrap()).unwrap();
+                assert_eq!(sqlite3_open(c_path.as_ptr(), &mut db), SQLITE_OK);
                 // Create a table and insert a row.
                 let mut stmt = ptr::null_mut();
                 assert_eq!(
