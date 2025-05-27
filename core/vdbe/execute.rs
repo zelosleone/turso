@@ -3932,6 +3932,7 @@ pub fn op_idx_delete(
                 let n_change = program.n_change.get();
                 program.n_change.set(n_change + 1);
                 state.pc += 1;
+                state.op_idx_delete_state = None;
                 return Ok(InsnFunctionStepResult::Step);
             }
             None => {
