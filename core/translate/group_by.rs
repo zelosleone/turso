@@ -760,6 +760,7 @@ pub fn group_by_emit_row_phase<'a>(
     });
     program.emit_insn(Insn::Return {
         return_reg: registers.reg_subrtn_acc_output_return_offset,
+        can_fallthrough: false,
     });
 
     program.resolve_label(labels.label_subrtn_acc_output, program.offset());
@@ -784,6 +785,7 @@ pub fn group_by_emit_row_phase<'a>(
     }
     program.emit_insn(Insn::Return {
         return_reg: registers.reg_subrtn_acc_output_return_offset,
+        can_fallthrough: false,
     });
 
     // Finalize aggregate values for output
@@ -916,6 +918,7 @@ pub fn group_by_emit_row_phase<'a>(
 
     program.emit_insn(Insn::Return {
         return_reg: registers.reg_subrtn_acc_output_return_offset,
+        can_fallthrough: false,
     });
 
     // Subroutine to clear accumulators for a new group
@@ -955,6 +958,7 @@ pub fn group_by_emit_row_phase<'a>(
     });
     program.emit_insn(Insn::Return {
         return_reg: registers.reg_subrtn_acc_clear_return_offset,
+        can_fallthrough: false,
     });
     program.preassign_label_to_next_insn(labels.label_group_by_end);
     Ok(())

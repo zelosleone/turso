@@ -322,15 +322,17 @@ pub fn op_null(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Null { dest, dest_end } = insn else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
-    if let Some(dest_end) = dest_end {
-        for i in *dest..=*dest_end {
-            state.registers[i] = Register::Value(Value::Null);
+    match insn {
+        Insn::Null { dest, dest_end } | Insn::BeginSubrtn { dest, dest_end } => {
+            if let Some(dest_end) = dest_end {
+                for i in *dest..=*dest_end {
+                    state.registers[i] = Register::Value(Value::Null);
+                }
+            } else {
+                state.registers[*dest] = Register::Value(Value::Null);
+            }
         }
-    } else {
-        state.registers[*dest] = Register::Value(Value::Null);
+        _ => unreachable!("unexpected Insn {:?}", insn),
     }
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -1809,7 +1811,11 @@ pub fn op_return(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Return { return_reg } = insn else {
+    let Insn::Return {
+        return_reg,
+        can_fallthrough,
+    } = insn
+    else {
         unreachable!("unexpected Insn {:?}", insn)
     };
     if let Value::Integer(pc) = state.registers[*return_reg].get_owned_value() {
@@ -1818,9 +1824,12 @@ pub fn op_return(
             .unwrap_or_else(|_| panic!("Return register is negative: {}", pc));
         state.pc = pc;
     } else {
-        return Err(LimboError::InternalError(
-            "Return register is not an integer".to_string(),
-        ));
+        if !*can_fallthrough {
+            return Err(LimboError::InternalError(
+                "Return register is not an integer".to_string(),
+            ));
+        }
+        state.pc += 1;
     }
     Ok(InsnFunctionStepResult::Step)
 }
