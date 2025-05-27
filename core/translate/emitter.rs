@@ -662,6 +662,8 @@ fn emit_program_for_delete(
         return Ok(());
     }
 
+    init_limit(program, &mut t_ctx, plan.limit, None);
+
     // No rows will be read from source table loops if there is a constant false condition eg. WHERE 0
     let after_main_loop_label = program.allocate_label();
     t_ctx.label_main_loop_end = Some(after_main_loop_label);
@@ -689,13 +691,7 @@ fn emit_program_for_delete(
         &[JoinOrderMember::default()],
         &mut plan.where_clause,
     )?;
-    emit_delete_insns(
-        program,
-        &mut t_ctx,
-        &plan.table_references,
-        &plan.indexes,
-        &plan.limit,
-    )?;
+    emit_delete_insns(program, &mut t_ctx, &plan.table_references, &plan.indexes)?;
 
     // Clean up and close the main execution loop
     close_loop(
@@ -718,7 +714,6 @@ fn emit_delete_insns(
     t_ctx: &mut TranslateCtx,
     table_references: &[TableReference],
     index_references: &[Arc<Index>],
-    limit: &Option<isize>,
 ) -> Result<()> {
     let table_reference = table_references.first().unwrap();
     let cursor_id = match &table_reference.op {
@@ -733,8 +728,6 @@ fn emit_delete_insns(
         },
     };
     let main_table_cursor_id = program.resolve_cursor_id(table_reference.table.get_name());
-
-    init_limit(program, t_ctx, *limit, None);
 
     // Emit the instructions to delete the row
     let key_reg = program.alloc_register();
