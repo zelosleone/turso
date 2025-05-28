@@ -11,7 +11,7 @@ use crate::translate::collate::CollationSeq;
 use crate::translate::plan::IterationDirection;
 use crate::vdbe::sorter::Sorter;
 use crate::vdbe::Register;
-use crate::vtab::VTabOpaqueCursor;
+use crate::vtab::VirtualTableCursor;
 use crate::Result;
 use std::fmt::Display;
 
@@ -1395,7 +1395,7 @@ pub enum Cursor {
     BTree(BTreeCursor),
     Pseudo(PseudoCursor),
     Sorter(Sorter),
-    Virtual(VTabOpaqueCursor),
+    Virtual(VirtualTableCursor),
 }
 
 impl Cursor {
@@ -1432,7 +1432,7 @@ impl Cursor {
         }
     }
 
-    pub fn as_virtual_mut(&mut self) -> &mut VTabOpaqueCursor {
+    pub fn as_virtual_mut(&mut self) -> &mut VirtualTableCursor {
         match self {
             Self::Virtual(cursor) => cursor,
             _ => panic!("Cursor is not a virtual cursor"),

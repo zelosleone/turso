@@ -35,10 +35,6 @@ impl Drop for VirtualTable {
 }
 
 impl VirtualTable {
-    pub(crate) fn rowid(&self, cursor: &VTabOpaqueCursor) -> i64 {
-        unsafe { (self.implementation.rowid)(cursor.as_ptr()) }
-    }
-
     pub(crate) fn best_index(
         &self,
         constraints: &[ConstraintInfo],
@@ -102,7 +98,7 @@ impl VirtualTable {
 
     /// Accepts a Weak pointer to the connection that owns the VTable, that the module
     /// can optionally use to query the other tables.
-    pub fn open(&self, conn: Weak<Connection>) -> crate::Result<VTabOpaqueCursor> {
+    pub fn open(&self, conn: Weak<Connection>) -> crate::Result<VirtualTableCursor> {
         // we need a Weak<Connection> to upgrade and call from the extension.
         let weak_box: *mut Weak<Connection> = Box::into_raw(Box::new(conn));
         let conn = limbo_ext::Conn::new(
@@ -115,56 +111,7 @@ impl VirtualTable {
         // store the leaked connection pointer on the table so it can be freed on drop
         *self.connection_ptr.borrow_mut() = Some(ext_conn_ptr);
         let cursor = unsafe { (self.implementation.open)(self.table_ptr, ext_conn_ptr) };
-        VTabOpaqueCursor::new(cursor, self.implementation.close)
-    }
-
-    #[tracing::instrument(skip(cursor))]
-    pub fn filter(
-        &self,
-        cursor: &VTabOpaqueCursor,
-        idx_num: i32,
-        idx_str: Option<String>,
-        arg_count: usize,
-        args: Vec<limbo_ext::Value>,
-    ) -> crate::Result<bool> {
-        tracing::trace!("xFilter");
-        let c_idx_str = idx_str
-            .map(|s| std::ffi::CString::new(s).unwrap())
-            .map(|cstr| cstr.into_raw())
-            .unwrap_or(std::ptr::null_mut());
-        let rc = unsafe {
-            (self.implementation.filter)(
-                cursor.as_ptr(),
-                arg_count as i32,
-                args.as_ptr(),
-                c_idx_str,
-                idx_num,
-            )
-        };
-        for arg in args {
-            unsafe {
-                arg.__free_internal_type();
-            }
-        }
-        match rc {
-            ResultCode::OK => Ok(true),
-            ResultCode::EOF => Ok(false),
-            _ => Err(LimboError::ExtensionError(rc.to_string())),
-        }
-    }
-
-    pub fn column(&self, cursor: &VTabOpaqueCursor, column: usize) -> crate::Result<Value> {
-        let val = unsafe { (self.implementation.column)(cursor.as_ptr(), column as u32) };
-        Value::from_ffi(val)
-    }
-
-    pub fn next(&self, cursor: &VTabOpaqueCursor) -> crate::Result<bool> {
-        let rc = unsafe { (self.implementation.next)(cursor.as_ptr()) };
-        match rc {
-            ResultCode::OK => Ok(true),
-            ResultCode::EOF => Ok(false),
-            _ => Err(LimboError::ExtensionError("Next failed".to_string())),
-        }
+        VirtualTableCursor::new(cursor, self.implementation.clone())
     }
 
     pub fn update(&self, args: &[Value]) -> crate::Result<Option<i64>> {
@@ -200,31 +147,80 @@ impl VirtualTable {
     }
 }
 
-type VTabOpaqueCursorCloseFn = unsafe extern "C" fn(*const c_void) -> limbo_ext::ResultCode;
-
-pub struct VTabOpaqueCursor {
+pub struct VirtualTableCursor {
     cursor: *const c_void,
-    close: VTabOpaqueCursorCloseFn,
+    implementation: Rc<VTabModuleImpl>,
 }
 
-impl VTabOpaqueCursor {
-    pub fn new(cursor: *const c_void, close: VTabOpaqueCursorCloseFn) -> crate::Result<Self> {
+impl VirtualTableCursor {
+    pub fn new(cursor: *const c_void, implementation: Rc<VTabModuleImpl>) -> crate::Result<Self> {
         if cursor.is_null() {
             return Err(LimboError::InternalError(
-                "VTabOpaqueCursor: cursor is null".into(),
+                "VirtualTableCursor: cursor is null".into(),
             ));
         }
-        Ok(Self { cursor, close })
+        Ok(Self {
+            cursor,
+            implementation,
+        })
     }
 
-    pub fn as_ptr(&self) -> *const c_void {
-        self.cursor
+    pub(crate) fn rowid(&self) -> i64 {
+        unsafe { (self.implementation.rowid)(self.cursor) }
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub fn filter(
+        &self,
+        idx_num: i32,
+        idx_str: Option<String>,
+        arg_count: usize,
+        args: Vec<limbo_ext::Value>,
+    ) -> crate::Result<bool> {
+        tracing::trace!("xFilter");
+        let c_idx_str = idx_str
+            .map(|s| std::ffi::CString::new(s).unwrap())
+            .map(|cstr| cstr.into_raw())
+            .unwrap_or(std::ptr::null_mut());
+        let rc = unsafe {
+            (self.implementation.filter)(
+                self.cursor,
+                arg_count as i32,
+                args.as_ptr(),
+                c_idx_str,
+                idx_num,
+            )
+        };
+        for arg in args {
+            unsafe {
+                arg.__free_internal_type();
+            }
+        }
+        match rc {
+            ResultCode::OK => Ok(true),
+            ResultCode::EOF => Ok(false),
+            _ => Err(LimboError::ExtensionError(rc.to_string())),
+        }
+    }
+
+    pub fn column(&self, column: usize) -> crate::Result<Value> {
+        let val = unsafe { (self.implementation.column)(self.cursor, column as u32) };
+        Value::from_ffi(val)
+    }
+
+    pub fn next(&self) -> crate::Result<bool> {
+        let rc = unsafe { (self.implementation.next)(self.cursor) };
+        match rc {
+            ResultCode::OK => Ok(true),
+            ResultCode::EOF => Ok(false),
+            _ => Err(LimboError::ExtensionError("Next failed".to_string())),
+        }
     }
 }
 
-impl Drop for VTabOpaqueCursor {
+impl Drop for VirtualTableCursor {
     fn drop(&mut self) {
-        let result = unsafe { (self.close)(self.cursor) };
+        let result = unsafe { (self.implementation.close)(self.cursor) };
         if !result.is_ok() {
             tracing::error!("Failed to close virtual table cursor");
         }

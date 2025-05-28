@@ -1085,10 +1085,6 @@ pub fn op_vfilter(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
-    let CursorType::VirtualTable(virtual_table) = cursor_type else {
-        panic!("VFilter on non-virtual table cursor");
-    };
     let has_rows = {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_virtual_mut();
@@ -1106,7 +1102,7 @@ pub fn op_vfilter(
         } else {
             None
         };
-        virtual_table.filter(cursor, *idx_num as i32, idx_str, *arg_count, args)?
+        cursor.filter(*idx_num as i32, idx_str, *arg_count, args)?
     };
     if !has_rows {
         state.pc = pc_if_empty.to_offset_int();
@@ -1131,14 +1127,10 @@ pub fn op_vcolumn(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
-    let CursorType::VirtualTable(virtual_table) = cursor_type else {
-        panic!("VColumn on non-virtual table cursor");
-    };
     let value = {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_virtual_mut();
-        virtual_table.column(cursor, *column)?
+        cursor.column(*column)?
     };
     state.registers[*dest] = Register::Value(value);
     state.pc += 1;
@@ -1223,14 +1215,10 @@ pub fn op_vnext(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
-    let CursorType::VirtualTable(virtual_table) = cursor_type else {
-        panic!("VNext on non-virtual table cursor");
-    };
     let has_more = {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_virtual_mut();
-        virtual_table.next(cursor)?
+        cursor.next()?
     };
     if has_more {
         state.pc = pc_if_next.to_offset_int();
@@ -1958,11 +1946,7 @@ pub fn op_row_id(
             state.registers[*dest] = Register::Value(Value::Null);
         }
     } else if let Some(Cursor::Virtual(virtual_cursor)) = cursors.get_mut(*cursor_id).unwrap() {
-        let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
-        let CursorType::VirtualTable(virtual_table) = cursor_type else {
-            panic!("VUpdate on non-virtual table cursor");
-        };
-        let rowid = virtual_table.rowid(virtual_cursor);
+        let rowid = virtual_cursor.rowid();
         if rowid != 0 {
             state.registers[*dest] = Register::Value(Value::Integer(rowid));
         } else {
