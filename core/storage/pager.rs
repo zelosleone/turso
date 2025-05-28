@@ -547,8 +547,19 @@ impl Pager {
         }
     }
 
-    // WARN: used for testing purposes
-    pub fn clear_page_cache(&self) -> CheckpointResult {
+    /// Invalidates entire page cache by removing all dirty and clean pages. Usually used in case
+    /// of a rollback or in case we want to invalidate page cache after starting a read transaction
+    /// right after new writes happened which would invalidate current page cache.
+    pub fn clear_page_cache(&self) {
+        self.dirty_pages.borrow_mut().clear();
+        self.page_cache.write().unset_dirty_all_pages();
+        self.page_cache
+            .write()
+            .clear()
+            .expect("Failed to clear page cache");
+    }
+
+    pub fn wal_checkpoint(&self) -> CheckpointResult {
         let checkpoint_result: CheckpointResult;
         loop {
             match self.wal.borrow_mut().checkpoint(

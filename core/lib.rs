@@ -531,7 +531,7 @@ impl Connection {
     }
 
     pub fn checkpoint(&self) -> Result<CheckpointResult> {
-        let checkpoint_result = self.pager.clear_page_cache();
+        let checkpoint_result = self.pager.wal_checkpoint();
         Ok(checkpoint_result)
     }
 

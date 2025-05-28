@@ -474,8 +474,6 @@ impl DumbLruPageCache {
         );
     }
 
-    #[cfg(test)]
-    /// For testing purposes, in case we use cursor api directly, we might want to unmark pages as dirty because we bypass the WAL transaction layer
     pub fn unset_dirty_all_pages(&mut self) {
         for node in self.map.borrow_mut().iter_mut() {
             unsafe {
@@ -572,7 +570,6 @@ impl PageHashMap {
         self.buckets.iter().flat_map(|bucket| bucket.iter())
     }
 
-    #[cfg(test)]
     pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut HashMapNode> {
         self.buckets.iter_mut().flat_map(|bucket| bucket.iter_mut())
     }
