@@ -2153,6 +2153,7 @@ impl BTreeCursor {
                         ) == Ordering::Equal {
 
                         tracing::debug!("insert_into_page: found exact match with cell_idx={cell_idx}, overwriting");
+                        self.has_record.set(CursorHasRecord::Yes { rowid: self.get_index_rowid_from_record() });
                         self.overwrite_cell(page.clone(), cell_idx, record)?;
                         self.state
                             .mut_write_info()
