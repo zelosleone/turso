@@ -2,6 +2,7 @@ use core::fmt;
 use limbo_ext::{ConstraintInfo, ConstraintOp};
 use limbo_sqlite3_parser::ast::{self, SortOrder};
 use std::{
+    cell::Cell,
     cmp::Ordering,
     fmt::{Display, Formatter},
     rc::Rc,
@@ -97,12 +98,16 @@ pub struct WhereTerm {
     /// A term may have been consumed e.g. if:
     /// - it has been converted into a constraint in a seek key
     /// - it has been removed due to being trivially true or false
-    pub consumed: bool,
+    ///
+    /// FIXME: this can be made into a simple `bool` once we move the virtual table constraint resolution
+    /// code out of `init_loop()`, because that's the only place that requires a mutable reference to the where clause
+    /// that causes problems to other code that needs immutable references to the where clause.
+    pub consumed: Cell<bool>,
 }
 
 impl WhereTerm {
     pub fn should_eval_before_loop(&self, join_order: &[JoinOrderMember]) -> bool {
-        if self.consumed {
+        if self.consumed.get() {
             return false;
         }
         let Ok(eval_at) = self.eval_at(join_order) else {
@@ -112,7 +117,7 @@ impl WhereTerm {
     }
 
     pub fn should_eval_at_loop(&self, loop_idx: usize, join_order: &[JoinOrderMember]) -> bool {
-        if self.consumed {
+        if self.consumed.get() {
             return false;
         }
         let Ok(eval_at) = self.eval_at(join_order) else {

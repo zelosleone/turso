@@ -293,11 +293,13 @@ fn optimize_table_access(
                 let constraint =
                     &constraints_per_table[table_idx].constraints[cref.constraint_vec_pos];
                 assert!(
-                    !where_clause[constraint.where_clause_pos.0].consumed,
+                    !where_clause[constraint.where_clause_pos.0].consumed.get(),
                     "trying to consume a where clause term twice: {:?}",
                     where_clause[constraint.where_clause_pos.0]
                 );
-                where_clause[constraint.where_clause_pos.0].consumed = true;
+                where_clause[constraint.where_clause_pos.0]
+                    .consumed
+                    .set(true);
             }
             if let Some(index) = &access_method.index {
                 table_references[table_idx].op = Operation::Search(Search::Seek {
@@ -355,7 +357,7 @@ fn eliminate_constant_conditions(
         let predicate = &where_clause[i];
         if predicate.expr.is_always_true()? {
             // true predicates can be removed since they don't affect the result
-            where_clause[i].consumed = true;
+            where_clause[i].consumed.set(true);
             i += 1;
         } else if predicate.expr.is_always_false()? {
             // any false predicate in a list of conjuncts (AND-ed predicates) will make the whole list false,
@@ -366,7 +368,7 @@ fn eliminate_constant_conditions(
             }
             where_clause
                 .iter_mut()
-                .for_each(|term| term.consumed = true);
+                .for_each(|term| term.consumed.set(true));
             return Ok(ConstantConditionEliminationResult::ImpossibleCondition);
         } else {
             i += 1;
