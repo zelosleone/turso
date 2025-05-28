@@ -1040,23 +1040,8 @@ pub fn op_vcreate(
             "Failed to upgrade Connection".to_string(),
         ));
     };
-    let mod_type = conn
-        .syms
-        .borrow()
-        .vtab_modules
-        .get(&module_name)
-        .ok_or_else(|| {
-            crate::LimboError::ExtensionError(format!("Module {} not found", module_name))
-        })?
-        .module_kind;
-    let table = crate::VirtualTable::from_args(
-        Some(&table_name),
-        &module_name,
-        args,
-        &conn.syms.borrow(),
-        mod_type,
-        None,
-    )?;
+    let table =
+        crate::VirtualTable::table(Some(&table_name), &module_name, args, &conn.syms.borrow())?;
     {
         conn.syms
             .borrow_mut()
@@ -1090,12 +1075,7 @@ pub fn op_vfilter(
         let cursor = cursor.as_virtual_mut();
         let mut args = Vec::with_capacity(*arg_count);
         for i in 0..*arg_count {
-            args.push(
-                state.registers[args_reg + i]
-                    .get_owned_value()
-                    .clone()
-                    .to_ffi(),
-            );
+            args.push(state.registers[args_reg + i].get_owned_value().clone());
         }
         let idx_str = if let Some(idx_str) = idx_str {
             Some(state.registers[*idx_str].get_owned_value().to_string())
