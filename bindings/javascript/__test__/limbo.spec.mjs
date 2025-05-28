@@ -207,6 +207,8 @@ test("Test exec(): Should correctly load multiple statements from file", async (
     t.truthy(row.name);
     t.true(typeof row.age === "number");
   }
+});
+
 test("pragma query", async (t) => {
   const [db] = await connect(":memory:");
   let page_size = db.pragma("page_size");
@@ -239,6 +241,14 @@ test("Test Statement.source", async t => {
   let sql = "CREATE TABLE t (id int)";
   let stmt = db.prepare(sql);
   t.is(stmt.source, sql);
+});
+
+test("simple pragma table_list", async (t) => {
+  const [db] = await connect(":memory:");
+  let param = "sqlite_schema";
+  let actual = db.pragma(`table_info(${param})`, {simple: true});
+  let expectedValue = 0;
+  t.deepEqual(actual, expectedValue);
 });
 
 const connect = async (path) => {
