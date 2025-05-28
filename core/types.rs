@@ -1616,7 +1616,7 @@ mod tests {
                 + size_of::<i16>()        // I16: 2 bytes
                 + (size_of::<i32>() - 1)        // I24: 3 bytes
                 + size_of::<i32>()        // I32: 4 bytes
-                + (size_of::<i64>() - 1)        // I48: 6 bytes
+                + (size_of::<i64>() - 2)        // I48: 6 bytes
                 + size_of::<i64>() // I64: 8 bytes
         );
     }
