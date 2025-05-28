@@ -1622,6 +1622,39 @@ mod tests {
     }
 
     #[test]
+    fn test_serialize_const_integers() {
+        let record = Record::new(vec![Value::Integer(0), Value::Integer(1)]);
+        let mut buf = Vec::new();
+        record.serialize(&mut buf);
+
+        // [header_size, serial_type_0, serial_type_1] + no payload bytes
+        let expected_header_size = 3; // 1 byte for header size + 2 bytes for serial types
+
+        assert_eq!(buf.len(), expected_header_size);
+
+        // Check header size
+        assert_eq!(buf[0], expected_header_size as u8);
+
+        assert_eq!(buf[1] as u64, u64::from(SerialType::const_int0())); // Should be 8
+        assert_eq!(buf[2] as u64, u64::from(SerialType::const_int1())); // Should be 9
+
+        assert_eq!(buf[1], 8); // ConstInt0 serial type
+        assert_eq!(buf[2], 9); // ConstInt1 serial type
+    }
+
+    #[test]
+    fn test_serialize_single_const_int0() {
+        let record = Record::new(vec![Value::Integer(0)]);
+        let mut buf = Vec::new();
+        record.serialize(&mut buf);
+
+        // Expected: [header_size=2, serial_type=8]
+        assert_eq!(buf.len(), 2);
+        assert_eq!(buf[0], 2); // Header size
+        assert_eq!(buf[1], 8); // ConstInt0 serial type
+    }
+
+    #[test]
     fn test_serialize_float() {
         #[warn(clippy::approx_constant)]
         let record = Record::new(vec![Value::Float(3.15555)]);
