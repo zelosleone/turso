@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use super::{
     expr::walk_expr,
     plan::{
@@ -514,7 +516,7 @@ pub fn parse_where(
             out_where_clause.push(WhereTerm {
                 expr,
                 from_outer_join: None,
-                consumed: false,
+                consumed: Cell::new(false),
             });
         }
         Ok(())
@@ -775,7 +777,7 @@ fn parse_join<'a>(
                         } else {
                             None
                         },
-                        consumed: false,
+                        consumed: Cell::new(false),
                     });
                 }
             }
@@ -849,7 +851,7 @@ fn parse_join<'a>(
                         } else {
                             None
                         },
-                        consumed: false,
+                        consumed: Cell::new(false),
                     });
                 }
                 using = Some(distinct_names);

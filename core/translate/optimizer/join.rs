@@ -494,7 +494,7 @@ fn generate_join_bitmasks(table_number_max_exclusive: usize, how_many: usize) ->
 
 #[cfg(test)]
 mod tests {
-    use std::{rc::Rc, sync::Arc};
+    use std::{cell::Cell, rc::Rc, sync::Arc};
 
     use limbo_sqlite3_parser::ast::{self, Expr, Operator, SortOrder, TableInternalId};
 
@@ -1332,7 +1332,7 @@ mod tests {
         WhereTerm {
             expr: Expr::Binary(Box::new(lhs), op, Box::new(rhs)),
             from_outer_join: None,
-            consumed: false,
+            consumed: Cell::new(false),
         }
     }
 

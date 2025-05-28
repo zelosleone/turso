@@ -295,7 +295,7 @@ pub fn open_loop(
     t_ctx: &mut TranslateCtx,
     tables: &[TableReference],
     join_order: &[JoinOrderMember],
-    predicates: &mut [WhereTerm],
+    predicates: &[WhereTerm],
 ) -> Result<()> {
     for (join_index, join) in join_order.iter().enumerate() {
         let table_index = join.original_idx;
@@ -406,7 +406,7 @@ pub fn open_loop(
                                                 &t_ctx.resolver,
                                             )?;
                                             if cinfo.usable && usage.omit {
-                                                predicates[pred_idx].consumed = true;
+                                                predicates[pred_idx].consumed.set(true);
                                             }
                                         }
                                     }
