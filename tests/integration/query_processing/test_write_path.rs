@@ -269,7 +269,6 @@ fn test_wal_checkpoint() -> anyhow::Result<()> {
     }
 
     do_flush(&conn, &tmp_db)?;
-    conn.clear_page_cache()?;
     let list_query = "SELECT * FROM test LIMIT 1";
     let mut current_index = 0;
     run_query_on_row(&tmp_db, &conn, list_query, |row: &Row| {
