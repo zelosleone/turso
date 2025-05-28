@@ -10,7 +10,8 @@ use crate::storage::sqlite3_ondisk::write_varint;
 use crate::translate::collate::CollationSeq;
 use crate::translate::plan::IterationDirection;
 use crate::vdbe::sorter::Sorter;
-use crate::vdbe::{Register, VTabOpaqueCursor};
+use crate::vdbe::Register;
+use crate::vtab::VTabOpaqueCursor;
 use crate::Result;
 use std::fmt::Display;
 

@@ -1,6 +1,5 @@
 use crate::schema::Column;
 use crate::util::columns_from_create_table_body;
-use crate::vdbe::VTabOpaqueCursor;
 use crate::{Connection, LimboError, SymbolTable, Value};
 use fallible_iterator::FallibleIterator;
 use limbo_ext::{ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabKind, VTabModuleImpl};
@@ -197,6 +196,37 @@ impl VirtualTable {
         match rc {
             ResultCode::OK => Ok(()),
             _ => Err(LimboError::ExtensionError(rc.to_string())),
+        }
+    }
+}
+
+type VTabOpaqueCursorCloseFn = unsafe extern "C" fn(*const c_void) -> limbo_ext::ResultCode;
+
+pub struct VTabOpaqueCursor {
+    cursor: *const c_void,
+    close: VTabOpaqueCursorCloseFn,
+}
+
+impl VTabOpaqueCursor {
+    pub fn new(cursor: *const c_void, close: VTabOpaqueCursorCloseFn) -> crate::Result<Self> {
+        if cursor.is_null() {
+            return Err(LimboError::InternalError(
+                "VTabOpaqueCursor: cursor is null".into(),
+            ));
+        }
+        Ok(Self { cursor, close })
+    }
+
+    pub fn as_ptr(&self) -> *const c_void {
+        self.cursor
+    }
+}
+
+impl Drop for VTabOpaqueCursor {
+    fn drop(&mut self) {
+        let result = unsafe { (self.close)(self.cursor) };
+        if !result.is_ok() {
+            tracing::error!("Failed to close virtual table cursor");
         }
     }
 }
