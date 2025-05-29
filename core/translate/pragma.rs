@@ -279,12 +279,12 @@ fn query_pragma(
                 register,
             );
             program.emit_result_row(register, 1);
-            program.add_pragma_result_column("cache_size".into());
+            program.add_pragma_result_column(pragma.to_string());
         }
         PragmaName::JournalMode => {
             program.emit_string8("wal".into(), register);
             program.emit_result_row(register, 1);
-            program.add_pragma_result_column("journal_mode".into());
+            program.add_pragma_result_column(pragma.to_string());
         }
         PragmaName::LegacyFileFormat => {}
         PragmaName::WalCheckpoint => {
@@ -305,7 +305,7 @@ fn query_pragma(
                 dest: register,
             });
             program.emit_result_row(register, 1);
-            program.add_pragma_result_column("page_count".into());
+            program.add_pragma_result_column(pragma.to_string());
         }
         PragmaName::TableInfo => {
             let table = match value {
@@ -362,7 +362,7 @@ fn query_pragma(
                 dest: register,
                 cookie: Cookie::UserVersion,
             });
-            program.add_pragma_result_column("user_version".into());
+            program.add_pragma_result_column(pragma.to_string());
             program.emit_result_row(register, 1);
         }
         PragmaName::SchemaVersion => {
@@ -371,13 +371,13 @@ fn query_pragma(
                 dest: register,
                 cookie: Cookie::SchemaVersion,
             });
-            program.add_pragma_result_column("schema_version".into());
+            program.add_pragma_result_column(pragma.to_string());
             program.emit_result_row(register, 1);
         }
         PragmaName::PageSize => {
             program.emit_int(database_header.lock().get_page_size().into(), register);
             program.emit_result_row(register, 1);
-            program.add_pragma_result_column("page_size".into());
+            program.add_pragma_result_column(pragma.to_string());
         }
         PragmaName::AutoVacuum => {
             let auto_vacuum_mode = pager.get_auto_vacuum_mode();
