@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use limbo_core::types::Text;
-use limbo_core::{maybe_init_database_file, LimboError};
+use limbo_core::{maybe_init_database_file, LimboError, StepResult};
 use napi::iterator::Generator;
 use napi::JsObject;
 use napi::{bindgen_prelude::ObjectFinalize, Env, JsUnknown};
@@ -119,7 +119,39 @@ impl Database {
 
     #[napi]
     pub fn exec(&self, sql: String) -> napi::Result<()> {
-        self.conn.execute(sql).map_err(into_napi_error)?;
+        let query_runner = self.conn.query_runner(sql.as_bytes());
+
+        // Since exec doesn't return any values, we can just iterate over the results
+        for output in query_runner {
+            match output {
+                Ok(Some(mut stmt)) => loop {
+                    match stmt.step() {
+                        Ok(StepResult::Row) => continue,
+                        Ok(StepResult::IO) => self.io.run_once().map_err(into_napi_error)?,
+                        Ok(StepResult::Done) => break,
+                        Ok(StepResult::Interrupt | StepResult::Busy) => {
+                            return Err(napi::Error::new(
+                                napi::Status::GenericFailure,
+                                "Statement execution interrupted or busy".to_string(),
+                            ));
+                        }
+                        Err(err) => {
+                            return Err(napi::Error::new(
+                                napi::Status::GenericFailure,
+                                format!("Error executing SQL: {}", err),
+                            ));
+                        }
+                    }
+                },
+                Ok(None) => continue,
+                Err(err) => {
+                    return Err(napi::Error::new(
+                        napi::Status::GenericFailure,
+                        format!("Error executing SQL: {}", err),
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 

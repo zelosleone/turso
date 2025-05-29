@@ -1,4 +1,7 @@
 import test from "ava";
+import fs from "node:fs";
+import { fileURLToPath } from "url";
+import path from "node:path";
 
 import { Database } from "../wrapper.js";
 
@@ -100,6 +103,20 @@ test("Test pluck(): Rows should only have the values of the first column", async
   for (const row of stmt.iterate()) {
     t.truthy(row.name);
     t.true(typeof row.age === "undefined");
+  }
+});
+
+test("Test exec()", async (t) => {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+
+  const [db] = await connect(":memory:");
+  const file = fs.readFileSync(path.resolve(__dirname, "./artifacts/basic-test.sql"), "utf8");
+  db.exec(file);
+  let rows = db.prepare("SELECT * FROM users").iterate();
+  for (const row of rows) {
+    t.truthy(row.name);
+    t.true(typeof row.age === "number");
   }
 });
 
