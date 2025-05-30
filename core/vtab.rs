@@ -1,3 +1,4 @@
+use crate::pragma::{PragmaVirtualTable, PragmaVirtualTableCursor};
 use crate::schema::Column;
 use crate::util::{columns_from_create_table_body, vtable_args};
 use crate::{Connection, LimboError, SymbolTable, Value};
@@ -10,6 +11,7 @@ use std::rc::{Rc, Weak};
 
 #[derive(Debug, Clone)]
 enum VirtualTableType {
+    Pragma(PragmaVirtualTable),
     External(ExtVirtualTable),
 }
 
@@ -28,18 +30,30 @@ impl VirtualTable {
         args: Option<Vec<ast::Expr>>,
         syms: &SymbolTable,
     ) -> crate::Result<Rc<VirtualTable>> {
-        let ext_args = match args {
-            Some(ref args) => vtable_args(args),
-            None => vec![],
+        let module = syms.vtab_modules.get(name);
+        let (vtab_type, schema) = if let Some(_) = module {
+            let ext_args = match args {
+                Some(ref args) => vtable_args(args),
+                None => vec![],
+            };
+            ExtVirtualTable::create(name, module, ext_args, VTabKind::TableValuedFunction)
+                .map(|(vtab, columns)| (VirtualTableType::External(vtab), columns))?
+        } else if let Some(pragma_name) = name.strip_prefix("pragma_") {
+            PragmaVirtualTable::create(pragma_name)
+                .map(|(vtab, columns)| (VirtualTableType::Pragma(vtab), columns))?
+        } else {
+            return Err(LimboError::ParseError(format!(
+                "No such table-valued function: {}",
+                name
+            )));
         };
-        let (vtab, columns) =
-            ExtVirtualTable::from_args(name, ext_args, syms, VTabKind::TableValuedFunction)?;
+
         let vtab = VirtualTable {
             name: name.to_owned(),
             args,
-            columns,
+            columns: Self::resolve_columns(schema)?,
             kind: VTabKind::TableValuedFunction,
-            vtab_type: VirtualTableType::External(vtab),
+            vtab_type,
         };
         Ok(Rc::new(vtab))
     }
@@ -50,20 +64,35 @@ impl VirtualTable {
         args: Vec<limbo_ext::Value>,
         syms: &SymbolTable,
     ) -> crate::Result<Rc<VirtualTable>> {
-        let (table, columns) =
-            ExtVirtualTable::from_args(module_name, args, syms, VTabKind::VirtualTable)?;
+        let module = syms.vtab_modules.get(module_name);
+        let (table, schema) =
+            ExtVirtualTable::create(module_name, module, args, VTabKind::VirtualTable)?;
         let vtab = VirtualTable {
             name: tbl_name.unwrap_or(module_name).to_owned(),
             args: None,
-            columns,
+            columns: Self::resolve_columns(schema)?,
             kind: VTabKind::VirtualTable,
             vtab_type: VirtualTableType::External(table),
         };
         Ok(Rc::new(vtab))
     }
 
+    fn resolve_columns(schema: String) -> crate::Result<Vec<Column>> {
+        let mut parser = Parser::new(schema.as_bytes());
+        if let ast::Cmd::Stmt(ast::Stmt::CreateTable { body, .. }) = parser.next()?.ok_or(
+            LimboError::ParseError("Failed to parse schema from virtual table module".to_string()),
+        )? {
+            columns_from_create_table_body(&body)
+        } else {
+            Err(LimboError::ParseError(
+                "Failed to parse schema from virtual table module".to_string(),
+            ))
+        }
+    }
+
     pub(crate) fn open(&self, conn: Weak<Connection>) -> crate::Result<VirtualTableCursor> {
         match &self.vtab_type {
+            VirtualTableType::Pragma(table) => Ok(VirtualTableCursor::Pragma(table.open(conn)?)),
             VirtualTableType::External(table) => {
                 Ok(VirtualTableCursor::External(table.open(conn)?))
             }
@@ -72,12 +101,14 @@ impl VirtualTable {
 
     pub(crate) fn update(&self, args: &[Value]) -> crate::Result<Option<i64>> {
         match &self.vtab_type {
+            VirtualTableType::Pragma(_) => Err(LimboError::ReadOnly),
             VirtualTableType::External(table) => table.update(args),
         }
     }
 
     pub(crate) fn destroy(&self) -> crate::Result<()> {
         match &self.vtab_type {
+            VirtualTableType::Pragma(_) => Ok(()),
             VirtualTableType::External(table) => table.destroy(),
         }
     }
@@ -88,30 +119,40 @@ impl VirtualTable {
         order_by: &[OrderByInfo],
     ) -> IndexInfo {
         match &self.vtab_type {
+            VirtualTableType::Pragma(_) => {
+                // SQLite tries to estimate cost and row count for pragma_ TVFs,
+                // but since Limbo doesn't have cost-based planning yet, this
+                // estimation is not currently implemented.
+                Default::default()
+            }
             VirtualTableType::External(table) => table.best_index(constraints, order_by),
         }
     }
 }
 
 pub enum VirtualTableCursor {
+    Pragma(PragmaVirtualTableCursor),
     External(ExtVirtualTableCursor),
 }
 
 impl VirtualTableCursor {
     pub(crate) fn next(&mut self) -> crate::Result<bool> {
         match self {
+            VirtualTableCursor::Pragma(cursor) => cursor.next(),
             VirtualTableCursor::External(cursor) => cursor.next(),
         }
     }
 
     pub(crate) fn rowid(&self) -> i64 {
         match self {
+            VirtualTableCursor::Pragma(cursor) => cursor.rowid(),
             VirtualTableCursor::External(cursor) => cursor.rowid(),
         }
     }
 
     pub(crate) fn column(&self, column: usize) -> crate::Result<Value> {
         match self {
+            VirtualTableCursor::Pragma(cursor) => cursor.column(column),
             VirtualTableCursor::External(cursor) => cursor.column(column),
         }
     }
@@ -124,6 +165,7 @@ impl VirtualTableCursor {
         args: Vec<Value>,
     ) -> crate::Result<bool> {
         match self {
+            VirtualTableCursor::Pragma(cursor) => cursor.filter(args),
             VirtualTableCursor::External(cursor) => {
                 cursor.filter(idx_num, idx_str, arg_count, args)
             }
@@ -166,19 +208,16 @@ impl ExtVirtualTable {
     }
 
     /// takes ownership of the provided Args
-    fn from_args(
+    fn create(
         module_name: &str,
+        module: Option<&Rc<crate::ext::VTabImpl>>,
         args: Vec<limbo_ext::Value>,
-        syms: &SymbolTable,
         kind: VTabKind,
-    ) -> crate::Result<(Self, Vec<Column>)> {
-        let module = syms
-            .vtab_modules
-            .get(module_name)
-            .ok_or(LimboError::ExtensionError(format!(
-                "Virtual table module not found: {}",
-                module_name
-            )))?;
+    ) -> crate::Result<(Self, String)> {
+        let module = module.ok_or(LimboError::ExtensionError(format!(
+            "Virtual table module not found: {}",
+            module_name
+        )))?;
         if kind != module.module_kind {
             let expected = match kind {
                 VTabKind::VirtualTable => "virtual table",
@@ -190,21 +229,12 @@ impl ExtVirtualTable {
             )));
         }
         let (schema, table_ptr) = module.implementation.create(args)?;
-        let mut parser = Parser::new(schema.as_bytes());
-        if let ast::Cmd::Stmt(ast::Stmt::CreateTable { body, .. }) = parser.next()?.ok_or(
-            LimboError::ParseError("Failed to parse schema from virtual table module".to_string()),
-        )? {
-            let columns = columns_from_create_table_body(&body)?;
-            let vtab = ExtVirtualTable {
-                connection_ptr: RefCell::new(None),
-                implementation: module.implementation.clone(),
-                table_ptr,
-            };
-            return Ok((vtab, columns));
-        }
-        Err(LimboError::ParseError(
-            "Failed to parse schema from virtual table module".to_string(),
-        ))
+        let vtab = ExtVirtualTable {
+            connection_ptr: RefCell::new(None),
+            implementation: module.implementation.clone(),
+            table_ptr,
+        };
+        Ok((vtab, schema))
     }
 
     /// Accepts a Weak pointer to the connection that owns the VTable, that the module

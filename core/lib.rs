@@ -11,6 +11,7 @@ mod io;
 mod json;
 pub mod mvcc;
 mod parameters;
+mod pragma;
 mod pseudo;
 pub mod result;
 mod schema;
