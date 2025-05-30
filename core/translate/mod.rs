@@ -49,9 +49,11 @@ use schema::{
 use select::translate_select;
 use std::rc::{Rc, Weak};
 use std::sync::Arc;
+use tracing::{instrument, Level};
 use transaction::{translate_tx_begin, translate_tx_commit};
 use update::translate_update;
 
+#[instrument(skip_all, level = Level::TRACE)]
 pub fn translate(
     schema: &Schema,
     stmt: ast::Stmt,

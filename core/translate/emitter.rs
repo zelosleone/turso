@@ -1,10 +1,12 @@
 // This module contains code for emitting bytecode instructions for SQL query execution.
 // It handles translating high-level SQL operations into low-level bytecode that can be executed by the virtual machine.
 
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use limbo_sqlite3_parser::ast::{self, SortOrder};
+use tracing::{instrument, Level};
 
 use super::aggregation::emit_ungrouped_aggregation;
 use super::expr::{translate_condition_expr, translate_expr, ConditionMetadata};
@@ -175,6 +177,7 @@ pub enum TransactionMode {
 
 /// Main entry point for emitting bytecode for a SQL query
 /// Takes a query plan and generates the corresponding bytecode program
+#[instrument(skip_all, level = Level::TRACE)]
 pub fn emit_program(
     program: &mut ProgramBuilder,
     plan: Plan,
@@ -191,6 +194,7 @@ pub fn emit_program(
     }
 }
 
+#[instrument(skip_all, level = Level::TRACE)]
 fn emit_program_for_compound_select(
     program: &mut ProgramBuilder,
     plan: Plan,
@@ -465,6 +469,7 @@ fn read_deduplicated_union_rows(
     });
 }
 
+#[instrument(skip_all, level = Level::TRACE)]
 fn emit_program_for_select(
     program: &mut ProgramBuilder,
     mut plan: SelectPlan,
@@ -503,6 +508,7 @@ fn emit_program_for_select(
     Ok(())
 }
 
+#[instrument(skip_all, level = Level::TRACE)]
 pub fn emit_query<'a>(
     program: &'a mut ProgramBuilder,
     plan: &'a mut SelectPlan,
@@ -641,6 +647,7 @@ pub fn emit_query<'a>(
     Ok(t_ctx.reg_result_cols_start.unwrap())
 }
 
+#[instrument(skip_all, level = Level::TRACE)]
 fn emit_program_for_delete(
     program: &mut ProgramBuilder,
     mut plan: DeletePlan,
@@ -684,6 +691,33 @@ fn emit_program_for_delete(
         OperationMode::DELETE,
     )?;
 
+    // Open indexes for delete.
+    // Order is important. This segment of code must be run before `open_loop`
+    let mut index_cursors = HashMap::with_capacity(plan.indexes.len());
+
+    for table_ref in plan.table_references.joined_tables() {
+        let index_cursor_id = table_ref.op.index().map(|index| {
+            program.resolve_cursor_id(&CursorKey::index(table_ref.internal_id, index.clone()))
+        });
+        if let Some(index_cursor) = index_cursor_id {
+            let index = table_ref.op.index().unwrap();
+            index_cursors.insert(index.name.as_str(), index_cursor);
+        }
+    }
+    for index in &plan.indexes {
+        index_cursors.entry(index.name.as_str()).or_insert_with(|| {
+            let index_cursor_id = program.alloc_cursor_id(CursorType::BTreeIndex(index.clone()));
+            program.emit_insn(Insn::OpenWrite {
+                cursor_id: index_cursor_id,
+                root_page: RegisterOrLiteral::Literal(index.root_page),
+                name: index.name.clone(),
+            });
+            index_cursor_id
+        });
+    }
+
+    assert_eq!(index_cursors.len(), plan.indexes.len());
+
     // Set up main query execution loop
     open_loop(
         program,
@@ -692,7 +726,14 @@ fn emit_program_for_delete(
         &[JoinOrderMember::default()],
         &mut plan.where_clause,
     )?;
-    emit_delete_insns(program, &mut t_ctx, &plan.table_references, &plan.indexes)?;
+
+    emit_delete_insns(
+        program,
+        &mut t_ctx,
+        &plan.table_references,
+        &plan.indexes,
+        index_cursors.values().into_iter(),
+    )?;
 
     // Clean up and close the main execution loop
     close_loop(
@@ -710,11 +751,12 @@ fn emit_program_for_delete(
     Ok(())
 }
 
-fn emit_delete_insns(
+fn emit_delete_insns<'a, T: Iterator<Item = &'a usize>>(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx,
     table_references: &TableReferences,
     index_references: &[Arc<Index>],
+    index_cursors: T,
 ) -> Result<()> {
     let table_reference = table_references.joined_tables().first().unwrap();
     let cursor_id = match &table_reference.op {
@@ -759,14 +801,7 @@ fn emit_delete_insns(
             conflict_action,
         });
     } else {
-        for index in index_references {
-            let index_cursor_id = program.alloc_cursor_id(CursorType::BTreeIndex(index.clone()));
-
-            program.emit_insn(Insn::OpenWrite {
-                cursor_id: index_cursor_id,
-                root_page: RegisterOrLiteral::Literal(index.root_page),
-                name: index.name.clone(),
-            });
+        for (index, index_cursor_id) in index_references.iter().zip(index_cursors) {
             let num_regs = index.columns.len() + 1;
             let start_reg = program.alloc_registers(num_regs);
             // Emit columns that are part of the index
@@ -788,7 +823,7 @@ fn emit_delete_insns(
             program.emit_insn(Insn::IdxDelete {
                 start_reg,
                 num_regs,
-                cursor_id: index_cursor_id,
+                cursor_id: *index_cursor_id,
             });
         }
         program.emit_insn(Insn::Delete {
@@ -805,6 +840,7 @@ fn emit_delete_insns(
     Ok(())
 }
 
+#[instrument(skip_all, level = Level::TRACE)]
 fn emit_program_for_update(
     program: &mut ProgramBuilder,
     mut plan: UpdatePlan,
@@ -893,6 +929,7 @@ fn emit_program_for_update(
     Ok(())
 }
 
+#[instrument(skip_all, level = Level::TRACE)]
 fn emit_update_insns(
     plan: &UpdatePlan,
     t_ctx: &TranslateCtx,

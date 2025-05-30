@@ -76,6 +76,7 @@ use storage::{
     pager::allocate_page,
     sqlite3_ondisk::{DatabaseHeader, DATABASE_HEADER_SIZE},
 };
+use tracing::{instrument, Level};
 use translate::select::prepare_select_plan;
 pub use types::RefValue;
 pub use types::Value;
@@ -339,6 +340,7 @@ pub struct Connection {
 }
 
 impl Connection {
+    #[instrument(skip_all, level = Level::TRACE)]
     pub fn prepare(self: &Rc<Connection>, sql: impl AsRef<str>) -> Result<Statement> {
         if sql.as_ref().is_empty() {
             return Err(LimboError::InvalidArgument(
@@ -377,6 +379,7 @@ impl Connection {
         }
     }
 
+    #[instrument(skip_all, level = Level::TRACE)]
     pub fn query(self: &Rc<Connection>, sql: impl AsRef<str>) -> Result<Option<Statement>> {
         let sql = sql.as_ref();
         tracing::trace!("Querying: {}", sql);
@@ -388,6 +391,7 @@ impl Connection {
         }
     }
 
+    #[instrument(skip_all, level = Level::TRACE)]
     pub(crate) fn run_cmd(self: &Rc<Connection>, cmd: Cmd) -> Result<Option<Statement>> {
         let syms = self.syms.borrow();
         match cmd {
@@ -448,6 +452,7 @@ impl Connection {
 
     /// Execute will run a query from start to finish taking ownership of I/O because it will run pending I/Os if it didn't finish.
     /// TODO: make this api async
+    #[instrument(skip_all, level = Level::TRACE)]
     pub fn execute(self: &Rc<Connection>, sql: impl AsRef<str>) -> Result<()> {
         let sql = sql.as_ref();
         let mut parser = Parser::new(sql.as_bytes());
