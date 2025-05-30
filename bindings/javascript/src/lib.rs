@@ -216,6 +216,7 @@ pub struct Statement {
     pub source: String,
 
     database: Database,
+    raw: bool,
     pluck: bool,
     binded: bool,
     inner: Rc<RefCell<limbo_core::Statement>>,
@@ -230,6 +231,7 @@ impl Statement {
             source,
             pluck: false,
             binded: false,
+            raw: false,
         }
     }
 
@@ -241,16 +243,43 @@ impl Statement {
         match step {
             limbo_core::StepResult::Row => {
                 let row = stmt.row().unwrap();
+
+                if self.raw {
+                    assert!(!self.pluck, "Cannot use raw mode with pluck mode");
+
+                    let mut raw_obj = env.create_array(row.len() as u32)?;
+                    for (idx, value) in row.get_values().enumerate() {
+                        let js_value = to_js_value(&env, value);
+
+                        raw_obj.set(idx as u32, js_value)?;
+                    }
+
+                    return Ok(raw_obj.coerce_to_object()?.into_unknown());
+                }
+
                 let mut obj = env.create_object()?;
-                for (idx, value) in row.get_values().enumerate() {
+                if self.pluck {
+                    assert!(!self.raw, "Cannot use pluck mode with raw mode");
+
+                    let (idx, value) =
+                        row.get_values().enumerate().next().ok_or(napi::Error::new(
+                            napi::Status::GenericFailure,
+                            "Pluck mode requires at least one column in the result",
+                        ))?;
                     let key = stmt.get_column_name(idx);
                     let js_value = to_js_value(&env, value);
                     obj.set_named_property(&key, js_value)?;
 
-                    if self.pluck {
-                        return Ok(obj.into_unknown());
-                    }
+                    return Ok(obj.into_unknown());
                 }
+
+                for (idx, value) in row.get_values().enumerate() {
+                    let key = stmt.get_column_name(idx);
+                    let js_value = to_js_value(&env, value);
+
+                    obj.set_named_property(&key, js_value)?;
+                }
+
                 Ok(obj.into_unknown())
             }
             limbo_core::StepResult::Done => Ok(env.get_undefined()?.into_unknown()),
@@ -276,12 +305,20 @@ impl Statement {
         args: Option<Vec<JsUnknown>>,
     ) -> napi::Result<IteratorStatement> {
         self.check_and_bind(args)?;
+        if self.raw {
+            assert!(!self.pluck, "Cannot use raw mode with pluck mode");
+        }
+
+        if self.pluck {
+            assert!(!self.raw, "Cannot use pluck mode with raw mode");
+        }
 
         Ok(IteratorStatement {
             stmt: Rc::clone(&self.inner),
             database: self.database.clone(),
             env,
-            plucked: self.pluck,
+            pluck: self.pluck,
+            raw: self.raw,
         })
     }
 
@@ -304,14 +341,40 @@ impl Statement {
                 limbo_core::StepResult::Row => {
                     let row = stmt.row().unwrap();
                     let mut obj = env.create_object()?;
+
+                    if self.raw {
+                        assert!(!self.pluck, "Cannot use raw mode with pluck mode");
+
+                        let mut raw_array = env.create_array(row.len() as u32)?;
+                        for (idx, value) in row.get_values().enumerate() {
+                            let js_value = to_js_value(&env, value)?;
+                            raw_array.set(idx as u32, js_value)?;
+                        }
+                        results.set_element(index, raw_array.coerce_to_object()?)?;
+                        index += 1;
+                        continue;
+                    }
+
+                    if self.pluck {
+                        assert!(!self.raw, "Cannot use pluck mode with raw mode");
+
+                        let (idx, value) =
+                            row.get_values().enumerate().next().ok_or(napi::Error::new(
+                                napi::Status::GenericFailure,
+                                "Pluck mode requires at least one column in the result",
+                            ))?;
+                        let key = stmt.get_column_name(idx);
+                        let js_value = to_js_value(&env, value)?;
+                        obj.set_named_property(&key, js_value)?;
+                        results.set_element(index, obj)?;
+                        index += 1;
+                        continue;
+                    }
+
                     for (idx, value) in row.get_values().enumerate() {
                         let key = stmt.get_column_name(idx);
                         let js_value = to_js_value(&env, value);
                         obj.set_named_property(&key, js_value)?;
-
-                        if self.pluck {
-                            break;
-                        }
                     }
                     results.set_element(index, obj)?;
                     index += 1;
@@ -340,6 +403,7 @@ impl Statement {
             self.pluck = false;
         }
 
+        self.raw = false;
         self.pluck = true;
     }
 
@@ -349,8 +413,13 @@ impl Statement {
     }
 
     #[napi]
-    pub fn raw() {
-        todo!()
+    pub fn raw(&mut self, raw: Option<bool>) {
+        if let Some(false) = raw {
+            self.raw = false;
+        }
+
+        self.pluck = false;
+        self.raw = true;
     }
 
     #[napi]
@@ -397,7 +466,8 @@ pub struct IteratorStatement {
     stmt: Rc<RefCell<limbo_core::Statement>>,
     database: Database,
     env: Env,
-    plucked: bool,
+    pluck: bool,
+    raw: bool,
 }
 
 impl Generator for IteratorStatement {
@@ -415,14 +485,33 @@ impl Generator for IteratorStatement {
                 let row = stmt.row().unwrap();
                 let mut js_row = self.env.create_object().ok()?;
 
+                if self.raw {
+                    assert!(!self.pluck, "Cannot use raw mode with pluck mode");
+
+                    let mut raw_array = self.env.create_array(row.len() as u32).ok()?;
+                    for (idx, value) in row.get_values().enumerate() {
+                        let js_value = to_js_value(&self.env, value);
+                        raw_array.set(idx as u32, js_value).ok()?;
+                    }
+
+                    // TODO: fix this unwrap
+                    return Some(raw_array.coerce_to_object().unwrap());
+                }
+
+                if self.pluck {
+                    assert!(!self.raw, "Cannot use pluck mode with raw mode");
+
+                    let (idx, value) = row.get_values().enumerate().next()?;
+                    let key = stmt.get_column_name(idx);
+                    let js_value = to_js_value(&self.env, value);
+                    js_row.set_named_property(&key, js_value).ok()?;
+                    return Some(js_row);
+                }
+
                 for (idx, value) in row.get_values().enumerate() {
                     let key = stmt.get_column_name(idx);
                     let js_value = to_js_value(&self.env, value);
                     js_row.set_named_property(&key, js_value).ok()?;
-
-                    if self.plucked {
-                        break;
-                    }
                 }
 
                 Some(js_row)

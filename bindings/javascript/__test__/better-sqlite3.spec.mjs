@@ -66,6 +66,7 @@ test("Test bind()", async (t) => {
   db.prepare("CREATE TABLE users (name TEXT, age INTEGER)").run();
   db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Alice", 42);
   let stmt = db.prepare("SELECT * FROM users WHERE name = ?").bind("Alice");
+  console.log(db.prepare("SELECT * FROM users").raw().get());
 
   for (const row of stmt.iterate()) {
     t.truthy(row.name);

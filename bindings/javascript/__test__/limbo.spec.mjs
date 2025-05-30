@@ -98,13 +98,48 @@ test("Test pluck(): Rows should only have the values of the first column", async
   db.prepare("CREATE TABLE users (name TEXT, age INTEGER)").run();
   db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Alice", 42);
   db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Bob", 24);
-  let stmt = db.prepare("SELECT * FROM users").pluck();
+  let stmt = db.prepare("SELECT * FROM users").raw().pluck();
 
   for (const row of stmt.iterate()) {
     t.truthy(row.name);
     t.true(typeof row.age === "undefined");
   }
 });
+
+
+test("Test raw()", async (t) => {
+  const [db] = await connect(":memory:");
+  db.prepare("CREATE TABLE users (name TEXT, age INTEGER)").run();
+  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Alice", 42);
+  db.prepare("INSERT INTO users (name, age) VALUES (?, ?)").run("Bob", 24);
+  
+  // Pluck and raw should be exclusive
+  let stmt = db.prepare("SELECT * FROM users").pluck().raw();
+
+  for (const row of stmt.iterate()) {
+    t.true(Array.isArray(row));
+    t.true(typeof row[0] === "string");
+    t.true(typeof row[1] === "number");
+  }
+
+  stmt = db.prepare("SELECT * FROM users WHERE name = ?").raw();
+  const row = stmt.get("Alice");
+  t.true(Array.isArray(row));
+  t.is(row.length, 2);
+  t.is(row[0], "Alice");
+  t.is(row[1], 42);
+
+  const noRow = stmt.get("Charlie");
+  t.is(noRow, undefined);
+
+  stmt = db.prepare("SELECT * FROM users").raw();
+  const rows = stmt.all();
+  t.true(Array.isArray(rows));
+  t.is(rows.length, 2);
+  t.deepEqual(rows[0], ["Alice", 42]);
+  t.deepEqual(rows[1], ["Bob", 24]);
+});
+
 
 test("Test exec()", async (t) => {
   const __filename = fileURLToPath(import.meta.url);
