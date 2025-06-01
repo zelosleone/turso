@@ -4237,7 +4237,7 @@ impl BTreeCursor {
     }
 
     pub fn next(&mut self) -> Result<CursorResult<()>> {
-        let _ = self.restore_context()?;
+        let _ = return_if_io!(self.restore_context());
         let cursor_has_record = return_if_io!(self.get_next_record(None));
         self.has_record.replace(cursor_has_record);
         Ok(CursorResult::Ok(()))
