@@ -17,7 +17,6 @@ def stub_memory_test(
     vals: int = 100,
     blobs: bool = True,
 ):
-    raise
     # zero_blob_size = 1024 **2
     zero_blob = "0" * blob_size * 2
     # vals = 100
