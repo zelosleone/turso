@@ -424,7 +424,6 @@ enum CursorSeekState {
 
 // These functions below exist to avoid problems with the borrow checker
 impl CursorSeekState {
-    /// # Safety
     /// method can only be called on CursorSeekState::Seeking
     fn set_nearest_matching_cell(&mut self, matching_cell: Option<usize>) {
         let CursorSeekState::Seeking {
@@ -437,7 +436,6 @@ impl CursorSeekState {
         *nearest_matching_cell = matching_cell;
     }
 
-    /// # Safety
     /// method can only be called on CursorSeekState::Seeking
     fn get_nearest_matching_cell(&mut self) -> Option<usize> {
         let CursorSeekState::Seeking {
@@ -450,7 +448,6 @@ impl CursorSeekState {
         nearest_matching_cell.clone()
     }
 
-    /// # Safety
     /// method can only be called on CursorSeekState::Seeking
     fn set_max(&mut self, max: isize) {
         let CursorSeekState::Seeking { max: max_state, .. } = self else {
@@ -459,7 +456,6 @@ impl CursorSeekState {
         *max_state = max;
     }
 
-    /// # Safety
     /// method can only be called on CursorSeekState::Seeking
     fn get_max(&mut self) -> isize {
         let CursorSeekState::Seeking { max, .. } = self else {
@@ -468,7 +464,6 @@ impl CursorSeekState {
         *max
     }
 
-    /// # Safety
     /// method can only be called on CursorSeekState::Seeking
     fn set_min(&mut self, min: isize) {
         let CursorSeekState::Seeking { min: min_state, .. } = self else {
@@ -477,7 +472,6 @@ impl CursorSeekState {
         *min_state = min;
     }
 
-    /// # Safety
     /// method can only be called on CursorSeekState::Seeking
     fn get_min(&mut self) -> isize {
         let CursorSeekState::Seeking { min, .. } = self else {
@@ -486,7 +480,6 @@ impl CursorSeekState {
         *min
     }
 
-    /// # Safety
     /// method can only be called on CursorSeekState::Seeking
     fn set_not_found_leaf(&mut self, not_found: bool) {
         let CursorSeekState::Seeking { not_found_leaf, .. } = self else {
@@ -495,7 +488,6 @@ impl CursorSeekState {
         *not_found_leaf = not_found;
     }
 
-    /// # Safety
     /// method can only be called on CursorSeekState::Seeking
     fn get_not_found_leaf(&mut self) -> bool {
         let CursorSeekState::Seeking { not_found_leaf, .. } = self else {
@@ -4245,6 +4237,7 @@ impl BTreeCursor {
 
     pub fn prev(&mut self) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
+        let _ = return_if_io!(self.restore_context());
         match self.get_prev_record(None)? {
             CursorResult::Ok(cursor_has_record) => {
                 self.has_record.replace(cursor_has_record);
