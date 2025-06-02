@@ -128,17 +128,15 @@ fn main() -> Result<(), String> {
 }
 
 fn testing_main(cli_opts: &SimulatorCLI) -> Result<(), String> {
-    let mut bugbase = BugBase::load().map_err(|e| format!("{:?}", e))?;
+    let mut bugbase = if cli_opts.disable_bugbase {
+        None
+    } else {
+        Some(BugBase::load().map_err(|e| format!("{:?}", e))?)
+    };
 
     let last_execution = Arc::new(Mutex::new(Execution::new(0, 0, 0)));
-    let (seed, env, plans) = setup_simulation(&mut bugbase, cli_opts, |p| &p.plan, |p| &p.db);
-
-    let paths = bugbase.paths(seed);
-
-    // Create the output directory if it doesn't exist
-    if !paths.base.exists() {
-        std::fs::create_dir_all(&paths.base).map_err(|e| format!("{:?}", e))?;
-    }
+    let (seed, env, plans, paths) =
+        setup_simulation(bugbase.as_mut(), cli_opts, |p| &p.plan, |p| &p.db);
 
     if cli_opts.watch {
         watch_mode(seed, cli_opts, &paths, last_execution.clone()).unwrap();
@@ -148,7 +146,7 @@ fn testing_main(cli_opts: &SimulatorCLI) -> Result<(), String> {
     let result = if cli_opts.differential {
         differential_testing(
             seed,
-            &mut bugbase,
+            bugbase.as_mut(),
             cli_opts,
             &paths,
             plans,
@@ -157,7 +155,7 @@ fn testing_main(cli_opts: &SimulatorCLI) -> Result<(), String> {
     } else {
         run_simulator(
             seed,
-            &mut bugbase,
+            bugbase.as_mut(),
             cli_opts,
             &paths,
             env,
@@ -233,7 +231,7 @@ fn watch_mode(
 
 fn run_simulator(
     seed: u64,
-    bugbase: &mut BugBase,
+    bugbase: Option<&mut BugBase>,
     cli_opts: &SimulatorCLI,
     paths: &Paths,
     env: SimulatorEnv,
@@ -280,7 +278,9 @@ fn run_simulator(
             SandboxedResult::Correct => {
                 tracing::info!("simulation succeeded");
                 println!("simulation succeeded");
-                bugbase.mark_successful_run(seed, cli_opts).unwrap();
+                if let Some(bugbase) = bugbase {
+                    bugbase.mark_successful_run(seed, cli_opts).unwrap();
+                }
                 Ok(())
             }
             SandboxedResult::Panicked {
@@ -352,9 +352,11 @@ fn run_simulator(
                             tracing::error!(
                                 "shrinking failed, the error was not properly reproduced"
                             );
-                            bugbase
-                                .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
-                                .unwrap();
+                            if let Some(bugbase) = bugbase {
+                                bugbase
+                                    .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
+                                    .unwrap();
+                            }
                             Err(format!("failed with error: '{}'", error))
                         } else {
                             tracing::info!(
@@ -363,9 +365,16 @@ fn run_simulator(
                                 shrunk_plans[0].plan.len()
                             );
                             // Save the shrunk database
-                            bugbase
-                                .add_bug(seed, shrunk_plans[0].clone(), Some(e1.clone()), cli_opts)
-                                .unwrap();
+                            if let Some(bugbase) = bugbase {
+                                bugbase
+                                    .add_bug(
+                                        seed,
+                                        shrunk_plans[0].clone(),
+                                        Some(e1.clone()),
+                                        cli_opts,
+                                    )
+                                    .unwrap();
+                            }
                             Err(format!("failed with error: '{}'", e1))
                         }
                     }
@@ -374,9 +383,11 @@ fn run_simulator(
                     }
                     _ => {
                         tracing::error!("shrinking failed, the error was not properly reproduced");
-                        bugbase
-                            .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
-                            .unwrap();
+                        if let Some(bugbase) = bugbase {
+                            bugbase
+                                .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
+                                .unwrap();
+                        }
                         Err(format!("failed with error: '{}'", error))
                     }
                 }
@@ -387,7 +398,7 @@ fn run_simulator(
 
 fn doublecheck(
     seed: u64,
-    bugbase: &mut BugBase,
+    bugbase: Option<&mut BugBase>,
     cli_opts: &SimulatorCLI,
     paths: &Paths,
     plans: &[InteractionPlan],
@@ -445,14 +456,18 @@ fn doublecheck(
         Ok(_) => {
             tracing::info!("doublecheck succeeded");
             println!("doublecheck succeeded");
-            bugbase.mark_successful_run(seed, cli_opts)?;
+            if let Some(bugbase) = bugbase {
+                bugbase.mark_successful_run(seed, cli_opts)?;
+            }
             Ok(())
         }
         Err(e) => {
             tracing::error!("doublecheck failed: '{}'", e);
-            bugbase
-                .add_bug(seed, plans[0].clone(), Some(e.clone()), cli_opts)
-                .unwrap();
+            if let Some(bugbase) = bugbase {
+                bugbase
+                    .add_bug(seed, plans[0].clone(), Some(e.clone()), cli_opts)
+                    .unwrap();
+            }
             Err(format!("doublecheck failed: '{}'", e))
         }
     }
@@ -460,7 +475,7 @@ fn doublecheck(
 
 fn differential_testing(
     seed: u64,
-    bugbase: &mut BugBase,
+    bugbase: Option<&mut BugBase>,
     cli_opts: &SimulatorCLI,
     paths: &Paths,
     plans: Vec<InteractionPlan>,
@@ -491,14 +506,18 @@ fn differential_testing(
         SandboxedResult::Correct => {
             tracing::info!("simulation succeeded, output of Limbo conforms to SQLite");
             println!("simulation succeeded, output of Limbo conforms to SQLite");
-            bugbase.mark_successful_run(seed, cli_opts).unwrap();
+            if let Some(bugbase) = bugbase {
+                bugbase.mark_successful_run(seed, cli_opts).unwrap();
+            }
             Ok(())
         }
         SandboxedResult::Panicked { error, .. } | SandboxedResult::FoundBug { error, .. } => {
             tracing::error!("simulation failed: '{}'", error);
-            bugbase
-                .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
-                .unwrap();
+            if let Some(bugbase) = bugbase {
+                bugbase
+                    .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
+                    .unwrap();
+            }
             Err(format!("simulation failed: '{}'", error))
         }
     }
@@ -558,13 +577,14 @@ impl SandboxedResult {
 }
 
 fn setup_simulation(
-    bugbase: &mut BugBase,
+    bugbase: Option<&mut BugBase>,
     cli_opts: &SimulatorCLI,
     plan_path: fn(&Paths) -> &Path,
     db_path: fn(&Paths) -> &Path,
-) -> (u64, SimulatorEnv, Vec<InteractionPlan>) {
+) -> (u64, SimulatorEnv, Vec<InteractionPlan>, Paths) {
     if let Some(seed) = &cli_opts.load {
         let seed = seed.parse::<u64>().expect("seed should be a number");
+        let bugbase = bugbase.expect("BugBase must be enabled to load a bug");
         tracing::info!("seed={}", seed);
         let bug = bugbase
             .get_bug(seed)
@@ -595,7 +615,7 @@ fn setup_simulation(
         )
         .unwrap();
         let plans = vec![plan];
-        (seed, env, plans)
+        (seed, env, plans, paths)
     } else {
         let seed = cli_opts.seed.unwrap_or_else(|| {
             let mut rng = rand::thread_rng();
@@ -603,10 +623,21 @@ fn setup_simulation(
         });
         tracing::info!("seed={}", seed);
 
-        let paths = bugbase.paths(seed);
-        if !paths.base.exists() {
-            std::fs::create_dir_all(&paths.base).unwrap();
-        }
+        let paths = if let Some(bugbase) = bugbase {
+            let paths = bugbase.paths(seed);
+            // Create the output directory if it doesn't exist
+            if !paths.base.exists() {
+                std::fs::create_dir_all(&paths.base)
+                    .map_err(|e| format!("{:?}", e))
+                    .unwrap();
+            }
+            paths
+        } else {
+            let dir = std::env::current_dir().unwrap().join("simulator-output");
+            std::fs::create_dir_all(&dir).unwrap();
+            Paths::new(&dir)
+        };
+
         let mut env = SimulatorEnv::new(seed, cli_opts, &paths.db);
 
         tracing::info!("Generating database interaction plan...");
@@ -625,7 +656,7 @@ fn setup_simulation(
         )
         .unwrap();
 
-        (seed, env, plans)
+        (seed, env, plans, paths)
     }
 }
 
