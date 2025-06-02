@@ -1075,7 +1075,7 @@ impl PtrmapType {
 #[derive(Debug, Clone, Copy)]
 pub struct PtrmapEntry {
     pub entry_type: PtrmapType,
-    pub parent_page_no: u32, // Page number of the parent/owner. 0 for some types.
+    pub parent_page_no: u32,
 }
 
 impl PtrmapEntry {
