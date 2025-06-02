@@ -75,7 +75,7 @@ const DEFAULT_CACHE_SIZE: i32 = -2000;
 pub const MIN_PAGE_CACHE_SIZE: usize = 10;
 
 /// The minimum page size in bytes.
-const MIN_PAGE_SIZE: u32 = 512;
+pub const MIN_PAGE_SIZE: u32 = 512;
 
 /// The maximum page size in bytes.
 const MAX_PAGE_SIZE: u32 = 65536;

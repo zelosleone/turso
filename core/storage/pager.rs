@@ -1047,7 +1047,7 @@ impl CreateBTreeFlags {
 */
 #[cfg(not(feature = "omit_autovacuum"))]
 mod ptrmap {
-    use crate::{LimboError, Result};
+    use crate::{storage::sqlite3_ondisk::MIN_PAGE_SIZE, LimboError, Result};
 
     // Constants
     pub const PTRMAP_ENTRY_SIZE: usize = 5;
@@ -1125,11 +1125,8 @@ mod ptrmap {
     /// Calculates the cycle length of pointer map pages
     /// The cycle length is the number of database pages that are mapped by a single pointer map page.
     fn ptrmap_page_cycle_length(page_size: usize) -> usize {
-        if page_size < PTRMAP_ENTRY_SIZE {
-            0
-        } else {
-            (page_size / PTRMAP_ENTRY_SIZE) + 1
-        }
+        assert!(page_size >= MIN_PAGE_SIZE as usize);
+        (page_size / PTRMAP_ENTRY_SIZE) + 1
     }
 
     /// Determines if a given page number `db_page_no` (1-indexed) is a pointer map page in a database with autovacuum enabled
