@@ -365,14 +365,20 @@ pub fn insn_to_str(
                 Value::build_text(""),
                 0,
                 {
-                    let cursor_key = program.cursor_ref[*cursor_id].0.as_ref().unwrap();
+                    let cursor_type =
+                        program.cursor_ref[*cursor_id]
+                            .0
+                            .as_ref()
+                            .map_or("", |cursor_key| {
+                                if cursor_key.index.is_some() {
+                                    "index"
+                                } else {
+                                    "table"
+                                }
+                            });
                     format!(
                         "{}={}, root={}",
-                        if cursor_key.index.is_some() {
-                            "index"
-                        } else {
-                            "table"
-                        },
+                        cursor_type,
                         get_table_or_index_name(*cursor_id),
                         root_page
                     )
@@ -386,16 +392,18 @@ pub fn insn_to_str(
                 Value::build_text(""),
                 0,
                 {
-                    let cursor_key = program.cursor_ref[*cursor_id].0.as_ref().unwrap();
-                    format!(
-                        "{} {}",
-                        if cursor_key.index.is_some() {
-                            "index"
-                        } else {
-                            "table"
-                        },
-                        get_table_or_index_name(*cursor_id),
-                    )
+                    let cursor_type =
+                        program.cursor_ref[*cursor_id]
+                            .0
+                            .as_ref()
+                            .map_or("", |cursor_key| {
+                                if cursor_key.index.is_some() {
+                                    "index"
+                                } else {
+                                    "table"
+                                }
+                            });
+                    format!("{} {}", cursor_type, get_table_or_index_name(*cursor_id),)
                 },
             ),
             Insn::VCreate {
@@ -497,14 +505,20 @@ pub fn insn_to_str(
                 Value::build_text(""),
                 0,
                 {
-                    let cursor_key = program.cursor_ref[*cursor_id].0.as_ref().unwrap();
+                    let cursor_type =
+                        program.cursor_ref[*cursor_id]
+                            .0
+                            .as_ref()
+                            .map_or("", |cursor_key| {
+                                if cursor_key.index.is_some() {
+                                    "index"
+                                } else {
+                                    "table"
+                                }
+                            });
                     format!(
                         "Rewind {} {}",
-                        if cursor_key.index.is_some() {
-                            "index"
-                        } else {
-                            "table"
-                        },
+                        cursor_type,
                         get_table_or_index_name(*cursor_id),
                     )
                 },

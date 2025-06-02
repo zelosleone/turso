@@ -6,6 +6,7 @@ use std::{
 };
 
 use limbo_sqlite3_parser::ast::{self, TableInternalId};
+use tracing::{instrument, Level};
 
 use crate::{
     fast_lock::SpinLock,
@@ -284,8 +285,11 @@ impl ProgramBuilder {
         cursor
     }
 
+    #[instrument(skip(self), level = Level::TRACE)]
     pub fn emit_insn(&mut self, insn: Insn) {
         let function = insn.to_function();
+        // This seemingly empty trace here is needed so that a function span is emmited with it
+        tracing::trace!("");
         self.insns.push((insn, function, self.insns.len()));
     }
 
