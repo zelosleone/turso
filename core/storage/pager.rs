@@ -22,6 +22,9 @@ use super::btree::BTreePage;
 use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCacheKey};
 use super::wal::{CheckpointMode, CheckpointStatus};
 
+#[cfg(not(feature = "omit_autovacuum"))]
+use ptrmap::*;
+
 pub struct PageInner {
     pub flags: AtomicUsize,
     pub contents: Option<PageContent>,
@@ -1042,148 +1045,154 @@ impl CreateBTreeFlags {
 ** PTRMAP_BTREE: The database page is a non-root btree page. The page number
 **               identifies the parent page in the btree.
 */
+#[cfg(not(feature = "omit_autovacuum"))]
+mod ptrmap {
+    use crate::{LimboError, Result};
 
-// Constants
-pub const PTRMAP_ENTRY_SIZE: usize = 5;
-/// Page 1 is the schema page which contains the database header.
-/// Page 2 is the first pointer map page if the database has any pointer map pages.
-pub const FIRST_PTRMAP_PAGE_NO: u32 = 2;
+    // Constants
+    pub const PTRMAP_ENTRY_SIZE: usize = 5;
+    /// Page 1 is the schema page which contains the database header.
+    /// Page 2 is the first pointer map page if the database has any pointer map pages.
+    pub const FIRST_PTRMAP_PAGE_NO: u32 = 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum PtrmapType {
-    RootPage = 1,
-    FreePage = 2,
-    Overflow1 = 3,
-    Overflow2 = 4,
-    BTreeNode = 5,
-}
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum PtrmapType {
+        RootPage = 1,
+        FreePage = 2,
+        Overflow1 = 3,
+        Overflow2 = 4,
+        BTreeNode = 5,
+    }
 
-impl PtrmapType {
-    pub fn from_u8(value: u8) -> Option<Self> {
-        match value {
-            1 => Some(PtrmapType::RootPage),
-            2 => Some(PtrmapType::FreePage),
-            3 => Some(PtrmapType::Overflow1),
-            4 => Some(PtrmapType::Overflow2),
-            5 => Some(PtrmapType::BTreeNode),
-            _ => None,
+    impl PtrmapType {
+        pub fn from_u8(value: u8) -> Option<Self> {
+            match value {
+                1 => Some(PtrmapType::RootPage),
+                2 => Some(PtrmapType::FreePage),
+                3 => Some(PtrmapType::Overflow1),
+                4 => Some(PtrmapType::Overflow2),
+                5 => Some(PtrmapType::BTreeNode),
+                _ => None,
+            }
         }
     }
-}
 
-#[derive(Debug, Clone, Copy)]
-pub struct PtrmapEntry {
-    pub entry_type: PtrmapType,
-    pub parent_page_no: u32,
-}
+    #[derive(Debug, Clone, Copy)]
+    pub struct PtrmapEntry {
+        pub entry_type: PtrmapType,
+        pub parent_page_no: u32,
+    }
 
-impl PtrmapEntry {
-    pub fn serialize(&self, buffer: &mut [u8]) -> Result<()> {
-        if buffer.len() < PTRMAP_ENTRY_SIZE {
-            return Err(LimboError::InternalError(format!(
+    impl PtrmapEntry {
+        pub fn serialize(&self, buffer: &mut [u8]) -> Result<()> {
+            if buffer.len() < PTRMAP_ENTRY_SIZE {
+                return Err(LimboError::InternalError(format!(
                 "Buffer too small to serialize ptrmap entry. Expected at least {} bytes, got {}",
                 PTRMAP_ENTRY_SIZE,
                 buffer.len()
             )));
+            }
+            buffer[0] = self.entry_type as u8;
+            buffer[1..5].copy_from_slice(&self.parent_page_no.to_be_bytes());
+            Ok(())
         }
-        buffer[0] = self.entry_type as u8;
-        buffer[1..5].copy_from_slice(&self.parent_page_no.to_be_bytes());
-        Ok(())
-    }
 
-    pub fn deserialize(buffer: &[u8]) -> Option<Self> {
-        if buffer.len() < PTRMAP_ENTRY_SIZE {
-            return None;
+        pub fn deserialize(buffer: &[u8]) -> Option<Self> {
+            if buffer.len() < PTRMAP_ENTRY_SIZE {
+                return None;
+            }
+            let entry_type_u8 = buffer[0];
+            let parent_bytes_slice = buffer.get(1..5)?;
+            let parent_page_no = u32::from_be_bytes(parent_bytes_slice.try_into().ok()?);
+            PtrmapType::from_u8(entry_type_u8).map(|entry_type| PtrmapEntry {
+                entry_type,
+                parent_page_no,
+            })
         }
-        let entry_type_u8 = buffer[0];
-        let parent_bytes_slice = buffer.get(1..5)?;
-        let parent_page_no = u32::from_be_bytes(parent_bytes_slice.try_into().ok()?);
-        PtrmapType::from_u8(entry_type_u8).map(|entry_type| PtrmapEntry {
-            entry_type,
-            parent_page_no,
-        })
-    }
-}
-
-/// Calculates how many database pages are mapped by a single pointer map page.
-/// This is based on the total page size, as ptrmap pages are filled with entries.
-fn entries_per_ptrmap_page(page_size: usize) -> usize {
-    if page_size < PTRMAP_ENTRY_SIZE {
-        0
-    } else {
-        page_size / PTRMAP_ENTRY_SIZE
-    }
-}
-
-/// Calculates the cycle length of pointer map pages
-/// The cycle length is the number of database pages that are mapped by a single pointer map page.
-fn ptrmap_page_cycle_length(page_size: usize) -> usize {
-    if page_size < PTRMAP_ENTRY_SIZE {
-        0
-    } else {
-        (page_size / PTRMAP_ENTRY_SIZE) + 1
-    }
-}
-
-/// Determines if a given page number `db_page_no` (1-indexed) is a pointer map page in a database with autovacuum enabled
-pub fn is_ptrmap_page(db_page_no: u32, page_size: usize) -> bool {
-    //  The first page cannot be a ptrmap page because its for the schema
-    if db_page_no == 1 {
-        return false;
-    }
-    if db_page_no == FIRST_PTRMAP_PAGE_NO {
-        return true;
-    }
-    return get_ptrmap_page_no_for_db_page(db_page_no, page_size) == db_page_no;
-}
-
-/// Calculates which pointer map page (1-indexed) contains the entry for `db_page_no_to_query` (1-indexed).
-/// `db_page_no_to_query` is the page whose ptrmap entry we are interested in.
-pub fn get_ptrmap_page_no_for_db_page(db_page_no_to_query: u32, page_size: usize) -> u32 {
-    let group_size = ptrmap_page_cycle_length(page_size) as u32;
-    if group_size == 0 {
-        panic!("Page size too small, a ptrmap page cannot map any db pages.");
     }
 
-    let effective_page_index = db_page_no_to_query - FIRST_PTRMAP_PAGE_NO;
-    let group_idx = effective_page_index / group_size;
-
-    (group_idx * group_size) + FIRST_PTRMAP_PAGE_NO
-}
-
-/// Calculates the byte offset of the entry for `db_page_no_to_query` (1-indexed)
-/// within its pointer map page (`ptrmap_page_no`, 1-indexed).
-pub fn get_ptrmap_offset_in_page(
-    db_page_no_to_query: u32,
-    ptrmap_page_no: u32,
-    page_size: usize,
-) -> Result<usize> {
-    // The data pages mapped by `ptrmap_page_no` are:
-    // `ptrmap_page_no + 1`, `ptrmap_page_no + 2`, ..., up to `ptrmap_page_no + n_data_pages_per_group`.
-    // `db_page_no_to_query` must be one of these.
-    // The 0-indexed position of `db_page_no_to_query` within this sequence of data pages is:
-    // `db_page_no_to_query - (ptrmap_page_no + 1)`.
-
-    let n_data_pages_per_group = entries_per_ptrmap_page(page_size);
-    let first_data_page_mapped = ptrmap_page_no + 1;
-    let last_data_page_mapped = ptrmap_page_no + n_data_pages_per_group as u32;
-
-    if db_page_no_to_query < first_data_page_mapped || db_page_no_to_query > last_data_page_mapped {
-        return Err(LimboError::InternalError(format!(
-            "Page {} is not mapped by the data page range [{}, {}] of ptrmap page {}",
-            db_page_no_to_query, first_data_page_mapped, last_data_page_mapped, ptrmap_page_no
-        )));
-    }
-    if is_ptrmap_page(db_page_no_to_query, page_size) {
-        return Err(LimboError::InternalError(format!(
-            "Page {} is a pointer map page and should not have an entry calculated this way.",
-            db_page_no_to_query
-        )));
+    /// Calculates how many database pages are mapped by a single pointer map page.
+    /// This is based on the total page size, as ptrmap pages are filled with entries.
+    pub fn entries_per_ptrmap_page(page_size: usize) -> usize {
+        if page_size < PTRMAP_ENTRY_SIZE {
+            0
+        } else {
+            page_size / PTRMAP_ENTRY_SIZE
+        }
     }
 
-    let entry_index_on_page = (db_page_no_to_query - first_data_page_mapped) as usize;
-    Ok(entry_index_on_page * PTRMAP_ENTRY_SIZE)
+    /// Calculates the cycle length of pointer map pages
+    /// The cycle length is the number of database pages that are mapped by a single pointer map page.
+    fn ptrmap_page_cycle_length(page_size: usize) -> usize {
+        if page_size < PTRMAP_ENTRY_SIZE {
+            0
+        } else {
+            (page_size / PTRMAP_ENTRY_SIZE) + 1
+        }
+    }
+
+    /// Determines if a given page number `db_page_no` (1-indexed) is a pointer map page in a database with autovacuum enabled
+    pub fn is_ptrmap_page(db_page_no: u32, page_size: usize) -> bool {
+        //  The first page cannot be a ptrmap page because its for the schema
+        if db_page_no == 1 {
+            return false;
+        }
+        if db_page_no == FIRST_PTRMAP_PAGE_NO {
+            return true;
+        }
+        return get_ptrmap_page_no_for_db_page(db_page_no, page_size) == db_page_no;
+    }
+
+    /// Calculates which pointer map page (1-indexed) contains the entry for `db_page_no_to_query` (1-indexed).
+    /// `db_page_no_to_query` is the page whose ptrmap entry we are interested in.
+    pub fn get_ptrmap_page_no_for_db_page(db_page_no_to_query: u32, page_size: usize) -> u32 {
+        let group_size = ptrmap_page_cycle_length(page_size) as u32;
+        if group_size == 0 {
+            panic!("Page size too small, a ptrmap page cannot map any db pages.");
+        }
+
+        let effective_page_index = db_page_no_to_query - FIRST_PTRMAP_PAGE_NO;
+        let group_idx = effective_page_index / group_size;
+
+        (group_idx * group_size) + FIRST_PTRMAP_PAGE_NO
+    }
+
+    /// Calculates the byte offset of the entry for `db_page_no_to_query` (1-indexed)
+    /// within its pointer map page (`ptrmap_page_no`, 1-indexed).
+    pub fn get_ptrmap_offset_in_page(
+        db_page_no_to_query: u32,
+        ptrmap_page_no: u32,
+        page_size: usize,
+    ) -> Result<usize> {
+        // The data pages mapped by `ptrmap_page_no` are:
+        // `ptrmap_page_no + 1`, `ptrmap_page_no + 2`, ..., up to `ptrmap_page_no + n_data_pages_per_group`.
+        // `db_page_no_to_query` must be one of these.
+        // The 0-indexed position of `db_page_no_to_query` within this sequence of data pages is:
+        // `db_page_no_to_query - (ptrmap_page_no + 1)`.
+
+        let n_data_pages_per_group = entries_per_ptrmap_page(page_size);
+        let first_data_page_mapped = ptrmap_page_no + 1;
+        let last_data_page_mapped = ptrmap_page_no + n_data_pages_per_group as u32;
+
+        if db_page_no_to_query < first_data_page_mapped
+            || db_page_no_to_query > last_data_page_mapped
+        {
+            return Err(LimboError::InternalError(format!(
+                "Page {} is not mapped by the data page range [{}, {}] of ptrmap page {}",
+                db_page_no_to_query, first_data_page_mapped, last_data_page_mapped, ptrmap_page_no
+            )));
+        }
+        if is_ptrmap_page(db_page_no_to_query, page_size) {
+            return Err(LimboError::InternalError(format!(
+                "Page {} is a pointer map page and should not have an entry calculated this way.",
+                db_page_no_to_query
+            )));
+        }
+
+        let entry_index_on_page = (db_page_no_to_query - first_data_page_mapped) as usize;
+        Ok(entry_index_on_page * PTRMAP_ENTRY_SIZE)
+    }
 }
 
 #[cfg(test)]
@@ -1219,6 +1228,7 @@ mod tests {
 
 #[cfg(test)]
 mod ptrmap_tests {
+    use super::ptrmap::*;
     use super::*;
 
     #[cfg(not(feature = "omit_autovacuum"))]
