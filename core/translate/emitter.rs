@@ -1,7 +1,6 @@
 // This module contains code for emitting bytecode instructions for SQL query execution.
 // It handles translating high-level SQL operations into low-level bytecode that can be executed by the virtual machine.
 
-use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -693,30 +692,32 @@ fn emit_program_for_delete(
 
     // Open indexes for delete.
     // Order is important. This segment of code must be run before `open_loop`
-    let mut index_cursors = HashMap::with_capacity(plan.indexes.len());
 
-    for table_ref in plan.table_references.joined_tables() {
-        let index_cursor_id = table_ref.op.index().map(|index| {
-            program.resolve_cursor_id(&CursorKey::index(table_ref.internal_id, index.clone()))
-        });
-        if let Some(index_cursor) = index_cursor_id {
-            let index = table_ref.op.index().unwrap();
-            index_cursors.insert(index.name.as_str(), index_cursor);
-        }
-    }
-    for index in &plan.indexes {
-        index_cursors.entry(index.name.as_str()).or_insert_with(|| {
-            let index_cursor_id = program.alloc_cursor_id(CursorType::BTreeIndex(index.clone()));
-            program.emit_insn(Insn::OpenWrite {
-                cursor_id: index_cursor_id,
-                root_page: RegisterOrLiteral::Literal(index.root_page),
-                name: index.name.clone(),
-            });
-            index_cursor_id
-        });
-    }
+    let table_ref = plan.table_references.joined_tables().first().unwrap();
+    let index_references = plan
+        .indexes
+        .iter()
+        .map(|index| {
+            if table_ref
+                .op
+                .index()
+                .is_some_and(|table_ref_index| table_ref_index.name == index.name)
+            {
+                (
+                    index.clone(),
+                    program
+                        .resolve_cursor_id(&CursorKey::index(table_ref.internal_id, index.clone())),
+                )
+            } else {
+                (
+                    index.clone(),
+                    program.alloc_cursor_id(CursorType::BTreeIndex(index.clone())),
+                )
+            }
+        })
+        .collect::<Vec<_>>();
 
-    assert_eq!(index_cursors.len(), plan.indexes.len());
+    assert_eq!(index_references.len(), plan.indexes.len());
 
     // Set up main query execution loop
     open_loop(
@@ -731,8 +732,7 @@ fn emit_program_for_delete(
         program,
         &mut t_ctx,
         &plan.table_references,
-        &plan.indexes,
-        index_cursors.values().into_iter(),
+        &index_references,
     )?;
 
     // Clean up and close the main execution loop
@@ -751,12 +751,11 @@ fn emit_program_for_delete(
     Ok(())
 }
 
-fn emit_delete_insns<'a, T: Iterator<Item = &'a usize>>(
+fn emit_delete_insns(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx,
     table_references: &TableReferences,
-    index_references: &[Arc<Index>],
-    index_cursors: T,
+    index_references: &[(Arc<Index>, usize)],
 ) -> Result<()> {
     let table_reference = table_references.joined_tables().first().unwrap();
     let cursor_id = match &table_reference.op {
@@ -801,7 +800,7 @@ fn emit_delete_insns<'a, T: Iterator<Item = &'a usize>>(
             conflict_action,
         });
     } else {
-        for (index, index_cursor_id) in index_references.iter().zip(index_cursors) {
+        for (index, index_cursor_id) in index_references {
             let num_regs = index.columns.len() + 1;
             let start_reg = program.alloc_registers(num_regs);
             // Emit columns that are part of the index
