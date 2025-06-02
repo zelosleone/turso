@@ -46,6 +46,8 @@ pub struct SimulatorCLI {
     pub differential: bool,
     #[clap(subcommand)]
     pub subcommand: Option<SimulatorCommand>,
+    #[clap(long, help = "disable BugBase", default_value_t = false)]
+    pub disable_bugbase: bool,
 }
 
 #[derive(Parser, Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord)]
