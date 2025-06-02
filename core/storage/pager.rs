@@ -1,5 +1,4 @@
 use crate::fast_lock::SpinLock;
-use crate::io::Buffer as IoBuffer;
 use crate::result::LimboResult;
 use crate::storage::btree::BTreePageInner;
 use crate::storage::buffer_pool::BufferPool;
@@ -23,7 +22,7 @@ use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCac
 use super::wal::{CheckpointMode, CheckpointStatus};
 
 #[cfg(not(feature = "omit_autovacuum"))]
-use ptrmap::*;
+use {crate::io::Buffer as IoBuffer, ptrmap::*};
 
 pub struct PageInner {
     pub flags: AtomicUsize,
@@ -279,6 +278,7 @@ impl Pager {
     /// Retrieves the pointer map entry for a given database page.
     /// `target_page_num` (1-indexed) is the page whose entry is sought.
     /// Returns `Ok(None)` if the page is not supposed to have a ptrmap entry (e.g. header, or a ptrmap page itself).
+    #[cfg(not(feature = "omit_autovacuum"))]
     pub fn ptrmap_get(&self, target_page_num: u32) -> Result<Option<PtrmapEntry>> {
         tracing::trace!("ptrmap_get(page_idx = {})", target_page_num);
         let configured_page_size = self.db_header.lock().get_page_size() as usize;
@@ -347,6 +347,7 @@ impl Pager {
     /// Writes or updates the pointer map entry for a given database page.
     /// `db_page_no_to_update` (1-indexed) is the page whose entry is to be set.
     /// `entry_type` and `parent_page_no` define the new entry.
+    #[cfg(not(feature = "omit_autovacuum"))]
     pub fn ptrmap_put(
         &self,
         db_page_no_to_update: u32,
@@ -1115,16 +1116,13 @@ mod ptrmap {
     /// Calculates how many database pages are mapped by a single pointer map page.
     /// This is based on the total page size, as ptrmap pages are filled with entries.
     pub fn entries_per_ptrmap_page(page_size: usize) -> usize {
-        if page_size < PTRMAP_ENTRY_SIZE {
-            0
-        } else {
-            page_size / PTRMAP_ENTRY_SIZE
-        }
+        assert!(page_size >= MIN_PAGE_SIZE as usize);
+        page_size / PTRMAP_ENTRY_SIZE
     }
 
     /// Calculates the cycle length of pointer map pages
     /// The cycle length is the number of database pages that are mapped by a single pointer map page.
-    fn ptrmap_page_cycle_length(page_size: usize) -> usize {
+    pub fn ptrmap_page_cycle_length(page_size: usize) -> usize {
         assert!(page_size >= MIN_PAGE_SIZE as usize);
         (page_size / PTRMAP_ENTRY_SIZE) + 1
     }
@@ -1224,27 +1222,25 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(not(feature = "omit_autovacuum"))]
 mod ptrmap_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Arc;
+
     use super::ptrmap::*;
     use super::*;
-
-    #[cfg(not(feature = "omit_autovacuum"))]
-    use {
-        crate::fast_lock::SpinLock,
-        crate::io::{MemoryIO, OpenFlags, IO},
-        crate::storage::buffer_pool::BufferPool,
-        crate::storage::database::{DatabaseFile, DatabaseStorage},
-        crate::storage::page_cache::DumbLruPageCache,
-        crate::storage::pager::Pager,
-        crate::storage::sqlite3_ondisk::DatabaseHeader,
-        crate::storage::wal::{WalFile, WalFileShared},
-        std::cell::RefCell,
-        std::rc::Rc,
-        std::sync::Arc,
-    };
+    use crate::fast_lock::SpinLock;
+    use crate::io::{MemoryIO, OpenFlags, IO};
+    use crate::storage::buffer_pool::BufferPool;
+    use crate::storage::database::{DatabaseFile, DatabaseStorage};
+    use crate::storage::page_cache::DumbLruPageCache;
+    use crate::storage::pager::Pager;
+    use crate::storage::sqlite3_ondisk::DatabaseHeader;
+    use crate::storage::sqlite3_ondisk::MIN_PAGE_SIZE;
+    use crate::storage::wal::{WalFile, WalFileShared};
 
     // Helper to create a Pager for testing
-    #[cfg(not(feature = "omit_autovacuum"))]
     fn test_pager_setup(page_size: u32, initial_db_pages: u32) -> Pager {
         let io: Arc<dyn IO> = Arc::new(MemoryIO::new()); // In-memory IO for tests
         let db_file_raw = io.open_file("test.db", OpenFlags::Create, true).unwrap();
@@ -1282,7 +1278,6 @@ mod ptrmap_tests {
     }
 
     #[test]
-    #[cfg(not(feature = "omit_autovacuum"))]
     fn test_ptrmap_page_allocation() {
         let page_size = 4096;
         let initial_db_pages = 10;
@@ -1309,42 +1304,45 @@ mod ptrmap_tests {
 
     #[test]
     fn test_is_ptrmap_page_logic() {
-        let page_size = 15;
+        let page_size = MIN_PAGE_SIZE as usize;
         let n_data_pages = entries_per_ptrmap_page(page_size);
-        assert_eq!(n_data_pages, 3);
+        assert_eq!(n_data_pages, 102); //   512/5 = 102
 
         assert!(!is_ptrmap_page(1, page_size)); // Header
         assert!(is_ptrmap_page(2, page_size)); // P0
         assert!(!is_ptrmap_page(3, page_size)); // D0_1
         assert!(!is_ptrmap_page(4, page_size)); // D0_2
         assert!(!is_ptrmap_page(5, page_size)); // D0_3
-        assert!(is_ptrmap_page(6, page_size)); // P1
-        assert!(!is_ptrmap_page(7, page_size)); // D1_1
-        assert!(!is_ptrmap_page(8, page_size)); // D1_2
+        assert!(is_ptrmap_page(105, page_size)); // P1
+        assert!(!is_ptrmap_page(106, page_size)); // D1_1
+        assert!(!is_ptrmap_page(107, page_size)); // D1_2
+        assert!(!is_ptrmap_page(108, page_size)); // D1_3
+        assert!(is_ptrmap_page(208, page_size)); // P2
     }
 
     #[test]
     fn test_get_ptrmap_page_no() {
-        let page_size = 15; // Maps 3 data pages
+        let page_size = MIN_PAGE_SIZE as usize; // Maps 103 data pages
 
         // Test pages mapped by P0 (page 2)
         assert_eq!(get_ptrmap_page_no_for_db_page(3, page_size), 2); // D(3) -> P0(2)
         assert_eq!(get_ptrmap_page_no_for_db_page(4, page_size), 2); // D(4) -> P0(2)
         assert_eq!(get_ptrmap_page_no_for_db_page(5, page_size), 2); // D(5) -> P0(2)
+        assert_eq!(get_ptrmap_page_no_for_db_page(104, page_size), 2); // D(104) -> P0(2)
 
-        assert_eq!(get_ptrmap_page_no_for_db_page(6, page_size), 6); // Page 6 is a pointer map page.
+        assert_eq!(get_ptrmap_page_no_for_db_page(105, page_size), 105); // Page 105 is a pointer map page.
 
         // Test pages mapped by P1 (page 6)
-        assert_eq!(get_ptrmap_page_no_for_db_page(7, page_size), 6); // D(8) -> P1(6)
-        assert_eq!(get_ptrmap_page_no_for_db_page(8, page_size), 6); // D(8) -> P1(6)
-        assert_eq!(get_ptrmap_page_no_for_db_page(9, page_size), 6); // D(9) -> P1(6)
+        assert_eq!(get_ptrmap_page_no_for_db_page(106, page_size), 105); // D(106) -> P1(105)
+        assert_eq!(get_ptrmap_page_no_for_db_page(107, page_size), 105); // D(107) -> P1(105)
+        assert_eq!(get_ptrmap_page_no_for_db_page(108, page_size), 105); // D(108) -> P1(105)
 
-        assert_eq!(get_ptrmap_page_no_for_db_page(10, page_size), 10); // Page 10 is a pointer map page.
+        assert_eq!(get_ptrmap_page_no_for_db_page(208, page_size), 208); // Page 208 is a pointer map page.
     }
 
     #[test]
     fn test_get_ptrmap_offset() {
-        let page_size = 15; //  Maps 3 data pages
+        let page_size = MIN_PAGE_SIZE as usize; //  Maps 103 data pages
 
         assert_eq!(get_ptrmap_offset_in_page(3, 2, page_size).unwrap(), 0);
         assert_eq!(
@@ -1356,17 +1354,17 @@ mod ptrmap_tests {
             2 * PTRMAP_ENTRY_SIZE
         );
 
-        //  P1 (page 6) maps D(7), D(8) and D(9)
-        // D(7) is index 0 on P1. Offset 0.
-        // D(8) is index 1 on P1. Offset 5.
-        // D(9) is index 2 on P1. Offset 10.
-        assert_eq!(get_ptrmap_offset_in_page(7, 6, page_size).unwrap(), 0);
+        //  P1 (page 105) maps D(106)...D(207)
+        // D(106) is index 0 on P1. Offset 0.
+        // D(107) is index 1 on P1. Offset 5.
+        // D(108) is index 2 on P1. Offset 10.
+        assert_eq!(get_ptrmap_offset_in_page(106, 105, page_size).unwrap(), 0);
         assert_eq!(
-            get_ptrmap_offset_in_page(8, 6, page_size).unwrap(),
+            get_ptrmap_offset_in_page(107, 105, page_size).unwrap(),
             1 * PTRMAP_ENTRY_SIZE
         );
         assert_eq!(
-            get_ptrmap_offset_in_page(9, 6, page_size).unwrap(),
+            get_ptrmap_offset_in_page(108, 105, page_size).unwrap(),
             2 * PTRMAP_ENTRY_SIZE
         );
     }
