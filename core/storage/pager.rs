@@ -166,9 +166,12 @@ enum CheckpointState {
 
 /// The mode of allocating a btree page.
 pub enum BtreePageAllocMode {
-    Any,        //  allocate any btree page
-    Exact(u32), //  allocate a specific page number, typically used for root page allocation
-    Le(u32),    //  allocate a page number less than or equal to the parameter
+    /// Allocate any btree page
+    Any,
+    /// Allocate a specific page number, typically used for root page allocation
+    Exact(u32),
+    /// Allocate a page number less than or equal to the parameter
+    Le(u32),
 }
 
 /// This will keep track of the state of current cache flush in order to not repeat work
@@ -271,25 +274,24 @@ impl Pager {
     }
 
     /// Retrieves the pointer map entry for a given database page.
-    /// `db_page_no_to_query` (1-indexed) is the page whose entry is sought.
+    /// `target_page_num` (1-indexed) is the page whose entry is sought.
     /// Returns `Ok(None)` if the page is not supposed to have a ptrmap entry (e.g. header, or a ptrmap page itself).
-    pub fn ptrmap_get(&self, db_page_no_to_query: u32) -> Result<Option<PtrmapEntry>> {
-        tracing::trace!("ptrmap_get(page_idx = {})", db_page_no_to_query);
+    pub fn ptrmap_get(&self, target_page_num: u32) -> Result<Option<PtrmapEntry>> {
+        tracing::trace!("ptrmap_get(page_idx = {})", target_page_num);
         let configured_page_size = self.db_header.lock().get_page_size() as usize;
 
-        if db_page_no_to_query < FIRST_PTRMAP_PAGE_NO
-            || is_ptrmap_page(db_page_no_to_query, configured_page_size)
+        if target_page_num < FIRST_PTRMAP_PAGE_NO
+            || is_ptrmap_page(target_page_num, configured_page_size)
         {
             return Ok(None);
         }
 
-        let ptrmap_pg_no =
-            get_ptrmap_page_no_for_db_page(db_page_no_to_query, configured_page_size);
+        let ptrmap_pg_no = get_ptrmap_page_no_for_db_page(target_page_num, configured_page_size);
         let offset_in_ptrmap_page =
-            get_ptrmap_offset_in_page(db_page_no_to_query, ptrmap_pg_no, configured_page_size)?;
+            get_ptrmap_offset_in_page(target_page_num, ptrmap_pg_no, configured_page_size)?;
         tracing::trace!(
             "ptrmap_get(page_idx = {}) = ptrmap_pg_no = {}",
-            db_page_no_to_query,
+            target_page_num,
             ptrmap_pg_no
         );
 
@@ -334,7 +336,7 @@ impl Pager {
             Some(entry) => Ok(Some(entry)),
             None => Err(LimboError::Corrupt(format!(
                 "Failed to deserialize ptrmap entry for page {} from ptrmap page {}",
-                db_page_no_to_query, ptrmap_pg_no
+                target_page_num, ptrmap_pg_no
             ))),
         }
     }
@@ -1043,7 +1045,8 @@ impl CreateBTreeFlags {
 
 // Constants
 pub const PTRMAP_ENTRY_SIZE: usize = 5;
-/// Page 1 is the database header. Page 2 is the first pointer map page.
+/// Page 1 is the schema page which contains the database header.
+/// Page 2 is the first pointer map page if the database has any pointer map pages.
 pub const FIRST_PTRMAP_PAGE_NO: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1123,7 +1126,7 @@ fn ptrmap_page_cycle_length(page_size: usize) -> usize {
     }
 }
 
-/// Determines if a given page number `db_page_no` (1-indexed) is a pointer map page.
+/// Determines if a given page number `db_page_no` (1-indexed) is a pointer map page in a database with autovacuum enabled
 pub fn is_ptrmap_page(db_page_no: u32, page_size: usize) -> bool {
     //  The first page cannot be a ptrmap page because its for the schema
     if db_page_no == 1 {
