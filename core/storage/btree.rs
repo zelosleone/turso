@@ -4297,7 +4297,7 @@ impl BTreeCursor {
             },
             None => {
                 tracing::trace!("moved {}", moved_before);
-                if !moved_before {
+                if !moved_before && !matches!(self.state, CursorState::Write(..)) {
                     match key {
                         BTreeKey::IndexKey(_) => {
                             return_if_io!(self
