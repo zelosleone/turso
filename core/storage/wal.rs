@@ -1,6 +1,7 @@
 #![allow(clippy::arc_with_non_send_sync)]
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+use std::array;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use tracing::{debug, trace};
@@ -896,7 +897,7 @@ impl WalFileShared {
         let header = if file.size()? > 0 {
             let wal_file_shared = sqlite3_ondisk::read_entire_wal_dumb(&file)?;
             // TODO: Return a completion instead.
-            let mut max_loops = 100000;
+            let mut max_loops = 100_000;
             while !unsafe { &*wal_file_shared.get() }
                 .loaded
                 .load(Ordering::SeqCst)
@@ -953,33 +954,11 @@ impl WalFileShared {
             last_checksum: checksum,
             file,
             pages_in_frames: Arc::new(SpinLock::new(Vec::new())),
-            read_locks: [
-                LimboRwLock {
-                    lock: AtomicU32::new(NO_LOCK),
-                    nreads: AtomicU32::new(0),
-                    value: AtomicU32::new(READMARK_NOT_USED),
-                },
-                LimboRwLock {
-                    lock: AtomicU32::new(NO_LOCK),
-                    nreads: AtomicU32::new(0),
-                    value: AtomicU32::new(READMARK_NOT_USED),
-                },
-                LimboRwLock {
-                    lock: AtomicU32::new(NO_LOCK),
-                    nreads: AtomicU32::new(0),
-                    value: AtomicU32::new(READMARK_NOT_USED),
-                },
-                LimboRwLock {
-                    lock: AtomicU32::new(NO_LOCK),
-                    nreads: AtomicU32::new(0),
-                    value: AtomicU32::new(READMARK_NOT_USED),
-                },
-                LimboRwLock {
-                    lock: AtomicU32::new(NO_LOCK),
-                    nreads: AtomicU32::new(0),
-                    value: AtomicU32::new(READMARK_NOT_USED),
-                },
-            ],
+            read_locks: array::from_fn(|_| LimboRwLock {
+                lock: AtomicU32::new(NO_LOCK),
+                nreads: AtomicU32::new(0),
+                value: AtomicU32::new(READMARK_NOT_USED),
+            }),
             write_lock: LimboRwLock {
                 lock: AtomicU32::new(NO_LOCK),
                 nreads: AtomicU32::new(0),
