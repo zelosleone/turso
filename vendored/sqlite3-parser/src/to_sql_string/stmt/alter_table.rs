@@ -68,7 +68,7 @@ impl ToSqlString for ast::ColumnConstraint {
                 deref_clause,
             } => format!(
                 "{}{}",
-                clause.to_string(),
+                clause,
                 if let Some(deref) = deref_clause {
                     deref.to_string()
                 } else {
@@ -94,10 +94,7 @@ impl ToSqlString for ast::ColumnConstraint {
                 // nullable should always be true here
                 format!(
                     "NOT NULL{}",
-                    conflict_clause.map_or("".to_string(), |conflict| format!(
-                        " {}",
-                        conflict.to_string()
-                    ))
+                    conflict_clause.map_or("".to_string(), |conflict| format!(" {}", conflict))
                 )
             }
             Self::PrimaryKey {
@@ -107,21 +104,15 @@ impl ToSqlString for ast::ColumnConstraint {
             } => {
                 format!(
                     "PRIMARY KEY{}{}{}",
-                    order.map_or("".to_string(), |order| format!(" {}", order.to_string())),
-                    conflict_clause.map_or("".to_string(), |conflict| format!(
-                        " {}",
-                        conflict.to_string()
-                    )),
+                    order.map_or("".to_string(), |order| format!(" {}", order)),
+                    conflict_clause.map_or("".to_string(), |conflict| format!(" {}", conflict)),
                     auto_increment.then_some(" AUTOINCREMENT").unwrap_or("")
                 )
             }
             Self::Unique(conflict_clause) => {
                 format!(
                     "UNIQUE{}",
-                    conflict_clause.map_or("".to_string(), |conflict| format!(
-                        " {}",
-                        conflict.to_string()
-                    ))
+                    conflict_clause.map_or("".to_string(), |conflict| format!(" {}", conflict))
                 )
             }
         }
@@ -166,8 +157,8 @@ impl Display for ast::RefArg {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let value = match self {
             Self::Match(name) => format!("MATCH {}", name.0),
-            Self::OnDelete(act) => format!("ON DELETE {}", act.to_string()),
-            Self::OnUpdate(act) => format!("ON UPDATE {}", act.to_string()),
+            Self::OnDelete(act) => format!("ON DELETE {}", act),
+            Self::OnUpdate(act) => format!("ON UPDATE {}", act),
             Self::OnInsert(..) => unimplemented!(
                 "On Insert does not exist in SQLite: https://www.sqlite.org/lang_altertable.html"
             ),

@@ -8,10 +8,8 @@ impl ToSqlString for ast::Insert {
                 "{} ",
                 with.to_sql_string(context)
             )),
-            self.or_conflict.map_or("".to_string(), |conflict| format!(
-                "OR {} ",
-                conflict.to_string()
-            )),
+            self.or_conflict
+                .map_or("".to_string(), |conflict| format!("OR {} ", conflict)),
             self.tbl_name.to_sql_string(context),
             self.columns
                 .as_ref()

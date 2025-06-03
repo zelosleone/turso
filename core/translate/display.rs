@@ -279,7 +279,7 @@ impl ToSqlString for Plan {
                 for (other_plan, operator) in rest {
                     ret.push(format!(
                         "{} {}",
-                        operator.to_string(),
+                        operator,
                         other_plan.to_sql_string(context),
                     ));
                 }
@@ -291,7 +291,7 @@ impl ToSqlString for Plan {
                             .map(|(expr, order)| format!(
                                 "{} {}",
                                 expr.to_sql_string(context),
-                                order.to_string()
+                                order
                             ))
                             .collect::<Vec<_>>()
                             .join(", ")
@@ -446,11 +446,7 @@ impl ToSqlString for SelectPlan {
                 "ORDER BY {}",
                 order_by
                     .iter()
-                    .map(|(expr, order)| format!(
-                        "{} {}",
-                        expr.to_sql_string(context),
-                        order.to_string()
-                    ))
+                    .map(|(expr, order)| format!("{} {}", expr.to_sql_string(context), order))
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
@@ -493,11 +489,7 @@ impl ToSqlString for DeletePlan {
                 "ORDER BY {}",
                 order_by
                     .iter()
-                    .map(|(expr, order)| format!(
-                        "{} {}",
-                        expr.to_sql_string(context),
-                        order.to_string()
-                    ))
+                    .map(|(expr, order)| format!("{} {}", expr.to_sql_string(context), order))
                     .collect::<Vec<_>>()
                     .join(", ")
             ));
@@ -568,11 +560,7 @@ impl ToSqlString for UpdatePlan {
                 "ORDER BY {}",
                 order_by
                     .iter()
-                    .map(|(expr, order)| format!(
-                        "{} {}",
-                        expr.to_sql_string(context),
-                        order.to_string()
-                    ))
+                    .map(|(expr, order)| format!("{} {}", expr.to_sql_string(context), order))
                     .collect::<Vec<_>>()
                     .join(", ")
             ));

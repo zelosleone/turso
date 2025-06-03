@@ -13,8 +13,8 @@ impl ToSqlString for ast::CreateTrigger {
             self.if_not_exists.then_some("IF NOT EXISTS ").unwrap_or(""),
             self.trigger_name.to_sql_string(context),
             self.time
-                .map_or("".to_string(), |time| format!(" {}", time.to_string())),
-            self.event.to_string(),
+                .map_or("".to_string(), |time| format!(" {}", time)),
+            self.event,
             self.tbl_name.to_sql_string(context),
             self.for_each_row.then_some(" FOR EACH ROW").unwrap_or(""),
             self.when_clause
@@ -97,10 +97,8 @@ impl ToSqlString for ast::TriggerCmdInsert {
         // TODO: no DEFAULT VALUES
         format!(
             "INSERT {}INTO {} {}{}{}{}",
-            self.or_conflict.map_or("".to_string(), |conflict| format!(
-                "OR {} ",
-                conflict.to_string()
-            )),
+            self.or_conflict
+                .map_or("".to_string(), |conflict| format!("OR {} ", conflict)),
             self.tbl_name.0,
             self.col_names
                 .as_ref()
@@ -216,10 +214,8 @@ impl ToSqlString for ast::TriggerCmdUpdate {
     fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, context: &C) -> String {
         format!(
             "UPDATE {}{} SET {}{}{}",
-            self.or_conflict.map_or("".to_string(), |conflict| format!(
-                "OR {}",
-                conflict.to_string()
-            )),
+            self.or_conflict
+                .map_or("".to_string(), |conflict| format!("OR {}", conflict)),
             self.tbl_name.0, // TODO: should be a qualified table name,
             self.sets
                 .iter()

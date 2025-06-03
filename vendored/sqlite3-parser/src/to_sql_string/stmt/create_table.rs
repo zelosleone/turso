@@ -28,7 +28,7 @@ impl ToSqlString for ast::CreateTableBody {
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         )),
-                    options.to_string()
+                    options
                 )
             }
         }
@@ -64,7 +64,7 @@ impl ToSqlString for ast::TableConstraint {
                     .map(|col| col.to_string())
                     .collect::<Vec<_>>()
                     .join(", "),
-                clause.to_string(),
+                clause,
                 if let Some(deref) = deref_clause {
                     deref.to_string()
                 } else {
@@ -82,10 +82,7 @@ impl ToSqlString for ast::TableConstraint {
                     .map(|col| col.to_sql_string(context))
                     .collect::<Vec<_>>()
                     .join(", "),
-                conflict_clause.map_or("".to_string(), |conflict| format!(
-                    " {}",
-                    conflict.to_string()
-                )),
+                conflict_clause.map_or("".to_string(), |conflict| format!(" {}", conflict)),
                 auto_increment.then_some(" AUTOINCREMENT").unwrap_or("")
             ),
             Self::Unique {
@@ -98,10 +95,7 @@ impl ToSqlString for ast::TableConstraint {
                     .map(|col| col.to_sql_string(context))
                     .collect::<Vec<_>>()
                     .join(", "),
-                conflict_clause.map_or("".to_string(), |conflict| format!(
-                    " {}",
-                    conflict.to_string()
-                ))
+                conflict_clause.map_or("".to_string(), |conflict| format!(" {}", conflict))
             ),
         }
     }

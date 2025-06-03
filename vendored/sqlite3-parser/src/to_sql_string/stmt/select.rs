@@ -359,7 +359,7 @@ impl Display for ast::JoinOperator {
                 Self::TypedJoin(join) => {
                     let join_keyword = "JOIN";
                     if let Some(join) = join {
-                        format!("{} {}", join.to_string(), join_keyword)
+                        format!("{} {}", join, join_keyword)
                     } else {
                         join_keyword.to_string()
                     }
