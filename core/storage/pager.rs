@@ -7,6 +7,7 @@ use crate::storage::sqlite3_ondisk::{
     self, DatabaseHeader, PageContent, PageType, DATABASE_HEADER_PAGE_ID,
 };
 use crate::storage::wal::{CheckpointResult, Wal, WalFsyncStatus};
+use crate::types::CursorResult;
 use crate::Completion;
 use crate::{Buffer, LimboError, Result};
 use parking_lot::RwLock;
@@ -22,7 +23,7 @@ use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCac
 use super::wal::{CheckpointMode, CheckpointStatus};
 
 #[cfg(not(feature = "omit_autovacuum"))]
-use {crate::io::Buffer as IoBuffer, crate::types::CursorResult, ptrmap::*};
+use {crate::io::Buffer as IoBuffer, ptrmap::*};
 
 pub struct PageInner {
     pub flags: AtomicUsize,
