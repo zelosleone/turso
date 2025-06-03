@@ -19,7 +19,7 @@ class InsertTest(BaseModel):
 
     def run(self, limbo: TestLimboShell):
         zero_blob = "0" * self.blob_size * 2
-        big_stmt = [self.db_schema]
+        big_stmt = [self.db_schema, "CREATE INDEX test_index ON test(t1);"]
         big_stmt = big_stmt + [
             f"INSERT INTO test (t1) VALUES (zeroblob({self.blob_size}));"
             if i % 2 == 0 and self.has_blob
@@ -37,6 +37,10 @@ class InsertTest(BaseModel):
 
         big_stmt.append("SELECT count(*) FROM test;")
         expected.append(str(self.vals * 2))
+        
+        big_stmt.append("DELETE FROM temp;")
+        big_stmt.append("SELECT count(*) FROM temp;")
+        expected.append(str(0))
 
         big_stmt = "".join(big_stmt)
         expected = "\n".join(expected)
