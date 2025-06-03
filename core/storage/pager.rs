@@ -387,6 +387,7 @@ impl Pager {
     pub fn write_database_header(&self, header: &DatabaseHeader) -> Result<()> {
         let header_page = self.read_page(DATABASE_HEADER_PAGE_ID)?;
         while header_page.is_locked() {
+            // FIXME: we should never run io here!
             self.io.run_once()?;
         }
         header_page.set_dirty();
