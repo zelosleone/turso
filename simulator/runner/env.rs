@@ -45,6 +45,7 @@ impl SimulatorEnv {
         let total = 100.0;
 
         let mut create_percent = 0.0;
+        let mut create_index_percent = 0.0;
         let mut drop_percent = 0.0;
         let mut delete_percent = 0.0;
         let mut update_percent = 0.0;
@@ -55,6 +56,10 @@ impl SimulatorEnv {
         if !cli_opts.disable_create {
             // Create percent should be 5-15% of the write percent
             create_percent = rng.gen_range(0.05..=0.15) * write_percent;
+        }
+        if !cli_opts.disable_create_index {
+            // Create indexpercent should be 2-5% of the write percent
+            create_index_percent = rng.gen_range(0.02..=0.05) * write_percent;
         }
         if !cli_opts.disable_drop {
             // Drop percent should be 2-5% of the write percent
@@ -70,13 +75,18 @@ impl SimulatorEnv {
             update_percent = rng.gen_range(0.1..=0.2) * write_percent;
         }
 
-        let write_percent =
-            write_percent - create_percent - delete_percent - drop_percent - update_percent;
+        let write_percent = write_percent
+            - create_percent
+            - create_index_percent
+            - delete_percent
+            - drop_percent
+            - update_percent;
 
         assert_eq!(
             read_percent
                 + write_percent
                 + create_percent
+                + create_index_percent
                 + drop_percent
                 + update_percent
                 + delete_percent,
@@ -89,6 +99,7 @@ impl SimulatorEnv {
             // correct transactions processing
             max_tables: rng.gen_range(0..128),
             create_percent,
+            create_index_percent,
             read_percent,
             write_percent,
             delete_percent,
@@ -193,6 +204,7 @@ pub(crate) struct SimulatorOpts {
     // this next options are the distribution of workload where read_percent + write_percent +
     // delete_percent == 100%
     pub(crate) create_percent: f64,
+    pub(crate) create_index_percent: f64,
     pub(crate) read_percent: f64,
     pub(crate) write_percent: f64,
     pub(crate) delete_percent: f64,
