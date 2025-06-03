@@ -11,7 +11,7 @@ use crate::{
     },
     types::SeekOp,
     vdbe::{
-        builder::{CursorType, ProgramBuilder},
+        builder::{CursorKey, CursorType, ProgramBuilder},
         insn::{CmpInsFlags, IdxInsertFlags, Insn},
         BranchOffset, CursorID,
     },
@@ -199,6 +199,34 @@ pub fn init_loop(
                         root_page: root_page.into(),
                         name: btree.name.clone(),
                     });
+                    if let Some(index_cursor_id) = index_cursor_id {
+                        program.emit_insn(Insn::OpenWrite {
+                            cursor_id: index_cursor_id,
+                            root_page: index.as_ref().unwrap().root_page.into(),
+                            name: index.as_ref().unwrap().name.clone(),
+                        });
+                    }
+                    // For delete, we need to open all the other indexes too for writing
+                    if let Some(indexes) = t_ctx.resolver.schema.indexes.get(&btree.name) {
+                        for index in indexes {
+                            if table
+                                .op
+                                .index()
+                                .is_some_and(|table_index| table_index.name == index.name)
+                            {
+                                continue;
+                            }
+                            let cursor_id = program.alloc_cursor_id_keyed(
+                                CursorKey::index(table.internal_id, index.clone()),
+                                CursorType::BTreeIndex(index.clone()),
+                            );
+                            program.emit_insn(Insn::OpenWrite {
+                                cursor_id,
+                                root_page: index.root_page.into(),
+                                name: index.name.clone(),
+                            });
+                        }
+                    }
                 }
                 (OperationMode::UPDATE, Table::BTree(btree)) => {
                     let root_page = btree.root_page;
