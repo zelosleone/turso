@@ -690,35 +690,6 @@ fn emit_program_for_delete(
         OperationMode::DELETE,
     )?;
 
-    // Open indexes for delete.
-    // Order is important. This segment of code must be run before `open_loop`
-
-    let table_ref = plan.table_references.joined_tables().first().unwrap();
-    let index_references = plan
-        .indexes
-        .iter()
-        .map(|index| {
-            if table_ref
-                .op
-                .index()
-                .is_some_and(|table_ref_index| table_ref_index.name == index.name)
-            {
-                (
-                    index.clone(),
-                    program
-                        .resolve_cursor_id(&CursorKey::index(table_ref.internal_id, index.clone())),
-                )
-            } else {
-                (
-                    index.clone(),
-                    program.alloc_cursor_id(CursorType::BTreeIndex(index.clone())),
-                )
-            }
-        })
-        .collect::<Vec<_>>();
-
-    assert_eq!(index_references.len(), plan.indexes.len());
-
     // Set up main query execution loop
     open_loop(
         program,
@@ -728,12 +699,7 @@ fn emit_program_for_delete(
         &mut plan.where_clause,
     )?;
 
-    emit_delete_insns(
-        program,
-        &mut t_ctx,
-        &plan.table_references,
-        &index_references,
-    )?;
+    emit_delete_insns(program, &mut t_ctx, &plan.table_references)?;
 
     // Clean up and close the main execution loop
     close_loop(
@@ -755,7 +721,6 @@ fn emit_delete_insns(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx,
     table_references: &TableReferences,
-    index_references: &[(Arc<Index>, usize)],
 ) -> Result<()> {
     let table_reference = table_references.joined_tables().first().unwrap();
     let cursor_id = match &table_reference.op {
@@ -800,31 +765,55 @@ fn emit_delete_insns(
             conflict_action,
         });
     } else {
-        for (index, index_cursor_id) in index_references {
-            let num_regs = index.columns.len() + 1;
-            let start_reg = program.alloc_registers(num_regs);
-            // Emit columns that are part of the index
-            index
-                .columns
+        // Delete from all indexes before deleting from the main table.
+        let indexes = t_ctx
+            .resolver
+            .schema
+            .indexes
+            .get(table_reference.table.get_name());
+        let index_refs_opt = indexes.map(|indexes| {
+            indexes
                 .iter()
-                .enumerate()
-                .for_each(|(reg_offset, column_index)| {
-                    program.emit_insn(Insn::Column {
-                        cursor_id: main_table_cursor_id,
-                        column: column_index.pos_in_table,
-                        dest: start_reg + reg_offset,
+                .map(|index| {
+                    (
+                        index.clone(),
+                        program.resolve_cursor_id(&CursorKey::index(
+                            table_reference.internal_id,
+                            index.clone(),
+                        )),
+                    )
+                })
+                .collect::<Vec<_>>()
+        });
+
+        if let Some(index_refs) = index_refs_opt {
+            for (index, index_cursor_id) in index_refs {
+                let num_regs = index.columns.len() + 1;
+                let start_reg = program.alloc_registers(num_regs);
+                // Emit columns that are part of the index
+                index
+                    .columns
+                    .iter()
+                    .enumerate()
+                    .for_each(|(reg_offset, column_index)| {
+                        program.emit_insn(Insn::Column {
+                            cursor_id: main_table_cursor_id,
+                            column: column_index.pos_in_table,
+                            dest: start_reg + reg_offset,
+                        });
                     });
+                program.emit_insn(Insn::RowId {
+                    cursor_id: main_table_cursor_id,
+                    dest: start_reg + num_regs - 1,
                 });
-            program.emit_insn(Insn::RowId {
-                cursor_id: main_table_cursor_id,
-                dest: start_reg + num_regs - 1,
-            });
-            program.emit_insn(Insn::IdxDelete {
-                start_reg,
-                num_regs,
-                cursor_id: *index_cursor_id,
-            });
+                program.emit_insn(Insn::IdxDelete {
+                    start_reg,
+                    num_regs,
+                    cursor_id: index_cursor_id,
+                });
+            }
         }
+
         program.emit_insn(Insn::Delete {
             cursor_id: main_table_cursor_id,
         });
