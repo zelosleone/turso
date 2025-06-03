@@ -225,18 +225,9 @@ fn update_pragma(
                 }
             };
             match auto_vacuum_mode {
-                0 => {
-                    pager.set_auto_vacuum_mode(AutoVacuumMode::None);
-                    pager.db_header.lock().vacuum_mode_largest_root_page = 0;
-                }
-                1 => {
-                    pager.set_auto_vacuum_mode(AutoVacuumMode::Full);
-                    pager.db_header.lock().vacuum_mode_largest_root_page = 1;
-                }
-                2 => {
-                    pager.set_auto_vacuum_mode(AutoVacuumMode::Incremental);
-                    pager.db_header.lock().vacuum_mode_largest_root_page = 1;
-                }
+                0 => update_auto_vacuum_mode(AutoVacuumMode::None, 0, header, pager)?,
+                1 => update_auto_vacuum_mode(AutoVacuumMode::Full, 1, header, pager)?,
+                2 => update_auto_vacuum_mode(AutoVacuumMode::Incremental, 1, header, pager)?,
                 _ => {
                     return Err(LimboError::InvalidArgument(
                         "invalid auto vacuum mode".to_string(),
@@ -396,6 +387,19 @@ fn query_pragma(
         }
     }
 
+    Ok(())
+}
+
+fn update_auto_vacuum_mode(
+    auto_vacuum_mode: AutoVacuumMode,
+    largest_root_page_number: u32,
+    header: Arc<SpinLock<DatabaseHeader>>,
+    pager: Rc<Pager>,
+) -> crate::Result<()> {
+    let mut header_guard = header.lock();
+    header_guard.vacuum_mode_largest_root_page = largest_root_page_number;
+    pager.set_auto_vacuum_mode(auto_vacuum_mode);
+    pager.write_database_header(&header_guard)?;
     Ok(())
 }
 

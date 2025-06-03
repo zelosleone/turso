@@ -4565,12 +4565,12 @@ pub fn op_set_cookie(
         Cookie::LargestRootPageNumber => {
             let mut header_guard = pager.db_header.lock();
             header_guard.vacuum_mode_largest_root_page = *value as u32;
-            pager.write_database_header(&*header_guard);
+            pager.write_database_header(&*header_guard)?;
         }
         Cookie::IncrementalVacuum => {
             let mut header_guard = pager.db_header.lock();
             header_guard.incremental_vacuum_enabled = *value as u32;
-            pager.write_database_header(&*header_guard);
+            pager.write_database_header(&*header_guard)?;
         }
         cookie => todo!("{cookie:?} is not yet implement for SetCookie"),
     }
