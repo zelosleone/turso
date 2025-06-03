@@ -4342,7 +4342,7 @@ pub fn op_create_btree(
         todo!("temp databases not implemented yet");
     }
     // FIXME: handle page cache is full
-    let root_page = pager.btree_create(flags);
+    let root_page = return_if_io!(pager.btree_create(flags));
     state.registers[*root] = Register::Value(Value::Integer(root_page as i64));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -4776,7 +4776,7 @@ pub fn op_open_ephemeral(
     };
 
     // FIXME: handle page cache is full
-    let root_page = pager.btree_create(flag);
+    let root_page = return_if_io!(pager.btree_create(flag));
 
     let (_, cursor_type) = program.cursor_ref.get(cursor_id).unwrap();
     let mv_cursor = match state.mv_tx_id {

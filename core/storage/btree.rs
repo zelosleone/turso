@@ -6874,8 +6874,14 @@ mod tests {
         tracing::info!("super seed: {}", seed);
         for _ in 0..attempts {
             let (pager, _) = empty_btree();
-            let index_root_page = pager.btree_create(&CreateBTreeFlags::new_index());
-            let index_root_page = index_root_page as usize;
+            let index_root_page_result =
+                pager.btree_create(&CreateBTreeFlags::new_index()).unwrap();
+            let index_root_page = match index_root_page_result {
+                crate::types::CursorResult::Ok(id) => id as usize,
+                crate::types::CursorResult::IO => {
+                    panic!("btree_create returned IO in test, unexpected")
+                }
+            };
             let mut cursor = BTreeCursor::new_table(None, pager.clone(), index_root_page);
             let mut keys = SortedVec::new();
             tracing::info!("seed: {}", seed);

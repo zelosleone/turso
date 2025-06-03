@@ -22,7 +22,7 @@ use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCac
 use super::wal::{CheckpointMode, CheckpointStatus};
 
 #[cfg(not(feature = "omit_autovacuum"))]
-use {crate::io::Buffer as IoBuffer, ptrmap::*};
+use {crate::io::Buffer as IoBuffer, crate::types::CursorResult, ptrmap::*};
 
 pub struct PageInner {
     pub flags: AtomicUsize,
@@ -279,14 +279,14 @@ impl Pager {
     /// `target_page_num` (1-indexed) is the page whose entry is sought.
     /// Returns `Ok(None)` if the page is not supposed to have a ptrmap entry (e.g. header, or a ptrmap page itself).
     #[cfg(not(feature = "omit_autovacuum"))]
-    pub fn ptrmap_get(&self, target_page_num: u32) -> Result<Option<PtrmapEntry>> {
+    pub fn ptrmap_get(&self, target_page_num: u32) -> Result<CursorResult<Option<PtrmapEntry>>> {
         tracing::trace!("ptrmap_get(page_idx = {})", target_page_num);
         let configured_page_size = self.db_header.lock().get_page_size() as usize;
 
         if target_page_num < FIRST_PTRMAP_PAGE_NO
             || is_ptrmap_page(target_page_num, configured_page_size)
         {
-            return Ok(None);
+            return Ok(CursorResult::Ok(None));
         }
 
         let ptrmap_pg_no = get_ptrmap_page_no_for_db_page(target_page_num, configured_page_size);
@@ -299,6 +299,12 @@ impl Pager {
         );
 
         let ptrmap_page = self.read_page(ptrmap_pg_no as usize)?;
+        if ptrmap_page.is_locked() {
+            return Ok(CursorResult::IO);
+        }
+        if !ptrmap_page.is_loaded() {
+            return Ok(CursorResult::IO);
+        }
         let ptrmap_page_inner = ptrmap_page.get();
 
         let page_content: &PageContent = match ptrmap_page_inner.contents.as_ref() {
@@ -336,7 +342,7 @@ impl Pager {
         let entry_slice = &ptrmap_page_data_slice
             [offset_in_ptrmap_page..offset_in_ptrmap_page + PTRMAP_ENTRY_SIZE];
         match PtrmapEntry::deserialize(entry_slice) {
-            Some(entry) => Ok(Some(entry)),
+            Some(entry) => Ok(CursorResult::Ok(Some(entry))),
             None => Err(LimboError::Corrupt(format!(
                 "Failed to deserialize ptrmap entry for page {} from ptrmap page {}",
                 target_page_num, ptrmap_pg_no
@@ -353,7 +359,7 @@ impl Pager {
         db_page_no_to_update: u32,
         entry_type: PtrmapType,
         parent_page_no: u32,
-    ) -> Result<()> {
+    ) -> Result<CursorResult<()>> {
         tracing::trace!(
             "ptrmap_put(page_idx = {}, entry_type = {:?}, parent_page_no = {})",
             db_page_no_to_update,
@@ -385,6 +391,12 @@ impl Pager {
         );
 
         let ptrmap_page = self.read_page(ptrmap_pg_no as usize)?;
+        if ptrmap_page.is_locked() {
+            return Ok(CursorResult::IO);
+        }
+        if !ptrmap_page.is_loaded() {
+            return Ok(CursorResult::IO);
+        }
         let ptrmap_page_inner = ptrmap_page.get();
 
         let page_content = match ptrmap_page_inner.contents.as_ref() {
@@ -421,12 +433,12 @@ impl Pager {
 
         ptrmap_page.set_dirty();
         self.add_dirty(ptrmap_pg_no as usize);
-        Ok(())
+        Ok(CursorResult::Ok(()))
     }
 
     /// This method is used to allocate a new root page for a btree, both for tables and indexes
     /// FIXME: handle no room in page cache
-    pub fn btree_create(&self, flags: &CreateBTreeFlags) -> u32 {
+    pub fn btree_create(&self, flags: &CreateBTreeFlags) -> Result<CursorResult<u32>> {
         let page_type = match flags {
             _ if flags.is_table() => PageType::TableLeaf,
             _ if flags.is_index() => PageType::IndexLeaf,
@@ -436,7 +448,7 @@ impl Pager {
         {
             let page = self.do_allocate_page(page_type, 0, BtreePageAllocMode::Any);
             let page_id = page.get().get().id;
-            return page_id as u32;
+            return Ok(CursorResult::Ok(page_id as u32));
         }
 
         //  If autovacuum is enabled, we need to allocate a new page number that is greater than the largest root page number
@@ -447,7 +459,7 @@ impl Pager {
                 AutoVacuumMode::None => {
                     let page = self.do_allocate_page(page_type, 0, BtreePageAllocMode::Any);
                     let page_id = page.get().get().id;
-                    return page_id as u32;
+                    return Ok(CursorResult::Ok(page_id as u32));
                 }
                 AutoVacuumMode::Full => {
                     let mut root_page_num = self.db_header.lock().vacuum_mode_largest_root_page;
@@ -474,9 +486,10 @@ impl Pager {
                         //  TODO: Handle swapping the allocated page with the desired root page
                     }
                     //  For now map allocated_page_id since we are not swapping it with root_page_num
-                    self.ptrmap_put(allocated_page_id, PtrmapType::RootPage, 0)
-                        .unwrap(); //  TODO: Fixing the unwrap here requires fixing an entire chain of calls in the b-tree. Is panicking better?
-                    return allocated_page_id as u32;
+                    match self.ptrmap_put(allocated_page_id, PtrmapType::RootPage, 0)? {
+                        CursorResult::Ok(_) => Ok(CursorResult::Ok(allocated_page_id as u32)),
+                        CursorResult::IO => Ok(CursorResult::IO),
+                    }
                 }
                 AutoVacuumMode::Incremental => {
                     unimplemented!()
@@ -1271,7 +1284,17 @@ mod ptrmap_tests {
 
         //  Allocate all the pages as btree root pages
         for _ in 0..initial_db_pages {
-            pager.btree_create(&CreateBTreeFlags::new_table());
+            match pager.btree_create(&CreateBTreeFlags::new_table()) {
+                Ok(CursorResult::Ok(_root_page_id)) => {
+                    // Successfully created, do nothing further in this loop context
+                }
+                Ok(CursorResult::IO) => {
+                    panic!("test_pager_setup: btree_create returned CursorResult::IO unexpectedly");
+                }
+                Err(e) => {
+                    panic!("test_pager_setup: btree_create failed: {:?}", e);
+                }
+            }
         }
 
         return pager;
@@ -1295,9 +1318,10 @@ mod ptrmap_tests {
 
         //  Read the entry from the ptrmap page and verify it
         let entry = pager.ptrmap_get(db_page_to_update).unwrap();
-        assert!(entry.is_some());
-        let entry = entry.unwrap();
-
+        assert!(matches!(entry, CursorResult::Ok(Some(_))));
+        let CursorResult::Ok(Some(entry)) = entry else {
+            panic!("entry is not Some");
+        };
         assert_eq!(entry.entry_type, PtrmapType::RootPage);
         assert_eq!(entry.parent_page_no, 0);
     }
