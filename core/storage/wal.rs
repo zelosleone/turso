@@ -772,14 +772,23 @@ impl Wal for WalFile {
                     };
                     let everything_backfilled = shared.max_frame.load(Ordering::SeqCst)
                         == self.ongoing_checkpoint.max_frame;
-                    if everything_backfilled && !matches!(mode, CheckpointMode::Passive) {
-                        // Here we know that we backfilled everything, therefore we can safely
-                        // reset the wal.
-                        shared.frame_cache.lock().clear();
-                        shared.pages_in_frames.lock().clear();
-                        shared.max_frame.store(0, Ordering::SeqCst);
-                        shared.nbackfills.store(0, Ordering::SeqCst);
-                        // TODO(pere): truncate wal file here.
+                    if everything_backfilled {
+                        // TODO: Even in Passive mode, if everything was backfilled we should
+                        // truncate and fsync the *db file*
+
+                        // To properly reset the *wal file* we will need restart and/or truncate mode.
+                        // Currently, it will grow the WAL file indefinetly, but don't resetting is better than breaking.
+                        // Check: https://github.com/sqlite/sqlite/blob/2bd9f69d40dd240c4122c6d02f1ff447e7b5c098/src/wal.c#L2193
+                        if !matches!(mode, CheckpointMode::Passive) {
+                            // Here we know that we backfilled everything, therefore we can safely
+                            // reset the wal.
+                            shared.frame_cache.lock().clear();
+                            shared.pages_in_frames.lock().clear();
+                            shared.max_frame.store(0, Ordering::SeqCst);
+                            shared.nbackfills.store(0, Ordering::SeqCst);
+                            // TODO: if all frames were backfilled into the db file, calls fsync
+                            // TODO(pere): truncate wal file here.
+                        }
                     } else {
                         shared
                             .nbackfills

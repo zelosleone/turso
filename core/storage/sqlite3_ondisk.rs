@@ -191,10 +191,12 @@ pub struct WalHeader {
     /// Checkpoint sequence number. Increases with each checkpoint
     pub checkpoint_seq: u32,
 
-    /// Random value used for the first salt in checksum calculations, incremented with each checkpoint
+    /// Random value used for the first salt in checksum calculations
+    /// TODO: Incremented with each checkpoint
     pub salt_1: u32,
 
-    /// Random value used for the second salt in checksum calculations. A different random value for each checkpoint
+    /// Random value used for the second salt in checksum calculations.
+    /// TODO: A different random value for each checkpoint
     pub salt_2: u32,
 
     /// First checksum value in the wal-header
