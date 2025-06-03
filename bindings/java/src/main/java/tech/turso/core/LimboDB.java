@@ -65,7 +65,7 @@ public final class LimboDB implements AutoCloseable {
       String osName = System.getProperty("os.name").toLowerCase();
       String osArch = System.getProperty("os.arch").toLowerCase();
 
-      // TODO: Fix this
+      // TODO: add support for arm64 on Linux
       if (osName.contains("linux")) {
         if (osArch.contains("aarch64") || osArch.contains("arm64")) {
           return LINUX_X86;
