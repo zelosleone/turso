@@ -25,6 +25,8 @@ type FaultTimeout = {
 
 type Fault = FaultPanic | FaultTimeout | FaultAssertion;
 
+const MAX_OPEN_SIMULATOR_ISSUES = parseInt(process.env.MAX_OPEN_SIMULATOR_ISSUES || "10", 10);
+
 export class GithubClient {
   /* This is the git hash of the commit that the simulator was built from. */
   GIT_HASH: string;
@@ -103,6 +105,12 @@ export class GithubClient {
 
     if (this.mode === 'dry-run') {
       console.log(`Dry-run mode: Would create issue in ${this.GITHUB_REPO} with title: ${title} and body: ${body}`);
+      return;
+    }
+
+    if (this.openIssueTitles.length >= MAX_OPEN_SIMULATOR_ISSUES) {
+      console.log(`Max open simulator issues reached: ${MAX_OPEN_SIMULATOR_ISSUES}`);
+      console.log(`Would create issue in ${this.GITHUB_REPO} with title: ${title} and body: ${body}`);
       return;
     }
 
