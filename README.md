@@ -4,7 +4,7 @@
 </p>
 
 <p align="center">
-  <i>Limbo</i> is a project to build the modern evolution of SQLite.
+  <i>Limbo</i> is a project to build the next evolution of SQLite.
 </p>
 
 <p align="center">
@@ -193,7 +193,7 @@ Limbo is currently under heavy development and is **not** ready for production u
 
 ### How is Limbo different from Turso's libSQL?
 
-Limbo is a project to build the modern evolution of SQLite in Rust, with a strong open contribution focus and features like native async support, vector search, and more. The libSQL project is also an attempt to evolve SQLite in a similar direction, but through a fork rather than a rewrite.
+Limbo is a project to build the next evolution of SQLite in Rust, with a strong open contribution focus and features like native async support, vector search, and more. The libSQL project is also an attempt to evolve SQLite in a similar direction, but through a fork rather than a rewrite.
 
 Rewriting SQLite in Rust started as an unassuming experiment, and due to its incredible success, replaces libSQL as our intended direction. At this point, libSQL is production ready, Limbo is not - although it is evolving rapidly. As the project starts to near production readiness, we plan to rename it to just "Turso". More details [here](https://turso.tech/blog/we-will-rewrite-sqlite-and-we-are-going-all-in).
 
