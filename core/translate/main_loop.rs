@@ -268,6 +268,32 @@ pub fn init_loop(
                             root_page: table.table.get_root_page().into(),
                             name: table.table.get_name().to_string(),
                         });
+                        // For DELETE, we need to open all the indexes for writing
+                        // UPDATE opens these in emit_program_for_update() separately
+                        if mode == OperationMode::DELETE {
+                            if let Some(indexes) =
+                                t_ctx.resolver.schema.indexes.get(table.table.get_name())
+                            {
+                                for index in indexes {
+                                    if table
+                                        .op
+                                        .index()
+                                        .is_some_and(|table_index| table_index.name == index.name)
+                                    {
+                                        continue;
+                                    }
+                                    let cursor_id = program.alloc_cursor_id_keyed(
+                                        CursorKey::index(table.internal_id, index.clone()),
+                                        CursorType::BTreeIndex(index.clone()),
+                                    );
+                                    program.emit_insn(Insn::OpenWrite {
+                                        cursor_id,
+                                        root_page: index.root_page.into(),
+                                        name: index.name.clone(),
+                                    });
+                                }
+                            }
+                        }
                     }
                     _ => {
                         unimplemented!()
