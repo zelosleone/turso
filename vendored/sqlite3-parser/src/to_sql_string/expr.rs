@@ -377,7 +377,7 @@ impl Display for ast::Literal {
             f,
             "{}",
             match self {
-                Self::Blob(b) => format!("Ox{b}"),
+                Self::Blob(b) => format!("x'{b}'"),
                 Self::CurrentDate => "CURRENT_DATE".to_string(),
                 Self::CurrentTime => "CURRENT_TIME".to_string(),
                 Self::CurrentTimestamp => "CURRENT_TIMESTAMP".to_string(),
