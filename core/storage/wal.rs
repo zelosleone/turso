@@ -62,9 +62,13 @@ impl CheckpointResult {
 
 #[derive(Debug, Copy, Clone)]
 pub enum CheckpointMode {
+    /// Checkpoint as many frames as possible without waiting for any database readers or writers to finish, then sync the database file if all frames in the log were checkpointed.
     Passive,
+    /// This mode blocks until there is no database writer and all readers are reading from the most recent database snapshot. It then checkpoints all frames in the log file and syncs the database file. This mode blocks new database writers while it is pending, but new database readers are allowed to continue unimpeded.
     Full,
+    /// This mode works the same way as `Full` with the addition that after checkpointing the log file it blocks (calls the busy-handler callback) until all readers are reading from the database file only. This ensures that the next writer will restart the log file from the beginning. Like `Full`, this mode blocks new database writer attempts while it is pending, but does not impede readers.
     Restart,
+    /// This mode works the same way as `Restart` with the addition that it also truncates the log file to zero bytes just prior to a successful return.
     Truncate,
 }
 
@@ -768,7 +772,7 @@ impl Wal for WalFile {
                     };
                     let everything_backfilled = shared.max_frame.load(Ordering::SeqCst)
                         == self.ongoing_checkpoint.max_frame;
-                    if everything_backfilled {
+                    if everything_backfilled && !matches!(mode, CheckpointMode::Passive) {
                         // Here we know that we backfilled everything, therefore we can safely
                         // reset the wal.
                         shared.frame_cache.lock().clear();
