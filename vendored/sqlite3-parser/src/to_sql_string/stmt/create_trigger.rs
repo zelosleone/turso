@@ -1,4 +1,9 @@
-use crate::{ast, to_sql_string::ToSqlString};
+use std::fmt::Display;
+
+use crate::{
+    ast::{self, fmt::ToTokens},
+    to_sql_string::ToSqlString,
+};
 
 impl ToSqlString for ast::CreateTrigger {
     fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, context: &C) -> String {
@@ -7,11 +12,9 @@ impl ToSqlString for ast::CreateTrigger {
             self.temporary.then_some(" TEMP").unwrap_or(""),
             self.if_not_exists.then_some("IF NOT EXISTS ").unwrap_or(""),
             self.trigger_name.to_sql_string(context),
-            self.time.map_or("".to_string(), |time| format!(
-                " {}",
-                time.to_sql_string(context)
-            )),
-            self.event.to_sql_string(context),
+            self.time
+                .map_or("".to_string(), |time| format!(" {}", time.to_string())),
+            self.event.to_string(),
             self.tbl_name.to_sql_string(context),
             self.for_each_row.then_some(" FOR EACH ROW").unwrap_or(""),
             self.when_clause
@@ -29,32 +32,31 @@ impl ToSqlString for ast::CreateTrigger {
     }
 }
 
-impl ToSqlString for ast::TriggerTime {
-    fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, _context: &C) -> String {
-        match self {
-            Self::After => "AFTER",
-            Self::Before => "BEFORE",
-            Self::InsteadOf => "INSTEAD OF",
-        }
-        .to_string()
+impl Display for ast::TriggerTime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_fmt(f)
     }
 }
 
-impl ToSqlString for ast::TriggerEvent {
-    fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, _context: &C) -> String {
-        match self {
-            Self::Delete => "DELETE".to_string(),
-            Self::Insert => "INSERT".to_string(),
-            Self::Update => "UPDATE".to_string(),
-            Self::UpdateOf(col_names) => format!(
-                "UPDATE OF {}",
-                col_names
-                    .iter()
-                    .map(|name| name.0.clone())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        }
+impl Display for ast::TriggerEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Delete => "DELETE".to_string(),
+                Self::Insert => "INSERT".to_string(),
+                Self::Update => "UPDATE".to_string(),
+                Self::UpdateOf(col_names) => format!(
+                    "UPDATE OF {}",
+                    col_names
+                        .iter()
+                        .map(|name| name.0.clone())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            }
+        )
     }
 }
 
@@ -97,7 +99,7 @@ impl ToSqlString for ast::TriggerCmdInsert {
             "INSERT {}INTO {} {}{}{}{}",
             self.or_conflict.map_or("".to_string(), |conflict| format!(
                 "OR {} ",
-                conflict.to_sql_string(context)
+                conflict.to_string()
             )),
             self.tbl_name.0,
             self.col_names
@@ -216,7 +218,7 @@ impl ToSqlString for ast::TriggerCmdUpdate {
             "UPDATE {}{} SET {}{}{}",
             self.or_conflict.map_or("".to_string(), |conflict| format!(
                 "OR {}",
-                conflict.to_sql_string(context)
+                conflict.to_string()
             )),
             self.tbl_name.0, // TODO: should be a qualified table name,
             self.sets

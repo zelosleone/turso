@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::{ast, to_sql_string::ToSqlString};
 
 impl ToSqlString for ast::CreateTableBody {
@@ -26,7 +28,7 @@ impl ToSqlString for ast::CreateTableBody {
                                 .collect::<Vec<_>>()
                                 .join(", ")
                         )),
-                    options.to_sql_string(context)
+                    options.to_string()
                 )
             }
         }
@@ -59,12 +61,12 @@ impl ToSqlString for ast::TableConstraint {
                 "FOREIGN KEY ({}) {}{}",
                 columns
                     .iter()
-                    .map(|col| col.to_sql_string(context))
+                    .map(|col| col.to_string())
                     .collect::<Vec<_>>()
                     .join(", "),
-                clause.to_sql_string(context),
+                clause.to_string(),
                 if let Some(deref) = deref_clause {
-                    deref.to_sql_string(context)
+                    deref.to_string()
                 } else {
                     "".to_string()
                 }
@@ -82,7 +84,7 @@ impl ToSqlString for ast::TableConstraint {
                     .join(", "),
                 conflict_clause.map_or("".to_string(), |conflict| format!(
                     " {}",
-                    conflict.to_sql_string(context)
+                    conflict.to_string()
                 )),
                 auto_increment.then_some(" AUTOINCREMENT").unwrap_or("")
             ),
@@ -98,23 +100,26 @@ impl ToSqlString for ast::TableConstraint {
                     .join(", "),
                 conflict_clause.map_or("".to_string(), |conflict| format!(
                     " {}",
-                    conflict.to_sql_string(context)
+                    conflict.to_string()
                 ))
             ),
         }
     }
 }
 
-impl ToSqlString for ast::TableOptions {
-    fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, _context: &C) -> String {
-        if *self == Self::NONE {
-            ""
-        } else if *self == Self::STRICT {
-            " STRICT"
-        } else {
-            " WITHOUT ROWID"
-        }
-        .to_string()
+impl Display for ast::TableOptions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            if *self == Self::NONE {
+                ""
+            } else if *self == Self::STRICT {
+                " STRICT"
+            } else {
+                " WITHOUT ROWID"
+            }
+        )
     }
 }
 

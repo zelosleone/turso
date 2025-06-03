@@ -13,7 +13,7 @@ impl ToSqlString for ast::Delete {
                 .as_ref()
                 .map_or("".to_string(), |indexed| format!(
                     " {}",
-                    indexed.to_sql_string(context)
+                    indexed.to_string()
                 )),
             self.where_clause
                 .as_ref()

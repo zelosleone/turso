@@ -108,7 +108,7 @@ impl ToSqlString for ast::Stmt {
                         " ({})",
                         columns
                             .iter()
-                            .map(|col| col.to_sql_string(context))
+                            .map(|col| col.to_string())
                             .collect::<Vec<_>>()
                             .join(", ")
                     )),

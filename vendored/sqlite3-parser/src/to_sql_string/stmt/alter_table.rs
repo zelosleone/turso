@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::{ast, to_sql_string::ToSqlString};
 
 impl ToSqlString for ast::AlterTableBody {
@@ -60,15 +62,15 @@ impl ToSqlString for ast::ColumnConstraint {
                     format!("DEFAULT ({})", expr.to_sql_string(context))
                 }
             }
-            Self::Defer(expr) => expr.to_sql_string(context),
+            Self::Defer(expr) => expr.to_string(),
             Self::ForeignKey {
                 clause,
                 deref_clause,
             } => format!(
                 "{}{}",
-                clause.to_sql_string(context),
+                clause.to_string(),
                 if let Some(deref) = deref_clause {
-                    deref.to_sql_string(context)
+                    deref.to_string()
                 } else {
                     "".to_string()
                 }
@@ -94,7 +96,7 @@ impl ToSqlString for ast::ColumnConstraint {
                     "NOT NULL{}",
                     conflict_clause.map_or("".to_string(), |conflict| format!(
                         " {}",
-                        conflict.to_sql_string(context)
+                        conflict.to_string()
                     ))
                 )
             }
@@ -105,13 +107,10 @@ impl ToSqlString for ast::ColumnConstraint {
             } => {
                 format!(
                     "PRIMARY KEY{}{}{}",
-                    order.map_or("".to_string(), |order| format!(
-                        " {}",
-                        order.to_sql_string(context)
-                    )),
+                    order.map_or("".to_string(), |order| format!(" {}", order.to_string())),
                     conflict_clause.map_or("".to_string(), |conflict| format!(
                         " {}",
-                        conflict.to_sql_string(context)
+                        conflict.to_string()
                     )),
                     auto_increment.then_some(" AUTOINCREMENT").unwrap_or("")
                 )
@@ -121,7 +120,7 @@ impl ToSqlString for ast::ColumnConstraint {
                     "UNIQUE{}",
                     conflict_clause.map_or("".to_string(), |conflict| format!(
                         " {}",
-                        conflict.to_sql_string(context)
+                        conflict.to_string()
                     ))
                 )
             }
@@ -129,9 +128,9 @@ impl ToSqlString for ast::ColumnConstraint {
     }
 }
 
-impl ToSqlString for ast::ForeignKeyClause {
-    fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, context: &C) -> String {
-        format!(
+impl Display for ast::ForeignKeyClause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = format!(
             "REFERENCES {}{}{}",
             self.tbl_name.0,
             if let Some(columns) = &self.columns {
@@ -139,7 +138,7 @@ impl ToSqlString for ast::ForeignKeyClause {
                     "({})",
                     columns
                         .iter()
-                        .map(|cols| cols.to_sql_string(context))
+                        .map(|cols| cols.to_string())
                         .collect::<Vec<_>>()
                         .join(", ")
                 )
@@ -151,46 +150,48 @@ impl ToSqlString for ast::ForeignKeyClause {
                     " {}",
                     self.args
                         .iter()
-                        .map(|arg| arg.to_sql_string(context))
+                        .map(|arg| arg.to_string())
                         .collect::<Vec<_>>()
                         .join(" ")
                 )
             } else {
                 "".to_string()
             }
-        )
+        );
+        write!(f, "{}", value)
     }
 }
 
-impl ToSqlString for ast::RefArg {
-    fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, context: &C) -> String {
-        match self {
+impl Display for ast::RefArg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
             Self::Match(name) => format!("MATCH {}", name.0),
-            Self::OnDelete(act) => format!("ON DELETE {}", act.to_sql_string(context)),
-            Self::OnUpdate(act) => format!("ON UPDATE {}", act.to_sql_string(context)),
+            Self::OnDelete(act) => format!("ON DELETE {}", act.to_string()),
+            Self::OnUpdate(act) => format!("ON UPDATE {}", act.to_string()),
             Self::OnInsert(..) => unimplemented!(
                 "On Insert does not exist in SQLite: https://www.sqlite.org/lang_altertable.html"
             ),
-        }
+        };
+        write!(f, "{}", value)
     }
 }
 
-impl ToSqlString for ast::RefAct {
-    fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, _context: &C) -> String {
-        match self {
+impl Display for ast::RefAct {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
             Self::Cascade => "CASCADE",
             Self::NoAction => "NO ACTION",
             Self::Restrict => "RESTRICT",
             Self::SetDefault => "SET DEFAULT",
             Self::SetNull => "SET NULL",
-        }
-        .to_string()
+        };
+        write!(f, "{}", value)
     }
 }
 
-impl ToSqlString for ast::DeferSubclause {
-    fn to_sql_string<C: crate::to_sql_string::ToSqlContext>(&self, _context: &C) -> String {
-        format!(
+impl Display for ast::DeferSubclause {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = format!(
             "{}{}",
             if self.deferrable {
                 "NOT DEFERRABLE"
@@ -205,7 +206,8 @@ impl ToSqlString for ast::DeferSubclause {
             } else {
                 ""
             }
-        )
+        );
+        write!(f, "{}", value)
     }
 }
 #[cfg(test)]

@@ -1,5 +1,7 @@
+use std::fmt::Display;
+
 use crate::{
-    ast::{self},
+    ast::{self, fmt::ToTokens},
     to_sql_string::{ToSqlContext, ToSqlString},
 };
 
@@ -37,7 +39,7 @@ impl ToSqlString for ast::SelectBody {
             let compound_selects = compounds
                 .iter()
                 .map(|compound_select| {
-                    let mut curr = compound_select.operator.to_sql_string(context);
+                    let mut curr = compound_select.operator.to_string();
                     curr.push(' ');
                     curr.push_str(&compound_select.select.to_sql_string(context));
                     curr
@@ -78,7 +80,7 @@ impl ToSqlString for ast::SelectInner {
         let mut ret = Vec::with_capacity(2 + self.columns.len());
         ret.push("SELECT".to_string());
         if let Some(distinct) = self.distinctness {
-            ret.push(distinct.to_sql_string(context));
+            ret.push(distinct.to_string());
         }
         let joined_cols = self
             .columns
@@ -124,7 +126,7 @@ impl ToSqlString for ast::FromClause {
             let joined_joins = joins
                 .iter()
                 .map(|join| {
-                    let mut curr = join.operator.to_sql_string(context);
+                    let mut curr = join.operator.to_string();
                     curr.push(' ');
                     curr.push_str(&join.table.to_sql_string(context));
                     if let Some(join_constraint) = &join.constraint {
@@ -149,11 +151,11 @@ impl ToSqlString for ast::SelectTable {
                 ret.push_str(&name.to_sql_string(context));
                 if let Some(alias) = alias {
                     ret.push(' ');
-                    ret.push_str(&alias.to_sql_string(context));
+                    ret.push_str(&alias.to_string());
                 }
                 if let Some(indexed) = indexed {
                     ret.push(' ');
-                    ret.push_str(&indexed.to_sql_string(context));
+                    ret.push_str(&indexed.to_string());
                 }
             }
             Self::TableCall(table_func, args, alias) => {
@@ -169,7 +171,7 @@ impl ToSqlString for ast::SelectTable {
                 }
                 if let Some(alias) = alias {
                     ret.push(' ');
-                    ret.push_str(&alias.to_sql_string(context));
+                    ret.push_str(&alias.to_string());
                 }
             }
             Self::Select(select, alias) => {
@@ -178,7 +180,7 @@ impl ToSqlString for ast::SelectTable {
                 ret.push(')');
                 if let Some(alias) = alias {
                     ret.push(' ');
-                    ret.push_str(&alias.to_sql_string(context));
+                    ret.push_str(&alias.to_string());
                 }
             }
             Self::Sub(from_clause, alias) => {
@@ -187,7 +189,7 @@ impl ToSqlString for ast::SelectTable {
                 ret.push(')');
                 if let Some(alias) = alias {
                     ret.push(' ');
-                    ret.push_str(&alias.to_sql_string(context));
+                    ret.push_str(&alias.to_string());
                 }
             }
         }
@@ -232,7 +234,7 @@ impl ToSqlString for ast::CommonTableExpr {
         if let Some(cols) = &self.columns {
             let joined_cols = cols
                 .iter()
-                .map(|col| col.to_sql_string(context))
+                .map(|col| col.to_string())
                 .collect::<Vec<_>>()
                 .join(", ");
 
@@ -241,7 +243,7 @@ impl ToSqlString for ast::CommonTableExpr {
         ret.push(format!(
             "AS {}({})",
             {
-                let mut materialized = self.materialized.to_sql_string(context);
+                let mut materialized = self.materialized.to_string();
                 if !materialized.is_empty() {
                     materialized.push(' ');
                 }
@@ -253,9 +255,9 @@ impl ToSqlString for ast::CommonTableExpr {
     }
 }
 
-impl ToSqlString for ast::IndexedColumn {
-    fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
-        self.col_name.0.to_string()
+impl Display for ast::IndexedColumn {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.col_name.0)
     }
 }
 
@@ -264,56 +266,36 @@ impl ToSqlString for ast::SortedColumn {
         let mut curr = self.expr.to_sql_string(context);
         if let Some(sort_order) = self.order {
             curr.push(' ');
-            curr.push_str(&sort_order.to_sql_string(context));
+            curr.push_str(&sort_order.to_string());
         }
         if let Some(nulls_order) = self.nulls {
             curr.push(' ');
-            curr.push_str(&nulls_order.to_sql_string(context));
+            curr.push_str(&nulls_order.to_string());
         }
         curr
     }
 }
 
-impl ToSqlString for ast::SortOrder {
-    fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
-        match self {
-            Self::Asc => "ASC",
-            Self::Desc => "DESC",
-        }
-        .to_string()
+impl Display for ast::SortOrder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_fmt(f)
     }
 }
 
-impl ToSqlString for ast::NullsOrder {
-    fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
-        match self {
-            Self::First => "NULLS FIRST",
-            Self::Last => "NULLS LAST",
-        }
-        .to_string()
+impl Display for ast::NullsOrder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_fmt(f)
     }
 }
 
-impl ToSqlString for ast::Materialized {
-    fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
-        match self {
+impl Display for ast::Materialized {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
             Self::Any => "",
             Self::No => "NOT MATERIALIZED",
             Self::Yes => "MATERIALIZED",
-        }
-        .to_string()
-    }
-}
-
-impl ToSqlString for ast::CompoundOperator {
-    fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
-        match self {
-            Self::Except => "EXCEPT",
-            Self::Intersect => "INTERSECT",
-            Self::Union => "UNION",
-            Self::UnionAll => "UNION ALL",
-        }
-        .to_string()
+        };
+        write!(f, "{}", value)
     }
 }
 
@@ -325,7 +307,7 @@ impl ToSqlString for ast::ResultColumn {
                 ret.push_str(&expr.to_sql_string(context));
                 if let Some(alias) = alias {
                     ret.push(' ');
-                    ret.push_str(&alias.to_sql_string(context));
+                    ret.push_str(&alias.to_string());
                 }
             }
             Self::Star => {
@@ -339,70 +321,85 @@ impl ToSqlString for ast::ResultColumn {
     }
 }
 
-impl ToSqlString for ast::As {
-    fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
-        match self {
-            Self::As(alias) => {
-                format!("AS {}", alias.0)
+impl Display for ast::As {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::As(alias) => {
+                    format!("AS {}", alias.0)
+                }
+                Self::Elided(alias) => alias.0.clone(),
             }
-            Self::Elided(alias) => alias.0.clone(),
-        }
+        )
     }
 }
 
-impl ToSqlString for ast::Indexed {
-    fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
-        match self {
-            Self::NotIndexed => "NOT INDEXED".to_string(),
-            Self::IndexedBy(name) => format!("INDEXED BY {}", name.0),
-        }
+impl Display for ast::Indexed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::NotIndexed => "NOT INDEXED".to_string(),
+                Self::IndexedBy(name) => format!("INDEXED BY {}", name.0),
+            }
+        )
     }
 }
 
-impl ToSqlString for ast::JoinOperator {
-    fn to_sql_string<C: ToSqlContext>(&self, context: &C) -> String {
-        match self {
-            Self::Comma => ",".to_string(),
-            Self::TypedJoin(join) => {
-                let join_keyword = "JOIN";
-                if let Some(join) = join {
-                    format!("{} {}", join.to_sql_string(context), join_keyword)
-                } else {
-                    join_keyword.to_string()
+impl Display for ast::JoinOperator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Comma => ",".to_string(),
+                Self::TypedJoin(join) => {
+                    let join_keyword = "JOIN";
+                    if let Some(join) = join {
+                        format!("{} {}", join.to_string(), join_keyword)
+                    } else {
+                        join_keyword.to_string()
+                    }
                 }
             }
-        }
+        )
     }
 }
 
-impl ToSqlString for ast::JoinType {
-    fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
-        let mut modifiers = Vec::new();
-        if self.contains(Self::NATURAL) {
-            modifiers.push("NATURAL");
-        }
-        if self.contains(Self::LEFT) || self.contains(Self::RIGHT) {
-            // TODO: I think the parser incorrectly asigns outer to every LEFT and RIGHT query
-            if self.contains(Self::LEFT | Self::RIGHT) {
-                modifiers.push("FULL");
-            } else if self.contains(Self::LEFT) {
-                modifiers.push("LEFT");
-            } else if self.contains(Self::RIGHT) {
-                modifiers.push("RIGHT");
+impl Display for ast::JoinType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = {
+            let mut modifiers = Vec::new();
+            if self.contains(Self::NATURAL) {
+                modifiers.push("NATURAL");
             }
-            // FIXME: ignore outer joins as I think they are parsed incorrectly in the bitflags
-            // if self.contains(Self::OUTER) {
-            //     modifiers.push("OUTER");
-            // }
-        }
+            if self.contains(Self::LEFT) || self.contains(Self::RIGHT) {
+                // TODO: I think the parser incorrectly asigns outer to every LEFT and RIGHT query
+                if self.contains(Self::LEFT | Self::RIGHT) {
+                    modifiers.push("FULL");
+                } else if self.contains(Self::LEFT) {
+                    modifiers.push("LEFT");
+                } else if self.contains(Self::RIGHT) {
+                    modifiers.push("RIGHT");
+                }
+                // FIXME: ignore outer joins as I think they are parsed incorrectly in the bitflags
+                // if self.contains(Self::OUTER) {
+                //     modifiers.push("OUTER");
+                // }
+            }
 
-        if self.contains(Self::INNER) {
-            modifiers.push("INNER");
-        }
-        if self.contains(Self::CROSS) {
-            modifiers.push("CROSS");
-        }
-        modifiers.join(" ")
+            if self.contains(Self::INNER) {
+                modifiers.push("INNER");
+            }
+            if self.contains(Self::CROSS) {
+                modifiers.push("CROSS");
+            }
+            modifiers.join(" ")
+        };
+        write!(f, "{}", value)
     }
 }
 
@@ -479,7 +476,7 @@ impl ToSqlString for ast::Window {
 impl ToSqlString for ast::FrameClause {
     fn to_sql_string<C: ToSqlContext>(&self, context: &C) -> String {
         let mut ret = Vec::new();
-        ret.push(self.mode.to_sql_string(context));
+        ret.push(self.mode.to_string());
         let start_sql = self.start.to_sql_string(context);
         if let Some(end) = &self.end {
             ret.push(format!(
@@ -491,21 +488,16 @@ impl ToSqlString for ast::FrameClause {
             ret.push(start_sql);
         }
         if let Some(exclude) = &self.exclude {
-            ret.push(exclude.to_sql_string(context));
+            ret.push(exclude.to_string());
         }
 
         ret.join(" ")
     }
 }
 
-impl ToSqlString for ast::FrameMode {
-    fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
-        match self {
-            Self::Groups => "GROUPS",
-            Self::Range => "RANGE",
-            Self::Rows => "ROWS",
-        }
-        .to_string()
+impl Display for ast::FrameMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_fmt(f)
     }
 }
 
@@ -521,15 +513,17 @@ impl ToSqlString for ast::FrameBound {
     }
 }
 
-impl ToSqlString for ast::FrameExclude {
-    fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
-        let clause = match self {
-            Self::CurrentRow => "CURRENT ROW",
-            Self::Group => "GROUP",
-            Self::NoOthers => "NO OTHERS",
-            Self::Ties => "TIES",
-        };
-        format!("EXCLUDE {}", clause)
+impl Display for ast::FrameExclude {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", {
+            let clause = match self {
+                Self::CurrentRow => "CURRENT ROW",
+                Self::Group => "GROUP",
+                Self::NoOthers => "NO OTHERS",
+                Self::Ties => "TIES",
+            };
+            format!("EXCLUDE {}", clause)
+        })
     }
 }
 
@@ -658,4 +652,22 @@ mod tests {
     );
 
     to_sql_string_test!(test_select_with_aggregate_window, "SELECT a, SUM(b) OVER (PARTITION BY c ORDER BY d ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS running_sum FROM t;");
+
+    to_sql_string_test!(
+        test_select_with_exclude,
+        "SELECT 
+    c.name,
+    o.order_id,
+    o.order_amount,
+    SUM(o.order_amount) OVER (PARTITION BY c.id
+        ORDER BY o.order_date
+        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        EXCLUDE CURRENT ROW) AS running_total_excluding_current
+FROM customers c
+JOIN orders o ON c.id = o.customer_id
+WHERE EXISTS (SELECT 1
+    FROM orders o2
+    WHERE o2.customer_id = c.id
+    AND o2.order_amount > 1000);"
+    );
 }

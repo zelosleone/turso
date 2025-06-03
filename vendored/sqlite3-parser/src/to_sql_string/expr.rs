@@ -1,4 +1,6 @@
-use crate::ast::{self, Expr};
+use std::fmt::Display;
+
+use crate::ast::{self, fmt::ToTokens, Expr};
 
 use super::ToSqlString;
 
@@ -30,7 +32,7 @@ impl ToSqlString for Expr {
             Expr::Binary(lhs, op, rhs) => {
                 ret.push_str(&lhs.to_sql_string(context));
                 ret.push(' ');
-                ret.push_str(&op.to_sql_string(context));
+                ret.push_str(&op.to_string());
                 ret.push(' ');
                 ret.push_str(&rhs.to_sql_string(context));
             }
@@ -212,7 +214,7 @@ impl ToSqlString for Expr {
                 if *not {
                     ret.push_str("NOT ");
                 }
-                ret.push_str(&op.to_sql_string(context));
+                ret.push_str(&op.to_string());
                 ret.push(' ');
                 ret.push_str(&rhs.to_sql_string(context));
                 if let Some(escape) = escape {
@@ -221,7 +223,7 @@ impl ToSqlString for Expr {
                 }
             }
             Expr::Literal(literal) => {
-                ret.push_str(&literal.to_sql_string(context));
+                ret.push_str(&literal.to_string());
             }
             Expr::Name(name) => {
                 ret.push_str(&name.0);
@@ -247,7 +249,7 @@ impl ToSqlString for Expr {
             }
             Expr::Raise(resolve_type, expr) => {
                 ret.push_str("RAISE(");
-                ret.push_str(&resolve_type.to_sql_string(context));
+                ret.push_str(&resolve_type.to_string());
                 if let Some(expr) = expr {
                     ret.push_str(", ");
                     ret.push_str(&expr.to_sql_string(context));
@@ -260,7 +262,7 @@ impl ToSqlString for Expr {
                 ret.push(')');
             }
             Expr::Unary(unary_operator, expr) => {
-                ret.push_str(&unary_operator.to_sql_string(context));
+                ret.push_str(&unary_operator.to_string());
                 ret.push(' ');
                 ret.push_str(&expr.to_sql_string(context));
             }
@@ -272,9 +274,9 @@ impl ToSqlString for Expr {
     }
 }
 
-impl ToSqlString for ast::Operator {
-    fn to_sql_string<C: super::ToSqlContext>(&self, _context: &C) -> String {
-        match self {
+impl Display for ast::Operator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let value = match self {
             Self::Add => "+",
             Self::And => "AND",
             Self::ArrowRight => "->",
@@ -298,8 +300,8 @@ impl ToSqlString for ast::Operator {
             Self::Or => "OR",
             Self::RightShift => ">>",
             Self::Subtract => "-",
-        }
-        .to_string()
+        };
+        write!(f, "{}", value)
     }
 }
 
@@ -333,16 +335,20 @@ impl ToSqlString for ast::TypeSize {
     }
 }
 
-impl ToSqlString for ast::Distinctness {
-    fn to_sql_string<C: super::ToSqlContext>(&self, _context: &C) -> String {
-        match self {
-            Self::All => "ALL",
-            Self::Distinct => "DISTINCT",
-        }
-        .to_string()
+impl Display for ast::Distinctness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::All => "ALL",
+                Self::Distinct => "DISTINCT",
+            }
+        )
     }
 }
 
+// Can't impl Display here as it is already implemented for it
 impl ToSqlString for ast::QualifiedName {
     fn to_sql_string<C: super::ToSqlContext>(&self, _context: &C) -> String {
         let mut ret = String::new();
@@ -359,55 +365,49 @@ impl ToSqlString for ast::QualifiedName {
     }
 }
 
-impl ToSqlString for ast::LikeOperator {
-    fn to_sql_string<C: super::ToSqlContext>(&self, _context: &C) -> String {
-        match self {
-            Self::Glob => "GLOB",
-            Self::Like => "LIKE",
-            Self::Match => "MATCH",
-            Self::Regexp => "REGEXP",
-        }
-        .to_string()
+impl Display for ast::LikeOperator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_fmt(f)
     }
 }
 
-impl ToSqlString for ast::Literal {
-    fn to_sql_string<C: super::ToSqlContext>(&self, _context: &C) -> String {
-        match self {
-            Self::Blob(b) => format!("Ox{b}"),
-            Self::CurrentDate => "CURRENT_DATE".to_string(),
-            Self::CurrentTime => "CURRENT_TIME".to_string(),
-            Self::CurrentTimestamp => "CURRENT_TIMESTAMP".to_string(),
-            Self::Keyword(keyword) => keyword.clone(),
-            Self::Null => "NULL".to_string(),
-            Self::Numeric(num) => num.clone(),
-            Self::String(s) => s.clone(),
-        }
+impl Display for ast::Literal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::Blob(b) => format!("Ox{b}"),
+                Self::CurrentDate => "CURRENT_DATE".to_string(),
+                Self::CurrentTime => "CURRENT_TIME".to_string(),
+                Self::CurrentTimestamp => "CURRENT_TIMESTAMP".to_string(),
+                Self::Keyword(keyword) => keyword.clone(),
+                Self::Null => "NULL".to_string(),
+                Self::Numeric(num) => num.clone(),
+                Self::String(s) => s.clone(),
+            }
+        )
     }
 }
 
-impl ToSqlString for ast::ResolveType {
-    fn to_sql_string<C: super::ToSqlContext>(&self, _context: &C) -> String {
-        match self {
-            Self::Abort => "ABORT",
-            Self::Fail => "FAIL",
-            Self::Ignore => "IGNORE",
-            Self::Replace => "REPLACE",
-            Self::Rollback => "ROLLBACK",
-        }
-        .to_string()
+impl Display for ast::ResolveType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_fmt(f)
     }
 }
 
-impl ToSqlString for ast::UnaryOperator {
-    fn to_sql_string<C: super::ToSqlContext>(&self, _context: &C) -> String {
-        match self {
-            Self::BitwiseNot => "~",
-            Self::Negative => "-",
-            Self::Not => "NOT",
-            Self::Positive => "+",
-        }
-        .to_string()
+impl Display for ast::UnaryOperator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Self::BitwiseNot => "~",
+                Self::Negative => "-",
+                Self::Not => "NOT",
+                Self::Positive => "+",
+            }
+        )
     }
 }
 

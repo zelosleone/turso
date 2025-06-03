@@ -10,14 +10,14 @@ impl ToSqlString for ast::Update {
             )),
             self.or_conflict.map_or("".to_string(), |conflict| format!(
                 "OR {} ",
-                conflict.to_sql_string(context)
+                conflict.to_string()
             )),
             self.tbl_name.to_sql_string(context),
             self.indexed
                 .as_ref()
                 .map_or("".to_string(), |indexed| format!(
                     " {}",
-                    indexed.to_sql_string(context)
+                    indexed.to_string()
                 )),
             self.sets
                 .iter()

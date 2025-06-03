@@ -279,7 +279,7 @@ impl ToSqlString for Plan {
                 for (other_plan, operator) in rest {
                     ret.push(format!(
                         "{} {}",
-                        operator.to_sql_string(context),
+                        operator.to_string(),
                         other_plan.to_sql_string(context),
                     ));
                 }
@@ -291,7 +291,7 @@ impl ToSqlString for Plan {
                             .map(|(expr, order)| format!(
                                 "{} {}",
                                 expr.to_sql_string(context),
-                                order.to_sql_string(context)
+                                order.to_string()
                             ))
                             .collect::<Vec<_>>()
                             .join(", ")
@@ -449,7 +449,7 @@ impl ToSqlString for SelectPlan {
                     .map(|(expr, order)| format!(
                         "{} {}",
                         expr.to_sql_string(context),
-                        order.to_sql_string(context)
+                        order.to_string()
                     ))
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -496,7 +496,7 @@ impl ToSqlString for DeletePlan {
                     .map(|(expr, order)| format!(
                         "{} {}",
                         expr.to_sql_string(context),
-                        order.to_sql_string(context)
+                        order.to_string()
                     ))
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -571,7 +571,7 @@ impl ToSqlString for UpdatePlan {
                     .map(|(expr, order)| format!(
                         "{} {}",
                         expr.to_sql_string(context),
-                        order.to_sql_string(context)
+                        order.to_string()
                     ))
                     .collect::<Vec<_>>()
                     .join(", ")
