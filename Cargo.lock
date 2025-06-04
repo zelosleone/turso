@@ -2014,6 +2014,7 @@ dependencies = [
  "clap",
  "hex",
  "limbo",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-appender",
