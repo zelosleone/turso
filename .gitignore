@@ -37,3 +37,4 @@ testing/limbo_output.txt
 testing/*.log
 .bugbase
 limbostress.log
+simulator.log
