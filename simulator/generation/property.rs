@@ -461,7 +461,7 @@ pub(crate) fn remaining(env: &SimulatorEnv, stats: &InteractionStats) -> Remaini
     let remaining_delete = ((env.opts.max_interactions as f64 * env.opts.delete_percent / 100.0)
         - (stats.delete_count as f64))
         .max(0.0);
-    let remaining_update = ((env.opts.max_interactions as f64 * env.opts.delete_percent / 100.0)
+    let remaining_update = ((env.opts.max_interactions as f64 * env.opts.update_percent / 100.0)
         - (stats.update_count as f64))
         .max(0.0);
     let remaining_drop = ((env.opts.max_interactions as f64 * env.opts.drop_percent / 100.0)
@@ -716,7 +716,7 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
                     Box::new(|rng: &mut R| property_select_limit(rng, env)),
                 ),
                 (
-                    f64::min(remaining_.read, remaining_.write),
+                    f64::min(remaining_.read, remaining_.write).min(remaining_.delete),
                     Box::new(|rng: &mut R| property_delete_select(rng, env, &remaining_)),
                 ),
                 (
