@@ -82,16 +82,21 @@ impl SimulatorEnv {
             - drop_percent
             - update_percent;
 
-        assert_eq!(
-            read_percent
-                + write_percent
-                + create_percent
-                + create_index_percent
-                + drop_percent
-                + update_percent
-                + delete_percent,
-            total
-        );
+        let summed_total: f64 = read_percent
+            + write_percent
+            + create_percent
+            + create_index_percent
+            + drop_percent
+            + update_percent
+            + delete_percent;
+
+        let abs_diff = (summed_total - total).abs();
+        if abs_diff > 0.0001 {
+            panic!(
+                "Summed total {} is not equal to total {}",
+                summed_total, total
+            );
+        }
 
         let opts = SimulatorOpts {
             ticks: rng.gen_range(cli_opts.minimum_tests..=cli_opts.maximum_tests),
