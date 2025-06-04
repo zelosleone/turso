@@ -253,7 +253,7 @@ impl BTreeTable {
                 sql.push_str(" UNIQUE");
             }
 
-            if  column.primary_key {
+            if column.primary_key {
                 sql.push_str(" PRIMARY KEY");
             }
 
