@@ -192,9 +192,11 @@ pub struct WalHeader {
     pub checkpoint_seq: u32,
 
     /// Random value used for the first salt in checksum calculations
+    /// TODO: Incremented with each checkpoint
     pub salt_1: u32,
 
-    /// Random value used for the second salt in checksum calculations
+    /// Random value used for the second salt in checksum calculations.
+    /// TODO: A different random value for each checkpoint
     pub salt_2: u32,
 
     /// First checksum value in the wal-header
@@ -1471,11 +1473,16 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
             let frame_h_checksum_2 =
                 u32::from_be_bytes(frame_header_slice[20..24].try_into().unwrap());
 
+            // It contains more frames with mismatched SALT values, which means they're leftovers from previous checkpoints
             if frame_h_salt_1 != header_locked.salt_1 || frame_h_salt_2 != header_locked.salt_2 {
-                panic!(
-                    "WAL frame salt mismatch. Expected ({}, {}), Got ({}, {})",
-                    header_locked.salt_1, header_locked.salt_2, frame_h_salt_1, frame_h_salt_2
+                tracing::trace!(
+                    "WAL frame salt mismatch: expected ({}, {}), got ({}, {}), ignoring frame",
+                    header_locked.salt_1,
+                    header_locked.salt_2,
+                    frame_h_salt_1,
+                    frame_h_salt_2
                 );
+                break;
             }
 
             let checksum_after_fh_meta = checksum_wal(
