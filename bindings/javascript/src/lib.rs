@@ -9,7 +9,6 @@ use std::sync::Arc;
 use limbo_core::types::Text;
 use limbo_core::{maybe_init_database_file, LimboError, StepResult};
 use napi::iterator::Generator;
-use napi::JsObject;
 use napi::{bindgen_prelude::ObjectFinalize, Env, JsUnknown};
 use napi_derive::napi;
 
@@ -261,18 +260,14 @@ impl Statement {
                         Ok(raw_obj.coerce_to_object()?.into_unknown())
                     }
                     PresentationMode::Pluck => {
-                        let mut obj = env.create_object()?;
-
-                        let (idx, value) =
+                        let (_, value) =
                             row.get_values().enumerate().next().ok_or(napi::Error::new(
                                 napi::Status::GenericFailure,
                                 "Pluck mode requires at least one column in the result",
                             ))?;
-                        let key = stmt.get_column_name(idx);
-                        let js_value = to_js_value(&env, value);
-                        obj.set_named_property(&key, js_value)?;
+                        let js_value = to_js_value(&env, value)?;
 
-                        Ok(obj.into_unknown())
+                        Ok(js_value)
                     }
                     PresentationMode::None => {
                         let mut obj = env.create_object()?;
@@ -337,7 +332,6 @@ impl Statement {
             match stmt.step().map_err(into_napi_error)? {
                 limbo_core::StepResult::Row => {
                     let row = stmt.row().unwrap();
-                    let mut obj = env.create_object()?;
 
                     match self.presentation_mode {
                         PresentationMode::Raw => {
@@ -351,19 +345,18 @@ impl Statement {
                             continue;
                         }
                         PresentationMode::Pluck => {
-                            let (idx, value) =
+                            let (_, value) =
                                 row.get_values().enumerate().next().ok_or(napi::Error::new(
                                     napi::Status::GenericFailure,
                                     "Pluck mode requires at least one column in the result",
                                 ))?;
-                            let key = stmt.get_column_name(idx);
                             let js_value = to_js_value(&env, value)?;
-                            obj.set_named_property(&key, js_value)?;
-                            results.set_element(index, obj)?;
+                            results.set_element(index, js_value)?;
                             index += 1;
                             continue;
                         }
                         PresentationMode::None => {
+                            let mut obj = env.create_object()?;
                             for (idx, value) in row.get_values().enumerate() {
                                 let key = stmt.get_column_name(idx);
                                 let js_value = to_js_value(&env, value);
@@ -463,7 +456,7 @@ pub struct IteratorStatement {
 }
 
 impl Generator for IteratorStatement {
-    type Yield = JsObject;
+    type Yield = JsUnknown;
 
     type Next = ();
 
@@ -475,7 +468,6 @@ impl Generator for IteratorStatement {
         match stmt.step().ok()? {
             limbo_core::StepResult::Row => {
                 let row = stmt.row().unwrap();
-                let mut js_row = self.env.create_object().ok()?;
 
                 match self.presentation_mode {
                     PresentationMode::Raw => {
@@ -485,23 +477,21 @@ impl Generator for IteratorStatement {
                             raw_array.set(idx as u32, js_value).ok()?;
                         }
 
-                        raw_array.coerce_to_object().ok()
+                        Some(raw_array.coerce_to_object().ok()?.into_unknown())
                     }
                     PresentationMode::Pluck => {
-                        let (idx, value) = row.get_values().enumerate().next()?;
-                        let key = stmt.get_column_name(idx);
-                        let js_value = to_js_value(&self.env, value);
-                        js_row.set_named_property(&key, js_value).ok()?;
-                        Some(js_row)
+                        let (_, value) = row.get_values().enumerate().next()?;
+                        to_js_value(&self.env, value).ok()
                     }
                     PresentationMode::None => {
+                        let mut js_row = self.env.create_object().ok()?;
                         for (idx, value) in row.get_values().enumerate() {
                             let key = stmt.get_column_name(idx);
                             let js_value = to_js_value(&self.env, value);
                             js_row.set_named_property(&key, js_value).ok()?;
                         }
 
-                        Some(js_row)
+                        Some(js_row.into_unknown())
                     }
                 }
             }
