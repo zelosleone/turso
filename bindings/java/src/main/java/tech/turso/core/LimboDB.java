@@ -68,7 +68,8 @@ public final class LimboDB implements AutoCloseable {
       // TODO: add support for arm64 on Linux
       if (osName.contains("linux")) {
         if (osArch.contains("aarch64") || osArch.contains("arm64")) {
-          return LINUX_X86;
+          throw new UnsupportedOperationException(
+              "ARM64 architecture is not supported on Linux yet");
         } else if (osArch.contains("x86_64") || osArch.contains("amd64")) {
           return LINUX_X86;
         }
