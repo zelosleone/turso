@@ -6,7 +6,7 @@ use limbo_sqlite3_parser::{
     to_sql_string::{ToSqlContext, ToSqlString},
 };
 
-use crate::schema::Table;
+use crate::{schema::Table, translate::plan::TableReferences};
 
 use super::plan::{
     Aggregate, DeletePlan, JoinedTable, Operation, Plan, Search, SelectPlan, UpdatePlan,
@@ -227,7 +227,7 @@ impl fmt::Display for UpdatePlan {
     }
 }
 
-pub struct PlanContext<'a>(pub &'a [&'a JoinedTable]);
+pub struct PlanContext<'a>(pub &'a [&'a TableReferences]);
 
 // Definitely not perfect yet
 impl ToSqlContext for PlanContext<'_> {
@@ -235,19 +235,30 @@ impl ToSqlContext for PlanContext<'_> {
         let table = self
             .0
             .iter()
-            .find(|table_ref| table_ref.internal_id == table_id)
+            .map(|table_ref| table_ref.find_table_by_internal_id(table_id))
+            .reduce(|accum, curr| match (accum, curr) {
+                (Some(table), _) | (_, Some(table)) => Some(table),
+                _ => None,
+            })
+            .unwrap()
             .unwrap();
         let cols = table.columns();
         cols.get(col_idx).unwrap().name.as_ref().unwrap()
     }
 
     fn get_table_name(&self, id: TableInternalId) -> &str {
-        let table = self
+        let table_ref = self
             .0
             .iter()
-            .find(|table_ref| table_ref.internal_id == id)
+            .find(|table_ref| table_ref.find_table_by_internal_id(id).is_some())
             .unwrap();
-        &table.identifier
+        let joined_table = table_ref.find_joined_table_by_internal_id(id);
+        let outer_query = table_ref.find_outer_query_ref_by_internal_id(id);
+        match (joined_table, outer_query) {
+            (Some(table), None) => &table.identifier,
+            (None, Some(table)) => &table.identifier,
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -255,9 +266,7 @@ impl ToSqlString for Plan {
     fn to_sql_string<C: ToSqlContext>(&self, context: &C) -> String {
         // Make the Plans pass their own context
         match self {
-            Self::Select(select) => select.to_sql_string(&PlanContext(
-                &select.joined_tables().iter().collect::<Vec<_>>(),
-            )),
+            Self::Select(select) => select.to_sql_string(&PlanContext(&[&select.table_references])),
             Self::CompoundSelect {
                 first,
                 rest,
@@ -265,12 +274,10 @@ impl ToSqlString for Plan {
                 offset,
                 order_by,
             } => {
-                let all_refs = first
-                    .joined_tables()
-                    .iter()
+                let all_refs = std::iter::once(&first.table_references)
                     .chain(
                         rest.iter()
-                            .flat_map(|(plan, _)| plan.joined_tables().iter()),
+                            .flat_map(|(plan, _)| std::iter::once(&plan.table_references)),
                     )
                     .collect::<Vec<_>>();
                 let context = &PlanContext(all_refs.as_slice());
@@ -316,24 +323,21 @@ impl ToSqlString for JoinedTable {
         &self,
         _context: &C,
     ) -> String {
-        let table_or_subquery = match &self.table {
-            Table::BTree(..) | Table::Pseudo(..) | Table::Virtual(..) => {
-                self.table.get_name().to_string()
-            }
-            Table::FromClauseSubquery(from_clause_subquery) => {
-                // Could possibly merge the contexts together here
-                format!(
-                    "({})",
-                    from_clause_subquery.plan.to_sql_string(&PlanContext(
-                        &from_clause_subquery
-                            .plan
-                            .joined_tables()
-                            .iter()
-                            .collect::<Vec<_>>()
-                    ))
-                )
-            }
-        };
+        let table_or_subquery =
+            match &self.table {
+                Table::BTree(..) | Table::Pseudo(..) | Table::Virtual(..) => {
+                    self.table.get_name().to_string()
+                }
+                Table::FromClauseSubquery(from_clause_subquery) => {
+                    // Could possibly merge the contexts together here
+                    format!(
+                        "({})",
+                        from_clause_subquery.plan.to_sql_string(&PlanContext(&[
+                            &from_clause_subquery.plan.table_references
+                        ]))
+                    )
+                }
+            };
         // JOIN is done at a higher level
         format!(
             "{}{}",
@@ -463,16 +467,16 @@ impl ToSqlString for SelectPlan {
 
 impl ToSqlString for DeletePlan {
     fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
-        let table_ref = self
+        let table = self
             .table_references
             .joined_tables()
             .first()
             .expect("Delete Plan should have only one table reference");
-        let context = &[table_ref];
+        let context = &[&self.table_references];
         let context = &PlanContext(context);
         let mut ret = Vec::new();
 
-        ret.push(format!("DELETE FROM {}", table_ref.table.get_name()));
+        ret.push(format!("DELETE FROM {}", table.table.get_name()));
 
         if !self.where_clause.is_empty() {
             ret.push("WHERE".to_string());
@@ -506,22 +510,18 @@ impl ToSqlString for DeletePlan {
 
 impl ToSqlString for UpdatePlan {
     fn to_sql_string<C: ToSqlContext>(&self, _context: &C) -> String {
-        let table_ref = self
+        let table = self
             .table_references
             .joined_tables()
             .first()
             .expect("UPDATE Plan should have only one table reference");
-        let context = &self
-            .table_references
-            .joined_tables()
-            .iter()
-            .collect::<Vec<_>>();
-        let context = &PlanContext(context);
+        let context = [&self.table_references];
+        let context = &PlanContext(&context);
         let mut ret = Vec::new();
 
         // TODO: we don't work with conflict clauses yet
 
-        ret.push(format!("UPDATE {} SET", table_ref.table.get_name()));
+        ret.push(format!("UPDATE {} SET", table.table.get_name()));
 
         // TODO: does not support column_name_list yet
         ret.push(
@@ -530,7 +530,7 @@ impl ToSqlString for UpdatePlan {
                 .map(|(col_idx, set_expr)| {
                     format!(
                         "{} = {}",
-                        table_ref
+                        table
                             .table
                             .get_column_at(*col_idx)
                             .as_ref()

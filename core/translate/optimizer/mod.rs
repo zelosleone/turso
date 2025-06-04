@@ -35,6 +35,7 @@ pub(crate) mod join;
 pub(crate) mod lift_common_subexpressions;
 pub(crate) mod order;
 
+#[tracing::instrument(skip_all, level = tracing::Level::DEBUG)]
 pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
     match plan {
         Plan::Select(plan) => optimize_select_plan(plan, schema)?,
@@ -48,10 +49,7 @@ pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
         }
     }
     // Context for everything is created with values inside the plan
-    tracing::debug!(
-        target = "optimized_plan",
-        plan_sql = plan.to_sql_string(&crate::translate::display::PlanContext(&[]))
-    );
+    tracing::debug!(plan_sql = plan.to_sql_string(&crate::translate::display::PlanContext(&[])));
     Ok(())
 }
 
