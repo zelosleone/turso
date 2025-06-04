@@ -42,29 +42,46 @@ impl SimulatorEnv {
     pub(crate) fn new(seed: u64, cli_opts: &SimulatorCLI, db_path: &Path) -> Self {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
-        let (create_percent, read_percent, write_percent, delete_percent, drop_percent) = {
-            let total = 100.0;
+        let total = 100.0;
 
-            let read_percent = rng.gen_range(0.0..=total);
-            let write_percent = total - read_percent;
+        let mut create_percent = 0.0;
+        let mut drop_percent = 0.0;
+        let mut delete_percent = 0.0;
+        let mut update_percent = 0.0;
 
+        let read_percent = rng.gen_range(0.0..=total);
+        let write_percent = total - read_percent;
+
+        if !cli_opts.disable_create {
             // Create percent should be 5-15% of the write percent
-            let create_percent = rng.gen_range(0.05..=0.15) * write_percent;
+            create_percent = rng.gen_range(0.05..=0.15) * write_percent;
+        }
+        if !cli_opts.disable_drop {
             // Drop percent should be 2-5% of the write percent
-            let drop_percent = rng.gen_range(0.02..=0.05) * write_percent;
+            drop_percent = rng.gen_range(0.02..=0.05) * write_percent;
+        }
+        if !cli_opts.disable_delete {
             // Delete percent should be 10-20% of the write percent
-            let delete_percent = rng.gen_range(0.1..=0.2) * write_percent;
+            delete_percent = rng.gen_range(0.1..=0.2) * write_percent;
+        }
+        if !cli_opts.disable_update {
+            // Update percent should be 10-20% of the write percent
+            // TODO: freestyling the percentage
+            update_percent = rng.gen_range(0.1..=0.2) * write_percent;
+        }
 
-            let write_percent = write_percent - create_percent - delete_percent - drop_percent;
+        let write_percent =
+            write_percent - create_percent - delete_percent - drop_percent - update_percent;
 
-            (
-                create_percent,
-                read_percent,
-                write_percent,
-                delete_percent,
-                drop_percent,
-            )
-        };
+        assert_eq!(
+            read_percent
+                + write_percent
+                + create_percent
+                + drop_percent
+                + update_percent
+                + delete_percent,
+            total
+        );
 
         let opts = SimulatorOpts {
             ticks: rng.gen_range(cli_opts.minimum_tests..=cli_opts.maximum_tests),
@@ -76,6 +93,7 @@ impl SimulatorEnv {
             write_percent,
             delete_percent,
             drop_percent,
+            update_percent,
             page_size: 4096, // TODO: randomize this too
             max_interactions: rng.gen_range(cli_opts.minimum_tests..=cli_opts.maximum_tests),
             max_time_simulation: cli_opts.maximum_time,
@@ -178,6 +196,7 @@ pub(crate) struct SimulatorOpts {
     pub(crate) read_percent: f64,
     pub(crate) write_percent: f64,
     pub(crate) delete_percent: f64,
+    pub(crate) update_percent: f64,
     pub(crate) drop_percent: f64,
     pub(crate) max_interactions: usize,
     pub(crate) page_size: usize,
