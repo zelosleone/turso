@@ -177,6 +177,10 @@ class Statement {
     throw new Error("not implemented");
   }
 
+  get source() {
+    return this.stmt.source;
+  }
+
   get database() {
     return this.db;
   }
