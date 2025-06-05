@@ -1508,10 +1508,9 @@ impl BTreeCursor {
                 // EQ  | <                          | go right | Last = key is in right subtree
                 let is_on_left = match seek_op {
                     SeekOp::GT => cell_rowid > rowid,
-                    SeekOp::GE => cell_rowid >= rowid,
-                    SeekOp::LE => cell_rowid >= rowid,
+                    SeekOp::GE { .. } => cell_rowid >= rowid,
+                    SeekOp::LE { .. } => cell_rowid >= rowid,
                     SeekOp::LT => cell_rowid + 1 >= rowid,
-                    SeekOp::EQ => cell_rowid >= rowid,
                 };
                 if is_on_left {
                     self.move_to_state
@@ -1689,9 +1688,8 @@ impl BTreeCursor {
 
                     match cmp {
                         SeekOp::GT => interior_cell_vs_index_key.is_gt(),
-                        SeekOp::GE => interior_cell_vs_index_key.is_ge(),
-                        SeekOp::EQ => interior_cell_vs_index_key.is_ge(),
-                        SeekOp::LE => interior_cell_vs_index_key.is_gt(),
+                        SeekOp::GE { .. } => interior_cell_vs_index_key.is_ge(),
+                        SeekOp::LE { .. } => interior_cell_vs_index_key.is_gt(),
                         SeekOp::LT => interior_cell_vs_index_key.is_ge(),
                     }
                 };
@@ -1769,14 +1767,15 @@ impl BTreeCursor {
 
             let found = match seek_op {
                 SeekOp::GT => cmp.is_gt(),
-                SeekOp::GE => cmp.is_ge(),
-                SeekOp::EQ => cmp.is_eq(),
-                SeekOp::LE => cmp.is_le(),
+                SeekOp::GE { eq_only: true } => cmp.is_eq(),
+                SeekOp::GE { eq_only: false } => cmp.is_ge(),
+                SeekOp::LE { eq_only: true } => cmp.is_eq(),
+                SeekOp::LE { eq_only: false } => cmp.is_le(),
                 SeekOp::LT => cmp.is_lt(),
             };
 
             // rowids are unique, so we can return the rowid immediately
-            if found && SeekOp::EQ == seek_op {
+            if found && seek_op.eq_only() {
                 self.stack.set_cell_index(cur_cell_idx as i32);
                 return Ok(CursorResult::Ok(true));
             }
@@ -2022,9 +2021,10 @@ impl BTreeCursor {
         };
         let found = match seek_op {
             SeekOp::GT => cmp.is_gt(),
-            SeekOp::GE => cmp.is_ge(),
-            SeekOp::EQ => cmp.is_eq(),
-            SeekOp::LE => cmp.is_le(),
+            SeekOp::GE { eq_only: true } => cmp.is_eq(),
+            SeekOp::GE { eq_only: false } => cmp.is_ge(),
+            SeekOp::LE { eq_only: true } => cmp.is_eq(),
+            SeekOp::LE { eq_only: false } => cmp.is_le(),
             SeekOp::LT => cmp.is_lt(),
         };
         (cmp, found)
@@ -4119,12 +4119,16 @@ impl BTreeCursor {
                 if !moved_before && !matches!(self.state, CursorState::Write(..)) {
                     match key {
                         BTreeKey::IndexKey(_) => {
-                            return_if_io!(
-                                self.seek(SeekKey::IndexKey(key.get_record().unwrap()), SeekOp::GE)
-                            )
+                            return_if_io!(self.seek(
+                                SeekKey::IndexKey(key.get_record().unwrap()),
+                                SeekOp::GE { eq_only: true }
+                            ))
                         }
                         BTreeKey::TableRowId(_) => {
-                            return_if_io!(self.seek(SeekKey::TableRowId(key.to_rowid()), SeekOp::EQ))
+                            return_if_io!(self.seek(
+                                SeekKey::TableRowId(key.to_rowid()),
+                                SeekOp::GE { eq_only: true }
+                            ))
                         }
                     };
                 }
@@ -4430,7 +4434,7 @@ impl BTreeCursor {
                             SeekKey::IndexKey(immutable_record)
                         }
                     };
-                    return_if_io!(self.seek(key, SeekOp::EQ));
+                    return_if_io!(self.seek(key, SeekOp::GE { eq_only: true }));
 
                     self.state = CursorState::None;
                     return Ok(CursorResult::Ok(()));
@@ -4454,7 +4458,7 @@ impl BTreeCursor {
 
     /// Search for a key in an Index Btree. Looking up indexes that need to be unique, we cannot compare the rowid
     pub fn key_exists_in_index(&mut self, key: &ImmutableRecord) -> Result<CursorResult<bool>> {
-        return_if_io!(self.seek(SeekKey::IndexKey(key), SeekOp::GE));
+        return_if_io!(self.seek(SeekKey::IndexKey(key), SeekOp::GE { eq_only: true }));
 
         let record_opt = return_if_io!(self.record());
         match record_opt.as_ref() {
@@ -4488,7 +4492,9 @@ impl BTreeCursor {
             Value::Integer(i) => i,
             _ => unreachable!("btree tables are indexed by integers!"),
         };
-        let _ = return_if_io!(self.move_to(SeekKey::TableRowId(*int_key), SeekOp::EQ));
+        let _ = return_if_io!(
+            self.move_to(SeekKey::TableRowId(*int_key), SeekOp::GE { eq_only: true })
+        );
         let page = self.stack.top();
         // TODO(pere): request load
         return_if_locked_maybe_load!(self.pager, page);
@@ -5005,7 +5011,7 @@ impl BTreeCursor {
             CursorContext::TableRowId(rowid) => SeekKey::TableRowId(rowid),
             CursorContext::IndexKeyRowId(ref record) => SeekKey::IndexKey(record),
         };
-        let res = self.seek(seek_key, SeekOp::EQ)?;
+        let res = self.seek(seek_key, SeekOp::GE { eq_only: true })?;
         match res {
             CursorResult::Ok(_) => {
                 self.valid_state = CursorValidState::Valid;
@@ -6504,7 +6510,7 @@ mod tests {
                 run_until_done(
                     || {
                         let key = SeekKey::TableRowId(*key);
-                        cursor.move_to(key, SeekOp::EQ)
+                        cursor.move_to(key, SeekOp::GE { eq_only: true })
                     },
                     pager.deref(),
                 )
@@ -6528,7 +6534,7 @@ mod tests {
                 let seek_key = SeekKey::TableRowId(*key);
                 assert!(
                     matches!(
-                        cursor.seek(seek_key, SeekOp::EQ).unwrap(),
+                        cursor.seek(seek_key, SeekOp::GE { eq_only: true }).unwrap(),
                         CursorResult::Ok(true)
                     ),
                     "key {} is not found",
@@ -6598,7 +6604,7 @@ mod tests {
                 run_until_done(
                     || {
                         let key = SeekKey::TableRowId(key);
-                        cursor.move_to(key, SeekOp::EQ)
+                        cursor.move_to(key, SeekOp::GE { eq_only: true })
                     },
                     pager.deref(),
                 )
@@ -7774,7 +7780,7 @@ mod tests {
             run_until_done(
                 || {
                     let key = SeekKey::TableRowId(i);
-                    cursor.move_to(key, SeekOp::EQ)
+                    cursor.move_to(key, SeekOp::GE { eq_only: true })
                 },
                 pager.deref(),
             )
@@ -7851,7 +7857,7 @@ mod tests {
             run_until_done(
                 || {
                     let key = SeekKey::TableRowId(i);
-                    cursor.move_to(key, SeekOp::EQ)
+                    cursor.move_to(key, SeekOp::GE { eq_only: true })
                 },
                 pager.deref(),
             )
@@ -7874,8 +7880,11 @@ mod tests {
             let mut cursor = BTreeCursor::new_table(None, pager.clone(), root_page);
             let seek_key = SeekKey::TableRowId(i);
 
-            let found = run_until_done(|| cursor.seek(seek_key.clone(), SeekOp::EQ), pager.deref())
-                .unwrap();
+            let found = run_until_done(
+                || cursor.seek(seek_key.clone(), SeekOp::GE { eq_only: true }),
+                pager.deref(),
+            )
+            .unwrap();
 
             if found {
                 run_until_done(|| cursor.delete(), pager.deref()).unwrap();
@@ -7932,7 +7941,7 @@ mod tests {
             run_until_done(
                 || {
                     let key = SeekKey::TableRowId(i as i64);
-                    cursor.move_to(key, SeekOp::EQ)
+                    cursor.move_to(key, SeekOp::GE { eq_only: true })
                 },
                 pager.deref(),
             )
@@ -7974,7 +7983,7 @@ mod tests {
         run_until_done(
             || {
                 let key = SeekKey::TableRowId(1);
-                cursor.move_to(key, SeekOp::EQ)
+                cursor.move_to(key, SeekOp::GE { eq_only: true })
             },
             pager.deref(),
         )
@@ -8050,7 +8059,7 @@ mod tests {
         run_until_done(
             || {
                 let key = SeekKey::TableRowId(1);
-                cursor.move_to(key, SeekOp::EQ)
+                cursor.move_to(key, SeekOp::GE { eq_only: true })
             },
             pager.deref(),
         )
