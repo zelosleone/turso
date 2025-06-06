@@ -1619,7 +1619,7 @@ pub fn halt(
         }
         SQLITE_CONSTRAINT_NOTNULL => {
             return Err(LimboError::Constraint(format!(
-                "NOTNULL constraint failed: {} (19)",
+                "NOT NULL constraint failed: {} (19)",
                 description
             )));
         }
