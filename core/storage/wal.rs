@@ -133,7 +133,7 @@ impl LimboRwLock {
                 // no op
                 false
             }
-            WRITE_LOCK => true,
+            WRITE_LOCK => false,
             _ => unreachable!(),
         };
         tracing::trace!("write_lock({})", ok);
