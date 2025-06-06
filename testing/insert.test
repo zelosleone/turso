@@ -210,7 +210,7 @@ do_execsql_test_on_specific_db {:memory:} not_null_insert_result_rows {
     INSERT INTO t2 (y) VALUES (1);
     INSERT INTO t2 (y) VALUES (NULL);
     SELECT * FROM t2;
-} {"Runtime error: NOTNULL constraint failed: t2.y (19)"
+} {"Runtime error: NOT NULL constraint failed: t2.y (19)"
 1}
 
 do_execsql_test_on_specific_db {:memory:} not_null_primary_key {
@@ -218,7 +218,7 @@ do_execsql_test_on_specific_db {:memory:} not_null_primary_key {
     INSERT INTO t2 (y) VALUES (1);
     INSERT INTO t2 (y) VALUES (NULL);
     SELECT * FROM t2;
-} {"Runtime error: NOTNULL constraint failed: t2.y (19)"
+} {"Runtime error: NOT NULL constraint failed: t2.y (19)"
 1}
 
 do_execsql_test_on_specific_db {:memory:} not_null_insert_select {
@@ -228,7 +228,7 @@ do_execsql_test_on_specific_db {:memory:} not_null_insert_select {
     INSERT INTO d (y) VALUES (NULL);
     INSERT INTO t2 (y) SELECT y FROM d;
     SELECT * FROM t2;
-} {"Runtime error: NOTNULL constraint failed: t2.y (19)"
+} {"Runtime error: NOT NULL constraint failed: t2.y (19)"
 }
 
 do_execsql_test_on_specific_db {:memory:} not_null_insert_multiple_values {
