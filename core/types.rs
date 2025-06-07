@@ -776,12 +776,15 @@ impl ImmutableRecord {
         }
     }
 
-    pub fn get<'a, T: FromValue<'a> + 'a>(&'a self, idx: usize) -> Result<T> {
+    pub fn get<'a, T: TryFrom<&'a RefValue, Error = LimboError> + 'a>(
+        &'a self,
+        idx: usize,
+    ) -> Result<T> {
         let value = self
             .values
             .get(idx)
             .ok_or(LimboError::InternalError("Index out of bounds".into()))?;
-        T::from_value(value)
+        T::try_from(value)
     }
 
     pub fn count(&self) -> usize {
