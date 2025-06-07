@@ -668,6 +668,17 @@ impl<'a> TryFrom<&'a RefValue> for i64 {
     }
 }
 
+impl<'a> TryFrom<&'a RefValue> for String {
+    type Error = LimboError;
+
+    fn try_from(value: &'a RefValue) -> Result<Self, Self::Error> {
+        match value {
+            RefValue::Text(s) => Ok(s.as_str().to_string()),
+            _ => Err(LimboError::ConversionError("Expected text value".into())),
+        }
+    }
+}
+
 /// This struct serves the purpose of not allocating multiple vectors of bytes if not needed.
 /// A value in a record that has already been serialized can stay serialized and what this struct offsers
 /// is easy acces to each value which point to the payload.
