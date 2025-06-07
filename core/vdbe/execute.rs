@@ -3871,7 +3871,6 @@ pub fn op_delete(
         return_if_io!(cursor.delete());
     }
     let prev_changes = program.n_change.get();
-    println!("[Insn::Delete] set n_changes to {}", prev_changes + 1);
     program.n_change.set(prev_changes + 1);
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -3931,7 +3930,7 @@ pub fn op_idx_delete(
                     return_if_io!(cursor.delete());
                 }
                 let n_change = program.n_change.get();
-                println!("[Insn::IdxDelete] set n_changes to {}", n_change + 1);
+                tracing::debug!("[Insn::IdxDelete] set n_changes to {}", n_change + 1);
                 program.n_change.set(n_change + 1);
                 state.pc += 1;
                 state.op_idx_delete_state = None;
