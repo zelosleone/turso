@@ -624,39 +624,6 @@ impl std::ops::DivAssign<Value> for Value {
     }
 }
 
-pub trait FromValue<'a> {
-    fn from_value(value: &'a RefValue) -> Result<Self>
-    where
-        Self: Sized + 'a;
-}
-
-impl<'a> FromValue<'a> for i64 {
-    fn from_value(value: &'a RefValue) -> Result<Self> {
-        match value {
-            RefValue::Integer(i) => Ok(*i),
-            _ => Err(LimboError::ConversionError("Expected integer value".into())),
-        }
-    }
-}
-
-impl<'a> FromValue<'a> for String {
-    fn from_value(value: &'a RefValue) -> Result<Self> {
-        match value {
-            RefValue::Text(s) => Ok(s.as_str().to_string()),
-            _ => Err(LimboError::ConversionError("Expected text value".into())),
-        }
-    }
-}
-
-impl<'a> FromValue<'a> for &'a str {
-    fn from_value(value: &'a RefValue) -> Result<Self> {
-        match value {
-            RefValue::Text(s) => Ok(s.as_str()),
-            _ => Err(LimboError::ConversionError("Expected text value".into())),
-        }
-    }
-}
-
 impl<'a> TryFrom<&'a RefValue> for i64 {
     type Error = LimboError;
 
