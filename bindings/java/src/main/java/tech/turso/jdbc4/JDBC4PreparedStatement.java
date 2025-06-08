@@ -204,7 +204,7 @@ public final class JDBC4PreparedStatement extends JDBC4Statement implements Prep
 
   @Override
   public ResultSetMetaData getMetaData() throws SQLException {
-    return this.resultSet; 
+    return this.resultSet;
   }
 
   @Override
