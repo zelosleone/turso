@@ -4,6 +4,13 @@ import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 
 public class JDBC4ResultSetMetadata implements ResultSetMetaData {
+
+    private final JDBC4ResultSet resultSet;
+
+    public JDBC4ResultSetMetadata(JDBC4ResultSet resultSet) {
+        this.resultSet = resultSet;
+    }
+
     @Override
     public int getColumnCount() throws SQLException {
         // TODO
