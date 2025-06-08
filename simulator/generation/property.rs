@@ -289,20 +289,6 @@ impl Property {
                     }),
                 });
 
-                let assertion = Interaction::Assertion(Assertion {
-                    message: format!(
-                        "select '{}' should return no values for table '{}'",
-                        predicate, table,
-                    ),
-                    func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
-                        let rows = stack.last().unwrap();
-                        match rows {
-                            Ok(rows) => Ok(rows.is_empty()),
-                            Err(err) => Err(LimboError::InternalError(err.to_string())),
-                        }
-                    }),
-                });
-
                 let delete = Interaction::Query(Query::Delete(Delete {
                     table: table.clone(),
                     predicate: predicate.clone(),
@@ -315,6 +301,17 @@ impl Property {
                     limit: None,
                     distinct: Distinctness::All,
                 }));
+
+                let assertion = Interaction::Assertion(Assertion {
+                    message: format!("`{}` should return no values for table `{}`", select, table,),
+                    func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
+                        let rows = stack.last().unwrap();
+                        match rows {
+                            Ok(rows) => Ok(rows.is_empty()),
+                            Err(err) => Err(LimboError::InternalError(err.to_string())),
+                        }
+                    }),
+                });
 
                 let mut interactions = Vec::new();
                 interactions.push(assumption);
