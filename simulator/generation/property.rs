@@ -715,24 +715,44 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
         frequency(
             vec![
                 (
-                    f64::min(remaining_.read, remaining_.write),
+                    if !env.opts.disable_insert_values_select {
+                        f64::min(remaining_.read, remaining_.write)
+                    } else {
+                        0.0
+                    },
                     Box::new(|rng: &mut R| property_insert_values_select(rng, env, &remaining_)),
                 ),
                 (
-                    remaining_.create / 2.0,
+                    if !env.opts.disable_double_create_failure {
+                        remaining_.create / 2.0
+                    } else {
+                        0.0
+                    },
                     Box::new(|rng: &mut R| property_double_create_failure(rng, env, &remaining_)),
                 ),
                 (
-                    remaining_.read,
+                    if !env.opts.disable_select_limit {
+                        remaining_.read
+                    } else {
+                        0.0
+                    },
                     Box::new(|rng: &mut R| property_select_limit(rng, env)),
                 ),
                 (
-                    f64::min(remaining_.read, remaining_.write).min(remaining_.delete),
+                    if !env.opts.disable_delete_select {
+                        f64::min(remaining_.read, remaining_.write).min(remaining_.delete)
+                    } else {
+                        0.0
+                    },
                     Box::new(|rng: &mut R| property_delete_select(rng, env, &remaining_)),
                 ),
                 (
-                    // remaining_.drop,
-                    0.0,
+                    if !env.opts.disable_drop_select {
+                        // remaining_.drop
+                        0.0
+                    } else {
+                        0.0
+                    },
                     Box::new(|rng: &mut R| property_drop_select(rng, env, &remaining_)),
                 ),
                 (
