@@ -1133,10 +1133,6 @@ fn emit_update_insns(
     }
 
     for (index, (idx_cursor_id, record_reg)) in plan.indexes_to_update.iter().zip(&index_cursors) {
-        if !index.unique {
-            continue;
-        }
-
         let num_cols = index.columns.len();
         // allocate scratch registers for the index columns plus rowid
         let idx_start_reg = program.alloc_registers(num_cols + 1);
@@ -1161,6 +1157,7 @@ fn emit_update_insns(
             amount: 0,
         });
 
+        // this record will be inserted into the index later
         program.emit_insn(Insn::MakeRecord {
             start_reg: idx_start_reg,
             count: num_cols + 1,
@@ -1168,6 +1165,11 @@ fn emit_update_insns(
             index_name: Some(index.name.clone()),
         });
 
+        if !index.unique {
+            continue;
+        }
+
+        // check if the record already exists in the index for unique indexes and abort if so
         let constraint_check = program.allocate_label();
         program.emit_insn(Insn::NoConflict {
             cursor_id: *idx_cursor_id,
@@ -1280,7 +1282,7 @@ fn emit_update_insns(
             let num_regs = index.columns.len() + 1;
             let start_reg = program.alloc_registers(num_regs);
 
-            // Emit columns that are part of the index
+            // Delete existing index key
             index
                 .columns
                 .iter()
@@ -1304,6 +1306,7 @@ fn emit_update_insns(
                 cursor_id: idx_cursor_id,
             });
 
+            // Insert new index key (filled further above with values from set_clauses)
             program.emit_insn(Insn::IdxInsert {
                 cursor_id: idx_cursor_id,
                 record_reg: record_reg,
