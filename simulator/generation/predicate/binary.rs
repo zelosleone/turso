@@ -7,7 +7,7 @@ use crate::{
         backtrack, one_of, pick,
         predicate::{CompoundPredicate, SimplePredicate},
         table::{GTValue, LTValue, LikeValue},
-        ArbitraryFrom as _, ArbitraryFromMaybe as _,
+        ArbitraryFrom, ArbitraryFromMaybe as _,
     },
     model::{
         query::predicate::Predicate,
@@ -335,7 +335,6 @@ impl CompoundPredicate {
                 (0..rng.gen_range(0..=3))
                     .map(|_| SimplePredicate::arbitrary_from(rng, (table, row, true)).0)
                     .reduce(|accum, curr| {
-                        // dbg!(&accum, &curr);
                         Predicate(Expr::Binary(
                             Box::new(accum.0),
                             ast::Operator::And,

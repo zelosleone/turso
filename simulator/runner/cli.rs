@@ -61,7 +61,7 @@ pub struct SimulatorCLI {
     #[clap(
         long,
         help = "disable Select-Select-Optimizer Property",
-        default_value_t = true // TODO: set this option to false after we have correctly asserted how this property should work
+        default_value_t = false
     )]
     pub disable_select_optimizer: bool,
 }

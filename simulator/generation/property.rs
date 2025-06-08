@@ -1,4 +1,5 @@
 use limbo_core::LimboError;
+use limbo_sqlite3_parser::ast;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -692,10 +693,16 @@ fn property_select_select_optimizer<R: rand::Rng>(rng: &mut R, env: &SimulatorEn
     let table = pick(&env.tables, rng);
     // Generate a random predicate
     let predicate = Predicate::arbitrary_from(rng, table);
+    // Transform into a Binary predicate to force values to be casted to a bool
+    let expr = ast::Expr::Binary(
+        Box::new(predicate.0),
+        ast::Operator::And,
+        Box::new(Predicate::true_().0),
+    );
 
     Property::SelectSelectOptimizer {
         table: table.name.clone(),
-        predicate,
+        predicate: Predicate(expr),
     }
 }
 

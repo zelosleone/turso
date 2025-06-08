@@ -17,11 +17,13 @@ struct CompoundPredicate(Predicate);
 #[derive(Debug)]
 struct SimplePredicate(Predicate);
 
-impl ArbitraryFrom<(&Table, &[SimValue], bool)> for SimplePredicate {
+impl<A: AsRef<[SimValue]>> ArbitraryFrom<(&Table, A, bool)> for SimplePredicate {
     fn arbitrary_from<R: Rng>(
         rng: &mut R,
-        (table, row, predicate_value): (&Table, &[SimValue], bool),
+        (table, row, predicate_value): (&Table, A, bool),
     ) -> Self {
+        let row = row.as_ref();
+        // Pick an operator
         let choice = rng.gen_range(0..2);
         // Pick an operator
         match predicate_value {

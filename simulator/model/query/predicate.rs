@@ -48,7 +48,6 @@ pub fn expr_to_value(expr: &ast::Expr, row: &[SimValue], table: &Table) -> Optio
         ast::Expr::Binary(lhs, op, rhs) => {
             let lhs = expr_to_value(lhs, row, table)?;
             let rhs = expr_to_value(rhs, row, table)?;
-            // dbg!(&lhs, &rhs);
             Some(lhs.binary_compare(&rhs, *op))
         }
         ast::Expr::Like {
