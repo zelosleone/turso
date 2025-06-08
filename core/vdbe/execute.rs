@@ -5521,12 +5521,10 @@ impl Value {
 
     // exec_if returns whether you should jump
     pub fn exec_if(&self, jump_if_null: bool, not: bool) -> bool {
-        match self {
-            Value::Integer(0) | Value::Float(0.0) => not,
-            Value::Integer(_) | Value::Float(_) => !not,
-            Value::Null => jump_if_null,
-            _ => false,
-        }
+        Numeric::from(self)
+            .try_into_bool()
+            .map(|jump| if not { !jump } else { jump })
+            .unwrap_or(jump_if_null)
     }
 
     pub fn exec_cast(&self, datatype: &str) -> Value {
