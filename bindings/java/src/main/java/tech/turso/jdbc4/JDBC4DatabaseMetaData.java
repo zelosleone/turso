@@ -705,25 +705,25 @@ public final class JDBC4DatabaseMetaData implements DatabaseMetaData {
     }
 
     // Start building query
-    StringBuilder sql = new StringBuilder(
-            "SELECT " +
-            "NULL AS TABLE_CAT, " +
-            "NULL AS TABLE_SCHEM, " +
-            "name AS TABLE_NAME, " +
-            "CASE type " +
-            "  WHEN 'table' THEN 'TABLE' " +
-            "  WHEN 'view' THEN 'VIEW' " +
-            "  ELSE UPPER(type) " +
-            "END AS TABLE_TYPE, " +
-            "NULL AS REMARKS, " +
-            "NULL AS TYPE_CAT, " +
-            "NULL AS TYPE_SCHEM, " +
-            "NULL AS TYPE_NAME, " +
-            "NULL AS SELF_REFERENCING_COL_NAME, " +
-            "NULL AS REF_GENERATION " +
-            "FROM sqlite_schema " +
-            "WHERE 1=1"
-    );
+    StringBuilder sql =
+        new StringBuilder(
+            "SELECT "
+                + "NULL AS TABLE_CAT, "
+                + "NULL AS TABLE_SCHEM, "
+                + "name AS TABLE_NAME, "
+                + "CASE type "
+                + "  WHEN 'table' THEN 'TABLE' "
+                + "  WHEN 'view' THEN 'VIEW' "
+                + "  ELSE UPPER(type) "
+                + "END AS TABLE_TYPE, "
+                + "NULL AS REMARKS, "
+                + "NULL AS TYPE_CAT, "
+                + "NULL AS TYPE_SCHEM, "
+                + "NULL AS TYPE_NAME, "
+                + "NULL AS SELF_REFERENCING_COL_NAME, "
+                + "NULL AS REF_GENERATION "
+                + "FROM sqlite_schema "
+                + "WHERE 1=1");
 
     // Apply type filtering if needed
     if (types != null && types.length > 0) {

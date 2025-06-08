@@ -203,7 +203,6 @@ public final class JDBC4PreparedStatement extends JDBC4Statement implements Prep
   }
 
   @Override
-  @SkipNullableCheck
   public ResultSetMetaData getMetaData() throws SQLException {
     return new JDBC4ResultSetMetadata(this.resultSet);
   }
