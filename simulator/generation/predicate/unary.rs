@@ -1,4 +1,4 @@
-//! Contains code for generation for [ast::Expr::Unary] Predicate
+//! Contains code regarding generation for [ast::Expr::Unary] Predicate
 //! TODO: for now just generating [ast::Literal], but want to also generate Columns and any
 //! arbitrary [ast::Expr]
 
@@ -100,21 +100,21 @@ impl ArbitraryFromMaybe<(&Vec<&SimValue>, bool)> for BitNotValue {
 // TODO: have some more complex generation with columns names here as well
 impl SimplePredicate {
     /// Generates a true [ast::Expr::Unary] [SimplePredicate] from a [Table] for some values in the table
-    pub fn true_unary<R: rand::Rng>(rng: &mut R, table: &Table) -> Self {
+    pub fn true_unary<R: rand::Rng>(rng: &mut R, table: &Table, row: &[SimValue]) -> Self {
         // Pick a random column
         let column_index = rng.gen_range(0..table.columns.len());
-        let column_values = table
-            .rows
-            .iter()
-            .map(|r| &r[column_index])
-            .collect::<Vec<_>>();
-        let num_retries = column_values.len();
+        let column_value = &row[column_index];
+        let num_retries = row.len();
+        // Avoid creation of NULLs
+        if row.is_empty() {
+            return SimplePredicate(Predicate(Expr::Literal(SimValue::TRUE.into())));
+        }
         let expr = backtrack(
             vec![
                 (
                     num_retries,
                     Box::new(|rng| {
-                        TrueValue::arbitrary_from_maybe(rng, &column_values).map(|value| {
+                        TrueValue::arbitrary_from_maybe(rng, column_value).map(|value| {
                             assert!(value.0.into_bool());
                             // Positive is a no-op in Sqlite
                             Expr::unary(ast::UnaryOperator::Positive, Expr::Literal(value.0.into()))
@@ -124,7 +124,7 @@ impl SimplePredicate {
                 (
                     num_retries,
                     Box::new(|rng| {
-                        TrueValue::arbitrary_from_maybe(rng, &column_values).map(|value| {
+                        TrueValue::arbitrary_from_maybe(rng, column_value).map(|value| {
                             assert!(value.0.into_bool());
                             // True Value with negative is still True
                             Expr::unary(ast::UnaryOperator::Negative, Expr::Literal(value.0.into()))
@@ -134,20 +134,18 @@ impl SimplePredicate {
                 (
                     num_retries,
                     Box::new(|rng| {
-                        BitNotValue::arbitrary_from_maybe(rng, (&column_values, true)).map(
-                            |value| {
-                                Expr::unary(
-                                    ast::UnaryOperator::BitwiseNot,
-                                    Expr::Literal(value.0.into()),
-                                )
-                            },
-                        )
+                        BitNotValue::arbitrary_from_maybe(rng, (column_value, true)).map(|value| {
+                            Expr::unary(
+                                ast::UnaryOperator::BitwiseNot,
+                                Expr::Literal(value.0.into()),
+                            )
+                        })
                     }),
                 ),
                 (
                     num_retries,
                     Box::new(|rng| {
-                        FalseValue::arbitrary_from_maybe(rng, &column_values).map(|value| {
+                        FalseValue::arbitrary_from_maybe(rng, column_value).map(|value| {
                             assert!(!value.0.into_bool());
                             Expr::unary(ast::UnaryOperator::Not, Expr::Literal(value.0.into()))
                         })
@@ -162,22 +160,22 @@ impl SimplePredicate {
         ))
     }
 
-    /// Generates a false [ast::Expr::Unary] [SimplePredicate] from a [Table] for some values in the table
-    pub fn false_unary<R: rand::Rng>(rng: &mut R, table: &Table) -> Self {
+    /// Generates a false [ast::Expr::Unary] [SimplePredicate] from a [Table] for a row in the table
+    pub fn false_unary<R: rand::Rng>(rng: &mut R, table: &Table, row: &[SimValue]) -> Self {
         // Pick a random column
         let column_index = rng.gen_range(0..table.columns.len());
-        let column_values = table
-            .rows
-            .iter()
-            .map(|r| &r[column_index])
-            .collect::<Vec<_>>();
-        let num_retries = column_values.len();
+        let column_value = &row[column_index];
+        let num_retries = row.len();
+        // Avoid creation of NULLs
+        if row.is_empty() {
+            return SimplePredicate(Predicate(Expr::Literal(SimValue::FALSE.into())));
+        }
         let expr = backtrack(
             vec![
                 (
                     num_retries,
                     Box::new(|rng| {
-                        FalseValue::arbitrary_from_maybe(rng, &column_values).map(|value| {
+                        FalseValue::arbitrary_from_maybe(rng, column_value).map(|value| {
                             assert!(!value.0.into_bool());
                             // Positive is a no-op in Sqlite
                             Expr::unary(ast::UnaryOperator::Positive, Expr::Literal(value.0.into()))
@@ -187,7 +185,7 @@ impl SimplePredicate {
                 (
                     num_retries,
                     Box::new(|rng| {
-                        FalseValue::arbitrary_from_maybe(rng, &column_values).map(|value| {
+                        FalseValue::arbitrary_from_maybe(rng, column_value).map(|value| {
                             assert!(!value.0.into_bool());
                             // True Value with negative is still True
                             Expr::unary(ast::UnaryOperator::Negative, Expr::Literal(value.0.into()))
@@ -197,20 +195,18 @@ impl SimplePredicate {
                 (
                     num_retries,
                     Box::new(|rng| {
-                        BitNotValue::arbitrary_from_maybe(rng, (&column_values, false)).map(
-                            |value| {
-                                Expr::unary(
-                                    ast::UnaryOperator::BitwiseNot,
-                                    Expr::Literal(value.0.into()),
-                                )
-                            },
-                        )
+                        BitNotValue::arbitrary_from_maybe(rng, (column_value, false)).map(|value| {
+                            Expr::unary(
+                                ast::UnaryOperator::BitwiseNot,
+                                Expr::Literal(value.0.into()),
+                            )
+                        })
                     }),
                 ),
                 (
                     num_retries,
                     Box::new(|rng| {
-                        TrueValue::arbitrary_from_maybe(rng, &column_values).map(|value| {
+                        TrueValue::arbitrary_from_maybe(rng, column_value).map(|value| {
                             assert!(value.0.into_bool());
                             Expr::unary(ast::UnaryOperator::Not, Expr::Literal(value.0.into()))
                         })
@@ -221,7 +217,7 @@ impl SimplePredicate {
         );
         // If cannot generate a value
         SimplePredicate(Predicate(
-            expr.unwrap_or(Expr::Literal(SimValue::TRUE.into())),
+            expr.unwrap_or(Expr::Literal(SimValue::FALSE.into())),
         ))
     }
 }
@@ -232,7 +228,7 @@ mod tests {
     use rand_chacha::ChaCha8Rng;
 
     use crate::{
-        generation::{predicate::SimplePredicate, Arbitrary, ArbitraryFrom as _},
+        generation::{pick, predicate::SimplePredicate, Arbitrary, ArbitraryFrom as _},
         model::table::{SimValue, Table},
     };
 
@@ -260,7 +256,8 @@ mod tests {
                 })
                 .collect();
             table.rows.extend(values.clone());
-            let predicate = SimplePredicate::true_unary(&mut rng, &table);
+            let row = pick(&table.rows, &mut rng);
+            let predicate = SimplePredicate::true_unary(&mut rng, &table, row);
             let result = values
                 .iter()
                 .map(|row| predicate.0.test(row, &table))
@@ -287,7 +284,8 @@ mod tests {
                 })
                 .collect();
             table.rows.extend(values.clone());
-            let predicate = SimplePredicate::false_unary(&mut rng, &table);
+            let row = pick(&table.rows, &mut rng);
+            let predicate = SimplePredicate::false_unary(&mut rng, &table, row);
             let result = values
                 .iter()
                 .map(|row| predicate.0.test(row, &table))
@@ -295,7 +293,4 @@ mod tests {
             assert!(result, "Predicate: {:#?}\nSeed: {}", predicate, seed)
         }
     }
-
-    #[test]
-    fn test_x() {}
 }

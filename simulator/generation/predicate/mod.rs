@@ -17,19 +17,22 @@ struct CompoundPredicate(Predicate);
 #[derive(Debug)]
 struct SimplePredicate(Predicate);
 
-impl ArbitraryFrom<(&Table, bool)> for SimplePredicate {
-    fn arbitrary_from<R: Rng>(rng: &mut R, (table, predicate_value): (&Table, bool)) -> Self {
+impl ArbitraryFrom<(&Table, &[SimValue], bool)> for SimplePredicate {
+    fn arbitrary_from<R: Rng>(
+        rng: &mut R,
+        (table, row, predicate_value): (&Table, &[SimValue], bool),
+    ) -> Self {
         let choice = rng.gen_range(0..2);
         // Pick an operator
         match predicate_value {
             true => match choice {
-                0 => SimplePredicate::true_binary(rng, table),
-                1 => SimplePredicate::true_unary(rng, table),
+                0 => SimplePredicate::true_binary(rng, table, row),
+                1 => SimplePredicate::true_unary(rng, table, row),
                 _ => unreachable!(),
             },
             false => match choice {
-                0 => SimplePredicate::false_binary(rng, table),
-                1 => SimplePredicate::false_unary(rng, table),
+                0 => SimplePredicate::false_binary(rng, table, row),
+                1 => SimplePredicate::false_unary(rng, table, row),
                 _ => unreachable!(),
             },
         }
@@ -45,6 +48,12 @@ impl ArbitraryFrom<(&Table, bool)> for CompoundPredicate {
 impl ArbitraryFrom<&Table> for Predicate {
     fn arbitrary_from<R: Rng>(rng: &mut R, table: &Table) -> Self {
         let predicate_value = rng.gen_bool(0.5);
+        Predicate::arbitrary_from(rng, (table, predicate_value))
+    }
+}
+
+impl ArbitraryFrom<(&Table, bool)> for Predicate {
+    fn arbitrary_from<R: Rng>(rng: &mut R, (table, predicate_value): (&Table, bool)) -> Self {
         CompoundPredicate::arbitrary_from(rng, (table, predicate_value)).0
     }
 }
@@ -214,5 +223,166 @@ impl ArbitraryFrom<(&Table, &Vec<SimValue>)> for Predicate {
             );
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rand::{Rng as _, SeedableRng as _};
+    use rand_chacha::ChaCha8Rng;
+
+    use crate::{
+        generation::{pick, predicate::SimplePredicate, Arbitrary, ArbitraryFrom as _},
+        model::{
+            query::predicate::{expr_to_value, Predicate},
+            table::{SimValue, Table},
+        },
+    };
+
+    fn get_seed() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    #[test]
+    fn fuzz_arbitrary_table_true_simple_predicate() {
+        let seed = get_seed();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        for _ in 0..10000 {
+            let table = Table::arbitrary(&mut rng);
+            let num_rows = rng.gen_range(1..10);
+            let values: Vec<Vec<SimValue>> = (0..num_rows)
+                .map(|_| {
+                    table
+                        .columns
+                        .iter()
+                        .map(|c| SimValue::arbitrary_from(&mut rng, &c.column_type))
+                        .collect()
+                })
+                .collect();
+            let row = pick(&values, &mut rng);
+            let predicate = SimplePredicate::arbitrary_from(&mut rng, (&table, row, true)).0;
+            let value = expr_to_value(&predicate.0, row, &table);
+            assert!(
+                value.as_ref().map_or(false, |value| value.into_bool()),
+                "Predicate: {:#?}\nValue: {:#?}\nSeed: {}",
+                predicate,
+                value,
+                seed
+            )
+        }
+    }
+
+    #[test]
+    fn fuzz_arbitrary_table_false_simple_predicate() {
+        let seed = get_seed();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        for _ in 0..10000 {
+            let table = Table::arbitrary(&mut rng);
+            let num_rows = rng.gen_range(1..10);
+            let values: Vec<Vec<SimValue>> = (0..num_rows)
+                .map(|_| {
+                    table
+                        .columns
+                        .iter()
+                        .map(|c| SimValue::arbitrary_from(&mut rng, &c.column_type))
+                        .collect()
+                })
+                .collect();
+            let row = pick(&values, &mut rng);
+            let predicate = SimplePredicate::arbitrary_from(&mut rng, (&table, row, false)).0;
+            let value = expr_to_value(&predicate.0, row, &table);
+            assert!(
+                !value.as_ref().map_or(false, |value| value.into_bool()),
+                "Predicate: {:#?}\nValue: {:#?}\nSeed: {}",
+                predicate,
+                value,
+                seed
+            )
+        }
+    }
+
+    #[test]
+    fn fuzz_arbitrary_row_table_predicate() {
+        let seed = get_seed();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        for _ in 0..10000 {
+            let table = Table::arbitrary(&mut rng);
+            let num_rows = rng.gen_range(1..10);
+            let values: Vec<Vec<SimValue>> = (0..num_rows)
+                .map(|_| {
+                    table
+                        .columns
+                        .iter()
+                        .map(|c| SimValue::arbitrary_from(&mut rng, &c.column_type))
+                        .collect()
+                })
+                .collect();
+            let row = pick(&values, &mut rng);
+            let predicate = Predicate::arbitrary_from(&mut rng, (&table, row));
+            let value = expr_to_value(&predicate.0, row, &table);
+            assert!(
+                value.as_ref().map_or(false, |value| value.into_bool()),
+                "Predicate: {:#?}\nValue: {:#?}\nSeed: {}",
+                predicate,
+                value,
+                seed
+            )
+        }
+    }
+
+    #[test]
+    fn fuzz_arbitrary_true_table_predicate() {
+        let seed = get_seed();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        for _ in 0..10000 {
+            let mut table = Table::arbitrary(&mut rng);
+            let num_rows = rng.gen_range(1..10);
+            let values: Vec<Vec<SimValue>> = (0..num_rows)
+                .map(|_| {
+                    table
+                        .columns
+                        .iter()
+                        .map(|c| SimValue::arbitrary_from(&mut rng, &c.column_type))
+                        .collect()
+                })
+                .collect();
+            table.rows.extend(values.clone());
+            let predicate = Predicate::arbitrary_from(&mut rng, (&table, true));
+            let result = values
+                .iter()
+                .map(|row| predicate.test(row, &table))
+                .reduce(|accum, curr| accum || curr)
+                .unwrap_or(false);
+            assert!(result, "Predicate: {:#?}\nSeed: {}", predicate, seed)
+        }
+    }
+
+    #[test]
+    fn fuzz_arbitrary_false_table_predicate() {
+        let seed = get_seed();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        for _ in 0..10000 {
+            let mut table = Table::arbitrary(&mut rng);
+            let num_rows = rng.gen_range(1..10);
+            let values: Vec<Vec<SimValue>> = (0..num_rows)
+                .map(|_| {
+                    table
+                        .columns
+                        .iter()
+                        .map(|c| SimValue::arbitrary_from(&mut rng, &c.column_type))
+                        .collect()
+                })
+                .collect();
+            table.rows.extend(values.clone());
+            let predicate = Predicate::arbitrary_from(&mut rng, (&table, false));
+            let result = values
+                .iter()
+                .map(|row| predicate.test(row, &table))
+                .any(|res| !res);
+            assert!(result, "Predicate: {:#?}\nSeed: {}", predicate, seed)
+        }
     }
 }

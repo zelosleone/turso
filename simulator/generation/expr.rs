@@ -257,12 +257,8 @@ impl ArbitraryFrom<&Vec<&SimValue>> for ast::Expr {
             return Self::Literal(ast::Literal::Null);
         }
         // TODO: for now just convert the value to an ast::Literal
-        let values = values
-            .iter()
-            .map(|value| ast::Expr::Literal((*value).into()))
-            .collect::<Vec<_>>();
-
-        pick(&values, rng).to_owned().clone()
+        let value = pick(&values, rng);
+        Expr::Literal((*value).into())
     }
 }
 
