@@ -1,4 +1,5 @@
 #![allow(clippy::arc_with_non_send_sync, dead_code)]
+use anyhow::anyhow;
 use clap::Parser;
 use generation::plan::{Interaction, InteractionPlan, InteractionPlanState};
 use generation::ArbitraryFrom;
@@ -49,14 +50,14 @@ impl Paths {
     }
 }
 
-fn main() -> Result<(), String> {
+fn main() -> anyhow::Result<()> {
     init_logger();
     let mut cli_opts = SimulatorCLI::parse();
     cli_opts.validate()?;
 
     match cli_opts.subcommand {
         Some(SimulatorCommand::List) => {
-            let mut bugbase = BugBase::load().map_err(|e| format!("{:?}", e))?;
+            let mut bugbase = BugBase::load()?;
             bugbase.list_bugs()
         }
         Some(SimulatorCommand::Loop { n, short_circuit }) => {
@@ -76,7 +77,7 @@ fn main() -> Result<(), String> {
             Ok(())
         }
         Some(SimulatorCommand::Test { filter }) => {
-            let mut bugbase = BugBase::load().map_err(|e| format!("{:?}", e))?;
+            let mut bugbase = BugBase::load()?;
             let bugs = bugbase.load_bugs()?;
             let mut bugs = bugs
                 .into_iter()
@@ -127,11 +128,11 @@ fn main() -> Result<(), String> {
     }
 }
 
-fn testing_main(cli_opts: &SimulatorCLI) -> Result<(), String> {
+fn testing_main(cli_opts: &SimulatorCLI) -> anyhow::Result<()> {
     let mut bugbase = if cli_opts.disable_bugbase {
         None
     } else {
-        Some(BugBase::load().map_err(|e| format!("{:?}", e))?)
+        Some(BugBase::load()?)
     };
 
     let last_execution = Arc::new(Mutex::new(Execution::new(0, 0, 0)));
@@ -237,7 +238,7 @@ fn run_simulator(
     env: SimulatorEnv,
     plans: Vec<InteractionPlan>,
     last_execution: Arc<Mutex<Execution>>,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     std::panic::set_hook(Box::new(move |info| {
         tracing::error!("panic occurred");
 
@@ -357,7 +358,7 @@ fn run_simulator(
                                     .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
                                     .unwrap();
                             }
-                            Err(format!("failed with error: '{}'", error))
+                            Err(anyhow!("failed with error: '{}'", error))
                         } else {
                             tracing::info!(
                                 "shrinking succeeded, reduced the plan from {} to {}",
@@ -375,7 +376,7 @@ fn run_simulator(
                                     )
                                     .unwrap();
                             }
-                            Err(format!("failed with error: '{}'", e1))
+                            Err(anyhow!("failed with error: '{}'", e1))
                         }
                     }
                     (_, SandboxedResult::Correct) => {
@@ -388,7 +389,7 @@ fn run_simulator(
                                 .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
                                 .unwrap();
                         }
-                        Err(format!("failed with error: '{}'", error))
+                        Err(anyhow!("failed with error: '{}'", error))
                     }
                 }
             }
@@ -404,7 +405,7 @@ fn doublecheck(
     plans: &[InteractionPlan],
     last_execution: Arc<Mutex<Execution>>,
     result: SandboxedResult,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     let env = SimulatorEnv::new(seed, cli_opts, &paths.doublecheck_db);
     let env = Arc::new(Mutex::new(env));
 
@@ -468,7 +469,7 @@ fn doublecheck(
                     .add_bug(seed, plans[0].clone(), Some(e.clone()), cli_opts)
                     .unwrap();
             }
-            Err(format!("doublecheck failed: '{}'", e))
+            Err(anyhow!("doublecheck failed: '{}'", e))
         }
     }
 }
@@ -480,7 +481,7 @@ fn differential_testing(
     paths: &Paths,
     plans: Vec<InteractionPlan>,
     last_execution: Arc<Mutex<Execution>>,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     let env = Arc::new(Mutex::new(SimulatorEnv::new(seed, cli_opts, &paths.db)));
     let rusqlite_env = Arc::new(Mutex::new(SimulatorEnv::new(
         seed,
@@ -518,7 +519,7 @@ fn differential_testing(
                     .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
                     .unwrap();
             }
-            Err(format!("simulation failed: '{}'", error))
+            Err(anyhow!("simulation failed: '{}'", error))
         }
     }
 }
