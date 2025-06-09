@@ -146,11 +146,9 @@ impl ToSqlString for Expr {
                 ret.push('.');
                 ret.push_str(context.get_column_name(*table, *column));
             }
-            // TODO: not sure how to rewrite this
-            Expr::RowId {
-                database: _,
-                table: _,
-            } => todo!(),
+            Expr::RowId { database: _, table } => {
+                ret.push_str(&format!("{}.rowid", context.get_table_name(*table)))
+            }
             Expr::InList { lhs, not, rhs } => {
                 ret.push_str(&format!(
                     "{} {}IN ({})",
