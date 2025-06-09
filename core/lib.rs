@@ -343,6 +343,12 @@ pub struct Connection {
     cache_size: Cell<i32>,
 }
 
+impl Drop for Connection {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
+}
+
 impl Connection {
     #[instrument(skip_all, level = Level::TRACE)]
     pub fn prepare(self: &Rc<Connection>, sql: impl AsRef<str>) -> Result<Statement> {
@@ -566,17 +572,7 @@ impl Connection {
 
     /// Close a connection and checkpoint.
     pub fn close(&self) -> Result<()> {
-        loop {
-            // TODO: make this async?
-            match self.pager.checkpoint()? {
-                CheckpointStatus::Done(_) => {
-                    return Ok(());
-                }
-                CheckpointStatus::IO => {
-                    self.pager.io.run_once()?;
-                }
-            };
-        }
+        self.pager.checkpoint_shutdown()
     }
 
     pub fn last_insert_rowid(&self) -> i64 {

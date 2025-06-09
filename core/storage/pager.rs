@@ -821,6 +821,12 @@ impl Pager {
             .expect("Failed to clear page cache");
     }
 
+    pub fn checkpoint_shutdown(&self) -> Result<()> {
+        self.wal.borrow_mut().sync()?;
+        self.wal_checkpoint();
+        Ok(())
+    }
+
     pub fn wal_checkpoint(&self) -> CheckpointResult {
         let checkpoint_result: CheckpointResult;
         loop {
