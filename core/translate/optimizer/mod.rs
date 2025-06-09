@@ -6,10 +6,7 @@ use constraints::{
 use cost::Cost;
 use join::{compute_best_join_order, BestJoinOrderResult};
 use lift_common_subexpressions::lift_common_subexpressions_from_binary_or_terms;
-use limbo_sqlite3_parser::{
-    ast::{self, Expr, SortOrder},
-    to_sql_string::ToSqlString,
-};
+use limbo_sqlite3_parser::ast::{self, Expr, SortOrder};
 use order::{compute_order_target, plan_satisfies_order_target, EliminatesSort};
 
 use crate::{
@@ -48,8 +45,6 @@ pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
             }
         }
     }
-    // Context for everything is created with values inside the plan
-    tracing::debug!(plan_sql = plan.to_sql_string(&crate::translate::display::PlanContext(&[])));
     Ok(())
 }
 
