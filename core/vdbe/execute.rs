@@ -3917,6 +3917,7 @@ pub fn op_delete(
 #[derive(Debug)]
 pub enum OpIdxDeleteState {
     Seeking(ImmutableRecord), // First seek row to delete
+    Verifying,
     Deleting,
 }
 pub fn op_idx_delete(
@@ -3934,22 +3935,49 @@ pub fn op_idx_delete(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    tracing::debug!(
-        "op_idx_delete(cursor_id={}, start_reg={}, num_regs={}, state={:?})",
-        cursor_id,
-        start_reg,
-        num_regs,
-        state.op_idx_delete_state
-    );
     loop {
+        tracing::debug!(
+            "op_idx_delete(cursor_id={}, start_reg={}, num_regs={}, rootpage={}, state={:?})",
+            cursor_id,
+            start_reg,
+            num_regs,
+            state.get_cursor(*cursor_id).as_btree_mut().root_page(),
+            state.op_idx_delete_state
+        );
         match &state.op_idx_delete_state {
             Some(OpIdxDeleteState::Seeking(record)) => {
                 {
                     let mut cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
-                    return_if_io!(
-                        cursor.seek(SeekKey::IndexKey(&record), SeekOp::GE { eq_only: true })
+                    let found = return_if_io!(
+                        cursor.seek(SeekKey::IndexKey(&record), SeekOp::LE { eq_only: true })
                     );
+                    tracing::debug!(
+                        "op_idx_delete: found={:?}, rootpage={}, key={:?}",
+                        found,
+                        cursor.root_page(),
+                        record
+                    );
+                }
+                state.op_idx_delete_state = Some(OpIdxDeleteState::Verifying);
+            }
+            Some(OpIdxDeleteState::Verifying) => {
+                let rowid = {
+                    let mut cursor = state.get_cursor(*cursor_id);
+                    let cursor = cursor.as_btree_mut();
+                    return_if_io!(cursor.rowid())
+                };
+
+                if rowid.is_none() {
+                    // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching
+                    // index entry is found. This happens when running an UPDATE or DELETE statement and the
+                    // index entry to be updated or deleted is not found. For some uses of IdxDelete
+                    // (example: the EXCEPT operator) it does not matter that no matching entry is found.
+                    // For those cases, P5 is zero. Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
+                    return Err(LimboError::Corrupt(format!(
+                        "IdxDelete: no matching index entry found for record {:?}",
+                        make_record(&state.registers, start_reg, num_regs)
+                    )));
                 }
                 state.op_idx_delete_state = Some(OpIdxDeleteState::Deleting);
             }
@@ -3957,17 +3985,6 @@ pub fn op_idx_delete(
                 {
                     let mut cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
-                    if return_if_io!(cursor.rowid()).is_none() {
-                        // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching
-                        // index entry is found. This happens when running an UPDATE or DELETE statement and the
-                        // index entry to be updated or deleted is not found. For some uses of IdxDelete
-                        // (example: the EXCEPT operator) it does not matter that no matching entry is found.
-                        // For those cases, P5 is zero. Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
-                        return Err(LimboError::Corrupt(format!(
-                            "IdxDelete: no matching index entry found for record {:?}",
-                            make_record(&state.registers, start_reg, num_regs)
-                        )));
-                    }
                     return_if_io!(cursor.delete());
                 }
                 let n_change = program.n_change.get();
