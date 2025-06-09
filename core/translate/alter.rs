@@ -241,9 +241,12 @@ pub fn translate_alter_table(
             });
 
             program.cursor_loop(cursor_id, |program, rowid| {
-                let first_column = program.alloc_registers(5);
+                let sqlite_schema_column_len = sqlite_schema.columns.len();
+                assert_eq!(sqlite_schema_column_len, 5);
 
-                for i in 0..5 {
+                let first_column = program.alloc_registers(sqlite_schema_column_len);
+
+                for i in 0..sqlite_schema_column_len {
                     program.emit_column(cursor_id, i, first_column + i);
                 }
 
@@ -256,7 +259,7 @@ pub fn translate_alter_table(
                 program.emit_string8_new_reg(rename_to.clone());
                 program.mark_last_insn_constant();
 
-                let out = program.alloc_registers(5);
+                let out = program.alloc_registers(sqlite_schema_column_len);
 
                 program.emit_insn(Insn::Function {
                     constant_mask: 0,
@@ -272,7 +275,7 @@ pub fn translate_alter_table(
 
                 program.emit_insn(Insn::MakeRecord {
                     start_reg: out,
-                    count: 5,
+                    count: sqlite_schema_column_len,
                     dest_reg: record,
                     index_name: None,
                 });
@@ -319,9 +322,12 @@ pub fn translate_alter_table(
             });
 
             program.cursor_loop(cursor_id, |program, rowid| {
-                let first_column = program.alloc_registers(5);
+                let sqlite_schema_column_len = sqlite_schema.columns.len();
+                assert_eq!(sqlite_schema_column_len, 5);
 
-                for i in 0..5 {
+                let first_column = program.alloc_registers(sqlite_schema_column_len);
+
+                for i in 0..sqlite_schema_column_len {
                     program.emit_column(cursor_id, i, first_column + i);
                 }
 
@@ -347,7 +353,7 @@ pub fn translate_alter_table(
 
                 program.emit_insn(Insn::MakeRecord {
                     start_reg: out,
-                    count: 5,
+                    count: sqlite_schema_column_len,
                     dest_reg: record,
                     index_name: None,
                 });
