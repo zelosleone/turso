@@ -4404,6 +4404,7 @@ impl BTreeCursor {
                         // because index 4 is now pointing beyond the last cell [a,b,c,d] _ <-- index 4
                         self.stack.retreat();
                     }
+
                     if needs_balancing {
                         let target_key = if page.is_index() {
                             let record = match return_if_io!(self.record()) {
@@ -4480,7 +4481,9 @@ impl BTreeCursor {
                             SeekKey::IndexKey(immutable_record)
                         }
                     };
-                    return_if_io!(self.seek(key, SeekOp::GE { eq_only: true }));
+                    // We want to end up pointing at the row to the left of the position of the row we deleted, so
+                    // that after we call next() in the loop,the next row we delete will again be the same position as this one.
+                    return_if_io!(self.seek(key, SeekOp::LT));
 
                     self.state = CursorState::None;
                     return Ok(CursorResult::Ok(()));
