@@ -178,8 +178,16 @@ class Statement {
     return this;
   }
 
+  get source() {
+    return this.stmt.source;
+  }
+
   get reader() {
     throw new Error("not implemented");
+  }
+
+  get source() {
+    return this.stmt.source;
   }
 
   get database() {
