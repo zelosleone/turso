@@ -73,6 +73,11 @@ class InsertTest(BaseModel):
                 lambda res: res == str(self.vals * 2),
                 "Counting total rows inserted",
             )
+            sqlite.run_test_fn(
+                "PRAGMA integrity_check;",
+                lambda res: res == "ok",
+                "Integrity Check",
+            )
         console.info()
 
 
