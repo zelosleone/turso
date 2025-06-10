@@ -3950,7 +3950,7 @@ pub fn op_idx_delete(
                     let mut cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
                     let found = return_if_io!(
-                        cursor.seek(SeekKey::IndexKey(&record), SeekOp::LE { eq_only: true })
+                        cursor.seek(SeekKey::IndexKey(&record), SeekOp::GE { eq_only: true })
                     );
                     tracing::debug!(
                         "op_idx_delete: found={:?}, rootpage={}, key={:?}",
