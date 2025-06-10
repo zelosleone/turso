@@ -1,5 +1,5 @@
 #![allow(clippy::arc_with_non_send_sync, dead_code)]
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use clap::Parser;
 use generation::plan::{Interaction, InteractionPlan, InteractionPlanState};
 use generation::ArbitraryFrom;
@@ -144,7 +144,7 @@ fn testing_main(cli_opts: &SimulatorCLI) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let result = if cli_opts.differential {
+    let mut result = if cli_opts.differential {
         differential_testing(
             seed,
             bugbase.as_mut(),
@@ -163,6 +163,17 @@ fn testing_main(cli_opts: &SimulatorCLI) -> anyhow::Result<()> {
             plans,
             last_execution.clone(),
         )
+    };
+
+    if let Err(err) = integrity_check(&paths.db) {
+        tracing::error!("Integrity Check failed:\n{}", err);
+        if result.is_err() {
+            result = result.with_context(|| anyhow!("Integrity Check failed:\n{}", err));
+        } else {
+            result = Err(err);
+        }
+    } else if let Some(bugbase) = bugbase.as_mut() {
+        bugbase.mark_successful_run(seed, cli_opts).unwrap();
     };
 
     // Print the seed, the locations of the database and the plan file at the end again for easily accessing them.
@@ -279,9 +290,6 @@ fn run_simulator(
             SandboxedResult::Correct => {
                 tracing::info!("simulation succeeded");
                 println!("simulation succeeded");
-                if let Some(bugbase) = bugbase {
-                    bugbase.mark_successful_run(seed, cli_opts).unwrap();
-                }
                 Ok(())
             }
             SandboxedResult::Panicked {
@@ -457,9 +465,6 @@ fn doublecheck(
         Ok(_) => {
             tracing::info!("doublecheck succeeded");
             println!("doublecheck succeeded");
-            if let Some(bugbase) = bugbase {
-                bugbase.mark_successful_run(seed, cli_opts)?;
-            }
             Ok(())
         }
         Err(e) => {
@@ -507,9 +512,6 @@ fn differential_testing(
         SandboxedResult::Correct => {
             tracing::info!("simulation succeeded, output of Limbo conforms to SQLite");
             println!("simulation succeeded, output of Limbo conforms to SQLite");
-            if let Some(bugbase) = bugbase {
-                bugbase.mark_successful_run(seed, cli_opts).unwrap();
-            }
             Ok(())
         }
         SandboxedResult::Panicked { error, .. } | SandboxedResult::FoundBug { error, .. } => {
@@ -739,3 +741,25 @@ const BANNER: &str = r#"
    \____________________________/
 
 "#;
+
+fn integrity_check(db_path: &Path) -> anyhow::Result<()> {
+    let conn = rusqlite::Connection::open(db_path)?;
+    let mut stmt = conn.prepare("SELECT * FROM pragma_integrity_check;")?;
+    let mut rows = stmt.query(())?;
+    let mut result: Vec<String> = Vec::new();
+
+    while let Some(row) = rows.next()? {
+        result.push(row.get(0)?);
+    }
+    if result.is_empty() {
+        anyhow::bail!("integrity_check should return `ok` or a list of problems")
+    }
+    if !result[0].eq_ignore_ascii_case("ok") {
+        // Build a list of problems
+        result
+            .iter_mut()
+            .for_each(|row| *row = format!("- {}", row));
+        anyhow::bail!(result.join("\n"))
+    }
+    Ok(())
+}
