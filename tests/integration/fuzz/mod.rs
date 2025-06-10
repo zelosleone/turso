@@ -51,7 +51,7 @@ mod tests {
 
         let insert = format!(
             "INSERT INTO t VALUES {}",
-            (1..2000)
+            (1..100)
                 .map(|x| format!("({})", x))
                 .collect::<Vec<_>>()
                 .join(", ")
@@ -104,7 +104,7 @@ mod tests {
     fn generate_random_comparison_values(rng: &mut ChaCha8Rng) -> Vec<String> {
         let mut values = Vec::new();
 
-        for _ in 0..5 {
+        for _ in 0..1000 {
             let val = rng.random_range(-10000..10000);
             values.push(val.to_string());
         }
