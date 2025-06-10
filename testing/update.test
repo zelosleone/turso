@@ -185,3 +185,11 @@ do_execsql_test_on_specific_db {:memory:} update_index_regression_test {
 1
 2
 2}
+
+do_execsql_test_on_specific_db {:memory:} update_where_or_regression_test {
+    CREATE TABLE t (a INTEGER);
+    INSERT INTO t VALUES (1), ('hi');
+    UPDATE t SET a = X'6C6F76656C795F7265766F6C74' WHERE ~ 'gorgeous_thropy' OR NOT -3830873834.233324;  
+    SELECT * from t;
+} {lovely_revolt
+lovely_revolt}
