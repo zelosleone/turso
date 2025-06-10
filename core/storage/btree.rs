@@ -165,19 +165,27 @@ enum DeleteSavepoint {
 #[derive(Debug, Clone)]
 enum DeleteState {
     Start,
-    LoadPage,
-    FindCell,
+    DeterminePostBalancingSeekKey,
+    LoadPage {
+        post_balancing_seek_key: Option<DeleteSavepoint>,
+    },
+    FindCell {
+        post_balancing_seek_key: Option<DeleteSavepoint>,
+    },
     ClearOverflowPages {
         cell_idx: usize,
         cell: BTreeCell,
         original_child_pointer: Option<u32>,
+        post_balancing_seek_key: Option<DeleteSavepoint>,
     },
     InteriorNodeReplacement {
         cell_idx: usize,
         original_child_pointer: Option<u32>,
+        post_balancing_seek_key: Option<DeleteSavepoint>,
     },
     CheckNeedsBalancing {
         rightmost_cell_was_dropped: bool,
+        post_balancing_seek_key: Option<DeleteSavepoint>,
     },
     WaitForBalancingToComplete {
         target_key: DeleteSavepoint,
@@ -4164,14 +4172,15 @@ impl BTreeCursor {
 
     /// Delete state machine flow:
     /// 1. Start -> check if the rowid to be delete is present in the page or not. If not we early return
-    /// 2. LoadPage -> load the page.
-    /// 3. FindCell -> find the cell to be deleted in the page.
-    /// 4. ClearOverflowPages -> Clear the overflow pages if there are any before dropping the cell, then if we are in a leaf page we just drop the cell in place.
+    /// 2. DeterminePostBalancingSeekKey -> determine the key to seek to after balancing.
+    /// 3. LoadPage -> load the page.
+    /// 4. FindCell -> find the cell to be deleted in the page.
+    /// 5. ClearOverflowPages -> Clear the overflow pages if there are any before dropping the cell, then if we are in a leaf page we just drop the cell in place.
     /// if we are in interior page, we need to rotate keys in order to replace current cell (InteriorNodeReplacement).
-    /// 5. InteriorNodeReplacement -> we copy the left subtree leaf node into the deleted interior node's place.
-    /// 6. WaitForBalancingToComplete -> perform balancing
-    /// 7. SeekAfterBalancing -> adjust the cursor to a node that is closer to the deleted value. go to Finish
-    /// 8. Finish -> Delete operation is done. Return CursorResult(Ok())
+    /// 6. InteriorNodeReplacement -> we copy the left subtree leaf node into the deleted interior node's place.
+    /// 7. WaitForBalancingToComplete -> perform balancing
+    /// 8. SeekAfterBalancing -> adjust the cursor to a node that is closer to the deleted value. go to Finish
+    /// 9. Finish -> Delete operation is done. Return CursorResult(Ok())
     pub fn delete(&mut self) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
 
@@ -4213,18 +4222,49 @@ impl BTreeCursor {
                     }
 
                     let delete_info = self.state.mut_delete_info().unwrap();
-                    delete_info.state = DeleteState::LoadPage;
+                    delete_info.state = DeleteState::DeterminePostBalancingSeekKey;
                 }
 
-                DeleteState::LoadPage => {
+                DeleteState::DeterminePostBalancingSeekKey => {
+                    // FIXME: skip this work if we determine deletion wont result in balancing
+                    // Right now we calculate the key every time for simplicity/debugging
+                    // since it won't affect correctness which is more important
+                    let page = self.stack.top();
+                    return_if_locked_maybe_load!(self.pager, page);
+                    let target_key = if page.get().is_index() {
+                        let record = match return_if_io!(self.record()) {
+                            Some(record) => record.clone(),
+                            None => unreachable!("there should've been a record"),
+                        };
+                        DeleteSavepoint::Payload(record)
+                    } else {
+                        let Some(rowid) = return_if_io!(self.rowid()) else {
+                            panic!("cursor should be pointing to a record with a rowid");
+                        };
+                        DeleteSavepoint::Rowid(rowid)
+                    };
+
+                    let delete_info = self.state.mut_delete_info().unwrap();
+                    delete_info.state = DeleteState::LoadPage {
+                        post_balancing_seek_key: Some(target_key),
+                    };
+                }
+
+                DeleteState::LoadPage {
+                    post_balancing_seek_key,
+                } => {
                     let page = self.stack.top();
                     return_if_locked_maybe_load!(self.pager, page);
 
                     let delete_info = self.state.mut_delete_info().unwrap();
-                    delete_info.state = DeleteState::FindCell;
+                    delete_info.state = DeleteState::FindCell {
+                        post_balancing_seek_key,
+                    };
                 }
 
-                DeleteState::FindCell => {
+                DeleteState::FindCell {
+                    post_balancing_seek_key,
+                } => {
                     let page = self.stack.top();
                     let cell_idx = self.stack.current_cell_index() as usize;
 
@@ -4268,6 +4308,7 @@ impl BTreeCursor {
                         cell_idx,
                         cell,
                         original_child_pointer,
+                        post_balancing_seek_key,
                     };
                 }
 
@@ -4275,6 +4316,7 @@ impl BTreeCursor {
                     cell_idx,
                     cell,
                     original_child_pointer,
+                    post_balancing_seek_key,
                 } => {
                     return_if_io!(self.clear_overflow_pages(&cell));
 
@@ -4289,6 +4331,7 @@ impl BTreeCursor {
                         delete_info.state = DeleteState::InteriorNodeReplacement {
                             cell_idx,
                             original_child_pointer,
+                            post_balancing_seek_key,
                         };
                     } else {
                         let contents = page.get().contents.as_mut().unwrap();
@@ -4297,6 +4340,7 @@ impl BTreeCursor {
                         let delete_info = self.state.mut_delete_info().unwrap();
                         delete_info.state = DeleteState::CheckNeedsBalancing {
                             rightmost_cell_was_dropped: is_last_cell,
+                            post_balancing_seek_key,
                         };
                     }
                 }
@@ -4304,6 +4348,7 @@ impl BTreeCursor {
                 DeleteState::InteriorNodeReplacement {
                     cell_idx,
                     original_child_pointer,
+                    post_balancing_seek_key,
                 } => {
                     // This is an interior node, we need to handle deletion differently
                     // For interior nodes:
@@ -4381,11 +4426,13 @@ impl BTreeCursor {
                     let delete_info = self.state.mut_delete_info().unwrap();
                     delete_info.state = DeleteState::CheckNeedsBalancing {
                         rightmost_cell_was_dropped: false, // TODO: when is this true?
+                        post_balancing_seek_key,
                     };
                 }
 
                 DeleteState::CheckNeedsBalancing {
                     rightmost_cell_was_dropped,
+                    post_balancing_seek_key,
                 } => {
                     let page = self.stack.top();
                     return_if_locked_maybe_load!(self.pager, page);
@@ -4406,25 +4453,15 @@ impl BTreeCursor {
                     }
 
                     if needs_balancing {
-                        let target_key = if page.is_index() {
-                            let record = match return_if_io!(self.record()) {
-                                Some(record) => record.clone(),
-                                None => unreachable!("there should've been a record"),
-                            };
-                            DeleteSavepoint::Payload(record)
-                        } else {
-                            let Some(rowid) = return_if_io!(self.rowid()) else {
-                                panic!("cursor should be pointing to a record with a rowid");
-                            };
-                            DeleteSavepoint::Rowid(rowid)
-                        };
                         let delete_info = self.state.mut_delete_info().unwrap();
                         if delete_info.balance_write_info.is_none() {
                             let mut write_info = WriteInfo::new();
                             write_info.state = WriteState::BalanceStart;
                             delete_info.balance_write_info = Some(write_info);
                         }
-                        delete_info.state = DeleteState::WaitForBalancingToComplete { target_key }
+                        delete_info.state = DeleteState::WaitForBalancingToComplete {
+                            target_key: post_balancing_seek_key.unwrap(),
+                        }
                     } else {
                         self.stack.retreat();
                         self.state = CursorState::None;
