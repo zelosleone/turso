@@ -2112,15 +2112,15 @@ pub fn op_seek(
                         if c > 0 {
                             // If approximation is larger than actual search term
                             match op {
-                                SeekOp::GT => SeekOp::GE, // (x > 4.9) -> (x >= 5)
-                                SeekOp::LE => SeekOp::LT, // (x <= 4.9) -> (x < 5)
+                                SeekOp::GT => SeekOp::GE { eq_only: false }, // (x > 4.9) -> (x >= 5)
+                                SeekOp::LE { .. } => SeekOp::LT, // (x <= 4.9) -> (x < 5)
                                 other => other,
                             }
                         } else if c < 0 {
                             // If approximation is smaller than actual search term
                             match op {
-                                SeekOp::LT => SeekOp::LE, // (x < 5.1) -> (x <= 5)
-                                SeekOp::GE => SeekOp::GT, // (x >= 5.1) -> (x > 5)
+                                SeekOp::LT => SeekOp::LE { eq_only: false }, // (x < 5.1) -> (x <= 5)
+                                SeekOp::GE { .. } => SeekOp::GT, // (x >= 5.1) -> (x > 5)
                                 other => other,
                             }
                         } else {
@@ -2129,12 +2129,12 @@ pub fn op_seek(
                     }
                     Value::Text(_) | Value::Blob(_) => {
                         match op {
-                            SeekOp::GT | SeekOp::GE => {
+                            SeekOp::GT | SeekOp::GE { .. } => {
                                 // No integers are > or >= non-numeric text, jump to target (empty result)
                                 state.pc = target_pc.to_offset_int();
                                 return Ok(InsnFunctionStepResult::Step);
                             }
-                            SeekOp::LT | SeekOp::LE => {
+                            SeekOp::LT | SeekOp::LE { .. } => {
                                 // All integers are < or <= non-numeric text
                                 // Move to last position and then use the normal seek logic
                                 {
@@ -2145,7 +2145,6 @@ pub fn op_seek(
                                 state.pc += 1;
                                 return Ok(InsnFunctionStepResult::Step);
                             }
-                            _ => unreachable!(),
                         }
                     }
                     _ => op,
@@ -2156,16 +2155,15 @@ pub fn op_seek(
 
             let rowid = if matches!(original_value, Value::Null) {
                 match actual_op {
-                    SeekOp::GE | SeekOp::GT => {
+                    SeekOp::GE { .. } | SeekOp::GT => {
                         state.pc = target_pc.to_offset_int();
                         return Ok(InsnFunctionStepResult::Step);
                     }
-                    SeekOp::LE | SeekOp::LT => {
+                    SeekOp::LE { .. } | SeekOp::LT => {
                         // No integers are < NULL, so jump to target
                         state.pc = target_pc.to_offset_int();
                         return Ok(InsnFunctionStepResult::Step);
                     }
-                    _ => unreachable!(),
                 }
             } else {
                 int_key
