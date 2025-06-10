@@ -626,7 +626,7 @@ impl BTreeCursor {
             }
             if cell_idx >= cell_count as i32 {
                 self.stack.set_cell_index(cell_count as i32 - 1);
-            } else {
+            } else if !self.stack.current_cell_index_less_than_min() {
                 let is_index = page.is_index();
                 // skip retreat in case we still haven't visited this cell in index
                 let should_visit_internal_node = is_index && self.going_upwards; // we are going upwards, this means we still need to visit divider cell in an index
@@ -1142,9 +1142,9 @@ impl BTreeCursor {
             let is_index = mem_page_rc.get().is_index();
             let should_skip_advance = is_index
                 && self.going_upwards // we are going upwards, this means we still need to visit divider cell in an index
-                && self.stack.current_cell_index() < cell_count as i32; // if we weren't on a
-                                                                        // valid cell then it means we will have to move upwards again or move to right page,
-                                                                        // anyways, we won't visit this invalid cell index
+                && self.stack.current_cell_index() >= 0 && self.stack.current_cell_index() < cell_count as i32; // if we weren't on a
+                                                                                                                // valid cell then it means we will have to move upwards again or move to right page,
+                                                                                                                // anyways, we won't visit this invalid cell index
             if should_skip_advance {
                 tracing::debug!(
                     "next: skipping advance, going_upwards: {}, page: {}, cell_idx: {}",
