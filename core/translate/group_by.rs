@@ -885,6 +885,7 @@ pub fn group_by_emit_row_phase<'a>(
 
     if let Some(having) = &group_by.having {
         for expr in having.iter() {
+            let if_true_target = program.allocate_label();
             translate_condition_expr(
                 program,
                 &plan.table_references,
@@ -892,10 +893,11 @@ pub fn group_by_emit_row_phase<'a>(
                 ConditionMetadata {
                     jump_if_condition_is_true: false,
                     jump_target_when_false: labels.label_group_by_end_without_emitting_row,
-                    jump_target_when_true: BranchOffset::Placeholder, // not used. FIXME: this is a bug. HAVING can have e.g. HAVING a OR b.
+                    jump_target_when_true: if_true_target,
                 },
                 &t_ctx.resolver,
             )?;
+            program.preassign_label_to_next_insn(if_true_target);
         }
     }
 
