@@ -343,12 +343,6 @@ pub struct Connection {
     cache_size: Cell<i32>,
 }
 
-impl Drop for Connection {
-    fn drop(&mut self) {
-        let _ = self.close();
-    }
-}
-
 impl Connection {
     #[instrument(skip_all, level = Level::TRACE)]
     pub fn prepare(self: &Rc<Connection>, sql: impl AsRef<str>) -> Result<Statement> {
