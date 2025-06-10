@@ -4354,82 +4354,96 @@ impl BTreeCursor {
                     original_child_pointer,
                     post_balancing_seek_key,
                 } => {
-                    // This is an interior node, we need to handle deletion differently
-                    // For interior nodes:
-                    // 1. Move cursor to largest entry in left subtree
-                    // 2. Copy that entry to replace the one being deleted
-                    // 3. Delete the leaf entry
+                    // This is an interior node, we need to handle deletion differently.
+                    // 1. Move cursor to the largest key in the left subtree.
+                    // 2. Replace the cell in the interior (parent) node with that key.
+                    // 3. Delete that key from the child page.
 
-                    // Move to the largest key in the left subtree
+                    // Step 1: Move cursor to the largest key in the left subtree.
                     return_if_io!(self.prev());
+                    let (cell_payload, leaf_cell_idx) = {
+                        let leaf_page_ref = self.stack.top();
+                        let leaf_page = leaf_page_ref.get();
+                        let leaf_contents = leaf_page.get().contents.as_ref().unwrap();
+                        assert!(leaf_contents.is_leaf());
+                        assert!(leaf_contents.cell_count() > 0);
+                        let leaf_cell_idx = leaf_contents.cell_count() - 1;
+                        let last_cell_on_child_page = leaf_contents.cell_get(
+                            leaf_cell_idx,
+                            payload_overflow_threshold_max(
+                                leaf_contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            payload_overflow_threshold_min(
+                                leaf_contents.page_type(),
+                                self.usable_space() as u16,
+                            ),
+                            self.usable_space(),
+                        )?;
 
-                    let leaf_page = self.stack.top();
-                    return_if_locked_maybe_load!(self.pager, leaf_page);
-                    assert!(
-                        matches!(
-                            leaf_page.get().get_contents().page_type(),
-                            PageType::TableLeaf | PageType::IndexLeaf
-                        ),
-                        "self.prev should have returned a leaf page"
-                    );
+                        let mut cell_payload: Vec<u8> = Vec::new();
+                        let child_pointer =
+                            original_child_pointer.expect("there should be a pointer");
+                        // Rewrite the old leaf cell as an interior cell depending on type.
+                        match last_cell_on_child_page {
+                            BTreeCell::TableLeafCell(leaf_cell) => {
+                                // Table interior cells contain the left child pointer and the rowid as varint.
+                                cell_payload.extend_from_slice(&child_pointer.to_be_bytes());
+                                write_varint_to_vec(leaf_cell._rowid as u64, &mut cell_payload);
+                            }
+                            BTreeCell::IndexLeafCell(leaf_cell) => {
+                                // Index interior cells contain:
+                                // 1. The left child pointer
+                                // 2. The payload size as varint
+                                // 3. The payload
+                                // 4. The first overflow page as varint, omitted if no overflow.
+                                cell_payload.extend_from_slice(&child_pointer.to_be_bytes());
+                                write_varint_to_vec(leaf_cell.payload_size, &mut cell_payload);
+                                cell_payload.extend_from_slice(leaf_cell.payload);
+                                if let Some(first_overflow_page) = leaf_cell.first_overflow_page {
+                                    cell_payload
+                                        .extend_from_slice(&first_overflow_page.to_be_bytes());
+                                }
+                            }
+                            _ => unreachable!("Expected table leaf cell"),
+                        }
+                        (cell_payload, leaf_cell_idx)
+                    };
 
                     let parent_page = self.stack.parent_page().unwrap();
-                    assert!(parent_page.get().is_loaded(), "parent page");
-
-                    let leaf_page = leaf_page.get();
-                    let leaf_contents = leaf_page.get().contents.as_ref().unwrap();
-                    // The index of the cell to removed must be the last one.
-                    let leaf_cell_idx = leaf_contents.cell_count() - 1;
-                    let predecessor_cell = leaf_contents.cell_get(
-                        leaf_cell_idx,
-                        payload_overflow_threshold_max(
-                            leaf_contents.page_type(),
-                            self.usable_space() as u16,
-                        ),
-                        payload_overflow_threshold_min(
-                            leaf_contents.page_type(),
-                            self.usable_space() as u16,
-                        ),
-                        self.usable_space(),
-                    )?;
+                    let leaf_page = self.stack.top();
 
                     parent_page.get().set_dirty();
                     self.pager.add_dirty(parent_page.get().get().id);
+                    leaf_page.get().set_dirty();
+                    self.pager.add_dirty(leaf_page.get().get().id);
 
-                    let parent_page = parent_page.get();
-                    let parent_contents = parent_page.get().contents.as_mut().unwrap();
+                    // Step 2: Replace the cell in the parent (interior) page.
+                    {
+                        let parent_page_ref = parent_page.get();
+                        let parent_contents = parent_page_ref.get().contents.as_mut().unwrap();
 
-                    // Create an interior cell from a predecessor
-                    let mut cell_payload: Vec<u8> = Vec::new();
-                    let child_pointer = original_child_pointer.expect("there should be a pointer");
-                    match predecessor_cell {
-                        BTreeCell::TableLeafCell(leaf_cell) => {
-                            cell_payload.extend_from_slice(&child_pointer.to_be_bytes());
-                            write_varint_to_vec(leaf_cell._rowid as u64, &mut cell_payload);
-                        }
-                        BTreeCell::IndexLeafCell(leaf_cell) => {
-                            cell_payload.extend_from_slice(&child_pointer.to_be_bytes());
-                            cell_payload.extend_from_slice(leaf_cell.payload);
-                        }
-                        _ => unreachable!("Expected table leaf cell"),
+                        // First, drop the old cell that is being replaced.
+                        drop_cell(parent_contents, cell_idx, self.usable_space() as u16)?;
+                        // Then, insert the new cell (the predecessor) in its place.
+                        insert_into_cell(
+                            parent_contents,
+                            &cell_payload,
+                            cell_idx,
+                            self.usable_space() as u16,
+                        )?;
                     }
 
-                    insert_into_cell(
-                        parent_contents,
-                        &cell_payload,
-                        cell_idx,
-                        self.usable_space() as u16,
-                    )?;
-                    let is_last_parent_cell =
-                        cell_idx == parent_contents.cell_count().saturating_sub(1);
-                    drop_cell(parent_contents, cell_idx, self.usable_space() as u16)?;
-                    if is_last_parent_cell {
-                        tracing::debug!("is_last_parent_cell: {:?}", parent_contents.cell_count());
+                    // Step 3: Delete the predecessor cell from the leaf page.
+                    {
+                        let leaf_page_ref = leaf_page.get();
+                        let leaf_contents = leaf_page_ref.get().contents.as_mut().unwrap();
+                        drop_cell(leaf_contents, leaf_cell_idx, self.usable_space() as u16)?;
                     }
 
                     let delete_info = self.state.mut_delete_info().unwrap();
                     delete_info.state = DeleteState::CheckNeedsBalancing {
-                        rightmost_cell_was_dropped: false, // TODO: when is this true?
+                        rightmost_cell_was_dropped: false,
                         post_balancing_seek_key,
                     };
                 }
