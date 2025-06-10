@@ -2322,6 +2322,10 @@ impl BTreeCursor {
                     == parent_page.get_contents().cell_count() + 1
                 {
                     self.stack.retreat();
+                } else if self.stack.current_cell_index() == -1 {
+                    // We might've retreated in CheckRequiresBalancing, so advance to the next cell
+                    // to prevent panic in the asserts below due to -1 index
+                    self.stack.advance();
                 }
                 parent_page.set_dirty();
                 self.pager.add_dirty(parent_page.get().id);
