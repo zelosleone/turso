@@ -1334,17 +1334,18 @@ pub fn op_column(
                     must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "Column");
                 let cursor = cursor.as_btree_mut();
                 let record = return_if_io!(cursor.record());
-                let value = if let Some(record) = record.as_ref() {
-                    if cursor.get_null_flag() {
-                        RefValue::Null
-                    } else {
-                        match record.get_value_opt(*column) {
-                            Some(val) => val.clone(),
-                            None => RefValue::Null,
-                        }
-                    }
+
+                let Some(record) = record.as_ref() else {
+                    break 'value Value::Null;
+                };
+
+                let value = if cursor.get_null_flag() {
+                    Value::Null
                 } else {
-                    RefValue::Null
+                    match record.get_value_opt(*column) {
+                        Some(val) => val.to_owned(),
+                        None => Value::Null,
+                    }
                 };
 
                 if cursor.get_null_flag() {
