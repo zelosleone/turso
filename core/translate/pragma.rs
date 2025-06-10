@@ -386,7 +386,7 @@ fn query_pragma(
             translate_integrity_check(schema, &mut program)?;
         }
         PragmaName::UnstableCaptureDataChangesConn => {
-            let pragma = pragma_for(pragma);
+            let pragma = pragma_for(&pragma);
             let second_column = program.alloc_register();
             let opts = connection.get_capture_data_changes();
             program.emit_string8(opts.mode_name().to_string(), register);
