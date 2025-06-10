@@ -748,7 +748,6 @@ impl Wal for WalFile {
                                 self.buffer_pool.clone(),
                             )?;
                             self.ongoing_checkpoint.state = CheckpointState::WaitReadFrame;
-                            self.ongoing_checkpoint.current_page += 1;
                             continue 'checkpoint_loop;
                         }
                     }
@@ -778,6 +777,7 @@ impl Wal for WalFile {
                     if (self.ongoing_checkpoint.current_page as usize)
                         < shared.pages_in_frames.lock().len()
                     {
+                        self.ongoing_checkpoint.current_page += 1;
                         self.ongoing_checkpoint.state = CheckpointState::ReadFrame;
                     } else {
                         self.ongoing_checkpoint.state = CheckpointState::Done;
