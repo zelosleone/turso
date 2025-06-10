@@ -4467,6 +4467,8 @@ impl BTreeCursor {
                             target_key: post_balancing_seek_key.unwrap(),
                         }
                     } else {
+                        // FIXME: if we deleted something from an interior page, this is now the leaf page from where a replacement cell
+                        // was taken in InteriorNodeReplacement. We must also check if the parent needs balancing!!!
                         self.stack.retreat();
                         self.state = CursorState::None;
                         return Ok(CursorResult::Ok(()));
