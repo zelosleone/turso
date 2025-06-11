@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::{collections::HashSet, fmt::Display};
 
 pub(crate) use create::Create;
 pub(crate) use create_index::CreateIndex;
@@ -32,16 +32,18 @@ pub(crate) enum Query {
 }
 
 impl Query {
-    pub(crate) fn dependencies(&self) -> Vec<String> {
+    pub(crate) fn dependencies(&self) -> HashSet<String> {
         match self {
-            Query::Create(_) => vec![],
+            Query::Create(_) => HashSet::new(),
             Query::Select(Select { table, .. })
             | Query::Insert(Insert::Select { table, .. })
             | Query::Insert(Insert::Values { table, .. })
             | Query::Delete(Delete { table, .. })
             | Query::Update(Update { table, .. })
-            | Query::Drop(Drop { table, .. }) => vec![table.clone()],
-            Query::CreateIndex(CreateIndex { table_name, .. }) => vec![table_name.clone()],
+            | Query::Drop(Drop { table, .. }) => HashSet::from_iter([table.clone()]),
+            Query::CreateIndex(CreateIndex { table_name, .. }) => {
+                HashSet::from_iter([table_name.clone()])
+            }
         }
     }
     pub(crate) fn uses(&self) -> Vec<String> {
