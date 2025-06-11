@@ -49,32 +49,47 @@ impl InteractionPlan {
 
         // Remove all properties after the failing one
         plan.plan.truncate(failing_execution.interaction_index + 1);
+
+        let mut idx = 0;
         // Remove all properties that do not use the failing tables
         plan.plan.retain_mut(|interactions| {
-            let mut has_table = interactions
-                .uses()
-                .iter()
-                .any(|t| depending_tables.contains(t));
-            if has_table {
-                // Remove the extensional parts of the properties
-                if let Interactions::Property(p) = interactions {
-                    match p {
-                        Property::InsertValuesSelect { queries, .. }
-                        | Property::DoubleCreateFailure { queries, .. }
-                        | Property::DeleteSelect { queries, .. }
-                        | Property::DropSelect { queries, .. } => {
-                            queries.clear();
-                        }
-                        Property::SelectLimit { .. } | Property::SelectSelectOptimizer { .. } => {}
-                    }
-                }
-                // Check again after query clear if the interactions still uses the failing table
-                has_table = interactions
+            let retain = if idx == failing_execution.interaction_index {
+                true
+            } else {
+                let mut has_table = interactions
                     .uses()
                     .iter()
                     .any(|t| depending_tables.contains(t));
-            }
-            has_table && !matches!(interactions, Interactions::Query(Query::Select(_)))
+                if has_table {
+                    // Remove the extensional parts of the properties
+                    if let Interactions::Property(p) = interactions {
+                        match p {
+                            Property::InsertValuesSelect { queries, .. }
+                            | Property::DoubleCreateFailure { queries, .. }
+                            | Property::DeleteSelect { queries, .. }
+                            | Property::DropSelect { queries, .. } => {
+                                queries.clear();
+                            }
+                            Property::SelectLimit { .. }
+                            | Property::SelectSelectOptimizer { .. } => {}
+                        }
+                    }
+                    // Check again after query clear if the interactions still uses the failing table
+                    has_table = interactions
+                        .uses()
+                        .iter()
+                        .any(|t| depending_tables.contains(t));
+                }
+                has_table
+                    && !matches!(
+                        interactions,
+                        Interactions::Query(Query::Select(_))
+                            | Interactions::Property(Property::SelectLimit { .. })
+                            | Interactions::Property(Property::SelectSelectOptimizer { .. })
+                    )
+            };
+            idx += 1;
+            retain
         });
 
         let after = plan.plan.len();
