@@ -37,8 +37,8 @@ impl Display for Plan {
                 order_by,
             } => {
                 for (plan, operator) in left {
-                    writeln!(f, "{}", operator)?;
                     plan.fmt(f)?;
+                    writeln!(f, "{}", operator)?;
                 }
                 right_most.fmt(f)?;
                 if let Some(limit) = limit {
@@ -283,7 +283,7 @@ impl ToSqlString for Plan {
 
                 let mut ret = Vec::new();
                 for (plan, operator) in left {
-                    ret.push(format!("{} {}", operator, plan.to_sql_string(context)));
+                    ret.push(format!("{} {}", plan.to_sql_string(context), operator));
                 }
                 ret.push(right_most.to_sql_string(context));
                 if let Some(order_by) = &order_by {

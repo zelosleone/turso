@@ -149,10 +149,10 @@ pub fn prepare_select_plan<'a>(
                 )?;
             }
 
-            // Ensure all subplans have same number of result columns
-            let first_num_result_columns = last.result_columns.len();
+            // Ensure all subplans have the same number of result columns
+            let right_most_num_result_columns = last.result_columns.len();
             for (plan, operator) in left.iter() {
-                if plan.result_columns.len() != first_num_result_columns {
+                if plan.result_columns.len() != right_most_num_result_columns {
                     crate::bail_parse_error!("SELECTs to the left and right of {} do not have the same number of result columns", operator);
                 }
             }
