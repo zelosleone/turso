@@ -1,16 +1,6 @@
-use std::{
-    rc::{Rc, Weak},
-    sync::Arc,
-};
-
-use limbo_sqlite3_parser::ast;
-
 use crate::{
-    fast_lock::SpinLock,
     schema::Schema,
-    storage::sqlite3_ondisk::DatabaseHeader,
     vdbe::{builder::ProgramBuilder, insn::Insn},
-    Pager,
 };
 
 /// Maximum number of errors to report with integrity check. If we exceed this number we will short
@@ -23,12 +13,9 @@ pub fn translate_integrity_check(
 ) -> crate::Result<()> {
     let mut root_pages = Vec::with_capacity(schema.tables.len() + schema.indexes.len());
     // Collect root pages to run integrity check on
-    for (name, table) in &schema.tables {
-        match table.as_ref() {
-            crate::schema::Table::BTree(table) => {
-                root_pages.push(table.root_page);
-            }
-            _ => {}
+    for table in schema.tables.values() {
+        if let crate::schema::Table::BTree(table) = table.as_ref() {
+            root_pages.push(table.root_page);
         };
     }
     let message_register = program.alloc_register();
