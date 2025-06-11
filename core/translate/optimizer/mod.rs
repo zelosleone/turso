@@ -41,9 +41,11 @@ pub fn optimize_plan(plan: &mut Plan, schema: &Schema) -> Result<()> {
         Plan::Select(plan) => optimize_select_plan(plan, schema)?,
         Plan::Delete(plan) => optimize_delete_plan(plan, schema)?,
         Plan::Update(plan) => optimize_update_plan(plan, schema)?,
-        Plan::CompoundSelect { first, rest, .. } => {
-            optimize_select_plan(first, schema)?;
-            for (plan, _) in rest {
+        Plan::CompoundSelect {
+            left, right_most, ..
+        } => {
+            optimize_select_plan(right_most, schema)?;
+            for (plan, _) in left {
                 optimize_select_plan(plan, schema)?;
             }
         }

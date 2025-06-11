@@ -10,6 +10,7 @@
 pub(crate) mod aggregation;
 pub(crate) mod alter;
 pub(crate) mod collate;
+mod compound_select;
 pub(crate) mod delete;
 pub(crate) mod display;
 pub(crate) mod emitter;

@@ -292,8 +292,8 @@ impl Ord for EvalAt {
 pub enum Plan {
     Select(SelectPlan),
     CompoundSelect {
-        first: SelectPlan,
-        rest: Vec<(SelectPlan, ast::CompoundOperator)>,
+        left: Vec<(SelectPlan, ast::CompoundOperator)>,
+        right_most: SelectPlan,
         limit: Option<isize>,
         offset: Option<isize>,
         order_by: Option<Vec<(ast::Expr, SortOrder)>>,
