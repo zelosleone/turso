@@ -93,12 +93,12 @@ pub enum SimulatorCommand {
 }
 
 impl SimulatorCLI {
-    pub fn validate(&mut self) -> Result<(), String> {
+    pub fn validate(&mut self) -> anyhow::Result<()> {
         if self.minimum_tests < 1 {
-            return Err("minimum size must be at least 1".to_string());
+            anyhow::bail!("minimum size must be at least 1");
         }
         if self.maximum_tests < 1 {
-            return Err("maximum size must be at least 1".to_string());
+            anyhow::bail!("maximum size must be at least 1");
         }
 
         if self.minimum_tests > self.maximum_tests {
@@ -112,7 +112,7 @@ impl SimulatorCLI {
         }
 
         if self.seed.is_some() && self.load.is_some() {
-            return Err("Cannot set seed and load plan at the same time".to_string());
+            anyhow::bail!("Cannot set seed and load plan at the same time");
         }
 
         Ok(())
