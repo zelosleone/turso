@@ -5101,6 +5101,19 @@ impl BTreeCursor {
     }
 }
 
+#[derive(Debug)]
+pub struct IntegrityCheckState {
+    pub current_page: usize,
+}
+
+pub fn integrity_check(
+    state: &mut IntegrityCheckState,
+    error_count: &mut usize,
+    message: &mut String,
+) -> Result<CursorResult<()>> {
+    Ok(CursorResult::Ok(()))
+}
+
 #[cfg(debug_assertions)]
 fn validate_cells_after_insertion(cell_array: &CellArray, leaf_data: bool) {
     for cell in &cell_array.cells {
