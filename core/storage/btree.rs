@@ -603,6 +603,7 @@ impl BTreeCursor {
 
     /// Move the cursor to the previous record and return it.
     /// Used in backwards iteration.
+    #[instrument(skip(self), level = Level::TRACE, name = "prev")]
     fn get_prev_record(&mut self) -> Result<CursorResult<bool>> {
         loop {
             let page = self.stack.top();
@@ -713,6 +714,7 @@ impl BTreeCursor {
 
     /// Reads the record of a cell that has overflow pages. This is a state machine that requires to be called until completion so everything
     /// that calls this function should be reentrant.
+    #[instrument(skip_all, level = Level::TRACE)]
     fn process_overflow_read(
         &self,
         payload: &'static [u8],
@@ -740,7 +742,7 @@ impl BTreeCursor {
         if page_btree.get().is_locked() {
             return Ok(CursorResult::IO);
         }
-        tracing::debug!("reading overflow page {} {}", next_page, remaining_to_read);
+        tracing::debug!(next_page, remaining_to_read, "reading overflow page");
         let page = page_btree.get();
         let contents = page.get_contents();
         // The first four bytes of each overflow page are a big-endian integer which is the page number of the next page in the chain, or zero for the final page in the chain.
@@ -1113,6 +1115,7 @@ impl BTreeCursor {
 
     /// Move the cursor to the next record and return it.
     /// Used in forwards iteration, which is the default.
+    #[instrument(skip(self), level = Level::TRACE, name = "next")]
     fn get_next_record(&mut self) -> Result<CursorResult<bool>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             let mut mv_cursor = mv_cursor.borrow_mut();
@@ -1133,10 +1136,10 @@ impl BTreeCursor {
             let contents = mem_page.get().contents.as_ref().unwrap();
             let cell_count = contents.cell_count();
             tracing::debug!(
-                "next: current_before_advance id={} cell={}, cell_count={}",
-                mem_page_rc.get().get().id,
-                self.stack.current_cell_index(),
-                cell_count
+                id = mem_page_rc.get().get().id,
+                cell = self.stack.current_cell_index(),
+                cell_count,
+                "current_before_advance",
             );
 
             let is_index = mem_page_rc.get().is_index();
@@ -1147,10 +1150,10 @@ impl BTreeCursor {
                                                                                                                 // anyways, we won't visit this invalid cell index
             if should_skip_advance {
                 tracing::debug!(
-                    "next: skipping advance, going_upwards: {}, page: {}, cell_idx: {}",
-                    self.going_upwards,
-                    mem_page_rc.get().get().id,
-                    self.stack.current_cell_index()
+                    going_upwards = self.going_upwards,
+                    page = mem_page_rc.get().get().id,
+                    cell_idx = self.stack.current_cell_index(),
+                    "skipping advance",
                 );
                 self.going_upwards = false;
                 return Ok(CursorResult::Ok(true));
@@ -1158,11 +1161,7 @@ impl BTreeCursor {
             // Important to advance only after loading the page in order to not advance > 1 times
             self.stack.advance();
             let cell_idx = self.stack.current_cell_index() as usize;
-            tracing::debug!(
-                "next:current id={} cell={}",
-                mem_page_rc.get().get().id,
-                cell_idx
-            );
+            tracing::debug!(id = mem_page_rc.get().get().id, cell = cell_idx, "current");
 
             if cell_idx == cell_count {
                 // do rightmost
@@ -1260,13 +1259,14 @@ impl BTreeCursor {
     fn move_to_root(&mut self) {
         self.seek_state = CursorSeekState::Start;
         self.going_upwards = false;
-        tracing::trace!("move_to_root({})", self.root_page);
+        tracing::trace!(root_page = self.root_page);
         let mem_page = self.read_page(self.root_page).unwrap();
         self.stack.clear();
         self.stack.push(mem_page);
     }
 
     /// Move the cursor to the rightmost record in the btree.
+    #[instrument(skip(self), level = Level::TRACE)]
     fn move_to_rightmost(&mut self) -> Result<CursorResult<bool>> {
         self.move_to_root();
 
@@ -1636,6 +1636,7 @@ impl BTreeCursor {
 
     /// Specialized version of do_seek() for table btrees that uses binary search instead
     /// of iterating cells in order.
+    #[instrument(skip_all, level = Level::TRACE)]
     fn tablebtree_seek(&mut self, rowid: i64, seek_op: SeekOp) -> Result<CursorResult<bool>> {
         assert!(self.mv_cursor.is_none());
         let iter_dir = seek_op.iteration_direction();
@@ -1754,6 +1755,7 @@ impl BTreeCursor {
         }
     }
 
+    #[instrument(skip_all, level = Level::TRACE)]
     fn indexbtree_seek(
         &mut self,
         key: &ImmutableRecord,
@@ -1988,7 +1990,7 @@ impl BTreeCursor {
         let cmp = {
             let record = self.get_immutable_record();
             let record = record.as_ref().unwrap();
-            tracing::debug!("record={}", record);
+            tracing::debug!(?record);
             let record_slice_equal_number_of_cols =
                 &record.get_values().as_slice()[..key.get_values().len()];
             compare_immutable(
@@ -2029,7 +2031,7 @@ impl BTreeCursor {
     #[instrument(skip_all, level = Level::TRACE)]
     pub fn move_to(&mut self, key: SeekKey<'_>, cmp: SeekOp) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
-        tracing::trace!("move_to(key={:?} cmp={:?})", key, cmp);
+        tracing::trace!(?key, ?cmp);
         // For a table with N rows, we can find any row by row id in O(log(N)) time by starting at the root page and following the B-tree pointers.
         // B-trees consist of interior pages and leaf pages. Interior pages contain pointers to other pages, while leaf pages contain the actual row data.
         //
@@ -2076,6 +2078,7 @@ impl BTreeCursor {
 
     /// Insert a record into the btree.
     /// If the insert operation overflows the page, it will be split and the btree will be balanced.
+    #[instrument(skip_all, level = Level::TRACE)]
     fn insert_into_page(&mut self, bkey: &BTreeKey) -> Result<CursorResult<()>> {
         let record = bkey
             .get_record()
@@ -2115,7 +2118,7 @@ impl BTreeCursor {
                         (return_if_io!(self.find_cell(page, bkey)), page.page_type())
                     };
                     self.stack.set_cell_index(cell_idx as i32);
-                    tracing::debug!("insert_into_page(cell_idx={})", cell_idx);
+                    tracing::debug!(cell_idx);
 
                     // if the cell index is less than the total cells, check: if its an existing
                     // rowid, we are going to update / overwrite the cell
@@ -2129,7 +2132,7 @@ impl BTreeCursor {
                         match cell {
                             BTreeCell::TableLeafCell(tbl_leaf) => {
                                 if tbl_leaf._rowid == bkey.to_rowid() {
-                                    tracing::debug!("insert_into_page: found exact match with cell_idx={cell_idx}, overwriting");
+                                    tracing::debug!("found exact match with cell_idx={cell_idx}, overwriting");
                                     self.overwrite_cell(page.clone(), cell_idx, record)?;
                                     self.state
                                         .mut_write_info()
@@ -2150,7 +2153,7 @@ impl BTreeCursor {
                                         &self.collations,
                                 );
                                 if cmp == Ordering::Equal {
-                                    tracing::debug!("insert_into_page: found exact match with cell_idx={cell_idx}, overwriting");
+                                    tracing::debug!("found exact match with cell_idx={cell_idx}, overwriting");
                                     self.has_record.set(true);
                                     self.overwrite_cell(page.clone(), cell_idx, record)?;
                                     self.state
@@ -2178,10 +2181,7 @@ impl BTreeCursor {
                     let overflow = {
                         let page = page.get();
                         let contents = page.get().contents.as_mut().unwrap();
-                        tracing::debug!(
-                            "insert_into_page(overflow, cell_count={})",
-                            contents.cell_count()
-                        );
+                        tracing::debug!(name: "overflow", cell_count = contents.cell_count());
 
                         insert_into_cell(
                             contents,
@@ -2194,7 +2194,7 @@ impl BTreeCursor {
                     self.stack.set_cell_index(cell_idx as i32);
                     if overflow > 0 {
                         // A balance will happen so save the key we were inserting
-                        tracing::debug!("insert_into_page: balance triggered on key {:?}, page={:?}, cell_idx={}", bkey, page.get().get().id, cell_idx);
+                        tracing::debug!(page = page.get().get().id, cell_idx, "balance triggered:");
                         self.save_context(match bkey {
                             BTreeKey::TableRowId(rowid) => CursorContext::TableRowId(rowid.0),
                             BTreeKey::IndexKey(record) => {
@@ -2241,6 +2241,7 @@ impl BTreeCursor {
     /// This is a naive algorithm that doesn't try to distribute cells evenly by content.
     /// It will try to split the page in half by keys not by content.
     /// Sqlite tries to have a page at least 40% full.
+    #[instrument(skip(self), level = Level::TRACE)]
     fn balance(&mut self) -> Result<CursorResult<()>> {
         assert!(
             matches!(self.state, CursorState::Write(_)),
@@ -3991,6 +3992,7 @@ impl BTreeCursor {
         Ok(CursorResult::Ok(cursor_has_record))
     }
 
+    #[instrument(skip(self), level = Level::TRACE)]
     pub fn rowid(&mut self) -> Result<CursorResult<Option<i64>>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             let mv_cursor = mv_cursor.borrow();
@@ -4029,12 +4031,14 @@ impl BTreeCursor {
         }
     }
 
+    #[instrument(skip(self), level = Level::TRACE)]
     pub fn seek(&mut self, key: SeekKey<'_>, op: SeekOp) -> Result<CursorResult<bool>> {
         assert!(self.mv_cursor.is_none());
+        // Empty trace to capture the span information
+        tracing::trace!("");
         // We need to clear the null flag for the table cursor before seeking,
         // because it might have been set to false by an unmatched left-join row during the previous iteration
         // on the outer loop.
-        tracing::trace!("seek(key={:?}, op={:?})", key, op);
         self.set_null_flag(false);
         let cursor_has_record = return_if_io!(self.do_seek(key, op));
         self.invalidate_record();
@@ -4048,6 +4052,7 @@ impl BTreeCursor {
     /// Return a reference to the record the cursor is currently pointing to.
     /// If record was not parsed yet, then we have to parse it and in case of I/O we yield control
     /// back.
+    #[instrument(skip(self), level = Level::TRACE)]
     pub fn record(&self) -> Result<CursorResult<Option<Ref<ImmutableRecord>>>> {
         if !self.has_record.get() {
             return Ok(CursorResult::Ok(None));
@@ -4115,12 +4120,13 @@ impl BTreeCursor {
         Ok(CursorResult::Ok(Some(record_ref)))
     }
 
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(skip(self), level = Level::TRACE)]
     pub fn insert(
         &mut self,
         key: &BTreeKey,
         mut moved_before: bool, /* Indicate whether it's necessary to traverse to find the leaf page */
     ) -> Result<CursorResult<()>> {
+        tracing::debug!(valid_state = ?self.valid_state, cursor_state = ?self.state, is_write_in_progress = self.is_write_in_progress());
         match &self.mv_cursor {
             Some(mv_cursor) => match key.maybe_rowid() {
                 Some(rowid) => {
@@ -4132,7 +4138,6 @@ impl BTreeCursor {
                 None => todo!("Support mvcc inserts with index btrees"),
             },
             None => {
-                tracing::debug!("insert(moved={}, key={:?}), valid_state={:?}, cursor_state={:?}, is_write_in_progress={}", moved_before, key, self.valid_state, self.state, self.is_write_in_progress());
                 if self.valid_state != CursorValidState::Valid && !self.is_write_in_progress() {
                     // A balance happened so we need to move.
                     moved_before = false;
@@ -4185,6 +4190,7 @@ impl BTreeCursor {
     /// 7. WaitForBalancingToComplete -> perform balancing
     /// 8. SeekAfterBalancing -> adjust the cursor to a node that is closer to the deleted value. go to Finish
     /// 9. Finish -> Delete operation is done. Return CursorResult(Ok())
+    #[instrument(skip(self), level = Level::TRACE)]
     pub fn delete(&mut self) -> Result<CursorResult<()>> {
         assert!(self.mv_cursor.is_none());
 
@@ -4200,7 +4206,7 @@ impl BTreeCursor {
                 let delete_info = self.state.delete_info().expect("cannot get delete info");
                 delete_info.state.clone()
             };
-            tracing::debug!("delete state: {:?}", delete_state);
+            tracing::debug!(?delete_state);
 
             match delete_state {
                 DeleteState::Start => {
@@ -4675,6 +4681,7 @@ impl BTreeCursor {
     /// ```
     ///
     /// The destruction order would be: [4',4,5,2,6,7,3,1]
+    #[instrument(skip(self), level = Level::TRACE)]
     pub fn btree_destroy(&mut self) -> Result<CursorResult<Option<usize>>> {
         if let CursorState::None = &self.state {
             self.move_to_root();
@@ -4953,6 +4960,7 @@ impl BTreeCursor {
     /// Count the number of entries in the b-tree
     ///
     /// Only supposed to be used in the context of a simple Count Select Statement
+    #[instrument(skip(self), level = Level::TRACE)]
     pub fn count(&mut self) -> Result<CursorResult<usize>> {
         if self.count == 0 {
             self.move_to_root();
@@ -5140,11 +5148,11 @@ impl PageStack {
     }
     /// Push a new page onto the stack.
     /// This effectively means traversing to a child page.
+    #[instrument(skip_all, level = Level::TRACE, name = "pagestack::push")]
     fn _push(&self, page: BTreePage, starting_cell_idx: i32) {
         tracing::trace!(
-            "pagestack::push(current={}, new_page_id={})",
-            self.current_page.get(),
-            page.get().get().id
+            current = self.current_page.get(),
+            new_page_id = page.get().get().id,
         );
         self.increment_current();
         let current = self.current_page.get();
@@ -5167,10 +5175,11 @@ impl PageStack {
 
     /// Pop a page off the stack.
     /// This effectively means traversing back up to a parent page.
+    #[instrument(skip_all, level = Level::TRACE, name = "pagestack::pop")]
     fn pop(&self) {
         let current = self.current_page.get();
         assert!(current >= 0);
-        tracing::trace!("pagestack::pop(current={})", current);
+        tracing::trace!(current);
         self.cell_indices.borrow_mut()[current as usize] = 0;
         self.stack.borrow_mut()[current as usize] = None;
         self.decrement_current();
@@ -5178,16 +5187,13 @@ impl PageStack {
 
     /// Get the top page on the stack.
     /// This is the page that is currently being traversed.
+    #[instrument(skip(self), level = Level::TRACE, name = "pagestack::top", )]
     fn top(&self) -> BTreePage {
         let page = self.stack.borrow()[self.current()]
             .as_ref()
             .unwrap()
             .clone();
-        tracing::trace!(
-            "pagestack::top(current={}, page_id={})",
-            self.current(),
-            page.get().get().id
-        );
+        tracing::trace!(current = self.current(), page_id = page.get().get().id);
         page
     }
 
@@ -5213,22 +5219,22 @@ impl PageStack {
 
     /// Advance the current cell index of the current page to the next cell.
     /// We usually advance after going traversing a new page
+    #[instrument(skip(self), level = Level::TRACE, name = "pagestack::advance",)]
     fn advance(&self) {
         let current = self.current();
         tracing::trace!(
-            "pagestack::advance {}, cell_indices={:?}",
-            self.cell_indices.borrow()[current],
-            self.cell_indices
+            curr_cell_index = self.cell_indices.borrow()[current],
+            cell_indices = ?self.cell_indices,
         );
         self.cell_indices.borrow_mut()[current] += 1;
     }
 
+    #[instrument(skip(self), level = Level::TRACE, name = "pagestack::retreat")]
     fn retreat(&self) {
         let current = self.current();
         tracing::trace!(
-            "pagestack::retreat {}, cell_indices={:?}",
-            self.cell_indices.borrow()[current],
-            self.cell_indices
+            curr_cell_index = self.cell_indices.borrow()[current],
+            cell_indices = ?self.cell_indices,
         );
         self.cell_indices.borrow_mut()[current] -= 1;
     }
