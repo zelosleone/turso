@@ -1095,19 +1095,21 @@ fn emit_update_insns(
                     target_reg,
                     &t_ctx.resolver,
                 )?;
-                use crate::error::SQLITE_CONSTRAINT_NOTNULL;
-                program.emit_insn(Insn::HaltIfNull {
-                    target_reg,
-                    err_code: SQLITE_CONSTRAINT_NOTNULL,
-                    description: format!(
-                        "{}.{}",
-                        table_ref.table.get_name(),
-                        table_column
-                            .name
-                            .as_ref()
-                            .expect("Column name must be present")
-                    ),
-                });
+                if table_column.notnull {
+                    use crate::error::SQLITE_CONSTRAINT_NOTNULL;
+                    program.emit_insn(Insn::HaltIfNull {
+                        target_reg,
+                        err_code: SQLITE_CONSTRAINT_NOTNULL,
+                        description: format!(
+                            "{}.{}",
+                            table_ref.table.get_name(),
+                            table_column
+                                .name
+                                .as_ref()
+                                .expect("Column name must be present")
+                        ),
+                    });
+                }
             }
         } else {
             let column_idx_in_index = index.as_ref().and_then(|(idx, _)| {
