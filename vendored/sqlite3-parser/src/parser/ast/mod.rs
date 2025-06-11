@@ -1659,6 +1659,8 @@ pub enum PragmaName {
     AutoVacuum,
     /// `cache_size` pragma
     CacheSize,
+    /// Run integrity check on the database file
+    IntegrityCheck,
     /// `journal_mode` pragma
     JournalMode,
     /// Noop as per SQLite docs
@@ -1675,8 +1677,6 @@ pub enum PragmaName {
     UserVersion,
     /// trigger a checkpoint to run on database(s) if WAL is enabled
     WalCheckpoint,
-    /// Run integrity check on the database file
-    IntegrityCheck,
 }
 
 /// `CREATE TRIGGER` time
