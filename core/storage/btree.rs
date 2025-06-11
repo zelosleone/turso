@@ -5148,7 +5148,11 @@ pub fn integrity_check(
     message: &mut String,
     pager: &Rc<Pager>,
 ) -> Result<CursorResult<()>> {
-    let Some(IntegrityCheckPageEntry { page_idx, level, max_intkey }) = state.page_stack.last().cloned() else {
+    let Some(IntegrityCheckPageEntry {
+        page_idx,
+        level,
+        max_intkey,
+    }) = state.page_stack.last().cloned() else {
         return Ok(CursorResult::Ok(()));
     };
     let page = btree_read_page(pager, page_idx)?;

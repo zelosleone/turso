@@ -5060,7 +5060,7 @@ pub fn op_integrity_check(
     let Insn::IntegrityCk {
         max_errors,
         roots,
-        message_register
+        message_register,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
