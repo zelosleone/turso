@@ -1,4 +1,4 @@
-use std::{fmt::Display, path::Path, rc::Rc, vec};
+use std::{collections::HashSet, fmt::Display, path::Path, rc::Rc, vec};
 
 use limbo_core::{Connection, Result, StepResult, IO};
 use serde::{Deserialize, Serialize};
@@ -97,7 +97,7 @@ pub(crate) struct InteractionPlanState {
     pub(crate) secondary_pointer: usize,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum Interactions {
     Property(Property),
     Query(Query),
@@ -123,13 +123,13 @@ impl Interactions {
 }
 
 impl Interactions {
-    pub(crate) fn dependencies(&self) -> Vec<String> {
+    pub(crate) fn dependencies(&self) -> HashSet<String> {
         match self {
             Interactions::Property(property) => {
                 property
                     .interactions()
                     .iter()
-                    .fold(vec![], |mut acc, i| match i {
+                    .fold(HashSet::new(), |mut acc, i| match i {
                         Interaction::Query(q) => {
                             acc.extend(q.dependencies());
                             acc
@@ -138,7 +138,7 @@ impl Interactions {
                     })
             }
             Interactions::Query(query) => query.dependencies(),
-            Interactions::Fault(_) => vec![],
+            Interactions::Fault(_) => HashSet::new(),
         }
     }
 
