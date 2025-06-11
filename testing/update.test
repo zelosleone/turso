@@ -69,6 +69,25 @@ do_execsql_test_on_specific_db {:memory:} update-null {
 } {10|1|2
 3|4|5}
 
+do_execsql_test_on_specific_db {:memory:} update-not-null-1 {
+    create table temp (a,b not null,c);
+    insert into temp values (1, 2, 3);
+    update temp set b = 999;
+    select * from temp;
+} {1|999|3}
+
+do_execsql_test_in_memory_any_error update-not-null-2 {
+    create table temp (a,b not null,c);
+    insert into temp values (1, 2, 3);
+    update temp set b = NULL;
+}
+
+do_execsql_test_on_specific_db {:memory:} update-not-null-3 {
+    create table temp (a not null, b not null, c not null);
+    update temp set a = null, b = null, c = null;
+    select * from temp;
+} {}
+
 do_execsql_test_on_specific_db {:memory:} update-mixed-types {
     create table temp (a);
     insert into temp values (1);
