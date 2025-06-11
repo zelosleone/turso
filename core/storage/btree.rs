@@ -24,8 +24,9 @@ use crate::{
 use std::collections::HashSet;
 use std::{
     cell::{Cell, Ref, RefCell},
-    cmp::Ordering,
-    fmt::Debug,
+    cmp::{Ordering, Reverse},
+    collections::BinaryHeap,
+    fmt::{Debug, Write},
     pin::Pin,
     rc::Rc,
     sync::Arc,
@@ -5088,11 +5089,7 @@ impl BTreeCursor {
     }
 
     pub fn read_page(&self, page_idx: usize) -> Result<BTreePage> {
-        self.pager.read_page(page_idx).map(|page| {
-            Arc::new(BTreePageInner {
-                page: RefCell::new(page),
-            })
-        })
+        btree_read_page(&self.pager, page_idx)
     }
 
     pub fn allocate_page(&self, page_type: PageType, offset: usize) -> BTreePage {
@@ -5101,17 +5098,138 @@ impl BTreeCursor {
     }
 }
 
-#[derive(Debug)]
 pub struct IntegrityCheckState {
     pub current_page: usize,
+    page_stack: PageStack,
+    start: bool,
+}
+
+impl IntegrityCheckState {
+    pub fn new(page_idx: usize) -> Self {
+        Self {
+            current_page: page_idx,
+            page_stack: PageStack {
+                current_page: Cell::new(-1),
+                cell_indices: RefCell::new([0; BTCURSOR_MAX_DEPTH + 1]),
+                stack: RefCell::new([const { None }; BTCURSOR_MAX_DEPTH + 1]),
+            },
+            start: true,
+        }
+    }
+}
+impl std::fmt::Debug for IntegrityCheckState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IntegrityCheckState")
+            .field("current_page", &self.current_page)
+            .field("start", &self.start)
+            .finish()
+    }
 }
 
 pub fn integrity_check(
     state: &mut IntegrityCheckState,
     error_count: &mut usize,
     message: &mut String,
+    pager: &Rc<Pager>,
 ) -> Result<CursorResult<()>> {
+    if state.start {
+        let page = btree_read_page(pager, state.current_page)?;
+        return_if_locked_maybe_load!(pager, page);
+        state.page_stack.push(page);
+        state.start = false;
+    }
+    let page = state.page_stack.top();
+    return_if_locked_maybe_load!(pager, page);
+
+    let page = page.get();
+    let contents = page.get_contents();
+    let usable_space = pager.usable_space() as u16;
+    let mut coverage_checker = CoverageChecker::new(page.get().id);
+
+    for cell_idx in 0..contents.cell_count() {
+        let (cell_start, cell_length) = contents.cell_get_raw_region(
+            cell_idx,
+            payload_overflow_threshold_max(contents.page_type(), usable_space),
+            payload_overflow_threshold_min(contents.page_type(), usable_space),
+            usable_space as usize,
+        );
+        if cell_start < contents.cell_content_area() as usize
+            || cell_start > usable_space as usize - 4
+        {
+            let error_msg = format!("Cell {} in page {} is out of range. cell_range={}..{}, content_area={}, usable_space={}\n", cell_idx, page.get().id, cell_start, cell_start+cell_length, contents.cell_content_area(), usable_space);
+            message.write_str(&error_msg).unwrap();
+            *error_count += 1;
+        }
+        if cell_start + cell_length > usable_space as usize {
+            let error_msg = format!("Cell {} in page {} extends out of page. cell_range={}..{}, content_area={}, usable_space={}\n", cell_idx, page.get().id, cell_start, cell_start+cell_length, contents.cell_content_area(), usable_space);
+            message.write_str(&error_msg).unwrap();
+            *error_count += 1;
+        }
+        coverage_checker.add_cell(cell_start, cell_start + cell_length);
+        // TODO: check order
+        // TODO: check overflow
+    }
+
+    let first_freeblock = contents.first_freeblock();
+    if first_freeblock > 0 {
+        let mut pc = first_freeblock;
+        while pc > 0 {
+            let next = contents.read_u16_no_offset(pc as usize);
+            let size = contents.read_u16_no_offset(pc as usize + 2) as usize;
+            // check it doesn't go out of range
+            if pc > usable_space - 4 {
+                let error_msg = format!(
+                    "Page {} detected freeblock that extends page start={} end={}",
+                    page.get().id,
+                    pc,
+                    pc as usize + size
+                );
+                message.write_str(&error_msg).unwrap();
+                *error_count += 1;
+                break;
+            }
+            coverage_checker.add_free_block(pc as usize, pc as usize + size);
+            pc = next;
+        }
+    }
+
+    coverage_checker.analyze(
+        usable_space,
+        contents.cell_content_area() as usize,
+        message,
+        error_count,
+        contents.num_frag_free_bytes() as usize,
+    );
+
     Ok(CursorResult::Ok(()))
+}
+
+pub fn btree_read_page(pager: &Rc<Pager>, page_idx: usize) -> Result<BTreePage> {
+    pager.read_page(page_idx).map(|page| {
+        Arc::new(BTreePageInner {
+            page: RefCell::new(page),
+        })
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct IntegrityCheckCellRange {
+    start: usize,
+    end: usize,
+    is_free_block: bool,
+}
+
+// Implement ordering for min-heap (smallest start address first)
+impl Ord for IntegrityCheckCellRange {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.start.cmp(&other.start)
+    }
+}
+
+impl PartialOrd for IntegrityCheckCellRange {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 #[cfg(debug_assertions)]
@@ -5121,6 +5239,73 @@ fn validate_cells_after_insertion(cell_array: &CellArray, leaf_data: bool) {
 
         if leaf_data {
             assert!(cell[0] != 0, "payload is {:?}", cell);
+        }
+    }
+}
+
+pub struct CoverageChecker {
+    /// Min-heap ordered by cell start
+    heap: BinaryHeap<Reverse<IntegrityCheckCellRange>>,
+    page_idx: usize,
+}
+
+impl CoverageChecker {
+    pub fn new(page_idx: usize) -> Self {
+        Self {
+            heap: BinaryHeap::new(),
+            page_idx,
+        }
+    }
+
+    fn add_range(&mut self, cell_start: usize, cell_end: usize, is_free_block: bool) {
+        self.heap.push(Reverse(IntegrityCheckCellRange {
+            start: cell_start,
+            end: cell_end,
+            is_free_block,
+        }));
+    }
+
+    pub fn add_cell(&mut self, cell_start: usize, cell_end: usize) {
+        self.add_range(cell_start, cell_end, false);
+    }
+
+    pub fn add_free_block(&mut self, cell_start: usize, cell_end: usize) {
+        self.add_range(cell_start, cell_end, true);
+    }
+
+    pub fn analyze(
+        &mut self,
+        usable_space: u16,
+        content_area: usize,
+        message: &mut String,
+        error_count: &mut usize,
+        expected_fragmentation: usize,
+    ) {
+        let mut fragmentation = 0;
+        let mut prev_end = content_area;
+        while let Some(cell) = self.heap.pop() {
+            let start = cell.0.start;
+            if prev_end > start {
+                let error_msg = format!(
+                    "Page {} cell overlap detected at position={} with previous_end={}. content_area={}, is_free_block={}",
+                    self.page_idx, start, prev_end, content_area, cell.0.is_free_block
+                );
+                message.push_str(&error_msg);
+                *error_count += 1;
+                break;
+            } else {
+                fragmentation += start - prev_end;
+                prev_end = cell.0.end;
+            }
+        }
+        fragmentation += usable_space as usize - prev_end;
+        if fragmentation != expected_fragmentation {
+            let error_msg = format!(
+                "Page {} unexpected fragmentation got={}, expected={}",
+                self.page_idx, fragmentation, expected_fragmentation
+            );
+            message.push_str(&error_msg);
+            *error_count += 1;
         }
     }
 }

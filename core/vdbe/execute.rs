@@ -5071,9 +5071,7 @@ pub fn op_integrity_check(
                 error_count: 0,
                 message: String::new(),
                 current_root_idx: 0,
-                state: IntegrityCheckState {
-                    current_page: roots[0],
-                },
+                state: IntegrityCheckState::new(roots[0]),
             };
         }
         OpIntegrityCheckState::Checking {
@@ -5082,12 +5080,15 @@ pub fn op_integrity_check(
             current_root_idx,
             state: integrity_check_state,
         } => {
-            return_if_io!(integrity_check(integrity_check_state, error_count, message));
+            return_if_io!(integrity_check(
+                integrity_check_state,
+                error_count,
+                message,
+                pager
+            ));
             *current_root_idx += 1;
             if *current_root_idx < roots.len() {
-                *integrity_check_state = IntegrityCheckState {
-                    current_page: roots[*current_root_idx],
-                };
+                *integrity_check_state = IntegrityCheckState::new(roots[*current_root_idx]);
                 return Ok(InsnFunctionStepResult::Step);
             } else {
                 if *error_count == 0 {
