@@ -39,12 +39,8 @@ pub fn emit_program_for_compound_select(
         }
     }
 
-    // Each subselect gets their own TranslateCtx, but they share the same limit_ctx
-    // because the LIMIT applies to the entire compound select, not just a single subselect.
-    // The way LIMIT works with compound selects is:
-    // - If a given subselect appears BEFORE any UNION, then do NOT count those rows towards the LIMIT,
-    //   because the rows from those subselects need to be deduplicated before they start being counted.
-    // - If a given subselect appears AFTER the last UNION, then count those rows towards the LIMIT immediately.
+    // Each subselect shares the same limit_ctx, because the LIMIT applies to the entire compound select,
+    // not just a single subselect.
     let limit_ctx = limit.map(|limit| {
         let reg = program.alloc_register();
         program.emit_insn(Insn::Integer {
@@ -54,6 +50,9 @@ pub fn emit_program_for_compound_select(
         LimitCtx::new_shared(reg)
     });
 
+    // When a compound SELECT is part of a query that yields results to a coroutine (e.g. within an INSERT clause),
+    // we must allocate registers for the result columns to be yielded. Each subselect will then yield to
+    // the coroutine using the same set of registers.
     let (yield_reg, reg_result_cols_start) = match right_most.query_destination {
         QueryDestination::CoroutineYield { yield_reg, .. } => {
             let start_reg = program.alloc_registers(right_most.result_columns.len());
@@ -79,6 +78,8 @@ pub fn emit_program_for_compound_select(
     Ok(())
 }
 
+// Emits bytecode for a compound SELECT statement. This function processes the rightmost part of
+// the compound SELECT and handles the left parts recursively based on the compound operator type.
 fn emit_compound_select(
     program: &mut ProgramBuilder,
     plan: Plan,
