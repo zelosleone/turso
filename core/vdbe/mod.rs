@@ -58,6 +58,7 @@ use std::{
     rc::{Rc, Weak},
     sync::Arc,
 };
+use tracing::{instrument, Level};
 
 /// We use labels to indicate that we want to jump to whatever the instruction offset
 /// will be at runtime, because the offset cannot always be determined when the jump
@@ -202,7 +203,7 @@ impl<const N: usize> Bitfield<N> {
     }
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 /// The commit state of the program.
 /// There are two states:
 /// - Ready: The program is ready to run the next instruction, or has shut down after
@@ -392,6 +393,7 @@ impl Program {
         }
     }
 
+    #[instrument(skip_all, level = Level::TRACE)]
     pub fn commit_txn(
         &self,
         pager: Rc<Pager>,
@@ -444,6 +446,7 @@ impl Program {
         }
     }
 
+    #[instrument(skip(self, pager, connection), level = Level::TRACE)]
     fn step_end_write_txn(
         &self,
         pager: &Rc<Pager>,
@@ -531,13 +534,13 @@ fn make_record(registers: &[Register], start_reg: &usize, count: &usize) -> Immu
     ImmutableRecord::from_registers(&registers[*start_reg..*start_reg + *count])
 }
 
-#[tracing::instrument(skip(program), level = tracing::Level::TRACE)]
+#[instrument(skip(program), level = Level::TRACE)]
 fn trace_insn(program: &Program, addr: InsnReference, insn: &Insn) {
     if !tracing::enabled!(tracing::Level::TRACE) {
         return;
     }
     tracing::trace!(
-        "{}",
+        "\n{}",
         explain::insn_to_str(
             program,
             addr,

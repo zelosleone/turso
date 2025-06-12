@@ -4,7 +4,7 @@
 use std::array;
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
-use tracing::{debug, trace};
+use tracing::{instrument, Level};
 
 use std::fmt::Formatter;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -572,7 +572,7 @@ impl Wal for WalFile {
 
     /// Read a frame from the WAL.
     fn read_frame(&self, frame_id: u64, page: PageRef, buffer_pool: Rc<BufferPool>) -> Result<()> {
-        debug!("read_frame({})", frame_id);
+        tracing::debug!("read_frame({})", frame_id);
         let offset = self.frame_offset(frame_id);
         page.set_locked();
         let frame = page.clone();
@@ -596,7 +596,7 @@ impl Wal for WalFile {
         frame: *mut u8,
         frame_len: u32,
     ) -> Result<Arc<Completion>> {
-        debug!("read_frame({})", frame_id);
+        tracing::debug!("read_frame({})", frame_id);
         let offset = self.frame_offset(frame_id);
         let complete = Box::new(move |buf: Arc<RefCell<Buffer>>| {
             let buf = buf.borrow();
@@ -667,6 +667,7 @@ impl Wal for WalFile {
         frame_id >= self.checkpoint_threshold
     }
 
+    #[instrument(skip_all, level = Level::TRACE)]
     fn checkpoint(
         &mut self,
         pager: &Pager,
@@ -679,7 +680,7 @@ impl Wal for WalFile {
         );
         'checkpoint_loop: loop {
             let state = self.ongoing_checkpoint.state;
-            debug!("checkpoint(state={:?})", state);
+            tracing::debug!(?state);
             match state {
                 CheckpointState::Start => {
                     // TODO(pere): check what frames are safe to checkpoint between many readers!
@@ -706,7 +707,7 @@ impl Wal for WalFile {
                     self.ongoing_checkpoint.max_frame = max_safe_frame;
                     self.ongoing_checkpoint.current_page = 0;
                     self.ongoing_checkpoint.state = CheckpointState::ReadFrame;
-                    trace!(
+                    tracing::trace!(
                         "checkpoint_start(min_frame={}, max_frame={})",
                         self.ongoing_checkpoint.max_frame,
                         self.ongoing_checkpoint.min_frame
@@ -733,9 +734,11 @@ impl Wal for WalFile {
 
                     for frame in frames.iter().rev() {
                         if *frame >= min_frame && *frame <= max_frame {
-                            debug!(
+                            tracing::debug!(
                                 "checkpoint page(state={:?}, page={}, frame={})",
-                                state, page, *frame
+                                state,
+                                page,
+                                *frame
                             );
                             self.ongoing_checkpoint.page.get().id = page as usize;
 
@@ -823,18 +826,19 @@ impl Wal for WalFile {
         }
     }
 
+    #[instrument(skip_all, level = Level::DEBUG)]
     fn sync(&mut self) -> Result<WalFsyncStatus> {
         let state = *self.sync_state.borrow();
         match state {
             SyncState::NotSyncing => {
                 let shared = self.get_shared();
-                debug!("wal_sync");
+                tracing::debug!("wal_sync");
                 {
                     let syncing = self.syncing.clone();
                     *syncing.borrow_mut() = true;
                     let completion = Completion::Sync(SyncCompletion {
                         complete: Box::new(move |_| {
-                            debug!("wal_sync finish");
+                            tracing::debug!("wal_sync finish");
                             *syncing.borrow_mut() = false;
                         }),
                         is_completed: Cell::new(false),
