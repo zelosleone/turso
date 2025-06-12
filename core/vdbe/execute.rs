@@ -4077,6 +4077,11 @@ pub fn op_idx_insert(
                     // a) nothing, or
                     // b) the first entry greater than the key we are inserting.
                     // In both cases, we can insert the new entry without moving again.
+                    //
+                    // This is re-entrant, because once we call cursor.insert() with moved_before=true,
+                    // we will immediately set BTreeCursor::state to CursorState::Write(WriteInfo::new()),
+                    // in BTreeCursor::insert_into_page; thus, if this function is called again,
+                    // moved_before will again be true due to cursor.is_write_in_progress() returning true.
                     true
                 } else {
                     flags.has(IdxInsertFlags::USE_SEEK)
