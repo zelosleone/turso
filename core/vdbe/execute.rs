@@ -4071,7 +4071,13 @@ pub fn op_idx_insert(
                         CursorResult::IO => return Ok(InsnFunctionStepResult::IO),
                         CursorResult::Ok(false) => {}
                     };
-                    false
+                    // uniqueness check already moved us to the correct place in the index.
+                    // the uniqueness check uses SeekOp::GE, which means a non-matching entry
+                    // will now be positioned at the insertion point where there currently is
+                    // a) nothing, or
+                    // b) the first entry greater than the key we are inserting.
+                    // In both cases, we can insert the new entry without moving again.
+                    true
                 } else {
                     flags.has(IdxInsertFlags::USE_SEEK)
                 }
