@@ -639,7 +639,7 @@ pub fn insn_to_str(
                 target_reg,
                 description,
             } => (
-                "HalfIfNull",
+                "HaltIfNull",
                 *err_code as i32,
                 0,
                 *target_reg as i32,
