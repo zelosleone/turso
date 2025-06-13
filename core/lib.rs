@@ -566,17 +566,7 @@ impl Connection {
 
     /// Close a connection and checkpoint.
     pub fn close(&self) -> Result<()> {
-        loop {
-            // TODO: make this async?
-            match self.pager.checkpoint()? {
-                CheckpointStatus::Done(_) => {
-                    return Ok(());
-                }
-                CheckpointStatus::IO => {
-                    self.pager.io.run_once()?;
-                }
-            };
-        }
+        self.pager.checkpoint_shutdown()
     }
 
     pub fn last_insert_rowid(&self) -> i64 {
