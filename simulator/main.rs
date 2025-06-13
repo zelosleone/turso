@@ -167,9 +167,10 @@ fn testing_main(cli_opts: &SimulatorCLI) -> anyhow::Result<()> {
     };
 
     if let Err(err) = integrity_check(&paths.db) {
-        tracing::error!("Integrity Check failed:\n{}", err);
+        tracing::error!("simulation failed: integrity check failed:\n{}", err);
         if result.is_err() {
-            result = result.with_context(|| anyhow!("Integrity Check failed:\n{}", err));
+            result = result
+                .with_context(|| anyhow!("simulation failed: integrity check failed:\n{}", err));
         } else {
             result = Err(err);
         }
@@ -761,14 +762,14 @@ fn integrity_check(db_path: &Path) -> anyhow::Result<()> {
         result.push(row.get(0)?);
     }
     if result.is_empty() {
-        anyhow::bail!("integrity_check should return `ok` or a list of problems")
+        anyhow::bail!("simulation failed: integrity_check should return `ok` or a list of problems")
     }
     if !result[0].eq_ignore_ascii_case("ok") {
         // Build a list of problems
         result
             .iter_mut()
             .for_each(|row| *row = format!("- {}", row));
-        anyhow::bail!(result.join("\n"))
+        anyhow::bail!("simulation failed: {}", result.join("\n"))
     }
     Ok(())
 }
