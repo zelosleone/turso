@@ -17,6 +17,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Mutex};
+use tracing_subscriber::field::MakeExt;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -359,6 +360,8 @@ fn run_simulator(
                     ) => {
                         if e1 != e2 {
                             tracing::error!(
+                                ?shrunk,
+                                ?result,
                                 "shrinking failed, the error was not properly reproduced"
                             );
                             if let Some(bugbase) = bugbase {
@@ -391,7 +394,11 @@ fn run_simulator(
                         unreachable!("shrinking should never be called on a correct simulation")
                     }
                     _ => {
-                        tracing::error!("shrinking failed, the error was not properly reproduced");
+                        tracing::error!(
+                            ?shrunk,
+                            ?result,
+                            "shrinking failed, the error was not properly reproduced"
+                        );
                         if let Some(bugbase) = bugbase {
                             bugbase
                                 .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
@@ -701,7 +708,8 @@ fn init_logger() {
                 .with_ansi(true)
                 .with_line_number(true)
                 .without_time()
-                .with_thread_ids(false),
+                .with_thread_ids(false)
+                .map_fmt_fields(|f| f.debug_alt()),
         )
         .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
         .with(
@@ -710,7 +718,8 @@ fn init_logger() {
                 .with_ansi(false)
                 .with_line_number(true)
                 .without_time()
-                .with_thread_ids(false),
+                .with_thread_ids(false)
+                .map_fmt_fields(|f| f.debug_alt()),
         )
         .try_init();
 }
