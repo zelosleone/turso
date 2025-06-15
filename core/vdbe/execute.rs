@@ -1916,6 +1916,36 @@ pub fn op_blob(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_row_data(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::RowData { cursor_id, dest } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+
+    let record = {
+        let mut cursor_ref =
+            must_be_btree_cursor!(*cursor_id, program.cursor_ref, state, "RowData");
+        let cursor = cursor_ref.as_btree_mut();
+        let record_option = return_if_io!(cursor.record());
+
+        let ret = record_option
+            .ok_or_else(|| LimboError::InternalError("RowData: cursor has no record".to_string()))?
+            .clone();
+        ret
+    };
+
+    let reg = &mut state.registers[*dest];
+    *reg = Register::Record(record);
+
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 pub fn op_row_id(
     program: &Program,
     state: &mut ProgramState,

@@ -510,6 +510,12 @@ pub enum Insn {
         dest: usize,
     },
 
+    /// Read a complete row of data from the current cursor and write it to the destination register.
+    RowData {
+        cursor_id: CursorID,
+        dest: usize,
+    },
+
     /// Read the rowid of the current row.
     RowId {
         cursor_id: CursorID,
@@ -1034,6 +1040,7 @@ impl Insn {
             Insn::RealAffinity { .. } => execute::op_real_affinity,
             Insn::String8 { .. } => execute::op_string8,
             Insn::Blob { .. } => execute::op_blob,
+            Insn::RowData { .. } => execute::op_row_data,
             Insn::RowId { .. } => execute::op_row_id,
             Insn::IdxRowId { .. } => execute::op_idx_row_id,
             Insn::SeekRowid { .. } => execute::op_seek_rowid,

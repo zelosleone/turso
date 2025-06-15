@@ -1601,7 +1601,15 @@ pub fn insn_to_str(
                 0,
                 Value::build_text(""),
                 0,
-                format!("roots={:?} message_register={}", roots, message_register),
+                format!("roots={:?} message_register={}", roots, message_register)),
+            Insn::RowData { cursor_id, dest } => (
+                "RowData",
+                *cursor_id as i32,
+                *dest as i32,
+                0,
+                Value::build_text(""),
+                0,
+                format!("r[{}] = data", *dest),
             ),
         };
     format!(
