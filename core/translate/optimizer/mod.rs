@@ -115,11 +115,9 @@ fn optimize_update_plan(plan: &mut UpdatePlan, schema: &Schema) -> Result<()> {
         plan.contains_constant_false_condition = true;
         return Ok(());
     }
-    // FIXME: don't use indexes for update right now because it's not safe to traverse an index
-    // while also updating the same table, things go wrong.
-    // e.g. in 'explain update t set x=x+5 where x > 10;' where x is an indexed column,
-    // sqlite first creates an ephemeral index to store the current values so the tree traversal
-    // doesn't get messed up while updating.
+    if let Some(ephemeral_plan) = &mut plan.ephemeral_plan {
+        optimize_select_plan(ephemeral_plan, schema)?;
+    }
     let _ = optimize_table_access(
         &mut plan.table_references,
         &schema.indexes,
@@ -236,6 +234,7 @@ fn optimize_table_access(
                 .map_or(false, |join_info| join_info.outer),
         })
         .collect();
+
     // Mutate the Operations in `joined_tables` to use the selected access methods.
     for (i, join_order_member) in best_join_order.iter().enumerate() {
         let table_idx = join_order_member.original_idx;

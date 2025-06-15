@@ -715,7 +715,7 @@ fn estimate_num_labels(select: &SelectPlan) -> usize {
 pub fn emit_simple_count<'a>(
     program: &mut ProgramBuilder,
     _t_ctx: &mut TranslateCtx<'a>,
-    plan: &'a SelectPlan,
+    plan: &SelectPlan,
 ) -> Result<()> {
     let cursors = plan
         .joined_tables()

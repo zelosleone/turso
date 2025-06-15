@@ -718,7 +718,7 @@ pub fn group_by_process_single_group<'a>(
 pub fn group_by_agg_phase<'a>(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx<'a>,
-    plan: &'a SelectPlan,
+    plan: &SelectPlan,
 ) -> Result<()> {
     let GroupByMetadata {
         labels, row_source, ..

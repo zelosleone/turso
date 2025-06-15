@@ -1,5 +1,9 @@
-use crate::translate::plan::Operation;
-use crate::vdbe::builder::TableRefIdCounter;
+use std::sync::Arc;
+
+use crate::schema::Index;
+use crate::translate::plan::{Operation, QueryDestination, SelectPlan};
+use crate::vdbe::builder::CursorType;
+use crate::vdbe::insn::Insn;
 use crate::{
     bail_parse_error,
     schema::{Schema, Table},
@@ -53,7 +57,7 @@ pub fn translate_update(
     syms: &SymbolTable,
     mut program: ProgramBuilder,
 ) -> crate::Result<ProgramBuilder> {
-    let mut plan = prepare_update_plan(schema, body, &mut program.table_reference_counter)?;
+    let mut plan = prepare_update_plan(&mut program, schema, body)?;
     optimize_plan(&mut plan, schema)?;
     // TODO: freestyling these numbers
     let opts = ProgramBuilderOpts {
@@ -75,7 +79,7 @@ pub fn translate_update_with_after(
     mut program: ProgramBuilder,
     after: impl FnOnce(&mut ProgramBuilder),
 ) -> crate::Result<ProgramBuilder> {
-    let mut plan = prepare_update_plan(schema, body, &mut program.table_reference_counter)?;
+    let mut plan = prepare_update_plan(&mut program, schema, body)?;
     optimize_plan(&mut plan, schema)?;
     // TODO: freestyling these numbers
     let opts = ProgramBuilderOpts {
@@ -90,9 +94,9 @@ pub fn translate_update_with_after(
 }
 
 pub fn prepare_update_plan(
+    program: &mut ProgramBuilder,
     schema: &Schema,
     body: &mut Update,
-    table_ref_counter: &mut TableRefIdCounter,
 ) -> crate::Result<Plan> {
     if body.with.is_some() {
         bail_parse_error!("WITH clause is not supported");
@@ -127,6 +131,7 @@ pub fn prepare_update_plan(
             })
         })
         .unwrap_or(IterationDirection::Forwards);
+
     let joined_tables = vec![JoinedTable {
         table: match table.as_ref() {
             Table::Virtual(vtab) => Table::Virtual(vtab.clone()),
@@ -134,7 +139,7 @@ pub fn prepare_update_plan(
             _ => unreachable!(),
         },
         identifier: table_name.0.clone(),
-        internal_id: table_ref_counter.next(),
+        internal_id: program.table_reference_counter.next(),
         op: Operation::Scan {
             iter_dir,
             index: None,
@@ -198,13 +203,98 @@ pub fn prepare_update_plan(
             .map(|o| (o.expr.clone(), o.order.unwrap_or(SortOrder::Asc)))
             .collect()
     });
-    // Parse the WHERE clause
-    parse_where(
-        body.where_clause.as_ref().map(|w| *w.clone()),
-        &mut table_references,
-        Some(&result_columns),
-        &mut where_clause,
-    )?;
+
+    // Sqlite determines we should create an ephemeral table if we do not have a FROM clause
+    // Difficult to say what items from the plan can be checked for this so currently just checking if a RowId Alias is referenced
+    // https://github.com/sqlite/sqlite/blob/master/src/update.c#L395
+    // https://github.com/sqlite/sqlite/blob/master/src/update.c#L670
+    let columns = table.columns();
+
+    let rowid_alias_used = set_clauses.iter().fold(false, |accum, (idx, _)| {
+        accum || columns[*idx].is_rowid_alias
+    });
+
+    let (ephemeral_plan, where_clause) = if rowid_alias_used {
+        let internal_id = program.table_reference_counter.next();
+
+        let joined_tables = vec![JoinedTable {
+            table: match table.as_ref() {
+                Table::Virtual(vtab) => Table::Virtual(vtab.clone()),
+                Table::BTree(btree_table) => Table::BTree(btree_table.clone()),
+                _ => unreachable!(),
+            },
+            identifier: table_name.0.clone(),
+            internal_id,
+            op: Operation::Scan {
+                iter_dir,
+                index: None,
+            },
+            join_info: None,
+            col_used_mask: ColumnUsedMask::new(),
+        }];
+        let mut table_references = TableReferences::new(joined_tables, vec![]);
+
+        // Parse the WHERE clause
+        parse_where(
+            body.where_clause.as_ref().map(|w| *w.clone()),
+            &mut table_references,
+            Some(&result_columns),
+            &mut where_clause,
+        )?;
+
+        let index = Arc::new(Index {
+            name: "ephemeral_scratch".to_string(),
+            table_name: table_name.0.clone(),
+            ephemeral: true,
+            root_page: 0,
+            columns: vec![],
+            unique: true,
+            has_rowid: true,
+        });
+
+        let temp_cursor_id = program.alloc_cursor_id(CursorType::BTreeIndex(index.clone()));
+
+        program.emit_insn(Insn::OpenEphemeral {
+            cursor_id: temp_cursor_id,
+            is_table: false,
+        });
+
+        let ephemeral_plan = SelectPlan {
+            table_references,
+            result_columns: vec![ResultSetColumn {
+                expr: Expr::RowId {
+                    database: None,
+                    table: internal_id,
+                },
+                alias: None,
+                contains_aggregates: false,
+            }],
+            where_clause,       // original WHERE terms from the UPDATE clause
+            group_by: None,     // N/A
+            order_by: None,     // N/A
+            aggregates: vec![], // N/A
+            limit: None,        // N/A
+            query_destination: QueryDestination::EphemeralIndex {
+                cursor_id: temp_cursor_id,
+                index,
+            },
+            join_order: vec![],
+            offset: None,
+            contains_constant_false_condition: false,
+            distinctness: super::plan::Distinctness::NonDistinct,
+            values: vec![],
+        };
+        (Some(ephemeral_plan), vec![])
+    } else {
+        // Parse the WHERE clause
+        parse_where(
+            body.where_clause.as_ref().map(|w| *w.clone()),
+            &mut table_references,
+            Some(&result_columns),
+            &mut where_clause,
+        )?;
+        (None, where_clause)
+    };
 
     // Parse the LIMIT/OFFSET clause
     let (limit, offset) = body
@@ -228,16 +318,6 @@ pub fn prepare_update_plan(
         .cloned()
         .collect();
 
-    // Sqlite determines we should create an ephemeral table if we do not have a FROM clause
-    // Difficult to say what items from the plan can be checked for this so currently just checking if a RowId Alias is referenced
-    // https://github.com/sqlite/sqlite/blob/master/src/update.c#L395
-    // https://github.com/sqlite/sqlite/blob/master/src/update.c#L670
-    let columns = table.columns();
-
-    let rowid_alias_used = set_clauses.iter().fold(false, |accum, (idx, _)| {
-        accum || columns[*idx].is_rowid_alias
-    });
-
     Ok(Plan::Update(UpdatePlan {
         table_references,
         set_clauses,
@@ -248,6 +328,6 @@ pub fn prepare_update_plan(
         offset,
         contains_constant_false_condition: false,
         indexes_to_update,
-        rowid_alias_used,
+        ephemeral_plan,
     }))
 }

@@ -24,12 +24,12 @@ use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
 use crate::function::Func;
 use crate::schema::Schema;
 use crate::translate::compound_select::emit_program_for_compound_select;
-use crate::translate::main_loop::EphemeralCtx;
-use crate::translate::plan::{DeletePlan, Plan, Search};
+use crate::translate::plan::{DeletePlan, Plan, QueryDestination, Search};
 use crate::translate::values::emit_values;
 use crate::util::exprs_are_equivalent;
 use crate::vdbe::builder::{CursorKey, CursorType, ProgramBuilder};
 use crate::vdbe::insn::{CmpInsFlags, IdxInsertFlags, InsertFlags, RegisterOrLiteral};
+use crate::vdbe::CursorID;
 use crate::vdbe::{insn::Insn, BranchOffset};
 use crate::{Result, SymbolTable};
 
@@ -257,9 +257,9 @@ fn emit_program_for_select(
 
 #[instrument(skip_all, level = Level::TRACE)]
 pub fn emit_query<'a>(
-    program: &'a mut ProgramBuilder,
+    program: &mut ProgramBuilder,
     plan: &'a mut SelectPlan,
-    t_ctx: &'a mut TranslateCtx<'a>,
+    t_ctx: &mut TranslateCtx<'a>,
 ) -> Result<usize> {
     if !plan.values.is_empty() {
         let reg_result_cols_start = emit_values(program, &plan, &t_ctx.resolver)?;
@@ -335,7 +335,6 @@ pub fn emit_query<'a>(
         plan.group_by.as_ref(),
         OperationMode::SELECT,
         &plan.where_clause,
-        None,
     )?;
 
     if plan.is_simple_count() {
@@ -439,7 +438,6 @@ fn emit_program_for_delete(
         None,
         OperationMode::DELETE,
         &plan.where_clause,
-        None,
     )?;
 
     // Set up main query execution loop
@@ -615,57 +613,20 @@ fn emit_program_for_update(
         });
     }
 
-    let table_ref = plan
-        .table_references
-        .joined_tables()
-        .first()
-        .expect("at least one table needs to be referenced for UPDATE");
-
-    let mut ephemeral_ctx = (plan.rowid_alias_used
-        && !matches!(table_ref.op, Operation::Search(Search::RowidEq { .. })))
-    .then(|| EphemeralCtx::from_table(program, &table_ref));
-
-    if let Some(ephemeral_ctx) = &mut ephemeral_ctx {
-        let mut t_ctx = TranslateCtx::new(
-            program,
-            schema,
-            syms,
-            plan.table_references.joined_tables().len(),
-            plan.returning.as_ref().map_or(0, |r| r.len()),
-        );
-
-        init_loop(
-            program,
-            &mut t_ctx,
-            &plan.table_references,
-            &mut [],
-            None,
-            OperationMode::UPDATE,
-            Some(ephemeral_ctx),
-        )?;
-
-        open_loop(
-            program,
-            &mut t_ctx,
-            &plan.table_references,
-            &[JoinOrderMember::default()],
-            &mut plan.where_clause,
-            Some(ephemeral_ctx),
-        )?;
-
-        emit_ephemeral_insert(program, ephemeral_ctx)?;
-
-        close_loop(
-            program,
-            &mut t_ctx,
-            &plan.table_references,
-            &[JoinOrderMember::default()],
-            Some(ephemeral_ctx),
-        )?;
-
-        ephemeral_ctx.finished_insert_loop = true;
+    let ephemeral_plan = plan.ephemeral_plan.take();
+    let temp_cursor_id = ephemeral_plan.as_ref().map(|plan| {
+        let QueryDestination::EphemeralIndex { cursor_id, .. } = &plan.query_destination else {
+            unreachable!()
+        };
+        *cursor_id
+    });
+    if let Some(ephemeral_plan) = ephemeral_plan {
+        program.incr_nesting();
+        emit_program_for_select(program, ephemeral_plan, schema, syms)?;
+        program.decr_nesting();
     }
 
+    // Initialize the main loop
     init_loop(
         program,
         &mut t_ctx,
@@ -674,12 +635,12 @@ fn emit_program_for_update(
         None,
         OperationMode::UPDATE,
         &plan.where_clause,
-        ephemeral_ctx.as_ref(),
     )?;
-    // Open indexes for update.
+
+    // Prepare index cursors
     let mut index_cursors = Vec::with_capacity(plan.indexes_to_update.len());
     for index in &plan.indexes_to_update {
-        if let Some(index_cursor) = program.resolve_cursor_id_safe(&CursorKey::index(
+        let index_cursor = if let Some(cursor) = program.resolve_cursor_id_safe(&CursorKey::index(
             plan.table_references
                 .joined_tables()
                 .first()
@@ -687,85 +648,41 @@ fn emit_program_for_update(
                 .internal_id,
             index.clone(),
         )) {
-            // Don't reopen index if it was already opened as the iteration cursor for this update plan.
-            let record_reg = program.alloc_register();
-            index_cursors.push((index_cursor, record_reg));
-            continue;
-        }
-        let index_cursor = program.alloc_cursor_id(CursorType::BTreeIndex(index.clone()));
-        program.emit_insn(Insn::OpenWrite {
-            cursor_id: index_cursor,
-            root_page: RegisterOrLiteral::Literal(index.root_page),
-            name: index.name.clone(),
-        });
+            cursor
+        } else {
+            let cursor = program.alloc_cursor_id(CursorType::BTreeIndex(index.clone()));
+            program.emit_insn(Insn::OpenWrite {
+                cursor_id: cursor,
+                root_page: RegisterOrLiteral::Literal(index.root_page),
+                name: index.name.clone(),
+            });
+            cursor
+        };
         let record_reg = program.alloc_register();
         index_cursors.push((index_cursor, record_reg));
     }
 
-    if ephemeral_ctx.is_none() {
-        open_loop(
-            program,
-            &mut t_ctx,
-            &plan.table_references,
-            &[JoinOrderMember::default()],
-            &mut plan.where_clause,
-            None,
-        )?;
-    } else {
-        let ctx = ephemeral_ctx.as_ref().unwrap();
-        let LoopLabels {
-            loop_start,
-            loop_end,
-            ..
-        } = t_ctx
-            .labels_main_loop
-            .first()
-            .expect("table has no loop labels");
-        if !matches!(ctx.table.op, Operation::Search(Search::RowidEq { .. })) {
-            program.emit_insn(Insn::Rewind {
-                cursor_id: ctx.temp_cursor_id,
-                pc_if_empty: *loop_end,
-            });
-        }
-
-        program.preassign_label_to_next_insn(*loop_start);
-    }
-    emit_update_insns(
-        &plan,
-        &t_ctx,
+    // Open the main loop
+    open_loop(
         program,
-        index_cursors,
-        ephemeral_ctx.as_ref(),
+        &mut t_ctx,
+        &plan.table_references,
+        &[JoinOrderMember::default()],
+        &mut plan.where_clause,
+        temp_cursor_id,
     )?;
 
-    if ephemeral_ctx.is_none() {
-        close_loop(
-            program,
-            &mut t_ctx,
-            &plan.table_references,
-            &[JoinOrderMember::default()],
-            None,
-        )?;
-    } else {
-        let ctx = ephemeral_ctx.as_ref().unwrap();
-        let LoopLabels {
-            loop_start,
-            loop_end,
-            next,
-            ..
-        } = t_ctx
-            .labels_main_loop
-            .first()
-            .expect("table has no loop labels");
-        program.preassign_label_to_next_insn(*next);
-        if !matches!(ctx.table.op, Operation::Search(Search::RowidEq { .. })) {
-            program.emit_insn(Insn::Next {
-                cursor_id: ephemeral_ctx.as_ref().unwrap().temp_cursor_id,
-                pc_if_next: *loop_start,
-            });
-        }
-        program.preassign_label_to_next_insn(*loop_end);
-    }
+    // Emit update instructions
+    emit_update_insns(&plan, &t_ctx, program, index_cursors, temp_cursor_id)?;
+
+    // Close the main loop
+    close_loop(
+        program,
+        &mut t_ctx,
+        &plan.table_references,
+        &[JoinOrderMember::default()],
+        temp_cursor_id,
+    )?;
 
     program.preassign_label_to_next_insn(after_main_loop_label);
 
@@ -784,7 +701,7 @@ fn emit_update_insns(
     t_ctx: &TranslateCtx,
     program: &mut ProgramBuilder,
     index_cursors: Vec<(usize, usize)>,
-    ephemeral_ctx: Option<&EphemeralCtx>,
+    temp_cursor_id: Option<CursorID>,
 ) -> crate::Result<()> {
     let table_ref = plan.table_references.joined_tables().first().unwrap();
     let loop_labels = t_ctx.labels_main_loop.first().unwrap();
@@ -815,28 +732,27 @@ fn emit_update_insns(
         },
     };
 
-    if ephemeral_ctx.is_none() {
-        for cond in plan
-            .where_clause
-            .iter()
-            .filter(|c| c.should_eval_before_loop(&[JoinOrderMember::default()]))
-        {
-            let jump_target = program.allocate_label();
-            let meta = ConditionMetadata {
-                jump_if_condition_is_true: false,
-                jump_target_when_true: jump_target,
-                jump_target_when_false: t_ctx.label_main_loop_end.unwrap(),
-            };
-            translate_condition_expr(
-                program,
-                &plan.table_references,
-                &cond.expr,
-                meta,
-                &t_ctx.resolver,
-            )?;
-            program.preassign_label_to_next_insn(jump_target);
-        }
+    for cond in plan
+        .where_clause
+        .iter()
+        .filter(|c| c.should_eval_before_loop(&[JoinOrderMember::default()]))
+    {
+        let jump_target = program.allocate_label();
+        let meta = ConditionMetadata {
+            jump_if_condition_is_true: false,
+            jump_target_when_true: jump_target,
+            jump_target_when_false: t_ctx.label_main_loop_end.unwrap(),
+        };
+        translate_condition_expr(
+            program,
+            &plan.table_references,
+            &cond.expr,
+            meta,
+            &t_ctx.resolver,
+        )?;
+        program.preassign_label_to_next_insn(jump_target);
     }
+
     let beg = program.alloc_registers(
         table_ref.table.columns().len()
             + if is_virtual {
@@ -846,7 +762,7 @@ fn emit_update_insns(
             },
     );
     program.emit_insn(Insn::RowId {
-        cursor_id: ephemeral_ctx.map_or(cursor_id, |ctx| ctx.temp_cursor_id),
+        cursor_id: temp_cursor_id.unwrap_or(cursor_id),
         dest: beg,
     });
 
@@ -903,27 +819,25 @@ fn emit_update_insns(
         });
     }
 
-    if ephemeral_ctx.is_none() {
-        for cond in plan
-            .where_clause
-            .iter()
-            .filter(|c| c.should_eval_before_loop(&[JoinOrderMember::default()]))
-        {
-            let jump_target = program.allocate_label();
-            let meta = ConditionMetadata {
-                jump_if_condition_is_true: false,
-                jump_target_when_true: jump_target,
-                jump_target_when_false: loop_labels.next,
-            };
-            translate_condition_expr(
-                program,
-                &plan.table_references,
-                &cond.expr,
-                meta,
-                &t_ctx.resolver,
-            )?;
-            program.preassign_label_to_next_insn(jump_target);
-        }
+    for cond in plan
+        .where_clause
+        .iter()
+        .filter(|c| c.should_eval_before_loop(&[JoinOrderMember::default()]))
+    {
+        let jump_target = program.allocate_label();
+        let meta = ConditionMetadata {
+            jump_if_condition_is_true: false,
+            jump_target_when_true: jump_target,
+            jump_target_when_false: loop_labels.next,
+        };
+        translate_condition_expr(
+            program,
+            &plan.table_references,
+            &cond.expr,
+            meta,
+            &t_ctx.resolver,
+        )?;
+        program.preassign_label_to_next_insn(jump_target);
     }
 
     // we scan a column at a time, loading either the column's values, or the new value

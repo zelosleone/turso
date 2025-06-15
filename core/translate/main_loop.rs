@@ -1,12 +1,12 @@
 use limbo_ext::VTabKind;
 use limbo_sqlite3_parser::ast::{self, SortOrder};
 
-use std::{rc::Rc, sync::Arc};
+use std::sync::Arc;
 
 use crate::{
-    schema::{Affinity, BTreeTable, Column, Index, IndexColumn, Table, Type},
+    schema::{Affinity, Index, IndexColumn, Table},
     translate::{
-        plan::{DistinctCtx, Distinctness, JoinedTable},
+        plan::{DistinctCtx, Distinctness},
         result_row::emit_select_result,
     },
     types::SeekOp,
@@ -103,56 +103,6 @@ pub fn init_distinct(program: &mut ProgramBuilder, plan: &SelectPlan) -> Distinc
     return ctx;
 }
 
-pub struct EphemeralCtx<'a> {
-    pub temp_cursor_id: CursorID,
-    pub table_cursor_id: CursorID,
-    pub table: &'a JoinedTable,
-    pub null_data_reg: usize,
-    pub rowid_reg: usize,
-    /// Indicates whether we closed the insert loop
-    pub finished_insert_loop: bool,
-}
-
-impl<'a> EphemeralCtx<'a> {
-    /// Creates an [EphemeralCtx] a Btree `table`
-    pub fn from_table(program: &mut ProgramBuilder, table: &'a JoinedTable) -> Self {
-        let cursor_type = CursorType::BTreeTable(table.table.btree().unwrap());
-
-        let cursor_id =
-            program.alloc_cursor_id_keyed(CursorKey::table(table.internal_id), cursor_type);
-
-        let simple_table_rc = Rc::new(BTreeTable {
-            root_page: 0, // Not relevant for ephemeral table definition
-            name: "ephemeral_scratch".to_string(),
-            has_rowid: true,
-            primary_key_columns: vec![],
-            columns: vec![Column {
-                name: Some("rowid".to_string()),
-                ty: Type::Integer,
-                ty_str: "INTEGER".to_string(),
-                primary_key: true,
-                is_rowid_alias: false,
-                notnull: true,
-                default: None,
-                unique: false,
-                collation: None,
-            }],
-            is_strict: false,
-            unique_sets: None,
-        });
-        let temp_cursor_id = program.alloc_cursor_id(CursorType::BTreeTable(simple_table_rc));
-
-        Self {
-            temp_cursor_id,
-            table_cursor_id: cursor_id,
-            table,
-            null_data_reg: program.alloc_register(),
-            rowid_reg: program.alloc_register(),
-            finished_insert_loop: false,
-        }
-    }
-}
-
 /// Initialize resources needed for the source operators (tables, joins, etc)
 pub fn init_loop(
     program: &mut ProgramBuilder,
@@ -161,12 +111,7 @@ pub fn init_loop(
     aggregates: &mut [Aggregate],
     group_by: Option<&GroupBy>,
     mode: OperationMode,
-<<<<<<< HEAD
     where_clause: &[WhereTerm],
-||||||| parent of 400ce819 (modify loop functions to accomodate for ephemeral tables)
-=======
-    ephemeral_ctx: Option<&EphemeralCtx>,
->>>>>>> 400ce819 (modify loop functions to accomodate for ephemeral tables)
 ) -> Result<()> {
     assert!(
         t_ctx.meta_left_joins.len() == tables.joined_tables().len(),
@@ -227,11 +172,7 @@ pub fn init_loop(
                 t_ctx.meta_left_joins[table_index] = Some(lj_metadata);
             }
         }
-        let (table_cursor_id, index_cursor_id) = if ephemeral_ctx.is_some() {
-            (None, None)
-        } else {
-            table.open_cursors(program, mode)?
-        };
+        let (table_cursor_id, index_cursor_id) = table.open_cursors(program, mode)?;
         match &table.op {
             Operation::Scan { index, .. } => match (mode, &table.table) {
                 (OperationMode::SELECT, Table::BTree(btree)) => {
@@ -288,41 +229,18 @@ pub fn init_loop(
                 }
                 (OperationMode::UPDATE, Table::BTree(btree)) => {
                     let root_page = btree.root_page;
-                    if let Some(ctx) = &ephemeral_ctx.filter(|ctx| !ctx.finished_insert_loop) {
-                        program.emit_insn(Insn::Null {
-                            dest: ctx.null_data_reg,
-                            dest_end: Some(ctx.rowid_reg),
-                        });
-
-                        program.emit_insn(Insn::OpenEphemeral {
-                            cursor_id: ctx.temp_cursor_id,
-                            is_table: true,
-                        });
-
-                        program.emit_insn(Insn::OpenRead {
-                            cursor_id: ctx.table_cursor_id,
-                            root_page: ctx.table.table.get_root_page(),
-                        });
-                    } else {
+                    program.emit_insn(Insn::OpenWrite {
+                        cursor_id: table_cursor_id
+                            .expect("table cursor is always opened in OperationMode::UPDATE"),
+                        root_page: root_page.into(),
+                        name: btree.name.clone(),
+                    });
+                    if let Some(index_cursor_id) = index_cursor_id {
                         program.emit_insn(Insn::OpenWrite {
-                            cursor_id: ephemeral_ctx.map_or_else(
-                                || {
-                                    table_cursor_id.expect(
-                                        "table cursor is always opened in OperationMode::UPDATE",
-                                    )
-                                },
-                                |ctx| ctx.table_cursor_id,
-                            ),
-                            root_page: root_page.into(),
-                            name: btree.name.clone(),
+                            cursor_id: index_cursor_id,
+                            root_page: index.as_ref().unwrap().root_page.into(),
+                            name: index.as_ref().unwrap().name.clone(),
                         });
-                        if let Some(index_cursor_id) = index_cursor_id {
-                            program.emit_insn(Insn::OpenWrite {
-                                cursor_id: index_cursor_id,
-                                root_page: index.as_ref().unwrap().root_page.into(),
-                                name: index.as_ref().unwrap().name.clone(),
-                            });
-                        }
                     }
                 }
                 (_, Table::Virtual(_)) => {
@@ -343,37 +261,15 @@ pub fn init_loop(
                         }
                     }
                     OperationMode::DELETE | OperationMode::UPDATE => {
-                        let table_cursor_id = ephemeral_ctx.map_or_else(
-                                || {
-                                    table_cursor_id.expect(
+                        let table_cursor_id = table_cursor_id.expect(
                                         "table cursor is always opened in OperationMode::DELETE or OperationMode::UPDATE",
-                                    )
-                                },
-                                |ctx| ctx.table_cursor_id,
-                            );
+                                    );
 
-                        if let Some(ctx) = &ephemeral_ctx.filter(|ctx| !ctx.finished_insert_loop) {
-                            program.emit_insn(Insn::Null {
-                                dest: ctx.null_data_reg,
-                                dest_end: Some(ctx.rowid_reg),
-                            });
-
-                            program.emit_insn(Insn::OpenEphemeral {
-                                cursor_id: ctx.temp_cursor_id,
-                                is_table: true,
-                            });
-
-                            program.emit_insn(Insn::OpenRead {
-                                cursor_id: ctx.table_cursor_id,
-                                root_page: ctx.table.table.get_root_page(),
-                            });
-                        } else {
-                            program.emit_insn(Insn::OpenWrite {
-                                cursor_id: table_cursor_id,
-                                root_page: table.table.get_root_page().into(),
-                                name: table.table.get_name().to_string(),
-                            });
-                        }
+                        program.emit_insn(Insn::OpenWrite {
+                            cursor_id: table_cursor_id,
+                            root_page: table.table.get_root_page().into(),
+                            name: table.table.get_name().to_string(),
+                        });
 
                         // For DELETE, we need to open all the indexes for writing
                         // UPDATE opens these in emit_program_for_update() separately
@@ -465,7 +361,7 @@ pub fn open_loop(
     table_references: &TableReferences,
     join_order: &[JoinOrderMember],
     predicates: &[WhereTerm],
-    ephemeral_ctx: Option<&EphemeralCtx>,
+    temp_cursor_id: Option<CursorID>,
 ) -> Result<()> {
     for (join_index, join) in join_order.iter().enumerate() {
         let joined_table_index = join.original_idx;
@@ -498,21 +394,13 @@ pub fn open_loop(
             Operation::Scan { iter_dir, .. } => {
                 match &table.table {
                     Table::BTree(_) => {
-                        let iteration_cursor_id = ephemeral_ctx
-                            .map(|ctx| {
-                                if ctx.finished_insert_loop {
-                                    ctx.temp_cursor_id
-                                } else {
-                                    ctx.table_cursor_id
-                                }
+                        let iteration_cursor_id = temp_cursor_id.unwrap_or_else(|| {
+                            index_cursor_id.unwrap_or_else(|| {
+                                table_cursor_id.expect(
+                                    "Either ephemeral or index or table cursor must be opened",
+                                )
                             })
-                            .unwrap_or_else(|| {
-                                index_cursor_id.unwrap_or_else(|| {
-                                    table_cursor_id.expect(
-                                        "Either ephemeral or index or table cursor must be opened",
-                                    )
-                                })
-                            });
+                        });
                         if *iter_dir == IterationDirection::Backwards {
                             program.emit_insn(Insn::Last {
                                 cursor_id: iteration_cursor_id,
@@ -758,21 +646,12 @@ pub fn open_loop(
                     };
 
                     let is_index = index_cursor_id.is_some();
-                    let seek_cursor_id = ephemeral_ctx
-                        .map(|ctx| {
-                            if ctx.finished_insert_loop {
-                                ctx.temp_cursor_id
-                            } else {
-                                ctx.table_cursor_id
-                            }
+                    let seek_cursor_id = temp_cursor_id.unwrap_or_else(|| {
+                        index_cursor_id.unwrap_or_else(|| {
+                            table_cursor_id
+                                .expect("Either ephemeral or index or table cursor must be opened")
                         })
-                        .unwrap_or_else(|| {
-                            index_cursor_id.unwrap_or_else(|| {
-                                table_cursor_id.expect(
-                                    "Either ephemeral or index or table cursor must be opened",
-                                )
-                            })
-                        });
+                    });
                     let Search::Seek { seek_def, .. } = search else {
                         unreachable!("Rowid equality point lookup should have been handled above");
                     };
@@ -871,7 +750,7 @@ enum LoopEmitTarget {
 pub fn emit_loop<'a>(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx<'a>,
-    plan: &'a SelectPlan,
+    plan: &SelectPlan,
 ) -> Result<()> {
     // if we have a group by, we emit a record into the group by sorter,
     // or if the rows are already sorted, we do the group by aggregation phase directly.
@@ -897,7 +776,7 @@ pub fn emit_loop<'a>(
 fn emit_loop_source<'a>(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx<'a>,
-    plan: &'a SelectPlan,
+    plan: &SelectPlan,
     emit_target: LoopEmitTarget,
 ) -> Result<()> {
     match emit_target {
@@ -1104,7 +983,7 @@ pub fn close_loop(
     t_ctx: &mut TranslateCtx,
     tables: &TableReferences,
     join_order: &[JoinOrderMember],
-    ephemeral_ctx: Option<&EphemeralCtx>,
+    temp_cursor_id: Option<CursorID>,
 ) -> Result<()> {
     // We close the loops for all tables in reverse order, i.e. innermost first.
     // OPEN t1
@@ -1129,21 +1008,13 @@ pub fn close_loop(
                 program.resolve_label(loop_labels.next, program.offset());
                 match &table.table {
                     Table::BTree(_) => {
-                        let iteration_cursor_id = ephemeral_ctx
-                            .map(|ctx| {
-                                if ctx.finished_insert_loop {
-                                    ctx.temp_cursor_id
-                                } else {
-                                    ctx.table_cursor_id
-                                }
+                        let iteration_cursor_id = temp_cursor_id.unwrap_or_else(|| {
+                            index_cursor_id.unwrap_or_else(|| {
+                                table_cursor_id.expect(
+                                    "Either ephemeral or index or table cursor must be opened",
+                                )
                             })
-                            .unwrap_or_else(|| {
-                                index_cursor_id.unwrap_or_else(|| {
-                                    table_cursor_id.expect(
-                                        "Either ephemeral or index or table cursor must be opened",
-                                    )
-                                })
-                            });
+                        });
                         if *iter_dir == IterationDirection::Backwards {
                             program.emit_insn(Insn::Prev {
                                 cursor_id: iteration_cursor_id,
@@ -1181,20 +1052,12 @@ pub fn close_loop(
                     "Subqueries do not support index seeks"
                 );
                 program.resolve_label(loop_labels.next, program.offset());
-                let iteration_cursor_id = ephemeral_ctx
-                    .map(|ctx| {
-                        if ctx.finished_insert_loop {
-                            ctx.temp_cursor_id
-                        } else {
-                            ctx.table_cursor_id
-                        }
+                let iteration_cursor_id = temp_cursor_id.unwrap_or_else(|| {
+                    index_cursor_id.unwrap_or_else(|| {
+                        table_cursor_id
+                            .expect("Either ephemeral or index or table cursor must be opened")
                     })
-                    .unwrap_or_else(|| {
-                        index_cursor_id.unwrap_or_else(|| {
-                            table_cursor_id
-                                .expect("Either ephemeral or index or table cursor must be opened")
-                        })
-                    });
+                });
                 // Rowid equality point lookups are handled with a SeekRowid instruction which does not loop, so there is no need to emit a Next instruction.
                 if !matches!(search, Search::RowidEq { .. }) {
                     let iter_dir = match search {
