@@ -10,6 +10,7 @@ use crate::util::normalize_ident;
 use crate::vdbe::builder::{ProgramBuilderOpts, QueryMode};
 use crate::vdbe::insn::{IdxInsertFlags, InsertFlags, RegisterOrLiteral};
 use crate::vdbe::BranchOffset;
+use crate::{bail_parse_error, Result, SymbolTable, VirtualTable};
 use crate::{
     schema::{Column, Schema},
     vdbe::{
@@ -17,7 +18,6 @@ use crate::{
         insn::Insn,
     },
 };
-use crate::{Result, SymbolTable, VirtualTable};
 
 use super::emitter::Resolver;
 use super::expr::{translate_expr, translate_expr_no_constant_opt, NoConstantOptReason};
@@ -58,6 +58,14 @@ pub fn translate_insert(
         crate::bail_parse_error!("ON CONFLICT clause is not supported");
     }
 
+    let indexes = schema.get_indices(&tbl_name.name.to_string());
+    if !indexes.is_empty() && cfg!(not(feature = "index_experimental")) {
+        // Let's disable altering a table with indices altogether instead of checking column by
+        // column to be extra safe.
+        bail_parse_error!(
+            "INSERT table disabled for table with indexes and without index_experimental feature flag"
+        );
+    }
     let table_name = &tbl_name.name;
     let table = match schema.get_table(table_name.0.as_str()) {
         Some(table) => table,

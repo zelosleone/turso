@@ -2,6 +2,7 @@ use fallible_iterator::FallibleIterator as _;
 use limbo_sqlite3_parser::{ast, lexer::sql::Parser};
 
 use crate::{
+    bail_parse_error,
     function::{AlterTableFunc, Func},
     schema::{Column, Schema},
     util::normalize_ident,
@@ -24,6 +25,14 @@ pub fn translate_alter_table(
 ) -> Result<ProgramBuilder> {
     let (table_name, alter_table) = alter;
     let ast::Name(table_name) = table_name.name;
+    let indexes = schema.get_indices(&table_name);
+    if !indexes.is_empty() && cfg!(not(feature = "index_experimental")) {
+        // Let's disable altering a table with indices altogether instead of checking column by
+        // column to be extra safe.
+        bail_parse_error!(
+            "Alter table disabled for table with indexes without index_experimental feature flag"
+        );
+    }
 
     let Some(original_btree) = schema
         .get_table(&table_name)

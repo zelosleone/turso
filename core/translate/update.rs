@@ -101,6 +101,14 @@ pub fn prepare_update_plan(
         bail_parse_error!("ON CONFLICT clause is not supported");
     }
     let table_name = &body.tbl_name.name;
+    let indexes = schema.get_indices(&table_name.to_string());
+    if !indexes.is_empty() && cfg!(not(feature = "index_experimental")) {
+        // Let's disable altering a table with indices altogether instead of checking column by
+        // column to be extra safe.
+        bail_parse_error!(
+            "INSERT table disabled for table with indexes and without index_experimental feature flag"
+        );
+    }
     let table = match schema.get_table(table_name.0.as_str()) {
         Some(table) => table,
         None => bail_parse_error!("Parse error: no such table: {}", table_name),

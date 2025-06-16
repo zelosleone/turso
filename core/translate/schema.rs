@@ -93,6 +93,9 @@ pub fn translate_create_table(
 
     let index_regs = check_automatic_pk_index_required(&body, &mut program, &tbl_name.name.0)?;
     if let Some(index_regs) = index_regs.as_ref() {
+        if cfg!(not(feature = "index_experimental")) {
+            bail_parse_error!("Constraints UNIQUE and PRIMARY KEY (unless INTEGER PRIMARY KEY) on table are not supported without indexes");
+        }
         for index_reg in index_regs.clone() {
             program.emit_insn(Insn::CreateBtree {
                 db: 0,

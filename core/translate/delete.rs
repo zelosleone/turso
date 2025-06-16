@@ -1,3 +1,4 @@
+use crate::bail_parse_error;
 use crate::schema::Table;
 use crate::translate::emitter::emit_program;
 use crate::translate::optimizer::optimize_plan;
@@ -18,6 +19,14 @@ pub fn translate_delete(
     syms: &SymbolTable,
     mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
+    let indexes = schema.get_indices(&tbl_name.name.to_string());
+    if !indexes.is_empty() && cfg!(not(feature = "index_experimental")) {
+        // Let's disable altering a table with indices altogether instead of checking column by
+        // column to be extra safe.
+        bail_parse_error!(
+            "DELETE into table disabled for table with indexes and without index_experimental feature flag"
+        );
+    }
     let mut delete_plan = prepare_delete_plan(
         schema,
         tbl_name,
