@@ -2,7 +2,7 @@
 use crate::function::AlterTableFunc;
 use crate::numeric::{NullableInteger, Numeric};
 use crate::schema::Schema;
-use crate::storage::btree::{integrity_check, IntegrityCheckState};
+use crate::storage::btree::{integrity_check, IntegrityCheckError, IntegrityCheckState};
 use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::CreateBTreeFlags;
@@ -24,7 +24,6 @@ use crate::{
     },
     types::compare_immutable,
 };
-use std::fmt::Write;
 use std::{borrow::BorrowMut, rc::Rc, sync::Arc};
 
 use crate::{pseudo::PseudoCursor, result::LimboResult};
@@ -5408,8 +5407,7 @@ pub fn op_count(
 pub enum OpIntegrityCheckState {
     Start,
     Checking {
-        error_count: usize,
-        message: String,
+        errors: Vec<IntegrityCheckError>,
         current_root_idx: usize,
         state: IntegrityCheckState,
     },
@@ -5432,37 +5430,31 @@ pub fn op_integrity_check(
     match &mut state.op_integrity_check_state {
         OpIntegrityCheckState::Start => {
             state.op_integrity_check_state = OpIntegrityCheckState::Checking {
-                error_count: 0,
-                message: String::new(),
+                errors: Vec::new(),
                 current_root_idx: 0,
                 state: IntegrityCheckState::new(roots[0]),
             };
         }
         OpIntegrityCheckState::Checking {
-            error_count,
-            message,
+            errors,
             current_root_idx,
             state: integrity_check_state,
         } => {
-            return_if_io!(integrity_check(
-                integrity_check_state,
-                error_count,
-                message,
-                pager
-            ));
+            return_if_io!(integrity_check(integrity_check_state, errors, pager));
             *current_root_idx += 1;
             if *current_root_idx < roots.len() {
                 *integrity_check_state = IntegrityCheckState::new(roots[*current_root_idx]);
                 return Ok(InsnFunctionStepResult::Step);
             } else {
-                if *error_count == 0 {
-                    message.write_str("ok").map_err(|err| {
-                        LimboError::InternalError(format!(
-                            "error appending message to integrity check {:?}",
-                            err
-                        ))
-                    })?;
-                }
+                let message = if errors.is_empty() {
+                    "ok".to_string()
+                } else {
+                    errors
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<String>>()
+                        .join("\n")
+                };
                 state.registers[*message_register] = Register::Value(Value::build_text(message));
                 state.op_integrity_check_state = OpIntegrityCheckState::Start;
                 state.pc += 1;
