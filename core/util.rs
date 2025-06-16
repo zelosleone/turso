@@ -152,7 +152,7 @@ pub fn parse_schema_rows(
                 schema.add_index(Arc::new(index));
             }
         }
-        for automatic_index in &automatic_indices {
+        for automatic_index in automatic_indices {
             #[cfg(not(feature = "index_experimental"))]
             schema.table_set_has_index(&automatic_index.0);
             #[cfg(feature = "index_experimental")]
@@ -160,7 +160,7 @@ pub fn parse_schema_rows(
                 let table = schema.get_btree_table(&automatic_index.0).unwrap();
                 let ret_index = schema::Index::automatic_from_primary_key_and_unique(
                     table.as_ref(),
-                    &automatic_index.1,
+                    automatic_index.1,
                 )?;
                 for index in ret_index {
                     schema.add_index(Arc::new(index));

@@ -31,7 +31,7 @@ pub struct Schema {
 impl Schema {
     pub fn new() -> Self {
         let mut tables: HashMap<String, Arc<Table>> = HashMap::new();
-        let mut has_indexes = HashSet::new();
+        let has_indexes = HashSet::new();
         let indexes: HashMap<String, Vec<Arc<Index>>> = HashMap::new();
         #[allow(clippy::arc_with_non_send_sync)]
         tables.insert(

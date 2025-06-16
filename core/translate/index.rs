@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use crate::bail_parse_error;
 use crate::vdbe::insn::CmpInsFlags;
 use crate::{
     schema::{BTreeTable, Column, Index, IndexColumn, PseudoTable, Schema},
@@ -25,7 +24,7 @@ pub fn translate_create_index(
     mut program: ProgramBuilder,
 ) -> crate::Result<ProgramBuilder> {
     if cfg!(not(feature = "index_experimental")) {
-        bail_parse_error!("CREATE INDEX enabled only with index_experimental feature");
+        crate::bail_parse_error!("CREATE INDEX enabled only with index_experimental feature");
     }
     let idx_name = normalize_ident(idx_name);
     let tbl_name = normalize_ident(tbl_name);
@@ -301,7 +300,7 @@ pub fn translate_drop_index(
     mut program: ProgramBuilder,
 ) -> crate::Result<ProgramBuilder> {
     if cfg!(not(feature = "index_experimental")) {
-        bail_parse_error!("DROP INDEX enabled only with index_experimental feature");
+        crate::bail_parse_error!("DROP INDEX enabled only with index_experimental feature");
     }
     let idx_name = normalize_ident(idx_name);
     let opts = crate::vdbe::builder::ProgramBuilderOpts {
