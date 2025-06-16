@@ -34,10 +34,6 @@ pub const SQLITE_CHECKPOINT_FULL: ffi::c_int = 1;
 pub const SQLITE_CHECKPOINT_RESTART: ffi::c_int = 2;
 pub const SQLITE_CHECKPOINT_TRUNCATE: ffi::c_int = 3;
 
-pub mod util;
-
-use util::sqlite3_safety_check_sick_or_ok;
-
 pub struct sqlite3 {
     pub(crate) io: Arc<dyn limbo_core::IO>,
     pub(crate) _db: Arc<limbo_core::Database>,
@@ -1168,5 +1164,15 @@ pub unsafe extern "C" fn libsql_wal_get_frame(
             Err(_) => SQLITE_ERROR,
         },
         Err(_) => SQLITE_ERROR,
+    }
+}
+
+fn sqlite3_safety_check_sick_or_ok(_db: &sqlite3) -> bool {
+    match _db.e_open_state {
+        crate::SQLITE_STATE_SICK | crate::SQLITE_STATE_OPEN | crate::SQLITE_STATE_BUSY => true,
+        _ => {
+            eprintln!("Invalid database state: {}", _db.e_open_state);
+            false
+        }
     }
 }
