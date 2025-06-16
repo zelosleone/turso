@@ -459,6 +459,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                         _ => panic!("Error executing query: {}", e),
                     }
                 }
+                let mut res = conn.query("PRAGMA integrity_check", ()).await.unwrap();
+                if let Some(row) = res.next().await? {
+                    let value = row.get_value(0).unwrap();
+                    if value != "ok".into() {
+                        panic!("integrity check failed: {:?}", value);
+                    }
+                } else {
+                    panic!("integrity check failed: no rows");
+                }
             }
             Ok::<_, Box<dyn std::error::Error + Send + Sync>>(())
         });
