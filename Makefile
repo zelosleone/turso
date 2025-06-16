@@ -36,6 +36,7 @@ check-wasm-target:
 
 limbo:
 	cargo build
+	cargo build --features index_experimental --bin limbo_index_experimental
 .PHONY: limbo
 
 limbo-c:

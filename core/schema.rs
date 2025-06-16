@@ -76,6 +76,7 @@ impl Schema {
         }
     }
 
+    #[cfg(feature = "index_experimental")]
     pub fn add_index(&mut self, index: Arc<Index>) {
         let table_name = normalize_ident(&index.table_name);
         self.indexes

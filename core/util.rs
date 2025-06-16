@@ -136,22 +136,30 @@ pub fn parse_schema_rows(
                 StepResult::Busy => break,
             }
         }
-        for UnparsedFromSqlIndex {
-            table_name,
-            root_page,
-            sql,
-        } in from_sql_indexes
+        #[cfg(feature = "index_experimental")]
         {
-            let table = schema.get_btree_table(&table_name).unwrap();
-            let index = schema::Index::from_sql(&sql, root_page as usize, table.as_ref())?;
-            schema.add_index(Arc::new(index));
-        }
-        for (table_name, indices) in automatic_indices {
-            let table = schema.get_btree_table(&table_name).unwrap();
-            let ret_index =
-                schema::Index::automatic_from_primary_key_and_unique(table.as_ref(), indices)?;
-            for index in ret_index {
+            for UnparsedFromSqlIndex {
+                table_name,
+                root_page,
+                sql,
+            } in from_sql_indexes
+            {
+                let table = schema.get_btree_table(&table_name).unwrap();
+                let index = schema::Index::from_sql(&sql, root_page as usize, table.as_ref())?;
                 schema.add_index(Arc::new(index));
+            }
+            #[cfg(feature = "index_experimental")]
+            {
+                for (table_name, indices) in automatic_indices {
+                    let table = schema.get_btree_table(&table_name).unwrap();
+                    let ret_index = schema::Index::automatic_from_primary_key_and_unique(
+                        table.as_ref(),
+                        indices,
+                    )?;
+                    for index in ret_index {
+                        schema.add_index(Arc::new(index));
+                    }
+                }
             }
         }
     }
