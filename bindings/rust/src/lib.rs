@@ -8,7 +8,6 @@ pub use params::params_from_iter;
 use crate::params::*;
 use std::fmt::Debug;
 use std::num::NonZero;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, thiserror::Error)]
@@ -84,7 +83,7 @@ impl Database {
 }
 
 pub struct Connection {
-    inner: Arc<Mutex<Rc<limbo_core::Connection>>>,
+    inner: Arc<Mutex<Arc<limbo_core::Connection>>>,
 }
 
 impl Clone for Connection {

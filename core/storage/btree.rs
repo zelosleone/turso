@@ -6227,7 +6227,7 @@ mod tests {
         pos: usize,
         page: &mut PageContent,
         record: ImmutableRecord,
-        conn: &Rc<Connection>,
+        conn: &Arc<Connection>,
     ) -> Vec<u8> {
         let mut payload: Vec<u8> = Vec::new();
         fill_cell_payload(

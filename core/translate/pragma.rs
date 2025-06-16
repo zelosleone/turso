@@ -3,7 +3,7 @@
 
 use limbo_sqlite3_parser::ast::PragmaName;
 use limbo_sqlite3_parser::ast::{self, Expr};
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::fast_lock::SpinLock;
@@ -34,7 +34,7 @@ pub fn translate_pragma(
     body: Option<ast::PragmaBody>,
     database_header: Arc<SpinLock<DatabaseHeader>>,
     pager: Rc<Pager>,
-    connection: Weak<crate::Connection>,
+    connection: Arc<crate::Connection>,
     mut program: ProgramBuilder,
 ) -> crate::Result<ProgramBuilder> {
     let opts = ProgramBuilderOpts {
@@ -124,7 +124,7 @@ fn update_pragma(
     value: ast::Expr,
     header: Arc<SpinLock<DatabaseHeader>>,
     pager: Rc<Pager>,
-    connection: Weak<crate::Connection>,
+    connection: Arc<crate::Connection>,
     program: &mut ProgramBuilder,
 ) -> crate::Result<()> {
     match pragma {
@@ -268,16 +268,13 @@ fn query_pragma(
     value: Option<ast::Expr>,
     database_header: Arc<SpinLock<DatabaseHeader>>,
     pager: Rc<Pager>,
-    connection: Weak<crate::Connection>,
+    connection: Arc<crate::Connection>,
     program: &mut ProgramBuilder,
 ) -> crate::Result<()> {
     let register = program.alloc_register();
     match pragma {
         PragmaName::CacheSize => {
-            program.emit_int(
-                connection.upgrade().unwrap().get_cache_size() as i64,
-                register,
-            );
+            program.emit_int(connection.get_cache_size() as i64, register);
             program.emit_result_row(register, 1);
             program.add_pragma_result_column(pragma.to_string());
         }
@@ -417,7 +414,7 @@ fn update_cache_size(
     value: i64,
     header: Arc<SpinLock<DatabaseHeader>>,
     pager: Rc<Pager>,
-    connection: Weak<crate::Connection>,
+    connection: Arc<crate::Connection>,
 ) -> crate::Result<()> {
     let mut cache_size_unformatted: i64 = value;
     let mut cache_size = if cache_size_unformatted < 0 {
@@ -432,10 +429,7 @@ fn update_cache_size(
         cache_size = MIN_PAGE_CACHE_SIZE;
         cache_size_unformatted = MIN_PAGE_CACHE_SIZE as i64;
     }
-    connection
-        .upgrade()
-        .unwrap()
-        .set_cache_size(cache_size_unformatted as i32);
+    connection.set_cache_size(cache_size_unformatted as i32);
 
     // update cache size
     pager

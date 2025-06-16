@@ -54,8 +54,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
     num::NonZero,
-    ops::Deref,
-    rc::{Rc, Weak},
+    rc::Rc,
     sync::Arc,
 };
 use tracing::{instrument, Level};
@@ -351,7 +350,6 @@ macro_rules! must_be_btree_cursor {
     }};
 }
 
-#[derive(Debug)]
 pub struct Program {
     pub max_registers: usize,
     pub insns: Vec<(Insn, InsnFunction)>,
@@ -359,7 +357,7 @@ pub struct Program {
     pub database_header: Arc<SpinLock<DatabaseHeader>>,
     pub comments: Option<Vec<(InsnReference, &'static str)>>,
     pub parameters: crate::parameters::Parameters,
-    pub connection: Weak<Connection>,
+    pub connection: Arc<Connection>,
     pub n_change: Cell<i64>,
     pub change_cnt_on: bool,
     pub result_columns: Vec<ResultSetColumn>,
@@ -401,7 +399,7 @@ impl Program {
         mv_store: Option<&Rc<MvStore>>,
     ) -> Result<StepResult> {
         if let Some(mv_store) = mv_store {
-            let conn = self.connection.upgrade().unwrap();
+            let conn = self.connection.clone();
             let auto_commit = conn.auto_commit.get();
             if auto_commit {
                 let mut mv_transactions = conn.mv_transactions.borrow_mut();
@@ -412,21 +410,18 @@ impl Program {
             }
             Ok(StepResult::Done)
         } else {
-            let connection = self
-                .connection
-                .upgrade()
-                .expect("only weak ref to connection?");
+            let connection = self.connection.clone();
             let auto_commit = connection.auto_commit.get();
             tracing::trace!("Halt auto_commit {}", auto_commit);
             if program_state.commit_state == CommitState::Committing {
-                self.step_end_write_txn(&pager, &mut program_state.commit_state, connection.deref())
+                self.step_end_write_txn(&pager, &mut program_state.commit_state, &connection)
             } else if auto_commit {
                 let current_state = connection.transaction_state.get();
                 match current_state {
                     TransactionState::Write => self.step_end_write_txn(
                         &pager,
                         &mut program_state.commit_state,
-                        connection.deref(),
+                        &connection,
                     ),
                     TransactionState::Read => {
                         connection.transaction_state.replace(TransactionState::None);
@@ -437,9 +432,7 @@ impl Program {
                 }
             } else {
                 if self.change_cnt_on {
-                    if let Some(conn) = self.connection.upgrade() {
-                        conn.set_changes(self.n_change.get());
-                    }
+                    self.connection.set_changes(self.n_change.get());
                 }
                 Ok(StepResult::Done)
             }
@@ -457,9 +450,7 @@ impl Program {
         match cacheflush_status {
             PagerCacheflushStatus::Done(_) => {
                 if self.change_cnt_on {
-                    if let Some(conn) = self.connection.upgrade() {
-                        conn.set_changes(self.n_change.get());
-                    }
+                    self.connection.set_changes(self.n_change.get());
                 }
                 connection.transaction_state.replace(TransactionState::None);
                 *commit_state = CommitState::Ready;

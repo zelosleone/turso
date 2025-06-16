@@ -214,10 +214,8 @@ pub fn op_drop_index(
     let Insn::DropIndex { index, db: _ } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    if let Some(conn) = program.connection.upgrade() {
-        let mut schema = conn.schema.write();
-        schema.remove_index(&index);
-    }
+    let mut schema = program.connection.schema.write();
+    schema.remove_index(&index);
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -310,7 +308,7 @@ pub fn op_checkpoint(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let result = program.connection.upgrade().unwrap().checkpoint();
+    let result = program.connection.checkpoint();
     match result {
         Ok(CheckpointResult {
             num_wal_frames: num_wal_pages,
@@ -900,7 +898,7 @@ pub fn op_open_read(
                 .replace(Cursor::new_btree(cursor));
         }
         CursorType::BTreeIndex(index) => {
-            let conn = program.connection.upgrade().unwrap();
+            let conn = program.connection.clone();
             let schema = conn.schema.try_read().ok_or(LimboError::SchemaLocked)?;
             let table = schema
                 .get_table(&index.table_name)
@@ -998,11 +996,7 @@ pub fn op_vcreate(
     } else {
         vec![]
     };
-    let Some(conn) = program.connection.upgrade() else {
-        return Err(crate::LimboError::ExtensionError(
-            "Failed to upgrade Connection".to_string(),
-        ));
-    };
+    let conn = program.connection.clone();
     let table =
         crate::VirtualTable::table(Some(&table_name), &module_name, args, &conn.syms.borrow())?;
     {
@@ -1123,9 +1117,7 @@ pub fn op_vupdate(
         Ok(Some(new_rowid)) => {
             if *conflict_action == 5 {
                 // ResolveType::Replace
-                if let Some(conn) = program.connection.upgrade() {
-                    conn.update_last_rowid(new_rowid);
-                }
+                program.connection.update_last_rowid(new_rowid);
             }
             state.pc += 1;
         }
@@ -1181,12 +1173,7 @@ pub fn op_vdestroy(
     let Insn::VDestroy { db, table_name } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let Some(conn) = program.connection.upgrade() else {
-        return Err(crate::LimboError::ExtensionError(
-            "Failed to upgrade Connection".to_string(),
-        ));
-    };
-
+    let conn = program.connection.clone();
     {
         let Some(vtab) = conn.syms.borrow_mut().vtabs.remove(table_name) else {
             return Err(crate::LimboError::InternalError(
@@ -1691,7 +1678,7 @@ pub fn op_transaction(
     let Insn::Transaction { write } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let connection = program.connection.upgrade().unwrap();
+    let connection = program.connection.clone();
     if *write && connection._db.open_flags.contains(OpenFlags::ReadOnly) {
         return Err(LimboError::ReadOnly);
     }
@@ -1746,7 +1733,7 @@ pub fn op_auto_commit(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let conn = program.connection.upgrade().unwrap();
+    let conn = program.connection.clone();
     if state.commit_state == CommitState::Committing {
         return match program.commit_txn(pager.clone(), state, mv_store)? {
             super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
@@ -3387,7 +3374,7 @@ pub fn op_function(
                 state.registers[*dest] = Register::Value(result);
             }
             ScalarFunc::Changes => {
-                let res = &program.connection.upgrade().unwrap().last_change;
+                let res = &program.connection.last_change;
                 let changes = res.get();
                 state.registers[*dest] = Register::Value(Value::Integer(changes));
             }
@@ -3435,12 +3422,8 @@ pub fn op_function(
                 state.registers[*dest] = Register::Value(result);
             }
             ScalarFunc::LastInsertRowid => {
-                if let Some(conn) = program.connection.upgrade() {
-                    state.registers[*dest] =
-                        Register::Value(Value::Integer(conn.last_insert_rowid() as i64));
-                } else {
-                    state.registers[*dest] = Register::Value(Value::Null);
-                }
+                state.registers[*dest] =
+                    Register::Value(Value::Integer(program.connection.last_insert_rowid() as i64));
             }
             ScalarFunc::Like => {
                 let pattern = &state.registers[*start_reg];
@@ -3645,7 +3628,7 @@ pub fn op_function(
                 }
             }
             ScalarFunc::TotalChanges => {
-                let res = &program.connection.upgrade().unwrap().total_changes;
+                let res = &program.connection.total_changes;
                 let total_changes = res.get();
                 state.registers[*dest] = Register::Value(Value::Integer(total_changes));
             }
@@ -3706,9 +3689,7 @@ pub fn op_function(
             ScalarFunc::LoadExtension => {
                 let extension = &state.registers[*start_reg];
                 let ext = resolve_ext_path(&extension.get_owned_value().to_string())?;
-                if let Some(conn) = program.connection.upgrade() {
-                    conn.load_extension(ext)?;
-                }
+                program.connection.load_extension(ext)?;
             }
             ScalarFunc::StrfTime => {
                 let result = exec_strftime(&state.registers[*start_reg..*start_reg + arg_count]);
@@ -4234,9 +4215,7 @@ pub fn op_insert(
         // Only update last_insert_rowid for regular table inserts, not schema modifications
         if cursor.root_page() != 1 {
             if let Some(rowid) = return_if_io!(cursor.rowid()) {
-                if let Some(conn) = program.connection.upgrade() {
-                    conn.update_last_rowid(rowid);
-                }
+                program.connection.update_last_rowid(rowid);
                 let prev_changes = program.n_change.get();
                 program.n_change.set(prev_changes + 1);
             }
@@ -4697,7 +4676,7 @@ pub fn op_open_write(
         None => None,
     };
     if let Some(index) = maybe_index {
-        let conn = program.connection.upgrade().unwrap();
+        let conn = program.connection.clone();
         let schema = conn.schema.try_read().ok_or(LimboError::SchemaLocked)?;
         let table = schema
             .get_table(&index.table_name)
@@ -4823,7 +4802,8 @@ pub fn op_drop_table(
     if *db > 0 {
         todo!("temp databases not implemented yet");
     }
-    if let Some(conn) = program.connection.upgrade() {
+    let conn = program.connection.clone();
+    {
         let mut schema = conn.schema.write();
         schema.remove_indices_for_table(table_name);
         schema.remove_table(table_name);
@@ -4900,8 +4880,7 @@ pub fn op_parse_schema(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let conn = program.connection.upgrade();
-    let conn = conn.as_ref().unwrap();
+    let conn = program.connection.clone();
 
     if let Some(where_clause) = where_clause {
         let stmt = conn.prepare(format!(
@@ -5187,7 +5166,7 @@ pub fn op_open_ephemeral(
         _ => unreachable!("unexpected Insn {:?}", insn),
     };
 
-    let conn = program.connection.upgrade().unwrap();
+    let conn = program.connection.clone();
     let io = conn.pager.io.get_memory_io();
 
     let file = io.open_file("", OpenFlags::Create, true)?;

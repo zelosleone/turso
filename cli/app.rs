@@ -21,7 +21,6 @@ use std::{
     fmt,
     io::{self, BufRead as _, Write},
     path::PathBuf,
-    rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -68,7 +67,7 @@ pub struct Limbo {
     pub prompt: String,
     io: Arc<dyn limbo_core::IO>,
     writer: Box<dyn Write>,
-    conn: Rc<limbo_core::Connection>,
+    conn: Arc<limbo_core::Connection>,
     pub interrupt_count: Arc<AtomicUsize>,
     input_buff: String,
     opts: Settings,
