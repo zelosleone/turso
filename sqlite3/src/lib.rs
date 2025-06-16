@@ -388,17 +388,20 @@ pub unsafe extern "C" fn sqlite3_free(_ptr: *mut ffi::c_void) {
     stub!();
 }
 
+/// Returns the error code for the most recent failed API call to connection.
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_errcode(_db: *mut sqlite3) -> ffi::c_int {
-    if !_db.is_null() && !sqlite3_safety_check_sick_or_ok(&*_db) {
+pub unsafe extern "C" fn sqlite3_errcode(db: *mut sqlite3) -> ffi::c_int {
+    if db.is_null() {
         return SQLITE_MISUSE;
     }
-
-    if _db.is_null() || (*_db).malloc_failed {
+    let db: &mut sqlite3 = &mut *db;
+    if !sqlite3_safety_check_sick_or_ok(db) {
+        return SQLITE_MISUSE;
+    }
+    if db.malloc_failed {
         return SQLITE_NOMEM;
     }
-
-    (*_db).err_code & (*_db).err_mask
+    db.err_code & db.err_mask
 }
 
 #[no_mangle]
