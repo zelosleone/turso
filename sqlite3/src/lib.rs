@@ -942,32 +942,31 @@ pub unsafe extern "C" fn sqlite3_create_window_function(
     stub!();
 }
 
+/// Returns the error message for the most recent failed API call to connection.
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_errmsg(_db: *mut sqlite3) -> *const ffi::c_char {
-    if _db.is_null() {
+pub unsafe extern "C" fn sqlite3_errmsg(db: *mut sqlite3) -> *const ffi::c_char {
+    if db.is_null() {
         return sqlite3_errstr(SQLITE_NOMEM);
     }
-    if !sqlite3_safety_check_sick_or_ok(&*_db) {
+    let db: &mut sqlite3 = &mut *db;
+    if !sqlite3_safety_check_sick_or_ok(db) {
         return sqlite3_errstr(SQLITE_MISUSE);
     }
-    if (*_db).malloc_failed {
+    if db.malloc_failed {
         return sqlite3_errstr(SQLITE_NOMEM);
     }
-
-    let err_msg = if (*_db).err_code != SQLITE_OK {
-        if !(*_db).p_err.is_null() {
-            (*_db).p_err as *const ffi::c_char
+    let err_msg = if db.err_code != SQLITE_OK {
+        if !db.p_err.is_null() {
+            db.p_err as *const ffi::c_char
         } else {
             std::ptr::null()
         }
     } else {
         std::ptr::null()
     };
-
     if err_msg.is_null() {
-        return sqlite3_errstr((*_db).err_code);
+        return sqlite3_errstr(db.err_code);
     }
-
     err_msg
 }
 
