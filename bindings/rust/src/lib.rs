@@ -289,19 +289,29 @@ unsafe impl Sync for Rows {}
 
 impl Rows {
     pub async fn next(&mut self) -> Result<Option<Row>> {
-        let mut stmt = self
-            .inner
-            .lock()
-            .map_err(|e| Error::MutexError(e.to_string()))?;
-
-        match stmt.step() {
-            Ok(limbo_core::StepResult::Row) => {
-                let row = stmt.row().unwrap();
-                Ok(Some(Row {
-                    values: row.get_values().map(|v| v.to_owned()).collect(),
-                }))
+        loop {
+            let mut stmt = self
+                .inner
+                .lock()
+                .map_err(|e| Error::MutexError(e.to_string()))?;
+            match stmt.step() {
+                Ok(limbo_core::StepResult::Row) => {
+                    let row = stmt.row().unwrap();
+                    return Ok(Some(Row {
+                        values: row.get_values().map(|v| v.to_owned()).collect(),
+                    }));
+                }
+                Ok(limbo_core::StepResult::Done) => return Ok(None),
+                Ok(limbo_core::StepResult::IO) => {
+                    if let Err(e) = stmt.run_once() {
+                        return Err(e.into());
+                    }
+                    continue;
+                }
+                Ok(limbo_core::StepResult::Busy) => return Ok(None),
+                Ok(limbo_core::StepResult::Interrupt) => return Ok(None),
+                _ => return Ok(None),
             }
-            _ => Ok(None),
         }
     }
 }
