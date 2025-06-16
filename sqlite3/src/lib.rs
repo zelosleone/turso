@@ -1067,12 +1067,12 @@ fn sqlite3_errstr_impl(rc: i32) -> *const ffi::c_char {
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_wal_checkpoint(
-    _db: *mut sqlite3,
-    _db_name: *const ffi::c_char,
+    db: *mut sqlite3,
+    db_name: *const ffi::c_char,
 ) -> ffi::c_int {
     sqlite3_wal_checkpoint_v2(
-        _db,
-        _db_name,
+        db,
+        db_name,
         SQLITE_CHECKPOINT_PASSIVE,
         std::ptr::null_mut(),
         std::ptr::null_mut(),
