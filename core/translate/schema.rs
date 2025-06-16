@@ -613,6 +613,13 @@ pub fn translate_drop_table(
     schema: &Schema,
     mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
+    if cfg!(not(feature = "index_experimental"))
+        && schema.table_has_indexes(&tbl_name.name.to_string())
+    {
+        bail_parse_error!(
+            "DROP Table with indexes on the table enabled only with index_experimental feature"
+        );
+    }
     let opts = ProgramBuilderOpts {
         query_mode,
         num_cursors: 3,

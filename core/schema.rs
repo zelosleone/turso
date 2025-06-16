@@ -9,7 +9,7 @@ use limbo_sqlite3_parser::{
     ast::{Cmd, CreateTableBody, QualifiedName, ResultColumn, Stmt},
     lexer::sql::Parser,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 use tracing::trace;
@@ -19,20 +19,30 @@ const SCHEMA_TABLE_NAME_ALT: &str = "sqlite_master";
 
 pub struct Schema {
     pub tables: HashMap<String, Arc<Table>>,
-    // table_name to list of indexes for the table
+    /// table_name to list of indexes for the table
     pub indexes: HashMap<String, Vec<Arc<Index>>>,
+    /// Used for index_experimental feature flag to track whether a table has an index.
+    /// This is necessary because we won't populate indexes so that we don't use them but
+    /// we still need to know if a table has an index to disallow any write operation that requires
+    /// indexes.
+    pub has_indexes: HashSet<String>,
 }
 
 impl Schema {
     pub fn new() -> Self {
         let mut tables: HashMap<String, Arc<Table>> = HashMap::new();
+        let mut has_indexes = HashSet::new();
         let indexes: HashMap<String, Vec<Arc<Index>>> = HashMap::new();
         #[allow(clippy::arc_with_non_send_sync)]
         tables.insert(
             SCHEMA_TABLE_NAME.to_string(),
             Arc::new(Table::BTree(sqlite_schema_table().into())),
         );
-        Self { tables, indexes }
+        Self {
+            tables,
+            indexes,
+            has_indexes,
+        }
     }
 
     pub fn is_unique_idx_name(&self, name: &str) -> bool {
@@ -111,6 +121,16 @@ impl Schema {
             .get_mut(&name)
             .expect("Must have the index")
             .retain_mut(|other_idx| other_idx.name != idx.name);
+    }
+
+    #[cfg(not(feature = "index_experimental"))]
+    pub fn table_has_indexes(&self, table_name: &str) -> bool {
+        self.has_indexes.contains(table_name)
+    }
+
+    #[cfg(not(feature = "index_experimental"))]
+    pub fn table_set_has_index(&mut self, table_name: &str) {
+        self.has_indexes.insert(table_name.to_string());
     }
 }
 
