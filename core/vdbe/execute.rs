@@ -84,6 +84,7 @@ use crate::{
 };
 
 use super::{get_new_rowid, make_record, Program, ProgramState, Register};
+use crate::vdbe::insn::InsertFlags;
 use crate::{
     bail_constraint_error, must_be_btree_cursor, resolve_ext_path, MvStore, Pager, Result,
     DATABASE_VERSION,
@@ -4195,7 +4196,7 @@ pub fn op_insert(
         cursor,
         key_reg,
         record_reg,
-        flag: _,
+        flag,
         table_name: _,
     } = insn
     else {
@@ -4217,8 +4218,12 @@ pub fn op_insert(
         if cursor.root_page() != 1 {
             if let Some(rowid) = return_if_io!(cursor.rowid()) {
                 program.connection.update_last_rowid(rowid);
-                let prev_changes = program.n_change.get();
-                program.n_change.set(prev_changes + 1);
+
+                // n_change is increased when Insn::Delete is executed, so we can skip for Insn::Insert
+                if !flag.has(InsertFlags::UPDATE) {
+                    let prev_changes = program.n_change.get();
+                    program.n_change.set(prev_changes + 1);
+                }
             }
         }
     }

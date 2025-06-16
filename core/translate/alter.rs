@@ -138,7 +138,7 @@ pub fn translate_alter_table(
                             cursor: cursor_id,
                             key_reg: rowid,
                             record_reg: record,
-                            flag: 0,
+                            flag: crate::vdbe::insn::InsertFlags(0),
                             table_name: table_name.clone(),
                         });
                     });
@@ -284,7 +284,7 @@ pub fn translate_alter_table(
                     cursor: cursor_id,
                     key_reg: rowid,
                     record_reg: record,
-                    flag: 0,
+                    flag: crate::vdbe::insn::InsertFlags(0),
                     table_name: table_name.clone(),
                 });
             });
@@ -362,7 +362,7 @@ pub fn translate_alter_table(
                     cursor: cursor_id,
                     key_reg: rowid,
                     record_reg: record,
-                    flag: 0,
+                    flag: crate::vdbe::insn::InsertFlags(0),
                     table_name: table_name.clone(),
                 });
             });
