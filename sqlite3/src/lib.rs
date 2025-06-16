@@ -65,6 +65,7 @@ impl sqlite3 {
             e_open_state: SQLITE_STATE_OPEN,
             p_err: std::ptr::null_mut(),
         };
+        #[allow(clippy::arc_with_non_send_sync)]
         let inner = Arc::new(Mutex::new(inner));
         Self { inner }
     }
