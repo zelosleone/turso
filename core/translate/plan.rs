@@ -325,6 +325,14 @@ pub enum QueryDestination {
         /// The index that will be used to store the results.
         index: Arc<Index>,
     },
+    /// The results of the query are stored in an ephemeral table,
+    /// later used by the parent query.
+    EphemeralTable {
+        /// The cursor ID of the ephemeral table that will be used to store the results.
+        cursor_id: CursorID,
+        /// The table that will be used to store the results.
+        table: Rc<BTreeTable>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

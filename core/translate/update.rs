@@ -1,9 +1,8 @@
-use std::sync::Arc;
+use std::rc::Rc;
 
-use crate::schema::Index;
+use crate::schema::{BTreeTable, Column, Type};
 use crate::translate::plan::{Operation, QueryDestination, SelectPlan};
 use crate::vdbe::builder::CursorType;
-use crate::vdbe::insn::Insn;
 use crate::{
     bail_parse_error,
     schema::{Schema, Table},
@@ -242,22 +241,27 @@ pub fn prepare_update_plan(
             &mut where_clause,
         )?;
 
-        let index = Arc::new(Index {
+        let table = Rc::new(BTreeTable {
+            root_page: 0, // Not relevant for ephemeral table definition
             name: "ephemeral_scratch".to_string(),
-            table_name: table_name.0.clone(),
-            ephemeral: true,
-            root_page: 0,
-            columns: vec![],
-            unique: true,
             has_rowid: true,
+            primary_key_columns: vec![],
+            columns: vec![Column {
+                name: Some("rowid".to_string()),
+                ty: Type::Integer,
+                ty_str: "INTEGER".to_string(),
+                primary_key: true,
+                is_rowid_alias: false,
+                notnull: true,
+                default: None,
+                unique: false,
+                collation: None,
+            }],
+            is_strict: false,
+            unique_sets: None,
         });
 
-        let temp_cursor_id = program.alloc_cursor_id(CursorType::BTreeIndex(index.clone()));
-
-        program.emit_insn(Insn::OpenEphemeral {
-            cursor_id: temp_cursor_id,
-            is_table: false,
-        });
+        let temp_cursor_id = program.alloc_cursor_id(CursorType::BTreeTable(table.clone()));
 
         let ephemeral_plan = SelectPlan {
             table_references,
@@ -274,9 +278,9 @@ pub fn prepare_update_plan(
             order_by: None,     // N/A
             aggregates: vec![], // N/A
             limit: None,        // N/A
-            query_destination: QueryDestination::EphemeralIndex {
+            query_destination: QueryDestination::EphemeralTable {
                 cursor_id: temp_cursor_id,
-                index,
+                table,
             },
             join_order: vec![],
             offset: None,

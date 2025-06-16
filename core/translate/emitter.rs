@@ -615,12 +615,16 @@ fn emit_program_for_update(
 
     let ephemeral_plan = plan.ephemeral_plan.take();
     let temp_cursor_id = ephemeral_plan.as_ref().map(|plan| {
-        let QueryDestination::EphemeralIndex { cursor_id, .. } = &plan.query_destination else {
+        let QueryDestination::EphemeralTable { cursor_id, .. } = &plan.query_destination else {
             unreachable!()
         };
         *cursor_id
     });
     if let Some(ephemeral_plan) = ephemeral_plan {
+        program.emit_insn(Insn::OpenEphemeral {
+            cursor_id: temp_cursor_id.unwrap(),
+            is_table: true,
+        });
         program.incr_nesting();
         emit_program_for_select(program, ephemeral_plan, schema, syms)?;
         program.decr_nesting();
@@ -1175,20 +1179,4 @@ fn init_limit(
             combined_reg,
         });
     }
-}
-
-/// Emits an ephemeral table that reads the rowids from `table`
-fn emit_ephemeral_insert(program: &mut ProgramBuilder, ctx: &EphemeralCtx) -> Result<()> {
-    program.emit_insn(Insn::RowId {
-        cursor_id: ctx.table_cursor_id,
-        dest: ctx.rowid_reg,
-    });
-    program.emit_insn(Insn::Insert {
-        cursor: ctx.temp_cursor_id,
-        key_reg: ctx.rowid_reg,
-        record_reg: ctx.null_data_reg,
-        flag: InsertFlags(0), // TODO: when we use the flags see if this needs to change
-        table_name: ctx.table.table.get_name().to_string(),
-    });
-    Ok(())
 }
