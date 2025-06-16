@@ -46,7 +46,7 @@ use insert::translate_insert;
 use limbo_sqlite3_parser::ast::{self, Delete, Insert};
 use schema::{translate_create_table, translate_create_virtual_table, translate_drop_table};
 use select::translate_select;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 use std::sync::Arc;
 use tracing::{instrument, Level};
 use transaction::{translate_tx_begin, translate_tx_commit};
@@ -58,7 +58,7 @@ pub fn translate(
     stmt: ast::Stmt,
     database_header: Arc<SpinLock<DatabaseHeader>>,
     pager: Rc<Pager>,
-    connection: Weak<Connection>,
+    connection: Arc<Connection>,
     syms: &SymbolTable,
     query_mode: QueryMode,
     _input: &str, // TODO: going to be used for CREATE VIEW

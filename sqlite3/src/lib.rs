@@ -5,7 +5,6 @@ use limbo_core::Value;
 use std::ffi::{self, CStr, CString};
 use tracing::trace;
 
-use std::rc::Rc;
 use std::sync::Arc;
 
 macro_rules! stub {
@@ -42,7 +41,7 @@ use util::sqlite3_safety_check_sick_or_ok;
 pub struct sqlite3 {
     pub(crate) io: Arc<dyn limbo_core::IO>,
     pub(crate) _db: Arc<limbo_core::Database>,
-    pub(crate) conn: Rc<limbo_core::Connection>,
+    pub(crate) conn: Arc<limbo_core::Connection>,
     pub(crate) err_code: ffi::c_int,
     pub(crate) err_mask: ffi::c_int,
     pub(crate) malloc_failed: bool,
@@ -54,7 +53,7 @@ impl sqlite3 {
     pub fn new(
         io: Arc<dyn limbo_core::IO>,
         db: Arc<limbo_core::Database>,
-        conn: Rc<limbo_core::Connection>,
+        conn: Arc<limbo_core::Connection>,
     ) -> Self {
         Self {
             io,
