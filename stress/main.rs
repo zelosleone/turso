@@ -451,7 +451,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 panic!("Error executing query: {}", e);
                             } else if e.contains("UNIQUE constraint failed") {
                                 println!("Skipping UNIQUE constraint violation: {}", e);
-                                continue;
                             } else {
                                 println!("Error executing query: {}", e);
                             }
