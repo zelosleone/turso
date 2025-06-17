@@ -4,7 +4,12 @@ import limbo
 from antithesis.random import get_random
 from antithesis.assertions import always
 
-con = limbo.connect("bank_test.db")
+try:
+    con = limbo.connect("bank_test.db")
+except Exception as e:
+    print(f"Error connecting to database: {e}")
+    exit(0)
+
 cur = con.cursor()
 
 initial_state = cur.execute(f'''

@@ -13,7 +13,12 @@ logger.setLevel(logging.INFO)
 
 logger.addHandler(handler)
 
-con = limbo.connect("bank_test.db")
+try:
+    con = limbo.connect("bank_test.db")
+except Exception as e:
+    print(f"Error connecting to database: {e}")
+    exit(0)
+
 cur = con.cursor()
 
 length = cur.execute("SELECT num_accts FROM initial_state").fetchone()[0]

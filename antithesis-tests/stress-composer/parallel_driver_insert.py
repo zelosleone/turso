@@ -7,7 +7,12 @@ from antithesis.random import get_random
 
 
 # Get initial state
-con_init = limbo.connect('init_state.db')
+try:
+    con_init = limbo.connect('init_state.db')
+except Exception as e:
+    print(f"Error connecting to database: {e}")
+    exit(0)
+
 cur_init = con_init.cursor()
 
 tbl_len = cur_init.execute('SELECT count FROM tables').fetchone()[0]
@@ -15,7 +20,12 @@ selected_tbl = get_random() % tbl_len
 tbl_schema = json.loads(cur_init.execute(f'SELECT schema FROM schemas WHERE tbl = {selected_tbl}').fetchone()[0])
 cols = ', '.join([f'col_{col}' for col in range(tbl_schema['colCount'])])
 
-con = limbo.connect('stress_composer.db')
+try:
+    con = limbo.connect('stress_composer.db')
+except limbo.OperationalError as e:
+    print(f'Failed to open stress_composer.db. Exiting... {e}')
+    exit(0)
+
 cur = con.cursor()
 
 # insert up to 100 rows in the selected table

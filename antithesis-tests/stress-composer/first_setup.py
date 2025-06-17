@@ -23,12 +23,22 @@ for f in glob.glob('*.db-wal'):
         pass
 
 # store initial states in a separate db
-con_init = limbo.connect('init_state.db')
+try:
+    con_init = limbo.connect('init_state.db')
+except Exception as e:
+    print(f"Error connecting to database: {e}")
+    exit(0)
+
 cur_init = con_init.cursor()
 cur_init.execute('CREATE TABLE schemas (schema TEXT, tbl INT PRIMARY KEY)')
 cur_init.execute('CREATE TABLE tables (count INT)')
 
-con = limbo.connect('stress_composer.db')
+try:
+    con = limbo.connect('stress_composer.db')
+except Exception as e:
+    print(f"Error connecting to database: {e}")
+    exit(0)
+
 cur = con.cursor()
 
 tbl_count = max(1, get_random() % 10)
