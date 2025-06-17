@@ -241,3 +241,55 @@ do_execsql_test_on_specific_db {:memory:} having_or {
   order by cnt desc
 } {Michael|2|37.5
 Sarah|1|65.0}
+
+do_execsql_test complex_result_expression_containing_aggregate {
+  select
+    case when price > 70 then group_concat(name, ',') else '<undisclosed>' end names
+  from products
+  group by price
+  order by price;
+} {<undisclosed>
+<undisclosed>
+<undisclosed>
+<undisclosed>
+<undisclosed>
+sweatshirt
+jeans
+hat
+accessories
+cap,sneakers}
+
+do_execsql_test complex_result_expression_containing_aggregate_and_rowid {
+  select
+    case when rowid >= 5 then group_concat(name, ',') else '<undisclosed>' end names
+  from products
+  group by rowid
+  order by rowid;
+} {<undisclosed>
+   <undisclosed>
+   <undisclosed>
+   <undisclosed>
+sweatshirt
+shorts
+jeans
+sneakers
+boots
+coat
+accessories}
+
+do_execsql_test complex_having_expression_containing_aggregate {
+  select group_concat(name, ',') from products group by price having (group_concat(name, ',') || price) like 'ca%';
+} {cap,sneakers}
+
+do_execsql_test complex_order_by_expression_containing_aggregate {
+  select group_concat(name, ',') from products group by price order by (group_concat(name, ',') || price);
+} {accessories
+boots
+cap,sneakers
+coat
+hat
+jeans
+shirt
+shorts
+sweater
+sweatshirt}

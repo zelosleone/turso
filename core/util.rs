@@ -1,3 +1,4 @@
+use crate::translate::expr::WalkControl;
 use crate::{
     schema::{self, Column, Schema, Type},
     translate::{collate::CollationSeq, expr::walk_expr, plan::JoinOrderMember},
@@ -589,7 +590,7 @@ pub fn can_pushdown_predicate(
     join_order: &[JoinOrderMember],
 ) -> Result<bool> {
     let mut can_pushdown = true;
-    walk_expr(top_level_expr, &mut |expr: &Expr| -> Result<()> {
+    walk_expr(top_level_expr, &mut |expr: &Expr| -> Result<WalkControl> {
         match expr {
             Expr::Column { table, .. } | Expr::RowId { table, .. } => {
                 let join_idx = join_order
@@ -608,7 +609,7 @@ pub fn can_pushdown_predicate(
             }
             _ => {}
         };
-        Ok(())
+        Ok(WalkControl::Continue)
     })?;
 
     Ok(can_pushdown)

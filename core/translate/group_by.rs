@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use limbo_sqlite3_parser::ast;
 
+use crate::translate::expr::{walk_expr, WalkControl};
 use crate::translate::plan::ResultSetColumn;
 use crate::{
     function::AggFunc,
@@ -86,21 +87,15 @@ pub fn init_group_by<'a>(
     group_by: &'a GroupBy,
     plan: &SelectPlan,
     result_columns: &'a Vec<ResultSetColumn>,
+    order_by: &'a Option<Vec<(ast::Expr, ast::SortOrder)>>,
 ) -> Result<()> {
-    for group_expr in &group_by.exprs {
-        let in_result = result_columns
-            .iter()
-            .any(|col| exprs_are_equivalent(&col.expr, group_expr));
-        t_ctx
-            .non_aggregate_expressions
-            .push((group_expr, in_result));
-    }
-    for col in result_columns
-        .iter()
-        .filter(|rc| !rc.contains_aggregates && !is_column_in_group_by(&rc.expr, &group_by.exprs))
-    {
-        t_ctx.non_aggregate_expressions.push((&col.expr, true));
-    }
+    collect_non_aggregate_expressions(
+        &mut t_ctx.non_aggregate_expressions,
+        group_by,
+        plan,
+        result_columns,
+        order_by,
+    )?;
 
     let label_subrtn_acc_output = program.allocate_label();
     let label_group_by_end_without_emitting_row = program.allocate_label();
@@ -237,6 +232,68 @@ pub fn init_group_by<'a>(
             reg_group_by_source_cols_start,
         },
     });
+    Ok(())
+}
+
+fn collect_non_aggregate_expressions<'a>(
+    non_aggregate_expressions: &mut Vec<(&'a ast::Expr, bool)>,
+    group_by: &'a GroupBy,
+    plan: &SelectPlan,
+    root_result_columns: &'a Vec<ResultSetColumn>,
+    order_by: &'a Option<Vec<(ast::Expr, ast::SortOrder)>>,
+) -> Result<()> {
+    let mut result_columns = Vec::new();
+    for expr in root_result_columns
+        .iter()
+        .map(|col| &col.expr)
+        .chain(order_by.iter().flat_map(|o| o.iter().map(|(e, _)| e)))
+        .chain(group_by.having.iter().flatten())
+    {
+        collect_result_columns(expr, plan, &mut result_columns)?;
+    }
+
+    for group_expr in &group_by.exprs {
+        let in_result = result_columns
+            .iter()
+            .any(|expr| exprs_are_equivalent(expr, group_expr));
+        non_aggregate_expressions.push((group_expr, in_result));
+    }
+    for expr in result_columns {
+        let in_group_by = group_by
+            .exprs
+            .iter()
+            .any(|group_expr| exprs_are_equivalent(expr, group_expr));
+        if !in_group_by {
+            non_aggregate_expressions.push((expr, true));
+        }
+    }
+    Ok(())
+}
+
+fn collect_result_columns<'a>(
+    root_expr: &'a ast::Expr,
+    plan: &SelectPlan,
+    result_columns: &mut Vec<&'a ast::Expr>,
+) -> Result<()> {
+    walk_expr(root_expr, &mut |expr: &ast::Expr| -> Result<WalkControl> {
+        match expr {
+            ast::Expr::Column { table, .. } | ast::Expr::RowId { table, .. } => {
+                if plan
+                    .table_references
+                    .find_joined_table_by_internal_id(*table)
+                    .is_some()
+                {
+                    result_columns.push(expr);
+                }
+            }
+            _ => {
+                if plan.aggregates.iter().any(|a| a.original_expr == *expr) {
+                    return Ok(WalkControl::SkipChildren);
+                }
+            }
+        };
+        Ok(WalkControl::Continue)
+    })?;
     Ok(())
 }
 
@@ -1078,10 +1135,4 @@ pub fn translate_aggregation_step_groupby(
         }
     };
     Ok(dest)
-}
-
-pub fn is_column_in_group_by(expr: &ast::Expr, group_by_exprs: &[ast::Expr]) -> bool {
-    group_by_exprs
-        .iter()
-        .any(|expr2| exprs_are_equivalent(expr, expr2))
 }
