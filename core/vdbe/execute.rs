@@ -1685,7 +1685,7 @@ pub fn op_transaction(
         }
 
         // We allocate the first page lazily in the *first* write transaction
-        if conn.pager.npages.load(Ordering::SeqCst) == 0 {
+        if conn.pager.is_empty.load(Ordering::SeqCst) {
             conn.pager.allocate_page1()?;
         }
     }
@@ -5221,6 +5221,7 @@ pub fn op_open_ephemeral(
         io,
         page_cache,
         buffer_pool.clone(),
+        true,
     )?);
 
     let header = pager.db_header()?;
