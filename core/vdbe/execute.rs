@@ -5792,10 +5792,11 @@ impl Value {
 
     pub fn exec_hex(&self) -> Value {
         match self {
-            Value::Text(_) | Value::Integer(_) | Value::Float(_) | Value::Blob(_) => {
+            Value::Text(_) | Value::Integer(_) | Value::Float(_) => {
                 let text = self.to_string();
                 Value::build_text(&hex::encode_upper(text))
             }
+            Value::Blob(blob_bytes) => Value::build_text(&hex::encode_upper(blob_bytes)),
             _ => Value::Null,
         }
     }
@@ -7548,6 +7549,10 @@ mod tests {
         let input_float = Value::Float(12.34);
         let expected_val = Value::build_text("31322E3334");
         assert_eq!(input_float.exec_hex(), expected_val);
+
+        let input_blob = Value::Blob(vec![0xff]);
+        let expected_val = Value::build_text("FF");
+        assert_eq!(input_blob.exec_hex(), expected_val);
     }
 
     #[test]
