@@ -32,25 +32,25 @@ class JDBC4StatementTest {
 
   @Test
   void execute_ddl_should_return_false() throws Exception {
-    assertFalse(stmt.execute("CREATE TABLE users (id INT PRIMARY KEY, username TEXT);"));
+    assertFalse(stmt.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);"));
   }
 
   @Test
   void execute_insert_should_return_false() throws Exception {
-    stmt.execute("CREATE TABLE users (id INT PRIMARY KEY, username TEXT);");
+    stmt.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);");
     assertFalse(stmt.execute("INSERT INTO users VALUES (1, 'limbo');"));
   }
 
   @Test
   void execute_update_should_return_false() throws Exception {
-    stmt.execute("CREATE TABLE users (id INT PRIMARY KEY, username TEXT);");
+    stmt.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);");
     stmt.execute("INSERT INTO users VALUES (1, 'limbo');");
     assertFalse(stmt.execute("UPDATE users SET username = 'seonwoo' WHERE id = 1;"));
   }
 
   @Test
   void execute_select_should_return_true() throws Exception {
-    stmt.execute("CREATE TABLE users (id INT PRIMARY KEY, username TEXT);");
+    stmt.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);");
     stmt.execute("INSERT INTO users VALUES (1, 'limbo');");
     assertTrue(stmt.execute("SELECT * FROM users;"));
   }
