@@ -393,6 +393,7 @@ fn test_write_delete_with_index() -> anyhow::Result<()> {
 }
 
 #[test]
+#[cfg(feature = "index_experimental")]
 fn test_update_with_index() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
 
