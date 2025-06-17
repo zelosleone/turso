@@ -70,7 +70,7 @@ pub fn translate_pragma(
                 &mut program,
             )?;
         }
-        Some(ast::PragmaBody::Equals(value)) => match pragma {
+        Some(ast::PragmaBody::Equals(value) | ast::PragmaBody::Call(value)) => match pragma {
             PragmaName::TableInfo => {
                 query_pragma(
                     pragma,
@@ -93,22 +93,6 @@ pub fn translate_pragma(
                     connection,
                     &mut program,
                 )?;
-            }
-        },
-        Some(ast::PragmaBody::Call(value)) => match pragma {
-            PragmaName::TableInfo => {
-                query_pragma(
-                    pragma,
-                    schema,
-                    Some(value),
-                    database_header.clone(),
-                    pager,
-                    connection,
-                    &mut program,
-                )?;
-            }
-            _ => {
-                todo!()
             }
         },
     };
@@ -156,7 +140,7 @@ fn update_pragma(
             query_pragma(
                 PragmaName::WalCheckpoint,
                 schema,
-                None,
+                Some(value),
                 header,
                 pager,
                 connection,
@@ -290,11 +274,26 @@ fn query_pragma(
         PragmaName::WalCheckpoint => {
             // Checkpoint uses 3 registers: P1, P2, P3. Ref Insn::Checkpoint for more info.
             // Allocate two more here as one was allocated at the top.
-            program.alloc_register();
-            program.alloc_register();
+            let mode = match value {
+                Some(ast::Expr::Name(name)) => {
+                    let mode_name = normalize_ident(&name.0);
+                    CheckpointMode::from_str(&mode_name).map_err(|e| {
+                        LimboError::ParseError(format!("Unknown Checkpoint Mode: {}", e))
+                    })?
+                }
+                _ => CheckpointMode::Passive,
+            };
+
+            if !matches!(mode, CheckpointMode::Passive) {
+                return Err(LimboError::ParseError(
+                    "only Passive mode supported".to_string(),
+                ));
+            }
+
+            program.alloc_registers(2);
             program.emit_insn(Insn::Checkpoint {
                 database: 0,
-                checkpoint_mode: CheckpointMode::Passive,
+                checkpoint_mode: mode,
                 dest: register,
             });
             program.emit_result_row(register, 3);
@@ -317,11 +316,7 @@ fn query_pragma(
             };
 
             let base_reg = register;
-            program.alloc_register();
-            program.alloc_register();
-            program.alloc_register();
-            program.alloc_register();
-            program.alloc_register();
+            program.alloc_registers(5);
             if let Some(table) = table {
                 for (i, column) in table.columns().iter().enumerate() {
                     // cid
