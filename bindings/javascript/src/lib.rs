@@ -585,7 +585,7 @@ impl limbo_core::DatabaseStorage for DatabaseFile {
     }
 
     fn size(&self) -> limbo_core::Result<u64> {
-        todo!()
+        self.file.size()
     }
 }
 
