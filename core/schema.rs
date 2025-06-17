@@ -9,7 +9,7 @@ use limbo_sqlite3_parser::{
     ast::{Cmd, CreateTableBody, QualifiedName, ResultColumn, Stmt},
     lexer::sql::Parser,
 };
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 use tracing::trace;
@@ -25,13 +25,15 @@ pub struct Schema {
     /// This is necessary because we won't populate indexes so that we don't use them but
     /// we still need to know if a table has an index to disallow any write operation that requires
     /// indexes.
-    pub has_indexes: HashSet<String>,
+    #[cfg(not(feature = "index_experimental"))]
+    pub has_indexes: std::collections::HashSet<String>,
 }
 
 impl Schema {
     pub fn new() -> Self {
         let mut tables: HashMap<String, Arc<Table>> = HashMap::new();
-        let has_indexes = HashSet::new();
+        #[cfg(not(feature = "index_experimental"))]
+        let has_indexes = std::collections::HashSet::new();
         let indexes: HashMap<String, Vec<Arc<Index>>> = HashMap::new();
         #[allow(clippy::arc_with_non_send_sync)]
         tables.insert(
@@ -41,6 +43,7 @@ impl Schema {
         Self {
             tables,
             indexes,
+            #[cfg(not(feature = "index_experimental"))]
             has_indexes,
         }
     }

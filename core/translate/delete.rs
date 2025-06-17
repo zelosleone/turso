@@ -1,4 +1,3 @@
-use crate::bail_parse_error;
 use crate::schema::Table;
 use crate::translate::emitter::emit_program;
 use crate::translate::optimizer::optimize_plan;
@@ -24,7 +23,7 @@ pub fn translate_delete(
         if schema.table_has_indexes(&tbl_name.name.to_string()) {
             // Let's disable altering a table with indices altogether instead of checking column by
             // column to be extra safe.
-            bail_parse_error!(
+            crate::bail_parse_error!(
                 "DELETE into table disabled for table with indexes and without index_experimental feature flag"
             );
         }
