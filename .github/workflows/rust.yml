@@ -41,6 +41,11 @@ jobs:
         RUST_LOG: ${{ runner.debug && 'limbo_core::storage=trace' || '' }}
       run: cargo test --verbose
       timeout-minutes: 20
+    - name: Tests with indexes
+      env:
+        RUST_LOG: ${{ runner.debug && 'limbo_core::storage=trace' || '' }}
+      run: cargo test --verbose -p core_tester  --features index_experimental -- --ignored index_scan
+      timeout-minutes: 20
 
 
   clippy:

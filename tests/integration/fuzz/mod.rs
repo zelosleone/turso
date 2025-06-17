@@ -165,6 +165,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "only used with feature index_experimental"]
     pub fn index_scan_fuzz() {
         let db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x PRIMARY KEY)");
         let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
@@ -212,6 +213,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "only used with feature index_experimental"]
     /// A test for verifying that index seek+scan works correctly for compound keys
     /// on indexes with various column orderings.
     pub fn index_scan_compound_key_fuzz() {
