@@ -283,6 +283,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "index_experimental")]
     fn test_unique_index_ordering() -> anyhow::Result<()> {
         let db = TempDatabase::new_empty();
         let conn = db.connect_limbo();
@@ -323,6 +324,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "index_experimental")]
     fn test_large_unique_blobs() -> anyhow::Result<()> {
         let path = TempDir::new().unwrap().keep().join("temp_read_only");
         let db = TempDatabase::new_with_existent(&path);

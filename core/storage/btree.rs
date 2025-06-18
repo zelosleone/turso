@@ -7097,6 +7097,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "index_experimental")]
     fn btree_index_insert_fuzz_run(attempts: usize, inserts: usize) {
         let (mut rng, seed) = if std::env::var("SEED").is_ok() {
             let seed = std::env::var("SEED").unwrap();
@@ -7282,6 +7283,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "index_experimental")]
     pub fn btree_index_insert_fuzz_run_equal_size() {
         btree_index_insert_fuzz_run(2, 1024);
     }
@@ -7317,6 +7319,7 @@ mod tests {
 
     #[test]
     #[ignore]
+    #[cfg(feature = "index_experimental")]
     pub fn fuzz_long_btree_index_insert_fuzz_run_equal_size() {
         btree_index_insert_fuzz_run(2, 10_000);
     }
