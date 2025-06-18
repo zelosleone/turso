@@ -161,9 +161,11 @@ impl ArbitrarySchema {
                     .map(|col| {
                         let mut col_def =
                             format!("  {} {}", col.name, data_type_to_sql(&col.data_type));
-                        for constraint in &col.constraints {
-                            col_def.push(' ');
-                            col_def.push_str(&constraint_to_sql(constraint));
+                        if cfg!(feature = "index_experimental") {
+                            for constraint in &col.constraints {
+                                col_def.push(' ');
+                                col_def.push_str(&constraint_to_sql(constraint));
+                            }
                         }
                         col_def
                     })
