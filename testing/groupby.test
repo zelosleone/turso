@@ -200,6 +200,23 @@ do_execsql_test group_by_no_sorting_required {
 3|97}
 
 if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-sqlite3-index-experimental" || $::env(SQLITE_EXEC) eq "sqlite3")} {
+  do_execsql_test_on_specific_db {:memory:} group_by_no_sorting_required_reordered_columns {
+    create table t0 (a INT, b INT, c INT);
+    create index a_b_idx on t0 (a, b);
+    insert into t0 values
+      (1,1,1),
+      (1,1,2),
+      (2,1,3),
+      (2,2,3),
+      (2,2,5);
+
+    select c, b, a from t0 group by a, b;
+  } {1|1|1
+  3|1|2
+  3|2|2}
+}
+
+if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-sqlite3-index-experimental" || $::env(SQLITE_EXEC) eq "sqlite3")} {
     do_execsql_test distinct_agg_functions {
     select first_name, sum(distinct age), count(distinct age), avg(distinct age)
     from users
