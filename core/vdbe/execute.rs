@@ -1709,6 +1709,7 @@ pub fn op_transaction(
 
         if updated && matches!(new_transaction_state, TransactionState::Write) {
             if let LimboResult::Busy = pager.begin_write_tx()? {
+                pager.end_read_tx()?;
                 tracing::trace!("begin_write_tx busy");
                 return Ok(InsnFunctionStepResult::Busy);
             }
