@@ -7,6 +7,7 @@ use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::CreateBTreeFlags;
 use crate::storage::wal::DummyWAL;
+use crate::storage::{self, header_accessor};
 use crate::translate::collate::CollationSeq;
 use crate::types::{ImmutableRecord, Text};
 use crate::util::normalize_ident;
@@ -3697,8 +3698,7 @@ pub fn op_function(
                 }
             }
             ScalarFunc::SqliteVersion => {
-                let header = pager.db_header()?;
-                let version_integer: i64 = header.version_number as i64;
+                let version_integer: i64 = header_accessor::get_version_number(&pager)? as i64;
                 let version = execute_sqlite_version(version_integer);
                 state.registers[*dest] = Register::Value(Value::build_text(version));
             }
@@ -4903,7 +4903,7 @@ pub fn op_page_count(
         // TODO: implement temp databases
         todo!("temp databases not implemented yet");
     }
-    let count = pager.db_header()?.database_size.into();
+    let count = header_accessor::get_database_size(pager)?.into();
     state.registers[*dest] = Register::Value(Value::Integer(count));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -4980,9 +4980,11 @@ pub fn op_read_cookie(
         todo!("temp databases not implemented yet");
     }
     let cookie_value = match cookie {
-        Cookie::UserVersion => pager.db_header()?.user_version.into(),
-        Cookie::SchemaVersion => pager.db_header()?.schema_cookie.into(),
-        Cookie::LargestRootPageNumber => pager.db_header()?.vacuum_mode_largest_root_page.into(),
+        Cookie::UserVersion => header_accessor::get_user_version(pager)?.into(),
+        Cookie::SchemaVersion => header_accessor::get_schema_cookie(pager)?.into(),
+        Cookie::LargestRootPageNumber => {
+            header_accessor::get_vacuum_mode_largest_root_page(pager)?.into()
+        }
         cookie => todo!("{cookie:?} is not yet implement for ReadCookie"),
     };
     state.registers[*dest] = Register::Value(Value::Integer(cookie_value));
@@ -5011,19 +5013,13 @@ pub fn op_set_cookie(
     }
     match cookie {
         Cookie::UserVersion => {
-            let mut header_guard = pager.db_header()?;
-            header_guard.user_version = *value;
-            pager.write_database_header(&header_guard)?;
+            header_accessor::set_user_version(pager, *value as i32)?;
         }
         Cookie::LargestRootPageNumber => {
-            let mut header_guard = pager.db_header()?;
-            header_guard.vacuum_mode_largest_root_page = *value as u32;
-            pager.write_database_header(&header_guard)?;
+            header_accessor::set_vacuum_mode_largest_root_page(pager, *value as u32)?;
         }
         Cookie::IncrementalVacuum => {
-            let mut header_guard = pager.db_header()?;
-            header_guard.incremental_vacuum_enabled = *value as u32;
-            pager.write_database_header(&header_guard)?;
+            header_accessor::set_incremental_vacuum_enabled(pager, *value as u32)?;
         }
         cookie => todo!("{cookie:?} is not yet implement for SetCookie"),
     }
@@ -5225,8 +5221,9 @@ pub fn op_open_ephemeral(
         true,
     )?);
 
-    let header = pager.db_header()?;
-    buffer_pool.set_page_size(header.get_page_size() as usize);
+    let page_size = header_accessor::get_page_size(&pager)
+        .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE) as usize;
+    buffer_pool.set_page_size(page_size);
 
     let flag = if is_table {
         &CreateBTreeFlags::new_table()
