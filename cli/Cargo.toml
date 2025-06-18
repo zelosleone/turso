@@ -21,7 +21,7 @@ path = "main.rs"
 name = "limbo_index_experimental"
 path = "main.rs"
 required-features = ["index_experimental"]
-
+dist = false
 
 [dependencies]
 anyhow.workspace = true
