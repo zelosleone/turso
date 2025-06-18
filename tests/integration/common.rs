@@ -12,6 +12,7 @@ use tracing_subscriber::EnvFilter;
 pub struct TempDatabase {
     pub path: PathBuf,
     pub io: Arc<dyn IO + Send>,
+    pub db: Arc<Database>,
 }
 unsafe impl Send for TempDatabase {}
 
@@ -25,14 +26,29 @@ impl TempDatabase {
         let mut path = TempDir::new().unwrap().keep();
         path.push(db_name);
         let io: Arc<dyn IO + Send> = Arc::new(limbo_core::PlatformIO::new().unwrap());
-        Self { path, io }
+        let db = Database::open_file_with_flags(
+            io.clone(),
+            path.to_str().unwrap(),
+            limbo_core::OpenFlags::default(),
+            false,
+        )
+        .unwrap();
+        Self { path, io, db }
     }
 
     pub fn new_with_existent(db_path: &Path) -> Self {
+        Self::new_with_existent_with_flags(db_path, limbo_core::OpenFlags::default())
+    }
+
+    pub fn new_with_existent_with_flags(db_path: &Path, flags: limbo_core::OpenFlags) -> Self {
         let io: Arc<dyn IO + Send> = Arc::new(limbo_core::PlatformIO::new().unwrap());
+        let db =
+            Database::open_file_with_flags(io.clone(), db_path.to_str().unwrap(), flags, false)
+                .unwrap();
         Self {
             path: db_path.to_path_buf(),
             io,
+            db,
         }
     }
 
@@ -50,28 +66,21 @@ impl TempDatabase {
             connection.execute(table_sql, ()).unwrap();
         }
         let io: Arc<dyn limbo_core::IO> = Arc::new(limbo_core::PlatformIO::new().unwrap());
-
-        Self { path, io }
-    }
-
-    pub fn connect_limbo(&self) -> Arc<limbo_core::Connection> {
-        Self::connect_limbo_with_flags(&self, limbo_core::OpenFlags::default())
-    }
-
-    pub fn connect_limbo_with_flags(
-        &self,
-        flags: limbo_core::OpenFlags,
-    ) -> Arc<limbo_core::Connection> {
-        log::debug!("conneting to limbo");
         let db = Database::open_file_with_flags(
-            self.io.clone(),
-            self.path.to_str().unwrap(),
-            flags,
+            io.clone(),
+            path.to_str().unwrap(),
+            limbo_core::OpenFlags::default(),
             false,
         )
         .unwrap();
 
-        let conn = db.connect().unwrap();
+        Self { path, io, db }
+    }
+
+    pub fn connect_limbo(&self) -> Arc<limbo_core::Connection> {
+        log::debug!("conneting to limbo");
+
+        let conn = self.db.connect().unwrap();
         log::debug!("connected to limbo");
         conn
     }
@@ -260,7 +269,10 @@ mod tests {
     #[test]
     fn test_limbo_open_read_only() -> anyhow::Result<()> {
         let path = TempDir::new().unwrap().keep().join("temp_read_only");
-        let db = TempDatabase::new_with_existent(&path);
+        let db = TempDatabase::new_with_existent_with_flags(
+            &path,
+            limbo_core::OpenFlags::default() | limbo_core::OpenFlags::ReadOnly,
+        );
         {
             let conn = db.connect_limbo();
             let ret = limbo_exec_rows(&db, &conn, "CREATE table t(a)");
@@ -270,9 +282,7 @@ mod tests {
         }
 
         {
-            let conn = db.connect_limbo_with_flags(
-                limbo_core::OpenFlags::default() | limbo_core::OpenFlags::ReadOnly,
-            );
+            let conn = db.connect_limbo();
             let ret = limbo_exec_rows(&db, &conn, "SELECT * from t");
             assert_eq!(ret, vec![vec![Value::Integer(1)]]);
 
