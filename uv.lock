@@ -430,6 +430,20 @@ dev = [
     { name = "ruff" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "coverage" },
+    { name = "iniconfig" },
+    { name = "maturin" },
+    { name = "mypy" },
+    { name = "mypy-extensions" },
+    { name = "pluggy" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+    { name = "typing-extensions" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "coverage", marker = "extra == 'dev'", specifier = "==7.6.1" },
@@ -441,6 +455,20 @@ requires-dist = [
     { name = "typing-extensions", specifier = ">=4.6.0,!=4.7.0" },
 ]
 provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "coverage", specifier = ">=7.6.1" },
+    { name = "iniconfig", specifier = ">=2.1.0" },
+    { name = "maturin", specifier = ">=1.7.8" },
+    { name = "mypy", specifier = ">=1.11.0" },
+    { name = "mypy-extensions", specifier = ">=1.1.0" },
+    { name = "pluggy", specifier = ">=1.6.0" },
+    { name = "pytest", specifier = ">=8.3.1" },
+    { name = "pytest-cov", specifier = ">=5.0.0" },
+    { name = "ruff", specifier = ">=0.5.4" },
+    { name = "typing-extensions", specifier = ">=4.13.0" },
+]
 
 [[package]]
 name = "pynacl"
