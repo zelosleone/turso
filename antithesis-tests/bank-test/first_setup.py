@@ -3,7 +3,12 @@
 import limbo
 from antithesis.random import get_random
 
-con = limbo.connect("bank_test.db")
+try:
+    con = limbo.connect("bank_test.db")
+except Exception as e:
+    print(f"Error connecting to database: {e}")
+    exit(0)
+
 cur = con.cursor()
 
 # drop accounts table if it exists and create a new table
