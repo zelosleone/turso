@@ -400,6 +400,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let mut opts = Opts::parse();
 
+    if opts.nr_threads > 1 {
+        println!("ERROR: Multi-threaded data access is not yet supported: https://github.com/tursodatabase/limbo/issues/1552");
+        return Ok(());
+    }
+
     let plan = if opts.load_log {
         read_plan_from_log_file(&mut opts)?
     } else {
