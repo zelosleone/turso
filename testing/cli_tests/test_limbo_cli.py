@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 import os
 import select
-from time import sleep
 import subprocess
 from pathlib import Path
+from time import sleep
 from typing import Callable, List, Optional
-from cli_tests import console
 
+from cli_tests import console
 
 PIPE_BUF = 4096
 
@@ -107,7 +107,7 @@ class TestLimboShell:
         flags="",
     ):
         if exec_name is None:
-            exec_name = os.environ.get('SQLITE_EXEC')
+            exec_name = os.environ.get("SQLITE_EXEC")
             if exec_name is None:
                 exec_name = "./scripts/limbo-sqlite3"
             if flags == "":
@@ -142,10 +142,7 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
         console.test(f"Running test: {name}", _stack_offset=2)
         actual = self.shell.execute(sql)
         assert actual == expected, (
-            f"Test failed: {name}\n"
-            f"SQL: {sql}\n"
-            f"Expected:\n{repr(expected)}\n"
-            f"Actual:\n{repr(actual)}"
+            f"Test failed: {name}\nSQL: {sql}\nExpected:\n{repr(expected)}\nActual:\n{repr(actual)}"
         )
 
     def run_debug(self, sql: str):
@@ -153,9 +150,7 @@ INSERT INTO t VALUES (zeroblob(1024 - 1), zeroblob(1024 - 2), zeroblob(1024 - 3)
         actual = self.shell.execute(sql)
         console.debug(f"OUTPUT:\n{repr(actual)}", _stack_offset=2)
 
-    def run_test_fn(
-        self, sql: str, validate: Callable[[str], bool], desc: str = ""
-    ) -> None:
+    def run_test_fn(self, sql: str, validate: Callable[[str], bool], desc: str = "") -> None:
         # Print the test that is executing before executing the sql command
         # Printing later confuses the user of the code what test has actually failed
         if desc:
