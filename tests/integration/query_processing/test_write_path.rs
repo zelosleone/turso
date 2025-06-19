@@ -561,11 +561,6 @@ fn test_write_concurrent_connections() -> anyhow::Result<()> {
     }
 
     let conn = tmp_db.connect_limbo();
-    // run_query_on_row(&tmp_db, &conn, "SELECT * from t", |row: &Row| {
-    //     for value in row.get_values() {
-    //         tracing::info!("got value {:?}", value);
-    //     }
-    // })?;
     run_query_on_row(&tmp_db, &conn, "SELECT count(1) from t", |row: &Row| {
         let count = row.get::<i64>(0).unwrap();
         assert_eq!(

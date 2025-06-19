@@ -269,11 +269,9 @@ mod tests {
     #[test]
     fn test_limbo_open_read_only() -> anyhow::Result<()> {
         let path = TempDir::new().unwrap().keep().join("temp_read_only");
-        let db = TempDatabase::new_with_existent_with_flags(
-            &path,
-            limbo_core::OpenFlags::default() | limbo_core::OpenFlags::ReadOnly,
-        );
         {
+            let db =
+                TempDatabase::new_with_existent_with_flags(&path, limbo_core::OpenFlags::default());
             let conn = db.connect_limbo();
             let ret = limbo_exec_rows(&db, &conn, "CREATE table t(a)");
             assert!(ret.is_empty(), "{:?}", ret);
@@ -282,6 +280,10 @@ mod tests {
         }
 
         {
+            let db = TempDatabase::new_with_existent_with_flags(
+                &path,
+                limbo_core::OpenFlags::default() | limbo_core::OpenFlags::ReadOnly,
+            );
             let conn = db.connect_limbo();
             let ret = limbo_exec_rows(&db, &conn, "SELECT * from t");
             assert_eq!(ret, vec![vec![Value::Integer(1)]]);
