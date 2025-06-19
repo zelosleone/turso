@@ -17,12 +17,6 @@ dist = true
 name = "limbo"
 path = "main.rs"
 
-[[bin]]
-name = "limbo_index_experimental"
-path = "main.rs"
-required-features = ["index_experimental"]
-dist = false
-
 [dependencies]
 anyhow.workspace = true
 cfg-if = "1.0.0"
