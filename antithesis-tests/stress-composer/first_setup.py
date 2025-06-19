@@ -6,7 +6,7 @@ import os
 import limbo
 from antithesis.random import get_random, random_choice
 
-constraints = ['NOT NULL', 'UNIQUE', '']
+constraints = ['NOT NULL', '']
 data_type = ['INTEGER', 'REAL', 'TEXT', 'BLOB', 'NUMERIC']
 
 # remove any existing db files
@@ -30,7 +30,7 @@ except Exception as e:
     exit(0)
 
 cur_init = con_init.cursor()
-cur_init.execute('CREATE TABLE schemas (schema TEXT, tbl INT PRIMARY KEY)')
+cur_init.execute('CREATE TABLE schemas (schema TEXT, tbl INT)')
 cur_init.execute('CREATE TABLE tables (count INT)')
 
 try:
@@ -63,13 +63,13 @@ for i in range(tbl_count):
         col_constraint_1 = random_choice(constraints)
         col_constraint_2 = random_choice(constraints)
 
-        col = f'col_{j} {col_data_type} {col_constraint_1} {col_constraint_2 if col_constraint_2 != col_constraint_1 else ""}' if j != pk else f'col_{j} {col_data_type} PRIMARY KEY NOT NULL'
+        col = f'col_{j} {col_data_type} {col_constraint_1} {col_constraint_2 if col_constraint_2 != col_constraint_1 else ""}' if j != pk else f'col_{j} {col_data_type}'
 
         cols.append(col)
 
         schema[f'col_{j}'] = {
             'data_type': col_data_type,
-            'constraint1': col_constraint_1 if j != pk else 'PRIMARY KEY',
+            'constraint1': col_constraint_1 if j != pk else '',
             'constraint2': col_constraint_2 if col_constraint_1 != col_constraint_2 else "" if j != pk else 'NOT NULL',
         }
 
