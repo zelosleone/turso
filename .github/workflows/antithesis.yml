@@ -1,4 +1,4 @@
-name: antithesis
+name: Antithesis experiment
 
 on:
   # Allows the workflow to be triggered manually
@@ -25,7 +25,7 @@ jobs:
     - uses: actions/checkout@v3
 
     - name: Publish workload 
-      run: ./scripts/antithesis/publish-workload.sh
+      run: bash ./scripts/antithesis/publish-workload.sh
 
     - name: Launch experiment
-      run: ./scripts/antithesis/launch.sh
+      run: bash ./scripts/antithesis/launch.sh
