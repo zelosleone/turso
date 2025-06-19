@@ -15,3 +15,16 @@ limbo_test = { workspace = true }
 
 [tool.uv.workspace]
 members = ["testing", "scripts", "antithesis-tests", "bindings/python"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+extend-select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warings
+    "F",   # pyflakes
+    'Q',   # flake8-quotes
+    'C90', # mccabe
+    'I',   # isort
+]

@@ -53,19 +53,6 @@ strip-extras = true
 header = false
 upgrade = false
 
-[tool.ruff]
-line-length = 120
-
-[tool.ruff.lint]
-extend-select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warings
-    "F",   # pyflakes
-    'Q',   # flake8-quotes
-    'C90', # mccabe
-    'I',   # isort
-]
-
 [tool.pytest.ini_options]
 testpaths = 'tests'
 log_format = '%(name)s %(levelname)s: %(message)s'
