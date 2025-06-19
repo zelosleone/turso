@@ -167,7 +167,7 @@ impl LimboRwLock {
     /// Unlock the current held lock.
     pub fn unlock(&mut self) {
         let lock = self.lock.load(Ordering::SeqCst);
-        tracing::trace!("unlock(lock={})", lock);
+        tracing::trace!("unlock(value={})", lock);
         match lock {
             NO_LOCK => {}
             SHARED_LOCK => {
@@ -511,6 +511,7 @@ impl Wal for WalFile {
         let shared = self.get_shared();
         {
             let lock = &mut shared.read_locks[max_read_mark_index as usize];
+            tracing::trace!("begin_read_tx_read_lock(lock={})", max_read_mark_index);
             let busy = !lock.read();
             if busy {
                 return Ok(LimboResult::Busy);
@@ -532,7 +533,7 @@ impl Wal for WalFile {
     /// End a read transaction.
     #[inline(always)]
     fn end_read_tx(&self) -> Result<LimboResult> {
-        tracing::debug!("end_read_tx");
+        tracing::debug!("end_read_tx(lock={})", self.max_frame_read_lock_index);
         let read_lock = &mut self.get_shared().read_locks[self.max_frame_read_lock_index];
         read_lock.unlock();
         Ok(LimboResult::Ok)
