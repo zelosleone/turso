@@ -88,7 +88,8 @@ RUN pip install antithesis
 WORKDIR /app
 EXPOSE 8080
 COPY --from=builder /usr/lib/libvoidstar.so* /usr/lib/
-COPY --from=builder /app/target/release/limbo_stress /bin/limbo_stress
+COPY --from=builder /app/target/antithesis/limbo_stress /bin/limbo_stress
+COPY --from=builder /app/target/antithesis/limbo_stress /symbols
 COPY stress/docker-entrypoint.sh /bin
 RUN chmod +x /bin/docker-entrypoint.sh
 
