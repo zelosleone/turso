@@ -413,6 +413,27 @@ fn emit_program_for_delete(
         OperationMode::DELETE,
     )?;
 
+    for cond in plan
+        .where_clause
+        .iter()
+        .filter(|c| c.should_eval_before_loop(&[JoinOrderMember::default()]))
+    {
+        let jump_target = program.allocate_label();
+        let meta = ConditionMetadata {
+            jump_if_condition_is_true: false,
+            jump_target_when_true: jump_target,
+            jump_target_when_false: t_ctx.label_main_loop_end.unwrap(),
+        };
+        translate_condition_expr(
+            program,
+            &plan.table_references,
+            &cond.expr,
+            meta,
+            &t_ctx.resolver,
+        )?;
+        program.preassign_label_to_next_insn(jump_target);
+    }
+
     // Set up main query execution loop
     open_loop(
         program,
@@ -465,27 +486,6 @@ fn emit_delete_insns(
     };
     let main_table_cursor_id =
         program.resolve_cursor_id(&CursorKey::table(table_reference.internal_id));
-
-    for cond in plan
-        .where_clause
-        .iter()
-        .filter(|c| c.should_eval_before_loop(&[JoinOrderMember::default()]))
-    {
-        let jump_target = program.allocate_label();
-        let meta = ConditionMetadata {
-            jump_if_condition_is_true: false,
-            jump_target_when_true: jump_target,
-            jump_target_when_false: t_ctx.label_main_loop_end.unwrap(),
-        };
-        translate_condition_expr(
-            program,
-            &plan.table_references,
-            &cond.expr,
-            meta,
-            &t_ctx.resolver,
-        )?;
-        program.preassign_label_to_next_insn(jump_target);
-    }
 
     // Emit the instructions to delete the row
     let key_reg = program.alloc_register();
