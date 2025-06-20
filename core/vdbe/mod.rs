@@ -471,11 +471,10 @@ impl Program {
         let mut buff = String::with_capacity(1024);
         buff.push_str("addr  opcode             p1    p2    p3    p4             p5  comment\n");
         buff.push_str("----  -----------------  ----  ----  ----  -------------  --  -------\n");
-        let mut indent_count: usize = 0;
         let indent = "  ";
-        let mut prev_insn: Option<&Insn> = None;
+        let indent_counts = get_indent_counts(&self.insns);
         for (addr, (insn, _)) in self.insns.iter().enumerate() {
-            indent_count = get_indent_count(indent_count, insn, prev_insn);
+            let indent_count = indent_counts[addr];
             print_insn(
                 self,
                 addr as InsnReference,
@@ -484,7 +483,6 @@ impl Program {
                 &mut buff,
             );
             buff.push('\n');
-            prev_insn = Some(insn);
         }
         buff
     }
@@ -565,27 +563,63 @@ fn print_insn(program: &Program, addr: InsnReference, insn: &Insn, indent: Strin
     w.push_str(&s);
 }
 
-fn get_indent_count(indent_count: usize, curr_insn: &Insn, prev_insn: Option<&Insn>) -> usize {
-    let indent_count = if let Some(insn) = prev_insn {
+// The indenting rules are(from SQLite):
+//
+//  * For each "Next", "Prev", "VNext" or "VPrev" instruction, increase the ident number for
+//    all opcodes that occur between the p2 jump destination and the opcode itself.
+//
+//   * Do the previous for "Return" instructions for when P2 is positive.
+//
+//   * For each "Goto", if the jump destination is earlier in the program and ends on one of:
+//        Yield  SeekGt  SeekLt  RowSetRead  Rewind
+//     or if the P1 parameter is one instead of zero, then increase the indent number for all
+//     opcodes between the earlier instruction and "Goto"
+fn get_indent_counts(insns: &Vec<(Insn, InsnFunction)>) -> Vec<usize> {
+    let mut indents = vec![0; insns.len()];
+
+    for (i, (insn, _)) in insns.iter().enumerate() {
+        let mut start = 0;
+        let mut end = 0;
         match insn {
-            Insn::Rewind { .. }
-            | Insn::Last { .. }
-            | Insn::SorterSort { .. }
-            | Insn::SeekGE { .. }
-            | Insn::SeekGT { .. }
-            | Insn::SeekLE { .. }
-            | Insn::SeekLT { .. } => indent_count + 1,
+            Insn::Next { pc_if_next, .. } | Insn::VNext { pc_if_next, .. } => {
+                let dest = pc_if_next.to_debug_int() as usize;
+                if dest < i {
+                    start = dest;
+                    end = i;
+                }
+            }
+            Insn::Prev { pc_if_prev, .. } => {
+                let dest = pc_if_prev.to_debug_int() as usize;
+                if dest < i {
+                    start = dest;
+                    end = i;
+                }
+            }
 
-            _ => indent_count,
+            Insn::Goto { target_pc } => {
+                let dest = target_pc.to_debug_int() as usize;
+                if dest < i
+                    && matches!(
+                        insns.get(dest).map(|(insn, _)| insn),
+                        Some(Insn::Yield { .. })
+                            | Some(Insn::SeekGT { .. })
+                            | Some(Insn::SeekLT { .. })
+                            | Some(Insn::Rewind { .. })
+                    )
+                {
+                    start = dest;
+                    end = i;
+                }
+            }
+
+            _ => {}
         }
-    } else {
-        indent_count
-    };
-
-    match curr_insn {
-        Insn::Next { .. } | Insn::SorterNext { .. } | Insn::Prev { .. } => indent_count - 1,
-        _ => indent_count,
+        for i in start..end {
+            indents[i] += 1;
+        }
     }
+
+    indents
 }
 
 pub trait FromValueRow<'a> {
