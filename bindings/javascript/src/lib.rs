@@ -11,6 +11,7 @@ use napi::iterator::Generator;
 use napi::{bindgen_prelude::ObjectFinalize, Env, JsUnknown};
 use napi_derive::napi;
 
+#[derive(Default)]
 #[napi(object)]
 pub struct OpenDatabaseOptions {
     pub readonly: bool,
@@ -30,9 +31,8 @@ pub struct Database {
     #[napi(writable = false)]
     pub memory: bool,
 
-    // TODO: implement each property
-    // #[napi(writable = false)]
-    // pub readonly: bool,
+    #[napi(writable = false)]
+    pub readonly: bool,
     // #[napi(writable = false)]
     // pub in_transaction: bool,
     // #[napi(writable = false)]
@@ -55,7 +55,7 @@ impl ObjectFinalize for Database {
 #[napi]
 impl Database {
     #[napi(constructor)]
-    pub fn new(path: String, _options: Option<OpenDatabaseOptions>) -> napi::Result<Self> {
+    pub fn new(path: String, options: Option<OpenDatabaseOptions>) -> napi::Result<Self> {
         let memory = path == ":memory:";
         let io: Arc<dyn limbo_core::IO> = if memory {
             Arc::new(limbo_core::MemoryIO::new())
@@ -65,12 +65,22 @@ impl Database {
         let file = io
             .open_file(&path, limbo_core::OpenFlags::Create, false)
             .map_err(into_napi_error)?;
+
+        let opts = options.unwrap_or_default();
+
+        let flag = if opts.readonly {
+            limbo_core::OpenFlags::ReadOnly
+        } else {
+            limbo_core::OpenFlags::Create
+        };
+
         let db_file = Arc::new(DatabaseFile::new(file));
         let db = limbo_core::Database::open(io.clone(), &path, db_file, false)
             .map_err(into_napi_error)?;
         let conn = db.connect().map_err(into_napi_error)?;
 
         Ok(Self {
+            readonly: opts.readonly,
             memory,
             _db: db,
             conn,
@@ -113,6 +123,11 @@ impl Database {
             }
             _ => stmt.run(env, None),
         }
+    }
+
+    #[napi]
+    pub fn readonly(&self) -> bool {
+        self.readonly
     }
 
     #[napi]
