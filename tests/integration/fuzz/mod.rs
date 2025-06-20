@@ -24,6 +24,22 @@ mod tests {
         (rng, seed)
     }
 
+    /// [See this issue for more info](https://github.com/tursodatabase/limbo/issues/1763)
+    #[test]
+    pub fn fuzz_failure_issue_1763() {
+        let db = TempDatabase::new_empty();
+        let limbo_conn = db.connect_limbo();
+        let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
+        let offending_query = "SELECT ((ceil(pow((((2.0))), (-2.0 - -1.0) / log(0.5)))) - -2.0)";
+        let limbo_result = limbo_exec_rows(&db, &limbo_conn, offending_query);
+        let sqlite_result = sqlite_exec_rows(&sqlite_conn, offending_query);
+        assert_eq!(
+            limbo_result, sqlite_result,
+            "query: {}, limbo: {:?}, sqlite: {:?}",
+            offending_query, limbo_result, sqlite_result
+        );
+    }
+
     #[test]
     pub fn arithmetic_expression_fuzz_ex1() {
         let db = TempDatabase::new_empty();
