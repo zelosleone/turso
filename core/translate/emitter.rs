@@ -736,27 +736,6 @@ fn emit_update_insns(
         },
     };
 
-    for cond in plan
-        .where_clause
-        .iter()
-        .filter(|c| c.should_eval_before_loop(&[JoinOrderMember::default()]))
-    {
-        let jump_target = program.allocate_label();
-        let meta = ConditionMetadata {
-            jump_if_condition_is_true: false,
-            jump_target_when_true: jump_target,
-            jump_target_when_false: t_ctx.label_main_loop_end.unwrap(),
-        };
-        translate_condition_expr(
-            program,
-            &plan.table_references,
-            &cond.expr,
-            meta,
-            &t_ctx.resolver,
-        )?;
-        program.preassign_label_to_next_insn(jump_target);
-    }
-
     let beg = program.alloc_registers(
         table_ref.table.columns().len()
             + if is_virtual {
@@ -821,27 +800,6 @@ fn emit_update_insns(
             target_pc: loop_labels.next,
             decrement_by: 1,
         });
-    }
-
-    for cond in plan
-        .where_clause
-        .iter()
-        .filter(|c| c.should_eval_before_loop(&[JoinOrderMember::default()]))
-    {
-        let jump_target = program.allocate_label();
-        let meta = ConditionMetadata {
-            jump_if_condition_is_true: false,
-            jump_target_when_true: jump_target,
-            jump_target_when_false: loop_labels.next,
-        };
-        translate_condition_expr(
-            program,
-            &plan.table_references,
-            &cond.expr,
-            meta,
-            &t_ctx.resolver,
-        )?;
-        program.preassign_label_to_next_insn(jump_target);
     }
 
     // we scan a column at a time, loading either the column's values, or the new value
