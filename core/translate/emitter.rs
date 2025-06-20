@@ -3,7 +3,7 @@
 
 use std::rc::Rc;
 
-use limbo_sqlite3_parser::ast::{self};
+use limbo_sqlite3_parser::ast::{self, Expr};
 use tracing::{instrument, Level};
 
 use super::aggregation::emit_ungrouped_aggregation;
@@ -15,7 +15,9 @@ use super::main_loop::{
     close_loop, emit_loop, init_distinct, init_loop, open_loop, LeftJoinMetadata, LoopLabels,
 };
 use super::order_by::{emit_order_by, init_order_by, SortMetadata};
-use super::plan::{JoinOrderMember, Operation, SelectPlan, TableReferences, UpdatePlan};
+use super::plan::{
+    Distinctness, JoinOrderMember, Operation, SelectPlan, TableReferences, UpdatePlan,
+};
 use super::select::emit_simple_count;
 use super::subquery::emit_subqueries;
 use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
@@ -33,6 +35,7 @@ use crate::{Result, SymbolTable};
 pub struct Resolver<'a> {
     pub schema: &'a Schema,
     pub symbol_table: &'a SymbolTable,
+    pub expr_to_reg_cache_enabled: bool,
     pub expr_to_reg_cache: Vec<(&'a ast::Expr, usize)>,
 }
 
@@ -41,6 +44,7 @@ impl<'a> Resolver<'a> {
         Self {
             schema,
             symbol_table,
+            expr_to_reg_cache_enabled: false,
             expr_to_reg_cache: Vec::new(),
         }
     }
@@ -55,11 +59,19 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    pub(crate) fn enable_expr_to_reg_cache(&mut self) {
+        self.expr_to_reg_cache_enabled = true;
+    }
+
     pub fn resolve_cached_expr_reg(&self, expr: &ast::Expr) -> Option<usize> {
-        self.expr_to_reg_cache
-            .iter()
-            .find(|(e, _)| exprs_are_equivalent(expr, e))
-            .map(|(_, reg)| *reg)
+        if self.expr_to_reg_cache_enabled {
+            self.expr_to_reg_cache
+                .iter()
+                .find(|(e, _)| exprs_are_equivalent(expr, e))
+                .map(|(_, reg)| *reg)
+        } else {
+            None
+        }
     }
 }
 
@@ -125,6 +137,17 @@ pub struct TranslateCtx<'a> {
     // This vector holds the indexes of the result columns that we need to skip.
     pub result_columns_to_skip_in_orderby_sorter: Option<Vec<usize>>,
     pub resolver: Resolver<'a>,
+    /// A list of expressions that are not aggregates, along with a flag indicating
+    /// whether the expression should be included in the output for each group.
+    ///
+    /// Each entry is a tuple:
+    /// - `&'ast Expr`: the expression itself
+    /// - `bool`: `true` if the expression should be included in the output for each group, `false` otherwise.
+    ///
+    /// The order of expressions is **significant**:
+    /// - First: all `GROUP BY` expressions, in the order they appear in the `GROUP BY` clause.
+    /// - Then: remaining non-aggregate expressions that are not part of `GROUP BY`.
+    pub non_aggregate_expressions: Vec<(&'a Expr, bool)>,
 }
 
 impl<'a> TranslateCtx<'a> {
@@ -150,6 +173,7 @@ impl<'a> TranslateCtx<'a> {
             result_column_indexes_in_orderby_sorter: (0..result_column_count).collect(),
             result_columns_to_skip_in_orderby_sorter: None,
             resolver: Resolver::new(schema, syms),
+            non_aggregate_expressions: Vec::new(),
         }
     }
 }
@@ -280,14 +304,28 @@ pub fn emit_query<'a>(
     }
 
     if let Some(ref group_by) = plan.group_by {
-        init_group_by(program, t_ctx, group_by, &plan)?;
+        init_group_by(
+            program,
+            t_ctx,
+            group_by,
+            &plan,
+            &plan.result_columns,
+            &plan.order_by,
+        )?;
     } else if !plan.aggregates.is_empty() {
         // Aggregate registers need to be NULLed at the start because the same registers might be reused on another invocation of a subquery,
         // and if they are not NULLed, the 2nd invocation of the same subquery will have values left over from the first invocation.
         t_ctx.reg_agg_start = Some(program.alloc_registers_and_init_w_null(plan.aggregates.len()));
     }
 
-    init_distinct(program, plan);
+    let distinct_ctx = if let Distinctness::Distinct { .. } = &plan.distinctness {
+        Some(init_distinct(program, plan))
+    } else {
+        None
+    };
+    if let Distinctness::Distinct { ctx } = &mut plan.distinctness {
+        *ctx = distinct_ctx
+    }
     init_loop(
         program,
         t_ctx,

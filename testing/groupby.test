@@ -200,6 +200,23 @@ do_execsql_test group_by_no_sorting_required {
 3|97}
 
 if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-sqlite3-index-experimental" || $::env(SQLITE_EXEC) eq "sqlite3")} {
+  do_execsql_test_on_specific_db {:memory:} group_by_no_sorting_required_reordered_columns {
+    create table t0 (a INT, b INT, c INT);
+    create index a_b_idx on t0 (a, b);
+    insert into t0 values
+      (1,1,1),
+      (1,1,2),
+      (2,1,3),
+      (2,2,3),
+      (2,2,5);
+
+    select c, b, a from t0 group by a, b;
+  } {1|1|1
+  3|1|2
+  3|2|2}
+}
+
+if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-sqlite3-index-experimental" || $::env(SQLITE_EXEC) eq "sqlite3")} {
     do_execsql_test distinct_agg_functions {
     select first_name, sum(distinct age), count(distinct age), avg(distinct age)
     from users
@@ -224,3 +241,55 @@ do_execsql_test_on_specific_db {:memory:} having_or {
   order by cnt desc
 } {Michael|2|37.5
 Sarah|1|65.0}
+
+do_execsql_test complex_result_expression_containing_aggregate {
+  select
+    case when price > 70 then group_concat(name, ',') else '<undisclosed>' end names
+  from products
+  group by price
+  order by price;
+} {<undisclosed>
+<undisclosed>
+<undisclosed>
+<undisclosed>
+<undisclosed>
+sweatshirt
+jeans
+hat
+accessories
+cap,sneakers}
+
+do_execsql_test complex_result_expression_containing_aggregate_and_rowid {
+  select
+    case when rowid >= 5 then group_concat(name, ',') else '<undisclosed>' end names
+  from products
+  group by rowid
+  order by rowid;
+} {<undisclosed>
+   <undisclosed>
+   <undisclosed>
+   <undisclosed>
+sweatshirt
+shorts
+jeans
+sneakers
+boots
+coat
+accessories}
+
+do_execsql_test complex_having_expression_containing_aggregate {
+  select group_concat(name, ',') from products group by price having (group_concat(name, ',') || price) like 'ca%';
+} {cap,sneakers}
+
+do_execsql_test complex_order_by_expression_containing_aggregate {
+  select group_concat(name, ',') from products group by price order by (group_concat(name, ',') || price);
+} {accessories
+boots
+cap,sneakers
+coat
+hat
+jeans
+shirt
+shorts
+sweater
+sweatshirt}

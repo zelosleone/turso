@@ -66,45 +66,41 @@ impl LoopLabels {
     }
 }
 
-pub fn init_distinct(program: &mut ProgramBuilder, plan: &mut SelectPlan) {
-    if let Distinctness::Distinct { ctx } = &mut plan.distinctness {
-        assert!(
-            ctx.is_none(),
-            "distinctness context should not be allocated yet"
-        );
-        let index_name = format!("distinct_{}", program.offset().to_offset_int()); // we don't really care about the name that much, just enough that we don't get name collisions
-        let index = Arc::new(Index {
-            name: index_name.clone(),
-            table_name: String::new(),
-            ephemeral: true,
-            root_page: 0,
-            columns: plan
-                .result_columns
-                .iter()
-                .enumerate()
-                .map(|(i, col)| IndexColumn {
-                    name: col.expr.to_string(),
-                    order: SortOrder::Asc,
-                    pos_in_table: i,
-                    collation: None, // FIXME: this should be determined based on the result column expression!
-                    default: None, // FIXME: this should be determined based on the result column expression!
-                })
-                .collect(),
-            unique: false,
-            has_rowid: false,
-        });
-        let cursor_id = program.alloc_cursor_id(CursorType::BTreeIndex(index.clone()));
-        *ctx = Some(DistinctCtx {
-            cursor_id,
-            ephemeral_index_name: index_name,
-            label_on_conflict: program.allocate_label(),
-        });
+pub fn init_distinct(program: &mut ProgramBuilder, plan: &SelectPlan) -> DistinctCtx {
+    let index_name = format!("distinct_{}", program.offset().to_offset_int()); // we don't really care about the name that much, just enough that we don't get name collisions
+    let index = Arc::new(Index {
+        name: index_name.clone(),
+        table_name: String::new(),
+        ephemeral: true,
+        root_page: 0,
+        columns: plan
+            .result_columns
+            .iter()
+            .enumerate()
+            .map(|(i, col)| IndexColumn {
+                name: col.expr.to_string(),
+                order: SortOrder::Asc,
+                pos_in_table: i,
+                collation: None, // FIXME: this should be determined based on the result column expression!
+                default: None, // FIXME: this should be determined based on the result column expression!
+            })
+            .collect(),
+        unique: false,
+        has_rowid: false,
+    });
+    let cursor_id = program.alloc_cursor_id(CursorType::BTreeIndex(index.clone()));
+    let ctx = DistinctCtx {
+        cursor_id,
+        ephemeral_index_name: index_name,
+        label_on_conflict: program.allocate_label(),
+    };
 
-        program.emit_insn(Insn::OpenEphemeral {
-            cursor_id,
-            is_table: false,
-        });
-    }
+    program.emit_insn(Insn::OpenEphemeral {
+        cursor_id,
+        is_table: false,
+    });
+
+    return ctx;
 }
 
 /// Initialize resources needed for the source operators (tables, joins, etc)
@@ -765,7 +761,6 @@ fn emit_loop_source<'a>(
             // 3) aggregate function arguments
             // - or if the rows produced by the loop are already sorted in the order required by the GROUP BY keys,
             // the group by comparisons are done directly inside the main loop.
-            let group_by = plan.group_by.as_ref().unwrap();
             let aggregates = &plan.aggregates;
 
             let GroupByMetadata {
@@ -777,9 +772,15 @@ fn emit_loop_source<'a>(
             let start_reg = registers.reg_group_by_source_cols_start;
             let mut cur_reg = start_reg;
 
-            // Step 1: Process GROUP BY columns first
-            // These will be the first columns in the sorter and serve as sort keys
-            for expr in group_by.exprs.iter() {
+            // Collect all non-aggregate expressions in the following order:
+            // 1. GROUP BY expressions. These serve as sort keys.
+            // 2. Remaining non-aggregate expressions that are not in GROUP BY.
+            //
+            // Example:
+            //   SELECT col1, col2, SUM(col3) FROM table GROUP BY col1
+            //   - col1 is added first (from GROUP BY)
+            //   - col2 is added second (non-aggregate, in SELECT, not in GROUP BY)
+            for (expr, _) in t_ctx.non_aggregate_expressions.iter() {
                 let key_reg = cur_reg;
                 cur_reg += 1;
                 translate_expr(
@@ -791,22 +792,7 @@ fn emit_loop_source<'a>(
                 )?;
             }
 
-            // Step 2: Process columns that aren't part of GROUP BY and don't contain aggregates
-            // Example: SELECT col1, col2, SUM(col3) FROM table GROUP BY col1
-            // Here col2 would be processed in this loop if it's in the result set
-            for expr in plan.non_group_by_non_agg_columns() {
-                let key_reg = cur_reg;
-                cur_reg += 1;
-                translate_expr(
-                    program,
-                    Some(&plan.table_references),
-                    expr,
-                    key_reg,
-                    &t_ctx.resolver,
-                )?;
-            }
-
-            // Step 3: Process arguments for all aggregate functions
+            // Step 2: Process arguments for all aggregate functions
             // For each aggregate, translate all its argument expressions
             for agg in aggregates.iter() {
                 // For a query like: SELECT group_col, SUM(val1), AVG(val2) FROM table GROUP BY group_col

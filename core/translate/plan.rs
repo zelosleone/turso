@@ -5,7 +5,6 @@ use std::{cell::Cell, cmp::Ordering, rc::Rc, sync::Arc};
 use crate::{
     function::AggFunc,
     schema::{BTreeTable, Column, FromClauseSubquery, Index, Table},
-    util::exprs_are_equivalent,
     vdbe::{
         builder::{CursorKey, CursorType, ProgramBuilder},
         insn::{IdxInsertFlags, Insn},
@@ -452,35 +451,6 @@ impl SelectPlan {
 
     pub fn agg_args_count(&self) -> usize {
         self.aggregates.iter().map(|agg| agg.args.len()).sum()
-    }
-
-    pub fn group_by_col_count(&self) -> usize {
-        self.group_by
-            .as_ref()
-            .map_or(0, |group_by| group_by.exprs.len())
-    }
-
-    pub fn non_group_by_non_agg_columns(&self) -> impl Iterator<Item = &ast::Expr> {
-        self.result_columns
-            .iter()
-            .filter(|c| {
-                !c.contains_aggregates
-                    && !self.group_by.as_ref().map_or(false, |group_by| {
-                        group_by
-                            .exprs
-                            .iter()
-                            .any(|expr| exprs_are_equivalent(&c.expr, expr))
-                    })
-            })
-            .map(|c| &c.expr)
-    }
-
-    pub fn non_group_by_non_agg_column_count(&self) -> usize {
-        self.non_group_by_non_agg_columns().count()
-    }
-
-    pub fn group_by_sorter_column_count(&self) -> usize {
-        self.agg_args_count() + self.group_by_col_count() + self.non_group_by_non_agg_column_count()
     }
 
     /// Reference: https://github.com/sqlite/sqlite/blob/5db695197b74580c777b37ab1b787531f15f7f9f/src/select.c#L8613
