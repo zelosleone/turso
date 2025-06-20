@@ -317,7 +317,7 @@ impl ProgramState {
         self.json_cache.clear()
     }
 
-    pub fn get_cursor<'a>(&'a self, cursor_id: CursorID) -> std::cell::RefMut<'a, Cursor> {
+    pub fn get_cursor(&self, cursor_id: CursorID) -> std::cell::RefMut<Cursor> {
         let cursors = self.cursors.borrow_mut();
         std::cell::RefMut::map(cursors, |c| {
             c.get_mut(cursor_id)
