@@ -6133,6 +6133,12 @@ impl Value {
             None => 10.0,
         };
 
+        if base == 2.0 {
+            return Value::Float(libm::log2(f));
+        } else if base == 10.0 {
+            return Value::Float(libm::log10(f));
+        };
+
         if f <= 0.0 || base <= 0.0 || base == 1.0 {
             return Value::Null;
         }
