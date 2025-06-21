@@ -302,6 +302,7 @@ def test_crypto():
 
 
 def test_series():
+    console.info(f"Running test_series for Limbo")
     limbo = TestLimboShell()
     ext_path = "./target/debug/liblimbo_series"
     limbo.run_test_fn(
@@ -309,6 +310,14 @@ def test_series():
         lambda res: "No such table-valued function: generate_series" in res,
     )
     limbo.execute_dot(f".load {ext_path}")
+    _test_series(limbo)
+
+    console.info(f"Running test_series for SQLite")
+    limbo = TestLimboShell(exec_name="sqlite3")
+    _test_series(limbo)
+
+
+def _test_series(limbo: TestLimboShell):
     limbo.run_test_fn(
         "SELECT * FROM generate_series(1, 10);",
         lambda res: res == "1\n2\n3\n4\n5\n6\n7\n8\n9\n10",
@@ -319,7 +328,7 @@ def test_series():
     )
     limbo.run_test_fn(
         "SELECT * FROM generate_series(1, 10, 2, 3);",
-        lambda res: "Invalid Argument" in res,
+        lambda res: "Invalid Argument" in res or "too many arguments" in res,
     )
     limbo.run_test_fn(
         "SELECT * FROM generate_series(10, 1, -2);",
@@ -335,14 +344,22 @@ def test_series():
 
 
 def test_kv():
-    ext_path = "target/debug/liblimbo_ext_tests"
-    limbo = TestLimboShell()
+    _test_kv(exec_name=None, ext_path="target/debug/liblimbo_ext_tests")
+    _test_kv(exec_name="sqlite3", ext_path="target/debug/liblimbo_sqlite_test_ext")
+
+
+def _test_kv(exec_name, ext_path):
+    console.info(f"Running test_kv for {ext_path}")
+
+    limbo = TestLimboShell(
+        exec_name=exec_name,
+    )
     # first, create a normal table to ensure no issues
     limbo.execute_dot("CREATE TABLE other (a,b,c);")
     limbo.execute_dot("INSERT INTO other values (23,32,23);")
     limbo.run_test_fn(
         "create virtual table t using kv_store;",
-        lambda res: "Parse error: no such module: kv_store" in res,
+        lambda res: "no such module: kv_store" in res,
     )
     limbo.execute_dot(f".load {ext_path}")
     limbo.execute_dot(
@@ -410,8 +427,11 @@ def test_kv():
         lambda res: res == "100",
         "can update all rows",
     )
-    limbo.run_test_fn("delete from t limit 96;", null, "can delete 96 rows")
-    limbo.run_test_fn("select count(*) from t;", lambda res: "4" == res, "four rows remain")
+    if exec_name is None:
+        # Test only on Limbo, since SQLite supports the DELETE ... LIMIT syntax only when compiled
+        # with the SQLITE_ENABLE_UPDATE_DELETE_LIMIT option: https://www.sqlite.org/lang_delete.html
+        limbo.run_test_fn("delete from t limit 96;", null, "can delete 96 rows")
+        limbo.run_test_fn("select count(*) from t;", lambda res: "4" == res, "four rows remain")
     limbo.run_test_fn("update t set key = '100' where 1;", null, "where clause evaluates properly")
     limbo.run_test_fn(
         "select * from t where key = '100';",
