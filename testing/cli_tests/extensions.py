@@ -302,7 +302,7 @@ def test_crypto():
 
 
 def test_series():
-    console.info(f"Running test_series for Limbo")
+    console.info("Running test_series for Limbo")
     limbo = TestLimboShell()
     ext_path = "./target/debug/liblimbo_series"
     limbo.run_test_fn(
@@ -312,7 +312,7 @@ def test_series():
     limbo.execute_dot(f".load {ext_path}")
     _test_series(limbo)
 
-    console.info(f"Running test_series for SQLite")
+    console.info("Running test_series for SQLite")
     limbo = TestLimboShell(exec_name="sqlite3")
     _test_series(limbo)
 
