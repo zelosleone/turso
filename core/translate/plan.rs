@@ -325,6 +325,14 @@ pub enum QueryDestination {
         /// The index that will be used to store the results.
         index: Arc<Index>,
     },
+    /// The results of the query are stored in an ephemeral table,
+    /// later used by the parent query.
+    EphemeralTable {
+        /// The cursor ID of the ephemeral table that will be used to store the results.
+        cursor_id: CursorID,
+        /// The table that will be used to store the results.
+        table: Rc<BTreeTable>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -534,6 +542,8 @@ pub struct UpdatePlan {
     // whether the WHERE clause is always false
     pub contains_constant_false_condition: bool,
     pub indexes_to_update: Vec<Arc<Index>>,
+    // If the table's rowid alias is used, gather all the target rowids into an ephemeral table, and then use that table as the single JoinedTable for the actual UPDATE loop.
+    pub ephemeral_plan: Option<SelectPlan>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

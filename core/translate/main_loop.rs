@@ -261,12 +261,16 @@ pub fn init_loop(
                         }
                     }
                     OperationMode::DELETE | OperationMode::UPDATE => {
-                        let table_cursor_id = table_cursor_id.expect("table cursor is always opened in OperationMode::DELETE or OperationMode::UPDATE");
+                        let table_cursor_id = table_cursor_id.expect(
+                                        "table cursor is always opened in OperationMode::DELETE or OperationMode::UPDATE",
+                                    );
+
                         program.emit_insn(Insn::OpenWrite {
                             cursor_id: table_cursor_id,
                             root_page: table.table.get_root_page().into(),
                             name: table.table.get_name().to_string(),
                         });
+
                         // For DELETE, we need to open all the indexes for writing
                         // UPDATE opens these in emit_program_for_update() separately
                         if mode == OperationMode::DELETE {
@@ -357,6 +361,7 @@ pub fn open_loop(
     table_references: &TableReferences,
     join_order: &[JoinOrderMember],
     predicates: &[WhereTerm],
+    temp_cursor_id: Option<CursorID>,
 ) -> Result<()> {
     for (join_index, join) in join_order.iter().enumerate() {
         let joined_table_index = join.original_idx;
@@ -389,8 +394,12 @@ pub fn open_loop(
             Operation::Scan { iter_dir, .. } => {
                 match &table.table {
                     Table::BTree(_) => {
-                        let iteration_cursor_id = index_cursor_id.unwrap_or_else(|| {
-                            table_cursor_id.expect("Either index or table cursor must be opened")
+                        let iteration_cursor_id = temp_cursor_id.unwrap_or_else(|| {
+                            index_cursor_id.unwrap_or_else(|| {
+                                table_cursor_id.expect(
+                                    "Either ephemeral or index or table cursor must be opened",
+                                )
+                            })
                         });
                         if *iter_dir == IterationDirection::Backwards {
                             program.emit_insn(Insn::Last {
@@ -637,8 +646,11 @@ pub fn open_loop(
                     };
 
                     let is_index = index_cursor_id.is_some();
-                    let seek_cursor_id = index_cursor_id.unwrap_or_else(|| {
-                        table_cursor_id.expect("Either index or table cursor must be opened")
+                    let seek_cursor_id = temp_cursor_id.unwrap_or_else(|| {
+                        index_cursor_id.unwrap_or_else(|| {
+                            table_cursor_id
+                                .expect("Either ephemeral or index or table cursor must be opened")
+                        })
                     });
                     let Search::Seek { seek_def, .. } = search else {
                         unreachable!("Rowid equality point lookup should have been handled above");
@@ -738,7 +750,7 @@ enum LoopEmitTarget {
 pub fn emit_loop<'a>(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx<'a>,
-    plan: &'a SelectPlan,
+    plan: &SelectPlan,
 ) -> Result<()> {
     // if we have a group by, we emit a record into the group by sorter,
     // or if the rows are already sorted, we do the group by aggregation phase directly.
@@ -764,7 +776,7 @@ pub fn emit_loop<'a>(
 fn emit_loop_source<'a>(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx<'a>,
-    plan: &'a SelectPlan,
+    plan: &SelectPlan,
     emit_target: LoopEmitTarget,
 ) -> Result<()> {
     match emit_target {
@@ -971,6 +983,7 @@ pub fn close_loop(
     t_ctx: &mut TranslateCtx,
     tables: &TableReferences,
     join_order: &[JoinOrderMember],
+    temp_cursor_id: Option<CursorID>,
 ) -> Result<()> {
     // We close the loops for all tables in reverse order, i.e. innermost first.
     // OPEN t1
@@ -995,8 +1008,12 @@ pub fn close_loop(
                 program.resolve_label(loop_labels.next, program.offset());
                 match &table.table {
                     Table::BTree(_) => {
-                        let iteration_cursor_id = index_cursor_id.unwrap_or_else(|| {
-                            table_cursor_id.expect("Either index or table cursor must be opened")
+                        let iteration_cursor_id = temp_cursor_id.unwrap_or_else(|| {
+                            index_cursor_id.unwrap_or_else(|| {
+                                table_cursor_id.expect(
+                                    "Either ephemeral or index or table cursor must be opened",
+                                )
+                            })
                         });
                         if *iter_dir == IterationDirection::Backwards {
                             program.emit_insn(Insn::Prev {
@@ -1035,8 +1052,11 @@ pub fn close_loop(
                     "Subqueries do not support index seeks"
                 );
                 program.resolve_label(loop_labels.next, program.offset());
-                let iteration_cursor_id = index_cursor_id.unwrap_or_else(|| {
-                    table_cursor_id.expect("Either index or table cursor must be opened")
+                let iteration_cursor_id = temp_cursor_id.unwrap_or_else(|| {
+                    index_cursor_id.unwrap_or_else(|| {
+                        table_cursor_id
+                            .expect("Either ephemeral or index or table cursor must be opened")
+                    })
                 });
                 // Rowid equality point lookups are handled with a SeekRowid instruction which does not loop, so there is no need to emit a Next instruction.
                 if !matches!(search, Search::RowidEq { .. }) {

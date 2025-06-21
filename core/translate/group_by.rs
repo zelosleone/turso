@@ -514,8 +514,8 @@ impl<'a> GroupByAggArgumentSource<'a> {
 /// Emits bytecode for processing a single GROUP BY group.
 pub fn group_by_process_single_group<'a>(
     program: &mut ProgramBuilder,
-    group_by: &'a GroupBy,
-    plan: &'a SelectPlan,
+    group_by: &GroupBy,
+    plan: &SelectPlan,
     t_ctx: &mut TranslateCtx<'a>,
 ) -> Result<()> {
     let GroupByMetadata {
@@ -718,7 +718,7 @@ pub fn group_by_process_single_group<'a>(
 pub fn group_by_agg_phase<'a>(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx<'a>,
-    plan: &'a SelectPlan,
+    plan: &SelectPlan,
 ) -> Result<()> {
     let GroupByMetadata {
         labels, row_source, ..
