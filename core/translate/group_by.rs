@@ -605,7 +605,7 @@ pub fn group_by_process_single_group<'a>(
     });
 
     // Process each aggregate function for the current row
-    program.resolve_label(labels.label_grouping_agg_step, program.offset());
+    program.preassign_label_to_next_insn(labels.label_grouping_agg_step);
     let cursor_index = t_ctx.non_aggregate_expressions.len(); // Skipping all columns in sorter that not an aggregation arguments
     let mut offset = 0;
     for (i, agg) in plan.aggregates.iter().enumerate() {
