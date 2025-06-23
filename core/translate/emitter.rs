@@ -1067,8 +1067,6 @@ fn emit_update_insns(
             });
         }
 
-        program.emit_insn(Insn::Delete { cursor_id });
-
         program.emit_insn(Insn::Insert {
             cursor: cursor_id,
             key_reg: rowid_set_clause_reg.unwrap_or(beg),
