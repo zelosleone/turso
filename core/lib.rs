@@ -255,7 +255,7 @@ impl Database {
         let page_size = header_accessor::get_page_size(&pager)
             .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE) as u32;
         let default_cache_size = header_accessor::get_default_page_cache_size(&pager)
-            .unwrap_or(storage::sqlite3_ondisk::DEFAULT_CACHE_SIZE as i32);
+            .unwrap_or(storage::sqlite3_ondisk::DEFAULT_CACHE_SIZE);
 
         let wal_path = format!("{}-wal", self.path);
         let file = self.io.open_file(&wal_path, OpenFlags::Create, false)?;

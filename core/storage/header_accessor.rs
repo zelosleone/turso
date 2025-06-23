@@ -6,7 +6,6 @@ use crate::{
     },
     LimboError, Result,
 };
-use paste;
 use std::sync::atomic::Ordering;
 
 // const HEADER_OFFSET_MAGIC: usize = 0;
@@ -142,7 +141,7 @@ impl_header_field_accessor!(
     default_page_cache_size,
     i32,
     HEADER_OFFSET_DEFAULT_PAGE_CACHE_SIZE,
-    storage::sqlite3_ondisk::DEFAULT_CACHE_SIZE as i32
+    storage::sqlite3_ondisk::DEFAULT_CACHE_SIZE
 );
 impl_header_field_accessor!(
     vacuum_mode_largest_root_page,

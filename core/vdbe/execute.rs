@@ -1680,10 +1680,8 @@ pub fn op_transaction(
         unreachable!("unexpected Insn {:?}", insn)
     };
     let conn = program.connection.clone();
-    if *write {
-        if conn._db.open_flags.contains(OpenFlags::ReadOnly) {
-            return Err(LimboError::ReadOnly);
-        }
+    if *write && !conn._db.open_flags.contains(OpenFlags::ReadOnly) {
+        return Err(LimboError::ReadOnly);
     }
 
     // We allocate the first page lazily in the first transaction
@@ -3698,7 +3696,7 @@ pub fn op_function(
                 }
             }
             ScalarFunc::SqliteVersion => {
-                let version_integer: i64 = header_accessor::get_version_number(&pager)? as i64;
+                let version_integer: i64 = header_accessor::get_version_number(pager)? as i64;
                 let version = execute_sqlite_version(version_integer);
                 state.registers[*dest] = Register::Value(Value::build_text(version));
             }
@@ -5013,7 +5011,7 @@ pub fn op_set_cookie(
     }
     match cookie {
         Cookie::UserVersion => {
-            header_accessor::set_user_version(pager, *value as i32)?;
+            header_accessor::set_user_version(pager, *value)?;
         }
         Cookie::LargestRootPageNumber => {
             header_accessor::set_vacuum_mode_largest_root_page(pager, *value as u32)?;
