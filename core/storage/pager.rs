@@ -704,6 +704,7 @@ impl Pager {
                     let in_flight = *self.flush_info.borrow().in_flight_writes.borrow();
                     if in_flight == 0 {
                         self.flush_info.borrow_mut().state = FlushState::SyncWal;
+                        self.wal.borrow_mut().finish_append_frames_commit()?;
                     } else {
                         return Ok(PagerCacheflushStatus::IO);
                     }
@@ -1059,6 +1060,13 @@ impl Pager {
         let page_size = header_accessor::get_page_size(self).unwrap_or_default() as u32;
         let reserved_space = header_accessor::get_reserved_space(self).unwrap_or_default() as u32;
         (page_size - reserved_space) as usize
+    }
+
+    pub fn rollback(&self) -> Result<(), LimboError> {
+        let mut cache = self.page_cache.write();
+        cache.clear();
+        self.wal.borrow_mut().rollback()?;
+        Ok(())
     }
 }
 

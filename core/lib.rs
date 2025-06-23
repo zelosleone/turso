@@ -328,6 +328,7 @@ pub struct Connection {
     _db: Arc<Database>,
     pager: Rc<Pager>,
     schema: Arc<RwLock<Schema>>,
+    /// Whether to automatically commit transaction
     auto_commit: Cell<bool>,
     mv_transactions: RefCell<Vec<crate::mvcc::database::TxID>>,
     transaction_state: Cell<TransactionState>,

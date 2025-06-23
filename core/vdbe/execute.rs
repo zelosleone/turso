@@ -1754,7 +1754,9 @@ pub fn op_auto_commit(
 
     if *auto_commit != conn.auto_commit.get() {
         if *rollback {
-            todo!("Rollback is not implemented");
+            // TODO(pere): add rollback I/O logic once we implement rollback journal
+            pager.rollback()?;
+            conn.auto_commit.replace(true);
         } else {
             conn.auto_commit.replace(*auto_commit);
         }
