@@ -202,7 +202,12 @@ impl Database {
 
         // Open existing WAL file if present
         if let Some(shared_wal) = self.maybe_shared_wal.read().clone() {
-            let is_empty = false;
+            // No pages in DB file or WAL -> empty database
+            let is_empty = self.db_file.size()? == 0
+                && unsafe { &*shared_wal.get() }
+                    .max_frame
+                    .load(Ordering::SeqCst)
+                    == 0;
             let wal = Rc::new(RefCell::new(WalFile::new(
                 self.io.clone(),
                 shared_wal,
@@ -217,8 +222,11 @@ impl Database {
                 is_empty,
             )?);
 
-            let page_size = header_accessor::get_page_size(&pager)?;
-            let default_cache_size = header_accessor::get_default_page_cache_size(&pager)?;
+            let page_size = header_accessor::get_page_size(&pager)
+                .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE)
+                as u32;
+            let default_cache_size = header_accessor::get_default_page_cache_size(&pager)
+                .unwrap_or(storage::sqlite3_ondisk::DEFAULT_CACHE_SIZE);
             pager.buffer_pool.set_page_size(page_size as usize);
             let conn = Arc::new(Connection {
                 _db: self.clone(),
