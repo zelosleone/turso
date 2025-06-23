@@ -84,7 +84,6 @@ use crate::{
 };
 
 use super::{get_new_rowid, make_record, Program, ProgramState, Register};
-use crate::vdbe::insn::InsertFlags;
 use crate::{
     bail_constraint_error, must_be_btree_cursor, resolve_ext_path, MvStore, Pager, Result,
     DATABASE_VERSION,
