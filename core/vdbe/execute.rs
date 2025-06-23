@@ -1680,7 +1680,7 @@ pub fn op_transaction(
         unreachable!("unexpected Insn {:?}", insn)
     };
     let conn = program.connection.clone();
-    if *write && !conn._db.open_flags.contains(OpenFlags::ReadOnly) {
+    if *write && conn._db.open_flags.contains(OpenFlags::ReadOnly) {
         return Err(LimboError::ReadOnly);
     }
 
