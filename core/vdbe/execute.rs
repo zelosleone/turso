@@ -4260,14 +4260,12 @@ pub fn op_insert(
             if let Some(rowid) = return_if_io!(cursor.rowid()) {
                 program.connection.update_last_rowid(rowid);
 
-                // n_change is increased when Insn::Delete is executed, so we can skip for Insn::Insert
-                if !flag.has(InsertFlags::UPDATE) {
-                    let prev_changes = program.n_change.get();
-                    program.n_change.set(prev_changes + 1);
-                }
+                let prev_changes = program.n_change.get();
+                program.n_change.set(prev_changes + 1);
             }
         }
     }
+
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
