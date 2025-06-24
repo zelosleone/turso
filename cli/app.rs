@@ -840,10 +840,6 @@ impl Limbo {
                 anyhow::bail!("We have to throw here, even if we printed error");
             }
         }
-        // for now let's cache flush always
-        while let PagerCacheflushStatus::IO = self.conn.cacheflush()? {
-            self.io.run_once()?;
-        }
         Ok(())
     }
 
