@@ -909,6 +909,7 @@ impl Wal for WalFile {
             // TODO(pere): implement proper hashmap, this sucks :).
             let shared = self.get_shared();
             let max_frame = shared.max_frame.load(Ordering::SeqCst);
+            tracing::trace!("rollback(to_max_frame={})", max_frame);
             let mut frame_cache = shared.frame_cache.lock();
             for (_, frames) in frame_cache.iter_mut() {
                 let mut last_valid_frame = frames.len();
@@ -927,7 +928,6 @@ impl Wal for WalFile {
     }
 
     fn finish_append_frames_commit(&mut self) -> Result<()> {
-        println!("finish_append_frames_commit");
         let shared = self.get_shared();
         shared.max_frame.store(self.max_frame, Ordering::SeqCst);
         tracing::trace!(

@@ -1589,7 +1589,7 @@ pub fn halt(
             )));
         }
     }
-    match program.commit_txn(pager.clone(), state, mv_store)? {
+    match program.commit_txn(pager.clone(), state, mv_store, false)? {
         StepResult::Done => Ok(InsnFunctionStepResult::Done),
         StepResult::IO => Ok(InsnFunctionStepResult::IO),
         StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1637,12 +1637,18 @@ pub fn op_halt(
             )));
         }
     }
-    match program.commit_txn(pager.clone(), state, mv_store)? {
-        StepResult::Done => Ok(InsnFunctionStepResult::Done),
-        StepResult::IO => Ok(InsnFunctionStepResult::IO),
-        StepResult::Row => Ok(InsnFunctionStepResult::Row),
-        StepResult::Interrupt => Ok(InsnFunctionStepResult::Interrupt),
-        StepResult::Busy => Ok(InsnFunctionStepResult::Busy),
+    let auto_commit = program.connection.auto_commit.get();
+    tracing::trace!("op_halt(auto_commit={})", auto_commit);
+    if auto_commit {
+        match program.commit_txn(pager.clone(), state, mv_store, false)? {
+            StepResult::Done => Ok(InsnFunctionStepResult::Done),
+            StepResult::IO => Ok(InsnFunctionStepResult::IO),
+            StepResult::Row => Ok(InsnFunctionStepResult::Row),
+            StepResult::Interrupt => Ok(InsnFunctionStepResult::Interrupt),
+            StepResult::Busy => Ok(InsnFunctionStepResult::Busy),
+        }
+    } else {
+        Ok(InsnFunctionStepResult::Done)
     }
 }
 
@@ -1743,7 +1749,7 @@ pub fn op_auto_commit(
     };
     let conn = program.connection.clone();
     if state.commit_state == CommitState::Committing {
-        return match program.commit_txn(pager.clone(), state, mv_store)? {
+        return match program.commit_txn(pager.clone(), state, mv_store, *rollback)? {
             super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
             super::StepResult::IO => Ok(InsnFunctionStepResult::IO),
             super::StepResult::Row => Ok(InsnFunctionStepResult::Row),
@@ -1773,7 +1779,7 @@ pub fn op_auto_commit(
             "cannot commit - no transaction is active".to_string(),
         ));
     }
-    match program.commit_txn(pager.clone(), state, mv_store)? {
+    match program.commit_txn(pager.clone(), state, mv_store, *rollback)? {
         super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
         super::StepResult::IO => Ok(InsnFunctionStepResult::IO),
         super::StepResult::Row => Ok(InsnFunctionStepResult::Row),

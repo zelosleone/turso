@@ -395,6 +395,7 @@ impl Program {
         pager: Rc<Pager>,
         program_state: &mut ProgramState,
         mv_store: Option<&Rc<MvStore>>,
+        rollback: bool,
     ) -> Result<StepResult> {
         if let Some(mv_store) = mv_store {
             let conn = self.connection.clone();
@@ -410,16 +411,27 @@ impl Program {
         } else {
             let connection = self.connection.clone();
             let auto_commit = connection.auto_commit.get();
-            tracing::trace!("Halt auto_commit {}", auto_commit);
+            tracing::trace!(
+                "Halt auto_commit {}, state={:?}",
+                auto_commit,
+                program_state.commit_state
+            );
             if program_state.commit_state == CommitState::Committing {
-                self.step_end_write_txn(&pager, &mut program_state.commit_state, &connection)
+                self.step_end_write_txn(
+                    &pager,
+                    &mut program_state.commit_state,
+                    &connection,
+                    rollback,
+                )
             } else if auto_commit {
                 let current_state = connection.transaction_state.get();
+                tracing::trace!("Auto-commit state: {:?}", current_state);
                 match current_state {
                     TransactionState::Write => self.step_end_write_txn(
                         &pager,
                         &mut program_state.commit_state,
                         &connection,
+                        rollback,
                     ),
                     TransactionState::Read => {
                         connection.transaction_state.replace(TransactionState::None);
@@ -443,8 +455,9 @@ impl Program {
         pager: &Rc<Pager>,
         commit_state: &mut CommitState,
         connection: &Connection,
+        rollback: bool,
     ) -> Result<StepResult> {
-        let cacheflush_status = pager.end_tx()?;
+        let cacheflush_status = pager.end_tx(rollback)?;
         match cacheflush_status {
             PagerCacheflushStatus::Done(_) => {
                 if self.change_cnt_on {

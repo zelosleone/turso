@@ -234,6 +234,7 @@ pub enum PagerCacheflushResult {
     /// The WAL was written, fsynced, and a checkpoint was performed.
     /// The database file was then also fsynced.
     Checkpointed(CheckpointResult),
+    Rollback,
 }
 
 impl Pager {
@@ -573,7 +574,13 @@ impl Pager {
         self.wal.borrow_mut().begin_write_tx()
     }
 
-    pub fn end_tx(&self) -> Result<PagerCacheflushStatus> {
+    pub fn end_tx(&self, rollback: bool) -> Result<PagerCacheflushStatus> {
+        tracing::trace!("end_tx(rollback={})", rollback);
+        if rollback {
+            self.wal.borrow().end_write_tx()?;
+            self.wal.borrow().end_read_tx()?;
+            return Ok(PagerCacheflushStatus::Done(PagerCacheflushResult::Rollback));
+        }
         let cacheflush_status = self.cacheflush()?;
         match cacheflush_status {
             PagerCacheflushStatus::IO => Ok(PagerCacheflushStatus::IO),
@@ -1064,8 +1071,10 @@ impl Pager {
 
     pub fn rollback(&self) -> Result<(), LimboError> {
         let mut cache = self.page_cache.write();
-        cache.clear();
+        cache.unset_dirty_all_pages();
+        cache.clear().expect("failed to clear page cache");
         self.wal.borrow_mut().rollback()?;
+
         Ok(())
     }
 }
