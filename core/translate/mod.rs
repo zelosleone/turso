@@ -64,6 +64,7 @@ pub fn translate(
     query_mode: QueryMode,
     _input: &str, // TODO: going to be used for CREATE VIEW
 ) -> Result<Program> {
+    tracing::trace!("querying {}", _input);
     let change_cnt_on = matches!(
         stmt,
         ast::Stmt::CreateIndex { .. }
