@@ -11,7 +11,7 @@ use crate::{
     HISTORY_FILE,
 };
 use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table};
-use limbo_core::{Database, LimboError, Statement, StepResult, Value};
+use limbo_core::{Database, LimboError, PagerCacheflushStatus, Statement, StepResult, Value};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -841,7 +841,9 @@ impl Limbo {
             }
         }
         // for now let's cache flush always
-        self.conn.cacheflush()?;
+        while let PagerCacheflushStatus::IO = self.conn.cacheflush()? {
+            self.io.run_once()?;
+        }
         Ok(())
     }
 
