@@ -411,8 +411,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
 
     let plan = if opts.load_log {
+        println!("Loading plan from log file...");
         read_plan_from_log_file(&opts)?
     } else {
+        println!("Generating plan...");
         generate_plan(&opts)?
     };
 
@@ -455,9 +457,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         let handle = tokio::spawn(async move {
             let conn = db.connect()?;
+            println!("\rExecuting queries...");
             for query_index in 0..nr_iterations {
                 let sql = &plan.queries_per_thread[thread][query_index];
-                println!("executing: {}", sql);
+                if !opts.silent {
+                    if opts.verbose {
+                        println!("executing query {}", sql);
+                    } else if query_index % 100 == 0 {
+                        print!(
+                            "\r{:.2} %",
+                            (query_index as f64 / nr_iterations as f64 * 100.0)
+                        );
+                        std::io::stdout().flush().unwrap();
+                    }
+                }
                 if let Err(e) = conn.execute(sql, ()).await {
                     match e {
                         limbo::Error::SqlExecutionFailure(e) => {
