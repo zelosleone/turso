@@ -335,6 +335,7 @@ impl Wal for DummyWAL {
     }
 
     fn finish_append_frames_commit(&mut self) -> Result<()> {
+        tracing::trace!("finish_append_frames_commit_dumb");
         Ok(())
     }
 
@@ -806,6 +807,11 @@ impl Wal for WalFile {
                     if *write_counter.borrow() > 0 {
                         return Ok(CheckpointStatus::IO);
                     }
+                    // If page was in cache clear it.
+                    if let Some(page) = pager.cache_get(self.ongoing_checkpoint.page.get().id) {
+                        page.clear_dirty();
+                    }
+                    self.ongoing_checkpoint.page.clear_dirty();
                     let shared = self.get_shared();
                     if (self.ongoing_checkpoint.current_page as usize)
                         < shared.pages_in_frames.lock().len()

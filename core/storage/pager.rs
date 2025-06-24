@@ -657,6 +657,14 @@ impl Pager {
         Ok(page)
     }
 
+    // Get a page from the cache, if it exists.
+    pub fn cache_get(&self, page_idx: usize) -> Option<PageRef> {
+        tracing::trace!("read_page(page_idx = {})", page_idx);
+        let mut page_cache = self.page_cache.write();
+        let page_key = PageCacheKey::new(page_idx);
+        page_cache.get(&page_key)
+    }
+
     /// Changes the size of the page cache.
     pub fn change_page_cache_size(&self, capacity: usize) -> Result<CacheResizeResult> {
         let mut page_cache = self.page_cache.write();
