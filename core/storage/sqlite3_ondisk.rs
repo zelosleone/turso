@@ -47,7 +47,9 @@ use tracing::{instrument, Level};
 
 use crate::error::LimboError;
 use crate::fast_lock::SpinLock;
-use crate::io::{Buffer, Complete, Completion, ReadCompletion, SyncCompletion, WriteCompletion};
+use crate::io::{
+    Buffer, Complete, Completion, CompletionType, ReadCompletion, SyncCompletion, WriteCompletion,
+};
 use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
 use crate::storage::pager::Pager;
@@ -55,7 +57,7 @@ use crate::types::{
     ImmutableRecord, RawSlice, RefValue, SerialType, SerialTypeKind, TextRef, TextSubtype,
 };
 use crate::{File, Result, WalFileShared};
-use std::cell::{Cell, RefCell, UnsafeCell};
+use std::cell::{RefCell, UnsafeCell};
 use std::collections::HashMap;
 use std::mem::MaybeUninit;
 use std::pin::Pin;
@@ -745,7 +747,7 @@ pub fn begin_read_page(
             page.set_error();
         }
     });
-    let c = Completion::Read(ReadCompletion::new(buf, complete));
+    let c = Completion::new(CompletionType::Read(ReadCompletion::new(buf, complete)));
     db_file.read_page(page_idx, Arc::new(c))?;
     Ok(())
 }
@@ -803,7 +805,7 @@ pub fn begin_write_btree_page(
             }
         })
     };
-    let c = Completion::Write(WriteCompletion::new(write_complete));
+    let c = Completion::new(CompletionType::Write(WriteCompletion::new(write_complete)));
     page_source.write_page(page_id, buffer.clone(), Arc::new(c))?;
     Ok(())
 }
@@ -811,12 +813,11 @@ pub fn begin_write_btree_page(
 pub fn begin_sync(db_file: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>) -> Result<()> {
     assert!(!*syncing.borrow());
     *syncing.borrow_mut() = true;
-    let completion = Completion::Sync(SyncCompletion {
+    let completion = Completion::new(CompletionType::Sync(SyncCompletion {
         complete: Box::new(move |_| {
             *syncing.borrow_mut() = false;
         }),
-        is_completed: Cell::new(false),
-    });
+    }));
     #[allow(clippy::arc_with_non_send_sync)]
     db_file.sync(Arc::new(completion))?;
     Ok(())
@@ -1450,7 +1451,10 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
         wfs_data.last_checksum = cumulative_checksum;
         wfs_data.loaded.store(true, Ordering::SeqCst);
     });
-    let c = Completion::Read(ReadCompletion::new(buf_for_pread, complete));
+    let c = Completion::new(CompletionType::Read(ReadCompletion::new(
+        buf_for_pread,
+        complete,
+    )));
     file.pread(0, Arc::new(c))?;
 
     Ok(wal_file_shared_ret)
@@ -1470,7 +1474,9 @@ pub fn begin_read_wal_frame(
     });
     let buf = Arc::new(RefCell::new(Buffer::new(buf, drop_fn)));
     #[allow(clippy::arc_with_non_send_sync)]
-    let c = Arc::new(Completion::Read(ReadCompletion::new(buf, complete)));
+    let c = Arc::new(Completion::new(CompletionType::Read(ReadCompletion::new(
+        buf, complete,
+    ))));
     io.pread(offset, c.clone())?;
     Ok(c)
 }
@@ -1557,7 +1563,9 @@ pub fn begin_write_wal_frame(
         })
     };
     #[allow(clippy::arc_with_non_send_sync)]
-    let c = Arc::new(Completion::Write(WriteCompletion::new(write_complete)));
+    let c = Arc::new(Completion::new(CompletionType::Write(
+        WriteCompletion::new(write_complete),
+    )));
     io.pwrite(offset, buffer.clone(), c)?;
     tracing::trace!("Frame written and synced");
     Ok(checksums)
@@ -1593,7 +1601,9 @@ pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<
         })
     };
     #[allow(clippy::arc_with_non_send_sync)]
-    let c = Arc::new(Completion::Write(WriteCompletion::new(write_complete)));
+    let c = Arc::new(Completion::new(CompletionType::Write(
+        WriteCompletion::new(write_complete),
+    )));
     io.pwrite(0, buffer.clone(), c)?;
     Ok(())
 }

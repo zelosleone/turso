@@ -584,8 +584,8 @@ impl DatabaseFile {
 
 impl limbo_core::DatabaseStorage for DatabaseFile {
     fn read_page(&self, page_idx: usize, c: Arc<limbo_core::Completion>) -> limbo_core::Result<()> {
-        let r = match *c {
-            limbo_core::Completion::Read(ref r) => r,
+        let r = match c.completion_type {
+            limbo_core::CompletionType::Read(ref r) => r,
             _ => unreachable!(),
         };
         let size = r.buf().len();

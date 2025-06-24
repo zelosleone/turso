@@ -1,4 +1,5 @@
 use crate::error::LimboError;
+use crate::io::CompletionType;
 use crate::{io::Completion, Buffer, Result};
 use std::{cell::RefCell, sync::Arc};
 
@@ -84,8 +85,8 @@ unsafe impl Sync for FileMemoryStorage {}
 
 impl DatabaseStorage for FileMemoryStorage {
     fn read_page(&self, page_idx: usize, c: Arc<Completion>) -> Result<()> {
-        let r = match *c {
-            Completion::Read(ref r) => r,
+        let r = match c.completion_type {
+            CompletionType::Read(ref r) => r,
             _ => unreachable!(),
         };
         let size = r.buf().len();

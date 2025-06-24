@@ -1,5 +1,5 @@
 use super::MemoryIO;
-use crate::{Clock, Completion, File, Instant, LimboError, OpenFlags, Result, IO};
+use crate::{Clock, Completion, CompletionType, File, Instant, LimboError, OpenFlags, Result, IO};
 use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
@@ -90,8 +90,8 @@ impl File for GenericFile {
         let mut file = self.file.borrow_mut();
         file.seek(std::io::SeekFrom::Start(pos as u64))?;
         {
-            let r = match *c {
-                Completion::Read(ref r) => r,
+            let r = match c.completion_type {
+                CompletionType::Read(ref r) => r,
                 _ => unreachable!(),
             };
             let mut buf = r.buf_mut();
@@ -102,7 +102,12 @@ impl File for GenericFile {
         Ok(())
     }
 
-    fn pwrite(&self, pos: usize, buffer: Arc<RefCell<crate::Buffer>>, c: Arc<Completion>) -> Result<()> {
+    fn pwrite(
+        &self,
+        pos: usize,
+        buffer: Arc<RefCell<crate::Buffer>>,
+        c: Arc<Completion>,
+    ) -> Result<()> {
         let mut file = self.file.borrow_mut();
         file.seek(std::io::SeekFrom::Start(pos as u64))?;
         let buf = buffer.borrow();
