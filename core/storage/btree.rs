@@ -2136,7 +2136,6 @@ impl BTreeCursor {
                                         .expect("expected write info");
                                     if page.get().get_contents().overflow_cells.is_empty() {
                                         write_info.state = WriteState::Finish;
-                                        return Ok(CursorResult::Ok(()));
                                     } else {
                                         write_info.state = WriteState::BalanceStart;
                                         // If we balance, we must save the cursor position and seek to it later.
@@ -2168,7 +2167,6 @@ impl BTreeCursor {
                                         .expect("expected write info");
                                     if page.get().get_contents().overflow_cells.is_empty() {
                                         write_info.state = WriteState::Finish;
-                                        return Ok(CursorResult::Ok(()));
                                     } else {
                                         write_info.state = WriteState::BalanceStart;
                                         // If we balance, we must save the cursor position and seek to it later.
