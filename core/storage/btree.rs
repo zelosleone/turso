@@ -2128,12 +2128,21 @@ impl BTreeCursor {
                         match cell {
                             BTreeCell::TableLeafCell(tbl_leaf) => {
                                 if tbl_leaf._rowid == bkey.to_rowid() {
-                                    tracing::debug!("found exact match with cell_idx={cell_idx}, overwriting");
+                                    tracing::debug!("TableLeafCell: found exact match with cell_idx={cell_idx}, overwriting");
                                     self.overwrite_cell(page.clone(), cell_idx, record)?;
-                                    self.state
+                                    let write_info = self
+                                        .state
                                         .mut_write_info()
-                                        .expect("expected write info")
-                                        .state = WriteState::Finish;
+                                        .expect("expected write info");
+                                    if page.get().get_contents().overflow_cells.is_empty() {
+                                        write_info.state = WriteState::Finish;
+                                    } else {
+                                        write_info.state = WriteState::BalanceStart;
+                                        // If we balance, we must save the cursor position and seek to it later.
+                                        // FIXME: we shouldn't have both DeleteState::SeekAfterBalancing and 
+                                        // save_context()/restore/context(), they are practically the same thing.
+                                        self.save_context(CursorContext::TableRowId(bkey.to_rowid()));
+                                    }
                                     continue;
                                 }
                             }
@@ -2149,13 +2158,22 @@ impl BTreeCursor {
                                         &self.collations,
                                 );
                                 if cmp == Ordering::Equal {
-                                    tracing::debug!("found exact match with cell_idx={cell_idx}, overwriting");
+                                    tracing::debug!("IndexLeafCell: found exact match with cell_idx={cell_idx}, overwriting");
                                     self.has_record.set(true);
                                     self.overwrite_cell(page.clone(), cell_idx, record)?;
-                                    self.state
+                                    let write_info = self
+                                        .state
                                         .mut_write_info()
-                                        .expect("expected write info")
-                                        .state = WriteState::Finish;
+                                        .expect("expected write info");
+                                    if page.get().get_contents().overflow_cells.is_empty() {
+                                        write_info.state = WriteState::Finish;
+                                    } else {
+                                        write_info.state = WriteState::BalanceStart;
+                                        // If we balance, we must save the cursor position and seek to it later.
+                                        // FIXME: we shouldn't have both DeleteState::SeekAfterBalancing and 
+                                        // save_context()/restore/context(), they are practically the same thing.
+                                        self.save_context(CursorContext::IndexKeyRowId((*record).clone()));
+                                    }
                                     continue;
                                 }
                             }
@@ -4023,7 +4041,10 @@ impl BTreeCursor {
                     _rowid, _payload, ..
                 }) = cell
                 else {
-                    unreachable!("unexpected page_type");
+                    unreachable!(
+                        "BTreeCursor::rowid(): unexpected page_type: {:?}",
+                        page_type
+                    );
                 };
                 Ok(CursorResult::Ok(Some(_rowid)))
             } else {
