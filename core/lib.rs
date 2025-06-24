@@ -84,7 +84,7 @@ use vdbe::builder::TableRefIdCounter;
 
 pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum TransactionState {
     Write,
     Read,

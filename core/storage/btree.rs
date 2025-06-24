@@ -7172,7 +7172,7 @@ mod tests {
                 .unwrap();
                 cursor.move_to_root();
                 loop {
-                    match pager.end_tx().unwrap() {
+                    match pager.end_tx(false).unwrap() {
                         crate::PagerCacheflushStatus::Done(_) => break,
                         crate::PagerCacheflushStatus::IO => {
                             pager.io.run_once().unwrap();
