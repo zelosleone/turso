@@ -965,7 +965,7 @@ impl WalFile {
             ));
         }
 
-        let header = unsafe { shared.get().as_mut().unwrap().wal_header.lock().clone() };
+        let header = unsafe { shared.get().as_mut().unwrap().wal_header.lock() };
         Self {
             io,
             // default to max frame in WAL, so that when we read schema we can read from WAL too if it's there.
