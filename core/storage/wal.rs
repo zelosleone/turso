@@ -930,6 +930,11 @@ impl Wal for WalFile {
         println!("finish_append_frames_commit");
         let shared = self.get_shared();
         shared.max_frame.store(self.max_frame, Ordering::SeqCst);
+        tracing::trace!(
+            "finish_append_frames_commit(max_frame={}, last_checksum={:?})",
+            self.max_frame,
+            self.last_checksum
+        );
         shared.last_checksum = self.last_checksum;
         Ok(())
     }
