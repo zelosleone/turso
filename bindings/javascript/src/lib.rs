@@ -35,6 +35,7 @@ pub struct Database {
     pub readonly: bool,
     // #[napi(writable = false)]
     // pub in_transaction: bool,
+    #[napi(writable = false)]
     pub open: bool,
     #[napi(writable = false)]
     pub name: String,
