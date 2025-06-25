@@ -213,7 +213,7 @@ pub struct Pager {
     syncing: Rc<RefCell<bool>>,
     auto_vacuum_mode: RefCell<AutoVacuumMode>,
     /// Is the db empty? This is signified by 0-sized database and nonexistent WAL.
-    pub is_empty: AtomicBool,
+    pub is_empty: Arc<AtomicBool>,
     /// Mutex for synchronizing database initialization to prevent race conditions
     init_lock: Mutex<()>,
 }
@@ -243,7 +243,7 @@ impl Pager {
         io: Arc<dyn crate::io::IO>,
         page_cache: Arc<RwLock<DumbLruPageCache>>,
         buffer_pool: Rc<BufferPool>,
-        is_empty: bool,
+        is_empty: Arc<AtomicBool>,
     ) -> Result<Self> {
         Ok(Self {
             db_file,
@@ -260,7 +260,7 @@ impl Pager {
             checkpoint_inflight: Rc::new(RefCell::new(0)),
             buffer_pool,
             auto_vacuum_mode: RefCell::new(AutoVacuumMode::None),
-            is_empty: AtomicBool::new(is_empty),
+            is_empty,
             init_lock: Mutex::new(()),
         })
     }
@@ -554,10 +554,11 @@ impl Pager {
     #[inline(always)]
     pub fn begin_read_tx(&self) -> Result<LimboResult> {
         // We allocate the first page lazily in the first transaction
-        // Use a loop similar to SQLite's btreeBeginTrans to handle concurrent initialization
-        while self.is_empty.load(Ordering::SeqCst) {
+        if self.is_empty.load(Ordering::SeqCst) {
             let _lock = self.init_lock.lock().unwrap();
-            self.allocate_page1()?;
+            if self.is_empty.load(Ordering::SeqCst) {
+                self.allocate_page1()?;
+            }
         }
         self.wal.borrow_mut().begin_read_tx()
     }
@@ -566,9 +567,11 @@ impl Pager {
     pub fn begin_write_tx(&self) -> Result<LimboResult> {
         // TODO(Diego): The only possibly allocate page1 here is because OpenEphemeral needs a write transaction
         // we should have a unique API to begin transactions, something like sqlite3BtreeBeginTrans
-        while self.is_empty.load(Ordering::SeqCst) {
+        if self.is_empty.load(Ordering::SeqCst) {
             let _lock = self.init_lock.lock().unwrap();
-            self.allocate_page1()?;
+            if self.is_empty.load(Ordering::SeqCst) {
+                self.allocate_page1()?;
+            }
         }
         self.wal.borrow_mut().begin_write_tx()
     }
@@ -1352,7 +1355,15 @@ mod ptrmap_tests {
             buffer_pool.clone(),
         )));
 
-        let pager = Pager::new(db_file, wal, io, page_cache, buffer_pool, true).unwrap();
+        let pager = Pager::new(
+            db_file,
+            wal,
+            io,
+            page_cache,
+            buffer_pool,
+            Arc::new(AtomicBool::new(true)),
+        )
+        .unwrap();
         pager.allocate_page1().unwrap();
         header_accessor::set_vacuum_mode_largest_root_page(&pager, 1).unwrap();
         pager.set_auto_vacuum_mode(AutoVacuumMode::Full);

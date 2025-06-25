@@ -51,7 +51,7 @@ pub use io::{
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::Schema;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
@@ -105,6 +105,7 @@ pub struct Database {
     // create DB connections.
     _shared_page_cache: Arc<RwLock<DumbLruPageCache>>,
     maybe_shared_wal: RwLock<Option<Arc<UnsafeCell<WalFileShared>>>>,
+    is_empty: Arc<AtomicBool>,
     open_flags: OpenFlags,
 }
 
@@ -163,6 +164,8 @@ impl Database {
             unsafe { &*wal.get() }.max_frame.load(Ordering::SeqCst) > 0
         });
 
+        let is_empty = db_size == 0 && !wal_has_frames;
+
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
         let schema = Arc::new(RwLock::new(Schema::new()));
         let db = Database {
@@ -174,11 +177,12 @@ impl Database {
             db_file,
             io: io.clone(),
             open_flags: flags,
+            is_empty: Arc::new(AtomicBool::new(is_empty)),
         };
         let db = Arc::new(db);
 
         // Check: https://github.com/tursodatabase/limbo/pull/1761#discussion_r2154013123
-        if db_size > 0 || wal_has_frames {
+        if !is_empty {
             // parse schema
             let conn = db.connect()?;
             let rows = conn.query("SELECT * FROM sqlite_schema")?;
@@ -203,11 +207,7 @@ impl Database {
         // Open existing WAL file if present
         if let Some(shared_wal) = self.maybe_shared_wal.read().clone() {
             // No pages in DB file or WAL -> empty database
-            let is_empty = self.db_file.size()? == 0
-                && unsafe { &*shared_wal.get() }
-                    .max_frame
-                    .load(Ordering::SeqCst)
-                    == 0;
+            let is_empty = self.is_empty.clone();
             let wal = Rc::new(RefCell::new(WalFile::new(
                 self.io.clone(),
                 shared_wal,
@@ -251,7 +251,7 @@ impl Database {
         // No existing WAL; create one.
         // TODO: currently Pager needs to be instantiated with some implementation of trait Wal, so here's a workaround.
         let dummy_wal = Rc::new(RefCell::new(DummyWAL {}));
-        let is_empty = self.db_file.size()? == 0;
+        let is_empty = self.is_empty.clone();
         let mut pager = Pager::new(
             self.db_file.clone(),
             dummy_wal,

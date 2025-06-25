@@ -25,6 +25,7 @@ use crate::{
     },
     types::compare_immutable,
 };
+use std::sync::atomic::AtomicBool;
 use std::{borrow::BorrowMut, rc::Rc, sync::Arc};
 
 use crate::{pseudo::PseudoCursor, result::LimboResult};
@@ -33,7 +34,6 @@ use crate::{
     schema::{affinity, Affinity},
     storage::btree::{BTreeCursor, BTreeKey},
 };
-use std::sync::atomic::Ordering;
 
 use crate::{
     storage::wal::CheckpointResult,
@@ -1682,11 +1682,6 @@ pub fn op_transaction(
     let conn = program.connection.clone();
     if *write && conn._db.open_flags.contains(OpenFlags::ReadOnly) {
         return Err(LimboError::ReadOnly);
-    }
-
-    // We allocate the first page lazily in the first transaction
-    if conn.pager.is_empty.load(Ordering::SeqCst) {
-        conn.pager.allocate_page1()?;
     }
 
     if let Some(mv_store) = &mv_store {
@@ -5216,7 +5211,7 @@ pub fn op_open_ephemeral(
         io,
         page_cache,
         buffer_pool.clone(),
-        true,
+        Arc::new(AtomicBool::new(true)),
     )?);
 
     let page_size = header_accessor::get_page_size(&pager)
