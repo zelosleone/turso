@@ -105,7 +105,7 @@ pub struct Database {
     // create DB connections.
     _shared_page_cache: Arc<RwLock<DumbLruPageCache>>,
     maybe_shared_wal: RwLock<Option<Arc<UnsafeCell<WalFileShared>>>>,
-    pub is_empty: Arc<AtomicBool>,
+    is_empty: Arc<AtomicBool>,
     open_flags: OpenFlags,
 }
 
