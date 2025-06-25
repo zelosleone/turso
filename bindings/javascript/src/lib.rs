@@ -4,7 +4,7 @@ use std::cell::{RefCell, RefMut};
 use std::num::NonZeroUsize;
 
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use limbo_core::{LimboError, StepResult};
 use napi::iterator::Generator;
