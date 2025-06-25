@@ -4,7 +4,7 @@ use std::cell::{RefCell, RefMut};
 use std::num::NonZeroUsize;
 
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use limbo_core::{LimboError, StepResult};
 use napi::iterator::Generator;
@@ -35,8 +35,7 @@ pub struct Database {
     pub readonly: bool,
     // #[napi(writable = false)]
     // pub in_transaction: bool,
-    // #[napi(writable = false)]
-    // pub open: bool,
+    pub open: bool,
     #[napi(writable = false)]
     pub name: String,
     _db: Arc<limbo_core::Database>,
@@ -80,6 +79,7 @@ impl Database {
             memory,
             _db: db,
             conn,
+            open: true,
             name: path,
             io,
         })
@@ -124,6 +124,11 @@ impl Database {
     #[napi]
     pub fn readonly(&self) -> bool {
         self.readonly
+    }
+
+    #[napi]
+    pub fn open(&self) -> bool {
+        self.open
     }
 
     #[napi]
@@ -199,8 +204,9 @@ impl Database {
     }
 
     #[napi]
-    pub fn close(&self) -> napi::Result<()> {
+    pub fn close(&mut self) -> napi::Result<()> {
         self.conn.close().map_err(into_napi_error)?;
+        self.open = false;
         Ok(())
     }
 }
