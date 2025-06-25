@@ -986,7 +986,7 @@ impl WalFile {
             max_frame_read_lock_index: 0,
             last_checksum: (0, 0),
             start_pages_in_frames: 0,
-            header,
+            header: *header,
         }
     }
 
