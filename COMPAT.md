@@ -78,7 +78,7 @@ Limbo aims to be fully compatible with SQLite, with opt-in features not supporte
 | RELEASE SAVEPOINT         | No      |                                                                                   |
 | REPLACE                   | No      |                                                                                   |
 | RETURNING clause          | No      |                                                                                   |
-| ROLLBACK TRANSACTION      | No      |                                                                                   |
+| ROLLBACK TRANSACTION      | Yes     |                                                                                   |
 | SAVEPOINT                 | No      |                                                                                   |
 | SELECT                    | Yes     |                                                                                   |
 | SELECT ... WHERE          | Yes     |                                                                                   |
