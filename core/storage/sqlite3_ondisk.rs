@@ -748,7 +748,7 @@ pub fn begin_read_page(
         }
     });
     let c = Completion::new(CompletionType::Read(ReadCompletion::new(buf, complete)));
-    db_file.read_page(page_idx, Arc::new(c))?;
+    db_file.read_page(page_idx, c)?;
     Ok(())
 }
 
@@ -806,7 +806,7 @@ pub fn begin_write_btree_page(
         })
     };
     let c = Completion::new(CompletionType::Write(WriteCompletion::new(write_complete)));
-    page_source.write_page(page_id, buffer.clone(), Arc::new(c))?;
+    page_source.write_page(page_id, buffer.clone(), c)?;
     Ok(())
 }
 
@@ -819,7 +819,7 @@ pub fn begin_sync(db_file: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>)
         }),
     }));
     #[allow(clippy::arc_with_non_send_sync)]
-    db_file.sync(Arc::new(completion))?;
+    db_file.sync(completion)?;
     Ok(())
 }
 
@@ -1455,7 +1455,7 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
         buf_for_pread,
         complete,
     )));
-    file.pread(0, Arc::new(c))?;
+    file.pread(0, c)?;
 
     Ok(wal_file_shared_ret)
 }
@@ -1474,10 +1474,8 @@ pub fn begin_read_wal_frame(
     });
     let buf = Arc::new(RefCell::new(Buffer::new(buf, drop_fn)));
     #[allow(clippy::arc_with_non_send_sync)]
-    let c = Arc::new(Completion::new(CompletionType::Read(ReadCompletion::new(
-        buf, complete,
-    ))));
-    io.pread(offset, c.clone())?;
+    let c = Completion::new(CompletionType::Read(ReadCompletion::new(buf, complete)));
+    let c = io.pread(offset, c)?;
     Ok(c)
 }
 
@@ -1563,9 +1561,7 @@ pub fn begin_write_wal_frame(
         })
     };
     #[allow(clippy::arc_with_non_send_sync)]
-    let c = Arc::new(Completion::new(CompletionType::Write(
-        WriteCompletion::new(write_complete),
-    )));
+    let c = Completion::new(CompletionType::Write(WriteCompletion::new(write_complete)));
     io.pwrite(offset, buffer.clone(), c)?;
     tracing::trace!("Frame written and synced");
     Ok(checksums)
@@ -1601,9 +1597,7 @@ pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<
         })
     };
     #[allow(clippy::arc_with_non_send_sync)]
-    let c = Arc::new(Completion::new(CompletionType::Write(
-        WriteCompletion::new(write_complete),
-    )));
+    let c = Completion::new(CompletionType::Write(WriteCompletion::new(write_complete)));
     io.pwrite(0, buffer.clone(), c)?;
     Ok(())
 }

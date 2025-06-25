@@ -7449,7 +7449,7 @@ mod tests {
             #[allow(clippy::arc_with_non_send_sync)]
             pager
                 .db_file
-                .write_page(current_page as usize, buf.clone(), Arc::new(c))?;
+                .write_page(current_page as usize, buf.clone(), c)?;
             pager.io.run_once()?;
 
             let page = cursor.read_page(current_page as usize)?;

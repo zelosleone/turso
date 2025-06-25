@@ -583,7 +583,7 @@ impl DatabaseFile {
 }
 
 impl limbo_core::DatabaseStorage for DatabaseFile {
-    fn read_page(&self, page_idx: usize, c: Arc<limbo_core::Completion>) -> limbo_core::Result<()> {
+    fn read_page(&self, page_idx: usize, c: limbo_core::Completion) -> limbo_core::Result<()> {
         let r = match c.completion_type {
             limbo_core::CompletionType::Read(ref r) => r,
             _ => unreachable!(),
@@ -602,7 +602,7 @@ impl limbo_core::DatabaseStorage for DatabaseFile {
         &self,
         page_idx: usize,
         buffer: Arc<std::cell::RefCell<limbo_core::Buffer>>,
-        c: Arc<limbo_core::Completion>,
+        c: limbo_core::Completion,
     ) -> limbo_core::Result<()> {
         let size = buffer.borrow().len();
         let pos = (page_idx - 1) * size;
@@ -610,8 +610,9 @@ impl limbo_core::DatabaseStorage for DatabaseFile {
         Ok(())
     }
 
-    fn sync(&self, c: Arc<limbo_core::Completion>) -> limbo_core::Result<()> {
-        self.file.sync(c)
+    fn sync(&self, c: limbo_core::Completion) -> limbo_core::Result<()> {
+        let _ = self.file.sync(c)?;
+        Ok(())
     }
 
     fn size(&self) -> limbo_core::Result<u64> {

@@ -879,7 +879,7 @@ impl Wal for WalFile {
                     }),
                 }));
                 let shared = self.get_shared();
-                shared.file.sync(Arc::new(completion))?;
+                shared.file.sync(completion)?;
                 self.sync_state.set(SyncState::Syncing);
                 Ok(WalFsyncStatus::IO)
             }
