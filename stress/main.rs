@@ -334,11 +334,26 @@ fn generate_plan(opts: &Opts) -> Result<Plan, Box<dyn std::error::Error + Send +
                 );
                 std::io::stdout().flush().unwrap();
             }
+            let tx = if get_random() % 2 == 0 {
+                Some("BEGIN")
+            } else {
+                None
+            };
+            if let Some(tx) = tx {
+                queries.push(format!("{}", tx));
+            }
             let sql = generate_random_statement(&schema);
             if !opts.skip_log {
                 writeln!(log_file, "{}", sql)?;
             }
             queries.push(sql);
+            if let Some(_) = tx {
+                if get_random() % 2 == 0 {
+                    queries.push(format!("COMMIT"));
+                } else {
+                    queries.push(format!("ROLLBACK"));
+                }
+            }
         }
         plan.queries_per_thread.push(queries);
     }
