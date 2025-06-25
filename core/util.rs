@@ -138,10 +138,9 @@ pub fn parse_schema_rows(
             }
         }
         for unparsed_sql_from_index in from_sql_indexes {
-            #[cfg(not(feature = "index_experimental"))]
-            schema.table_set_has_index(&unparsed_sql_from_index.table_name);
-            #[cfg(feature = "index_experimental")]
-            {
+            if !schema.indexes_enabled() {
+                schema.table_set_has_index(&unparsed_sql_from_index.table_name);
+            } else {
                 let table = schema
                     .get_btree_table(&unparsed_sql_from_index.table_name)
                     .unwrap();
@@ -154,10 +153,9 @@ pub fn parse_schema_rows(
             }
         }
         for automatic_index in automatic_indices {
-            #[cfg(not(feature = "index_experimental"))]
-            schema.table_set_has_index(&automatic_index.0);
-            #[cfg(feature = "index_experimental")]
-            {
+            if !schema.indexes_enabled() {
+                schema.table_set_has_index(&automatic_index.0);
+            } else {
                 let table = schema.get_btree_table(&automatic_index.0).unwrap();
                 let ret_index = schema::Index::automatic_from_primary_key_and_unique(
                     table.as_ref(),

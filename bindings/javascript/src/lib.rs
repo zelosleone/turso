@@ -71,7 +71,7 @@ impl Database {
         let file = io.open_file(&path, flag, false).map_err(into_napi_error)?;
 
         let db_file = Arc::new(DatabaseFile::new(file));
-        let db = limbo_core::Database::open(io.clone(), &path, db_file, false)
+        let db = limbo_core::Database::open(io.clone(), &path, db_file, false, false)
             .map_err(into_napi_error)?;
         let conn = db.connect().map_err(into_napi_error)?;
 

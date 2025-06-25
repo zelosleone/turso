@@ -4946,7 +4946,7 @@ pub fn op_parse_schema(
         }
     } else {
         let stmt = conn.prepare("SELECT * FROM sqlite_schema")?;
-        let mut new = Schema::new();
+        let mut new = Schema::new(conn.schema.read().indexes_enabled());
 
         // TODO: This function below is synchronous, make it async
         {

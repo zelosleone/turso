@@ -57,6 +57,8 @@ pub struct Opts {
     pub vfs: Option<String>,
     #[clap(long, help = "Enable experimental MVCC feature")]
     pub experimental_mvcc: bool,
+    #[clap(long, help = "Enable experimental indexing feature")]
+    pub experimental_indexes: bool,
     #[clap(short = 't', long, help = "specify output file for log traces")]
     pub tracing_output: Option<String>,
 }
@@ -129,7 +131,12 @@ impl Limbo {
             };
             (
                 io.clone(),
-                Database::open_file(io.clone(), &db_file, opts.experimental_mvcc)?,
+                Database::open_file(
+                    io.clone(),
+                    &db_file,
+                    opts.experimental_mvcc,
+                    opts.experimental_indexes,
+                )?,
             )
         };
         let conn = db.connect()?;
@@ -356,7 +363,10 @@ impl Limbo {
                     _path => get_io(DbLocation::Path, &self.opts.io.to_string())?,
                 }
             };
-            (io.clone(), Database::open_file(io.clone(), path, false)?)
+            (
+                io.clone(),
+                Database::open_file(io.clone(), path, false, false)?,
+            )
         };
         self.io = io;
         self.conn = db.connect()?;

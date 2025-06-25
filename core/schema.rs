@@ -21,18 +21,13 @@ pub struct Schema {
     pub tables: HashMap<String, Arc<Table>>,
     /// table_name to list of indexes for the table
     pub indexes: HashMap<String, Vec<Arc<Index>>>,
-    /// Used for index_experimental feature flag to track whether a table has an index.
-    /// This is necessary because we won't populate indexes so that we don't use them but
-    /// we still need to know if a table has an index to disallow any write operation that requires
-    /// indexes.
-    #[cfg(not(feature = "index_experimental"))]
     pub has_indexes: std::collections::HashSet<String>,
+    pub indexes_enabled: bool,
 }
 
 impl Schema {
-    pub fn new() -> Self {
+    pub fn new(indexes_enabled: bool) -> Self {
         let mut tables: HashMap<String, Arc<Table>> = HashMap::new();
-        #[cfg(not(feature = "index_experimental"))]
         let has_indexes = std::collections::HashSet::new();
         let indexes: HashMap<String, Vec<Arc<Index>>> = HashMap::new();
         #[allow(clippy::arc_with_non_send_sync)]
@@ -43,8 +38,8 @@ impl Schema {
         Self {
             tables,
             indexes,
-            #[cfg(not(feature = "index_experimental"))]
             has_indexes,
+            indexes_enabled,
         }
     }
 
@@ -89,7 +84,6 @@ impl Schema {
         }
     }
 
-    #[cfg(feature = "index_experimental")]
     pub fn add_index(&mut self, index: Arc<Index>) {
         let table_name = normalize_ident(&index.table_name);
         self.indexes
@@ -126,14 +120,16 @@ impl Schema {
             .retain_mut(|other_idx| other_idx.name != idx.name);
     }
 
-    #[cfg(not(feature = "index_experimental"))]
     pub fn table_has_indexes(&self, table_name: &str) -> bool {
         self.has_indexes.contains(table_name)
     }
 
-    #[cfg(not(feature = "index_experimental"))]
     pub fn table_set_has_index(&mut self, table_name: &str) {
         self.has_indexes.insert(table_name.to_string());
+    }
+
+    pub fn indexes_enabled(&self) -> bool {
+        self.indexes_enabled
     }
 }
 

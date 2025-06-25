@@ -6583,7 +6583,7 @@ mod tests {
                 .unwrap();
         }
         let io: Arc<dyn IO> = Arc::new(PlatformIO::new().unwrap());
-        let db = Database::open_file(io.clone(), path.to_str().unwrap(), false).unwrap();
+        let db = Database::open_file(io.clone(), path.to_str().unwrap(), false, false).unwrap();
 
         db
     }
@@ -7123,7 +7123,6 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "index_experimental")]
     fn btree_index_insert_fuzz_run(attempts: usize, inserts: usize) {
         use crate::storage::pager::CreateBTreeFlags;
 
@@ -7311,7 +7310,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "index_experimental")]
     pub fn btree_index_insert_fuzz_run_equal_size() {
         btree_index_insert_fuzz_run(2, 1024);
     }
@@ -7347,7 +7345,6 @@ mod tests {
 
     #[test]
     #[ignore]
-    #[cfg(feature = "index_experimental")]
     pub fn fuzz_long_btree_index_insert_fuzz_run_equal_size() {
         btree_index_insert_fuzz_run(2, 10_000);
     }

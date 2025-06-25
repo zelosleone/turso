@@ -25,7 +25,11 @@ use limbo_sqlite3_parser::ast::{
 
 pub const ROWID: &str = "rowid";
 
-pub fn resolve_aggregates(top_level_expr: &Expr, aggs: &mut Vec<Aggregate>) -> Result<bool> {
+pub fn resolve_aggregates(
+    schema: &Schema,
+    top_level_expr: &Expr,
+    aggs: &mut Vec<Aggregate>,
+) -> Result<bool> {
     let mut contains_aggregates = false;
     walk_expr(top_level_expr, &mut |expr: &Expr| -> Result<WalkControl> {
         if aggs
@@ -51,13 +55,10 @@ pub fn resolve_aggregates(top_level_expr: &Expr, aggs: &mut Vec<Aggregate>) -> R
                 {
                     Ok(Func::Agg(f)) => {
                         let distinctness = Distinctness::from_ast(distinctness.as_ref());
-                        #[cfg(not(feature = "index_experimental"))]
-                        {
-                            if distinctness.is_distinct() {
-                                crate::bail_parse_error!(
-                                    "SELECT with DISTINCT is not allowed without indexes enabled"
-                                );
-                            }
+                        if !schema.indexes_enabled() && distinctness.is_distinct() {
+                            crate::bail_parse_error!(
+                                "SELECT with DISTINCT is not allowed without indexes enabled"
+                            );
                         }
                         let num_args = args.as_ref().map_or(0, |args| args.len());
                         if distinctness.is_distinct() && num_args != 1 {
@@ -76,7 +77,7 @@ pub fn resolve_aggregates(top_level_expr: &Expr, aggs: &mut Vec<Aggregate>) -> R
                     _ => {
                         if let Some(args) = args {
                             for arg in args.iter() {
-                                contains_aggregates |= resolve_aggregates(arg, aggs)?;
+                                contains_aggregates |= resolve_aggregates(schema, arg, aggs)?;
                             }
                         }
                     }

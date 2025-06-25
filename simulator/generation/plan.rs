@@ -648,6 +648,7 @@ impl Interaction {
                             env.io.clone(),
                             &db_path,
                             false,
+                            false,
                         ) {
                             Ok(db) => db,
                             Err(e) => {

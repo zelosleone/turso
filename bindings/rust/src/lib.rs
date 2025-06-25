@@ -83,12 +83,12 @@ impl Builder {
         match self.path.as_str() {
             ":memory:" => {
                 let io: Arc<dyn limbo_core::IO> = Arc::new(limbo_core::MemoryIO::new());
-                let db = limbo_core::Database::open_file(io, self.path.as_str(), false)?;
+                let db = limbo_core::Database::open_file(io, self.path.as_str(), false, false)?;
                 Ok(Database { inner: db })
             }
             path => {
                 let io: Arc<dyn limbo_core::IO> = Arc::new(limbo_core::PlatformIO::new()?);
-                let db = limbo_core::Database::open_file(io, path, false)?;
+                let db = limbo_core::Database::open_file(io, path, false, false)?;
                 Ok(Database { inner: db })
             }
         }
