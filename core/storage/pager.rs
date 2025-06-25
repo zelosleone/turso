@@ -1078,6 +1078,7 @@ impl Pager {
     }
 
     pub fn rollback(&self) -> Result<(), LimboError> {
+        self.dirty_pages.borrow_mut().clear();
         let mut cache = self.page_cache.write();
         cache.unset_dirty_all_pages();
         cache.clear().expect("failed to clear page cache");
