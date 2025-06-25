@@ -335,10 +335,14 @@ impl ProgramBuilder {
         self.emit_insn(Insn::ResultRow { start_reg, count });
     }
 
-    fn emit_halt(&mut self) {
+    fn emit_halt(&mut self, rollback: bool) {
         self.emit_insn(Insn::Halt {
             err_code: 0,
-            description: String::new(),
+            description: if rollback {
+                "rollback".to_string()
+            } else {
+                String::new()
+            },
         });
     }
 
@@ -745,8 +749,16 @@ impl ProgramBuilder {
     /// Note that although these are the final instructions, typically an SQLite
     /// query will jump to the Transaction instruction via init_label.
     pub fn epilogue(&mut self, txn_mode: TransactionMode) {
+        self.epilogue_maybe_rollback(txn_mode, false);
+    }
+
+    /// Clean up and finalize the program, resolving any remaining labels
+    /// Note that although these are the final instructions, typically an SQLite
+    /// query will jump to the Transaction instruction via init_label.
+    /// "rollback" flag is used to determine if halt should rollback the transaction.
+    pub fn epilogue_maybe_rollback(&mut self, txn_mode: TransactionMode, rollback: bool) {
         if self.nested_level == 0 {
-            self.emit_halt();
+            self.emit_halt(rollback);
             self.preassign_label_to_next_insn(self.init_label);
 
             match txn_mode {

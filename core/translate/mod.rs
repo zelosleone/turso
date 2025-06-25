@@ -26,6 +26,7 @@ pub(crate) mod plan;
 pub(crate) mod planner;
 pub(crate) mod pragma;
 pub(crate) mod result_row;
+pub(crate) mod rollback;
 pub(crate) mod schema;
 pub(crate) mod select;
 pub(crate) mod subquery;
@@ -43,6 +44,7 @@ use alter::translate_alter_table;
 use index::{translate_create_index, translate_drop_index};
 use insert::translate_insert;
 use limbo_sqlite3_parser::ast::{self, Delete, Insert};
+use rollback::translate_rollback;
 use schema::{translate_create_table, translate_create_virtual_table, translate_drop_table};
 use select::translate_select;
 use std::rc::Rc;
@@ -62,6 +64,7 @@ pub fn translate(
     query_mode: QueryMode,
     _input: &str, // TODO: going to be used for CREATE VIEW
 ) -> Result<Program> {
+    tracing::trace!("querying {}", _input);
     let change_cnt_on = matches!(
         stmt,
         ast::Stmt::CreateIndex { .. }
@@ -183,7 +186,10 @@ pub fn translate_inner(
         }
         ast::Stmt::Reindex { .. } => bail_parse_error!("REINDEX not supported yet"),
         ast::Stmt::Release(_) => bail_parse_error!("RELEASE not supported yet"),
-        ast::Stmt::Rollback { .. } => bail_parse_error!("ROLLBACK not supported yet"),
+        ast::Stmt::Rollback {
+            tx_name,
+            savepoint_name,
+        } => translate_rollback(query_mode, schema, syms, program, tx_name, savepoint_name)?,
         ast::Stmt::Savepoint(_) => bail_parse_error!("SAVEPOINT not supported yet"),
         ast::Stmt::Select(select) => {
             translate_select(

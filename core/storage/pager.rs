@@ -234,6 +234,7 @@ pub enum PagerCacheflushResult {
     /// The WAL was written, fsynced, and a checkpoint was performed.
     /// The database file was then also fsynced.
     Checkpointed(CheckpointResult),
+    Rollback,
 }
 
 impl Pager {
@@ -576,7 +577,13 @@ impl Pager {
         self.wal.borrow_mut().begin_write_tx()
     }
 
-    pub fn end_tx(&self) -> Result<PagerCacheflushStatus> {
+    pub fn end_tx(&self, rollback: bool) -> Result<PagerCacheflushStatus> {
+        tracing::trace!("end_tx(rollback={})", rollback);
+        if rollback {
+            self.wal.borrow().end_write_tx()?;
+            self.wal.borrow().end_read_tx()?;
+            return Ok(PagerCacheflushStatus::Done(PagerCacheflushResult::Rollback));
+        }
         let cacheflush_status = self.cacheflush()?;
         match cacheflush_status {
             PagerCacheflushStatus::IO => Ok(PagerCacheflushStatus::IO),
@@ -653,6 +660,14 @@ impl Pager {
         Ok(page)
     }
 
+    // Get a page from the cache, if it exists.
+    pub fn cache_get(&self, page_idx: usize) -> Option<PageRef> {
+        tracing::trace!("read_page(page_idx = {})", page_idx);
+        let mut page_cache = self.page_cache.write();
+        let page_key = PageCacheKey::new(page_idx);
+        page_cache.get(&page_key)
+    }
+
     /// Changes the size of the page cache.
     pub fn change_page_cache_size(&self, capacity: usize) -> Result<CacheResizeResult> {
         let mut page_cache = self.page_cache.write();
@@ -707,6 +722,7 @@ impl Pager {
                     let in_flight = *self.flush_info.borrow().in_flight_writes.borrow();
                     if in_flight == 0 {
                         self.flush_info.borrow_mut().state = FlushState::SyncWal;
+                        self.wal.borrow_mut().finish_append_frames_commit()?;
                     } else {
                         return Ok(PagerCacheflushStatus::IO);
                     }
@@ -1062,6 +1078,16 @@ impl Pager {
         let page_size = header_accessor::get_page_size(self).unwrap_or_default() as u32;
         let reserved_space = header_accessor::get_reserved_space(self).unwrap_or_default() as u32;
         (page_size - reserved_space) as usize
+    }
+
+    pub fn rollback(&self) -> Result<(), LimboError> {
+        self.dirty_pages.borrow_mut().clear();
+        let mut cache = self.page_cache.write();
+        cache.unset_dirty_all_pages();
+        cache.clear().expect("failed to clear page cache");
+        self.wal.borrow_mut().rollback()?;
+
+        Ok(())
     }
 }
 

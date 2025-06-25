@@ -84,7 +84,7 @@ use vdbe::builder::TableRefIdCounter;
 
 pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum TransactionState {
     Write,
     Read,
@@ -328,6 +328,7 @@ pub struct Connection {
     _db: Arc<Database>,
     pager: Rc<Pager>,
     schema: Arc<RwLock<Schema>>,
+    /// Whether to automatically commit transaction
     auto_commit: Cell<bool>,
     mv_transactions: RefCell<Vec<crate::mvcc::database::TxID>>,
     transaction_state: Cell<TransactionState>,
