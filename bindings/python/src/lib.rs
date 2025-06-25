@@ -263,9 +263,16 @@ impl Connection {
     }
 
     pub fn rollback(&self) -> PyResult<()> {
-        Err(PyErr::new::<NotSupportedError, _>(
-            "Transactions are not supported in this version",
-        ))
+        if !self.conn.get_auto_commit() {
+            self.conn.execute("COMMIT").map_err(|e| {
+                PyErr::new::<OperationalError, _>(format!("Failed to commit: {:?}", e))
+            })?;
+
+            self.conn.execute("BEGIN").map_err(|e| {
+                PyErr::new::<OperationalError, _>(format!("Failed to commit: {:?}", e))
+            })?;
+        }
+        Ok(())
     }
 
     fn __enter__(&self) -> PyResult<Self> {
