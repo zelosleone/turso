@@ -223,6 +223,7 @@ impl limbo_core::File for File {
             assert!(nr >= 0);
         }
         r.complete();
+        #[allow(clippy::arc_with_non_send_sync)]
         Ok(Arc::new(c))
     }
 
@@ -240,12 +241,14 @@ impl limbo_core::File for File {
         let buf: &[u8] = buf.as_slice();
         self.vfs.pwrite(self.fd, buf, pos);
         w.complete(buf.len() as i32);
+        #[allow(clippy::arc_with_non_send_sync)]
         Ok(Arc::new(c))
     }
 
     fn sync(&self, c: limbo_core::Completion) -> Result<Arc<limbo_core::Completion>> {
         self.vfs.sync(self.fd);
         c.complete(0);
+        #[allow(clippy::arc_with_non_send_sync)]
         Ok(Arc::new(c))
     }
 
@@ -363,7 +366,7 @@ impl limbo_core::DatabaseStorage for DatabaseFile {
         Ok(())
     }
 
-    fn sync(&self, c: limbo_core::Completion) -> Result<Arc<limbo_core::Completion>> {
+    fn sync(&self, c: limbo_core::Completion) -> Result<()> {
         let _ = self.file.sync(c)?;
         Ok(())
     }

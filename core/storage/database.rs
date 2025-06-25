@@ -68,10 +68,6 @@ impl DatabaseStorage for DatabaseFile {
     fn size(&self) -> Result<u64> {
         self.file.size()
     }
-
-    fn size(&self) -> Result<u64> {
-        self.file.size()
-    }
 }
 
 #[cfg(feature = "fs")]

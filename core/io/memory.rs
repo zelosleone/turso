@@ -125,7 +125,12 @@ impl File for MemoryFile {
         Ok(c)
     }
 
-    fn pwrite(&self, pos: usize, buffer: Arc<RefCell<Buffer>>, c: Completion) -> Result<Arc<Completion>> {
+    fn pwrite(
+        &self,
+        pos: usize,
+        buffer: Arc<RefCell<Buffer>>,
+        c: Completion,
+    ) -> Result<Arc<Completion>> {
         let c = Arc::new(c);
         let buf = buffer.borrow();
         let buf_len = buf.len();
