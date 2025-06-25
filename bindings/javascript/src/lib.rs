@@ -62,17 +62,13 @@ impl Database {
         } else {
             Arc::new(limbo_core::PlatformIO::new().map_err(into_napi_error)?)
         };
-        let file = io
-            .open_file(&path, limbo_core::OpenFlags::Create, false)
-            .map_err(into_napi_error)?;
-
         let opts = options.unwrap_or_default();
-
         let flag = if opts.readonly {
             limbo_core::OpenFlags::ReadOnly
         } else {
             limbo_core::OpenFlags::Create
         };
+        let file = io.open_file(&path, flag, false).map_err(into_napi_error)?;
 
         let db_file = Arc::new(DatabaseFile::new(file));
         let db = limbo_core::Database::open(io.clone(), &path, db_file, false)
