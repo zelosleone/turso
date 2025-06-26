@@ -6529,12 +6529,8 @@ mod tests {
         collections::HashSet,
         mem::transmute,
         ops::Deref,
-        panic,
         rc::Rc,
-        sync::{
-            atomic::{AtomicBool, AtomicUsize},
-            Arc, Mutex,
-        },
+        sync::{atomic::AtomicUsize, Arc, Mutex},
     };
 
     use tempfile::TempDir;
