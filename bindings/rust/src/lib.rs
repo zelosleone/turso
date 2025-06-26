@@ -21,7 +21,10 @@
 //!
 //! ```rust,no_run
 //! # async fn run() {
-//! let stmt = conn.prepare("SELECT * FROM users WHERE email = ?1").await.unwrap()a
+//! # use limbo::Builder;
+//! # let db = Builder::new_local(":memory:").build().await.unwrap();
+//! # let conn = db.connect().unwrap();
+//! let mut stmt = conn.prepare("SELECT * FROM users WHERE email = ?1").await.unwrap();
 //! let mut rows = stmt.query(["foo@example.com"]).await.unwrap();
 //! let row = rows.next().await.unwrap().unwrap();
 //! let value = row.get_value(0).unwrap();
