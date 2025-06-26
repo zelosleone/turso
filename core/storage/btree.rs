@@ -6529,9 +6529,8 @@ mod tests {
         collections::HashSet,
         mem::transmute,
         ops::Deref,
-        panic,
         rc::Rc,
-        sync::{atomic::AtomicBool, Arc},
+        sync::{atomic::AtomicUsize, Arc, Mutex},
     };
 
     use tempfile::TempDir;
@@ -6883,13 +6882,14 @@ mod tests {
                 io,
                 page_cache,
                 buffer_pool,
-                Arc::new(AtomicBool::new(true)),
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(Mutex::new(())),
             )
             .unwrap()
         };
         let pager = Rc::new(pager);
         // FIXME: handle page cache is full
-        pager.allocate_page1().unwrap();
+        let _ = run_until_done(|| pager.allocate_page1(), &pager);
         let page2 = pager.allocate_page().unwrap();
         let page2 = Arc::new(BTreePageInner {
             page: RefCell::new(page2),
@@ -7016,8 +7016,8 @@ mod tests {
             tracing::info!("seed: {}", seed);
             for insert_id in 0..inserts {
                 let do_validate = do_validate_btree || (insert_id % VALIDATE_INTERVAL == 0);
-                pager.begin_read_tx().unwrap();
-                pager.begin_write_tx().unwrap();
+                run_until_done(|| pager.begin_read_tx(), &pager).unwrap();
+                run_until_done(|| pager.begin_write_tx(), &pager).unwrap();
                 let size = size(&mut rng);
                 let key = {
                     let result;
@@ -7068,7 +7068,7 @@ mod tests {
                         }
                     }
                 }
-                pager.begin_read_tx().unwrap();
+                run_until_done(|| pager.begin_read_tx(), &pager).unwrap();
                 // FIXME: add sorted vector instead, should be okay for small amounts of keys for now :P, too lazy to fix right now
                 cursor.move_to_root();
                 let mut valid = true;
@@ -7098,7 +7098,7 @@ mod tests {
                 }
                 pager.end_read_tx().unwrap();
             }
-            pager.begin_read_tx().unwrap();
+            run_until_done(|| pager.begin_read_tx(), &pager).unwrap();
             tracing::info!(
                 "=========== btree ===========\n{}\n\n",
                 format_btree(pager.clone(), root_page, 0)
@@ -7405,15 +7405,15 @@ mod tests {
                 io,
                 Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(10))),
                 buffer_pool,
-                Arc::new(AtomicBool::new(true)),
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(Mutex::new(())),
             )
             .unwrap(),
         );
 
         pager.io.run_once().unwrap();
 
-        pager.allocate_page1().unwrap();
-
+        let _ = run_until_done(|| pager.allocate_page1(), &pager);
         for _ in 0..(database_size - 1) {
             pager.allocate_page().unwrap();
         }

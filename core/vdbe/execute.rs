@@ -25,7 +25,8 @@ use crate::{
     },
     types::compare_immutable,
 };
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::AtomicUsize;
+use std::sync::Mutex;
 use std::{borrow::BorrowMut, rc::Rc, sync::Arc};
 
 use crate::{pseudo::PseudoCursor, result::LimboResult};
@@ -1708,13 +1709,13 @@ pub fn op_transaction(
         };
 
         if updated && matches!(current_state, TransactionState::None) {
-            if let LimboResult::Busy = pager.begin_read_tx()? {
+            if let LimboResult::Busy = return_if_io!(pager.begin_read_tx()) {
                 return Ok(InsnFunctionStepResult::Busy);
             }
         }
 
         if updated && matches!(new_transaction_state, TransactionState::Write) {
-            if let LimboResult::Busy = pager.begin_write_tx()? {
+            if let LimboResult::Busy = return_if_io!(pager.begin_write_tx()) {
                 pager.end_read_tx()?;
                 tracing::trace!("begin_write_tx busy");
                 return Ok(InsnFunctionStepResult::Busy);
@@ -5188,6 +5189,11 @@ pub fn op_noop(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub enum OpOpenEphemeralState {
+    Start,
+    StartingTxn { pager: Rc<Pager> },
+    CreateBtree { pager: Rc<Pager> },
+}
 pub fn op_open_ephemeral(
     program: &Program,
     state: &mut ProgramState,
@@ -5203,97 +5209,114 @@ pub fn op_open_ephemeral(
         Insn::OpenAutoindex { cursor_id } => (*cursor_id, false),
         _ => unreachable!("unexpected Insn {:?}", insn),
     };
+    match &state.op_open_ephemeral_state {
+        OpOpenEphemeralState::Start => {
+            tracing::trace!("Start");
+            let conn = program.connection.clone();
+            let io = conn.pager.io.get_memory_io();
 
-    let conn = program.connection.clone();
-    let io = conn.pager.io.get_memory_io();
+            let file = io.open_file("", OpenFlags::Create, true)?;
+            let db_file = Arc::new(FileMemoryStorage::new(file));
 
-    let file = io.open_file("", OpenFlags::Create, true)?;
-    let db_file = Arc::new(FileMemoryStorage::new(file));
+            let buffer_pool = Rc::new(BufferPool::new(None));
+            let page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
 
-    let buffer_pool = Rc::new(BufferPool::new(None));
-    let page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
+            let pager = Rc::new(Pager::new(
+                db_file,
+                Rc::new(RefCell::new(DummyWAL)),
+                io,
+                page_cache,
+                buffer_pool.clone(),
+                Arc::new(AtomicUsize::new(0)),
+                Arc::new(Mutex::new(())),
+            )?);
 
-    let pager = Rc::new(Pager::new(
-        db_file,
-        Rc::new(RefCell::new(DummyWAL)),
-        io,
-        page_cache,
-        buffer_pool.clone(),
-        Arc::new(AtomicBool::new(true)),
-    )?);
+            let page_size = header_accessor::get_page_size(&pager)
+                .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE)
+                as usize;
+            buffer_pool.set_page_size(page_size);
 
-    let page_size = header_accessor::get_page_size(&pager)
-        .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE) as usize;
-    buffer_pool.set_page_size(page_size);
-
-    let flag = if is_table {
-        &CreateBTreeFlags::new_table()
-    } else {
-        &CreateBTreeFlags::new_index()
-    };
-
-    pager.begin_write_tx()?;
-
-    // FIXME: handle page cache is full
-    let root_page = return_if_io!(pager.btree_create(flag));
-
-    let (_, cursor_type) = program.cursor_ref.get(cursor_id).unwrap();
-    let mv_cursor = match state.mv_tx_id {
-        Some(tx_id) => {
-            let table_id = root_page as u64;
-            let mv_store = mv_store.unwrap().clone();
-            let mv_cursor = Rc::new(RefCell::new(
-                MvCursor::new(mv_store.clone(), tx_id, table_id).unwrap(),
-            ));
-            Some(mv_cursor)
+            state.op_open_ephemeral_state = OpOpenEphemeralState::StartingTxn { pager };
         }
-        None => None,
-    };
-    let mut cursor = if let CursorType::BTreeIndex(index) = cursor_type {
-        BTreeCursor::new_index(
-            mv_cursor,
-            pager,
-            root_page as usize,
-            index,
-            index
-                .columns
-                .iter()
-                .map(|c| c.collation.unwrap_or_default())
-                .collect(),
-        )
-    } else {
-        BTreeCursor::new_table(mv_cursor, pager, root_page as usize)
-    };
-    cursor.rewind()?; // Will never return io
+        OpOpenEphemeralState::StartingTxn { pager } => {
+            tracing::trace!("StartingTxn");
+            return_if_io!(pager.begin_write_tx());
+            state.op_open_ephemeral_state = OpOpenEphemeralState::CreateBtree {
+                pager: pager.clone(),
+            };
+        }
+        OpOpenEphemeralState::CreateBtree { pager } => {
+            tracing::trace!("CreateBtree");
+            // FIXME: handle page cache is full
+            let flag = if is_table {
+                &CreateBTreeFlags::new_table()
+            } else {
+                &CreateBTreeFlags::new_index()
+            };
+            let root_page = return_if_io!(pager.btree_create(flag));
 
-    let mut cursors: std::cell::RefMut<'_, Vec<Option<Cursor>>> = state.cursors.borrow_mut();
+            let (_, cursor_type) = program.cursor_ref.get(cursor_id).unwrap();
+            let mv_cursor = match state.mv_tx_id {
+                Some(tx_id) => {
+                    let table_id = root_page as u64;
+                    let mv_store = mv_store.unwrap().clone();
+                    let mv_cursor = Rc::new(RefCell::new(
+                        MvCursor::new(mv_store.clone(), tx_id, table_id).unwrap(),
+                    ));
+                    Some(mv_cursor)
+                }
+                None => None,
+            };
+            let mut cursor = if let CursorType::BTreeIndex(index) = cursor_type {
+                BTreeCursor::new_index(
+                    mv_cursor,
+                    pager.clone(),
+                    root_page as usize,
+                    index,
+                    index
+                        .columns
+                        .iter()
+                        .map(|c| c.collation.unwrap_or_default())
+                        .collect(),
+                )
+            } else {
+                BTreeCursor::new_table(mv_cursor, pager.clone(), root_page as usize)
+            };
+            cursor.rewind()?; // Will never return io
 
-    // Table content is erased if the cursor already exists
-    match cursor_type {
-        CursorType::BTreeTable(_) => {
-            cursors
-                .get_mut(cursor_id)
-                .unwrap()
-                .replace(Cursor::new_btree(cursor));
-        }
-        CursorType::BTreeIndex(_) => {
-            cursors
-                .get_mut(cursor_id)
-                .unwrap()
-                .replace(Cursor::new_btree(cursor));
-        }
-        CursorType::Pseudo(_) => {
-            panic!("OpenEphemeral on pseudo cursor");
-        }
-        CursorType::Sorter => {
-            panic!("OpenEphemeral on sorter cursor");
-        }
-        CursorType::VirtualTable(_) => {
-            panic!("OpenEphemeral on virtual table cursor, use Insn::VOpen instead");
+            let mut cursors: std::cell::RefMut<'_, Vec<Option<Cursor>>> =
+                state.cursors.borrow_mut();
+
+            // Table content is erased if the cursor already exists
+            match cursor_type {
+                CursorType::BTreeTable(_) => {
+                    cursors
+                        .get_mut(cursor_id)
+                        .unwrap()
+                        .replace(Cursor::new_btree(cursor));
+                }
+                CursorType::BTreeIndex(_) => {
+                    cursors
+                        .get_mut(cursor_id)
+                        .unwrap()
+                        .replace(Cursor::new_btree(cursor));
+                }
+                CursorType::Pseudo(_) => {
+                    panic!("OpenEphemeral on pseudo cursor");
+                }
+                CursorType::Sorter => {
+                    panic!("OpenEphemeral on sorter cursor");
+                }
+                CursorType::VirtualTable(_) => {
+                    panic!("OpenEphemeral on virtual table cursor, use Insn::VOpen instead");
+                }
+            }
+
+            state.pc += 1;
+            state.op_open_ephemeral_state = OpOpenEphemeralState::Start;
         }
     }
 
-    state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
 
