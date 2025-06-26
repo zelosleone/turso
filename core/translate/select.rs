@@ -203,13 +203,10 @@ fn prepare_one_select_plan(
                 distinctness,
                 ..
             } = *select_inner;
-            #[cfg(not(feature = "index_experimental"))]
-            {
-                if distinctness.is_some() {
-                    crate::bail_parse_error!(
-                        "SELECT with DISTINCT is not allowed without indexes enabled"
-                    );
-                }
+            if !schema.indexes_enabled() && distinctness.is_some() {
+                crate::bail_parse_error!(
+                    "SELECT with DISTINCT is not allowed without indexes enabled"
+                );
             }
             let col_count = columns.len();
             if col_count == 0 {
@@ -346,13 +343,10 @@ fn prepare_one_select_plan(
                                 };
                                 let distinctness = Distinctness::from_ast(distinctness.as_ref());
 
-                                #[cfg(not(feature = "index_experimental"))]
-                                {
-                                    if distinctness.is_distinct() {
-                                        crate::bail_parse_error!(
-                                            "SELECT with DISTINCT is not allowed without indexes enabled"
-                                        );
-                                    }
+                                if !schema.indexes_enabled() && distinctness.is_distinct() {
+                                    crate::bail_parse_error!(
+                                       "SELECT with DISTINCT is not allowed without indexes enabled"
+                                   );
                                 }
                                 if distinctness.is_distinct() && args_count != 1 {
                                     crate::bail_parse_error!("DISTINCT aggregate functions must have exactly one argument");
@@ -393,8 +387,11 @@ fn prepare_one_select_plan(
                                         });
                                     }
                                     Ok(_) => {
-                                        let contains_aggregates =
-                                            resolve_aggregates(expr, &mut aggregate_expressions)?;
+                                        let contains_aggregates = resolve_aggregates(
+                                            schema,
+                                            expr,
+                                            &mut aggregate_expressions,
+                                        )?;
                                         plan.result_columns.push(ResultSetColumn {
                                             alias: maybe_alias.as_ref().map(|alias| match alias {
                                                 ast::As::Elided(alias) => alias.0.clone(),
@@ -409,6 +406,7 @@ fn prepare_one_select_plan(
                                         {
                                             if let ExtFunc::Scalar(_) = f.as_ref().func {
                                                 let contains_aggregates = resolve_aggregates(
+                                                    schema,
                                                     expr,
                                                     &mut aggregate_expressions,
                                                 )?;
@@ -486,7 +484,7 @@ fn prepare_one_select_plan(
                             }
                             expr => {
                                 let contains_aggregates =
-                                    resolve_aggregates(expr, &mut aggregate_expressions)?;
+                                    resolve_aggregates(schema, expr, &mut aggregate_expressions)?;
                                 plan.result_columns.push(ResultSetColumn {
                                     alias: maybe_alias.as_ref().map(|alias| match alias {
                                         ast::As::Elided(alias) => alias.0.clone(),
@@ -532,7 +530,7 @@ fn prepare_one_select_plan(
                                 Some(&plan.result_columns),
                             )?;
                             let contains_aggregates =
-                                resolve_aggregates(expr, &mut aggregate_expressions)?;
+                                resolve_aggregates(schema, expr, &mut aggregate_expressions)?;
                             if !contains_aggregates {
                                 // TODO: sqlite allows HAVING clauses with non aggregate expressions like
                                 // HAVING id = 5. We should support this too eventually (I guess).
@@ -567,7 +565,7 @@ fn prepare_one_select_plan(
                         &mut plan.table_references,
                         Some(&plan.result_columns),
                     )?;
-                    resolve_aggregates(&o.expr, &mut plan.aggregates)?;
+                    resolve_aggregates(schema, &o.expr, &mut plan.aggregates)?;
 
                     key.push((o.expr, o.order.unwrap_or(ast::SortOrder::Asc)));
                 }

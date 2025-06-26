@@ -114,8 +114,13 @@ unsafe impl Sync for Database {}
 
 impl Database {
     #[cfg(feature = "fs")]
-    pub fn open_file(io: Arc<dyn IO>, path: &str, enable_mvcc: bool) -> Result<Arc<Database>> {
-        Self::open_file_with_flags(io, path, OpenFlags::default(), enable_mvcc)
+    pub fn open_file(
+        io: Arc<dyn IO>,
+        path: &str,
+        enable_mvcc: bool,
+        enable_indexes: bool,
+    ) -> Result<Arc<Database>> {
+        Self::open_file_with_flags(io, path, OpenFlags::default(), enable_mvcc, enable_indexes)
     }
 
     #[cfg(feature = "fs")]
@@ -124,10 +129,11 @@ impl Database {
         path: &str,
         flags: OpenFlags,
         enable_mvcc: bool,
+        enable_indexes: bool,
     ) -> Result<Arc<Database>> {
         let file = io.open_file(path, flags, true)?;
         let db_file = Arc::new(DatabaseFile::new(file));
-        Self::open_with_flags(io, path, db_file, flags, enable_mvcc)
+        Self::open_with_flags(io, path, db_file, flags, enable_mvcc, enable_indexes)
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
@@ -136,8 +142,16 @@ impl Database {
         path: &str,
         db_file: Arc<dyn DatabaseStorage>,
         enable_mvcc: bool,
+        enable_indexes: bool,
     ) -> Result<Arc<Database>> {
-        Self::open_with_flags(io, path, db_file, OpenFlags::default(), enable_mvcc)
+        Self::open_with_flags(
+            io,
+            path,
+            db_file,
+            OpenFlags::default(),
+            enable_mvcc,
+            enable_indexes,
+        )
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
@@ -147,6 +161,7 @@ impl Database {
         db_file: Arc<dyn DatabaseStorage>,
         flags: OpenFlags,
         enable_mvcc: bool,
+        enable_indexes: bool,
     ) -> Result<Arc<Database>> {
         let wal_path = format!("{}-wal", path);
         let maybe_shared_wal = WalFileShared::open_shared_if_exists(&io, wal_path.as_str())?;
@@ -167,7 +182,7 @@ impl Database {
         let is_empty = db_size == 0 && !wal_has_frames;
 
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
-        let schema = Arc::new(RwLock::new(Schema::new()));
+        let schema = Arc::new(RwLock::new(Schema::new(enable_indexes)));
         let db = Database {
             mv_store,
             path: path.to_string(),
@@ -319,7 +334,7 @@ impl Database {
                 }
             },
         };
-        let db = Self::open_file(io.clone(), path, false)?;
+        let db = Self::open_file(io.clone(), path, false, false)?;
         Ok((io, db))
     }
 }

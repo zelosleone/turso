@@ -2,9 +2,7 @@ pub mod grammar_generator;
 
 #[cfg(test)]
 mod tests {
-    #[cfg(feature = "index_experimental")]
     use rand::seq::IndexedRandom;
-    #[cfg(feature = "index_experimental")]
     use std::collections::HashSet;
 
     use rand::{Rng, SeedableRng};
@@ -30,7 +28,7 @@ mod tests {
     /// [See this issue for more info](https://github.com/tursodatabase/limbo/issues/1763)
     #[test]
     pub fn fuzz_failure_issue_1763() {
-        let db = TempDatabase::new_empty();
+        let db = TempDatabase::new_empty(false);
         let limbo_conn = db.connect_limbo();
         let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
         let offending_query = "SELECT ((ceil(pow((((2.0))), (-2.0 - -1.0) / log(0.5)))) - -2.0)";
@@ -45,7 +43,7 @@ mod tests {
 
     #[test]
     pub fn arithmetic_expression_fuzz_ex1() {
-        let db = TempDatabase::new_empty();
+        let db = TempDatabase::new_empty(false);
         let limbo_conn = db.connect_limbo();
         let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
 
@@ -65,7 +63,7 @@ mod tests {
 
     #[test]
     pub fn rowid_seek_fuzz() {
-        let db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x INTEGER PRIMARY KEY)"); // INTEGER PRIMARY KEY is a rowid alias, so an index is not created
+        let db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x INTEGER PRIMARY KEY)", false); // INTEGER PRIMARY KEY is a rowid alias, so an index is not created
         let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
 
         let insert = format!(
@@ -184,9 +182,8 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "index_experimental")]
     pub fn index_scan_fuzz() {
-        let db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x PRIMARY KEY)");
+        let db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x PRIMARY KEY)", true);
         let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
 
         let insert = format!(
@@ -232,7 +229,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "index_experimental")]
     /// A test for verifying that index seek+scan works correctly for compound keys
     /// on indexes with various column orderings.
     pub fn index_scan_compound_key_fuzz() {
@@ -254,14 +250,14 @@ mod tests {
         ];
         // Create all different 3-column primary key permutations
         let dbs = [
-            TempDatabase::new_with_rusqlite(table_defs[0]),
-            TempDatabase::new_with_rusqlite(table_defs[1]),
-            TempDatabase::new_with_rusqlite(table_defs[2]),
-            TempDatabase::new_with_rusqlite(table_defs[3]),
-            TempDatabase::new_with_rusqlite(table_defs[4]),
-            TempDatabase::new_with_rusqlite(table_defs[5]),
-            TempDatabase::new_with_rusqlite(table_defs[6]),
-            TempDatabase::new_with_rusqlite(table_defs[7]),
+            TempDatabase::new_with_rusqlite(table_defs[0], true),
+            TempDatabase::new_with_rusqlite(table_defs[1], true),
+            TempDatabase::new_with_rusqlite(table_defs[2], true),
+            TempDatabase::new_with_rusqlite(table_defs[3], true),
+            TempDatabase::new_with_rusqlite(table_defs[4], true),
+            TempDatabase::new_with_rusqlite(table_defs[5], true),
+            TempDatabase::new_with_rusqlite(table_defs[6], true),
+            TempDatabase::new_with_rusqlite(table_defs[7], true),
         ];
         let mut pk_tuples = HashSet::new();
         while pk_tuples.len() < 100000 {
@@ -512,7 +508,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "index_experimental")]
     pub fn compound_select_fuzz() {
         let _ = env_logger::try_init();
         let (mut rng, seed) = rng_from_time();
@@ -528,7 +523,7 @@ mod tests {
         const MAX_SELECTS_IN_UNION_EXTRA: usize = 2;
         const MAX_LIMIT_VALUE: usize = 50;
 
-        let db = TempDatabase::new_empty();
+        let db = TempDatabase::new_empty(true);
         let limbo_conn = db.connect_limbo();
         let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
 
@@ -672,7 +667,7 @@ mod tests {
 
         let sql = g.create().concat(" ").push_str("SELECT").push(expr).build();
 
-        let db = TempDatabase::new_empty();
+        let db = TempDatabase::new_empty(false);
         let limbo_conn = db.connect_limbo();
         let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
 
@@ -693,7 +688,7 @@ mod tests {
     #[test]
     pub fn fuzz_ex() {
         let _ = env_logger::try_init();
-        let db = TempDatabase::new_empty();
+        let db = TempDatabase::new_empty(false);
         let limbo_conn = db.connect_limbo();
         let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
 
@@ -793,7 +788,7 @@ mod tests {
 
         let sql = g.create().concat(" ").push_str("SELECT").push(expr).build();
 
-        let db = TempDatabase::new_empty();
+        let db = TempDatabase::new_empty(false);
         let limbo_conn = db.connect_limbo();
         let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
 
@@ -957,7 +952,7 @@ mod tests {
 
         let sql = g.create().concat(" ").push_str("SELECT").push(expr).build();
 
-        let db = TempDatabase::new_empty();
+        let db = TempDatabase::new_empty(false);
         let limbo_conn = db.connect_limbo();
         let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
 
@@ -991,7 +986,6 @@ mod tests {
         pub cast_expr: SymbolHandle,
         pub case_expr: SymbolHandle,
         pub cmp_op: SymbolHandle,
-        #[cfg(feature = "index_experimental")]
         pub number: SymbolHandle,
     }
 
@@ -1226,12 +1220,10 @@ mod tests {
             cast_expr,
             case_expr,
             cmp_op,
-            #[cfg(feature = "index_experimental")]
             number,
         }
     }
 
-    #[cfg(feature = "index_experimental")]
     fn predicate_builders(g: &GrammarGenerator, tables: Option<&[TestTable]>) -> PredicateBuilders {
         let (in_op, in_op_builder) = g.create_handle();
         let (column, column_builder) = g.create_handle();
@@ -1330,7 +1322,7 @@ mod tests {
             .push(expr)
             .build();
 
-        let db = TempDatabase::new_empty();
+        let db = TempDatabase::new_empty(false);
         let limbo_conn = db.connect_limbo();
         let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
 
@@ -1365,7 +1357,7 @@ mod tests {
                 "SELECT * FROM t",
             ],
         ] {
-            let db = TempDatabase::new_empty();
+            let db = TempDatabase::new_empty(false);
             let limbo_conn = db.connect_limbo();
             let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
             for query in queries.iter() {
@@ -1381,7 +1373,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "index_experimental")]
     pub fn table_logical_expression_fuzz_run() {
         let _ = env_logger::try_init();
         let g = GrammarGenerator::new();
@@ -1393,7 +1384,7 @@ mod tests {
         let predicate = predicate_builders(&g, Some(&tables));
         let expr = build_logical_expr(&g, &builders, Some(&predicate));
 
-        let db = TempDatabase::new_empty();
+        let db = TempDatabase::new_empty(true);
         let limbo_conn = db.connect_limbo();
         let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
         for table in tables.iter() {
