@@ -51,7 +51,8 @@ pub use io::{
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::Schema;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
@@ -67,6 +68,7 @@ use std::{
 use storage::database::DatabaseFile;
 use storage::page_cache::DumbLruPageCache;
 pub use storage::pager::PagerCacheflushStatus;
+use storage::pager::{DB_STATE_EMPTY, DB_STATE_INITIALIZED};
 pub use storage::{
     buffer_pool::BufferPool,
     database::DatabaseStorage,
@@ -105,7 +107,9 @@ pub struct Database {
     // create DB connections.
     _shared_page_cache: Arc<RwLock<DumbLruPageCache>>,
     maybe_shared_wal: RwLock<Option<Arc<UnsafeCell<WalFileShared>>>>,
-    is_empty: Arc<AtomicBool>,
+    is_empty: Arc<AtomicUsize>,
+    init_lock: Arc<Mutex<()>>,
+
     open_flags: OpenFlags,
 }
 
@@ -164,7 +168,11 @@ impl Database {
             unsafe { &*wal.get() }.max_frame.load(Ordering::SeqCst) > 0
         });
 
-        let is_empty = db_size == 0 && !wal_has_frames;
+        let is_empty = if db_size == 0 && !wal_has_frames {
+            DB_STATE_EMPTY
+        } else {
+            DB_STATE_INITIALIZED
+        };
 
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
         let schema = Arc::new(RwLock::new(Schema::new()));
@@ -177,12 +185,13 @@ impl Database {
             db_file,
             io: io.clone(),
             open_flags: flags,
-            is_empty: Arc::new(AtomicBool::new(is_empty)),
+            is_empty: Arc::new(AtomicUsize::new(is_empty)),
+            init_lock: Arc::new(Mutex::new(())),
         };
         let db = Arc::new(db);
 
         // Check: https://github.com/tursodatabase/limbo/pull/1761#discussion_r2154013123
-        if !is_empty {
+        if is_empty == 2 {
             // parse schema
             let conn = db.connect()?;
             let rows = conn.query("SELECT * FROM sqlite_schema")?;
@@ -220,6 +229,7 @@ impl Database {
                 Arc::new(RwLock::new(DumbLruPageCache::default())),
                 buffer_pool,
                 is_empty,
+                self.init_lock.clone(),
             )?);
 
             let page_size = header_accessor::get_page_size(&pager)
@@ -259,6 +269,7 @@ impl Database {
             Arc::new(RwLock::new(DumbLruPageCache::default())),
             buffer_pool.clone(),
             is_empty,
+            Arc::new(Mutex::new(())),
         )?;
         let page_size = header_accessor::get_page_size(&pager)
             .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE) as u32;

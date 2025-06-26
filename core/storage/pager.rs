@@ -12,13 +12,13 @@ use parking_lot::RwLock;
 use std::cell::{RefCell, UnsafeCell};
 use std::collections::HashSet;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{trace, Level};
 
 use super::btree::{btree_init_page, BTreePage};
 use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCacheKey};
-use super::sqlite3_ondisk::DATABASE_HEADER_SIZE;
+use super::sqlite3_ondisk::{begin_write_btree_page, DATABASE_HEADER_SIZE};
 use super::wal::{CheckpointMode, CheckpointStatus};
 
 #[cfg(not(feature = "omit_autovacuum"))]
@@ -191,6 +191,9 @@ pub enum AutoVacuumMode {
     Incremental,
 }
 
+pub const DB_STATE_EMPTY: usize = 0;
+pub const DB_STATE_INITIALIZING: usize = 1;
+pub const DB_STATE_INITIALIZED: usize = 2;
 /// The pager interface implements the persistence layer by providing access
 /// to pages of the database file, including caching, concurrency control, and
 /// transaction management.
@@ -212,10 +215,13 @@ pub struct Pager {
     checkpoint_inflight: Rc<RefCell<usize>>,
     syncing: Rc<RefCell<bool>>,
     auto_vacuum_mode: RefCell<AutoVacuumMode>,
-    /// Is the db empty? This is signified by 0-sized database and nonexistent WAL.
-    pub is_empty: Arc<AtomicBool>,
+    /// 0 -> Database is empty,
+    /// 1 -> Database is being initialized,
+    /// 2 -> Database is initialized and ready for use.
+    pub is_empty: Arc<AtomicUsize>,
     /// Mutex for synchronizing database initialization to prevent race conditions
-    init_lock: Mutex<()>,
+    init_lock: Arc<Mutex<()>>,
+    allocate_page1_state: RefCell<AllocatePage1State>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -237,6 +243,16 @@ pub enum PagerCacheflushResult {
     Rollback,
 }
 
+#[derive(Clone)]
+enum AllocatePage1State {
+    Start,
+    Writing {
+        write_counter: Rc<RefCell<usize>>,
+        page: BTreePage,
+    },
+    Done,
+}
+
 impl Pager {
     pub fn new(
         db_file: Arc<dyn DatabaseStorage>,
@@ -244,8 +260,14 @@ impl Pager {
         io: Arc<dyn crate::io::IO>,
         page_cache: Arc<RwLock<DumbLruPageCache>>,
         buffer_pool: Rc<BufferPool>,
-        is_empty: Arc<AtomicBool>,
+        is_empty: Arc<AtomicUsize>,
+        init_lock: Arc<Mutex<()>>,
     ) -> Result<Self> {
+        let allocate_page1_state = if is_empty.load(Ordering::SeqCst) < DB_STATE_INITIALIZED {
+            RefCell::new(AllocatePage1State::Start)
+        } else {
+            RefCell::new(AllocatePage1State::Done)
+        };
         Ok(Self {
             db_file,
             wal,
@@ -262,7 +284,8 @@ impl Pager {
             buffer_pool,
             auto_vacuum_mode: RefCell::new(AutoVacuumMode::None),
             is_empty,
-            init_lock: Mutex::new(()),
+            init_lock,
+            allocate_page1_state,
         })
     }
 
@@ -553,28 +576,46 @@ impl Pager {
     }
 
     #[inline(always)]
-    pub fn begin_read_tx(&self) -> Result<LimboResult> {
+    pub fn begin_read_tx(&self) -> Result<CursorResult<LimboResult>> {
         // We allocate the first page lazily in the first transaction
-        if self.is_empty.load(Ordering::SeqCst) {
-            let _lock = self.init_lock.lock().unwrap();
-            if self.is_empty.load(Ordering::SeqCst) {
-                self.allocate_page1()?;
-            }
+        match self.maybe_allocate_page1()? {
+            CursorResult::Ok(_) => {}
+            CursorResult::IO => return Ok(CursorResult::IO),
         }
-        self.wal.borrow_mut().begin_read_tx()
+        Ok(CursorResult::Ok(self.wal.borrow_mut().begin_read_tx()?))
+    }
+
+    fn maybe_allocate_page1(&self) -> Result<CursorResult<()>> {
+        if self.is_empty.load(Ordering::SeqCst) < DB_STATE_INITIALIZED {
+            if let Ok(_lock) = self.init_lock.try_lock() {
+                match (
+                    self.is_empty.load(Ordering::SeqCst),
+                    self.allocating_page1(),
+                ) {
+                    // In case of being empty or (allocating and this connection is performing allocation) then allocate the first page
+                    (0, false) | (1, true) => match self.allocate_page1()? {
+                        CursorResult::Ok(_) => Ok(CursorResult::Ok(())),
+                        CursorResult::IO => Ok(CursorResult::IO),
+                    },
+                    _ => Ok(CursorResult::IO),
+                }
+            } else {
+                Ok(CursorResult::IO)
+            }
+        } else {
+            Ok(CursorResult::Ok(()))
+        }
     }
 
     #[inline(always)]
-    pub fn begin_write_tx(&self) -> Result<LimboResult> {
+    pub fn begin_write_tx(&self) -> Result<CursorResult<LimboResult>> {
         // TODO(Diego): The only possibly allocate page1 here is because OpenEphemeral needs a write transaction
         // we should have a unique API to begin transactions, something like sqlite3BtreeBeginTrans
-        if self.is_empty.load(Ordering::SeqCst) {
-            let _lock = self.init_lock.lock().unwrap();
-            if self.is_empty.load(Ordering::SeqCst) {
-                self.allocate_page1()?;
-            }
+        match self.maybe_allocate_page1()? {
+            CursorResult::Ok(_) => {}
+            CursorResult::IO => return Ok(CursorResult::IO),
         }
-        self.wal.borrow_mut().begin_write_tx()
+        Ok(CursorResult::Ok(self.wal.borrow_mut().begin_write_tx()?))
     }
 
     pub fn end_tx(&self, rollback: bool) -> Result<PagerCacheflushStatus> {
@@ -957,37 +998,73 @@ impl Pager {
         Ok(())
     }
 
-    pub fn allocate_page1(&self) -> Result<PageRef> {
-        let mut default_header = DatabaseHeader::default();
-        default_header.database_size += 1;
-        self.is_empty.store(false, Ordering::SeqCst);
-        let page = allocate_page(1, &self.buffer_pool, 0);
+    pub fn allocate_page1(&self) -> Result<CursorResult<PageRef>> {
+        let state = self.allocate_page1_state.borrow().clone();
+        match state {
+            AllocatePage1State::Start => {
+                tracing::trace!("allocate_page1(Start)");
+                self.is_empty.store(DB_STATE_INITIALIZING, Ordering::SeqCst);
+                let default_header = DatabaseHeader::default();
+                let page = allocate_page(1, &self.buffer_pool, 0);
 
-        let page1 = Arc::new(BTreePageInner {
-            page: RefCell::new(page),
-        });
-        // Create the sqlite_schema table, for this we just need to create the btree page
-        // for the first page of the database which is basically like any other btree page
-        // but with a 100 byte offset, so we just init the page so that sqlite understands
-        // this is a correct page.
-        btree_init_page(
-            &page1,
-            PageType::TableLeaf,
-            DATABASE_HEADER_SIZE,
-            (default_header.get_page_size() - default_header.reserved_space as u32) as u16,
-        );
+                let page1 = Arc::new(BTreePageInner {
+                    page: RefCell::new(page),
+                });
+                // Create the sqlite_schema table, for this we just need to create the btree page
+                // for the first page of the database which is basically like any other btree page
+                // but with a 100 byte offset, so we just init the page so that sqlite understands
+                // this is a correct page.
+                btree_init_page(
+                    &page1,
+                    PageType::TableLeaf,
+                    DATABASE_HEADER_SIZE,
+                    (default_header.get_page_size() - default_header.reserved_space as u32) as u16,
+                );
+                let write_counter = Rc::new(RefCell::new(0));
+                begin_write_btree_page(self, &page1.get(), write_counter.clone())?;
 
-        let page1_ref = page1.get();
-        let contents = page1_ref.get().contents.as_mut().unwrap();
-        contents.write_database_header(&default_header);
-        page1_ref.set_dirty();
-        self.add_dirty(page1_ref.get().id);
-        let page_key = PageCacheKey::new(page1_ref.get().id);
-        let mut cache = self.page_cache.write();
-        cache.insert(page_key, page1_ref.clone()).map_err(|e| {
-            LimboError::InternalError(format!("Failed to insert page 1 into cache: {:?}", e))
-        })?;
-        Ok(page1_ref.clone())
+                self.allocate_page1_state
+                    .replace(AllocatePage1State::Writing {
+                        write_counter,
+                        page: page1,
+                    });
+                Ok(CursorResult::IO)
+            }
+            AllocatePage1State::Writing {
+                write_counter,
+                page,
+            } => {
+                tracing::trace!("allocate_page1(Writing)");
+                if *write_counter.borrow() > 0 {
+                    return Ok(CursorResult::IO);
+                }
+                tracing::trace!("allocate_page1(Writing done)");
+                let mut default_header = DatabaseHeader::default();
+                default_header.database_size += 1;
+                let page1_ref = page.get();
+                let contents = page1_ref.get().contents.as_mut().unwrap();
+                contents.write_database_header(&default_header);
+                let page_key = PageCacheKey::new(page1_ref.get().id);
+                let mut cache = self.page_cache.write();
+                cache.insert(page_key, page1_ref.clone()).map_err(|e| {
+                    LimboError::InternalError(format!(
+                        "Failed to insert page 1 into cache: {:?}",
+                        e
+                    ))
+                })?;
+                self.is_empty.store(DB_STATE_INITIALIZED, Ordering::SeqCst);
+                self.allocate_page1_state.replace(AllocatePage1State::Done);
+                Ok(CursorResult::Ok(page1_ref.clone()))
+            }
+            AllocatePage1State::Done => unreachable!("cannot try to allocate page 1 again"),
+        }
+    }
+
+    pub fn allocating_page1(&self) -> bool {
+        matches!(
+            *self.allocate_page1_state.borrow(),
+            AllocatePage1State::Writing { .. }
+        )
     }
 
     /*
@@ -1356,6 +1433,19 @@ mod ptrmap_tests {
     use crate::storage::sqlite3_ondisk::MIN_PAGE_SIZE;
     use crate::storage::wal::{WalFile, WalFileShared};
 
+    pub fn run_until_done<T>(
+        mut action: impl FnMut() -> Result<CursorResult<T>>,
+        pager: &Pager,
+    ) -> Result<T> {
+        loop {
+            match action()? {
+                CursorResult::Ok(res) => {
+                    return Ok(res);
+                }
+                CursorResult::IO => pager.io.run_once().unwrap(),
+            }
+        }
+    }
     // Helper to create a Pager for testing
     fn test_pager_setup(page_size: u32, initial_db_pages: u32) -> Pager {
         let io: Arc<dyn IO> = Arc::new(MemoryIO::new());
@@ -1387,10 +1477,11 @@ mod ptrmap_tests {
             io,
             page_cache,
             buffer_pool,
-            Arc::new(AtomicBool::new(true)),
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(Mutex::new(())),
         )
         .unwrap();
-        pager.allocate_page1().unwrap();
+        run_until_done(|| pager.allocate_page1(), &pager).unwrap();
         header_accessor::set_vacuum_mode_largest_root_page(&pager, 1).unwrap();
         pager.set_auto_vacuum_mode(AutoVacuumMode::Full);
 
