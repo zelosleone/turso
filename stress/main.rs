@@ -340,18 +340,18 @@ fn generate_plan(opts: &Opts) -> Result<Plan, Box<dyn std::error::Error + Send +
                 None
             };
             if let Some(tx) = tx {
-                queries.push(format!("{}", tx));
+                queries.push(tx.to_string());
             }
             let sql = generate_random_statement(&schema);
             if !opts.skip_log {
                 writeln!(log_file, "{}", sql)?;
             }
             queries.push(sql);
-            if let Some(_) = tx {
+            if tx.is_some() {
                 if get_random() % 2 == 0 {
-                    queries.push(format!("COMMIT"));
+                    queries.push("COMMIT".to_string());
                 } else {
-                    queries.push(format!("ROLLBACK"));
+                    queries.push("ROLLBACK".to_string());
                 }
             }
         }
