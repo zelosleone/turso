@@ -94,7 +94,7 @@ impl Builder {
 
 /// A database.
 ///
-/// The `Database` object points to a database and allows you to connect to it 
+/// The `Database` object points to a database and allows you to connect to it
 #[derive(Clone)]
 pub struct Database {
     inner: Arc<limbo_core::Database>,
