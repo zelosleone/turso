@@ -206,8 +206,10 @@ impl Database {
 
     #[napi]
     pub fn close(&mut self) -> napi::Result<()> {
-        self.conn.close().map_err(into_napi_error)?;
-        self.open = false;
+        if self.open {
+            self.conn.close().map_err(into_napi_error)?;
+            self.open = false;
+        }
         Ok(())
     }
 }
