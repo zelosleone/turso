@@ -23,8 +23,10 @@ pub fn translate_create_index(
     schema: &Schema,
     mut program: ProgramBuilder,
 ) -> crate::Result<ProgramBuilder> {
-    if cfg!(not(feature = "index_experimental")) {
-        crate::bail_parse_error!("CREATE INDEX enabled only with index_experimental feature");
+    if !schema.indexes_enabled() {
+        crate::bail_parse_error!(
+            "CREATE INDEX is disabled by default. Run with `--experimental-indexes` to enable this feature."
+        );
     }
     let idx_name = normalize_ident(idx_name);
     let tbl_name = normalize_ident(tbl_name);
@@ -299,8 +301,10 @@ pub fn translate_drop_index(
     schema: &Schema,
     mut program: ProgramBuilder,
 ) -> crate::Result<ProgramBuilder> {
-    if cfg!(not(feature = "index_experimental")) {
-        crate::bail_parse_error!("DROP INDEX enabled only with index_experimental feature");
+    if !schema.indexes_enabled() {
+        crate::bail_parse_error!(
+            "DROP INDEX is disabled by default. Run with `--experimental-indexes` to enable this feature."
+        );
     }
     let idx_name = normalize_ident(idx_name);
     let opts = crate::vdbe::builder::ProgramBuilderOpts {

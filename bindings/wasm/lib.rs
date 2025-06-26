@@ -22,7 +22,7 @@ impl Database {
         let io: Arc<dyn limbo_core::IO> = Arc::new(PlatformIO { vfs: VFS::new() });
         let file = io.open_file(path, OpenFlags::Create, false).unwrap();
         let db_file = Arc::new(DatabaseFile::new(file));
-        let db = limbo_core::Database::open(io, path, db_file, false).unwrap();
+        let db = limbo_core::Database::open(io, path, db_file, false, false).unwrap();
         let conn = db.connect().unwrap();
         Database { db, conn }
     }

@@ -71,6 +71,7 @@ pub fn optimize_select_plan(plan: &mut SelectPlan, schema: &Schema) -> Result<()
     }
 
     let best_join_order = optimize_table_access(
+        schema,
         &mut plan.table_references,
         &schema.indexes,
         &mut plan.where_clause,
@@ -119,6 +120,7 @@ fn optimize_update_plan(plan: &mut UpdatePlan, schema: &Schema) -> Result<()> {
         optimize_select_plan(ephemeral_plan, schema)?;
     }
     let _ = optimize_table_access(
+        schema,
         &mut plan.table_references,
         &schema.indexes,
         &mut plan.where_clause,
@@ -150,6 +152,7 @@ fn optimize_subqueries(plan: &mut SelectPlan, schema: &Schema) -> Result<()> {
 ///
 /// Returns the join order if it was optimized, or None if the default join order was considered best.
 fn optimize_table_access(
+    schema: &Schema,
     table_references: &mut TableReferences,
     available_indexes: &HashMap<String, Vec<Arc<Index>>>,
     where_clause: &mut [WhereTerm],
@@ -240,8 +243,7 @@ fn optimize_table_access(
         let table_idx = join_order_member.original_idx;
         let access_method = &access_methods_arena.borrow()[best_access_methods[i]];
         if access_method.is_scan() {
-            #[cfg(feature = "index_experimental")]
-            let try_to_build_ephemeral_index = {
+            let try_to_build_ephemeral_index = if schema.indexes_enabled() {
                 let is_leftmost_table = i == 0;
                 let uses_index = access_method.index.is_some();
                 let source_table_is_from_clause_subquery = matches!(
@@ -249,9 +251,9 @@ fn optimize_table_access(
                     Table::FromClauseSubquery(_)
                 );
                 !is_leftmost_table && !uses_index && !source_table_is_from_clause_subquery
+            } else {
+                false
             };
-            #[cfg(not(feature = "index_experimental"))]
-            let try_to_build_ephemeral_index = false;
 
             if !try_to_build_ephemeral_index {
                 joined_tables[table_idx].op = Operation::Scan {
