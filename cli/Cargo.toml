@@ -2,8 +2,8 @@
 
 [package]
 authors.workspace = true
-default-run = "limbo"
-description = "The Limbo interactive SQL shell"
+default-run = "tursodb"
+description = "The Turso interactive SQL shell"
 edition.workspace = true
 license.workspace = true
 name = "limbo_cli"
@@ -14,7 +14,7 @@ version.workspace = true
 dist = true
 
 [[bin]]
-name = "limbo"
+name = "tursodb"
 path = "main.rs"
 
 [dependencies]
