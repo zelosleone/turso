@@ -103,18 +103,27 @@ impl Database {
         match options {
             Some(PragmaOptions { simple: true, .. }) => {
                 let mut stmt = stmt.inner.borrow_mut();
-                match stmt.step().map_err(into_napi_error)? {
-                    limbo_core::StepResult::Row => {
-                        let row: Vec<_> = stmt.row().unwrap().get_values().cloned().collect();
-                        to_js_value(&env, &row[0])
+                loop {
+                    match stmt.step().map_err(into_napi_error)? {
+                        limbo_core::StepResult::Row => {
+                            let row: Vec<_> = stmt.row().unwrap().get_values().cloned().collect();
+                            return to_js_value(&env, &row[0]);
+                        }
+                        limbo_core::StepResult::Done => {
+                            return Ok(env.get_undefined()?.into_unknown())
+                        }
+                        limbo_core::StepResult::IO => {
+                            self.io.run_once().map_err(into_napi_error)?;
+                            continue;
+                        }
+                        step @ limbo_core::StepResult::Interrupt
+                        | step @ limbo_core::StepResult::Busy => {
+                            return Err(napi::Error::new(
+                                napi::Status::GenericFailure,
+                                format!("{:?}", step),
+                            ))
+                        }
                     }
-                    limbo_core::StepResult::Done => Ok(env.get_undefined()?.into_unknown()),
-                    limbo_core::StepResult::IO => todo!(),
-                    step @ limbo_core::StepResult::Interrupt
-                    | step @ limbo_core::StepResult::Busy => Err(napi::Error::new(
-                        napi::Status::GenericFailure,
-                        format!("{:?}", step),
-                    )),
                 }
             }
             _ => stmt.run(env, None),
@@ -247,51 +256,59 @@ impl Statement {
     pub fn get(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<JsUnknown> {
         let mut stmt = self.check_and_bind(args)?;
 
-        let step = stmt.step().map_err(into_napi_error)?;
-        match step {
-            limbo_core::StepResult::Row => {
-                let row = stmt.row().unwrap();
+        loop {
+            let step = stmt.step().map_err(into_napi_error)?;
+            match step {
+                limbo_core::StepResult::Row => {
+                    let row = stmt.row().unwrap();
 
-                match self.presentation_mode {
-                    PresentationMode::Raw => {
-                        let mut raw_obj = env.create_array(row.len() as u32)?;
-                        for (idx, value) in row.get_values().enumerate() {
-                            let js_value = to_js_value(&env, value);
+                    match self.presentation_mode {
+                        PresentationMode::Raw => {
+                            let mut raw_obj = env.create_array(row.len() as u32)?;
+                            for (idx, value) in row.get_values().enumerate() {
+                                let js_value = to_js_value(&env, value);
 
-                            raw_obj.set(idx as u32, js_value)?;
+                                raw_obj.set(idx as u32, js_value)?;
+                            }
+
+                            return Ok(raw_obj.coerce_to_object()?.into_unknown());
                         }
+                        PresentationMode::Pluck => {
+                            let (_, value) =
+                                row.get_values().enumerate().next().ok_or(napi::Error::new(
+                                    napi::Status::GenericFailure,
+                                    "Pluck mode requires at least one column in the result",
+                                ))?;
+                            let js_value = to_js_value(&env, value)?;
 
-                        Ok(raw_obj.coerce_to_object()?.into_unknown())
-                    }
-                    PresentationMode::Pluck => {
-                        let (_, value) =
-                            row.get_values().enumerate().next().ok_or(napi::Error::new(
-                                napi::Status::GenericFailure,
-                                "Pluck mode requires at least one column in the result",
-                            ))?;
-                        let js_value = to_js_value(&env, value)?;
-
-                        Ok(js_value)
-                    }
-                    PresentationMode::None => {
-                        let mut obj = env.create_object()?;
-
-                        for (idx, value) in row.get_values().enumerate() {
-                            let key = stmt.get_column_name(idx);
-                            let js_value = to_js_value(&env, value);
-
-                            obj.set_named_property(&key, js_value)?;
+                            return Ok(js_value);
                         }
+                        PresentationMode::None => {
+                            let mut obj = env.create_object()?;
 
-                        Ok(obj.into_unknown())
+                            for (idx, value) in row.get_values().enumerate() {
+                                let key = stmt.get_column_name(idx);
+                                let js_value = to_js_value(&env, value);
+
+                                obj.set_named_property(&key, js_value)?;
+                            }
+
+                            return Ok(obj.into_unknown());
+                        }
                     }
                 }
+                limbo_core::StepResult::Done => return Ok(env.get_undefined()?.into_unknown()),
+                limbo_core::StepResult::IO => {
+                    self.database.io.run_once().map_err(into_napi_error)?;
+                    continue;
+                }
+                limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => {
+                    return Err(napi::Error::new(
+                        napi::Status::GenericFailure,
+                        format!("{:?}", step),
+                    ))
+                }
             }
-            limbo_core::StepResult::Done => Ok(env.get_undefined()?.into_unknown()),
-            limbo_core::StepResult::IO => todo!(),
-            limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => Err(
-                napi::Error::new(napi::Status::GenericFailure, format!("{:?}", step)),
-            ),
         }
     }
 
@@ -469,42 +486,44 @@ impl Generator for IteratorStatement {
     fn next(&mut self, _: Option<Self::Next>) -> Option<Self::Yield> {
         let mut stmt = self.stmt.borrow_mut();
 
-        match stmt.step().ok()? {
-            limbo_core::StepResult::Row => {
-                let row = stmt.row().unwrap();
+        loop {
+            match stmt.step().ok()? {
+                limbo_core::StepResult::Row => {
+                    let row = stmt.row().unwrap();
 
-                match self.presentation_mode {
-                    PresentationMode::Raw => {
-                        let mut raw_array = self.env.create_array(row.len() as u32).ok()?;
-                        for (idx, value) in row.get_values().enumerate() {
-                            let js_value = to_js_value(&self.env, value);
-                            raw_array.set(idx as u32, js_value).ok()?;
+                    match self.presentation_mode {
+                        PresentationMode::Raw => {
+                            let mut raw_array = self.env.create_array(row.len() as u32).ok()?;
+                            for (idx, value) in row.get_values().enumerate() {
+                                let js_value = to_js_value(&self.env, value);
+                                raw_array.set(idx as u32, js_value).ok()?;
+                            }
+
+                            return Some(raw_array.coerce_to_object().ok()?.into_unknown());
                         }
-
-                        Some(raw_array.coerce_to_object().ok()?.into_unknown())
-                    }
-                    PresentationMode::Pluck => {
-                        let (_, value) = row.get_values().enumerate().next()?;
-                        to_js_value(&self.env, value).ok()
-                    }
-                    PresentationMode::None => {
-                        let mut js_row = self.env.create_object().ok()?;
-                        for (idx, value) in row.get_values().enumerate() {
-                            let key = stmt.get_column_name(idx);
-                            let js_value = to_js_value(&self.env, value);
-                            js_row.set_named_property(&key, js_value).ok()?;
+                        PresentationMode::Pluck => {
+                            let (_, value) = row.get_values().enumerate().next()?;
+                            return to_js_value(&self.env, value).ok();
                         }
+                        PresentationMode::None => {
+                            let mut js_row = self.env.create_object().ok()?;
+                            for (idx, value) in row.get_values().enumerate() {
+                                let key = stmt.get_column_name(idx);
+                                let js_value = to_js_value(&self.env, value);
+                                js_row.set_named_property(&key, js_value).ok()?;
+                            }
 
-                        Some(js_row.into_unknown())
+                            return Some(js_row.into_unknown());
+                        }
                     }
                 }
+                limbo_core::StepResult::Done => return None,
+                limbo_core::StepResult::IO => {
+                    self.database.io.run_once().ok()?;
+                    continue;
+                }
+                limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => return None,
             }
-            limbo_core::StepResult::Done => None,
-            limbo_core::StepResult::IO => {
-                self.database.io.run_once().ok()?;
-                None // clearly it's incorrect, it should return to user
-            }
-            limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => None,
         }
     }
 }
