@@ -191,7 +191,7 @@ pub enum AutoVacuumMode {
     Incremental,
 }
 
-pub const DB_STATE_EMPTY: usize = 0;
+pub const DB_STATE_UNITIALIZED: usize = 0;
 pub const DB_STATE_INITIALIZING: usize = 1;
 pub const DB_STATE_INITIALIZED: usize = 2;
 /// The pager interface implements the persistence layer by providing access

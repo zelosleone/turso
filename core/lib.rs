@@ -68,7 +68,7 @@ use std::{
 use storage::database::DatabaseFile;
 use storage::page_cache::DumbLruPageCache;
 pub use storage::pager::PagerCacheflushStatus;
-use storage::pager::{DB_STATE_EMPTY, DB_STATE_INITIALIZED};
+use storage::pager::{DB_STATE_INITIALIZED, DB_STATE_UNITIALIZED};
 pub use storage::{
     buffer_pool::BufferPool,
     database::DatabaseStorage,
@@ -169,7 +169,7 @@ impl Database {
         });
 
         let is_empty = if db_size == 0 && !wal_has_frames {
-            DB_STATE_EMPTY
+            DB_STATE_UNITIALIZED
         } else {
             DB_STATE_INITIALIZED
         };
