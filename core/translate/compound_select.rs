@@ -206,7 +206,8 @@ fn emit_compound_select(
                     target_cursor_id = Some(cursor_id);
                 }
 
-                let (left_cursor_id, left_index) = create_dedupe_index(program, &right_most, schema)?;
+                let (left_cursor_id, left_index) =
+                    create_dedupe_index(program, &right_most, schema)?;
                 plan.query_destination = QueryDestination::EphemeralIndex {
                     cursor_id: left_cursor_id,
                     index: left_index.clone(),
@@ -228,7 +229,8 @@ fn emit_compound_select(
                     reg_result_cols_start,
                 )?;
 
-                let (right_cursor_id, right_index) = create_dedupe_index(program, &right_most, schema)?;
+                let (right_cursor_id, right_index) =
+                    create_dedupe_index(program, &right_most, schema)?;
                 right_most.query_destination = QueryDestination::EphemeralIndex {
                     cursor_id: right_cursor_id,
                     index: right_index,
@@ -264,7 +266,7 @@ fn emit_compound_select(
 fn create_dedupe_index(
     program: &mut ProgramBuilder,
     select: &SelectPlan,
-    schema: &Schema
+    schema: &Schema,
 ) -> crate::Result<(usize, Arc<Index>)> {
     if !schema.indexes_enabled {
         crate::bail_parse_error!("UNION OR INTERSECT is not supported without indexes");
