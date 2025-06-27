@@ -1760,36 +1760,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "limbo_cli"
-version = "0.0.22"
-dependencies = [
- "anyhow",
- "cfg-if",
- "clap",
- "clap_complete",
- "comfy-table",
- "csv",
- "ctrlc",
- "dirs 5.0.1",
- "env_logger 0.10.2",
- "libc",
- "limbo_core",
- "miette",
- "nu-ansi-term 0.50.1",
- "rustyline",
- "schemars",
- "serde",
- "shlex",
- "syntect",
- "toml",
- "toml_edit",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "validator",
-]
-
-[[package]]
 name = "limbo_completion"
 version = "0.0.22"
 dependencies = [
@@ -3808,6 +3778,36 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "turso_cli"
+version = "0.0.22"
+dependencies = [
+ "anyhow",
+ "cfg-if",
+ "clap",
+ "clap_complete",
+ "comfy-table",
+ "csv",
+ "ctrlc",
+ "dirs 5.0.1",
+ "env_logger 0.10.2",
+ "libc",
+ "limbo_core",
+ "miette",
+ "nu-ansi-term 0.50.1",
+ "rustyline",
+ "schemars",
+ "serde",
+ "shlex",
+ "syntect",
+ "toml",
+ "toml_edit",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "validator",
 ]
 
 [[package]]
