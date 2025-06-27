@@ -160,7 +160,7 @@ fn update_pragma(
             unreachable!();
         }
         PragmaName::PageSize => {
-            todo!("updating page_size is not yet implemented")
+            bail_parse_error!("Updating database page size is not supported.");
         }
         PragmaName::AutoVacuum => {
             let auto_vacuum_mode = match value {
