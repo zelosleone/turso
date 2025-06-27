@@ -1004,8 +1004,12 @@ impl Pager {
             AllocatePage1State::Start => {
                 tracing::trace!("allocate_page1(Start)");
                 self.is_empty.store(DB_STATE_INITIALIZING, Ordering::SeqCst);
-                let default_header = DatabaseHeader::default();
+                let mut default_header = DatabaseHeader::default();
+                default_header.database_size += 1;
                 let page = allocate_page(1, &self.buffer_pool, 0);
+
+                let contents = page.get_contents();
+                contents.write_database_header(&default_header);
 
                 let page1 = Arc::new(BTreePageInner {
                     page: RefCell::new(page),
@@ -1039,11 +1043,7 @@ impl Pager {
                     return Ok(CursorResult::IO);
                 }
                 tracing::trace!("allocate_page1(Writing done)");
-                let mut default_header = DatabaseHeader::default();
-                default_header.database_size += 1;
                 let page1_ref = page.get();
-                let contents = page1_ref.get().contents.as_mut().unwrap();
-                contents.write_database_header(&default_header);
                 let page_key = PageCacheKey::new(page1_ref.get().id);
                 let mut cache = self.page_cache.write();
                 cache.insert(page_key, page1_ref.clone()).map_err(|e| {
