@@ -9,11 +9,11 @@ use crate::types::CursorResult;
 use crate::{Buffer, LimboError, Result};
 use crate::{Completion, WalFile};
 use parking_lot::RwLock;
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::{OnceCell, RefCell, UnsafeCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use tracing::{trace, Level};
 
 use super::btree::{btree_init_page, BTreePage};
@@ -225,8 +225,8 @@ pub struct Pager {
     /// Cache page_size and reserved_space at Pager init and reuse for subsequent
     /// `usable_space` calls. TODO: Invalidate reserved_space when we add the functionality
     /// to change it.
-    page_size: OnceLock<u16>,
-    reserved_space: OnceLock<u8>,
+    page_size: OnceCell<u16>,
+    reserved_space: OnceCell<u8>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -291,8 +291,8 @@ impl Pager {
             is_empty,
             init_lock,
             allocate_page1_state,
-            page_size: OnceLock::new(),
-            reserved_space: OnceLock::new(),
+            page_size: OnceCell::new(),
+            reserved_space: OnceCell::new(),
         })
     }
 
