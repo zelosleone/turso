@@ -125,9 +125,9 @@ pip install pylimbo
 Example usage:
 
 ```python
-import limbo
+import turso
 
-con = limbo.connect("sqlite.db")
+con = turso.connect("sqlite.db")
 cur = con.cursor()
 res = cur.execute("SELECT * FROM users")
 print(res.fetchone())

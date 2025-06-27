@@ -365,7 +365,7 @@ fn py_to_owned_value(obj: &Bound<PyAny>) -> Result<limbo_core::Value> {
 }
 
 #[pymodule]
-fn _limbo(m: &Bound<PyModule>) -> PyResult<()> {
+fn _turso(m: &Bound<PyModule>) -> PyResult<()> {
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_class::<Connection>()?;
     m.add_class::<Cursor>()?;
