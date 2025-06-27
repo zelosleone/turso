@@ -14,7 +14,7 @@ name = "limbo_core"
 path = "lib.rs"
 
 [features]
-default = ["fs", "uuid", "time", "json", "static"]
+default = ["fs", "uuid", "time", "json", "static", "series"]
 fs = ["limbo_ext/vfs"]
 json = []
 uuid = ["limbo_uuid/static"]
@@ -26,7 +26,6 @@ crypto = ["limbo_crypto/static"]
 series = ["limbo_series/static"]
 ipaddr = ["limbo_ipaddr/static"]
 completion = ["limbo_completion/static"]
-testvfs = ["limbo_ext_tests/static"]
 static = ["limbo_ext/static"]
 fuzz = []
 csv = ["limbo_csv/static"]
@@ -71,7 +70,6 @@ limbo_crypto = { workspace = true, optional = true, features = ["static"] }
 limbo_series = { workspace = true, optional = true, features = ["static"] }
 limbo_ipaddr = { workspace = true, optional = true, features = ["static"] }
 limbo_completion = { workspace = true, optional = true, features = ["static"] }
-limbo_ext_tests = { workspace = true, optional = true, features = ["static"] }
 limbo_csv = { workspace = true, optional = true, features = ["static"] }
 miette = "7.6.0"
 strum = { workspace = true }
