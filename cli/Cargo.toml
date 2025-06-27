@@ -37,7 +37,7 @@ rustyline = { version = "15.0.0", default-features = true, features = [
     "derive",
 ] }
 shlex = "1.3.0"
-syntect = "5.2.0"
+syntect = { git = "https://github.com/trishume/syntect.git", rev = "64644ffe064457265cbcee12a0c1baf9485ba6ee" }
 tracing = "0.1.41"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
@@ -52,4 +52,4 @@ default = ["io_uring"]
 io_uring = ["limbo_core/io_uring"]
 
 [build-dependencies]
-syntect = "5.2.0"
+syntect = { git = "https://github.com/trishume/syntect.git", rev = "64644ffe064457265cbcee12a0c1baf9485ba6ee" }
