@@ -500,6 +500,23 @@ fn test_update_regression() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn test_multiple_statements() -> anyhow::Result<()> {
+    let _ = env_logger::try_init();
+    let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x)", false);
+    let conn = tmp_db.connect_limbo();
+
+    conn.execute("INSERT INTO t values(1); insert into t values(2);")?;
+
+    run_query_on_row(&tmp_db, &conn, "SELECT count(1) from t;", |row| {
+        let count = row.get::<i64>(0).unwrap();
+        assert_eq!(count, 2);
+    })
+    .unwrap();
+
+    Ok(())
+}
+
 fn check_integrity_is_ok(tmp_db: TempDatabase, conn: Arc<Connection>) -> Result<(), anyhow::Error> {
     run_query_on_row(&tmp_db, &conn, "pragma integrity_check", |row: &Row| {
         let res = row.get::<String>(0).unwrap();
