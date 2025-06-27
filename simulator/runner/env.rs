@@ -123,7 +123,8 @@ impl SimulatorEnv {
             disable_reopen_database: cli_opts.disable_reopen_database,
         };
 
-        let io = Arc::new(SimulatorIO::new(seed, opts.page_size).unwrap());
+        let io =
+            Arc::new(SimulatorIO::new(seed, opts.page_size, cli_opts.latency_probability).unwrap());
 
         // Remove existing database file if it exists
         if db_path.exists() {

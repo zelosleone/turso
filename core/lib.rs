@@ -46,7 +46,8 @@ pub use io::UnixIO;
 #[cfg(all(feature = "fs", target_os = "linux", feature = "io_uring"))]
 pub use io::UringIO;
 pub use io::{
-    Buffer, Completion, File, MemoryIO, OpenFlags, PlatformIO, SyscallIO, WriteCompletion, IO,
+    Buffer, Completion, CompletionType, File, MemoryIO, OpenFlags, PlatformIO, SyscallIO,
+    WriteCompletion, IO,
 };
 use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;

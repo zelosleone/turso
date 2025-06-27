@@ -6518,7 +6518,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        io::{Buffer, Completion, MemoryIO, OpenFlags, IO},
+        io::{Buffer, Completion, CompletionType, MemoryIO, OpenFlags, IO},
         storage::{database::DatabaseFile, page_cache::DumbLruPageCache},
         types::Text,
         vdbe::Register,
@@ -7445,11 +7445,11 @@ mod tests {
                 drop_fn,
             )));
             let write_complete = Box::new(|_| {});
-            let c = Completion::Write(WriteCompletion::new(write_complete));
+            let c = Completion::new(CompletionType::Write(WriteCompletion::new(write_complete)));
             #[allow(clippy::arc_with_non_send_sync)]
             pager
                 .db_file
-                .write_page(current_page as usize, buf.clone(), Arc::new(c))?;
+                .write_page(current_page as usize, buf.clone(), c)?;
             pager.io.run_once()?;
 
             let page = cursor.read_page(current_page as usize)?;
