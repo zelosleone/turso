@@ -189,7 +189,9 @@ impl Limbo {
         if !quiet {
             self.write_fmt(format_args!("Limbo v{}", env!("CARGO_PKG_VERSION")))?;
             self.writeln("Enter \".help\" for usage hints.")?;
-            self.writeln("This software is ALPHA, only use for development, testing, and experimentation.")?;
+            self.writeln(
+                "This software is ALPHA, only use for development, testing, and experimentation.",
+            )?;
             self.display_in_memory()?;
         }
         Ok(())
