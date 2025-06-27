@@ -6,7 +6,7 @@ default-run = "tursodb"
 description = "The Turso interactive SQL shell"
 edition.workspace = true
 license.workspace = true
-name = "limbo_cli"
+name = "turso_cli"
 repository.workspace = true
 version.workspace = true
 

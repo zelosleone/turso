@@ -63,7 +63,7 @@ pub struct Opts {
     pub tracing_output: Option<String>,
 }
 
-const PROMPT: &str = "limbo> ";
+const PROMPT: &str = "turso> ";
 
 pub struct Limbo {
     pub prompt: String,
@@ -187,7 +187,7 @@ impl Limbo {
             self.handle_first_input(&sql)?;
         }
         if !quiet {
-            self.write_fmt(format_args!("Limbo v{}", env!("CARGO_PKG_VERSION")))?;
+            self.write_fmt(format_args!("Turso v{}", env!("CARGO_PKG_VERSION")))?;
             self.writeln("Enter \".help\" for usage hints.")?;
             self.writeln(
                 "This software is ALPHA, only use for development, testing, and experimentation.",
