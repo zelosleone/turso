@@ -14,7 +14,7 @@ name = "limbo_core"
 path = "lib.rs"
 
 [features]
-default = ["fs", "uuid", "time", "json", "static"]
+default = ["fs", "uuid", "time", "json", "static", "series"]
 fs = ["limbo_ext/vfs"]
 json = []
 uuid = ["limbo_uuid/static"]
