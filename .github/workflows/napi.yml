@@ -12,7 +12,7 @@ on:
 
 env:
   DEBUG: napi:*
-  APP_NAME: turso-limbo
+  APP_NAME: turso
   MACOSX_DEPLOYMENT_TARGET: '10.13'
 
 defaults:

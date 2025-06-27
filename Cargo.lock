@@ -1919,16 +1919,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "limbo_node"
-version = "0.0.22"
-dependencies = [
- "limbo_core",
- "napi",
- "napi-build",
- "napi-derive",
-]
-
-[[package]]
 name = "limbo_percentile"
 version = "0.0.22"
 dependencies = [
@@ -3818,6 +3808,16 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "turso_node"
+version = "0.0.22"
+dependencies = [
+ "limbo_core",
+ "napi",
+ "napi-build",
+ "napi-derive",
 ]
 
 [[package]]
