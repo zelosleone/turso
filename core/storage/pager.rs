@@ -9,7 +9,7 @@ use crate::types::CursorResult;
 use crate::{Buffer, LimboError, Result};
 use crate::{Completion, WalFile};
 use parking_lot::RwLock;
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::{OnceCell, RefCell, UnsafeCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -222,6 +222,11 @@ pub struct Pager {
     /// Mutex for synchronizing database initialization to prevent race conditions
     init_lock: Arc<Mutex<()>>,
     allocate_page1_state: RefCell<AllocatePage1State>,
+    /// Cache page_size and reserved_space at Pager init and reuse for subsequent
+    /// `usable_space` calls. TODO: Invalidate reserved_space when we add the functionality
+    /// to change it.
+    page_size: OnceCell<u16>,
+    reserved_space: OnceCell<u8>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -286,6 +291,8 @@ impl Pager {
             is_empty,
             init_lock,
             allocate_page1_state,
+            page_size: OnceCell::new(),
+            reserved_space: OnceCell::new(),
         })
     }
 
@@ -570,9 +577,15 @@ impl Pager {
     /// The usable size of a page might be an odd number. However, the usable size is not allowed to be less than 480.
     /// In other words, if the page size is 512, then the reserved space size cannot exceed 32.
     pub fn usable_space(&self) -> usize {
-        let page_size = header_accessor::get_page_size(self).unwrap_or_default() as u32;
-        let reserved_space = header_accessor::get_reserved_space(self).unwrap_or_default() as u32;
-        (page_size - reserved_space) as usize
+        let page_size = *self
+            .page_size
+            .get_or_init(|| header_accessor::get_page_size(self).unwrap_or_default());
+
+        let reserved_space = *self
+            .reserved_space
+            .get_or_init(|| header_accessor::get_reserved_space(self).unwrap_or_default());
+
+        (page_size as usize) - (reserved_space as usize)
     }
 
     #[inline(always)]
