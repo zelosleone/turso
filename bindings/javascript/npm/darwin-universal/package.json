@@ -1,5 +1,5 @@
 {
-  "name": "@tursodatabase/limbo-darwin-universal",
+  "name": "@tursodatabase/turso-darwin-universal",
   "version": "0.0.22",
   "repository": {
     "type": "git",
@@ -8,9 +8,9 @@
   "os": [
     "darwin"
   ],
-  "main": "turso-limbo.darwin-universal.node",
+  "main": "turso.darwin-universal.node",
   "files": [
-    "turso-limbo.darwin-universal.node"
+    "turso.darwin-universal.node"
   ],
   "license": "MIT",
   "engines": {
