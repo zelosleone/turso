@@ -85,6 +85,7 @@ impl IO for SimulatorIO {
             page_size: self.page_size,
             rng: RefCell::new(ChaCha8Rng::seed_from_u64(self.seed)),
             latency_probability: self.latency_probability,
+            sync_completion: RefCell::new(None),
         });
         self.files.borrow_mut().push(file.clone());
         Ok(file)

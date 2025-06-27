@@ -31,6 +31,8 @@ pub(crate) struct SimulatorFile {
     pub(crate) rng: RefCell<ChaCha8Rng>,
 
     pub latency_probability: usize,
+
+    pub sync_completion: RefCell<Option<Arc<limbo_core::Completion>>>,
 }
 
 unsafe impl Send for SimulatorFile {}
@@ -185,7 +187,9 @@ impl File for SimulatorFile {
             };
             sync_completion.complete = Box::new(new_complete);
         };
-        self.inner.sync(c)
+        let c = self.inner.sync(c)?;
+        *self.sync_completion.borrow_mut() = Some(c.clone());
+        Ok(c)
     }
 
     fn size(&self) -> Result<u64> {
