@@ -42,16 +42,16 @@ In the future, we will be also working on:
 
 ## Getting Started
 
-Please see the [Limbo Database Manual](docs/manual.md) for more information.
+Please see the [Turso Database Manual](docs/manual.md) for more information.
 
 <details>
 <summary>💻 Command Line</summary>
 <br>
-You can install the latest `limbo` release with:
+You can install the latest `turso` release with:
 
 ```shell
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/tursodatabase/limbo/releases/latest/download/turso_cli-installer.sh | sh
+  https://github.com/tursodatabase/turso/releases/latest/download/turso_cli-installer.sh | sh
 ```
 
 Then launch the shell to execute SQL statements:
@@ -61,10 +61,10 @@ Turso
 Enter ".help" for usage hints.
 Connected to a transient in-memory database.
 Use ".open FILENAME" to reopen on a persistent database
-limbo> CREATE TABLE users (id INT PRIMARY KEY, username TEXT);
-limbo> INSERT INTO users VALUES (1, 'alice');
-limbo> INSERT INTO users VALUES (2, 'bob');
-limbo> SELECT * FROM users;
+turso> CREATE TABLE users (id INT PRIMARY KEY, username TEXT);
+turso> INSERT INTO users VALUES (1, 'alice');
+turso> INSERT INTO users VALUES (2, 'bob');
+turso> SELECT * FROM users;
 1|alice
 2|bob
 ```
@@ -139,7 +139,7 @@ print(res.fetchone())
 <br>
 
 1. Clone the repository
-2. Build the library and set your LD_LIBRARY_PATH to include limbo's target directory
+2. Build the library and set your LD_LIBRARY_PATH to include turso's target directory
 ```console
 cargo build --package limbo-go
 export LD_LIBRARY_PATH=/path/to/limbo/target/debug:$LD_LIBRARY_PATH
@@ -147,15 +147,15 @@ export LD_LIBRARY_PATH=/path/to/limbo/target/debug:$LD_LIBRARY_PATH
 3. Use the driver
 
 ```console
-go get github.com/tursodatabase/limbo
-go install github.com/tursodatabase/limbo
+go get github.com/tursodatabase/turso
+go install github.com/tursodatabase/turso
 ```
 
 Example usage:
 ```go
 import (
     "database/sql"
-    _ "github.com/tursodatabase/limbo"
+    _ "github.com/tursodatabase/turso"
 )
 
 conn, _ = sql.Open("sqlite3", "sqlite.db")
@@ -219,7 +219,7 @@ terms or conditions.
 
 ## Partners
 
-Thanks to all the partners of Limbo!
+Thanks to all the partners of Turso!
 
 <a href="https://blacksmith.sh"><img src="assets/blacksmith.svg" width="400"></a>
 

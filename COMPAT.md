@@ -1,10 +1,10 @@
-# Limbo compatibility with SQLite
+# Turso compatibility with SQLite
 
-This document describes the compatibility of Limbo with SQLite.
+This document describes the compatibility of Turso with SQLite.
 
 ## Table of contents
 
-- [Limbo compatibility with SQLite](#limbo-compatibility-with-sqlite)
+- [Turso compatibility with SQLite](#limbo-compatibility-with-sqlite)
   - [Table of contents](#table-of-contents)
   - [Overview](#overview)
     - [Features](#features)
@@ -30,7 +30,7 @@ This document describes the compatibility of Limbo with SQLite.
 
 ## Overview
 
-Limbo aims to be fully compatible with SQLite, with opt-in features not supported by SQLite.
+Turso aims to be fully compatible with SQLite, with opt-in features not supported by SQLite.
 
 ### Features
 
@@ -595,11 +595,11 @@ Therefore, all rollback-type modes (delete, truncate, persist, memory) are marke
 
 ##  Extensions
 
-Limbo has in-tree extensions.
+Turso has in-tree extensions.
 
 ### UUID
 
-UUID's in Limbo are `blobs` by default.
+UUID's in Turso are `blobs` by default.
 
 | Function              | Status | Comment                                                       |
 |-----------------------|--------|---------------------------------------------------------------|
