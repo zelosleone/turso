@@ -1790,7 +1790,6 @@ dependencies = [
  "limbo_crypto",
  "limbo_csv",
  "limbo_ext",
- "limbo_ext_tests",
  "limbo_ipaddr",
  "limbo_macros",
  "limbo_percentile",
