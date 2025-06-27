@@ -496,13 +496,12 @@ impl Connection {
     pub fn execute(self: &Arc<Connection>, sql: impl AsRef<str>) -> Result<()> {
         let sql = sql.as_ref();
         let mut parser = Parser::new(sql.as_bytes());
-        let cmd = parser.next()?;
-        let syms = self.syms.borrow();
-        let byte_offset_end = parser.offset();
-        let input = str::from_utf8(&sql.as_bytes()[..byte_offset_end])
-            .unwrap()
-            .trim();
-        if let Some(cmd) = cmd {
+        while let Some(cmd) = parser.next()? {
+            let syms = self.syms.borrow();
+            let byte_offset_end = parser.offset();
+            let input = str::from_utf8(&sql.as_bytes()[..byte_offset_end])
+                .unwrap()
+                .trim();
             match cmd {
                 Cmd::Explain(stmt) => {
                     let program = translate::translate(
