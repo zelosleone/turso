@@ -3850,7 +3850,6 @@ impl BTreeCursor {
         let mut low = 0;
         let mut high = if cell_count > 0 { cell_count - 1 } else { 0 };
         let mut result_index = cell_count;
-
         if self.find_cell_state.0.is_some() {
             low = self.find_cell_state.get_cell_idx() as usize;
         }
@@ -3870,20 +3869,8 @@ impl BTreeCursor {
             };
 
             let comparison_result = match cell {
-                BTreeCell::TableLeafCell(cell) => {
-                    if key.to_rowid() <= cell._rowid {
-                        Ordering::Less
-                    } else {
-                        Ordering::Greater
-                    }
-                }
-                BTreeCell::TableInteriorCell(cell) => {
-                    if key.to_rowid() <= cell._rowid {
-                        Ordering::Less
-                    } else {
-                        Ordering::Greater
-                    }
-                }
+                BTreeCell::TableLeafCell(cell) => key.to_rowid().cmp(&cell._rowid),
+                BTreeCell::TableInteriorCell(cell) => key.to_rowid().cmp(&cell._rowid),
                 BTreeCell::IndexInteriorCell(IndexInteriorCell {
                     payload,
                     first_overflow_page,
@@ -3917,14 +3904,21 @@ impl BTreeCursor {
                 }
             };
 
-            if comparison_result == Ordering::Greater {
-                low = mid + 1;
-            } else {
-                result_index = mid;
-                if mid == 0 {
+            match comparison_result {
+                Ordering::Equal => {
+                    result_index = mid;
                     break;
                 }
-                high = mid - 1;
+                Ordering::Greater => {
+                    low = mid + 1;
+                }
+                Ordering::Less => {
+                    result_index = mid;
+                    if mid == 0 {
+                        break;
+                    }
+                    high = mid - 1;
+                }
             }
         }
 
