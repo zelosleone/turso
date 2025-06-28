@@ -99,38 +99,40 @@ pub(crate) enum Property {
         predicate: Predicate,
         queries: Vec<Query>,
     },
-    // Drop-Select is a property in which selecting from a dropped table
-    // should result in an error.
-    // The execution of the property is as follows
-    //     DROP TABLE <t>
-    //     I_0
-    //     I_1
-    //     ...
-    //     I_n
-    //     SELECT * FROM <t> WHERE <predicate> -> Error
-    // The interactions in the middle has the following constraints;
-    // - There will be no errors in the middle interactions.
-    // - The table `t` will not be created, no table will be renamed to `t`.
+    /// Drop-Select is a property in which selecting from a dropped table
+    /// should result in an error.
+    /// The execution of the property is as follows
+    ///     DROP TABLE <t>
+    ///     I_0
+    ///     I_1
+    ///     ...
+    ///     I_n
+    ///     SELECT * FROM <t> WHERE <predicate> -> Error
+    /// The interactions in the middle has the following constraints;
+    /// - There will be no errors in the middle interactions.
+    /// - The table `t` will not be created, no table will be renamed to `t`.
     DropSelect {
         table: String,
         queries: Vec<Query>,
         select: Select,
     },
-    // Select-Select-Optimizer is a property in which we test the optimizer by
-    // running two equivalent select queries, one with `SELECT <predicate> from <t>`
-    // and the other with `SELECT * from <t> WHERE <predicate>`. As highlighted by
-    // Rigger et al. in Non-Optimizing Reference Engine Construction(NoREC), SQLite
-    // tends to optimize `where` statements while keeping the result column expressions
-    // unoptimized. This property is used to test the optimizer. The property is successful
-    // if the two queries return the same number of rows.
-    SelectSelectOptimizer {
-        table: String,
-        predicate: Predicate,
-    },
-    FsyncNoWait {
-        query: Query,
-        tables: Vec<String>,
-    },
+    /// Select-Select-Optimizer is a property in which we test the optimizer by
+    /// running two equivalent select queries, one with `SELECT <predicate> from <t>`
+    /// and the other with `SELECT * from <t> WHERE <predicate>`. As highlighted by
+    /// Rigger et al. in Non-Optimizing Reference Engine Construction(NoREC), SQLite
+    /// tends to optimize `where` statements while keeping the result column expressions
+    /// unoptimized. This property is used to test the optimizer. The property is successful
+    /// if the two queries return the same number of rows.
+    SelectSelectOptimizer { table: String, predicate: Predicate },
+    /// FsyncNoWait is a property which tests if we do not loose any data after not waiting for fsync.
+    ///
+    /// # Interactions
+    /// - Executes the `query` without waiting for fsync
+    /// - Drop all connections and Reopen the database
+    /// - Execute the `query` again
+    /// - Query tables to assert that the values were inserted
+    ///
+    FsyncNoWait { query: Query, tables: Vec<String> },
 }
 
 impl Property {
