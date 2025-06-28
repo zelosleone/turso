@@ -9,7 +9,7 @@ use crate::{
             select::{Distinctness, ResultColumn},
             Create, Delete, Drop, Insert, Query, Select,
         },
-        table::{SimValue, Table},
+        table::SimValue,
     },
     runner::env::SimulatorEnv,
 };
@@ -129,7 +129,7 @@ pub(crate) enum Property {
     },
     FsyncNoWait {
         query: Query,
-        tables: Vec<Table>,
+        tables: Vec<String>,
     },
 }
 
@@ -434,42 +434,41 @@ impl Property {
                 vec![assumption, select1, select2, assertion]
             }
             Property::FsyncNoWait { query, tables } => {
-                let checks = tables
-                    .iter()
-                    .map(|table| {
-                        let select = Interaction::Query(Query::Select(Select {
-                            table: table.name.clone(),
-                            result_columns: vec![ResultColumn::Star],
-                            predicate: Predicate::true_(),
-                            limit: None,
-                            distinct: Distinctness::All,
-                        }));
-                        let assertion = Interaction::Assertion(Assertion {
-                            message: format!(
-                            "table {} contains all of its values after the wal reopened",
-                            table.name
+                let checks = tables.iter().flat_map(|table| {
+                    let select = Interaction::Query(Query::Select(Select {
+                        table: table.clone(),
+                        result_columns: vec![ResultColumn::Star],
+                        predicate: Predicate::true_(),
+                        limit: None,
+                        distinct: Distinctness::All,
+                    }));
+                    let assertion = Interaction::Assertion(Assertion {
+                        message: format!(
+                            "table {} should contain all of its values after the wal reopened",
+                            table
                         ),
-                            func: Box::new({
-                                let table = table.clone();
-                                move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
-                                    let last = stack.last().unwrap();
-                                    match last {
-                                        Ok(vals) => {
-                                            if *vals != table.rows {
-                                                tracing::error!(table.name, ?vals, ?table.rows, "values mismatch after wal reopen");
-                                            }
-                                            Ok(*vals == table.rows)
-                                        }
-                                        Err(err) => {
-                                            Err(LimboError::InternalError(format!("{}", err)))
-                                        }
-                                    }
+                        func: Box::new({
+                            let table = table.clone();
+                            move |stack: &Vec<ResultSet>, env: &SimulatorEnv| {
+                                let table =
+                                    env.tables.iter().find(|t| t.name == table).ok_or_else(
+                                        || {
+                                            LimboError::InternalError(format!(
+                                                "table {} should exist",
+                                                table
+                                            ))
+                                        },
+                                    )?;
+                                let last = stack.last().unwrap();
+                                match last {
+                                    Ok(vals) => Ok(*vals == table.rows),
+                                    Err(err) => Err(LimboError::InternalError(format!("{}", err))),
                                 }
-                            }),
-                        });
-                        [select, assertion].into_iter()
-                    })
-                    .flatten();
+                            }
+                        }),
+                    });
+                    [select, assertion].into_iter()
+                });
                 Vec::from_iter(
                     std::iter::once(Interaction::FsyncQuery(query.clone())).chain(checks),
                 )
@@ -750,7 +749,7 @@ fn property_fsync_no_wait<R: rand::Rng>(
 ) -> Property {
     Property::FsyncNoWait {
         query: Query::arbitrary_from(rng, (env, remaining)),
-        tables: env.tables.clone(),
+        tables: env.tables.iter().map(|t| t.name.clone()).collect(),
     }
 }
 

@@ -11,12 +11,7 @@ use turso_core::{Connection, Result, StepResult, IO};
 
 use crate::{
     model::{
-        query::{
-            predicate::Predicate,
-            select::{Distinctness, ResultColumn},
-            update::Update,
-            Create, CreateIndex, Delete, Drop, Insert, Query, Select,
-        },
+        query::{update::Update, Create, CreateIndex, Delete, Drop, Insert, Query, Select},
         table::SimValue,
     },
     runner::{env::SimConnection, io::SimulatorIO},
@@ -293,138 +288,6 @@ impl Display for Fault {
     }
 }
 
-impl Interactions {
-    pub(crate) fn shadow(&self, env: &mut SimulatorEnv) {
-        match self {
-            Interactions::Property(property) => {
-                match property {
-                    Property::InsertValuesSelect {
-                        insert,
-                        row_index: _,
-                        queries,
-                        select,
-                    } => {
-                        insert.shadow(env);
-                        for query in queries {
-                            query.shadow(env);
-                        }
-                        select.shadow(env);
-                    }
-                    Property::DoubleCreateFailure { create, queries } => {
-                        if env.tables.iter().any(|t| t.name == create.table.name) {
-                            return;
-                        }
-                        create.shadow(env);
-                        for query in queries {
-                            query.shadow(env);
-                        }
-                    }
-                    Property::SelectLimit { select } => {
-                        select.shadow(env);
-                    }
-                    Property::DeleteSelect {
-                        table,
-                        predicate,
-                        queries,
-                    } => {
-                        let delete = Query::Delete(Delete {
-                            table: table.clone(),
-                            predicate: predicate.clone(),
-                        });
-
-                        let select = Query::Select(Select {
-                            table: table.clone(),
-                            result_columns: vec![ResultColumn::Star],
-                            predicate: predicate.clone(),
-                            distinct: Distinctness::All,
-                            limit: None,
-                        });
-
-                        delete.shadow(env);
-                        for query in queries {
-                            query.shadow(env);
-                        }
-                        select.shadow(env);
-                    }
-                    Property::DropSelect {
-                        table,
-                        queries,
-                        select,
-                    } => {
-                        let drop = Query::Drop(Drop {
-                            table: table.clone(),
-                        });
-
-                        drop.shadow(env);
-                        for query in queries {
-                            query.shadow(env);
-                        }
-                        select.shadow(env);
-                    }
-                    Property::SelectSelectOptimizer { table, predicate } => {
-                        let select1 = Query::Select(Select {
-                            table: table.clone(),
-                            result_columns: vec![ResultColumn::Expr(predicate.clone())],
-                            predicate: Predicate::true_(),
-                            distinct: Distinctness::All,
-                            limit: None,
-                        });
-
-                        let select2 = Query::Select(Select {
-                            table: table.clone(),
-                            result_columns: vec![ResultColumn::Star],
-                            predicate: predicate.clone(),
-                            distinct: Distinctness::All,
-                            limit: None,
-                        });
-
-                        select1.shadow(env);
-                        select2.shadow(env);
-                    }
-                    // Nothing should change
-                    Property::FsyncNoWait { .. } => {}
-                }
-                for interaction in property.interactions() {
-                    match interaction {
-                        Interaction::Query(query) => match query {
-                            Query::Create(create) => {
-                                create.shadow(env);
-                            }
-                            Query::Insert(insert) => {
-                                insert.shadow(env);
-                            }
-                            Query::Delete(delete) => {
-                                delete.shadow(env);
-                            }
-                            Query::Drop(drop) => {
-                                drop.shadow(env);
-                            }
-                            Query::Select(select) => {
-                                select.shadow(env);
-                            }
-                            Query::Update(update) => {
-                                update.shadow(env);
-                            }
-                            Query::CreateIndex(create_index) => {
-                                create_index.shadow(env);
-                            }
-                        },
-                        Interaction::Assertion(_) => {}
-                        Interaction::Assumption(_) => {}
-                        Interaction::Fault(_) => {}
-                        // FsyncQuery should not shadow as we are not going to run it to completion
-                        Interaction::FsyncQuery(_) => {}
-                    }
-                }
-            }
-            Interactions::Query(query) => {
-                query.shadow(env);
-            }
-            Interactions::Fault(_) => {}
-        }
-    }
-}
-
 impl InteractionPlan {
     pub(crate) fn new() -> Self {
         Self { plan: Vec::new() }
@@ -501,7 +364,6 @@ impl ArbitraryFrom<&mut SimulatorEnv> for InteractionPlan {
                 num_interactions
             );
             let interactions = Interactions::arbitrary_from(rng, (env, plan.stats()));
-            interactions.shadow(env);
 
             plan.plan.push(interactions);
         }
@@ -515,7 +377,12 @@ impl Interaction {
     pub(crate) fn shadow(&self, env: &mut SimulatorEnv) -> Vec<Vec<SimValue>> {
         match self {
             Self::Query(query) => query.shadow(env),
-            Self::Assumption(_) | Self::Assertion(_) | Self::Fault(_) | Self::FsyncQuery(_) => {
+            Self::FsyncQuery(query) => {
+                let mut first = query.shadow(env);
+                first.extend(query.shadow(env));
+                first
+            }
+            Self::Assumption(_) | Self::Assertion(_) | Self::Fault(_) => {
                 vec![]
             }
         }
@@ -658,9 +525,7 @@ impl Interaction {
                 );
                 return Err(err.unwrap());
             }
-            let rows = rows?;
-            assert!(rows.is_some());
-            let mut rows = rows.unwrap();
+            let mut rows = rows.unwrap().unwrap();
             while let Ok(row) = rows.step() {
                 match row {
                     StepResult::IO => {

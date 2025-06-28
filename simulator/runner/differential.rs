@@ -337,7 +337,7 @@ fn execute_interaction_rusqlite(
             tracing::debug!("{:?}", results);
             stack.push(results);
         }
-        Interaction::FsyncQuery(_) => {
+        Interaction::FsyncQuery(query) => {
             let conn = match &env.connections[connection_index] {
                 SimConnection::LimboConnection(conn) => conn.clone(),
                 SimConnection::SQLiteConnection(_) => unreachable!(),
@@ -345,6 +345,10 @@ fn execute_interaction_rusqlite(
             };
 
             interaction.execute_fsync_query(conn.clone(), env)?;
+
+            let query_interaction = Interaction::Query(query.clone());
+
+            execute_interaction_rusqlite(env, connection_index, &query_interaction, stack)?;
         }
         Interaction::Assertion(_) => {
             interaction.execute_assertion(stack, env)?;
