@@ -188,6 +188,10 @@ impl Display for InteractionPlan {
                                 writeln!(f, "-- ASSERT {};", assertion.message)?
                             }
                             Interaction::Fault(fault) => writeln!(f, "-- FAULT '{}';", fault)?,
+                            Interaction::FsyncQuery(query) => {
+                                writeln!(f, "-- FSYNC QUERY;")?;
+                                writeln!(f, "{};", query)?
+                            }
                         }
                     }
                     writeln!(f, "-- end testing '{}'", name)?;
@@ -238,6 +242,9 @@ pub(crate) enum Interaction {
     Assumption(Assertion),
     Assertion(Assertion),
     Fault(Fault),
+    /// Will attempt to run any random query. However, when the connection tries to sync it will
+    /// close all connections and reopen the database and assert that no data was lost
+    FsyncQuery(Query),
 }
 
 impl Display for Interaction {
@@ -247,6 +254,7 @@ impl Display for Interaction {
             Self::Assumption(assumption) => write!(f, "ASSUME {}", assumption.message),
             Self::Assertion(assertion) => write!(f, "ASSERT {}", assertion.message),
             Self::Fault(fault) => write!(f, "FAULT '{}'", fault),
+            Self::FsyncQuery(query) => write!(f, "{}", query),
         }
     }
 }
@@ -373,6 +381,8 @@ impl Interactions {
                         select1.shadow(env);
                         select2.shadow(env);
                     }
+                    // Nothing should change
+                    Property::FsyncNoWait { .. } => {}
                 }
                 for interaction in property.interactions() {
                     match interaction {
@@ -402,6 +412,8 @@ impl Interactions {
                         Interaction::Assertion(_) => {}
                         Interaction::Assumption(_) => {}
                         Interaction::Fault(_) => {}
+                        // FsyncQuery should not shadow as we are not going to run it to completion
+                        Interaction::FsyncQuery(_) => {}
                     }
                 }
             }
@@ -503,7 +515,9 @@ impl Interaction {
     pub(crate) fn shadow(&self, env: &mut SimulatorEnv) -> Vec<Vec<SimValue>> {
         match self {
             Self::Query(query) => query.shadow(env),
-            Self::Assumption(_) | Self::Assertion(_) | Self::Fault(_) => vec![],
+            Self::Assumption(_) | Self::Assertion(_) | Self::Fault(_) | Self::FsyncQuery(_) => {
+                vec![]
+            }
         }
     }
     pub(crate) fn execute_query(&self, conn: &mut Arc<Connection>, io: &SimulatorIO) -> ResultSet {
@@ -557,9 +571,6 @@ impl Interaction {
         env: &SimulatorEnv,
     ) -> Result<()> {
         match self {
-            Self::Query(_) => {
-                unreachable!("unexpected: this function should only be called on assertions")
-            }
             Self::Assertion(assertion) => {
                 let result = assertion.func.as_ref()(stack, env);
                 match result {
@@ -573,10 +584,7 @@ impl Interaction {
                     ))),
                 }
             }
-            Self::Assumption(_) => {
-                unreachable!("unexpected: this function should only be called on assertions")
-            }
-            Self::Fault(_) => {
+            _ => {
                 unreachable!("unexpected: this function should only be called on assertions")
             }
         }
@@ -588,12 +596,6 @@ impl Interaction {
         env: &SimulatorEnv,
     ) -> Result<()> {
         match self {
-            Self::Query(_) => {
-                unreachable!("unexpected: this function should only be called on assumptions")
-            }
-            Self::Assertion(_) => {
-                unreachable!("unexpected: this function should only be called on assumptions")
-            }
             Self::Assumption(assumption) => {
                 let result = assumption.func.as_ref()(stack, env);
                 match result {
@@ -607,7 +609,7 @@ impl Interaction {
                     ))),
                 }
             }
-            Self::Fault(_) => {
+            _ => {
                 unreachable!("unexpected: this function should only be called on assumptions")
             }
         }
@@ -615,15 +617,6 @@ impl Interaction {
 
     pub(crate) fn execute_fault(&self, env: &mut SimulatorEnv, conn_index: usize) -> Result<()> {
         match self {
-            Self::Query(_) => {
-                unreachable!("unexpected: this function should only be called on faults")
-            }
-            Self::Assertion(_) => {
-                unreachable!("unexpected: this function should only be called on faults")
-            }
-            Self::Assumption(_) => {
-                unreachable!("unexpected: this function should only be called on faults")
-            }
             Self::Fault(fault) => {
                 match fault {
                     Fault::Disconnect => {
@@ -637,35 +630,89 @@ impl Interaction {
                         env.connections[conn_index] = SimConnection::Disconnected;
                     }
                     Fault::ReopenDatabase => {
-                        // 1. Close all connections without default checkpoint-on-close behavior
-                        // to expose bugs related to how we handle WAL
-                        let num_conns = env.connections.len();
-                        env.connections.clear();
-
-                        // 2. Re-open database
-                        let db_path = env.db_path.clone();
-                        let db = match turso_core::Database::open_file(
-                            env.io.clone(),
-                            &db_path,
-                            false,
-                            false,
-                        ) {
-                            Ok(db) => db,
-                            Err(e) => {
-                                panic!("error opening simulator test file {:?}: {:?}", db_path, e);
-                            }
-                        };
-                        env.db = db;
-
-                        for _ in 0..num_conns {
-                            env.connections
-                                .push(SimConnection::LimboConnection(env.db.connect().unwrap()));
-                        }
+                        reopen_database(env);
                     }
                 }
                 Ok(())
             }
+            _ => {
+                unreachable!("unexpected: this function should only be called on faults")
+            }
         }
+    }
+
+    pub(crate) fn execute_fsync_query(
+        &self,
+        conn: Arc<Connection>,
+        env: &mut SimulatorEnv,
+    ) -> Result<()> {
+        if let Self::FsyncQuery(query) = self {
+            let query_str = query.to_string();
+            let rows = conn.query(&query_str);
+            if rows.is_err() {
+                let err = rows.err();
+                tracing::debug!(
+                    "Error running query '{}': {:?}",
+                    &query_str[0..query_str.len().min(4096)],
+                    err
+                );
+                return Err(err.unwrap());
+            }
+            let rows = rows?;
+            assert!(rows.is_some());
+            let mut rows = rows.unwrap();
+            while let Ok(row) = rows.step() {
+                match row {
+                    StepResult::IO => {
+                        let syncing = {
+                            let files = env.io.files.borrow();
+                            // TODO: currently assuming we only have 1 file that is syncing
+                            files
+                                .iter()
+                                .any(|file| file.sync_completion.borrow().is_some())
+                        };
+                        if syncing {
+                            reopen_database(env);
+                        } else {
+                            env.io.run_once().unwrap();
+                        }
+                    }
+                    StepResult::Done => {
+                        break;
+                    }
+                    StepResult::Row | StepResult::Interrupt | StepResult::Busy => {}
+                }
+            }
+
+            Ok(())
+        } else {
+            unreachable!("unexpected: this function should only be called on queries")
+        }
+    }
+}
+
+fn reopen_database(env: &mut SimulatorEnv) {
+    // 1. Close all connections without default checkpoint-on-close behavior
+    // to expose bugs related to how we handle WAL
+    let num_conns = env.connections.len();
+    env.connections.clear();
+
+    // Clear all open files
+    env.io.files.borrow_mut().clear();
+
+    // 2. Re-open database
+    let db_path = env.db_path.clone();
+    let db = match turso_core::Database::open_file(env.io.clone(), &db_path, false, false) {
+        Ok(db) => db,
+        Err(e) => {
+            panic!("error opening simulator test file {:?}: {:?}", db_path, e);
+        }
+    };
+    env.db = db;
+
+    for _ in 0..num_conns {
+        env.connections
+            .push(SimConnection::LimboConnection(env.db.connect().unwrap()));
     }
 }
 

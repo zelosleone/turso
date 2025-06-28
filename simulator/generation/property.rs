@@ -9,7 +9,7 @@ use crate::{
             select::{Distinctness, ResultColumn},
             Create, Delete, Drop, Insert, Query, Select,
         },
-        table::SimValue,
+        table::{SimValue, Table},
     },
     runner::env::SimulatorEnv,
 };
@@ -127,6 +127,10 @@ pub(crate) enum Property {
         table: String,
         predicate: Predicate,
     },
+    FsyncNoWait {
+        query: Query,
+        tables: Vec<Table>,
+    },
 }
 
 impl Property {
@@ -138,6 +142,7 @@ impl Property {
             Property::DeleteSelect { .. } => "Delete-Select",
             Property::DropSelect { .. } => "Drop-Select",
             Property::SelectSelectOptimizer { .. } => "Select-Select-Optimizer",
+            Property::FsyncNoWait { .. } => "FsyncNoWait",
         }
     }
     /// interactions construct a list of interactions, which is an executable representation of the property.
@@ -428,6 +433,47 @@ impl Property {
 
                 vec![assumption, select1, select2, assertion]
             }
+            Property::FsyncNoWait { query, tables } => {
+                let checks = tables
+                    .iter()
+                    .map(|table| {
+                        let select = Interaction::Query(Query::Select(Select {
+                            table: table.name.clone(),
+                            result_columns: vec![ResultColumn::Star],
+                            predicate: Predicate::true_(),
+                            limit: None,
+                            distinct: Distinctness::All,
+                        }));
+                        let assertion = Interaction::Assertion(Assertion {
+                            message: format!(
+                            "table {} contains all of its values after the wal reopened",
+                            table.name
+                        ),
+                            func: Box::new({
+                                let table = table.clone();
+                                move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
+                                    let last = stack.last().unwrap();
+                                    match last {
+                                        Ok(vals) => {
+                                            if *vals != table.rows {
+                                                tracing::error!(table.name, ?vals, ?table.rows, "values mismatch after wal reopen");
+                                            }
+                                            Ok(*vals == table.rows)
+                                        }
+                                        Err(err) => {
+                                            Err(LimboError::InternalError(format!("{}", err)))
+                                        }
+                                    }
+                                }
+                            }),
+                        });
+                        [select, assertion].into_iter()
+                    })
+                    .flatten();
+                Vec::from_iter(
+                    std::iter::once(Interaction::FsyncQuery(query.clone())).chain(checks),
+                )
+            }
         }
     }
 }
@@ -697,6 +743,17 @@ fn property_select_select_optimizer<R: rand::Rng>(rng: &mut R, env: &SimulatorEn
     }
 }
 
+fn property_fsync_no_wait<R: rand::Rng>(
+    rng: &mut R,
+    env: &SimulatorEnv,
+    remaining: &Remaining,
+) -> Property {
+    Property::FsyncNoWait {
+        query: Query::arbitrary_from(rng, (env, remaining)),
+        tables: env.tables.clone(),
+    }
+}
+
 impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
     fn arbitrary_from<R: rand::Rng>(
         rng: &mut R,
@@ -753,6 +810,10 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
                         0.0
                     },
                     Box::new(|rng: &mut R| property_select_select_optimizer(rng, env)),
+                ),
+                (
+                    50.0, // Freestyle number
+                    Box::new(|rng: &mut R| property_fsync_no_wait(rng, env, &remaining_)),
                 ),
             ],
             rng,

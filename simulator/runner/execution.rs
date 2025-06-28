@@ -196,6 +196,22 @@ pub(crate) fn execute_interaction(
             stack.push(results);
             limbo_integrity_check(conn)?;
         }
+        Interaction::FsyncQuery(_) => {
+            let conn = match &env.connections[connection_index] {
+                SimConnection::LimboConnection(conn) => conn.clone(),
+                SimConnection::SQLiteConnection(_) => unreachable!(),
+                SimConnection::Disconnected => unreachable!(),
+            };
+
+            interaction.execute_fsync_query(conn.clone(), env)?;
+
+            let conn = match &env.connections[connection_index] {
+                SimConnection::LimboConnection(conn) => conn,
+                SimConnection::SQLiteConnection(_) => unreachable!(),
+                SimConnection::Disconnected => unreachable!(),
+            };
+            limbo_integrity_check(conn)?;
+        }
         Interaction::Assertion(_) => {
             interaction.execute_assertion(stack, env)?;
             stack.clear();
@@ -217,7 +233,7 @@ pub(crate) fn execute_interaction(
     Ok(ExecutionContinuation::NextInteraction)
 }
 
-fn limbo_integrity_check(conn: &mut Arc<Connection>) -> Result<()> {
+fn limbo_integrity_check(conn: &Arc<Connection>) -> Result<()> {
     let mut rows = conn.query("PRAGMA integrity_check;")?.unwrap();
     let mut result = Vec::new();
 
