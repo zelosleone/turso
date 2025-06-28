@@ -229,7 +229,13 @@ impl Statement {
                     stmt.bind_at(NonZero::new(i + 1).unwrap(), value.into());
                 }
             }
-            params::Params::Named(_items) => todo!(),
+            params::Params::Named(values) => {
+                for (name, value) in values.into_iter() {
+                    let mut stmt = self.inner.lock().unwrap();
+                    let i = stmt.parameters().index(name).unwrap();
+                    stmt.bind_at(i, value.into());
+                }
+            }
         }
         #[allow(clippy::arc_with_non_send_sync)]
         let rows = Rows {
@@ -253,7 +259,13 @@ impl Statement {
                     stmt.bind_at(NonZero::new(i + 1).unwrap(), value.into());
                 }
             }
-            params::Params::Named(_items) => todo!(),
+            params::Params::Named(values) => {
+                for (name, value) in values.into_iter() {
+                    let mut stmt = self.inner.lock().unwrap();
+                    let i = stmt.parameters().index(name).unwrap();
+                    stmt.bind_at(i, value.into());
+                }
+            }
         }
         loop {
             let mut stmt = self.inner.lock().unwrap();
