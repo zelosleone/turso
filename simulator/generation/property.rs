@@ -812,7 +812,11 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
                     Box::new(|rng: &mut R| property_select_select_optimizer(rng, env)),
                 ),
                 (
-                    50.0, // Freestyle number
+                    if !env.opts.disable_fsync_no_wait {
+                        50.0 // Freestyle number
+                    } else {
+                        0.0
+                    },
                     Box::new(|rng: &mut R| property_fsync_no_wait(rng, env, &remaining_)),
                 ),
             ],

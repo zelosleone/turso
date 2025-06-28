@@ -82,6 +82,8 @@ pub struct SimulatorCLI {
         default_value_t = false
     )]
     pub disable_select_optimizer: bool,
+    #[clap(long, help = "disable FsyncNoWait Property", default_value_t = false)]
+    pub disable_fsync_no_wait: bool,
     #[clap(long, help = "disable Reopen-Database fault", default_value_t = false)]
     pub disable_reopen_database: bool,
     #[clap(
