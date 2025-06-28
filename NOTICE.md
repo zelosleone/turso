@@ -3,7 +3,7 @@ Limbo
 
 Please visit our GitHub for more information:
 
-* https://github.com/tursodatabase/limbo
+* https://github.com/tursodatabase/turso
 
 Dependencies
 ============
