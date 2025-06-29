@@ -3,12 +3,12 @@ use crate::schema::Column;
 use crate::util::{columns_from_create_table_body, vtable_args};
 use crate::{Connection, LimboError, SymbolTable, Value};
 use fallible_iterator::FallibleIterator;
-use limbo_ext::{ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabKind, VTabModuleImpl};
 use limbo_sqlite3_parser::{ast, lexer::sql::Parser};
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::rc::Rc;
 use std::sync::Arc;
+use turso_ext::{ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabKind, VTabModuleImpl};
 
 #[derive(Debug, Clone)]
 enum VirtualTableType {
@@ -62,7 +62,7 @@ impl VirtualTable {
     pub fn table(
         tbl_name: Option<&str>,
         module_name: &str,
-        args: Vec<limbo_ext::Value>,
+        args: Vec<turso_ext::Value>,
         syms: &SymbolTable,
     ) -> crate::Result<Rc<VirtualTable>> {
         let module = syms.vtab_modules.get(module_name);
@@ -178,7 +178,7 @@ impl VirtualTableCursor {
 struct ExtVirtualTable {
     implementation: Rc<VTabModuleImpl>,
     table_ptr: *const c_void,
-    connection_ptr: RefCell<Option<*mut limbo_ext::Conn>>,
+    connection_ptr: RefCell<Option<*mut turso_ext::Conn>>,
 }
 
 impl Drop for ExtVirtualTable {
@@ -187,7 +187,7 @@ impl Drop for ExtVirtualTable {
             if conn.is_null() {
                 return;
             }
-            // free the memory for the limbo_ext::Conn itself
+            // free the memory for the turso_ext::Conn itself
             let mut conn = unsafe { Box::from_raw(conn) };
             // frees the boxed Weak pointer
             conn.close();
@@ -212,7 +212,7 @@ impl ExtVirtualTable {
     fn create(
         module_name: &str,
         module: Option<&Rc<crate::ext::VTabImpl>>,
-        args: Vec<limbo_ext::Value>,
+        args: Vec<turso_ext::Value>,
         kind: VTabKind,
     ) -> crate::Result<(Self, String)> {
         let module = module.ok_or(LimboError::ExtensionError(format!(
@@ -243,7 +243,7 @@ impl ExtVirtualTable {
     fn open(&self, conn: Arc<Connection>) -> crate::Result<ExtVirtualTableCursor> {
         // we need a Weak<Connection> to upgrade and call from the extension.
         let weak_box: *mut Arc<Connection> = Box::into_raw(Box::new(conn));
-        let conn = limbo_ext::Conn::new(
+        let conn = turso_ext::Conn::new(
             weak_box.cast(),
             crate::ext::prepare_stmt,
             crate::ext::execute,

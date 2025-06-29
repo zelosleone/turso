@@ -1,6 +1,6 @@
-# Limbo extension API
+# Turso extension API
 
-The `limbo_ext` crate simplifies the creation and registration of libraries meant to extend the functionality of `Limbo`, that can be loaded
+The `turso_ext` crate simplifies the creation and registration of libraries meant to extend the functionality of `Turso`, that can be loaded
 like traditional `sqlite3` extensions, but are able to be written in much more ergonomic Rust.
  
 ---
@@ -10,7 +10,7 @@ like traditional `sqlite3` extensions, but are able to be written in much more e
  - [ x ] **Scalar Functions**: Create scalar functions using the `scalar` macro.
  - [ x ] **Aggregate Functions**: Define aggregate functions with `AggregateDerive` macro and `AggFunc` trait.
  - [ x ]  **Virtual tables**: Create a module for a virtual table with the `VTabModuleDerive` macro and `VTabCursor` trait.
- - [ x ] **VFS Modules**: Extend Limbo's OS interface by implementing `VfsExtension` and `VfsFile` traits.
+ - [ x ] **VFS Modules**: Extend Turso's OS interface by implementing `VfsExtension` and `VfsFile` traits.
 ---
 
 ## Installation
@@ -28,10 +28,10 @@ creating an extension inside `core`, this step should be skipped.
 ```toml
 
 [features]
-static = ["limbo_ext/static"]
+static = ["turso_ext/static"]
 
 [dependencies]
-limbo_ext = { path = "path/to/limbo/extensions/core", features = ["static", "vfs"] } # temporary until crate is published
+turso_ext = { path = "path/to/limbo/extensions/core", features = ["static", "vfs"] } # temporary until crate is published
 
 # mimalloc is required if you intend on linking dynamically. It is imported for you by the register_extension
 # macro, so no configuration is needed. But it must be added to your Cargo.toml
@@ -71,7 +71,7 @@ file as the `register_extension` macro.
 
 ### Scalar Example:
 ```rust
-use limbo_ext::{register_extension, Value, scalar};
+use turso_ext::{register_extension, Value, scalar};
 
 /// Annotate each with the scalar macro, specifying the name you would like to call it with
 /// and optionally, an alias.. e.g. SELECT double(4); or SELECT twice(4);
@@ -98,7 +98,7 @@ fn double(&self, args: &[Value]) -> Value {
 
 ```rust
 
-use limbo_ext::{register_extension, AggregateDerive, AggFunc, Value};
+use turso_ext::{register_extension, AggregateDerive, AggFunc, Value};
 /// annotate your struct with the AggregateDerive macro, and it must implement the below AggFunc trait
 #[derive(AggregateDerive)]
 struct Percentile;
@@ -317,7 +317,7 @@ You can use the `Rc<Connection>` to query the same underlying connection that cr
 **NOTE**: Requires 'vfs' feature enabled.
 
 ```rust
-use limbo_ext::{ExtResult as Result, VfsDerive, VfsExtension, VfsFile};
+use turso_ext::{ExtResult as Result, VfsDerive, VfsExtension, VfsFile};
 
 /// Your struct must also impl Default
 #[derive(VfsDerive, Default)]
@@ -421,7 +421,7 @@ Edit the workspace `Cargo.toml` to include your extension as a workspace depende
 [workspace.dependencies]
 turso_core = { path = "core", version = "0.0.17" }
 limbo_crypto = { path = "extensions/crypto", version = "0.0.17" }
-limbo_ext = { path = "extensions/core", version = "0.0.17" }
+turso_ext = { path = "extensions/core", version = "0.0.17" }
 limbo_macros = { path = "macros", version = "0.0.17" }
 limbo_uuid = { path = "extensions/uuid", version = "0.0.17" }
 ...
@@ -448,7 +448,7 @@ Lastly, you have to register your extension statically in the core crate:
 ```diff
 pub fn register_builtins(&self) -> Result<(), String> {
         #[allow(unused_variables)]
-        let ext_api = self.build_limbo_ext();
+        let ext_api = self.build_turso_ext();
         #[cfg(feature = "uuid")]
         if unsafe { !limbo_uuid::register_extension_static(&ext_api).is_ok() } {
             return Err("Failed to register uuid extension".to_string());

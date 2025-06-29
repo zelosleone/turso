@@ -8,14 +8,14 @@ repository.workspace = true
 description = "Limbo series extension"
 
 [features]
-static = ["limbo_ext/static"]
+static = ["turso_ext/static"]
 
 [lib]
 crate-type = ["cdylib", "lib"]
 
 
 [dependencies]
-limbo_ext = { workspace = true, features = ["static"] }
+turso_ext = { workspace = true, features = ["static"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 mimalloc = { version = "0.1", default-features = false }

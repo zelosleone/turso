@@ -80,8 +80,8 @@ macro_rules! bail_constraint_error {
     };
 }
 
-impl From<limbo_ext::ResultCode> for LimboError {
-    fn from(err: limbo_ext::ResultCode) -> Self {
+impl From<turso_ext::ResultCode> for LimboError {
+    fn from(err: turso_ext::ResultCode) -> Self {
         LimboError::ExtensionError(err.to_string())
     }
 }

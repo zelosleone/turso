@@ -91,7 +91,7 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
     static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
             #[cfg(feature = "static")]
-            pub unsafe extern "C" fn register_extension_static(api: &mut ::limbo_ext::ExtensionApi) -> ::limbo_ext::ResultCode {
+            pub unsafe extern "C" fn register_extension_static(api: &mut ::turso_ext::ExtensionApi) -> ::turso_ext::ResultCode {
                 #(#static_scalars)*
 
                 #(#static_aggregates)*
@@ -101,12 +101,12 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
                 #[cfg(not(target_family = "wasm"))]
                 #(#static_vfs)*
 
-                ::limbo_ext::ResultCode::OK
+                ::turso_ext::ResultCode::OK
               }
 
             #[cfg(not(feature = "static"))]
             #[no_mangle]
-            pub unsafe extern "C" fn register_extension(api: &::limbo_ext::ExtensionApi) -> ::limbo_ext::ResultCode {
+            pub unsafe extern "C" fn register_extension(api: &::turso_ext::ExtensionApi) -> ::turso_ext::ResultCode {
                 #(#scalar_calls)*
 
                 #(#aggregate_calls)*
@@ -115,7 +115,7 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
 
                 #(#vfs_calls)*
 
-                ::limbo_ext::ResultCode::OK
+                ::turso_ext::ResultCode::OK
             }
         };
 

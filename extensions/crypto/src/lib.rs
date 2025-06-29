@@ -1,5 +1,5 @@
 use crypto::{blake3, decode, encode, md5, sha1, sha256, sha384, sha512};
-use limbo_ext::{register_extension, scalar, ResultCode, Value};
+use turso_ext::{register_extension, scalar, ResultCode, Value};
 
 mod crypto;
 

@@ -3,10 +3,10 @@ use crate::ext::VfsMod;
 use crate::io::clock::{Clock, Instant};
 use crate::io::CompletionType;
 use crate::{LimboError, Result};
-use limbo_ext::{VfsFileImpl, VfsImpl};
 use std::cell::RefCell;
 use std::ffi::{c_void, CString};
 use std::sync::Arc;
+use turso_ext::{VfsFileImpl, VfsImpl};
 
 impl Clock for VfsMod {
     fn now(&self) -> Instant {
@@ -29,7 +29,7 @@ impl IO for VfsMod {
         if file.is_null() {
             return Err(LimboError::ExtensionError("File not found".to_string()));
         }
-        Ok(Arc::new(limbo_ext::VfsFileImpl::new(file, self.ctx)?))
+        Ok(Arc::new(turso_ext::VfsFileImpl::new(file, self.ctx)?))
     }
 
     fn run_once(&self) -> Result<()> {

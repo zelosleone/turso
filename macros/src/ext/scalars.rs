@@ -23,7 +23,7 @@ pub fn scalar(attr: TokenStream, input: TokenStream) -> TokenStream {
     let alias_check = if let Some(alias) = &scalar_info.alias {
         quote! {
             let Ok(alias_c_name) = ::std::ffi::CString::new(#alias) else {
-                return ::limbo_ext::ResultCode::Error;
+                return ::turso_ext::ResultCode::Error;
             };
             (api.register_scalar_function)(
                 api.ctx,
@@ -38,14 +38,14 @@ pub fn scalar(attr: TokenStream, input: TokenStream) -> TokenStream {
     let expanded = quote! {
         #[no_mangle]
         pub unsafe extern "C" fn #register_fn_name(
-            api: *const ::limbo_ext::ExtensionApi
-        ) -> ::limbo_ext::ResultCode {
+            api: *const ::turso_ext::ExtensionApi
+        ) -> ::turso_ext::ResultCode {
             if api.is_null() {
-                return ::limbo_ext::ResultCode::Error;
+                return ::turso_ext::ResultCode::Error;
             }
             let api = unsafe { &*api };
             let Ok(c_name) = ::std::ffi::CString::new(#name) else {
-                return ::limbo_ext::ResultCode::Error;
+                return ::turso_ext::ResultCode::Error;
             };
             (api.register_scalar_function)(
                 api.ctx,
@@ -53,14 +53,14 @@ pub fn scalar(attr: TokenStream, input: TokenStream) -> TokenStream {
                 #fn_name,
             );
             #alias_check
-            ::limbo_ext::ResultCode::OK
+            ::turso_ext::ResultCode::OK
         }
 
         #[no_mangle]
         pub unsafe extern "C" fn #fn_name(
             argc: i32,
-            argv: *const ::limbo_ext::Value
-        ) -> ::limbo_ext::Value {
+            argv: *const ::turso_ext::Value
+        ) -> ::turso_ext::Value {
             let #args_variable_name = if argv.is_null() || argc <= 0 {
                 &[]
             } else {

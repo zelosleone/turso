@@ -1,5 +1,5 @@
 [package]
-name = "limbo_ext"
+name = "turso_ext"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

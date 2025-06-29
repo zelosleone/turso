@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use limbo_ext::{
+use turso_ext::{
     register_extension, Connection, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive,
     VTable, Value,
 };

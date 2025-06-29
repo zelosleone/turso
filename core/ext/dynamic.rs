@@ -3,11 +3,11 @@ use crate::{
     Connection, LimboError,
 };
 use libloading::{Library, Symbol};
-use limbo_ext::{ExtensionApi, ExtensionApiRef, ExtensionEntryPoint, ResultCode, VfsImpl};
 use std::{
     ffi::{c_char, CString},
     sync::{Arc, Mutex, OnceLock},
 };
+use turso_ext::{ExtensionApi, ExtensionApiRef, ExtensionEntryPoint, ResultCode, VfsImpl};
 
 type ExtensionStore = Vec<(Arc<Library>, ExtensionApiRef)>;
 static EXTENSIONS: OnceLock<Arc<Mutex<ExtensionStore>>> = OnceLock::new();
@@ -33,9 +33,9 @@ impl Connection {
         self: &Arc<Connection>,
         path: P,
     ) -> crate::Result<()> {
-        use limbo_ext::ExtensionApiRef;
+        use turso_ext::ExtensionApiRef;
 
-        let api = Box::new(self.build_limbo_ext());
+        let api = Box::new(self.build_turso_ext());
         let lib =
             unsafe { Library::new(path).map_err(|e| LimboError::ExtensionError(e.to_string()))? };
         let entry: Symbol<ExtensionEntryPoint> = unsafe {
@@ -93,7 +93,7 @@ pub(crate) unsafe extern "C" fn register_vfs(
 pub fn add_builtin_vfs_extensions(
     api: Option<ExtensionApi>,
 ) -> crate::Result<Vec<(String, Arc<VfsMod>)>> {
-    use limbo_ext::VfsInterface;
+    use turso_ext::VfsInterface;
 
     let mut vfslist: Vec<*const VfsImpl> = Vec::new();
     let mut api = match api {

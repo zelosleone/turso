@@ -20,13 +20,13 @@
 //!              accepts `yes`/`no`, `on`/`off`, `true`/`false`, or `1`/`0`
 //! - `columns` — number of columns
 //! - `schema` — optional custom SQL `CREATE TABLE` schema
-use limbo_ext::{
-    register_extension, Connection, ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabCursor,
-    VTabKind, VTabModule, VTabModuleDerive, VTable, Value,
-};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
+use turso_ext::{
+    register_extension, Connection, ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabCursor,
+    VTabKind, VTabModule, VTabModuleDerive, VTable, Value,
+};
 
 register_extension! {
     vtabs: { CsvVTabModule }
@@ -392,9 +392,9 @@ impl VTabCursor for CsvCursor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use limbo_ext::{Value, ValueType};
     use std::io::Write;
     use tempfile::NamedTempFile;
+    use turso_ext::{Value, ValueType};
 
     fn write_csv(content: &str) -> NamedTempFile {
         let mut tmp = NamedTempFile::new().expect("Failed to create temp file");

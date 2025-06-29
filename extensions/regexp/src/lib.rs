@@ -1,5 +1,5 @@
-use limbo_ext::{register_extension, scalar, Value, ValueType};
 use regex::Regex;
+use turso_ext::{register_extension, scalar, Value, ValueType};
 
 register_extension! {
     scalars: { regexp, regexp_like, regexp_substr, regexp_replace }

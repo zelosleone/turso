@@ -1763,8 +1763,8 @@ dependencies = [
 name = "limbo_completion"
 version = "0.1.0-pre.2"
 dependencies = [
- "limbo_ext",
  "mimalloc",
+ "turso_ext",
 ]
 
 [[package]]
@@ -1773,10 +1773,10 @@ version = "0.1.0-pre.2"
 dependencies = [
  "blake3",
  "data-encoding",
- "limbo_ext",
  "md5",
  "mimalloc",
  "ring",
+ "turso_ext",
  "urlencoding",
 ]
 
@@ -1785,29 +1785,9 @@ name = "limbo_csv"
 version = "0.1.0-pre.2"
 dependencies = [
  "csv",
- "limbo_ext",
  "mimalloc",
  "tempfile",
-]
-
-[[package]]
-name = "limbo_ext"
-version = "0.1.0-pre.2"
-dependencies = [
- "chrono",
- "getrandom 0.3.2",
- "turso_macros",
-]
-
-[[package]]
-name = "limbo_ext_tests"
-version = "0.1.0-pre.2"
-dependencies = [
- "env_logger 0.11.7",
- "lazy_static",
- "limbo_ext",
- "log",
- "mimalloc",
+ "turso_ext",
 ]
 
 [[package]]
@@ -1815,35 +1795,35 @@ name = "limbo_ipaddr"
 version = "0.1.0-pre.2"
 dependencies = [
  "ipnetwork",
- "limbo_ext",
  "mimalloc",
+ "turso_ext",
 ]
 
 [[package]]
 name = "limbo_percentile"
 version = "0.1.0-pre.2"
 dependencies = [
- "limbo_ext",
  "mimalloc",
+ "turso_ext",
 ]
 
 [[package]]
 name = "limbo_regexp"
 version = "0.1.0-pre.2"
 dependencies = [
- "limbo_ext",
  "mimalloc",
  "regex",
+ "turso_ext",
 ]
 
 [[package]]
 name = "limbo_series"
 version = "0.1.0-pre.2"
 dependencies = [
- "limbo_ext",
  "mimalloc",
  "quickcheck",
  "quickcheck_macros",
+ "turso_ext",
 ]
 
 [[package]]
@@ -1934,19 +1914,19 @@ name = "limbo_time"
 version = "0.1.0-pre.2"
 dependencies = [
  "chrono",
- "limbo_ext",
  "mimalloc",
  "strum",
  "strum_macros",
  "thiserror 2.0.12",
+ "turso_ext",
 ]
 
 [[package]]
 name = "limbo_uuid"
 version = "0.1.0-pre.2"
 dependencies = [
- "limbo_ext",
  "mimalloc",
+ "turso_ext",
  "uuid",
 ]
 
@@ -3763,7 +3743,6 @@ dependencies = [
  "limbo_completion",
  "limbo_crypto",
  "limbo_csv",
- "limbo_ext",
  "limbo_ipaddr",
  "limbo_percentile",
  "limbo_regexp",
@@ -3796,8 +3775,29 @@ dependencies = [
  "test-log",
  "thiserror 1.0.69",
  "tracing",
+ "turso_ext",
  "turso_macros",
  "uncased",
+]
+
+[[package]]
+name = "turso_ext"
+version = "0.1.0-pre.2"
+dependencies = [
+ "chrono",
+ "getrandom 0.3.2",
+ "turso_macros",
+]
+
+[[package]]
+name = "turso_ext_tests"
+version = "0.1.0-pre.2"
+dependencies = [
+ "env_logger 0.11.7",
+ "lazy_static",
+ "log",
+ "mimalloc",
+ "turso_ext",
 ]
 
 [[package]]

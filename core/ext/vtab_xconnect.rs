@@ -1,5 +1,4 @@
 use crate::{types::Value, Connection, Statement, StepResult};
-use limbo_ext::{Conn as ExtConn, ResultCode, Stmt, Value as ExtValue};
 use std::{
     boxed::Box,
     ffi::{c_char, c_void, CStr, CString},
@@ -7,6 +6,7 @@ use std::{
     ptr,
     sync::Arc,
 };
+use turso_ext::{Conn as ExtConn, ResultCode, Stmt, Value as ExtValue};
 
 /// Free memory for the internal context of the connection.
 /// This function does not close the core connection itself,
@@ -21,7 +21,7 @@ pub unsafe extern "C" fn close(ctx: *mut c_void) {
 }
 
 /// Wrapper around core Connection::execute with optional arguments to bind
-/// to the statment This function takes ownership of the optional limbo_ext::Value array if provided
+/// to the statment This function takes ownership of the optional turso_ext::Value array if provided
 pub unsafe extern "C" fn execute(
     ctx: *mut ExtConn,
     sql: *const c_char,
