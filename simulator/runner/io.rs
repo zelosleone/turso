@@ -79,6 +79,7 @@ impl IO for SimulatorIO {
             fault: Cell::new(false),
             nr_pread_faults: Cell::new(0),
             nr_pwrite_faults: Cell::new(0),
+            nr_sync_faults: Cell::new(0),
             nr_pread_calls: Cell::new(0),
             nr_pwrite_calls: Cell::new(0),
             nr_sync_calls: Cell::new(0),

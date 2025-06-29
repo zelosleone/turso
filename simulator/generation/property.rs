@@ -123,7 +123,10 @@ pub(crate) enum Property {
     /// tends to optimize `where` statements while keeping the result column expressions
     /// unoptimized. This property is used to test the optimizer. The property is successful
     /// if the two queries return the same number of rows.
-    SelectSelectOptimizer { table: String, predicate: Predicate },
+    SelectSelectOptimizer {
+        table: String,
+        predicate: Predicate,
+    },
     /// FsyncNoWait is a property which tests if we do not loose any data after not waiting for fsync.
     ///
     /// # Interactions
@@ -132,7 +135,14 @@ pub(crate) enum Property {
     /// - Execute the `query` again
     /// - Query tables to assert that the values were inserted
     ///
-    FsyncNoWait { query: Query, tables: Vec<String> },
+    FsyncNoWait {
+        query: Query,
+        tables: Vec<String>,
+    },
+    FaultyQuery {
+        query: Query,
+        tables: Vec<String>,
+    },
 }
 
 impl Property {
@@ -145,6 +155,7 @@ impl Property {
             Property::DropSelect { .. } => "Drop-Select",
             Property::SelectSelectOptimizer { .. } => "Select-Select-Optimizer",
             Property::FsyncNoWait { .. } => "FsyncNoWait",
+            Property::FaultyQuery { .. } => "FaultyQuery",
         }
     }
     /// interactions construct a list of interactions, which is an executable representation of the property.
@@ -436,47 +447,51 @@ impl Property {
                 vec![assumption, select1, select2, assertion]
             }
             Property::FsyncNoWait { query, tables } => {
-                let checks = tables.iter().flat_map(|table| {
-                    let select = Interaction::Query(Query::Select(Select {
-                        table: table.clone(),
-                        result_columns: vec![ResultColumn::Star],
-                        predicate: Predicate::true_(),
-                        limit: None,
-                        distinct: Distinctness::All,
-                    }));
-                    let assertion = Interaction::Assertion(Assertion {
-                        message: format!(
-                            "table {} should contain all of its values after the wal reopened",
-                            table
-                        ),
-                        func: Box::new({
-                            let table = table.clone();
-                            move |stack: &Vec<ResultSet>, env: &SimulatorEnv| {
-                                let table =
-                                    env.tables.iter().find(|t| t.name == table).ok_or_else(
-                                        || {
-                                            LimboError::InternalError(format!(
-                                                "table {} should exist",
-                                                table
-                                            ))
-                                        },
-                                    )?;
-                                let last = stack.last().unwrap();
-                                match last {
-                                    Ok(vals) => Ok(*vals == table.rows),
-                                    Err(err) => Err(LimboError::InternalError(format!("{}", err))),
-                                }
-                            }
-                        }),
-                    });
-                    [select, assertion].into_iter()
-                });
+                let checks = assert_all_table_values(tables);
                 Vec::from_iter(
                     std::iter::once(Interaction::FsyncQuery(query.clone())).chain(checks),
                 )
             }
+            Property::FaultyQuery { query, tables } => {
+                let checks = assert_all_table_values(tables);
+                let first = std::iter::once(Interaction::FaultyQuery(query.clone()));
+                Vec::from_iter(first.chain(checks))
+            }
         }
     }
+}
+
+fn assert_all_table_values(tables: &[String]) -> impl Iterator<Item = Interaction> + use<'_> {
+    let checks = tables.iter().flat_map(|table| {
+        let select = Interaction::Query(Query::Select(Select {
+            table: table.clone(),
+            result_columns: vec![ResultColumn::Star],
+            predicate: Predicate::true_(),
+            limit: None,
+            distinct: Distinctness::All,
+        }));
+        let assertion = Interaction::Assertion(Assertion {
+            message: format!(
+                "table {} should contain all of its values after the wal reopened",
+                table
+            ),
+            func: Box::new({
+                let table = table.clone();
+                move |stack: &Vec<ResultSet>, env: &SimulatorEnv| {
+                    let table = env.tables.iter().find(|t| t.name == table).ok_or_else(|| {
+                        LimboError::InternalError(format!("table {} should exist", table))
+                    })?;
+                    let last = stack.last().unwrap();
+                    match last {
+                        Ok(vals) => Ok(*vals == table.rows),
+                        Err(err) => Err(LimboError::InternalError(format!("{}", err))),
+                    }
+                }
+            }),
+        });
+        [select, assertion].into_iter()
+    });
+    checks
 }
 
 #[derive(Debug)]
@@ -755,6 +770,17 @@ fn property_fsync_no_wait<R: rand::Rng>(
     }
 }
 
+fn property_faulty_query<R: rand::Rng>(
+    rng: &mut R,
+    env: &SimulatorEnv,
+    remaining: &Remaining,
+) -> Property {
+    Property::FaultyQuery {
+        query: Query::arbitrary_from(rng, (env, remaining)),
+        tables: env.tables.iter().map(|t| t.name.clone()).collect(),
+    }
+}
+
 impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
     fn arbitrary_from<R: rand::Rng>(
         rng: &mut R,
@@ -819,6 +845,10 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
                         0.0
                     },
                     Box::new(|rng: &mut R| property_fsync_no_wait(rng, env, &remaining_)),
+                ),
+                (
+                    20.0,
+                    Box::new(|rng: &mut R| property_faulty_query(rng, env, &remaining_)),
                 ),
             ],
             rng,

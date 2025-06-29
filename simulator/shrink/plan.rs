@@ -72,7 +72,8 @@ impl InteractionPlan {
                             }
                             Property::SelectLimit { .. }
                             | Property::SelectSelectOptimizer { .. }
-                            | Property::FsyncNoWait { .. } => {}
+                            | Property::FsyncNoWait { .. }
+                            | Property::FaultyQuery { .. } => {}
                         }
                     }
                     // Check again after query clear if the interactions still uses the failing table

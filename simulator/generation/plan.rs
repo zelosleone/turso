@@ -592,9 +592,21 @@ impl Interaction {
             let mut rows = rows.unwrap().unwrap();
             let mut out = Vec::new();
             let mut current_prob = 0.05;
-            let mut incr = 0.01;
-            while let Ok(row) = rows.step() {
-                match row {
+            let mut incr = 0.001;
+            loop {
+                let syncing = {
+                    let files = env.io.files.borrow();
+                    // TODO: currently assuming we only have 1 file that is syncing
+                    files
+                        .iter()
+                        .any(|file| file.sync_completion.borrow().is_some())
+                };
+                let inject_fault = env.rng.gen_bool(current_prob);
+                if inject_fault || syncing {
+                    env.io.inject_fault(true);
+                }
+
+                match rows.step()? {
                     StepResult::Row => {
                         let row = rows.row().unwrap();
                         let mut r = Vec::new();
@@ -605,24 +617,12 @@ impl Interaction {
                         out.push(r);
                     }
                     StepResult::IO => {
-                        let syncing = {
-                            let files = env.io.files.borrow();
-                            // TODO: currently assuming we only have 1 file that is syncing
-                            files
-                                .iter()
-                                .any(|file| file.sync_completion.borrow().is_some())
-                        };
-                        let inject_fault = env.rng.gen_bool(current_prob);
-                        if inject_fault || syncing {
-                            env.io.inject_fault(true);
-                        }
-
                         rows.run_once()?;
                         current_prob += incr;
                         if current_prob > 1.0 {
                             current_prob = 1.0;
                         } else {
-                            incr += 0.01;
+                            incr *= 1.01;
                         }
                     }
                     StepResult::Done => {
