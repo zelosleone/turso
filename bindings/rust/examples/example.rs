@@ -1,3 +1,5 @@
+#[cfg(feature = "futures")]
+use futures_util::stream::StreamExt;
 use turso::Builder;
 
 #[tokio::main]

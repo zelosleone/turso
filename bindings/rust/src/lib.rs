@@ -374,6 +374,7 @@ unsafe impl Send for Rows {}
 unsafe impl Sync for Rows {}
 
 impl Rows {
+    #[cfg(not(feature = "futures"))]
     /// Fetch the next row of this result set.
     pub async fn next(&mut self) -> Result<Option<Row>> {
         loop {
@@ -381,23 +382,68 @@ impl Rows {
                 .inner
                 .lock()
                 .map_err(|e| Error::MutexError(e.to_string()))?;
-            match stmt.step() {
-                Ok(turso_core::StepResult::Row) => {
+            match stmt.step()? {
+                turso_core::StepResult::Row => {
                     let row = stmt.row().unwrap();
                     return Ok(Some(Row {
                         values: row.get_values().map(|v| v.to_owned()).collect(),
                     }));
                 }
-                Ok(turso_core::StepResult::Done) => return Ok(None),
-                Ok(turso_core::StepResult::IO) => {
+                turso_core::StepResult::Done => return Ok(None),
+                turso_core::StepResult::IO => {
                     if let Err(e) = stmt.run_once() {
                         return Err(e.into());
                     }
                     continue;
                 }
-                Ok(turso_core::StepResult::Busy) => return Ok(None),
-                Ok(turso_core::StepResult::Interrupt) => return Ok(None),
-                _ => return Ok(None),
+                // TODO: Busy should probably be an error
+                turso_core::StepResult::Busy => return Ok(None),
+                turso_core::StepResult::Interrupt => return Ok(None),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "futures")]
+impl futures_util::Stream for Rows {
+    type Item = Result<Row>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        use std::task::Poll;
+        loop {
+            let stmt = self
+                .inner
+                .lock()
+                .map_err(|e| Error::MutexError(e.to_string()));
+
+            if let Err(err) = stmt {
+                return Poll::Ready(Some(Err(err)));
+            }
+            let mut stmt = stmt.unwrap();
+            match stmt.step() {
+                Ok(step_result) => match step_result {
+                    turso_core::StepResult::Row => {
+                        let row = stmt.row().unwrap();
+                        return Poll::Ready(Some(Ok(Row {
+                            values: row.get_values().map(|v| v.to_owned()).collect(),
+                        })));
+                    }
+                    turso_core::StepResult::Done => return Poll::Ready(None),
+                    turso_core::StepResult::IO => {
+                        if let Err(e) = stmt.run_once() {
+                            return Poll::Ready(Some(Err(e.into())));
+                        }
+                        return Poll::Pending;
+                    }
+                    turso_core::StepResult::Busy => return Poll::Ready(None),
+                    turso_core::StepResult::Interrupt => return Poll::Ready(None),
+                },
+                Err(err) => {
+                    return Poll::Ready(Some(Err(Error::from(err))));
+                }
             }
         }
     }
@@ -449,7 +495,23 @@ impl<'a> FromIterator<&'a turso_core::Value> for Row {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "futures")]
+    use futures_util::TryStreamExt;
     use tempfile::NamedTempFile;
+
+    #[cfg(not(feature = "futures"))]
+    macro_rules! rows_next {
+        ($rows:expr) => {
+            $rows.next()
+        };
+    }
+
+    #[cfg(feature = "futures")]
+    macro_rules! rows_next {
+        ($rows:expr) => {
+            $rows.try_next()
+        };
+    }
 
     #[tokio::test]
     async fn test_database_persistence() -> Result<()> {
@@ -479,13 +541,13 @@ mod tests {
             .query("SELECT name FROM test_persistence ORDER BY id;", ())
             .await?;
 
-        let row1 = rows.next().await?.expect("Expected first row");
+        let row1 = rows_next!(rows).await?.expect("Expected first row");
         assert_eq!(row1.get_value(0)?, Value::Text("Alice".to_string()));
 
-        let row2 = rows.next().await?.expect("Expected second row");
+        let row2 = rows_next!(rows).await?.expect("Expected second row");
         assert_eq!(row2.get_value(0)?, Value::Text("Bob".to_string()));
 
-        assert!(rows.next().await?.is_none(), "Expected no more rows");
+        assert!(rows_next!(rows).await?.is_none(), "Expected no more rows");
 
         Ok(())
     }
@@ -534,8 +596,7 @@ mod tests {
             .await?;
 
         for (i, value) in original_data.iter().enumerate().take(NUM_INSERTS) {
-            let row = rows
-                .next()
+            let row = rows_next!(rows)
                 .await?
                 .unwrap_or_else(|| panic!("Expected row {} but found None", i));
             assert_eq!(
@@ -547,7 +608,7 @@ mod tests {
         }
 
         assert!(
-            rows.next().await?.is_none(),
+            rows_next!(rows).await?.is_none(),
             "Expected no more rows after retrieving all inserted data"
         );
 
@@ -604,9 +665,9 @@ mod tests {
                 let mut rows_iter = conn
                     .query("SELECT count(*) FROM test_persistence;", ())
                     .await?;
-                let rows = rows_iter.next().await?.unwrap();
+                let rows = rows_next!(rows_iter).await?.unwrap();
                 assert_eq!(rows.get_value(0)?, Value::Integer(i as i64 + 1));
-                assert!(rows_iter.next().await?.is_none());
+                assert!(rows_next!(rows_iter).await?.is_none());
             }
         }
 
