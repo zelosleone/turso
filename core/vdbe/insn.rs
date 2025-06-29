@@ -11,8 +11,8 @@ use crate::{
     translate::collate::CollationSeq,
     Value,
 };
-use limbo_macros::Description;
 use limbo_sqlite3_parser::ast::SortOrder;
+use turso_macros::Description;
 
 /// Flags provided to comparison instructions (e.g. Eq, Ne) which determine behavior related to NULL values.
 #[derive(Clone, Copy, Debug, Default)]

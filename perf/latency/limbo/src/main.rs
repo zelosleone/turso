@@ -4,11 +4,13 @@
 
 use clap::Parser;
 use hdrhistogram::Histogram;
+use std::{
+    ops::{Coroutine, CoroutineState},
+    pin::Pin,
+    sync::Arc,
+    time::Instant,
+};
 use turso_core::{Database, PlatformIO, IO};
-use std::ops::{Coroutine, CoroutineState};
-use std::pin::Pin;
-use std::sync::Arc;
-use std::time::Instant;
 
 #[derive(Parser)]
 struct Opts {

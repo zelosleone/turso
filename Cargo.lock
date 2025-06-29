@@ -1796,7 +1796,7 @@ version = "0.1.0-pre.2"
 dependencies = [
  "chrono",
  "getrandom 0.3.2",
- "limbo_macros",
+ "turso_macros",
 ]
 
 [[package]]
@@ -1817,15 +1817,6 @@ dependencies = [
  "ipnetwork",
  "limbo_ext",
  "mimalloc",
-]
-
-[[package]]
-name = "limbo_macros"
-version = "0.1.0-pre.2"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.100",
 ]
 
 [[package]]
@@ -3773,7 +3764,6 @@ dependencies = [
  "limbo_csv",
  "limbo_ext",
  "limbo_ipaddr",
- "limbo_macros",
  "limbo_percentile",
  "limbo_regexp",
  "limbo_series",
@@ -3805,7 +3795,17 @@ dependencies = [
  "test-log",
  "thiserror 1.0.69",
  "tracing",
+ "turso_macros",
  "uncased",
+]
+
+[[package]]
+name = "turso_macros"
+version = "0.1.0-pre.2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
 ]
 
 [[package]]

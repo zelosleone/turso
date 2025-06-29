@@ -61,7 +61,7 @@ chrono = { version = "0.4.38", default-features = false, features = ["clock"] }
 julian_day_converter = "0.4.5"
 rand = "0.8.5"
 libm = "0.2"
-limbo_macros = { workspace = true }
+turso_macros = { workspace = true }
 limbo_uuid = { workspace = true, optional = true, features = ["static"] }
 limbo_regexp = { workspace = true, optional = true, features = ["static"] }
 limbo_percentile = { workspace = true, optional = true, features = ["static"] }
