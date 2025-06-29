@@ -7,10 +7,10 @@ pub use functions::{
     AggCtx, AggFunc, FinalizeFunction, InitAggFunction, ScalarFunction, StepFunction,
 };
 use functions::{RegisterAggFn, RegisterScalarFn};
-#[cfg(feature = "vfs")]
-pub use limbo_macros::VfsDerive;
-pub use limbo_macros::{register_extension, scalar, AggregateDerive, VTabModuleDerive};
 use std::os::raw::c_void;
+#[cfg(feature = "vfs")]
+pub use turso_macros::VfsDerive;
+pub use turso_macros::{register_extension, scalar, AggregateDerive, VTabModuleDerive};
 pub use types::{ResultCode, StepResult, Value, ValueType};
 #[cfg(feature = "vfs")]
 pub use vfs_modules::{RegisterVfsFn, VfsExtension, VfsFile, VfsFileImpl, VfsImpl, VfsInterface};

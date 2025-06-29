@@ -658,16 +658,7 @@ version = "0.1.0-pre.2"
 dependencies = [
  "chrono",
  "getrandom 0.3.3",
- "limbo_macros",
-]
-
-[[package]]
-name = "limbo_macros"
-version = "0.1.0-pre.2"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
+ "turso_macros",
 ]
 
 [[package]]
@@ -1256,7 +1247,6 @@ dependencies = [
  "libloading",
  "libm",
  "limbo_ext",
- "limbo_macros",
  "limbo_series",
  "limbo_sqlite3_parser",
  "limbo_time",
@@ -1275,7 +1265,17 @@ dependencies = [
  "strum_macros",
  "thiserror 1.0.63",
  "tracing",
+ "turso_macros",
  "uncased",
+]
+
+[[package]]
+name = "turso_macros"
+version = "0.1.0-pre.2"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
