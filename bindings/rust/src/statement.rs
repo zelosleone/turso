@@ -85,8 +85,7 @@ impl Statement {
                     return Ok(0);
                 }
                 Ok(turso_core::StepResult::IO) => {
-                    let _ = stmt.run_once();
-                    //return Ok(1);
+                    stmt.run_once()?;
                 }
                 Ok(turso_core::StepResult::Busy) => {
                     return Ok(4);
