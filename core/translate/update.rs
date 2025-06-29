@@ -293,6 +293,7 @@ pub fn prepare_update_plan(
             .joined_tables()
             .first()
             .unwrap();
+        // We do not need to emit an ephemeral plan if we are not going to loop over the table values
         if matches!(table.op, Operation::Search(Search::RowidEq { .. })) {
             (None, vec![])
         } else {

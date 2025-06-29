@@ -1067,6 +1067,9 @@ fn emit_update_insns(
             });
         }
 
+        // If we are updating the rowid, we cannot rely on overwrite on the
+        // Insert instruction to update the cell. We need to first delete the current cell
+        // and later insert the updated record
         if has_user_provided_rowid {
             program.emit_insn(Insn::Delete { cursor_id });
         }
