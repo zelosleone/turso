@@ -1,5 +1,5 @@
 use crate::common::{do_flush, TempDatabase};
-use limbo_core::StepResult;
+use turso_core::StepResult;
 
 #[test]
 fn test_last_insert_rowid_basic() -> anyhow::Result<()> {
@@ -31,7 +31,7 @@ fn test_last_insert_rowid_basic() -> anyhow::Result<()> {
             match rows.step()? {
                 StepResult::Row => {
                     let row = rows.row().unwrap();
-                    if let limbo_core::Value::Integer(id) = row.get_value(0) {
+                    if let turso_core::Value::Integer(id) = row.get_value(0) {
                         assert_eq!(*id, 1, "First insert should have rowid 1");
                     }
                 }
@@ -67,7 +67,7 @@ fn test_last_insert_rowid_basic() -> anyhow::Result<()> {
             match rows.step()? {
                 StepResult::Row => {
                     let row = rows.row().unwrap();
-                    if let limbo_core::Value::Integer(id) = row.get_value(0) {
+                    if let turso_core::Value::Integer(id) = row.get_value(0) {
                         last_id = *id;
                     }
                 }
@@ -113,7 +113,7 @@ fn test_integer_primary_key() -> anyhow::Result<()> {
         match select_query.step()? {
             StepResult::Row => {
                 let row = select_query.row().unwrap();
-                if let limbo_core::Value::Integer(id) = row.get_value(0) {
+                if let turso_core::Value::Integer(id) = row.get_value(0) {
                     rowids.push(*id);
                 }
             }

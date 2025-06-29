@@ -1,5 +1,5 @@
 use crate::common::TempDatabase;
-use limbo_core::{StepResult, Value};
+use turso_core::{StepResult, Value};
 
 #[test]
 fn test_statement_reset_bind() -> anyhow::Result<()> {
@@ -16,7 +16,7 @@ fn test_statement_reset_bind() -> anyhow::Result<()> {
                 let row = stmt.row().unwrap();
                 assert_eq!(
                     *row.get::<&Value>(0).unwrap(),
-                    limbo_core::Value::Integer(1)
+                    turso_core::Value::Integer(1)
                 );
             }
             StepResult::IO => tmp_db.io.run_once()?,
@@ -34,7 +34,7 @@ fn test_statement_reset_bind() -> anyhow::Result<()> {
                 let row = stmt.row().unwrap();
                 assert_eq!(
                     *row.get::<&Value>(0).unwrap(),
-                    limbo_core::Value::Integer(2)
+                    turso_core::Value::Integer(2)
                 );
             }
             StepResult::IO => tmp_db.io.run_once()?,
@@ -67,23 +67,23 @@ fn test_statement_bind() -> anyhow::Result<()> {
         match stmt.step()? {
             StepResult::Row => {
                 let row = stmt.row().unwrap();
-                if let limbo_core::Value::Text(s) = row.get::<&Value>(0).unwrap() {
+                if let turso_core::Value::Text(s) = row.get::<&Value>(0).unwrap() {
                     assert_eq!(s.as_str(), "hello")
                 }
 
-                if let limbo_core::Value::Text(s) = row.get::<&Value>(1).unwrap() {
+                if let turso_core::Value::Text(s) = row.get::<&Value>(1).unwrap() {
                     assert_eq!(s.as_str(), "hello")
                 }
 
-                if let limbo_core::Value::Integer(i) = row.get::<&Value>(2).unwrap() {
+                if let turso_core::Value::Integer(i) = row.get::<&Value>(2).unwrap() {
                     assert_eq!(*i, 42)
                 }
 
-                if let limbo_core::Value::Blob(v) = row.get::<&Value>(3).unwrap() {
+                if let turso_core::Value::Blob(v) = row.get::<&Value>(3).unwrap() {
                     assert_eq!(v.as_slice(), &vec![0x1_u8, 0x2, 0x3])
                 }
 
-                if let limbo_core::Value::Float(f) = row.get::<&Value>(4).unwrap() {
+                if let turso_core::Value::Float(f) = row.get::<&Value>(4).unwrap() {
                     assert_eq!(*f, 0.5)
                 }
             }

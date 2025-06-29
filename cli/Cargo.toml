@@ -28,7 +28,7 @@ ctrlc = "3.4.4"
 dirs = "5.0.1"
 env_logger = "0.10.1"
 libc = "0.2.172"
-limbo_core = { path = "../core", default-features = true, features = [
+turso_core = { path = "../core", default-features = true, features = [
     "completion",
 ] }
 miette = { version = "7.4.0", features = ["fancy"] }
@@ -49,7 +49,7 @@ toml_edit = {version = "0.22.24", features = ["serde"]}
 
 [features]
 default = ["io_uring"]
-io_uring = ["limbo_core/io_uring"]
+io_uring = ["turso_core/io_uring"]
 
 [build-dependencies]
 syntect = { git = "https://github.com/trishume/syntect.git", rev = "64644ffe064457265cbcee12a0c1baf9485ba6ee" }

@@ -1,9 +1,9 @@
 use crate::common::{do_flush, maybe_setup_tracing, TempDatabase};
-use limbo_core::{Connection, LimboError, Result, StepResult};
 use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use turso_core::{Connection, LimboError, Result, StepResult};
 
 #[allow(clippy::arc_with_non_send_sync)]
 #[test]
@@ -154,7 +154,7 @@ pub(crate) fn execute_and_get_ints(
                 let row = stmt.row().unwrap();
                 for value in row.get_values() {
                     let out = match value {
-                        limbo_core::Value::Integer(i) => i,
+                        turso_core::Value::Integer(i) => i,
                         _ => {
                             return Err(LimboError::ConversionError(format!(
                                 "cannot convert {value} to int"

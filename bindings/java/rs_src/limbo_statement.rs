@@ -5,8 +5,8 @@ use crate::utils::set_err_msg_and_throw_exception;
 use jni::objects::{JByteArray, JObject, JObjectArray, JString, JValue};
 use jni::sys::{jdouble, jint, jlong};
 use jni::JNIEnv;
-use limbo_core::{Statement, StepResult, Value};
 use std::num::NonZero;
+use turso_core::{Statement, StepResult, Value};
 
 pub const STEP_RESULT_ID_ROW: i32 = 10;
 #[allow(dead_code)]
@@ -101,21 +101,21 @@ pub extern "system" fn Java_tech_turso_core_LimboStatement__1close<'local>(
 
 fn row_to_obj_array<'local>(
     env: &mut JNIEnv<'local>,
-    row: &limbo_core::Row,
+    row: &turso_core::Row,
 ) -> Result<JObject<'local>> {
     let obj_array = env.new_object_array(row.len() as i32, "java/lang/Object", JObject::null())?;
 
     for (i, value) in row.get_values().enumerate() {
         let obj = match value {
-            limbo_core::Value::Null => JObject::null(),
-            limbo_core::Value::Integer(i) => {
+            turso_core::Value::Null => JObject::null(),
+            turso_core::Value::Integer(i) => {
                 env.new_object("java/lang/Long", "(J)V", &[JValue::Long(*i)])?
             }
-            limbo_core::Value::Float(f) => {
+            turso_core::Value::Float(f) => {
                 env.new_object("java/lang/Double", "(D)V", &[JValue::Double(*f)])?
             }
-            limbo_core::Value::Text(s) => env.new_string(s.as_str())?.into(),
-            limbo_core::Value::Blob(b) => env.byte_array_from_slice(b.as_slice())?.into(),
+            turso_core::Value::Text(s) => env.new_string(s.as_str())?.into(),
+            turso_core::Value::Blob(b) => env.byte_array_from_slice(b.as_slice())?.into(),
         };
         if let Err(e) = env.set_object_array_element(&obj_array, i as i32, obj) {
             eprintln!("Error on parsing row: {:?}", e);

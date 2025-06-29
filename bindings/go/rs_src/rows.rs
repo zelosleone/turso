@@ -2,8 +2,8 @@ use crate::{
     types::{LimboValue, ResultCode},
     LimboConn,
 };
-use limbo_core::{LimboError, Statement, StepResult, Value};
 use std::ffi::{c_char, c_void};
+use turso_core::{LimboError, Statement, StepResult, Value};
 
 pub struct LimboRows<'conn> {
     stmt: Box<Statement>,

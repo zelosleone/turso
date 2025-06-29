@@ -1,5 +1,4 @@
 use clap::Parser;
-use limbo_core::{Connection, StepResult};
 use nu_ansi_term::{Color, Style};
 use rustyline::completion::{extract_word, Completer, Pair};
 use rustyline::highlight::Highlighter;
@@ -15,6 +14,7 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::ThemeSet;
 use syntect::parsing::{Scope, SyntaxSet};
 use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
+use turso_core::{Connection, StepResult};
 
 use crate::commands::CommandParser;
 use crate::config::{HighlightConfig, CONFIG_DIR};
@@ -42,7 +42,7 @@ pub struct LimboHelper {
 impl LimboHelper {
     pub fn new(
         conn: Arc<Connection>,
-        io: Arc<dyn limbo_core::IO>,
+        io: Arc<dyn turso_core::IO>,
         syntax_config: Option<HighlightConfig>,
     ) -> Self {
         // Load only predefined syntax
@@ -141,7 +141,7 @@ impl Highlighter for LimboHelper {
 
 pub struct SqlCompleter<C: Parser + Send + Sync + 'static> {
     conn: Arc<Connection>,
-    io: Arc<dyn limbo_core::IO>,
+    io: Arc<dyn turso_core::IO>,
     // Has to be a ref cell as Rustyline takes immutable reference to self
     // This problem would be solved with Reedline as it uses &mut self for completions
     cmd: RefCell<clap::Command>,
@@ -149,7 +149,7 @@ pub struct SqlCompleter<C: Parser + Send + Sync + 'static> {
 }
 
 impl<C: Parser + Send + Sync + 'static> SqlCompleter<C> {
-    pub fn new(conn: Arc<Connection>, io: Arc<dyn limbo_core::IO>) -> Self {
+    pub fn new(conn: Arc<Connection>, io: Arc<dyn turso_core::IO>) -> Self {
         Self {
             conn,
             io,

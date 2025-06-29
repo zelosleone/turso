@@ -40,7 +40,7 @@ repository = "https://github.com/tursodatabase/limbo"
 
 [workspace.dependencies]
 limbo_completion = { path = "extensions/completion", version = "0.1.0-pre.2" }
-limbo_core = { path = "core", version = "0.1.0-pre.2" }
+turso_core = { path = "core", version = "0.1.0-pre.2" }
 limbo_crypto = { path = "extensions/crypto", version = "0.1.0-pre.2" }
 limbo_csv = { path = "extensions/csv", version = "0.1.0-pre.2" }
 limbo_ext = { path = "extensions/core", version = "0.1.0-pre.2" }

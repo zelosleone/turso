@@ -4,16 +4,16 @@ use crate::utils::set_err_msg_and_throw_exception;
 use jni::objects::{JByteArray, JObject};
 use jni::sys::{jint, jlong};
 use jni::JNIEnv;
-use limbo_core::Database;
 use std::sync::Arc;
+use turso_core::Database;
 
 struct LimboDB {
     db: Arc<Database>,
-    io: Arc<dyn limbo_core::IO>,
+    io: Arc<dyn turso_core::IO>,
 }
 
 impl LimboDB {
-    pub fn new(db: Arc<Database>, io: Arc<dyn limbo_core::IO>) -> Self {
+    pub fn new(db: Arc<Database>, io: Arc<dyn turso_core::IO>) -> Self {
         LimboDB { db, io }
     }
 
@@ -43,7 +43,7 @@ pub extern "system" fn Java_tech_turso_core_LimboDB_openUtf8<'local>(
     file_path_byte_arr: JByteArray<'local>,
     _open_flags: jint,
 ) -> jlong {
-    let io = match limbo_core::PlatformIO::new() {
+    let io = match turso_core::PlatformIO::new() {
         Ok(io) => Arc::new(io),
         Err(e) => {
             set_err_msg_and_throw_exception(&mut env, obj, LIMBO_ETC, e.to_string());

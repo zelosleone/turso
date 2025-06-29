@@ -11,7 +11,7 @@ description = "The Turso database library Node bindings"
 crate-type = ["cdylib"]
 
 [dependencies]
-limbo_core = { workspace = true }
+turso_core = { workspace = true }
 napi = { version = "2.16.17", default-features = false, features = ["napi4"] }
 napi-derive = { version = "2.16.13", default-features = false }
 

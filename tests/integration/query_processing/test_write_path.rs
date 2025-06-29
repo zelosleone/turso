@@ -1,8 +1,8 @@
 use crate::common::{self, maybe_setup_tracing};
 use crate::common::{compare_string, do_flush, TempDatabase};
-use limbo_core::{Connection, Row, Statement, StepResult, Value};
 use log::debug;
 use std::sync::Arc;
+use turso_core::{Connection, Row, Statement, StepResult, Value};
 
 #[macro_export]
 macro_rules! change_state {
@@ -175,8 +175,8 @@ fn test_sequential_write() -> anyhow::Result<()> {
         run_query_on_row(&tmp_db, &conn, list_query, |row: &Row| {
             let first_value = row.get::<&Value>(0).expect("missing id");
             let id = match first_value {
-                limbo_core::Value::Integer(i) => *i as i32,
-                limbo_core::Value::Float(f) => *f as i32,
+                turso_core::Value::Integer(i) => *i as i32,
+                turso_core::Value::Float(f) => *f as i32,
                 _ => unreachable!(),
             };
             assert_eq!(current_read_index, id);
@@ -239,7 +239,7 @@ fn test_statement_reset() -> anyhow::Result<()> {
                 let row = stmt.row().unwrap();
                 assert_eq!(
                     *row.get::<&Value>(0).unwrap(),
-                    limbo_core::Value::Integer(1)
+                    turso_core::Value::Integer(1)
                 );
                 break;
             }
@@ -256,7 +256,7 @@ fn test_statement_reset() -> anyhow::Result<()> {
                 let row = stmt.row().unwrap();
                 assert_eq!(
                     *row.get::<&Value>(0).unwrap(),
-                    limbo_core::Value::Integer(1)
+                    turso_core::Value::Integer(1)
                 );
                 break;
             }
@@ -381,8 +381,8 @@ fn test_write_delete_with_index() -> anyhow::Result<()> {
         run_query_on_row(&tmp_db, &conn, list_query, |row: &Row| {
             let first_value = row.get::<&Value>(0).expect("missing id");
             let id = match first_value {
-                limbo_core::Value::Integer(i) => *i as i32,
-                limbo_core::Value::Float(f) => *f as i32,
+                turso_core::Value::Integer(i) => *i as i32,
+                turso_core::Value::Float(f) => *f as i32,
                 _ => unreachable!(),
             };
             assert_eq!(current_read_index, id);
@@ -397,8 +397,8 @@ fn test_write_delete_with_index() -> anyhow::Result<()> {
                 |row| {
                     let first_value = row.get::<&Value>(0).expect("missing id");
                     let id = match first_value {
-                        limbo_core::Value::Integer(i) => *i as i32,
-                        limbo_core::Value::Float(f) => *f as i32,
+                        turso_core::Value::Integer(i) => *i as i32,
+                        turso_core::Value::Float(f) => *f as i32,
                         _ => unreachable!(),
                     };
                     assert_eq!(i, id);

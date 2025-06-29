@@ -6,8 +6,8 @@ use std::{
     vec,
 };
 
-use limbo_core::{Connection, Result, StepResult, IO};
 use serde::{Deserialize, Serialize};
+use turso_core::{Connection, Result, StepResult, IO};
 
 use crate::{
     model::{
@@ -564,10 +564,10 @@ impl Interaction {
                 let result = assertion.func.as_ref()(stack, env);
                 match result {
                     Ok(true) => Ok(()),
-                    Ok(false) => Err(limbo_core::LimboError::InternalError(
+                    Ok(false) => Err(turso_core::LimboError::InternalError(
                         assertion.message.clone(),
                     )),
-                    Err(err) => Err(limbo_core::LimboError::InternalError(format!(
+                    Err(err) => Err(turso_core::LimboError::InternalError(format!(
                         "{}. Inner error: {}",
                         assertion.message, err
                     ))),
@@ -598,10 +598,10 @@ impl Interaction {
                 let result = assumption.func.as_ref()(stack, env);
                 match result {
                     Ok(true) => Ok(()),
-                    Ok(false) => Err(limbo_core::LimboError::InternalError(
+                    Ok(false) => Err(turso_core::LimboError::InternalError(
                         assumption.message.clone(),
                     )),
-                    Err(err) => Err(limbo_core::LimboError::InternalError(format!(
+                    Err(err) => Err(turso_core::LimboError::InternalError(format!(
                         "{}. Inner error: {}",
                         assumption.message, err
                     ))),
@@ -630,7 +630,7 @@ impl Interaction {
                         if env.connections[conn_index].is_connected() {
                             env.connections[conn_index].disconnect();
                         } else {
-                            return Err(limbo_core::LimboError::InternalError(
+                            return Err(turso_core::LimboError::InternalError(
                                 "connection already disconnected".into(),
                             ));
                         }
@@ -644,7 +644,7 @@ impl Interaction {
 
                         // 2. Re-open database
                         let db_path = env.db_path.clone();
-                        let db = match limbo_core::Database::open_file(
+                        let db = match turso_core::Database::open_file(
                             env.io.clone(),
                             &db_path,
                             false,
