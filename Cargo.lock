@@ -1721,16 +1721,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "limbo"
-version = "0.1.0-pre.2"
-dependencies = [
- "tempfile",
- "thiserror 2.0.12",
- "tokio",
- "turso_core",
-]
-
-[[package]]
 name = "limbo-go"
 version = "0.1.0-pre.2"
 dependencies = [
@@ -1880,12 +1870,12 @@ dependencies = [
  "antithesis_sdk",
  "clap",
  "hex",
- "limbo",
  "tempfile",
  "tokio",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "turso",
 ]
 
 [[package]]
@@ -3667,6 +3657,16 @@ dependencies = [
  "tracing",
  "tracing-core",
  "tracing-log",
+]
+
+[[package]]
+name = "turso"
+version = "0.1.0-pre.2"
+dependencies = [
+ "tempfile",
+ "thiserror 2.0.12",
+ "tokio",
+ "turso_core",
 ]
 
 [[package]]

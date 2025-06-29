@@ -1,4 +1,4 @@
-use limbo::{Builder, Value};
+use turso::{Builder, Value};
 
 #[tokio::test]
 async fn test_rows_next() {
