@@ -33,6 +33,7 @@
 //! ```
 
 pub mod params;
+pub mod statement;
 pub mod value;
 
 pub use value::Value;
@@ -40,8 +41,8 @@ pub use value::Value;
 pub use params::params_from_iter;
 
 use crate::params::*;
+use crate::statement::Statement;
 use std::fmt::Debug;
-use std::num::NonZero;
 use std::sync::{Arc, Mutex};
 
 #[derive(Debug, thiserror::Error)]
@@ -62,7 +63,7 @@ impl From<turso_core::LimboError> for Error {
 
 pub(crate) type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-pub type Result<T> = std::result::Result<T, Error>;
+pub(crate) type Result<T> = std::result::Result<T, Error>;
 
 /// A builder for `Database`.
 pub struct Builder {
@@ -210,119 +211,6 @@ impl Connection {
 impl Debug for Connection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Connection").finish()
-    }
-}
-
-/// A prepared statement.
-pub struct Statement {
-    inner: Arc<Mutex<turso_core::Statement>>,
-}
-
-impl Clone for Statement {
-    fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-        }
-    }
-}
-
-unsafe impl Send for Statement {}
-unsafe impl Sync for Statement {}
-
-impl Statement {
-    /// Query the database with this prepared statement.
-    pub async fn query(&mut self, params: impl IntoParams) -> Result<Rows> {
-        let params = params.into_params()?;
-        match params {
-            params::Params::None => (),
-            params::Params::Positional(values) => {
-                for (i, value) in values.into_iter().enumerate() {
-                    let mut stmt = self.inner.lock().unwrap();
-                    stmt.bind_at(NonZero::new(i + 1).unwrap(), value.into());
-                }
-            }
-            params::Params::Named(values) => {
-                for (name, value) in values.into_iter() {
-                    let mut stmt = self.inner.lock().unwrap();
-                    let i = stmt.parameters().index(name).unwrap();
-                    stmt.bind_at(i, value.into());
-                }
-            }
-        }
-        #[allow(clippy::arc_with_non_send_sync)]
-        let rows = Rows {
-            inner: Arc::clone(&self.inner),
-        };
-        Ok(rows)
-    }
-
-    /// Execute this prepared statement.
-    pub async fn execute(&mut self, params: impl IntoParams) -> Result<u64> {
-        {
-            // Reset the statement before executing
-            self.inner.lock().unwrap().reset();
-        }
-        let params = params.into_params()?;
-        match params {
-            params::Params::None => (),
-            params::Params::Positional(values) => {
-                for (i, value) in values.into_iter().enumerate() {
-                    let mut stmt = self.inner.lock().unwrap();
-                    stmt.bind_at(NonZero::new(i + 1).unwrap(), value.into());
-                }
-            }
-            params::Params::Named(values) => {
-                for (name, value) in values.into_iter() {
-                    let mut stmt = self.inner.lock().unwrap();
-                    let i = stmt.parameters().index(name).unwrap();
-                    stmt.bind_at(i, value.into());
-                }
-            }
-        }
-        loop {
-            let mut stmt = self.inner.lock().unwrap();
-            match stmt.step() {
-                Ok(turso_core::StepResult::Row) => {
-                    // unexpected row during execution, error out.
-                    return Ok(2);
-                }
-                Ok(turso_core::StepResult::Done) => {
-                    return Ok(0);
-                }
-                Ok(turso_core::StepResult::IO) => {
-                    let _ = stmt.run_once();
-                    //return Ok(1);
-                }
-                Ok(turso_core::StepResult::Busy) => {
-                    return Ok(4);
-                }
-                Ok(turso_core::StepResult::Interrupt) => {
-                    return Ok(3);
-                }
-                Err(err) => {
-                    return Err(err.into());
-                }
-            }
-        }
-    }
-
-    /// Returns columns of the result of this prepared statement.
-    pub fn columns(&self) -> Vec<Column> {
-        let stmt = self.inner.lock().unwrap();
-
-        let n = stmt.num_columns();
-
-        let mut cols = Vec::with_capacity(n);
-
-        for i in 0..n {
-            let name = stmt.get_column_name(i).into_owned();
-            cols.push(Column {
-                name,
-                decl_type: None, // TODO
-            });
-        }
-
-        cols
     }
 }
 
