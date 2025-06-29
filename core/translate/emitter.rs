@@ -3,8 +3,8 @@
 
 use std::rc::Rc;
 
-use limbo_sqlite3_parser::ast::{self, Expr};
 use tracing::{instrument, Level};
+use turso_sqlite3_parser::ast::{self, Expr};
 
 use super::aggregation::emit_ungrouped_aggregation;
 use super::expr::translate_expr;

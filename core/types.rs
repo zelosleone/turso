@@ -1,7 +1,7 @@
-use limbo_sqlite3_parser::ast::SortOrder;
 #[cfg(feature = "serde")]
 use serde::Deserialize;
 use turso_ext::{AggCtx, FinalizeFunction, StepFunction};
+use turso_sqlite3_parser::ast::SortOrder;
 
 use crate::error::LimboError;
 use crate::ext::{ExtValue, ExtValueType};

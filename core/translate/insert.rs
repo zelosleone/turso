@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use limbo_sqlite3_parser::ast::{
+use turso_sqlite3_parser::ast::{
     DistinctNames, Expr, InsertBody, OneSelect, QualifiedName, ResolveType, ResultColumn, With,
 };
 

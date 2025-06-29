@@ -1,8 +1,8 @@
 use std::{fmt::Display, hash::Hash, ops::Deref};
 
-use limbo_sqlite3_parser::ast;
 use serde::{Deserialize, Serialize};
 use turso_core::{numeric::Numeric, types};
+use turso_sqlite3_parser::ast;
 
 pub(crate) struct Name(pub(crate) String);
 

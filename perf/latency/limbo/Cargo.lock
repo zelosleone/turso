@@ -661,25 +661,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "limbo_sqlite3_parser"
-version = "0.1.0-pre.2"
-dependencies = [
- "bitflags",
- "cc",
- "fallible-iterator",
- "indexmap",
- "log",
- "memchr",
- "miette",
- "phf",
- "phf_codegen",
- "phf_shared",
- "strum",
- "strum_macros",
- "uncased",
-]
-
-[[package]]
 name = "limbo_time"
 version = "0.1.0-pre.2"
 dependencies = [
@@ -1238,7 +1219,6 @@ dependencies = [
  "libloading",
  "libm",
  "limbo_series",
- "limbo_sqlite3_parser",
  "limbo_time",
  "limbo_uuid",
  "miette",
@@ -1257,6 +1237,7 @@ dependencies = [
  "tracing",
  "turso_ext",
  "turso_macros",
+ "turso_sqlite3_parser",
  "uncased",
 ]
 
@@ -1276,6 +1257,25 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "turso_sqlite3_parser"
+version = "0.1.0-pre.2"
+dependencies = [
+ "bitflags",
+ "cc",
+ "fallible-iterator",
+ "indexmap",
+ "log",
+ "memchr",
+ "miette",
+ "phf",
+ "phf_codegen",
+ "phf_shared",
+ "strum",
+ "strum_macros",
+ "uncased",
 ]
 
 [[package]]

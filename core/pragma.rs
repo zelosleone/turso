@@ -1,8 +1,8 @@
 use crate::{Connection, LimboError, Statement, StepResult, Value};
 use bitflags::bitflags;
-use limbo_sqlite3_parser::ast::PragmaName;
 use std::str::FromStr;
 use std::sync::Arc;
+use turso_sqlite3_parser::ast::PragmaName;
 
 bitflags! {
     // Flag names match those used in SQLite:

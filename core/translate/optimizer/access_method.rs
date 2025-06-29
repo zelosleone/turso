@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use limbo_sqlite3_parser::ast::SortOrder;
+use turso_sqlite3_parser::ast::SortOrder;
 
 use crate::{
     schema::Index,

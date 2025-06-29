@@ -1,5 +1,5 @@
-use limbo_sqlite3_parser::ast::{self, Expr, UnaryOperator};
 use tracing::{instrument, Level};
+use turso_sqlite3_parser::ast::{self, Expr, UnaryOperator};
 
 use super::emitter::Resolver;
 use super::optimizer::Optimizable;

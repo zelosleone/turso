@@ -2,7 +2,7 @@
 //! TODO: for now just generating [ast::Literal], but want to also generate Columns and any
 //! arbitrary [ast::Expr]
 
-use limbo_sqlite3_parser::ast::{self, Expr};
+use turso_sqlite3_parser::ast::{self, Expr};
 
 use crate::{
     generation::{backtrack, pick, predicate::SimplePredicate, ArbitraryFromMaybe},

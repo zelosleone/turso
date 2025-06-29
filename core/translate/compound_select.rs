@@ -5,9 +5,9 @@ use crate::vdbe::builder::{CursorType, ProgramBuilder};
 use crate::vdbe::insn::Insn;
 use crate::vdbe::BranchOffset;
 use crate::SymbolTable;
-use limbo_sqlite3_parser::ast::{CompoundOperator, SortOrder};
 use std::sync::Arc;
 use tracing::instrument;
+use turso_sqlite3_parser::ast::{CompoundOperator, SortOrder};
 
 use tracing::Level;
 

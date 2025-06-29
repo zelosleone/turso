@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use limbo_sqlite3_parser::ast::{self, SortOrder, TableInternalId};
+use turso_sqlite3_parser::ast::{self, SortOrder, TableInternalId};
 
 use crate::{
     translate::plan::{GroupBy, IterationDirection, JoinedTable},

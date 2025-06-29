@@ -50,7 +50,6 @@ pub use io::{
     Buffer, Completion, CompletionType, File, MemoryIO, OpenFlags, PlatformIO, SyscallIO,
     WriteCompletion, IO,
 };
-use limbo_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use parking_lot::RwLock;
 use schema::Schema;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -80,6 +79,7 @@ pub use storage::{
 };
 use tracing::{instrument, Level};
 use translate::select::prepare_select_plan;
+use turso_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 pub use types::RefValue;
 pub use types::Value;
 use util::parse_schema_rows;

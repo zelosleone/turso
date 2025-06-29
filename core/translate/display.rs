@@ -1,7 +1,7 @@
 use core::fmt;
 use std::fmt::{Display, Formatter};
 
-use limbo_sqlite3_parser::{
+use turso_sqlite3_parser::{
     ast::{SortOrder, TableInternalId},
     to_sql_string::{ToSqlContext, ToSqlString},
 };
@@ -315,7 +315,7 @@ impl ToSqlString for Plan {
 }
 
 impl ToSqlString for JoinedTable {
-    fn to_sql_string<C: limbo_sqlite3_parser::to_sql_string::ToSqlContext>(
+    fn to_sql_string<C: turso_sqlite3_parser::to_sql_string::ToSqlContext>(
         &self,
         _context: &C,
     ) -> String {
@@ -349,7 +349,7 @@ impl ToSqlString for JoinedTable {
 
 // TODO: currently cannot print the original CTE as it is optimized into a subquery
 impl ToSqlString for SelectPlan {
-    fn to_sql_string<C: limbo_sqlite3_parser::to_sql_string::ToSqlContext>(
+    fn to_sql_string<C: turso_sqlite3_parser::to_sql_string::ToSqlContext>(
         &self,
         context: &C,
     ) -> String {

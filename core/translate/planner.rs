@@ -19,7 +19,7 @@ use crate::{
     vdbe::{builder::TableRefIdCounter, BranchOffset},
     Result,
 };
-use limbo_sqlite3_parser::ast::{
+use turso_sqlite3_parser::ast::{
     self, Expr, FromClause, JoinType, Limit, Materialized, TableInternalId, UnaryOperator, With,
 };
 

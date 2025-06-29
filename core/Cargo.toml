@@ -52,7 +52,7 @@ cfg_block = "0.1.1"
 fallible-iterator = "0.3.0"
 hex = "0.4.3"
 libc = { version = "0.2.172", optional = true }
-limbo_sqlite3_parser = { workspace = true }
+turso_sqlite3_parser = { workspace = true }
 thiserror = "1.0.61"
 getrandom = { version = "0.2.15" }
 regex = "1.11.1"

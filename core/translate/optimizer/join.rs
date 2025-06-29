@@ -1,6 +1,6 @@
 use std::{cell::RefCell, collections::HashMap};
 
-use limbo_sqlite3_parser::ast::TableInternalId;
+use turso_sqlite3_parser::ast::TableInternalId;
 
 use crate::{
     translate::{
@@ -492,7 +492,7 @@ fn generate_join_bitmasks(table_number_max_exclusive: usize, how_many: usize) ->
 mod tests {
     use std::{cell::Cell, rc::Rc, sync::Arc};
 
-    use limbo_sqlite3_parser::ast::{self, Expr, Operator, SortOrder, TableInternalId};
+    use turso_sqlite3_parser::ast::{self, Expr, Operator, SortOrder, TableInternalId};
 
     use super::*;
     use crate::{

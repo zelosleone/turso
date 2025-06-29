@@ -16,8 +16,8 @@ use crate::vdbe::builder::{ProgramBuilderOpts, QueryMode, TableRefIdCounter};
 use crate::vdbe::insn::Insn;
 use crate::SymbolTable;
 use crate::{schema::Schema, vdbe::builder::ProgramBuilder, Result};
-use limbo_sqlite3_parser::ast::{self, CompoundSelect, SortOrder};
-use limbo_sqlite3_parser::ast::{ResultColumn, SelectInner};
+use turso_sqlite3_parser::ast::{self, CompoundSelect, SortOrder};
+use turso_sqlite3_parser::ast::{ResultColumn, SelectInner};
 
 pub struct TranslateSelectResult {
     pub program: ProgramBuilder,

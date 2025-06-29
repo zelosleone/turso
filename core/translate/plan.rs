@@ -1,6 +1,6 @@
-use limbo_sqlite3_parser::ast::{self, SortOrder};
 use std::{cell::Cell, cmp::Ordering, rc::Rc, sync::Arc};
 use turso_ext::{ConstraintInfo, ConstraintOp};
+use turso_sqlite3_parser::ast::{self, SortOrder};
 
 use crate::{
     function::AggFunc,
@@ -14,7 +14,7 @@ use crate::{
 };
 use crate::{schema::Type, types::SeekOp, util::can_pushdown_predicate};
 
-use limbo_sqlite3_parser::ast::TableInternalId;
+use turso_sqlite3_parser::ast::TableInternalId;
 
 use super::{emitter::OperationMode, planner::determine_where_to_eval_term};
 
@@ -479,15 +479,15 @@ impl SelectPlan {
             return false;
         }
 
-        let count = limbo_sqlite3_parser::ast::Expr::FunctionCall {
-            name: limbo_sqlite3_parser::ast::Id("count".to_string()),
+        let count = turso_sqlite3_parser::ast::Expr::FunctionCall {
+            name: turso_sqlite3_parser::ast::Id("count".to_string()),
             distinctness: None,
             args: None,
             order_by: None,
             filter_over: None,
         };
-        let count_star = limbo_sqlite3_parser::ast::Expr::FunctionCallStar {
-            name: limbo_sqlite3_parser::ast::Id("count".to_string()),
+        let count_star = turso_sqlite3_parser::ast::Expr::FunctionCallStar {
+            name: turso_sqlite3_parser::ast::Id("count".to_string()),
             filter_over: None,
         };
         let result_col_expr = &self.result_columns.first().unwrap().expr;
