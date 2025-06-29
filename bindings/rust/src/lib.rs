@@ -1,6 +1,6 @@
-//! # Limbo bindings for Rust
+//! # Turso bindings for Rust
 //!
-//! Limbo is an in-process SQL database engine, compatible with SQLite.
+//! Turso is an in-process SQL database engine, compatible with SQLite.
 //!
 //! ## Getting Started
 //!
@@ -8,7 +8,7 @@
 //!
 //! ```rust,no_run
 //! # async fn run() {
-//! use limbo::Builder;
+//! use turso::Builder;
 //!
 //! let db = Builder::new_local(":memory:").build().await.unwrap();
 //! let conn = db.connect().unwrap();
@@ -21,7 +21,7 @@
 //!
 //! ```rust,no_run
 //! # async fn run() {
-//! # use limbo::Builder;
+//! # use turso::Builder;
 //! # let db = Builder::new_local(":memory:").build().await.unwrap();
 //! # let conn = db.connect().unwrap();
 //! let mut stmt = conn.prepare("SELECT * FROM users WHERE email = ?1").await.unwrap();

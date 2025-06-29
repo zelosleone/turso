@@ -16,16 +16,16 @@ path = "main.rs"
 
 [features]
 default = []
-antithesis = ["limbo/antithesis"]
+antithesis = ["turso/antithesis"]
 
 [dependencies]
+anarchist-readable-name-generator-lib = "0.1.0"
 antithesis_sdk = "0.2.5"
 clap = { version = "4.5", features = ["derive"] }
-limbo = { path = "../bindings/rust" }
-tokio = { version = "1.29.1", features = ["full"] }
-anarchist-readable-name-generator-lib = "0.1.0"
 hex = "0.4"
+tempfile = "3.20.0"
+tokio = { version = "1.29.1", features = ["full"] }
 tracing = "0.1.41"
 tracing-appender = "0.2.3"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
-tempfile = "3.20.0"
+turso = { path = "../bindings/rust" }

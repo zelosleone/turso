@@ -1,4 +1,4 @@
-use limbo::Builder;
+use turso::Builder;
 
 #[tokio::main]
 async fn main() {
