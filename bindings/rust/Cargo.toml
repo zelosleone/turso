@@ -9,6 +9,10 @@ license.workspace = true
 repository.workspace = true
 description = "Limbo Rust API"
 
+[features]
+default = []
+antithesis = ["turso_core/antithesis"]
+
 [dependencies]
 turso_core = { workspace = true, features = ["io_uring"] }
 thiserror = "2.0.9"

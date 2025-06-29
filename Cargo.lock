@@ -3753,6 +3753,7 @@ dependencies = [
 name = "turso_core"
 version = "0.1.0-pre.2"
 dependencies = [
+ "antithesis_sdk",
  "bitflags 2.9.0",
  "built",
  "cfg_block",
