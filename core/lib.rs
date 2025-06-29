@@ -1,5 +1,6 @@
 #![allow(clippy::arc_with_non_send_sync)]
 
+mod assert;
 mod error;
 mod ext;
 mod fast_lock;

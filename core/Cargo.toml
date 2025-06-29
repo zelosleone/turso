@@ -14,6 +14,7 @@ name = "turso_core"
 path = "lib.rs"
 
 [features]
+antithesis = ["dep:antithesis_sdk"]
 default = ["fs", "uuid", "time", "json", "static", "series"]
 fs = ["limbo_ext/vfs"]
 json = []
@@ -45,6 +46,7 @@ mimalloc = { version = "0.1.46", default-features = false }
 libloading = "0.8.6"
 
 [dependencies]
+antithesis_sdk = { version = "0.2.5", optional = true }
 limbo_ext = { workspace = true, features = ["core_only"] }
 cfg_block = "0.1.1"
 fallible-iterator = "0.3.0"
