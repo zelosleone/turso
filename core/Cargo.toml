@@ -1,16 +1,16 @@
-# Copyright 2023 the Limbo authors. All rights reserved. MIT license.
+# Copyright 2023-2025 the Turso authors. All rights reserved. MIT license.
 
 [package]
-name = "limbo_core"
+name = "turso_core"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The Limbo database library"
+description = "The Turso database library"
 
 [lib]
-name = "limbo_core"
+name = "turso_core"
 path = "lib.rs"
 
 [features]

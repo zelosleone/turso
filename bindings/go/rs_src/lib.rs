@@ -2,11 +2,11 @@ mod rows;
 #[allow(dead_code)]
 mod statement;
 mod types;
-use limbo_core::{Connection, Database, LimboError, IO};
 use std::{
     ffi::{c_char, c_void},
     sync::Arc,
 };
+use turso_core::{Connection, Database, LimboError, IO};
 
 /// # Safety
 /// Safe to be called from Go with null terminated DSN string.
@@ -21,8 +21,8 @@ pub unsafe extern "C" fn db_open(path: *const c_char) -> *mut c_void {
     let path = unsafe { std::ffi::CStr::from_ptr(path) };
     let path = path.to_str().unwrap();
     let io: Arc<dyn IO> = match path {
-        p if p.contains(":memory:") => Arc::new(limbo_core::MemoryIO::new()),
-        _ => Arc::new(limbo_core::PlatformIO::new().expect("Failed to create IO")),
+        p if p.contains(":memory:") => Arc::new(turso_core::MemoryIO::new()),
+        _ => Arc::new(turso_core::PlatformIO::new().expect("Failed to create IO")),
     };
     let db = Database::open_file(io.clone(), path, false, false);
     match db {
@@ -40,12 +40,12 @@ pub unsafe extern "C" fn db_open(path: *const c_char) -> *mut c_void {
 #[allow(dead_code)]
 struct LimboConn {
     conn: Arc<Connection>,
-    io: Arc<dyn limbo_core::IO>,
+    io: Arc<dyn turso_core::IO>,
     err: Option<LimboError>,
 }
 
 impl LimboConn {
-    fn new(conn: Arc<Connection>, io: Arc<dyn limbo_core::IO>) -> Self {
+    fn new(conn: Arc<Connection>, io: Arc<dyn turso_core::IO>) -> Self {
         LimboConn {
             conn,
             io,

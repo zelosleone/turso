@@ -54,8 +54,8 @@ pub enum Error {
     SqlExecutionFailure(String),
 }
 
-impl From<limbo_core::LimboError> for Error {
-    fn from(err: limbo_core::LimboError) -> Self {
+impl From<turso_core::LimboError> for Error {
+    fn from(err: turso_core::LimboError) -> Self {
         Error::SqlExecutionFailure(err.to_string())
     }
 }
@@ -82,13 +82,13 @@ impl Builder {
     pub async fn build(self) -> Result<Database> {
         match self.path.as_str() {
             ":memory:" => {
-                let io: Arc<dyn limbo_core::IO> = Arc::new(limbo_core::MemoryIO::new());
-                let db = limbo_core::Database::open_file(io, self.path.as_str(), false, false)?;
+                let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::MemoryIO::new());
+                let db = turso_core::Database::open_file(io, self.path.as_str(), false, false)?;
                 Ok(Database { inner: db })
             }
             path => {
-                let io: Arc<dyn limbo_core::IO> = Arc::new(limbo_core::PlatformIO::new()?);
-                let db = limbo_core::Database::open_file(io, path, false, false)?;
+                let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new()?);
+                let db = turso_core::Database::open_file(io, path, false, false)?;
                 Ok(Database { inner: db })
             }
         }
@@ -100,7 +100,7 @@ impl Builder {
 /// The `Database` object points to a database and allows you to connect to it
 #[derive(Clone)]
 pub struct Database {
-    inner: Arc<limbo_core::Database>,
+    inner: Arc<turso_core::Database>,
 }
 
 unsafe impl Send for Database {}
@@ -126,7 +126,7 @@ impl Database {
 
 /// A database connection.
 pub struct Connection {
-    inner: Arc<Mutex<Arc<limbo_core::Connection>>>,
+    inner: Arc<Mutex<Arc<turso_core::Connection>>>,
 }
 
 impl Clone for Connection {
@@ -172,7 +172,7 @@ impl Connection {
     /// Query a pragma.
     pub fn pragma_query<F>(&self, pragma_name: &str, mut f: F) -> Result<()>
     where
-        F: FnMut(&Row) -> limbo_core::Result<()>,
+        F: FnMut(&Row) -> turso_core::Result<()>,
     {
         let conn = self
             .inner
@@ -203,7 +203,7 @@ impl Debug for Connection {
 
 /// A prepared statement.
 pub struct Statement {
-    inner: Arc<Mutex<limbo_core::Statement>>,
+    inner: Arc<Mutex<turso_core::Statement>>,
 }
 
 impl Clone for Statement {
@@ -270,21 +270,21 @@ impl Statement {
         loop {
             let mut stmt = self.inner.lock().unwrap();
             match stmt.step() {
-                Ok(limbo_core::StepResult::Row) => {
+                Ok(turso_core::StepResult::Row) => {
                     // unexpected row during execution, error out.
                     return Ok(2);
                 }
-                Ok(limbo_core::StepResult::Done) => {
+                Ok(turso_core::StepResult::Done) => {
                     return Ok(0);
                 }
-                Ok(limbo_core::StepResult::IO) => {
+                Ok(turso_core::StepResult::IO) => {
                     let _ = stmt.run_once();
                     //return Ok(1);
                 }
-                Ok(limbo_core::StepResult::Busy) => {
+                Ok(turso_core::StepResult::Busy) => {
                     return Ok(4);
                 }
-                Ok(limbo_core::StepResult::Interrupt) => {
+                Ok(turso_core::StepResult::Interrupt) => {
                     return Ok(3);
                 }
                 Err(err) => {
@@ -347,7 +347,7 @@ pub struct Transaction {}
 
 /// Results of a prepared statement query.
 pub struct Rows {
-    inner: Arc<Mutex<limbo_core::Statement>>,
+    inner: Arc<Mutex<turso_core::Statement>>,
 }
 
 impl Clone for Rows {
@@ -370,21 +370,21 @@ impl Rows {
                 .lock()
                 .map_err(|e| Error::MutexError(e.to_string()))?;
             match stmt.step() {
-                Ok(limbo_core::StepResult::Row) => {
+                Ok(turso_core::StepResult::Row) => {
                     let row = stmt.row().unwrap();
                     return Ok(Some(Row {
                         values: row.get_values().map(|v| v.to_owned()).collect(),
                     }));
                 }
-                Ok(limbo_core::StepResult::Done) => return Ok(None),
-                Ok(limbo_core::StepResult::IO) => {
+                Ok(turso_core::StepResult::Done) => return Ok(None),
+                Ok(turso_core::StepResult::IO) => {
                     if let Err(e) = stmt.run_once() {
                         return Err(e.into());
                     }
                     continue;
                 }
-                Ok(limbo_core::StepResult::Busy) => return Ok(None),
-                Ok(limbo_core::StepResult::Interrupt) => return Ok(None),
+                Ok(turso_core::StepResult::Busy) => return Ok(None),
+                Ok(turso_core::StepResult::Interrupt) => return Ok(None),
                 _ => return Ok(None),
             }
         }
@@ -394,7 +394,7 @@ impl Rows {
 /// Query result row.
 #[derive(Debug)]
 pub struct Row {
-    values: Vec<limbo_core::Value>,
+    values: Vec<turso_core::Value>,
 }
 
 unsafe impl Send for Row {}
@@ -404,11 +404,11 @@ impl Row {
     pub fn get_value(&self, index: usize) -> Result<Value> {
         let value = &self.values[index];
         match value {
-            limbo_core::Value::Integer(i) => Ok(Value::Integer(*i)),
-            limbo_core::Value::Null => Ok(Value::Null),
-            limbo_core::Value::Float(f) => Ok(Value::Real(*f)),
-            limbo_core::Value::Text(text) => Ok(Value::Text(text.to_string())),
-            limbo_core::Value::Blob(items) => Ok(Value::Blob(items.to_vec())),
+            turso_core::Value::Integer(i) => Ok(Value::Integer(*i)),
+            turso_core::Value::Null => Ok(Value::Null),
+            turso_core::Value::Float(f) => Ok(Value::Real(*f)),
+            turso_core::Value::Text(text) => Ok(Value::Text(text.to_string())),
+            turso_core::Value::Blob(items) => Ok(Value::Blob(items.to_vec())),
         }
     }
 
@@ -417,16 +417,16 @@ impl Row {
     }
 }
 
-impl<'a> FromIterator<&'a limbo_core::Value> for Row {
-    fn from_iter<T: IntoIterator<Item = &'a limbo_core::Value>>(iter: T) -> Self {
+impl<'a> FromIterator<&'a turso_core::Value> for Row {
+    fn from_iter<T: IntoIterator<Item = &'a turso_core::Value>>(iter: T) -> Self {
         let values = iter
             .into_iter()
             .map(|v| match v {
-                limbo_core::Value::Integer(i) => limbo_core::Value::Integer(*i),
-                limbo_core::Value::Null => limbo_core::Value::Null,
-                limbo_core::Value::Float(f) => limbo_core::Value::Float(*f),
-                limbo_core::Value::Text(s) => limbo_core::Value::Text(s.clone()),
-                limbo_core::Value::Blob(b) => limbo_core::Value::Blob(b.clone()),
+                turso_core::Value::Integer(i) => turso_core::Value::Integer(*i),
+                turso_core::Value::Null => turso_core::Value::Null,
+                turso_core::Value::Float(f) => turso_core::Value::Float(*f),
+                turso_core::Value::Text(s) => turso_core::Value::Text(s.clone()),
+                turso_core::Value::Blob(b) => turso_core::Value::Blob(b.clone()),
             })
             .collect();
 

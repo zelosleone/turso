@@ -1,7 +1,7 @@
 use clap::Args;
 use clap_complete::{ArgValueCompleter, PathCompleter};
-use limbo_core::Connection;
 use std::{fs::File, io::Write, path::PathBuf, sync::Arc};
+use turso_core::Connection;
 
 #[derive(Debug, Clone, Args)]
 pub struct ImportArgs {
@@ -21,14 +21,14 @@ pub struct ImportArgs {
 
 pub struct ImportFile<'a> {
     conn: Arc<Connection>,
-    io: Arc<dyn limbo_core::IO>,
+    io: Arc<dyn turso_core::IO>,
     writer: &'a mut dyn Write,
 }
 
 impl<'a> ImportFile<'a> {
     pub fn new(
         conn: Arc<Connection>,
-        io: Arc<dyn limbo_core::IO>,
+        io: Arc<dyn turso_core::IO>,
         writer: &'a mut dyn Write,
     ) -> Self {
         Self { conn, io, writer }
@@ -78,17 +78,17 @@ impl<'a> ImportFile<'a> {
                         if let Some(mut rows) = rows {
                             while let Ok(x) = rows.step() {
                                 match x {
-                                    limbo_core::StepResult::IO => {
+                                    turso_core::StepResult::IO => {
                                         self.io.run_once().unwrap();
                                     }
-                                    limbo_core::StepResult::Done => break,
-                                    limbo_core::StepResult::Interrupt => break,
-                                    limbo_core::StepResult::Busy => {
+                                    turso_core::StepResult::Done => break,
+                                    turso_core::StepResult::Interrupt => break,
+                                    turso_core::StepResult::Busy => {
                                         let _ =
                                             self.writer.write_all("database is busy\n".as_bytes());
                                         break;
                                     }
-                                    limbo_core::StepResult::Row => todo!(),
+                                    turso_core::StepResult::Row => todo!(),
                                 }
                             }
                         }

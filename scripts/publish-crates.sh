@@ -13,5 +13,5 @@ cargo publish -p limbo_time
 cargo publish -p limbo_uuid
 cargo publish -p limbo_ipaddr
 cargo publish -p limbo_sqlite3_parser
-cargo publish -p limbo_core
+cargo publish -p turso_core
 cargo publish -p limbo

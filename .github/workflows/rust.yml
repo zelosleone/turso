@@ -38,7 +38,7 @@ jobs:
       run: cargo build --verbose
     - name: Test
       env:
-        RUST_LOG: ${{ runner.debug && 'limbo_core::storage=trace' || '' }}
+        RUST_LOG: ${{ runner.debug && 'turso_core::storage=trace' || '' }}
       run: cargo test --verbose
       timeout-minutes: 20
 

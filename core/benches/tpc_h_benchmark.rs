@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, SamplingMode};
-use limbo_core::{Database, PlatformIO, IO as _};
 use pprof::criterion::{Output, PProfProfiler};
+use turso_core::{Database, PlatformIO, IO as _};
 
 const TPC_H_PATH: &str = "../perf/tpc-h/TPC-H.db";
 
@@ -93,16 +93,16 @@ fn bench_tpc_h_queries(criterion: &mut Criterion) {
                     let mut stmt = limbo_conn.prepare(query).unwrap();
                     loop {
                         match stmt.step().unwrap() {
-                            limbo_core::StepResult::Row => {
+                            turso_core::StepResult::Row => {
                                 black_box(stmt.row());
                             }
-                            limbo_core::StepResult::IO => {
+                            turso_core::StepResult::IO => {
                                 let _ = io.run_once();
                             }
-                            limbo_core::StepResult::Done => {
+                            turso_core::StepResult::Done => {
                                 break;
                             }
-                            limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => {
+                            turso_core::StepResult::Interrupt | turso_core::StepResult::Busy => {
                                 unreachable!();
                             }
                         }

@@ -16,8 +16,8 @@ pub enum LimboError {
     JNIErrors(Error),
 }
 
-impl From<limbo_core::LimboError> for LimboError {
-    fn from(_value: limbo_core::LimboError) -> Self {
+impl From<turso_core::LimboError> for LimboError {
+    fn from(_value: turso_core::LimboError) -> Self {
         todo!()
     }
 }

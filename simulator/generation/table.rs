@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-use limbo_core::Value;
 use rand::Rng;
+use turso_core::Value;
 
 use crate::generation::{gen_random_text, pick, readable_name_custom, Arbitrary, ArbitraryFrom};
 use crate::model::table::{Column, ColumnType, Name, SimValue, Table};

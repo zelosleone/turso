@@ -3,10 +3,10 @@ use std::{
     sync::Arc,
 };
 
-use limbo_core::{CompletionType, File, Result};
 use rand::Rng as _;
 use rand_chacha::ChaCha8Rng;
 use tracing::{instrument, Level};
+use turso_core::{CompletionType, File, Result};
 pub(crate) struct SimulatorFile {
     pub(crate) inner: Arc<dyn File>,
     pub(crate) fault: Cell<bool>,
@@ -82,7 +82,7 @@ impl SimulatorFile {
 impl File for SimulatorFile {
     fn lock_file(&self, exclusive: bool) -> Result<()> {
         if self.fault.get() {
-            return Err(limbo_core::LimboError::InternalError(
+            return Err(turso_core::LimboError::InternalError(
                 "Injected fault".into(),
             ));
         }
@@ -91,7 +91,7 @@ impl File for SimulatorFile {
 
     fn unlock_file(&self) -> Result<()> {
         if self.fault.get() {
-            return Err(limbo_core::LimboError::InternalError(
+            return Err(turso_core::LimboError::InternalError(
                 "Injected fault".into(),
             ));
         }
@@ -101,12 +101,12 @@ impl File for SimulatorFile {
     fn pread(
         &self,
         pos: usize,
-        mut c: limbo_core::Completion,
-    ) -> Result<Arc<limbo_core::Completion>> {
+        mut c: turso_core::Completion,
+    ) -> Result<Arc<turso_core::Completion>> {
         self.nr_pread_calls.set(self.nr_pread_calls.get() + 1);
         if self.fault.get() {
             self.nr_pread_faults.set(self.nr_pread_faults.get() + 1);
-            return Err(limbo_core::LimboError::InternalError(
+            return Err(turso_core::LimboError::InternalError(
                 "Injected fault".into(),
             ));
         }
@@ -134,13 +134,13 @@ impl File for SimulatorFile {
     fn pwrite(
         &self,
         pos: usize,
-        buffer: Arc<RefCell<limbo_core::Buffer>>,
-        mut c: limbo_core::Completion,
-    ) -> Result<Arc<limbo_core::Completion>> {
+        buffer: Arc<RefCell<turso_core::Buffer>>,
+        mut c: turso_core::Completion,
+    ) -> Result<Arc<turso_core::Completion>> {
         self.nr_pwrite_calls.set(self.nr_pwrite_calls.get() + 1);
         if self.fault.get() {
             self.nr_pwrite_faults.set(self.nr_pwrite_faults.get() + 1);
-            return Err(limbo_core::LimboError::InternalError(
+            return Err(turso_core::LimboError::InternalError(
                 "Injected fault".into(),
             ));
         }
@@ -165,7 +165,7 @@ impl File for SimulatorFile {
         self.inner.pwrite(pos, buffer, c)
     }
 
-    fn sync(&self, mut c: limbo_core::Completion) -> Result<Arc<limbo_core::Completion>> {
+    fn sync(&self, mut c: turso_core::Completion) -> Result<Arc<turso_core::Completion>> {
         self.nr_sync_calls.set(self.nr_sync_calls.get() + 1);
         if let Some(latency) = self.generate_latency_duration() {
             let CompletionType::Sync(sync_completion) = &mut c.completion_type else {

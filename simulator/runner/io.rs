@@ -3,9 +3,9 @@ use std::{
     sync::Arc,
 };
 
-use limbo_core::{Clock, Instant, OpenFlags, PlatformIO, Result, IO};
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use turso_core::{Clock, Instant, OpenFlags, PlatformIO, Result, IO};
 
 use crate::runner::file::SimulatorFile;
 
@@ -72,7 +72,7 @@ impl IO for SimulatorIO {
         path: &str,
         flags: OpenFlags,
         _direct: bool,
-    ) -> Result<Arc<dyn limbo_core::File>> {
+    ) -> Result<Arc<dyn turso_core::File>> {
         let inner = self.inner.open_file(path, flags, false)?;
         let file = Arc::new(SimulatorFile {
             inner,
@@ -90,7 +90,7 @@ impl IO for SimulatorIO {
         Ok(file)
     }
 
-    fn wait_for_completion(&self, c: Arc<limbo_core::Completion>) -> Result<()> {
+    fn wait_for_completion(&self, c: Arc<turso_core::Completion>) -> Result<()> {
         while !c.is_completed() {
             self.run_once()?;
         }
@@ -101,7 +101,7 @@ impl IO for SimulatorIO {
         if self.fault.get() {
             self.nr_run_once_faults
                 .replace(self.nr_run_once_faults.get() + 1);
-            return Err(limbo_core::LimboError::InternalError(
+            return Err(turso_core::LimboError::InternalError(
                 "Injected fault".into(),
             ));
         }
@@ -113,7 +113,7 @@ impl IO for SimulatorIO {
         self.rng.borrow_mut().next_u64() as i64
     }
 
-    fn get_memory_io(&self) -> Arc<limbo_core::MemoryIO> {
+    fn get_memory_io(&self) -> Arc<turso_core::MemoryIO> {
         todo!()
     }
 }

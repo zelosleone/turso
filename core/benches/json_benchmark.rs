@@ -1,10 +1,10 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use limbo_core::{Database, PlatformIO, IO};
 use pprof::{
     criterion::{Output, PProfProfiler},
     flamegraph::Options,
 };
 use std::sync::Arc;
+use turso_core::{Database, PlatformIO, IO};
 
 // Title: JSONB Function Benchmarking
 
@@ -451,14 +451,14 @@ fn bench(criterion: &mut Criterion) {
             b.iter(|| {
                 loop {
                     match stmt.step().unwrap() {
-                        limbo_core::StepResult::Row => {}
-                        limbo_core::StepResult::IO => {
+                        turso_core::StepResult::Row => {}
+                        turso_core::StepResult::IO => {
                             let _ = io.run_once();
                         }
-                        limbo_core::StepResult::Done => {
+                        turso_core::StepResult::Done => {
                             break;
                         }
-                        limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => {
+                        turso_core::StepResult::Interrupt | turso_core::StepResult::Busy => {
                             unreachable!();
                         }
                     }
@@ -610,14 +610,14 @@ fn bench_sequential_jsonb(criterion: &mut Criterion) {
         b.iter(|| {
             loop {
                 match stmt.step().unwrap() {
-                    limbo_core::StepResult::Row => {}
-                    limbo_core::StepResult::IO => {
+                    turso_core::StepResult::Row => {}
+                    turso_core::StepResult::IO => {
                         let _ = io.run_once();
                     }
-                    limbo_core::StepResult::Done => {
+                    turso_core::StepResult::Done => {
                         break;
                     }
-                    limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => {
+                    turso_core::StepResult::Interrupt | turso_core::StepResult::Busy => {
                         unreachable!();
                     }
                 }
@@ -903,14 +903,14 @@ fn bench_json_patch(criterion: &mut Criterion) {
             b.iter(|| {
                 loop {
                     match stmt.step().unwrap() {
-                        limbo_core::StepResult::Row => {}
-                        limbo_core::StepResult::IO => {
+                        turso_core::StepResult::Row => {}
+                        turso_core::StepResult::IO => {
                             let _ = io.run_once();
                         }
-                        limbo_core::StepResult::Done => {
+                        turso_core::StepResult::Done => {
                             break;
                         }
-                        limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => {
+                        turso_core::StepResult::Interrupt | turso_core::StepResult::Busy => {
                             unreachable!();
                         }
                     }

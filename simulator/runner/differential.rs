@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use limbo_core::Value;
+use turso_core::Value;
 
 use crate::{
     generation::{
@@ -163,7 +163,7 @@ pub(crate) fn execute_plans(
         if now.elapsed().as_secs() >= env.opts.max_time_simulation as u64 {
             return ExecutionResult::new(
                 history,
-                Some(limbo_core::LimboError::InternalError(
+                Some(turso_core::LimboError::InternalError(
                     "maximum time for simulation reached".into(),
                 )),
             );
@@ -181,7 +181,7 @@ fn execute_plan(
     plans: &mut [InteractionPlan],
     states: &mut [InteractionPlanState],
     rusqlite_states: &mut [InteractionPlanState],
-) -> limbo_core::Result<()> {
+) -> turso_core::Result<()> {
     let connection = &env.connections[connection_index];
     let rusqlite_connection = &rusqlite_env.connections[connection_index];
     let plan = &mut plans[connection_index];
@@ -214,7 +214,7 @@ fn execute_plan(
                 (Ok(next_execution), Ok(next_execution_rusqlite)) => {
                     if next_execution != next_execution_rusqlite {
                         tracing::error!("limbo and rusqlite results do not match");
-                        return Err(limbo_core::LimboError::InternalError(
+                        return Err(turso_core::LimboError::InternalError(
                             "limbo and rusqlite results do not match".into(),
                         ));
                     }
@@ -227,7 +227,7 @@ fn execute_plan(
                                 (Ok(limbo_values), Ok(rusqlite_values)) => {
                                     if limbo_values != rusqlite_values {
                                         tracing::error!("limbo and rusqlite results do not match");
-                                        return Err(limbo_core::LimboError::InternalError(
+                                        return Err(turso_core::LimboError::InternalError(
                                             "limbo and rusqlite results do not match".into(),
                                         ));
                                     }
@@ -243,14 +243,14 @@ fn execute_plan(
                                     tracing::error!("limbo and rusqlite results do not match");
                                     tracing::error!("limbo values {:?}", limbo_result);
                                     tracing::error!("rusqlite error {}", rusqlite_err);
-                                    return Err(limbo_core::LimboError::InternalError(
+                                    return Err(turso_core::LimboError::InternalError(
                                         "limbo and rusqlite results do not match".into(),
                                     ));
                                 }
                                 (Err(limbo_err), Ok(_)) => {
                                     tracing::error!("limbo and rusqlite results do not match");
                                     tracing::error!("limbo error {}", limbo_err);
-                                    return Err(limbo_core::LimboError::InternalError(
+                                    return Err(turso_core::LimboError::InternalError(
                                         "limbo and rusqlite results do not match".into(),
                                     ));
                                 }
@@ -259,7 +259,7 @@ fn execute_plan(
                         (None, None) => {}
                         _ => {
                             tracing::error!("limbo and rusqlite results do not match");
-                            return Err(limbo_core::LimboError::InternalError(
+                            return Err(turso_core::LimboError::InternalError(
                                 "limbo and rusqlite results do not match".into(),
                             ));
                         }
@@ -316,7 +316,7 @@ fn execute_interaction_rusqlite(
     connection_index: usize,
     interaction: &Interaction,
     stack: &mut Vec<ResultSet>,
-) -> limbo_core::Result<ExecutionContinuation> {
+) -> turso_core::Result<ExecutionContinuation> {
     tracing::trace!(
         "execute_interaction_rusqlite(connection_index={}, interaction={})",
         connection_index,
@@ -332,7 +332,7 @@ fn execute_interaction_rusqlite(
 
             tracing::debug!("{}", interaction);
             let results = execute_query_rusqlite(conn, query).map_err(|e| {
-                limbo_core::LimboError::InternalError(format!("error executing query: {}", e))
+                turso_core::LimboError::InternalError(format!("error executing query: {}", e))
             });
             tracing::debug!("{:?}", results);
             stack.push(results);

@@ -1,6 +1,6 @@
-use limbo_core::LimboError;
 use limbo_sqlite3_parser::ast;
 use serde::{Deserialize, Serialize};
+use turso_core::LimboError;
 
 use crate::{
     model::{

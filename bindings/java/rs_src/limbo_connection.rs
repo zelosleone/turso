@@ -7,17 +7,17 @@ use crate::utils::{set_err_msg_and_throw_exception, utf8_byte_arr_to_str};
 use jni::objects::{JByteArray, JObject};
 use jni::sys::jlong;
 use jni::JNIEnv;
-use limbo_core::Connection;
 use std::sync::Arc;
+use turso_core::Connection;
 
 #[derive(Clone)]
 pub struct LimboConnection {
     pub(crate) conn: Arc<Connection>,
-    pub(crate) io: Arc<dyn limbo_core::IO>,
+    pub(crate) io: Arc<dyn turso_core::IO>,
 }
 
 impl LimboConnection {
-    pub fn new(conn: Arc<Connection>, io: Arc<dyn limbo_core::IO>) -> Self {
+    pub fn new(conn: Arc<Connection>, io: Arc<dyn turso_core::IO>) -> Self {
         LimboConnection { conn, io }
     }
 

@@ -110,14 +110,14 @@ impl Value {
     }
 }
 
-impl From<Value> for limbo_core::Value {
+impl From<Value> for turso_core::Value {
     fn from(val: Value) -> Self {
         match val {
-            Value::Null => limbo_core::Value::Null,
-            Value::Integer(n) => limbo_core::Value::Integer(n),
-            Value::Real(n) => limbo_core::Value::Float(n),
-            Value::Text(t) => limbo_core::Value::from_text(&t),
-            Value::Blob(items) => limbo_core::Value::from_blob(items),
+            Value::Null => turso_core::Value::Null,
+            Value::Integer(n) => turso_core::Value::Integer(n),
+            Value::Real(n) => turso_core::Value::Float(n),
+            Value::Text(t) => turso_core::Value::from_text(&t),
+            Value::Blob(items) => turso_core::Value::from_blob(items),
         }
     }
 }

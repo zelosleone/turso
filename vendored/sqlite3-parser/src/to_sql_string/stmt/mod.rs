@@ -244,7 +244,7 @@ mod tests {
     pub(crate) struct TestContext;
 
     // Placeholders for compilation
-    // Context only necessary parsing inside limbo_core or in the simulator
+    // Context only necessary parsing inside turso_core or in the simulator
     impl ToSqlContext for TestContext {
         fn get_column_name(&self, _table_id: crate::ast::TableInternalId, _col_idx: usize) -> &str {
             todo!()

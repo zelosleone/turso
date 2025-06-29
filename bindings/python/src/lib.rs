@@ -1,12 +1,12 @@
 use anyhow::Result;
 use errors::*;
-use limbo_core::Value;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyList, PyTuple};
 use std::cell::RefCell;
 use std::num::NonZeroUsize;
 use std::rc::Rc;
 use std::sync::Arc;
+use turso_core::Value;
 
 mod errors;
 
@@ -61,7 +61,7 @@ pub struct Cursor {
     #[pyo3(get)]
     rowcount: i64,
 
-    smt: Option<Rc<RefCell<limbo_core::Statement>>>,
+    smt: Option<Rc<RefCell<turso_core::Statement>>>,
 }
 
 #[allow(unused_variables, clippy::arc_with_non_send_sync)]
@@ -95,7 +95,7 @@ impl Cursor {
         // For DDL and DML statements,
         // we need to execute the statement immediately
         if stmt_is_ddl || stmt_is_dml {
-            while let limbo_core::StepResult::IO = stmt
+            while let turso_core::StepResult::IO = stmt
                 .borrow_mut()
                 .step()
                 .map_err(|e| PyErr::new::<OperationalError, _>(format!("Step error: {:?}", e)))?
@@ -125,23 +125,23 @@ impl Cursor {
                 match stmt.step().map_err(|e| {
                     PyErr::new::<OperationalError, _>(format!("Step error: {:?}", e))
                 })? {
-                    limbo_core::StepResult::Row => {
+                    turso_core::StepResult::Row => {
                         let row = stmt.row().unwrap();
                         let py_row = row_to_py(py, row)?;
                         return Ok(Some(py_row));
                     }
-                    limbo_core::StepResult::IO => {
+                    turso_core::StepResult::IO => {
                         self.conn.io.run_once().map_err(|e| {
                             PyErr::new::<OperationalError, _>(format!("IO error: {:?}", e))
                         })?;
                     }
-                    limbo_core::StepResult::Interrupt => {
+                    turso_core::StepResult::Interrupt => {
                         return Ok(None);
                     }
-                    limbo_core::StepResult::Done => {
+                    turso_core::StepResult::Done => {
                         return Ok(None);
                     }
-                    limbo_core::StepResult::Busy => {
+                    turso_core::StepResult::Busy => {
                         return Err(
                             PyErr::new::<OperationalError, _>("Busy error".to_string()).into()
                         );
@@ -161,23 +161,23 @@ impl Cursor {
                 match stmt.step().map_err(|e| {
                     PyErr::new::<OperationalError, _>(format!("Step error: {:?}", e))
                 })? {
-                    limbo_core::StepResult::Row => {
+                    turso_core::StepResult::Row => {
                         let row = stmt.row().unwrap();
                         let py_row = row_to_py(py, row)?;
                         results.push(py_row);
                     }
-                    limbo_core::StepResult::IO => {
+                    turso_core::StepResult::IO => {
                         self.conn.io.run_once().map_err(|e| {
                             PyErr::new::<OperationalError, _>(format!("IO error: {:?}", e))
                         })?;
                     }
-                    limbo_core::StepResult::Interrupt => {
+                    turso_core::StepResult::Interrupt => {
                         return Ok(results);
                     }
-                    limbo_core::StepResult::Done => {
+                    turso_core::StepResult::Done => {
                         return Ok(results);
                     }
-                    limbo_core::StepResult::Busy => {
+                    turso_core::StepResult::Busy => {
                         return Err(
                             PyErr::new::<OperationalError, _>("Busy error".to_string()).into()
                         );
@@ -225,8 +225,8 @@ fn stmt_is_ddl(sql: &str) -> bool {
 #[pyclass(unsendable)]
 #[derive(Clone)]
 pub struct Connection {
-    conn: Arc<limbo_core::Connection>,
-    io: Arc<dyn limbo_core::IO>,
+    conn: Arc<turso_core::Connection>,
+    io: Arc<dyn turso_core::IO>,
 }
 
 #[pymethods]
@@ -302,39 +302,39 @@ impl Drop for Connection {
 pub fn connect(path: &str) -> Result<Connection> {
     #[inline(always)]
     fn open_or(
-        io: Arc<dyn limbo_core::IO>,
+        io: Arc<dyn turso_core::IO>,
         path: &str,
-    ) -> std::result::Result<Arc<limbo_core::Database>, PyErr> {
-        limbo_core::Database::open_file(io, path, false, false).map_err(|e| {
+    ) -> std::result::Result<Arc<turso_core::Database>, PyErr> {
+        turso_core::Database::open_file(io, path, false, false).map_err(|e| {
             PyErr::new::<DatabaseError, _>(format!("Failed to open database: {:?}", e))
         })
     }
 
     match path {
         ":memory:" => {
-            let io: Arc<dyn limbo_core::IO> = Arc::new(limbo_core::MemoryIO::new());
+            let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::MemoryIO::new());
             let db = open_or(io.clone(), path)?;
-            let conn: Arc<limbo_core::Connection> = db.connect().unwrap();
+            let conn: Arc<turso_core::Connection> = db.connect().unwrap();
             Ok(Connection { conn, io })
         }
         path => {
-            let io: Arc<dyn limbo_core::IO> = Arc::new(limbo_core::PlatformIO::new()?);
+            let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new()?);
             let db = open_or(io.clone(), path)?;
-            let conn: Arc<limbo_core::Connection> = db.connect().unwrap();
+            let conn: Arc<turso_core::Connection> = db.connect().unwrap();
             Ok(Connection { conn, io })
         }
     }
 }
 
-fn row_to_py(py: Python, row: &limbo_core::Row) -> Result<PyObject> {
+fn row_to_py(py: Python, row: &turso_core::Row) -> Result<PyObject> {
     let mut py_values = Vec::new();
     for value in row.get_values() {
         match value {
-            limbo_core::Value::Null => py_values.push(py.None()),
-            limbo_core::Value::Integer(i) => py_values.push(i.into_pyobject(py)?.into()),
-            limbo_core::Value::Float(f) => py_values.push(f.into_pyobject(py)?.into()),
-            limbo_core::Value::Text(s) => py_values.push(s.as_str().into_pyobject(py)?.into()),
-            limbo_core::Value::Blob(b) => py_values.push(PyBytes::new(py, b.as_slice()).into()),
+            turso_core::Value::Null => py_values.push(py.None()),
+            turso_core::Value::Integer(i) => py_values.push(i.into_pyobject(py)?.into()),
+            turso_core::Value::Float(f) => py_values.push(f.into_pyobject(py)?.into()),
+            turso_core::Value::Text(s) => py_values.push(s.as_str().into_pyobject(py)?.into()),
+            turso_core::Value::Blob(b) => py_values.push(PyBytes::new(py, b.as_slice()).into()),
         }
     }
     Ok(PyTuple::new(py, &py_values)
@@ -344,7 +344,7 @@ fn row_to_py(py: Python, row: &limbo_core::Row) -> Result<PyObject> {
 }
 
 /// Converts a Python object to a Limbo Value
-fn py_to_owned_value(obj: &Bound<PyAny>) -> Result<limbo_core::Value> {
+fn py_to_owned_value(obj: &Bound<PyAny>) -> Result<turso_core::Value> {
     if obj.is_none() {
         Ok(Value::Null)
     } else if let Ok(integer) = obj.extract::<i64>() {

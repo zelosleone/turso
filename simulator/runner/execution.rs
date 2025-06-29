@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
-use limbo_core::{Connection, LimboError, Result, StepResult};
 use tracing::instrument;
+use turso_core::{Connection, LimboError, Result, StepResult};
 
 use crate::generation::{
     pick_index,
@@ -227,7 +227,7 @@ fn limbo_integrity_check(conn: &mut Arc<Connection>) -> Result<()> {
                 let row = rows.row().unwrap();
 
                 let val = match row.get_value(0) {
-                    limbo_core::Value::Text(text) => text.as_str().to_string(),
+                    turso_core::Value::Text(text) => text.as_str().to_string(),
                     _ => unreachable!(),
                 };
                 result.push(val);

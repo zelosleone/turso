@@ -520,7 +520,6 @@ dependencies = [
  "anyhow",
  "assert_cmd",
  "env_logger 0.10.2",
- "limbo_core",
  "log",
  "rand 0.9.0",
  "rand_chacha 0.9.0",
@@ -530,6 +529,7 @@ dependencies = [
  "test-log",
  "tracing",
  "tracing-subscriber",
+ "turso_core",
 ]
 
 [[package]]
@@ -1724,17 +1724,17 @@ dependencies = [
 name = "limbo"
 version = "0.1.0-pre.2"
 dependencies = [
- "limbo_core",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
+ "turso_core",
 ]
 
 [[package]]
 name = "limbo-go"
 version = "0.1.0-pre.2"
 dependencies = [
- "limbo_core",
+ "turso_core",
 ]
 
 [[package]]
@@ -1742,8 +1742,8 @@ name = "limbo-java"
 version = "0.1.0-pre.2"
 dependencies = [
  "jni",
- "limbo_core",
  "thiserror 2.0.12",
+ "turso_core",
 ]
 
 [[package]]
@@ -1753,7 +1753,7 @@ dependencies = [
  "console_error_panic_hook",
  "getrandom 0.2.15",
  "js-sys",
- "limbo_core",
+ "turso_core",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -1765,65 +1765,6 @@ version = "0.1.0-pre.2"
 dependencies = [
  "limbo_ext",
  "mimalloc",
-]
-
-[[package]]
-name = "limbo_core"
-version = "0.1.0-pre.2"
-dependencies = [
- "bitflags 2.9.0",
- "built",
- "cfg_block",
- "chrono",
- "criterion",
- "crossbeam-skiplist",
- "env_logger 0.11.7",
- "fallible-iterator",
- "getrandom 0.2.15",
- "hex",
- "io-uring",
- "julian_day_converter",
- "libc",
- "libloading",
- "libm",
- "limbo_completion",
- "limbo_crypto",
- "limbo_csv",
- "limbo_ext",
- "limbo_ipaddr",
- "limbo_macros",
- "limbo_percentile",
- "limbo_regexp",
- "limbo_series",
- "limbo_sqlite3_parser",
- "limbo_time",
- "limbo_uuid",
- "lru",
- "miette",
- "mimalloc",
- "parking_lot",
- "paste",
- "polling",
- "pprof",
- "quickcheck",
- "quickcheck_macros",
- "rand 0.8.5",
- "rand_chacha 0.9.0",
- "regex",
- "regex-syntax 0.8.5",
- "rstest",
- "rusqlite",
- "rustix 1.0.7",
- "ryu",
- "serde",
- "sorted-vec",
- "strum",
- "strum_macros",
- "tempfile",
- "test-log",
- "thiserror 1.0.69",
- "tracing",
- "uncased",
 ]
 
 [[package]]
@@ -1925,7 +1866,6 @@ dependencies = [
  "dirs 6.0.0",
  "env_logger 0.10.2",
  "hex",
- "limbo_core",
  "limbo_sqlite3_parser",
  "log",
  "notify",
@@ -1938,6 +1878,7 @@ dependencies = [
  "serde_json",
  "tracing",
  "tracing-subscriber",
+ "turso_core",
 ]
 
 [[package]]
@@ -1946,11 +1887,11 @@ version = "0.1.0-pre.2"
 dependencies = [
  "env_logger 0.11.7",
  "libc",
- "limbo_core",
  "tempfile",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "turso_core",
 ]
 
 [[package]]
@@ -2679,9 +2620,9 @@ name = "py-turso"
 version = "0.1.0-pre.2"
 dependencies = [
  "anyhow",
- "limbo_core",
  "pyo3",
  "pyo3-build-config",
+ "turso_core",
  "version_check",
 ]
 
@@ -3792,7 +3733,6 @@ dependencies = [
  "dirs 5.0.1",
  "env_logger 0.10.2",
  "libc",
- "limbo_core",
  "miette",
  "nu-ansi-term 0.50.1",
  "rustyline",
@@ -3805,17 +3745,77 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "turso_core",
  "validator",
+]
+
+[[package]]
+name = "turso_core"
+version = "0.1.0-pre.2"
+dependencies = [
+ "bitflags 2.9.0",
+ "built",
+ "cfg_block",
+ "chrono",
+ "criterion",
+ "crossbeam-skiplist",
+ "env_logger 0.11.7",
+ "fallible-iterator",
+ "getrandom 0.2.15",
+ "hex",
+ "io-uring",
+ "julian_day_converter",
+ "libc",
+ "libloading",
+ "libm",
+ "limbo_completion",
+ "limbo_crypto",
+ "limbo_csv",
+ "limbo_ext",
+ "limbo_ipaddr",
+ "limbo_macros",
+ "limbo_percentile",
+ "limbo_regexp",
+ "limbo_series",
+ "limbo_sqlite3_parser",
+ "limbo_time",
+ "limbo_uuid",
+ "lru",
+ "miette",
+ "mimalloc",
+ "parking_lot",
+ "paste",
+ "polling",
+ "pprof",
+ "quickcheck",
+ "quickcheck_macros",
+ "rand 0.8.5",
+ "rand_chacha 0.9.0",
+ "regex",
+ "regex-syntax 0.8.5",
+ "rstest",
+ "rusqlite",
+ "rustix 1.0.7",
+ "ryu",
+ "serde",
+ "sorted-vec",
+ "strum",
+ "strum_macros",
+ "tempfile",
+ "test-log",
+ "thiserror 1.0.69",
+ "tracing",
+ "uncased",
 ]
 
 [[package]]
 name = "turso_node"
 version = "0.1.0-pre.2"
 dependencies = [
- "limbo_core",
  "napi",
  "napi-build",
  "napi-derive",
+ "turso_core",
 ]
 
 [[package]]

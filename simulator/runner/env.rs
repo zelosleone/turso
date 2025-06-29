@@ -3,9 +3,9 @@ use std::mem;
 use std::path::Path;
 use std::sync::Arc;
 
-use limbo_core::Database;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use turso_core::Database;
 
 use crate::model::table::Table;
 
@@ -168,7 +168,7 @@ where
 }
 
 pub(crate) enum SimConnection {
-    LimboConnection(Arc<limbo_core::Connection>),
+    LimboConnection(Arc<turso_core::Connection>),
     SQLiteConnection(rusqlite::Connection),
     Disconnected,
 }
