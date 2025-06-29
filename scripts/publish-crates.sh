@@ -2,7 +2,6 @@
 
 cargo publish -p turso_macros
 cargo publish -p turso_ext
-cargo publish -p limbo_completion
 cargo publish -p limbo_crypto
 cargo publish -p limbo_csv
 cargo publish -p limbo_percentile

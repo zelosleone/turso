@@ -200,10 +200,6 @@ impl Connection {
         if unsafe { !limbo_ipaddr::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register ipaddr extension".to_string());
         }
-        #[cfg(feature = "completion")]
-        if unsafe { !limbo_completion::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register completion extension".to_string());
-        }
         #[cfg(feature = "csv")]
         if unsafe { !limbo_csv::register_extension_static(&mut ext_api).is_ok() } {
             return Err("Failed to register csv extension".to_string());

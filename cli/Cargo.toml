@@ -28,9 +28,8 @@ ctrlc = "3.4.4"
 dirs = "5.0.1"
 env_logger = "0.10.1"
 libc = "0.2.172"
-turso_core = { path = "../core", default-features = true, features = [
-    "completion",
-] }
+turso_core = { path = "../core", default-features = true, features = [] }
+limbo_completion = { path = "../extensions/completion", features = ["static"] }
 miette = { version = "7.4.0", features = ["fancy"] }
 nu-ansi-term = {version = "0.50.1", features = ["serde", "derive_serde_style"]}
 rustyline = { version = "15.0.0", default-features = true, features = [

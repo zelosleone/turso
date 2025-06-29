@@ -10,12 +10,9 @@ use crate::{
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
     HISTORY_FILE,
 };
-use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table};
-use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use turso_core::{Database, LimboError, Statement, StepResult, Value};
-
+use anyhow::anyhow;
 use clap::Parser;
+use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table};
 use rustyline::{error::ReadlineError, history::DefaultHistory, Editor};
 use std::{
     fmt,
@@ -27,6 +24,9 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use turso_core::{Database, LimboError, Statement, StepResult, Value};
 
 #[derive(Parser)]
 #[command(name = "limbo")]
@@ -140,6 +140,12 @@ impl Limbo {
             )
         };
         let conn = db.connect()?;
+        let mut ext_api = conn.build_turso_ext();
+        if unsafe { !limbo_completion::register_extension_static(&mut ext_api).is_ok() } {
+            return Err(anyhow!(
+                "Failed to register completion extension".to_string()
+            ));
+        }
         let interrupt_count = Arc::new(AtomicUsize::new(0));
         {
             let interrupt_count: Arc<AtomicUsize> = Arc::clone(&interrupt_count);
