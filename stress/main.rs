@@ -482,12 +482,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             println!("\rExecuting queries...");
             for query_index in 0..nr_iterations {
                 if gen_bool(0.001) {
+                    if opts.verbose {
+                        println!("Reopening database");
+                    }
                     // Reopen the database
                     let mut db_guard = db.lock().await;
                     *db_guard = Builder::new_local(&db_file).build().await?;
                     conn = db_guard.connect()?;
                 } else if gen_bool(0.01) {
                     // Reconnect to the database
+                    if opts.verbose {
+                        println!("Reconnecting to database");
+                    }
                     let db_guard = db.lock().await;
                     conn = db_guard.connect()?;
                 }
