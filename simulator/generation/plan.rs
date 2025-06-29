@@ -188,6 +188,9 @@ impl Display for InteractionPlan {
                                 writeln!(f, "{};", query)?;
                                 writeln!(f, "{};", query)?
                             }
+                            Interaction::FaultyQuery(query) => {
+                                writeln!(f, "{}; --FAULTY QUERY", query)?
+                            }
                         }
                     }
                     writeln!(f, "-- end testing '{}'", name)?;
@@ -241,6 +244,7 @@ pub(crate) enum Interaction {
     /// Will attempt to run any random query. However, when the connection tries to sync it will
     /// close all connections and reopen the database and assert that no data was lost
     FsyncQuery(Query),
+    FaultyQuery(Query),
 }
 
 impl Display for Interaction {
@@ -251,6 +255,7 @@ impl Display for Interaction {
             Self::Assertion(assertion) => write!(f, "ASSERT {}", assertion.message),
             Self::Fault(fault) => write!(f, "FAULT '{}'", fault),
             Self::FsyncQuery(query) => write!(f, "{}", query),
+            Self::FaultyQuery(query) => write!(f, "{} -- FAULTY QUERY", query),
         }
     }
 }
@@ -383,7 +388,7 @@ impl Interaction {
                 first.extend(query.shadow(env));
                 first
             }
-            Self::Assumption(_) | Self::Assertion(_) | Self::Fault(_) => {
+            Self::Assumption(_) | Self::Assertion(_) | Self::Fault(_) | Self::FaultyQuery(_) => {
                 vec![]
             }
         }
@@ -550,7 +555,74 @@ impl Interaction {
                         if syncing {
                             reopen_database(env);
                         } else {
-                            env.io.run_once().unwrap();
+                            rows.run_once().unwrap();
+                        }
+                    }
+                    StepResult::Done => {
+                        break;
+                    }
+                    StepResult::Interrupt | StepResult::Busy => {}
+                }
+            }
+
+            Ok(out)
+        } else {
+            unreachable!("unexpected: this function should only be called on queries")
+        }
+    }
+
+    pub(crate) fn execute_faulty_query(
+        &self,
+        conn: &Arc<Connection>,
+        env: &mut SimulatorEnv,
+    ) -> ResultSet {
+        use rand::Rng;
+        if let Self::FaultyQuery(query) = self {
+            let query_str = query.to_string();
+            let rows = conn.query(&query_str);
+            if rows.is_err() {
+                let err = rows.err();
+                tracing::debug!(
+                    "Error running query '{}': {:?}",
+                    &query_str[0..query_str.len().min(4096)],
+                    err
+                );
+                return Err(err.unwrap());
+            }
+            let mut rows = rows.unwrap().unwrap();
+            let mut out = Vec::new();
+            let mut current_prob = 0.05;
+            let mut incr = 0.01;
+            while let Ok(row) = rows.step() {
+                match row {
+                    StepResult::Row => {
+                        let row = rows.row().unwrap();
+                        let mut r = Vec::new();
+                        for v in row.get_values() {
+                            let v = v.into();
+                            r.push(v);
+                        }
+                        out.push(r);
+                    }
+                    StepResult::IO => {
+                        let syncing = {
+                            let files = env.io.files.borrow();
+                            // TODO: currently assuming we only have 1 file that is syncing
+                            files
+                                .iter()
+                                .any(|file| file.sync_completion.borrow().is_some())
+                        };
+                        let inject_fault = env.rng.gen_bool(current_prob);
+                        if inject_fault || syncing {
+                            env.io.inject_fault(true);
+                        }
+
+                        rows.run_once()?;
+                        current_prob += incr;
+                        if current_prob > 1.0 {
+                            current_prob = 1.0;
+                        } else {
+                            incr += 0.01;
                         }
                     }
                     StepResult::Done => {

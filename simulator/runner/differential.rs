@@ -337,18 +337,8 @@ fn execute_interaction_rusqlite(
             tracing::debug!("{:?}", results);
             stack.push(results);
         }
-        Interaction::FsyncQuery(query) => {
-            let conn = match &env.connections[connection_index] {
-                SimConnection::LimboConnection(conn) => conn.clone(),
-                SimConnection::SQLiteConnection(_) => unreachable!(),
-                SimConnection::Disconnected => unreachable!(),
-            };
-
-            interaction.execute_fsync_query(conn.clone(), env)?;
-
-            let query_interaction = Interaction::Query(query.clone());
-
-            execute_interaction_rusqlite(env, connection_index, &query_interaction, stack)?;
+        Interaction::FsyncQuery(..) => {
+            unimplemented!("cannot implement fsync query in rusqlite, as we do not control IO");
         }
         Interaction::Assertion(_) => {
             interaction.execute_assertion(stack, env)?;
@@ -365,6 +355,9 @@ fn execute_interaction_rusqlite(
         }
         Interaction::Fault(_) => {
             interaction.execute_fault(env, connection_index)?;
+        }
+        Interaction::FaultyQuery(_) => {
+            unimplemented!("cannot implement faulty query in rusqlite, as we do not control IO");
         }
     }
 

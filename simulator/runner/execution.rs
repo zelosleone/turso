@@ -227,6 +227,20 @@ pub(crate) fn execute_interaction(
         Interaction::Fault(_) => {
             interaction.execute_fault(env, connection_index)?;
         }
+        Interaction::FaultyQuery(_) => {
+            let conn = match &env.connections[connection_index] {
+                SimConnection::LimboConnection(conn) => conn.clone(),
+                SimConnection::SQLiteConnection(_) => unreachable!(),
+                SimConnection::Disconnected => unreachable!(),
+            };
+
+            let results = interaction.execute_faulty_query(&conn, env);
+            tracing::debug!("{:?}", results);
+            stack.push(results);
+            // Reset fault injection
+            env.io.inject_fault(false);
+            limbo_integrity_check(&conn)?;
+        }
     }
 
     Ok(ExecutionContinuation::NextInteraction)
