@@ -653,20 +653,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "limbo_ext"
-version = "0.1.0-pre.2"
-dependencies = [
- "chrono",
- "getrandom 0.3.3",
- "turso_macros",
-]
-
-[[package]]
 name = "limbo_series"
 version = "0.1.0-pre.2"
 dependencies = [
- "limbo_ext",
  "mimalloc",
+ "turso_ext",
 ]
 
 [[package]]
@@ -693,19 +684,19 @@ name = "limbo_time"
 version = "0.1.0-pre.2"
 dependencies = [
  "chrono",
- "limbo_ext",
  "mimalloc",
  "strum",
  "strum_macros",
  "thiserror 2.0.12",
+ "turso_ext",
 ]
 
 [[package]]
 name = "limbo_uuid"
 version = "0.1.0-pre.2"
 dependencies = [
- "limbo_ext",
  "mimalloc",
+ "turso_ext",
  "uuid",
 ]
 
@@ -1246,7 +1237,6 @@ dependencies = [
  "julian_day_converter",
  "libloading",
  "libm",
- "limbo_ext",
  "limbo_series",
  "limbo_sqlite3_parser",
  "limbo_time",
@@ -1265,8 +1255,18 @@ dependencies = [
  "strum_macros",
  "thiserror 1.0.63",
  "tracing",
+ "turso_ext",
  "turso_macros",
  "uncased",
+]
+
+[[package]]
+name = "turso_ext"
+version = "0.1.0-pre.2"
+dependencies = [
+ "chrono",
+ "getrandom 0.3.3",
+ "turso_macros",
 ]
 
 [[package]]

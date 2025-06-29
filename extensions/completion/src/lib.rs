@@ -6,7 +6,7 @@ mod keywords;
 use std::sync::Arc;
 
 use keywords::KEYWORDS;
-use limbo_ext::{
+use turso_ext::{
     register_extension, Connection, ResultCode, VTabCursor, VTabModule, VTabModuleDerive, VTable,
     Value,
 };
@@ -67,7 +67,7 @@ struct CompletionVTabModule {}
 impl VTabModule for CompletionVTabModule {
     type Table = CompletionTable;
     const NAME: &'static str = "completion";
-    const VTAB_KIND: limbo_ext::VTabKind = limbo_ext::VTabKind::TableValuedFunction;
+    const VTAB_KIND: turso_ext::VTabKind = turso_ext::VTabKind::TableValuedFunction;
 
     fn create(_args: &[Value]) -> Result<(String, Self::Table), ResultCode> {
         let schema = "CREATE TABLE completion(

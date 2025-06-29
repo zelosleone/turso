@@ -1,7 +1,7 @@
-use limbo_ext::{FinalizeFunction, InitAggFunction, ScalarFunction, StepFunction};
 use std::fmt;
 use std::fmt::{Debug, Display};
 use std::rc::Rc;
+use turso_ext::{FinalizeFunction, InitAggFunction, ScalarFunction, StepFunction};
 
 use crate::LimboError;
 

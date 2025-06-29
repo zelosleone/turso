@@ -2,10 +2,10 @@ use std::str::FromStr as _;
 
 use chrono::prelude::*;
 use core::cmp::Ordering;
-use limbo_ext::ValueType;
 use thiserror::Error;
+use turso_ext::ValueType;
 
-use limbo_ext::{register_extension, scalar, ResultCode, Value};
+use turso_ext::{register_extension, scalar, ResultCode, Value};
 
 mod time;
 

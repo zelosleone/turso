@@ -338,7 +338,7 @@ def _test_series(limbo: TestLimboShell):
 
 
 def test_kv():
-    _test_kv(exec_name=None, ext_path="target/debug/liblimbo_ext_tests")
+    _test_kv(exec_name=None, ext_path="target/debug/libturso_ext_tests")
     _test_kv(exec_name="sqlite3", ext_path="target/debug/liblimbo_sqlite_test_ext")
 
 
@@ -505,7 +505,7 @@ def test_ipaddr():
 
 def test_vfs():
     limbo = TestLimboShell()
-    ext_path = "target/debug/liblimbo_ext_tests"
+    ext_path = "target/debug/libturso_ext_tests"
     limbo.run_test_fn(".vfslist", lambda x: "testvfs" not in x, "testvfs not loaded")
     limbo.execute_dot(f".load {ext_path}")
     limbo.run_test_fn(".vfslist", lambda res: "testvfs" in res, "testvfs extension loaded")
@@ -530,7 +530,7 @@ def test_vfs():
 
 
 def test_drop_virtual_table():
-    ext_path = "target/debug/liblimbo_ext_tests"
+    ext_path = "target/debug/libturso_ext_tests"
     limbo = TestLimboShell()
     limbo.execute_dot(f".load {ext_path}")
     limbo.run_debug(
@@ -585,7 +585,7 @@ def test_sqlite_vfs_compat():
 
 
 def test_create_virtual_table():
-    ext_path = "target/debug/liblimbo_ext_tests"
+    ext_path = "target/debug/libturso_ext_tests"
 
     limbo = TestLimboShell()
     limbo.execute_dot(f".load {ext_path}")
@@ -711,7 +711,7 @@ def cleanup():
 
 
 def test_tablestats():
-    ext_path = "target/debug/liblimbo_ext_tests"
+    ext_path = "target/debug/libturso_ext_tests"
     limbo = TestLimboShell(use_testing_db=True)
     limbo.execute_dot("CREATE TABLE people(id INTEGER PRIMARY KEY, name TEXT);")
     limbo.execute_dot("INSERT INTO people(name) VALUES ('Ada'), ('Grace'), ('Linus');")

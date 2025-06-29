@@ -20,8 +20,8 @@ use crate::LimboError;
 use crate::SymbolTable;
 use crate::{bail_parse_error, Result};
 
-use limbo_ext::VTabKind;
 use limbo_sqlite3_parser::ast::{fmt::ToTokens, CreateVirtualTable};
+use turso_ext::VTabKind;
 
 pub fn translate_create_table(
     query_mode: QueryMode,
@@ -483,7 +483,7 @@ fn create_vtable_body_to_str(vtab: &CreateVirtualTable, module: Rc<VTabImpl>) ->
         .as_ref()
         .unwrap_or(&vec![])
         .iter()
-        .map(|a| limbo_ext::Value::from_text(a.to_string()))
+        .map(|a| turso_ext::Value::from_text(a.to_string()))
         .collect::<Vec<_>>();
     let schema = module
         .implementation
@@ -738,7 +738,7 @@ pub fn translate_drop_table(
             // From what I see, TableValuedFunction is not stored in the schema as a table.
             // But this line here below is a safeguard in case this behavior changes in the future
             // And mirrors what SQLite does.
-            if matches!(vtab.kind, limbo_ext::VTabKind::TableValuedFunction) {
+            if matches!(vtab.kind, turso_ext::VTabKind::TableValuedFunction) {
                 return Err(crate::LimboError::ParseError(format!(
                     "table {} may not be dropped",
                     vtab.name

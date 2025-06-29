@@ -1,8 +1,7 @@
 #!/bin/sh
 
 cargo publish -p turso_macros
-cargo publish -p limbo_ext
-cargo publish -p limbo_ext_tests
+cargo publish -p turso_ext
 cargo publish -p limbo_completion
 cargo publish -p limbo_crypto
 cargo publish -p limbo_csv

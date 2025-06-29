@@ -11,10 +11,10 @@ description = "Limbo percentile extension"
 crate-type = ["cdylib", "lib"]
 
 [features]
-static = ["limbo_ext/static"]
+static = ["turso_ext/static"]
 
 [dependencies]
-limbo_ext = { workspace = true, features = ["static"] }
+turso_ext = { workspace = true, features = ["static"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 mimalloc = { version = "0.1", default-features = false }

@@ -137,7 +137,7 @@ fn generate_get_description(
 
 /// Register your extension with 'core' by providing the relevant functions
 ///```ignore
-///use limbo_ext::{register_extension, scalar, Value, AggregateDerive, AggFunc};
+///use turso_ext::{register_extension, scalar, Value, AggregateDerive, AggFunc};
 ///
 /// register_extension!{ scalars: { return_one }, aggregates: { SumPlusOne } }
 ///
@@ -175,7 +175,7 @@ pub fn register_extension(input: TokenStream) -> TokenStream {
 /// Declare a scalar function for your extension. This requires the name:
 /// #[scalar(name = "example")] of what you wish to call your function with.
 /// ```ignore
-/// use limbo_ext::{scalar, Value};
+/// use turso_ext::{scalar, Value};
 /// #[scalar(name = "double", alias = "twice")] // you can provide an <optional> alias
 /// fn double(args: &[Value]) -> Value {
 ///       let arg = args.get(0).unwrap();
@@ -202,7 +202,7 @@ pub fn scalar(attr: TokenStream, input: TokenStream) -> TokenStream {
 /// Define an aggregate function for your extension by deriving
 /// AggregateDerive on a struct that implements the AggFunc trait.
 /// ```ignore
-/// use limbo_ext::{register_extension, Value, AggregateDerive, AggFunc};
+/// use turso_ext::{register_extension, Value, AggregateDerive, AggFunc};
 ///
 ///#[derive(AggregateDerive)]
 ///struct SumPlusOne;
@@ -353,7 +353,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
 }
 
 /// ```ignore
-/// use limbo_ext::{ExtResult as Result, VfsDerive, VfsExtension, VfsFile};
+/// use turso_ext::{ExtResult as Result, VfsDerive, VfsExtension, VfsFile};
 ///
 /// // Your struct must also impl Default
 /// #[derive(VfsDerive, Default)]

@@ -1,4 +1,4 @@
-use limbo_ext::{register_extension, scalar, ResultCode, Value, ValueType};
+use turso_ext::{register_extension, scalar, ResultCode, Value, ValueType};
 
 register_extension! {
     scalars: {uuid4_str, uuid4_blob, uuid7_str, uuid7, uuid7_ts, uuid_str, uuid_blob },

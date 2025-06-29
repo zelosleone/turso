@@ -1,6 +1,6 @@
-use limbo_ext::{ConstraintInfo, ConstraintOp};
 use limbo_sqlite3_parser::ast::{self, SortOrder};
 use std::{cell::Cell, cmp::Ordering, rc::Rc, sync::Arc};
+use turso_ext::{ConstraintInfo, ConstraintOp};
 
 use crate::{
     function::AggFunc,

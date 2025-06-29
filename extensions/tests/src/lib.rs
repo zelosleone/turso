@@ -1,16 +1,16 @@
 use lazy_static::lazy_static;
-use limbo_ext::{
-    register_extension, scalar, Connection, ConstraintInfo, ConstraintOp, ConstraintUsage,
-    ExtResult, IndexInfo, OrderByInfo, ResultCode, StepResult, VTabCursor, VTabKind, VTabModule,
-    VTabModuleDerive, VTable, Value,
-};
-#[cfg(not(target_family = "wasm"))]
-use limbo_ext::{VfsDerive, VfsExtension, VfsFile};
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
+use turso_ext::{
+    register_extension, scalar, Connection, ConstraintInfo, ConstraintOp, ConstraintUsage,
+    ExtResult, IndexInfo, OrderByInfo, ResultCode, StepResult, VTabCursor, VTabKind, VTabModule,
+    VTabModuleDerive, VTable, Value,
+};
+#[cfg(not(target_family = "wasm"))]
+use turso_ext::{VfsDerive, VfsExtension, VfsFile};
 
 register_extension! {
     vtabs: { KVStoreVTabModule, TableStatsVtabModule },
@@ -241,8 +241,8 @@ pub struct TestFS;
 // Test that we can have additional extension types in the same file
 // and still register the vfs at comptime if linking staticly
 #[scalar(name = "test_scalar")]
-fn test_scalar(_args: limbo_ext::Value) -> limbo_ext::Value {
-    limbo_ext::Value::from_integer(42)
+fn test_scalar(_args: turso_ext::Value) -> turso_ext::Value {
+    turso_ext::Value::from_integer(42)
 }
 
 #[cfg(not(target_family = "wasm"))]

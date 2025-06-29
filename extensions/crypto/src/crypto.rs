@@ -1,9 +1,9 @@
 use crate::Error;
 use blake3::Hasher;
 use data_encoding::{BASE32, BASE64, HEXLOWER};
-use limbo_ext::{Value, ValueType};
 use ring::digest::{self, digest};
 use std::{borrow::Cow, error::Error as StdError};
+use turso_ext::{Value, ValueType};
 
 pub fn sha256(data: &Value) -> Result<Vec<u8>, Error> {
     match data.value_type() {
