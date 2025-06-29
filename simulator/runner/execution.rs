@@ -203,7 +203,9 @@ pub(crate) fn execute_interaction(
                 SimConnection::Disconnected => unreachable!(),
             };
 
-            interaction.execute_fsync_query(conn.clone(), env)?;
+            let results = interaction.execute_fsync_query(conn.clone(), env);
+            tracing::debug!("{:?}", results);
+            stack.push(results);
 
             let query_interaction = Interaction::Query(query.clone());
 

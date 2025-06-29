@@ -32,7 +32,7 @@ pub(crate) struct SimulatorFile {
 
     pub latency_probability: usize,
 
-    pub sync_completion: RefCell<Option<Arc<limbo_core::Completion>>>,
+    pub sync_completion: RefCell<Option<Arc<turso_core::Completion>>>,
 }
 
 unsafe impl Send for SimulatorFile {}

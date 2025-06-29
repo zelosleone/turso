@@ -185,6 +185,7 @@ impl Display for InteractionPlan {
                             Interaction::Fault(fault) => writeln!(f, "-- FAULT '{}';", fault)?,
                             Interaction::FsyncQuery(query) => {
                                 writeln!(f, "-- FSYNC QUERY;")?;
+                                writeln!(f, "{};", query)?;
                                 writeln!(f, "{};", query)?
                             }
                         }
@@ -512,7 +513,7 @@ impl Interaction {
         &self,
         conn: Arc<Connection>,
         env: &mut SimulatorEnv,
-    ) -> Result<()> {
+    ) -> ResultSet {
         if let Self::FsyncQuery(query) = self {
             let query_str = query.to_string();
             let rows = conn.query(&query_str);
@@ -526,8 +527,18 @@ impl Interaction {
                 return Err(err.unwrap());
             }
             let mut rows = rows.unwrap().unwrap();
+            let mut out = Vec::new();
             while let Ok(row) = rows.step() {
                 match row {
+                    StepResult::Row => {
+                        let row = rows.row().unwrap();
+                        let mut r = Vec::new();
+                        for v in row.get_values() {
+                            let v = v.into();
+                            r.push(v);
+                        }
+                        out.push(r);
+                    }
                     StepResult::IO => {
                         let syncing = {
                             let files = env.io.files.borrow();
@@ -545,11 +556,11 @@ impl Interaction {
                     StepResult::Done => {
                         break;
                     }
-                    StepResult::Row | StepResult::Interrupt | StepResult::Busy => {}
+                    StepResult::Interrupt | StepResult::Busy => {}
                 }
             }
 
-            Ok(())
+            Ok(out)
         } else {
             unreachable!("unexpected: this function should only be called on queries")
         }
