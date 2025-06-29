@@ -5,10 +5,10 @@ use crate::{
     types::{Value, ValueType},
     LimboError, OpenFlags, Result, Statement, StepResult, SymbolTable, IO,
 };
-use limbo_sqlite3_parser::ast::{
+use std::{rc::Rc, sync::Arc};
+use turso_sqlite3_parser::ast::{
     self, CreateTableBody, Expr, FunctionTail, Literal, UnaryOperator,
 };
-use std::{rc::Rc, sync::Arc};
 
 pub trait RoundToPrecision {
     fn round_to_precision(self, precision: i32) -> f64;
@@ -529,7 +529,7 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
                         .constraints
                         .iter()
                         .find_map(|c| match &c.constraint {
-                            limbo_sqlite3_parser::ast::ColumnConstraint::Default(val) => {
+                            turso_sqlite3_parser::ast::ColumnConstraint::Default(val) => {
                                 Some(val.clone())
                             }
                             _ => None,
@@ -537,7 +537,7 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
                     notnull: column_def.constraints.iter().any(|c| {
                         matches!(
                             c.constraint,
-                            limbo_sqlite3_parser::ast::ColumnConstraint::NotNull { .. }
+                            turso_sqlite3_parser::ast::ColumnConstraint::NotNull { .. }
                         )
                     }),
                     ty_str: column_def
@@ -548,14 +548,14 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
                     primary_key: column_def.constraints.iter().any(|c| {
                         matches!(
                             c.constraint,
-                            limbo_sqlite3_parser::ast::ColumnConstraint::PrimaryKey { .. }
+                            turso_sqlite3_parser::ast::ColumnConstraint::PrimaryKey { .. }
                         )
                     }),
                     is_rowid_alias: false,
                     unique: column_def.constraints.iter().any(|c| {
                         matches!(
                             c.constraint,
-                            limbo_sqlite3_parser::ast::ColumnConstraint::Unique(..)
+                            turso_sqlite3_parser::ast::ColumnConstraint::Unique(..)
                         )
                     }),
                     collation: column_def
@@ -567,7 +567,7 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
                             // But in the future, when a user defines a collation sequence, creates a table with it,
                             // then closes the db and opens it again. This may panic here if the collation seq is not registered
                             // before reading the columns
-                            limbo_sqlite3_parser::ast::ColumnConstraint::Collate {
+                            turso_sqlite3_parser::ast::ColumnConstraint::Collate {
                                 collation_name,
                             } => Some(CollationSeq::new(collation_name.0.as_str()).expect(
                                 "collation should have been set correctly in create table",
@@ -1063,7 +1063,7 @@ pub fn vtable_args(args: &[ast::Expr]) -> Vec<turso_ext::Value> {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use limbo_sqlite3_parser::ast::{self, Expr, Id, Literal, Operator::*, Type};
+    use turso_sqlite3_parser::ast::{self, Expr, Id, Literal, Operator::*, Type};
 
     #[test]
     fn test_normalize_ident() {

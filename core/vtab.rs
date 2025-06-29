@@ -3,12 +3,12 @@ use crate::schema::Column;
 use crate::util::{columns_from_create_table_body, vtable_args};
 use crate::{Connection, LimboError, SymbolTable, Value};
 use fallible_iterator::FallibleIterator;
-use limbo_sqlite3_parser::{ast, lexer::sql::Parser};
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::rc::Rc;
 use std::sync::Arc;
 use turso_ext::{ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabKind, VTabModuleImpl};
+use turso_sqlite3_parser::{ast, lexer::sql::Parser};
 
 #[derive(Debug, Clone)]
 enum VirtualTableType {

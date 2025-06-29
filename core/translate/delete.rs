@@ -5,7 +5,7 @@ use crate::translate::plan::{DeletePlan, Operation, Plan};
 use crate::translate::planner::{parse_limit, parse_where};
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode, TableRefIdCounter};
 use crate::{schema::Schema, Result, SymbolTable};
-use limbo_sqlite3_parser::ast::{Expr, Limit, QualifiedName};
+use turso_sqlite3_parser::ast::{Expr, Limit, QualifiedName};
 
 use super::plan::{ColumnUsedMask, IterationDirection, JoinedTable, TableReferences};
 

@@ -1837,7 +1837,6 @@ dependencies = [
  "dirs 6.0.0",
  "env_logger 0.10.2",
  "hex",
- "limbo_sqlite3_parser",
  "log",
  "notify",
  "rand 0.8.5",
@@ -1850,6 +1849,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "turso_core",
+ "turso_sqlite3_parser",
 ]
 
 [[package]]
@@ -1863,27 +1863,6 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "turso_core",
-]
-
-[[package]]
-name = "limbo_sqlite3_parser"
-version = "0.1.0-pre.2"
-dependencies = [
- "bitflags 2.9.0",
- "cc",
- "env_logger 0.11.7",
- "fallible-iterator",
- "indexmap 2.8.0",
- "log",
- "memchr",
- "miette",
- "phf",
- "phf_codegen",
- "phf_shared",
- "serde",
- "strum",
- "strum_macros",
- "uncased",
 ]
 
 [[package]]
@@ -3228,7 +3207,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "fallible-iterator",
- "limbo_sqlite3_parser",
+ "turso_sqlite3_parser",
 ]
 
 [[package]]
@@ -3747,7 +3726,6 @@ dependencies = [
  "limbo_percentile",
  "limbo_regexp",
  "limbo_series",
- "limbo_sqlite3_parser",
  "limbo_time",
  "limbo_uuid",
  "lru",
@@ -3777,6 +3755,7 @@ dependencies = [
  "tracing",
  "turso_ext",
  "turso_macros",
+ "turso_sqlite3_parser",
  "uncased",
 ]
 
@@ -3817,6 +3796,27 @@ dependencies = [
  "napi-build",
  "napi-derive",
  "turso_core",
+]
+
+[[package]]
+name = "turso_sqlite3_parser"
+version = "0.1.0-pre.2"
+dependencies = [
+ "bitflags 2.9.0",
+ "cc",
+ "env_logger 0.11.7",
+ "fallible-iterator",
+ "indexmap 2.8.0",
+ "log",
+ "memchr",
+ "miette",
+ "phf",
+ "phf_codegen",
+ "phf_shared",
+ "serde",
+ "strum",
+ "strum_macros",
+ "uncased",
 ]
 
 [[package]]

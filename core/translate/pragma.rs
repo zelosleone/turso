@@ -1,10 +1,10 @@
 //! VDBE bytecode generation for pragma statements.
 //! More info: https://www.sqlite.org/pragma.html.
 
-use limbo_sqlite3_parser::ast::PragmaName;
-use limbo_sqlite3_parser::ast::{self, Expr};
 use std::rc::Rc;
 use std::sync::Arc;
+use turso_sqlite3_parser::ast::PragmaName;
+use turso_sqlite3_parser::ast::{self, Expr};
 
 use crate::schema::Schema;
 use crate::storage::pager::AutoVacuumMode;

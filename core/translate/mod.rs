@@ -43,7 +43,6 @@ use crate::{bail_parse_error, Connection, Result, SymbolTable};
 use alter::translate_alter_table;
 use index::{translate_create_index, translate_drop_index};
 use insert::translate_insert;
-use limbo_sqlite3_parser::ast::{self, Delete, Insert};
 use rollback::translate_rollback;
 use schema::{translate_create_table, translate_create_virtual_table, translate_drop_table};
 use select::translate_select;
@@ -51,6 +50,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tracing::{instrument, Level};
 use transaction::{translate_tx_begin, translate_tx_commit};
+use turso_sqlite3_parser::ast::{self, Delete, Insert};
 use update::translate_update;
 
 #[instrument(skip_all, level = Level::TRACE)]

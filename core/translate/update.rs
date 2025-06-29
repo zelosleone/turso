@@ -10,7 +10,7 @@ use crate::{
     vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode},
     SymbolTable,
 };
-use limbo_sqlite3_parser::ast::{self, Expr, ResultColumn, SortOrder, Update};
+use turso_sqlite3_parser::ast::{self, Expr, ResultColumn, SortOrder, Update};
 
 use super::emitter::emit_program;
 use super::optimizer::optimize_plan;

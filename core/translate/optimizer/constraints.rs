@@ -9,7 +9,7 @@ use crate::{
     },
     Result,
 };
-use limbo_sqlite3_parser::ast::{self, SortOrder, TableInternalId};
+use turso_sqlite3_parser::ast::{self, SortOrder, TableInternalId};
 
 use super::cost::ESTIMATED_HARDCODED_ROWS_PER_TABLE;
 

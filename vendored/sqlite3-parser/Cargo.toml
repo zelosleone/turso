@@ -1,5 +1,5 @@
 [package]
-name = "limbo_sqlite3_parser"
+name = "turso_sqlite3_parser"
 version.workspace = true
 edition.workspace = true
 authors = ["gwenn"]

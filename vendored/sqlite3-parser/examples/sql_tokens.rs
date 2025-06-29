@@ -1,5 +1,5 @@
-use limbo_sqlite3_parser::lexer::sql::{TokenType, Tokenizer};
-use limbo_sqlite3_parser::lexer::Scanner;
+use turso_sqlite3_parser::lexer::sql::{TokenType, Tokenizer};
+use turso_sqlite3_parser::lexer::Scanner;
 
 use std::env;
 use std::fs::read;

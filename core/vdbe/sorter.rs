@@ -1,4 +1,4 @@
-use limbo_sqlite3_parser::ast::SortOrder;
+use turso_sqlite3_parser::ast::SortOrder;
 
 use crate::{
     translate::collate::CollationSeq,

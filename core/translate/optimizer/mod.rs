@@ -6,11 +6,11 @@ use constraints::{
 use cost::Cost;
 use join::{compute_best_join_order, BestJoinOrderResult};
 use lift_common_subexpressions::lift_common_subexpressions_from_binary_or_terms;
-use limbo_sqlite3_parser::{
+use order::{compute_order_target, plan_satisfies_order_target, EliminatesSortBy};
+use turso_sqlite3_parser::{
     ast::{self, Expr, SortOrder},
     to_sql_string::ToSqlString as _,
 };
-use order::{compute_order_target, plan_satisfies_order_target, EliminatesSortBy};
 
 use crate::{
     parameters::PARAM_PREFIX,

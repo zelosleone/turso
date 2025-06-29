@@ -1,7 +1,7 @@
 use std::fmt::Display;
 
-use limbo_sqlite3_parser::{ast, to_sql_string::ToSqlString};
 use serde::{Deserialize, Serialize};
+use turso_sqlite3_parser::{ast, to_sql_string::ToSqlString};
 
 use crate::model::{
     query::EmptyContext,

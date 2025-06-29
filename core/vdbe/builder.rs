@@ -1,7 +1,7 @@
 use std::{cell::Cell, cmp::Ordering, rc::Rc, sync::Arc};
 
-use limbo_sqlite3_parser::ast::{self, TableInternalId};
 use tracing::{instrument, Level};
+use turso_sqlite3_parser::ast::{self, TableInternalId};
 
 use crate::{
     numeric::Numeric,

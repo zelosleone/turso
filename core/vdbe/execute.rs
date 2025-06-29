@@ -61,11 +61,11 @@ use super::{
     CommitState,
 };
 use fallible_iterator::FallibleIterator;
-use limbo_sqlite3_parser::ast;
-use limbo_sqlite3_parser::ast::fmt::ToTokens;
-use limbo_sqlite3_parser::lexer::sql::Parser;
 use parking_lot::RwLock;
 use rand::thread_rng;
+use turso_sqlite3_parser::ast;
+use turso_sqlite3_parser::ast::fmt::ToTokens;
+use turso_sqlite3_parser::lexer::sql::Parser;
 
 use super::{
     likeop::{construct_like_escape_arg, exec_glob, exec_like_with_escape},
