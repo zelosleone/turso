@@ -29,7 +29,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 use turso_core::{Database, LimboError, Statement, StepResult, Value};
 
 #[derive(Parser)]
-#[command(name = "limbo")]
+#[command(name = "Turso")]
 #[command(author, version, about, long_about = None)]
 pub struct Opts {
     #[clap(index = 1, help = "SQLite database file", default_value = ":memory:")]
