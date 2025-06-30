@@ -295,7 +295,9 @@ impl PseudoCursorType {
     }
 
     pub fn new_with_columns(columns: impl AsRef<[Column]>) -> Self {
-        Self { column_count: columns.as_ref().len() }
+        Self {
+            column_count: columns.as_ref().len(),
+        }
     }
 }
 
