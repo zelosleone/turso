@@ -77,23 +77,24 @@ impl Statement {
         loop {
             let mut stmt = self.inner.lock().unwrap();
             match stmt.step() {
-                Ok(turso_core::StepResult::Row) => {
-                    // unexpected row during execution, error out.
-                    return Ok(2);
-                }
+                Ok(turso_core::StepResult::Row) => {}
                 Ok(turso_core::StepResult::Done) => {
+                    stmt.reset();
                     return Ok(0);
                 }
                 Ok(turso_core::StepResult::IO) => {
                     stmt.run_once()?;
                 }
                 Ok(turso_core::StepResult::Busy) => {
+                    stmt.reset();
                     return Ok(4);
                 }
                 Ok(turso_core::StepResult::Interrupt) => {
+                    stmt.reset();
                     return Ok(3);
                 }
                 Err(err) => {
+                    stmt.reset();
                     return Err(err.into());
                 }
             }

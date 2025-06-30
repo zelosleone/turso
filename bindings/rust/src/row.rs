@@ -29,14 +29,17 @@ impl Rows {
                 .inner
                 .lock()
                 .map_err(|e| Error::MutexError(e.to_string()))?;
-            match stmt.step()? {
+            match stmt.step().inspect_err(|_| stmt.reset())? {
                 turso_core::StepResult::Row => {
                     let row = stmt.row().unwrap();
                     return Ok(Some(Row {
                         values: row.get_values().map(|v| v.to_owned()).collect(),
                     }));
                 }
-                turso_core::StepResult::Done => return Ok(None),
+                turso_core::StepResult::Done => {
+                    stmt.reset();
+                    return Ok(None);
+                }
                 turso_core::StepResult::IO => {
                     if let Err(e) = stmt.run_once() {
                         return Err(e.into());
@@ -44,8 +47,10 @@ impl Rows {
                     continue;
                 }
                 // TODO: Busy should probably be an error
-                turso_core::StepResult::Busy => return Ok(None),
-                turso_core::StepResult::Interrupt => return Ok(None),
+                turso_core::StepResult::Busy | turso_core::StepResult::Interrupt => {
+                    stmt.reset();
+                    return Ok(None);
+                }
             }
         }
     }
@@ -79,19 +84,26 @@ impl futures_util::Stream for Rows {
                             values: row.get_values().map(|v| v.to_owned()).collect(),
                         })));
                     }
-                    turso_core::StepResult::Done => return Poll::Ready(None),
+                    turso_core::StepResult::Done => {
+                        stmt.reset();
+                        return Poll::Ready(None);
+                    }
                     turso_core::StepResult::IO => {
                         if let Err(e) = stmt.run_once() {
                             return Poll::Ready(Some(Err(e.into())));
                         }
+                        // TODO: see correct way to signal for this task to wake up
                         return Poll::Pending;
                     }
-                    turso_core::StepResult::Busy => return Poll::Ready(None),
-                    turso_core::StepResult::Interrupt => return Poll::Ready(None),
+                    // TODO: Busy and Interrupt should probably return errors
+                    turso_core::StepResult::Busy | turso_core::StepResult::Interrupt => {
+                        stmt.reset();
+                        return Poll::Ready(None);
+                    }
                 },
                 Err(err) => {
                     use crate::Error;
-
+                    stmt.reset();
                     return Poll::Ready(Some(Err(Error::from(err))));
                 }
             }
