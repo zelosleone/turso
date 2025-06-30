@@ -10,6 +10,7 @@
   "types": "index.d.ts",
   "napi": {
     "name": "turso",
+    "release": false,
     "triples": {
       "defaults": false,
       "additional": [
