@@ -10,7 +10,7 @@
 <p align="center">
   <a title="Build Status" target="_blank" href="https://github.com/tursodatabase/turso/actions/workflows/rust.yml"><img src="https://img.shields.io/github/actions/workflow/status/tursodatabase/turso/rust.yml?style=flat-square"></a>
   <a title="Releases" target="_blank" href="https://github.com/tursodatabase/turso/releases"><img src="https://img.shields.io/github/release/tursodatabase/turso?style=flat-square&color=9CF"></a>
-  <a title="Rust" target="_blank" href="https://crates.io/crates/limbo"><img alt="PyPI" src="https://img.shields.io/crates/v/limbo"></a>
+  <a title="Rust" target="_blank" href="https://crates.io/crates/turso"><img alt="PyPI" src="https://img.shields.io/crates/v/turso"></a>
   <a title="JavaScript" target="_blank" href="https://www.npmjs.com/package/@tursodatabase/turso"><img alt="PyPI" src="https://img.shields.io/npm/v/@tursodatabase/turso"></a>
   <a title="Python" target="_blank" href="https://pypi.org/project/pyturso/"><img alt="PyPI" src="https://img.shields.io/pypi/v/pyturso"></a>
   <a title="MIT" target="_blank" href="https://github.com/tursodatabase/turso/blob/main/LICENSE.md"><img src="http://img.shields.io/badge/license-MIT-orange.svg?style=flat-square"></a>
@@ -81,7 +81,7 @@ cargo run
 <br>
 
 ```console
-cargo add limbo
+cargo add turso
 ```
 
 Example usage:
@@ -119,7 +119,7 @@ console.log(users);
 <br>
 
 ```console
-pip install pylimbo
+pip install pyturso
 ```
 
 Example usage:
