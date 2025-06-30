@@ -189,6 +189,86 @@ test("Test raw(): Rows should be returned as arrays", async (t) => {
   t.deepEqual(rows[1], ["Bob", 24]);
 });
 
+test("Test expand(): Columns should be namespaced", async (t) => {
+  const expandedResults = [
+    {
+      users: {
+        name: "Alice",
+        type: "premium",
+      },
+      addresses: {
+        userName: "Alice",
+        type: "home",
+        street: "Alice's street",
+      },
+    },
+    {
+      users: {
+        name: "Bob",
+        type: "basic",
+      },
+      addresses: {
+        userName: "Bob",
+        type: "work",
+        street: "Bob's street",
+      },
+    },
+  ];
+
+  let regularResults = [
+    {
+      name: "Alice",
+      street: "Alice's street",
+      type: "home",
+      userName: "Alice",
+    },
+    {
+      name: "Bob",
+      street: "Bob's street",
+      type: "work",
+      userName: "Bob",
+    },
+  ];
+
+  const [db] = await connect(":memory:");
+  db.prepare("CREATE TABLE users (name TEXT, type TEXT)").run();
+  // prettier-ignore
+  db.prepare("CREATE TABLE addresses (userName TEXT, street TEXT, type TEXT)")
+    .run();
+  // prettier-ignore
+  db.prepare("INSERT INTO users (name, type) VALUES (?, ?)")
+    .run("Alice", "premium");
+  // prettier-ignore
+  db.prepare("INSERT INTO users (name, type) VALUES (?, ?)")
+    .run("Bob", "basic");
+  // prettier-ignore
+  db.prepare("INSERT INTO addresses (userName, street, type) VALUES (?, ?, ?)")
+    .run("Alice", "Alice's street", "home");
+  // prettier-ignore
+  db.prepare( "INSERT INTO addresses (userName, street, type) VALUES (?, ?, ?)")
+    .run("Bob", "Bob's street", "work");
+
+  let allRows = db
+    .prepare("SELECT * FROM users u JOIN addresses a ON (u.name = a.userName)")
+    .expand(true)
+    .all();
+
+  t.deepEqual(allRows, expandedResults);
+
+  allRows = db
+    .prepare("SELECT * FROM users u JOIN addresses a ON (u.name = a.userName)")
+    .expand()
+    .all();
+
+  t.deepEqual(allRows, expandedResults);
+
+  allRows = db
+    .prepare("SELECT * FROM users u JOIN addresses a ON (u.name = a.userName)")
+    .expand(false)
+    .all();
+
+  t.deepEqual(allRows, regularResults);
+});
 
 test("Presentation modes should be mutually exclusive", async (t) => {
   const [db] = await connect(":memory:");
@@ -217,7 +297,7 @@ test("Presentation modes should be mutually exclusive", async (t) => {
   t.is(noRow, undefined);
 
   stmt = db.prepare("SELECT * FROM users").raw();
-  const rows = stmt.all();
+  let rows = stmt.all();
   t.true(Array.isArray(rows));
   t.is(rows.length, 2);
   t.deepEqual(rows[0], ["Alice", 42]);
@@ -230,6 +310,14 @@ test("Presentation modes should be mutually exclusive", async (t) => {
     t.truthy(name);
     t.assert(typeof name === "string");
   }
+
+  // test expand()
+  stmt = db.prepare("SELECT * FROM users").raw().pluck().expand();
+  rows = stmt.all();
+  t.true(Array.isArray(rows));
+  t.is(rows.length, 2);
+  t.deepEqual(rows[0], { users: { name: "Alice", age: 42 } });
+  t.deepEqual(rows[1], { users: { name: "Bob", age: 24 } });
 });
 
 
