@@ -9,6 +9,8 @@ use crate::{
 };
 
 /// A prepared statement.
+///
+/// Statements when executed or queried are reset after they encounter an error or run to completion
 pub struct Statement {
     pub(crate) inner: Arc<Mutex<turso_core::Statement>>,
 }
