@@ -46,4 +46,16 @@ async fn main() {
         let value = row.get_value(0).unwrap();
         println!("Row: {:?}", value);
     }
+
+    let rows = stmt.query(["foo@example.com"]).await.unwrap();
+
+    // As `Rows` implement streams you can easily map over it and apply other transformations you see fit
+    println!("Using Stream map");
+    rows.map_ok(|row| row.get_value(0).unwrap())
+        .try_for_each(|val| {
+            println!("Row: {:?}", val.as_text().unwrap());
+            futures_util::future::ready(Ok(()))
+        })
+        .await
+        .unwrap();
 }
