@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.1.0 -- 2025-06-30
+
+### Added
+
+* bindings/rust: Add feature flag to enable indexes (Pekka Enberg)
+* core: Add Antithesis-aware `turso_assert` (Pekka Enberg)
+* Fix database header contents on initialization (Pere Diaz Bou)
+* Support insersect operator for compound select (meteorgan)
+* Simulator: add latency to File IO (Pedro Muniz)
+* write page1 on database initialization (Pere Diaz Bou)
+* `Rollback` simple support (Pere Diaz Bou)
+* core/db&pager: fix locking for initializing empty database (Jussi Saurio)
+* sim: add Fault::ReopenDatabase (Jussi Saurio)
+* Fix database header initialization (Diego Reis)
+* Add Pedro to email recipients for antithesis (Pedro Muniz)
+* bindings/rust: Implement Debug for Connection (Charlie)
+* Fix: add uv sync to all packages for pytest github action (Pedro Muniz)
+* Implement RowData opcode (meteorgan)
+* Support indent for Goto opcode when executing explain (meteorgan)
+
+### Updated
+
+* core: Disable `ROLLBACK` statement (Pekka Enberg)
+* WAL record db_size frame on commit last frame (Pere Diaz Bou)
+* Eliminate core extension dependencies (Pekka Enberg)
+* Move completion extension dependency to CLI (Pekka Enberg)
+* Rename `limbo` crate to `turso` (Pekka Enberg)
+* Rename `limbo_sqlite3_parser` crate to `turso_sqlite3_parser` (Pekka Enberg)
+* Rename `limbo_ext` crate to `turso_ext` (Pekka Enberg)
+* Rename `limbo_macros` to `turso_macros` (Pekka Enberg)
+* stress: Log reopen and reconnect (Pekka Enberg)
+* Rename `limbo_core` crate to `turso_core` (Pekka Enberg)
+* github: Run simulator on pull requests (Pekka Enberg)
+* bindings/rust: Named params (Andika Tanuwijaya)
+* Rename Limbo to Turso in the README and other files (Glauber Costa)
+* Remove dependency on test extension pkg (Preston Thorpe)
+* Cache `reserved_space` and `page_size` values at Pager init to prevent doing redundant IO (Krishna Vishal)
+* cli: Rename CLI to Turso (Pekka Enberg)
+* bindings/javascript: Rename package to `@tursodatabase/turso` (Pekka Enberg)
+* bindings/python: Rename package to `pyturso` (Pekka Enberg)
+* Rename Limbo to Turso Database (Pekka Enberg)
+* Bring back TPC-H benchmarks (Pekka Enberg)
+* Switch to runtime flag for enabling indexes (Pekka Enberg)
+* stress: reopen db / reconnect to db every now and then (Jussi Saurio)
+* Bring back some merge conflicts code (Pedro Muniz)
+* simulator: integrity check per query (Pedro Muniz)
+* stress: Improve progress reporting (Pekka Enberg)
+* Improve extension compatibility testing (Piotr Rżysko)
+* Ephemeral Table in Update (Pedro Muniz)
+* Use UV more in python related scripts and actions (Pedro Muniz)
+* Copy instrumented image and symbols in Dockerfile.antithesis (eric-dinh-antithesis)
+* ` op_transaction` `end_read_tx` in case of `begin_write_tx` is busy (Pere Diaz Bou)
+* antithesis-tests: Make test drivers robust when database is locked (Pekka Enberg)
+
+### Fixed
+
+* tests/integration: Fix write path test on Windows (Pekka Enberg)
+* Fix deleting previous rowid when rowid is in the Set Clause (Pedro Muniz)
+* Fix executing multiple statements (Pere Diaz Bou)
+* Fix evaluation of ISNULL/NOTNULL in OR expressions (Piotr Rżysko)
+* bindings/javascript: Fix StepResult:IO handling (Pekka Enberg)
+* fix: use uv run instead of uvx for Pytest (Pedro Muniz)
+* sim: when loading bug, dont panic if there are no runs (Jussi Saurio)
+* sim: fix singlequote escaping and unescaping (Jussi Saurio)
+* Fix btree balance and seek after overwritten cell overflows (Jussi Saurio)
+* chore: fix clippy warnings (Nils Koch)
+* Fix CI errors (Piotr Rżysko)
+* Fix infinite aggregation loop when sorting is not required (Piotr Rżysko)
+* Fix DELETE not emitting constant `WhereTerms` (Pedro Muniz)
+* Fix handling of non-aggregate expressions (Piotr Rżysko)
+* Fix fuzz issue #1763 by using the `log2` & `log10` functions where applicable (Luca Muscat)
+
 ## 0.0.22 -- 2025-06-19
 
 ### Added
