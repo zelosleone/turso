@@ -83,16 +83,28 @@ impl Builder {
         match self.path.as_str() {
             ":memory:" => {
                 let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::MemoryIO::new());
-                let db = turso_core::Database::open_file(io, self.path.as_str(), false, false)?;
+                let db = turso_core::Database::open_file(
+                    io,
+                    self.path.as_str(),
+                    false,
+                    indexes_enabled(),
+                )?;
                 Ok(Database { inner: db })
             }
             path => {
                 let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new()?);
-                let db = turso_core::Database::open_file(io, path, false, false)?;
+                let db = turso_core::Database::open_file(io, path, false, indexes_enabled())?;
                 Ok(Database { inner: db })
             }
         }
     }
+}
+
+fn indexes_enabled() -> bool {
+    #[cfg(feature = "experimental_indexes")]
+    return true;
+    #[cfg(not(feature = "experimental_indexes"))]
+    return false;
 }
 
 /// A database.
