@@ -66,7 +66,7 @@ impl From<turso_core::LimboError> for Error {
 
 pub(crate) type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-pub(crate) type Result<T, E = Error> = std::result::Result<T, E>;
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// A builder for `Database`.
 pub struct Builder {
