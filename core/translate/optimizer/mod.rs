@@ -6,11 +6,11 @@ use constraints::{
 use cost::Cost;
 use join::{compute_best_join_order, BestJoinOrderResult};
 use lift_common_subexpressions::lift_common_subexpressions_from_binary_or_terms;
-use limbo_sqlite3_parser::{
+use order::{compute_order_target, plan_satisfies_order_target, EliminatesSortBy};
+use turso_sqlite3_parser::{
     ast::{self, Expr, SortOrder},
     to_sql_string::ToSqlString as _,
 };
-use order::{compute_order_target, plan_satisfies_order_target, EliminatesSortBy};
 
 use crate::{
     parameters::PARAM_PREFIX,
@@ -96,7 +96,7 @@ fn optimize_delete_plan(plan: &mut DeletePlan, _schema: &Schema) -> Result<()> {
     }
 
     // FIXME: don't use indexes for delete right now because it's buggy. See for example:
-    // https://github.com/tursodatabase/limbo/issues/1714
+    // https://github.com/tursodatabase/turso/issues/1714
     // let _ = optimize_table_access(
     //     &mut plan.table_references,
     //     &schema.indexes,
@@ -115,9 +115,6 @@ fn optimize_update_plan(plan: &mut UpdatePlan, schema: &Schema) -> Result<()> {
     {
         plan.contains_constant_false_condition = true;
         return Ok(());
-    }
-    if let Some(ephemeral_plan) = &mut plan.ephemeral_plan {
-        optimize_select_plan(ephemeral_plan, schema)?;
     }
     let _ = optimize_table_access(
         schema,

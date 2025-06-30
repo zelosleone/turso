@@ -70,7 +70,7 @@ pub(crate) fn execute_plans(
         if now.elapsed().as_secs() >= env.opts.max_time_simulation as u64 {
             return ExecutionResult::new(
                 history,
-                Some(limbo_core::LimboError::InternalError(
+                Some(turso_core::LimboError::InternalError(
                     "maximum time for simulation reached".into(),
                 )),
             );
@@ -85,7 +85,7 @@ fn execute_plan(
     connection_index: usize,
     plans: &mut [Vec<Vec<Interaction>>],
     states: &mut [InteractionPlanState],
-) -> limbo_core::Result<()> {
+) -> turso_core::Result<()> {
     let connection = &env.connections[connection_index];
     let plan = &mut plans[connection_index];
     let state = &mut states[connection_index];

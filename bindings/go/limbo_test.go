@@ -7,7 +7,7 @@ import (
 	"math"
 	"testing"
 
-	_ "github.com/tursodatabase/limbo"
+	_ "github.com/tursodatabase/turso"
 )
 
 var (

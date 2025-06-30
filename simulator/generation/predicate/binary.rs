@@ -1,6 +1,6 @@
 //! Contains code for generation for [ast::Expr::Binary] Predicate
 
-use limbo_sqlite3_parser::ast::{self, Expr};
+use turso_sqlite3_parser::ast::{self, Expr};
 
 use crate::{
     generation::{

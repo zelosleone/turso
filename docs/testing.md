@@ -64,10 +64,10 @@ Use these Python-based tests for validating:
 If you wish to trace internal events during test execution, you can set the RUST_LOG environment variable before running the test. For example:
 
 ```bash
-RUST_LOG=none,limbo_core=trace make test
+RUST_LOG=none,turso_core=trace make test
 ```
 
-This will enable trace-level logs for the limbo_core crate and disable logs elsewhere. Logging all internal traces to the `testing/test.log` file. 
+This will enable trace-level logs for the turso_core crate and disable logs elsewhere. Logging all internal traces to the `testing/test.log` file. 
 
 **Note:** trace logs can be very verbose—it's not uncommon for a single test run to generate megabytes of logs.
 

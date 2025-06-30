@@ -1,5 +1,5 @@
-use limbo_ext::VTabKind;
-use limbo_sqlite3_parser::ast::{self, SortOrder};
+use turso_ext::VTabKind;
+use turso_sqlite3_parser::ast::{self, SortOrder};
 
 use std::sync::Arc;
 

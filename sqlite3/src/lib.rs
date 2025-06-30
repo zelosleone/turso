@@ -1,9 +1,9 @@
 #![allow(clippy::missing_safety_doc)]
 #![allow(non_camel_case_types)]
 
-use limbo_core::Value;
 use std::ffi::{self, CStr, CString};
 use tracing::trace;
+use turso_core::Value;
 
 use std::sync::{Arc, Mutex};
 
@@ -39,9 +39,9 @@ pub struct sqlite3 {
 }
 
 struct sqlite3Inner {
-    pub(crate) io: Arc<dyn limbo_core::IO>,
-    pub(crate) _db: Arc<limbo_core::Database>,
-    pub(crate) conn: Arc<limbo_core::Connection>,
+    pub(crate) io: Arc<dyn turso_core::IO>,
+    pub(crate) _db: Arc<turso_core::Database>,
+    pub(crate) conn: Arc<turso_core::Connection>,
     pub(crate) err_code: ffi::c_int,
     pub(crate) err_mask: ffi::c_int,
     pub(crate) malloc_failed: bool,
@@ -51,9 +51,9 @@ struct sqlite3Inner {
 
 impl sqlite3 {
     pub fn new(
-        io: Arc<dyn limbo_core::IO>,
-        db: Arc<limbo_core::Database>,
-        conn: Arc<limbo_core::Connection>,
+        io: Arc<dyn turso_core::IO>,
+        db: Arc<turso_core::Database>,
+        conn: Arc<turso_core::Connection>,
     ) -> Self {
         let inner = sqlite3Inner {
             io,
@@ -73,11 +73,11 @@ impl sqlite3 {
 
 pub struct sqlite3_stmt {
     pub(crate) db: *mut sqlite3,
-    pub(crate) stmt: limbo_core::Statement,
+    pub(crate) stmt: turso_core::Statement,
 }
 
 impl sqlite3_stmt {
-    pub fn new(db: *mut sqlite3, stmt: limbo_core::Statement) -> Self {
+    pub fn new(db: *mut sqlite3, stmt: turso_core::Statement) -> Self {
         Self { db, stmt }
     }
 }
@@ -119,14 +119,14 @@ pub unsafe extern "C" fn sqlite3_open(
         Ok(s) => s,
         Err(_) => return SQLITE_MISUSE,
     };
-    let io: Arc<dyn limbo_core::IO> = match filename {
-        ":memory:" => Arc::new(limbo_core::MemoryIO::new()),
-        _ => match limbo_core::PlatformIO::new() {
+    let io: Arc<dyn turso_core::IO> = match filename {
+        ":memory:" => Arc::new(turso_core::MemoryIO::new()),
+        _ => match turso_core::PlatformIO::new() {
             Ok(io) => Arc::new(io),
             Err(_) => return SQLITE_CANTOPEN,
         },
     };
-    match limbo_core::Database::open_file(io.clone(), filename, false, false) {
+    match turso_core::Database::open_file(io.clone(), filename, false, false) {
         Ok(db) => {
             let conn = db.connect().unwrap();
             *db_out = Box::leak(Box::new(sqlite3::new(io, db, conn)));
@@ -250,15 +250,15 @@ pub unsafe extern "C" fn sqlite3_step(stmt: *mut sqlite3_stmt) -> ffi::c_int {
         let db = db.inner.lock().unwrap();
         if let Ok(result) = stmt.stmt.step() {
             match result {
-                limbo_core::StepResult::IO => {
+                turso_core::StepResult::IO => {
                     let io = db.io.clone();
                     io.run_once().unwrap();
                     continue;
                 }
-                limbo_core::StepResult::Done => return SQLITE_DONE,
-                limbo_core::StepResult::Interrupt => return SQLITE_INTERRUPT,
-                limbo_core::StepResult::Row => return SQLITE_ROW,
-                limbo_core::StepResult::Busy => return SQLITE_BUSY,
+                turso_core::StepResult::Done => return SQLITE_DONE,
+                turso_core::StepResult::Interrupt => return SQLITE_INTERRUPT,
+                turso_core::StepResult::Row => return SQLITE_ROW,
+                turso_core::StepResult::Busy => return SQLITE_BUSY,
             }
         } else {
             return SQLITE_ERROR;
@@ -588,63 +588,63 @@ pub unsafe extern "C" fn sqlite3_column_bytes(
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_value_type(value: *mut ffi::c_void) -> ffi::c_int {
-    let value = value as *mut limbo_core::Value;
+    let value = value as *mut turso_core::Value;
     let value = &*value;
     match value {
-        limbo_core::Value::Null => 0,
-        limbo_core::Value::Integer(_) => 1,
-        limbo_core::Value::Float(_) => 2,
-        limbo_core::Value::Text(_) => 3,
-        limbo_core::Value::Blob(_) => 4,
+        turso_core::Value::Null => 0,
+        turso_core::Value::Integer(_) => 1,
+        turso_core::Value::Float(_) => 2,
+        turso_core::Value::Text(_) => 3,
+        turso_core::Value::Blob(_) => 4,
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_value_int64(value: *mut ffi::c_void) -> i64 {
-    let value = value as *mut limbo_core::Value;
+    let value = value as *mut turso_core::Value;
     let value = &*value;
     match value {
-        limbo_core::Value::Integer(i) => *i,
+        turso_core::Value::Integer(i) => *i,
         _ => 0,
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_value_double(value: *mut ffi::c_void) -> f64 {
-    let value = value as *mut limbo_core::Value;
+    let value = value as *mut turso_core::Value;
     let value = &*value;
     match value {
-        limbo_core::Value::Float(f) => *f,
+        turso_core::Value::Float(f) => *f,
         _ => 0.0,
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_value_text(value: *mut ffi::c_void) -> *const ffi::c_uchar {
-    let value = value as *mut limbo_core::Value;
+    let value = value as *mut turso_core::Value;
     let value = &*value;
     match value {
-        limbo_core::Value::Text(text) => text.as_str().as_ptr(),
+        turso_core::Value::Text(text) => text.as_str().as_ptr(),
         _ => std::ptr::null(),
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_value_blob(value: *mut ffi::c_void) -> *const ffi::c_void {
-    let value = value as *mut limbo_core::Value;
+    let value = value as *mut turso_core::Value;
     let value = &*value;
     match value {
-        limbo_core::Value::Blob(blob) => blob.as_ptr() as *const ffi::c_void,
+        turso_core::Value::Blob(blob) => blob.as_ptr() as *const ffi::c_void,
         _ => std::ptr::null(),
     }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_value_bytes(value: *mut ffi::c_void) -> ffi::c_int {
-    let value = value as *mut limbo_core::Value;
+    let value = value as *mut turso_core::Value;
     let value = &*value;
     match value {
-        limbo_core::Value::Blob(blob) => blob.len() as ffi::c_int,
+        turso_core::Value::Blob(blob) => blob.len() as ffi::c_int,
         _ => 0,
     }
 }
@@ -661,7 +661,7 @@ pub unsafe extern "C" fn sqlite3_column_text(
         None => return std::ptr::null(),
     };
     match row.get::<&Value>(idx as usize) {
-        Ok(limbo_core::Value::Text(text)) => text.as_str().as_ptr(),
+        Ok(turso_core::Value::Text(text)) => text.as_str().as_ptr(),
         _ => std::ptr::null(),
     }
 }

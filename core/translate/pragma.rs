@@ -1,10 +1,10 @@
 //! VDBE bytecode generation for pragma statements.
 //! More info: https://www.sqlite.org/pragma.html.
 
-use limbo_sqlite3_parser::ast::PragmaName;
-use limbo_sqlite3_parser::ast::{self, Expr};
 use std::rc::Rc;
 use std::sync::Arc;
+use turso_sqlite3_parser::ast::PragmaName;
+use turso_sqlite3_parser::ast::{self, Expr};
 
 use crate::schema::Schema;
 use crate::storage::pager::AutoVacuumMode;
@@ -160,7 +160,7 @@ fn update_pragma(
             unreachable!();
         }
         PragmaName::PageSize => {
-            todo!("updating page_size is not yet implemented")
+            bail_parse_error!("Updating database page size is not supported.");
         }
         PragmaName::AutoVacuum => {
             let auto_vacuum_mode = match value {

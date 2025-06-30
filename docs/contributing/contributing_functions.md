@@ -7,16 +7,16 @@ Steps
 4. Push it as a Merge Request, get it review.
 
 Sample Pull Requests of function contributing
-- [partial support for datetime() and julianday()](https://github.com/tursodatabase/limbo/pull/600)
-- [support for changes() and total_changes()](https://github.com/tursodatabase/limbo/pull/589)
-- [support for unhex(X)](https://github.com/tursodatabase/limbo/pull/353)
+- [partial support for datetime() and julianday()](https://github.com/tursodatabase/turso/pull/600)
+- [support for changes() and total_changes()](https://github.com/tursodatabase/turso/pull/589)
+- [support for unhex(X)](https://github.com/tursodatabase/turso/pull/353)
 
 ## An example with function `date(..)`
 
 > Note that the files, code location, steps might be not exactly the same because of refactor but the idea of the changes needed in each layer stays.
 
-[Issue #158](https://github.com/tursodatabase/limbo/issues/158) was created for it.
-Refer to commit [4ff7058](https://github.com/tursodatabase/limbo/commit/4ff705868a054643f6113cbe009655c32bc5f235).
+[Issue #158](https://github.com/tursodatabase/turso/issues/158) was created for it.
+Refer to commit [4ff7058](https://github.com/tursodatabase/turso/commit/4ff705868a054643f6113cbe009655c32bc5f235).
 
 ![limbo_architecture.png](limbo_architecture.png)
 
@@ -131,7 +131,7 @@ How to translate the function into bytecode `Instruction`?
 for each argument expression.
 - then we emit the bytecode instruction for Function `program.emit_insn(Insn::Function {...})`
 
-https://github.com/tursodatabase/limbo/blob/69e3dd28f77e59927da4313e517b2b428ede480d/core/translate/expr.rs#L1235C1-L1256C26
+https://github.com/tursodatabase/turso/blob/69e3dd28f77e59927da4313e517b2b428ede480d/core/translate/expr.rs#L1235C1-L1256C26
 
 
 ```diff
@@ -173,7 +173,7 @@ pub fn translate_expr(...) -> Result<usize> {
 
 ### Function execution
 
-The function execution code is implemented in `vdbe/datetime.rs` file [here](https://github.com/tursodatabase/limbo/commit/9cc965186fecf4ba4dd81c783a841c71575123bf#diff-839435241d4ffb648ad2d162bc6ba6a94f052309865251dc2aff36eaa14fa3c5R11-R30) as we already implemented the datetime features in this file. 
+The function execution code is implemented in `vdbe/datetime.rs` file [here](https://github.com/tursodatabase/turso/commit/9cc965186fecf4ba4dd81c783a841c71575123bf#diff-839435241d4ffb648ad2d162bc6ba6a94f052309865251dc2aff36eaa14fa3c5R11-R30) as we already implemented the datetime features in this file. 
 Note that for other functions it might be implemented in other location in vdbe module.
 
 ```diff
@@ -218,7 +218,7 @@ There are 2 kind of tests we need to add
 2. TCL tests for executing the sql function
 
 One test for the Rust code is shown as example below
-https://github.com/tursodatabase/limbo/blob/69e3dd28f77e59927da4313e517b2b428ede480d/core/vdbe/datetime.rs#L620C1-L661C1
+https://github.com/tursodatabase/turso/blob/69e3dd28f77e59927da4313e517b2b428ede480d/core/vdbe/datetime.rs#L620C1-L661C1
 
 TCL tests for `date` functions can be referenced from SQLite source code which is already very comprehensive. 
 - https://github.com/sqlite/sqlite/blob/f2b21a5f57e1a1db1a286c42af40563077635c3d/test/date3.test#L36

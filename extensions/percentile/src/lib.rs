@@ -1,4 +1,4 @@
-use limbo_ext::{register_extension, AggFunc, AggregateDerive, Value};
+use turso_ext::{register_extension, AggFunc, AggregateDerive, Value};
 
 register_extension! {
     aggregates: { Median, Percentile, PercentileCont, PercentileDisc }

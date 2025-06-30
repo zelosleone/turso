@@ -182,7 +182,7 @@ do_execsql_test_on_specific_db {:memory:} update-true-expr {
 } {10|20|30
 10|20|30}
 
-# https://github.com/tursodatabase/limbo/issues/1625
+# https://github.com/tursodatabase/turso/issues/1625
 do_execsql_test_on_specific_db {:memory:} update_cache_full_regression_test_#1625 {
     CREATE TABLE t(x);
     INSERT INTO t VALUES (randomblob(4096));
@@ -253,3 +253,10 @@ do_execsql_test_in_memory_any_error update_primary_key_unique_constraint_error {
     INSERT INTO t(b) VALUES (100), (200), (300);
     UPDATE t SET b = 2;
 }
+
+do_execsql_test_on_specific_db {:memory:} update-single-rowid {
+    CREATE TABLE t(x INTEGER PRIMARY KEY);
+    INSERT INTO t VALUES (1);
+    UPDATE t SET x = 2 WHERE x = 1;
+    SELECT * FROM t;
+} {2}

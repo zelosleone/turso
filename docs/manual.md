@@ -48,7 +48,7 @@ You can install Limbo on your computer as follows:
 
 ```
 curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/tursodatabase/limbo/releases/latest/download/limbo-installer.sh | sh
+  https://github.com/tursodatabase/turso/releases/latest/download/limbo-installer.sh | sh
 ```
 
 When you have the software installed, you can start a SQL shell as follows:

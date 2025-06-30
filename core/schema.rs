@@ -4,15 +4,15 @@ use crate::{util::normalize_ident, Result};
 use crate::{LimboError, VirtualTable};
 use core::fmt;
 use fallible_iterator::FallibleIterator;
-use limbo_sqlite3_parser::ast::{self, ColumnDefinition, Expr, Literal, SortOrder, TableOptions};
-use limbo_sqlite3_parser::{
-    ast::{Cmd, CreateTableBody, QualifiedName, ResultColumn, Stmt},
-    lexer::sql::Parser,
-};
 use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 use std::sync::Arc;
 use tracing::trace;
+use turso_sqlite3_parser::ast::{self, ColumnDefinition, Expr, Literal, SortOrder, TableOptions};
+use turso_sqlite3_parser::{
+    ast::{Cmd, CreateTableBody, QualifiedName, ResultColumn, Stmt},
+    lexer::sql::Parser,
+};
 
 const SCHEMA_TABLE_NAME: &str = "sqlite_schema";
 const SCHEMA_TABLE_NAME_ALT: &str = "sqlite_master";
@@ -389,7 +389,7 @@ fn create_table(
             is_strict = options.contains(TableOptions::STRICT);
             if let Some(constraints) = constraints {
                 for c in constraints {
-                    if let limbo_sqlite3_parser::ast::TableConstraint::PrimaryKey {
+                    if let turso_sqlite3_parser::ast::TableConstraint::PrimaryKey {
                         columns, ..
                     } = c.constraint
                     {
@@ -406,7 +406,7 @@ fn create_table(
                             primary_key_columns
                                 .push((col_name, column.order.unwrap_or(SortOrder::Asc)));
                         }
-                    } else if let limbo_sqlite3_parser::ast::TableConstraint::Unique {
+                    } else if let turso_sqlite3_parser::ast::TableConstraint::Unique {
                         columns,
                         conflict_clause,
                     } = c.constraint
@@ -490,7 +490,7 @@ fn create_table(
                 let mut collation = None;
                 for c_def in &col_def.constraints {
                     match &c_def.constraint {
-                        limbo_sqlite3_parser::ast::ColumnConstraint::PrimaryKey {
+                        turso_sqlite3_parser::ast::ColumnConstraint::PrimaryKey {
                             order: o,
                             ..
                         } => {
@@ -499,20 +499,20 @@ fn create_table(
                                 order = *o;
                             }
                         }
-                        limbo_sqlite3_parser::ast::ColumnConstraint::NotNull { .. } => {
+                        turso_sqlite3_parser::ast::ColumnConstraint::NotNull { .. } => {
                             notnull = true;
                         }
-                        limbo_sqlite3_parser::ast::ColumnConstraint::Default(expr) => {
+                        turso_sqlite3_parser::ast::ColumnConstraint::Default(expr) => {
                             default = Some(expr.clone())
                         }
                         // TODO: for now we don't check Resolve type of unique
-                        limbo_sqlite3_parser::ast::ColumnConstraint::Unique(on_conflict) => {
+                        turso_sqlite3_parser::ast::ColumnConstraint::Unique(on_conflict) => {
                             if on_conflict.is_some() {
                                 unimplemented!("ON CONFLICT not implemented");
                             }
                             unique = true;
                         }
-                        limbo_sqlite3_parser::ast::ColumnConstraint::Collate { collation_name } => {
+                        turso_sqlite3_parser::ast::ColumnConstraint::Collate { collation_name } => {
                             collation = Some(CollationSeq::new(collation_name.0.as_str())?);
                         }
                         // Collate

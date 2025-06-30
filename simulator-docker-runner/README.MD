@@ -17,4 +17,4 @@ The script acts as the entrypoint for the Docker container, automatically starti
 
 ## How do I see the open issues created by the simulator?
 
-[GitHub issues](https://github.com/tursodatabase/limbo/issues?q=is%3Aissue+is%3Aopen+label%3A%22automated%22)
+[GitHub issues](https://github.com/tursodatabase/turso/issues?q=is%3Aissue+is%3Aopen+label%3A%22automated%22)

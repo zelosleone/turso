@@ -2,16 +2,16 @@
 compile_error!("Features 'web' and 'nodejs' cannot be enabled at the same time");
 
 use js_sys::{Array, Object};
-use limbo_core::{Clock, Instant, OpenFlags, Result};
 use std::cell::RefCell;
 use std::sync::Arc;
+use turso_core::{Clock, Instant, OpenFlags, Result};
 use wasm_bindgen::prelude::*;
 
 #[allow(dead_code)]
 #[wasm_bindgen]
 pub struct Database {
-    db: Arc<limbo_core::Database>,
-    conn: Arc<limbo_core::Connection>,
+    db: Arc<turso_core::Database>,
+    conn: Arc<turso_core::Connection>,
 }
 
 #[allow(clippy::arc_with_non_send_sync)]
@@ -19,10 +19,10 @@ pub struct Database {
 impl Database {
     #[wasm_bindgen(constructor)]
     pub fn new(path: &str) -> Database {
-        let io: Arc<dyn limbo_core::IO> = Arc::new(PlatformIO { vfs: VFS::new() });
+        let io: Arc<dyn turso_core::IO> = Arc::new(PlatformIO { vfs: VFS::new() });
         let file = io.open_file(path, OpenFlags::Create, false).unwrap();
         let db_file = Arc::new(DatabaseFile::new(file));
-        let db = limbo_core::Database::open(io, path, db_file, false, false).unwrap();
+        let db = turso_core::Database::open(io, path, db_file, false, false).unwrap();
         let conn = db.connect().unwrap();
         Database { db, conn }
     }
@@ -41,12 +41,12 @@ impl Database {
 
 #[wasm_bindgen]
 pub struct RowIterator {
-    inner: RefCell<limbo_core::Statement>,
+    inner: RefCell<turso_core::Statement>,
 }
 
 #[wasm_bindgen]
 impl RowIterator {
-    fn new(inner: RefCell<limbo_core::Statement>) -> Self {
+    fn new(inner: RefCell<turso_core::Statement>) -> Self {
         Self { inner }
     }
 
@@ -55,7 +55,7 @@ impl RowIterator {
     pub fn next(&mut self) -> JsValue {
         let mut stmt = self.inner.borrow_mut();
         match stmt.step() {
-            Ok(limbo_core::StepResult::Row) => {
+            Ok(turso_core::StepResult::Row) => {
                 let row = stmt.row().unwrap();
                 let row_array = Array::new();
                 for value in row.get_values() {
@@ -64,11 +64,11 @@ impl RowIterator {
                 }
                 JsValue::from(row_array)
             }
-            Ok(limbo_core::StepResult::IO) => JsValue::UNDEFINED,
-            Ok(limbo_core::StepResult::Done) | Ok(limbo_core::StepResult::Interrupt) => {
+            Ok(turso_core::StepResult::IO) => JsValue::UNDEFINED,
+            Ok(turso_core::StepResult::Done) | Ok(turso_core::StepResult::Interrupt) => {
                 JsValue::UNDEFINED
             }
-            Ok(limbo_core::StepResult::Busy) => JsValue::UNDEFINED,
+            Ok(turso_core::StepResult::Busy) => JsValue::UNDEFINED,
             Err(e) => panic!("Error: {:?}", e),
         }
     }
@@ -76,13 +76,13 @@ impl RowIterator {
 
 #[wasm_bindgen]
 pub struct Statement {
-    inner: RefCell<limbo_core::Statement>,
+    inner: RefCell<turso_core::Statement>,
     raw: bool,
 }
 
 #[wasm_bindgen]
 impl Statement {
-    fn new(inner: RefCell<limbo_core::Statement>, raw: bool) -> Self {
+    fn new(inner: RefCell<turso_core::Statement>, raw: bool) -> Self {
         Self { inner, raw }
     }
 
@@ -95,7 +95,7 @@ impl Statement {
     pub fn get(&self) -> JsValue {
         let mut stmt = self.inner.borrow_mut();
         match stmt.step() {
-            Ok(limbo_core::StepResult::Row) => {
+            Ok(turso_core::StepResult::Row) => {
                 let row = stmt.row().unwrap();
                 let row_array = js_sys::Array::new();
                 for value in row.get_values() {
@@ -104,10 +104,10 @@ impl Statement {
                 }
                 JsValue::from(row_array)
             }
-            Ok(limbo_core::StepResult::IO)
-            | Ok(limbo_core::StepResult::Done)
-            | Ok(limbo_core::StepResult::Interrupt)
-            | Ok(limbo_core::StepResult::Busy) => JsValue::UNDEFINED,
+            Ok(turso_core::StepResult::IO)
+            | Ok(turso_core::StepResult::Done)
+            | Ok(turso_core::StepResult::Interrupt)
+            | Ok(turso_core::StepResult::Busy) => JsValue::UNDEFINED,
             Err(e) => panic!("Error: {:?}", e),
         }
     }
@@ -117,7 +117,7 @@ impl Statement {
         loop {
             let mut stmt = self.inner.borrow_mut();
             match stmt.step() {
-                Ok(limbo_core::StepResult::Row) => {
+                Ok(turso_core::StepResult::Row) => {
                     let row = stmt.row().unwrap();
                     let row_array = js_sys::Array::new();
                     for value in row.get_values() {
@@ -126,10 +126,10 @@ impl Statement {
                     }
                     array.push(&row_array);
                 }
-                Ok(limbo_core::StepResult::IO) => {}
-                Ok(limbo_core::StepResult::Interrupt) => break,
-                Ok(limbo_core::StepResult::Done) => break,
-                Ok(limbo_core::StepResult::Busy) => break,
+                Ok(turso_core::StepResult::IO) => {}
+                Ok(turso_core::StepResult::Interrupt) => break,
+                Ok(turso_core::StepResult::Done) => break,
+                Ok(turso_core::StepResult::Busy) => break,
                 Err(e) => panic!("Error: {:?}", e),
             }
         }
@@ -168,10 +168,10 @@ impl Statement {
     }
 }
 
-fn to_js_value(value: &limbo_core::Value) -> JsValue {
+fn to_js_value(value: &turso_core::Value) -> JsValue {
     match value {
-        limbo_core::Value::Null => JsValue::null(),
-        limbo_core::Value::Integer(i) => {
+        turso_core::Value::Null => JsValue::null(),
+        turso_core::Value::Integer(i) => {
             let i = *i;
             if i >= i32::MIN as i64 && i <= i32::MAX as i64 {
                 JsValue::from(i as i32)
@@ -179,9 +179,9 @@ fn to_js_value(value: &limbo_core::Value) -> JsValue {
                 JsValue::from(i)
             }
         }
-        limbo_core::Value::Float(f) => JsValue::from(*f),
-        limbo_core::Value::Text(t) => JsValue::from_str(t.as_str()),
-        limbo_core::Value::Blob(b) => js_sys::Uint8Array::from(b.as_slice()).into(),
+        turso_core::Value::Float(f) => JsValue::from(*f),
+        turso_core::Value::Text(t) => JsValue::from_str(t.as_str()),
+        turso_core::Value::Blob(b) => js_sys::Uint8Array::from(b.as_slice()).into(),
     }
 }
 
@@ -200,7 +200,7 @@ impl File {
     }
 }
 
-impl limbo_core::File for File {
+impl turso_core::File for File {
     fn lock_file(&self, _exclusive: bool) -> Result<()> {
         // TODO
         Ok(())
@@ -211,9 +211,9 @@ impl limbo_core::File for File {
         Ok(())
     }
 
-    fn pread(&self, pos: usize, c: Arc<limbo_core::Completion>) -> Result<()> {
-        let r = match *c {
-            limbo_core::Completion::Read(ref r) => r,
+    fn pread(&self, pos: usize, c: turso_core::Completion) -> Result<Arc<turso_core::Completion>> {
+        let r = match c.completion_type {
+            turso_core::CompletionType::Read(ref r) => r,
             _ => unreachable!(),
         };
         {
@@ -223,30 +223,33 @@ impl limbo_core::File for File {
             assert!(nr >= 0);
         }
         r.complete();
-        Ok(())
+        #[allow(clippy::arc_with_non_send_sync)]
+        Ok(Arc::new(c))
     }
 
     fn pwrite(
         &self,
         pos: usize,
-        buffer: Arc<std::cell::RefCell<limbo_core::Buffer>>,
-        c: Arc<limbo_core::Completion>,
-    ) -> Result<()> {
-        let w = match *c {
-            limbo_core::Completion::Write(ref w) => w,
+        buffer: Arc<std::cell::RefCell<turso_core::Buffer>>,
+        c: turso_core::Completion,
+    ) -> Result<Arc<turso_core::Completion>> {
+        let w = match c.completion_type {
+            turso_core::CompletionType::Write(ref w) => w,
             _ => unreachable!(),
         };
         let buf = buffer.borrow();
         let buf: &[u8] = buf.as_slice();
         self.vfs.pwrite(self.fd, buf, pos);
         w.complete(buf.len() as i32);
-        Ok(())
+        #[allow(clippy::arc_with_non_send_sync)]
+        Ok(Arc::new(c))
     }
 
-    fn sync(&self, c: Arc<limbo_core::Completion>) -> Result<()> {
+    fn sync(&self, c: turso_core::Completion) -> Result<Arc<turso_core::Completion>> {
         self.vfs.sync(self.fd);
         c.complete(0);
-        Ok(())
+        #[allow(clippy::arc_with_non_send_sync)]
+        Ok(Arc::new(c))
     }
 
     fn size(&self) -> Result<u64> {
@@ -272,13 +275,13 @@ impl Clock for PlatformIO {
     }
 }
 
-impl limbo_core::IO for PlatformIO {
+impl turso_core::IO for PlatformIO {
     fn open_file(
         &self,
         path: &str,
         _flags: OpenFlags,
         _direct: bool,
-    ) -> Result<Arc<dyn limbo_core::File>> {
+    ) -> Result<Arc<dyn turso_core::File>> {
         let fd = self.vfs.open(path, "a+");
         Ok(Arc::new(File {
             vfs: VFS::new(),
@@ -286,7 +289,7 @@ impl limbo_core::IO for PlatformIO {
         }))
     }
 
-    fn wait_for_completion(&self, c: Arc<limbo_core::Completion>) -> Result<()> {
+    fn wait_for_completion(&self, c: Arc<turso_core::Completion>) -> Result<()> {
         while !c.is_completed() {
             self.run_once()?;
         }
@@ -303,8 +306,8 @@ impl limbo_core::IO for PlatformIO {
         i64::from_ne_bytes(buf)
     }
 
-    fn get_memory_io(&self) -> Arc<limbo_core::MemoryIO> {
-        Arc::new(limbo_core::MemoryIO::new())
+    fn get_memory_io(&self) -> Arc<turso_core::MemoryIO> {
+        Arc::new(turso_core::MemoryIO::new())
     }
 }
 
@@ -323,28 +326,28 @@ extern "C" {
 }
 
 pub struct DatabaseFile {
-    file: Arc<dyn limbo_core::File>,
+    file: Arc<dyn turso_core::File>,
 }
 
 unsafe impl Send for DatabaseFile {}
 unsafe impl Sync for DatabaseFile {}
 
 impl DatabaseFile {
-    pub fn new(file: Arc<dyn limbo_core::File>) -> Self {
+    pub fn new(file: Arc<dyn turso_core::File>) -> Self {
         Self { file }
     }
 }
 
-impl limbo_core::DatabaseStorage for DatabaseFile {
-    fn read_page(&self, page_idx: usize, c: Arc<limbo_core::Completion>) -> Result<()> {
-        let r = match *c {
-            limbo_core::Completion::Read(ref r) => r,
+impl turso_core::DatabaseStorage for DatabaseFile {
+    fn read_page(&self, page_idx: usize, c: turso_core::Completion) -> Result<()> {
+        let r = match c.completion_type {
+            turso_core::CompletionType::Read(ref r) => r,
             _ => unreachable!(),
         };
         let size = r.buf().len();
         assert!(page_idx > 0);
         if !(512..=65536).contains(&size) || size & (size - 1) != 0 {
-            return Err(limbo_core::LimboError::NotADB);
+            return Err(turso_core::LimboError::NotADB);
         }
         let pos = (page_idx - 1) * size;
         self.file.pread(pos, c)?;
@@ -354,8 +357,8 @@ impl limbo_core::DatabaseStorage for DatabaseFile {
     fn write_page(
         &self,
         page_idx: usize,
-        buffer: Arc<std::cell::RefCell<limbo_core::Buffer>>,
-        c: Arc<limbo_core::Completion>,
+        buffer: Arc<std::cell::RefCell<turso_core::Buffer>>,
+        c: turso_core::Completion,
     ) -> Result<()> {
         let size = buffer.borrow().len();
         let pos = (page_idx - 1) * size;
@@ -363,8 +366,9 @@ impl limbo_core::DatabaseStorage for DatabaseFile {
         Ok(())
     }
 
-    fn sync(&self, c: Arc<limbo_core::Completion>) -> Result<()> {
-        self.file.sync(c)
+    fn sync(&self, c: turso_core::Completion) -> Result<()> {
+        let _ = self.file.sync(c)?;
+        Ok(())
     }
 
     fn size(&self) -> Result<u64> {

@@ -1,9 +1,9 @@
 use crate::rows::LimboRows;
 use crate::types::{AllocPool, LimboValue, ResultCode};
 use crate::LimboConn;
-use limbo_core::{LimboError, Statement, StepResult};
 use std::ffi::{c_char, c_void};
 use std::num::NonZero;
+use turso_core::{LimboError, Statement, StepResult};
 
 #[no_mangle]
 pub extern "C" fn db_prepare(ctx: *mut c_void, query: *const c_char) -> *mut c_void {

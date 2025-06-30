@@ -4,7 +4,7 @@ use std::{error::Error, num::NonZero, sync::Arc};
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::{fuzz_target, Corpus};
-use limbo_core::{Value, IO as _};
+use turso_core::{Value, IO as _};
 
 macro_rules! str_enum {
     ($vis:vis enum $name:ident { $($variant:ident => $value:literal),*, }) => {
@@ -72,20 +72,20 @@ enum Value {
     Blob(Vec<u8>),
 }
 
-impl From<Value> for limbo_core::Value {
-    fn from(value: Value) -> limbo_core::Value {
+impl From<Value> for turso_core::Value {
+    fn from(value: Value) -> turso_core::Value {
         match value {
-            Value::Null => limbo_core::Value::Null,
-            Value::Integer(v) => limbo_core::Value::Integer(v),
+            Value::Null => turso_core::Value::Null,
+            Value::Integer(v) => turso_core::Value::Integer(v),
             Value::Real(v) => {
                 if v.is_nan() {
-                    limbo_core::Value::Null
+                    turso_core::Value::Null
                 } else {
-                    limbo_core::Value::Float(v)
+                    turso_core::Value::Float(v)
                 }
             }
-            Value::Text(v) => limbo_core::Value::from_text(&v),
-            Value::Blob(v) => limbo_core::Value::from_blob(v.to_owned()),
+            Value::Text(v) => turso_core::Value::from_text(&v),
+            Value::Blob(v) => turso_core::Value::from_blob(v.to_owned()),
         }
     }
 }
@@ -168,7 +168,7 @@ fn do_fuzz(expr: Expr) -> Result<Corpus, Box<dyn Error>> {
     let expr = expr.lower();
     let sql = format!("SELECT {}", expr.query);
 
-    // FIX: `limbo_core::translate::expr::translate_expr` causes a overflow if this is any higher.
+    // FIX: `turso_core::translate::expr::translate_expr` causes a overflow if this is any higher.
     if expr.depth > 140 {
         return Ok(Corpus::Reject);
     }
@@ -183,8 +183,8 @@ fn do_fuzz(expr: Expr) -> Result<Corpus, Box<dyn Error>> {
     };
 
     let found = 'value: {
-        let io = Arc::new(limbo_core::MemoryIO::new());
-        let db = limbo_core::Database::open_file(io.clone(), ":memory:", false)?;
+        let io = Arc::new(turso_core::MemoryIO::new());
+        let db = turso_core::Database::open_file(io.clone(), ":memory:", false)?;
         let conn = db.connect()?;
 
         let mut stmt = conn.prepare(sql)?;
@@ -192,7 +192,7 @@ fn do_fuzz(expr: Expr) -> Result<Corpus, Box<dyn Error>> {
             stmt.bind_at(NonZero::new(idx + 1).unwrap(), value.clone().into())
         }
         loop {
-            use limbo_core::StepResult;
+            use turso_core::StepResult;
             match stmt.step()? {
                 StepResult::IO => io.run_once()?,
                 StepResult::Row => {

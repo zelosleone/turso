@@ -6,7 +6,7 @@ The Limbo JDBC driver is a library for accessing and creating Limbo database fil
 
 The project is actively developed. Feel free to open issues and contribute.
 
-To view related works, visit this [issue](https://github.com/tursodatabase/limbo/issues/615).
+To view related works, visit this [issue](https://github.com/tursodatabase/turso/issues/615).
 
 ## How to use
 

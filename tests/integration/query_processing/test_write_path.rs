@@ -1,8 +1,12 @@
 use crate::common::{self, maybe_setup_tracing};
 use crate::common::{compare_string, do_flush, TempDatabase};
-use limbo_core::{Connection, Row, Statement, StepResult, Value};
 use log::debug;
+use std::io::{Read, Seek, Write};
 use std::sync::Arc;
+use turso_core::{Connection, Database, Row, Statement, StepResult, Value};
+
+const WAL_HEADER_SIZE: usize = 32;
+const WAL_FRAME_HEADER_SIZE: usize = 24;
 
 #[macro_export]
 macro_rules! change_state {
@@ -175,8 +179,8 @@ fn test_sequential_write() -> anyhow::Result<()> {
         run_query_on_row(&tmp_db, &conn, list_query, |row: &Row| {
             let first_value = row.get::<&Value>(0).expect("missing id");
             let id = match first_value {
-                limbo_core::Value::Integer(i) => *i as i32,
-                limbo_core::Value::Float(f) => *f as i32,
+                turso_core::Value::Integer(i) => *i as i32,
+                turso_core::Value::Float(f) => *f as i32,
                 _ => unreachable!(),
             };
             assert_eq!(current_read_index, id);
@@ -189,7 +193,7 @@ fn test_sequential_write() -> anyhow::Result<()> {
 
 #[test]
 /// There was a regression with inserting multiple rows with a column containing an unary operator :)
-/// https://github.com/tursodatabase/limbo/pull/679
+/// https://github.com/tursodatabase/turso/pull/679
 fn test_regression_multi_row_insert() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
     let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE test (x REAL);", false);
@@ -239,7 +243,7 @@ fn test_statement_reset() -> anyhow::Result<()> {
                 let row = stmt.row().unwrap();
                 assert_eq!(
                     *row.get::<&Value>(0).unwrap(),
-                    limbo_core::Value::Integer(1)
+                    turso_core::Value::Integer(1)
                 );
                 break;
             }
@@ -256,7 +260,7 @@ fn test_statement_reset() -> anyhow::Result<()> {
                 let row = stmt.row().unwrap();
                 assert_eq!(
                     *row.get::<&Value>(0).unwrap(),
-                    limbo_core::Value::Integer(1)
+                    turso_core::Value::Integer(1)
                 );
                 break;
             }
@@ -381,8 +385,8 @@ fn test_write_delete_with_index() -> anyhow::Result<()> {
         run_query_on_row(&tmp_db, &conn, list_query, |row: &Row| {
             let first_value = row.get::<&Value>(0).expect("missing id");
             let id = match first_value {
-                limbo_core::Value::Integer(i) => *i as i32,
-                limbo_core::Value::Float(f) => *f as i32,
+                turso_core::Value::Integer(i) => *i as i32,
+                turso_core::Value::Float(f) => *f as i32,
                 _ => unreachable!(),
             };
             assert_eq!(current_read_index, id);
@@ -397,8 +401,8 @@ fn test_write_delete_with_index() -> anyhow::Result<()> {
                 |row| {
                     let first_value = row.get::<&Value>(0).expect("missing id");
                     let id = match first_value {
-                        limbo_core::Value::Integer(i) => *i as i32,
-                        limbo_core::Value::Float(f) => *f as i32,
+                        turso_core::Value::Integer(i) => *i as i32,
+                        turso_core::Value::Float(f) => *f as i32,
                         _ => unreachable!(),
                     };
                     assert_eq!(i, id);
@@ -496,6 +500,23 @@ fn test_update_regression() -> anyhow::Result<()> {
     conn.execute("UPDATE imaginative_baroja SET ample_earth = -7099009285992304294, remarkable_lester = 7860481406646607706, blithesome_hall = X'636F6D70657469746976655F736F6369657479', glowing_parissi = 'captivating_dreams', insightful_ryner = X'61646570745F6B6F7A6172656B' WHERE 1")?;
 
     check_integrity_is_ok(tmp_db, conn)?;
+
+    Ok(())
+}
+
+#[test]
+fn test_multiple_statements() -> anyhow::Result<()> {
+    let _ = env_logger::try_init();
+    let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x)", false);
+    let conn = tmp_db.connect_limbo();
+
+    conn.execute("INSERT INTO t values(1); insert into t values(2);")?;
+
+    run_query_on_row(&tmp_db, &conn, "SELECT count(1) from t;", |row| {
+        let count = row.get::<i64>(0).unwrap();
+        assert_eq!(count, 2);
+    })
+    .unwrap();
 
     Ok(())
 }
@@ -617,6 +638,98 @@ fn test_write_concurrent_connections() -> anyhow::Result<()> {
             "received wrong number of rows"
         );
     })?;
+
+    Ok(())
+}
+
+#[test]
+fn test_wal_bad_frame() -> anyhow::Result<()> {
+    maybe_setup_tracing();
+    let _ = env_logger::try_init();
+    let db_path = {
+        let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE t1(x)", false);
+        let db_path = tmp_db.path.clone();
+        let conn = tmp_db.connect_limbo();
+        conn.execute("BEGIN")?;
+        conn.execute("CREATE TABLE t2(x)")?;
+        conn.execute("CREATE TABLE t3(x)")?;
+        conn.execute("INSERT INTO t2(x) VALUES (1)")?;
+        conn.execute("INSERT INTO t3(x) VALUES (1)")?;
+        conn.execute("COMMIT")?;
+        run_query_on_row(&tmp_db, &conn, "SELECT count(1) from t2", |row| {
+            let x = row.get::<i64>(0).unwrap();
+            assert_eq!(x, 1);
+        })
+        .unwrap();
+        run_query_on_row(&tmp_db, &conn, "SELECT count(1) from t3", |row| {
+            let x = row.get::<i64>(0).unwrap();
+            assert_eq!(x, 1);
+        })
+        .unwrap();
+        // Now let's modify last frame record
+        let path = tmp_db.path.clone();
+        let path = path.with_extension("db-wal");
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let offset = WAL_HEADER_SIZE + (WAL_FRAME_HEADER_SIZE + 4096) * 2;
+        let mut buf = [0u8; WAL_FRAME_HEADER_SIZE];
+        file.seek(std::io::SeekFrom::Start(offset as u64)).unwrap();
+        file.read_exact(&mut buf).unwrap();
+        dbg!(&buf);
+        let db_size = u32::from_be_bytes(buf[4..8].try_into().unwrap());
+        dbg!(offset);
+        assert_eq!(db_size, 4);
+        // let's overwrite size_after to be 0 so that we think transaction never finished
+        buf[4..8].copy_from_slice(&[0, 0, 0, 0]);
+        file.seek(std::io::SeekFrom::Start(offset as u64)).unwrap();
+        file.write_all(&buf).unwrap();
+        file.flush().unwrap();
+
+        db_path
+    };
+    {
+        let result = std::panic::catch_unwind(|| {
+            let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
+            let db = Database::open_file_with_flags(
+                io.clone(),
+                db_path.to_str().unwrap(),
+                turso_core::OpenFlags::default(),
+                false,
+                false,
+            )
+            .unwrap();
+            let tmp_db = TempDatabase {
+                path: db_path,
+                io,
+                db,
+            };
+            let conn = tmp_db.connect_limbo();
+            run_query_on_row(&tmp_db, &conn, "SELECT count(1) from t2", |row| {
+                let x = row.get::<i64>(0).unwrap();
+                assert_eq!(x, 0);
+            })
+        });
+
+        match result {
+            Err(panic_info) => {
+                let panic_msg = panic_info
+                    .downcast_ref::<String>()
+                    .map(|s| s.as_str())
+                    .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                    .unwrap_or("Unknown panic message");
+
+                assert!(
+                    panic_msg.contains("WAL frame checksum mismatch."),
+                    "Expected panic message not found. Got: {}",
+                    panic_msg
+                );
+            }
+            Ok(_) => panic!("Expected query to panic, but it succeeded"),
+        }
+    }
 
     Ok(())
 }

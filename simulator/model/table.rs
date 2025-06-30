@@ -1,8 +1,8 @@
 use std::{fmt::Display, hash::Hash, ops::Deref};
 
-use limbo_core::{numeric::Numeric, types};
-use limbo_sqlite3_parser::ast;
 use serde::{Deserialize, Serialize};
+use turso_core::{numeric::Numeric, types};
+use turso_sqlite3_parser::ast;
 
 pub(crate) struct Name(pub(crate) String);
 
@@ -79,7 +79,7 @@ where
 }
 
 #[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
-pub(crate) struct SimValue(pub limbo_core::Value);
+pub(crate) struct SimValue(pub turso_core::Value);
 
 fn to_sqlite_blob(bytes: &[u8]) -> String {
     format!(
@@ -116,7 +116,7 @@ impl SimValue {
     /// TODO: forget collations for now
     /// TODO: have the [ast::Operator::Equals], [ast::Operator::NotEquals], [ast::Operator::Greater],
     /// [ast::Operator::GreaterEquals], [ast::Operator::Less], [ast::Operator::LessEquals] function to be extracted
-    /// into its functions in limbo_core so that it can be used here
+    /// into its functions in turso_core so that it can be used here
     pub fn binary_compare(&self, other: &Self, operator: ast::Operator) -> SimValue {
         match operator {
             ast::Operator::Add => self.0.exec_add(&other.0).into(),
@@ -290,26 +290,26 @@ impl From<bool> for SimValue {
     }
 }
 
-impl From<SimValue> for limbo_core::types::Value {
+impl From<SimValue> for turso_core::types::Value {
     fn from(value: SimValue) -> Self {
         value.0
     }
 }
 
-impl From<&SimValue> for limbo_core::types::Value {
+impl From<&SimValue> for turso_core::types::Value {
     fn from(value: &SimValue) -> Self {
         value.0.clone()
     }
 }
 
-impl From<limbo_core::types::Value> for SimValue {
-    fn from(value: limbo_core::types::Value) -> Self {
+impl From<turso_core::types::Value> for SimValue {
+    fn from(value: turso_core::types::Value) -> Self {
         Self(value)
     }
 }
 
-impl From<&limbo_core::types::Value> for SimValue {
-    fn from(value: &limbo_core::types::Value) -> Self {
+impl From<&turso_core::types::Value> for SimValue {
+    fn from(value: &turso_core::types::Value) -> Self {
         Self(value.clone())
     }
 }

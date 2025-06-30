@@ -14,7 +14,7 @@ pub enum LimboError {
     ParseError(String),
     #[error(transparent)]
     #[diagnostic(transparent)]
-    LexerError(#[from] limbo_sqlite3_parser::lexer::sql::Error),
+    LexerError(#[from] turso_sqlite3_parser::lexer::sql::Error),
     #[error("Conversion error: {0}")]
     ConversionError(String),
     #[error("Env variable error: {0}")]
@@ -80,8 +80,8 @@ macro_rules! bail_constraint_error {
     };
 }
 
-impl From<limbo_ext::ResultCode> for LimboError {
-    fn from(err: limbo_ext::ResultCode) -> Self {
+impl From<turso_ext::ResultCode> for LimboError {
+    fn from(err: turso_ext::ResultCode) -> Self {
         LimboError::ExtensionError(err.to_string())
     }
 }

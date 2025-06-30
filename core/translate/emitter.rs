@@ -3,8 +3,8 @@
 
 use std::rc::Rc;
 
-use limbo_sqlite3_parser::ast::{self, Expr};
 use tracing::{instrument, Level};
+use turso_sqlite3_parser::ast::{self, Expr};
 
 use super::aggregation::emit_ungrouped_aggregation;
 use super::expr::translate_expr;
@@ -1065,6 +1065,13 @@ fn emit_update_insns(
                 unpacked_count: Some((index.columns.len() + 1) as u16),
                 flags: IdxInsertFlags::new(),
             });
+        }
+
+        // If we are updating the rowid, we cannot rely on overwrite on the
+        // Insert instruction to update the cell. We need to first delete the current cell
+        // and later insert the updated record
+        if has_user_provided_rowid {
+            program.emit_insn(Insn::Delete { cursor_id });
         }
 
         program.emit_insn(Insn::Insert {

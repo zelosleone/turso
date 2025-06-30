@@ -1,4 +1,4 @@
-use limbo_sqlite3_parser::ast;
+use turso_sqlite3_parser::ast;
 
 use crate::{
     function::AggFunc,

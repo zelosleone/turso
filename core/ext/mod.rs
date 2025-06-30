@@ -6,15 +6,15 @@ use crate::UringIO;
 use crate::{function::ExternalFunc, Connection, Database, LimboError, IO};
 #[cfg(feature = "fs")]
 pub use dynamic::{add_builtin_vfs_extensions, add_vfs_module, list_vfs_modules, VfsMod};
-use limbo_ext::{
-    ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl,
-};
-pub use limbo_ext::{FinalizeFunction, StepFunction, Value as ExtValue, ValueType as ExtValueType};
 use std::{
     ffi::{c_char, c_void, CStr, CString},
     rc::Rc,
     sync::Arc,
 };
+use turso_ext::{
+    ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl,
+};
+pub use turso_ext::{FinalizeFunction, StepFunction, Value as ExtValue, ValueType as ExtValueType};
 pub use vtab_xconnect::{close, execute, prepare_stmt};
 type ExternAggFunc = (InitAggFunction, StepFunction, FinalizeFunction);
 
@@ -154,14 +154,14 @@ impl Connection {
         ResultCode::OK
     }
 
-    pub fn build_limbo_ext(&self) -> ExtensionApi {
+    pub fn build_turso_ext(&self) -> ExtensionApi {
         ExtensionApi {
             ctx: self as *const _ as *mut c_void,
             register_scalar_function,
             register_aggregate_function,
             register_vtab_module,
             #[cfg(feature = "fs")]
-            vfs_interface: limbo_ext::VfsInterface {
+            vfs_interface: turso_ext::VfsInterface {
                 register_vfs: dynamic::register_vfs,
                 builtin_vfs: std::ptr::null_mut(),
                 builtin_vfs_count: 0,
@@ -171,43 +171,11 @@ impl Connection {
 
     pub fn register_builtins(&self) -> Result<(), String> {
         #[allow(unused_variables)]
-        let mut ext_api = self.build_limbo_ext();
+        let mut ext_api = self.build_turso_ext();
         #[cfg(feature = "uuid")]
-        if unsafe { !limbo_uuid::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register uuid extension".to_string());
-        }
-        #[cfg(feature = "percentile")]
-        if unsafe { !limbo_percentile::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register percentile extension".to_string());
-        }
-        #[cfg(feature = "regexp")]
-        if unsafe { !limbo_regexp::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register regexp extension".to_string());
-        }
-        #[cfg(feature = "time")]
-        if unsafe { !limbo_time::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register time extension".to_string());
-        }
-        #[cfg(feature = "crypto")]
-        if unsafe { !limbo_crypto::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register crypto extension".to_string());
-        }
+        crate::uuid::register_extension(&mut ext_api);
         #[cfg(feature = "series")]
-        if unsafe { !limbo_series::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register series extension".to_string());
-        }
-        #[cfg(feature = "ipaddr")]
-        if unsafe { !limbo_ipaddr::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register ipaddr extension".to_string());
-        }
-        #[cfg(feature = "completion")]
-        if unsafe { !limbo_completion::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register completion extension".to_string());
-        }
-        #[cfg(feature = "csv")]
-        if unsafe { !limbo_csv::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register csv extension".to_string());
-        }
+        crate::series::register_extension(&mut ext_api);
         #[cfg(feature = "fs")]
         {
             let vfslist = add_builtin_vfs_extensions(Some(ext_api)).map_err(|e| e.to_string())?;

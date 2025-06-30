@@ -1,17 +1,17 @@
 [package]
-name = "limbo_node"
+name = "turso_node"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Limbo Rust API"
+description = "The Turso database library Node bindings"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-limbo_core = { workspace = true }
+turso_core = { workspace = true }
 napi = { version = "2.16.17", default-features = false, features = ["napi4"] }
 napi-derive = { version = "2.16.13", default-features = false }
 

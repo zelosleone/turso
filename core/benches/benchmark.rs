@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use limbo_core::{Database, PlatformIO, IO};
 use pprof::criterion::{Output, PProfProfiler};
 use std::sync::Arc;
+use turso_core::{Database, PlatformIO, IO};
 
 fn rusqlite_open() -> rusqlite::Connection {
     let sqlite_conn = rusqlite::Connection::open("../testing/testing.db").unwrap();
@@ -12,7 +12,7 @@ fn rusqlite_open() -> rusqlite::Connection {
 }
 
 fn bench_prepare_query(criterion: &mut Criterion) {
-    // https://github.com/tursodatabase/limbo/issues/174
+    // https://github.com/tursodatabase/turso/issues/174
     // The rusqlite benchmark crashes on Mac M1 when using the flamegraph features
     let enable_rusqlite = std::env::var("DISABLE_RUSQLITE_BENCHMARK").is_err();
 
@@ -59,7 +59,7 @@ fn bench_prepare_query(criterion: &mut Criterion) {
 }
 
 fn bench_execute_select_rows(criterion: &mut Criterion) {
-    // https://github.com/tursodatabase/limbo/issues/174
+    // https://github.com/tursodatabase/turso/issues/174
     // The rusqlite benchmark crashes on Mac M1 when using the flamegraph features
     let enable_rusqlite = std::env::var("DISABLE_RUSQLITE_BENCHMARK").is_err();
 
@@ -83,16 +83,16 @@ fn bench_execute_select_rows(criterion: &mut Criterion) {
                 b.iter(|| {
                     loop {
                         match stmt.step().unwrap() {
-                            limbo_core::StepResult::Row => {
+                            turso_core::StepResult::Row => {
                                 black_box(stmt.row());
                             }
-                            limbo_core::StepResult::IO => {
+                            turso_core::StepResult::IO => {
                                 let _ = io.run_once();
                             }
-                            limbo_core::StepResult::Done => {
+                            turso_core::StepResult::Done => {
                                 break;
                             }
-                            limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => {
+                            turso_core::StepResult::Interrupt | turso_core::StepResult::Busy => {
                                 unreachable!();
                             }
                         }
@@ -128,7 +128,7 @@ fn bench_execute_select_rows(criterion: &mut Criterion) {
 }
 
 fn bench_execute_select_1(criterion: &mut Criterion) {
-    // https://github.com/tursodatabase/limbo/issues/174
+    // https://github.com/tursodatabase/turso/issues/174
     // The rusqlite benchmark crashes on Mac M1 when using the flamegraph features
     let enable_rusqlite = std::env::var("DISABLE_RUSQLITE_BENCHMARK").is_err();
 
@@ -145,16 +145,16 @@ fn bench_execute_select_1(criterion: &mut Criterion) {
         b.iter(|| {
             loop {
                 match stmt.step().unwrap() {
-                    limbo_core::StepResult::Row => {
+                    turso_core::StepResult::Row => {
                         black_box(stmt.row());
                     }
-                    limbo_core::StepResult::IO => {
+                    turso_core::StepResult::IO => {
                         let _ = io.run_once();
                     }
-                    limbo_core::StepResult::Done => {
+                    turso_core::StepResult::Done => {
                         break;
                     }
-                    limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => {
+                    turso_core::StepResult::Interrupt | turso_core::StepResult::Busy => {
                         unreachable!();
                     }
                 }
@@ -181,7 +181,7 @@ fn bench_execute_select_1(criterion: &mut Criterion) {
 }
 
 fn bench_execute_select_count(criterion: &mut Criterion) {
-    // https://github.com/tursodatabase/limbo/issues/174
+    // https://github.com/tursodatabase/turso/issues/174
     // The rusqlite benchmark crashes on Mac M1 when using the flamegraph features
     let enable_rusqlite = std::env::var("DISABLE_RUSQLITE_BENCHMARK").is_err();
 
@@ -198,16 +198,16 @@ fn bench_execute_select_count(criterion: &mut Criterion) {
         b.iter(|| {
             loop {
                 match stmt.step().unwrap() {
-                    limbo_core::StepResult::Row => {
+                    turso_core::StepResult::Row => {
                         black_box(stmt.row());
                     }
-                    limbo_core::StepResult::IO => {
+                    turso_core::StepResult::IO => {
                         let _ = io.run_once();
                     }
-                    limbo_core::StepResult::Done => {
+                    turso_core::StepResult::Done => {
                         break;
                     }
-                    limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => {
+                    turso_core::StepResult::Interrupt | turso_core::StepResult::Busy => {
                         unreachable!();
                     }
                 }

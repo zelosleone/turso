@@ -1,38 +1,31 @@
-# Copyright 2023 the Limbo authors. All rights reserved. MIT license.
+# Copyright 2023-2025 the Turso authors. All rights reserved. MIT license.
 
 [package]
-name = "limbo_core"
+name = "turso_core"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "The Limbo database library"
+description = "The Turso database library"
 
 [lib]
-name = "limbo_core"
+name = "turso_core"
 path = "lib.rs"
 
 [features]
-default = ["fs", "uuid", "time", "json", "static"]
-fs = ["limbo_ext/vfs"]
+antithesis = ["dep:antithesis_sdk"]
+default = ["fs", "uuid", "time", "json", "series"]
+fs = ["turso_ext/vfs"]
 json = []
-uuid = ["limbo_uuid/static"]
+uuid = ["dep:uuid"]
 io_uring = ["dep:io-uring", "rustix/io_uring", "dep:libc"]
-percentile = ["limbo_percentile/static"]
-regexp = ["limbo_regexp/static"]
-time = ["limbo_time/static"]
-crypto = ["limbo_crypto/static"]
-series = ["limbo_series/static"]
-ipaddr = ["limbo_ipaddr/static"]
-completion = ["limbo_completion/static"]
-testvfs = ["limbo_ext_tests/static"]
-static = ["limbo_ext/static"]
+time = []
 fuzz = []
-csv = ["limbo_csv/static"]
 omit_autovacuum = []
 simulator = ["fuzz", "serde"]
 serde = ["dep:serde"]
+series = []
 
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.7.5", optional = true }
@@ -46,12 +39,13 @@ mimalloc = { version = "0.1.46", default-features = false }
 libloading = "0.8.6"
 
 [dependencies]
-limbo_ext = { workspace = true, features = ["core_only"] }
+antithesis_sdk = { version = "0.2.5", optional = true }
+turso_ext = { workspace = true, features = ["core_only"] }
 cfg_block = "0.1.1"
 fallible-iterator = "0.3.0"
 hex = "0.4.3"
 libc = { version = "0.2.172", optional = true }
-limbo_sqlite3_parser = { workspace = true }
+turso_sqlite3_parser = { workspace = true }
 thiserror = "1.0.61"
 getrandom = { version = "0.2.15" }
 regex = "1.11.1"
@@ -62,17 +56,7 @@ chrono = { version = "0.4.38", default-features = false, features = ["clock"] }
 julian_day_converter = "0.4.5"
 rand = "0.8.5"
 libm = "0.2"
-limbo_macros = { workspace = true }
-limbo_uuid = { workspace = true, optional = true, features = ["static"] }
-limbo_regexp = { workspace = true, optional = true, features = ["static"] }
-limbo_percentile = { workspace = true, optional = true, features = ["static"] }
-limbo_time = { workspace = true, optional = true, features = ["static"] }
-limbo_crypto = { workspace = true, optional = true, features = ["static"] }
-limbo_series = { workspace = true, optional = true, features = ["static"] }
-limbo_ipaddr = { workspace = true, optional = true, features = ["static"] }
-limbo_completion = { workspace = true, optional = true, features = ["static"] }
-limbo_ext_tests = { workspace = true, optional = true, features = ["static"] }
-limbo_csv = { workspace = true, optional = true, features = ["static"] }
+turso_macros = { workspace = true }
 miette = "7.6.0"
 strum = { workspace = true }
 parking_lot = "0.12.3"
@@ -84,6 +68,7 @@ strum_macros = { workspace = true }
 bitflags = "2.9.0"
 serde = { workspace = true , optional = true, features = ["derive"] }
 paste = "1.0.15"
+uuid = { version = "1.11.0", features = ["v4", "v7"], optional = true }
 
 [build-dependencies]
 chrono = { version = "0.4.38", default-features = false }

@@ -17,7 +17,7 @@ use std::{
 };
 
 use crate::fast_lock::SpinLock;
-use crate::io::{File, SyncCompletion, IO};
+use crate::io::{CompletionType, File, SyncCompletion, IO};
 use crate::result::LimboResult;
 use crate::storage::sqlite3_ondisk::{
     begin_read_wal_frame, begin_write_wal_frame, finish_read_page, WAL_FRAME_HEADER_SIZE,
@@ -223,6 +223,10 @@ pub trait Wal {
     ) -> Result<Arc<Completion>>;
 
     /// Write a frame to the WAL.
+    /// db_size is the database size in pages after the transaction finishes.
+    /// db_size > 0    -> last frame written in transaction
+    /// db_size == 0   -> non-last frame written in transaction
+    /// write_counter is the counter we use to track when the I/O operation starts and completes
     fn append_frame(
         &mut self,
         page: PageRef,
@@ -872,15 +876,14 @@ impl Wal for WalFile {
                 tracing::debug!("wal_sync");
                 let syncing = self.syncing.clone();
                 self.syncing.set(true);
-                let completion = Completion::Sync(SyncCompletion {
+                let completion = Completion::new(CompletionType::Sync(SyncCompletion {
                     complete: Box::new(move |_| {
                         tracing::debug!("wal_sync finish");
                         syncing.set(false);
                     }),
-                    is_completed: Cell::new(false),
-                });
+                }));
                 let shared = self.get_shared();
-                shared.file.sync(Arc::new(completion))?;
+                shared.file.sync(completion)?;
                 self.sync_state.set(SyncState::Syncing);
                 Ok(WalFsyncStatus::IO)
             }

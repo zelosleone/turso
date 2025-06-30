@@ -20,8 +20,8 @@ use crate::LimboError;
 use crate::SymbolTable;
 use crate::{bail_parse_error, Result};
 
-use limbo_ext::VTabKind;
-use limbo_sqlite3_parser::ast::{fmt::ToTokens, CreateVirtualTable};
+use turso_ext::VTabKind;
+use turso_sqlite3_parser::ast::{fmt::ToTokens, CreateVirtualTable};
 
 pub fn translate_create_table(
     query_mode: QueryMode,
@@ -341,7 +341,7 @@ fn check_automatic_pk_index_required(
                         let col_names = unique_columns
                             .iter()
                             .map(|column| match &column.expr {
-                                limbo_sqlite3_parser::ast::Expr::Id(id) => {
+                                turso_sqlite3_parser::ast::Expr::Id(id) => {
                                     if !columns.iter().any(|(k, _)| k.0 == id.0) {
                                         bail_parse_error!("No such column: {}", id.0);
                                     }
@@ -483,7 +483,7 @@ fn create_vtable_body_to_str(vtab: &CreateVirtualTable, module: Rc<VTabImpl>) ->
         .as_ref()
         .unwrap_or(&vec![])
         .iter()
-        .map(|a| limbo_ext::Value::from_text(a.to_string()))
+        .map(|a| turso_ext::Value::from_text(a.to_string()))
         .collect::<Vec<_>>();
     let schema = module
         .implementation
@@ -719,10 +719,10 @@ pub fn translate_drop_table(
         });
 
         //  3. TODO: Open an ephemeral table, and read over triggers from schema table into ephemeral table
-        //  Requires support via https://github.com/tursodatabase/limbo/pull/768
+        //  Requires support via https://github.com/tursodatabase/turso/pull/768
 
         //  4. TODO: Open a write cursor to the schema table and re-insert all triggers into the sqlite schema table from the ephemeral table and delete old trigger
-        //  Requires support via https://github.com/tursodatabase/limbo/pull/768
+        //  Requires support via https://github.com/tursodatabase/turso/pull/768
     }
 
     //  3. Destroy the table structure
@@ -738,7 +738,7 @@ pub fn translate_drop_table(
             // From what I see, TableValuedFunction is not stored in the schema as a table.
             // But this line here below is a safeguard in case this behavior changes in the future
             // And mirrors what SQLite does.
-            if matches!(vtab.kind, limbo_ext::VTabKind::TableValuedFunction) {
+            if matches!(vtab.kind, turso_ext::VTabKind::TableValuedFunction) {
                 return Err(crate::LimboError::ParseError(format!(
                     "table {} may not be dropped",
                     vtab.name

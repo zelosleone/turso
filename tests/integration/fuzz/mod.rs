@@ -25,7 +25,7 @@ mod tests {
         (rng, seed)
     }
 
-    /// [See this issue for more info](https://github.com/tursodatabase/limbo/issues/1763)
+    /// [See this issue for more info](https://github.com/tursodatabase/turso/issues/1763)
     #[test]
     pub fn fuzz_failure_issue_1763() {
         let db = TempDatabase::new_empty(false);
@@ -584,7 +584,7 @@ mod tests {
                 ));
             }
 
-            const COMPOUND_OPERATORS: [&str; 2] = [" UNION ALL ", " UNION "];
+            const COMPOUND_OPERATORS: [&str; 3] = [" UNION ALL ", " UNION ", " INTERSECT "];
 
             let mut query = String::new();
             for (i, select_statement) in select_statements.iter().enumerate() {

@@ -1,6 +1,6 @@
 use std::rc::Rc;
 
-use limbo_sqlite3_parser::ast::{self, SortOrder};
+use turso_sqlite3_parser::ast::{self, SortOrder};
 
 use crate::{
     schema::{Column, PseudoTable},

@@ -2,8 +2,8 @@
 #![feature(test)]
 extern crate test;
 
-use limbo_sqlite3_parser::dialect::keyword_token;
 use test::Bencher;
+use turso_sqlite3_parser::dialect::keyword_token;
 
 static VALUES: [&[u8]; 136] = [
     b"ABORT",

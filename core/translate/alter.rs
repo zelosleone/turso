@@ -1,5 +1,5 @@
 use fallible_iterator::FallibleIterator as _;
-use limbo_sqlite3_parser::{ast, lexer::sql::Parser};
+use turso_sqlite3_parser::{ast, lexer::sql::Parser};
 
 use crate::{
     function::{AlterTableFunc, Func},

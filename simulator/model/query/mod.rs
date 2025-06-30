@@ -5,9 +5,9 @@ pub(crate) use create_index::CreateIndex;
 pub(crate) use delete::Delete;
 pub(crate) use drop::Drop;
 pub(crate) use insert::Insert;
-use limbo_sqlite3_parser::to_sql_string::ToSqlContext;
 pub(crate) use select::Select;
 use serde::{Deserialize, Serialize};
+use turso_sqlite3_parser::to_sql_string::ToSqlContext;
 use update::Update;
 
 use crate::{model::table::SimValue, runner::env::SimulatorEnv};
@@ -94,13 +94,13 @@ struct EmptyContext;
 impl ToSqlContext for EmptyContext {
     fn get_column_name(
         &self,
-        _table_id: limbo_sqlite3_parser::ast::TableInternalId,
+        _table_id: turso_sqlite3_parser::ast::TableInternalId,
         _col_idx: usize,
     ) -> &str {
         unreachable!()
     }
 
-    fn get_table_name(&self, _id: limbo_sqlite3_parser::ast::TableInternalId) -> &str {
+    fn get_table_name(&self, _id: turso_sqlite3_parser::ast::TableInternalId) -> &str {
         unreachable!()
     }
 }

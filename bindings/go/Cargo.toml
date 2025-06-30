@@ -14,11 +14,11 @@ path = "rs_src/lib.rs"
 
 [features]
 default = ["io_uring"]
-io_uring = ["limbo_core/io_uring"]
+io_uring = ["turso_core/io_uring"]
 
 
 [dependencies]
-limbo_core = { workspace = true }
+turso_core = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-limbo_core = { workspace = true, features = ["io_uring"] }
+turso_core = { workspace = true, features = ["io_uring"] }

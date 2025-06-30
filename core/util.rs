@@ -5,10 +5,10 @@ use crate::{
     types::{Value, ValueType},
     LimboError, OpenFlags, Result, Statement, StepResult, SymbolTable, IO,
 };
-use limbo_sqlite3_parser::ast::{
+use std::{rc::Rc, sync::Arc};
+use turso_sqlite3_parser::ast::{
     self, CreateTableBody, Expr, FunctionTail, Literal, UnaryOperator,
 };
-use std::{rc::Rc, sync::Arc};
 
 pub trait RoundToPrecision {
     fn round_to_precision(self, precision: i32) -> f64;
@@ -207,7 +207,7 @@ fn module_name_from_sql(sql: &str) -> Result<&str> {
 
 // CREATE VIRTUAL TABLE table_name USING module_name(arg1, arg2, ...);
 // CREATE VIRTUAL TABLE table_name USING module_name;
-fn module_args_from_sql(sql: &str) -> Result<Vec<limbo_ext::Value>> {
+fn module_args_from_sql(sql: &str) -> Result<Vec<turso_ext::Value>> {
     if !sql.contains('(') {
         return Ok(vec![]);
     }
@@ -233,7 +233,7 @@ fn module_args_from_sql(sql: &str) -> Result<Vec<limbo_ext::Value>> {
                         chars.next();
                     } else {
                         in_quotes = false;
-                        args.push(limbo_ext::Value::from_text(current_arg.trim().to_string()));
+                        args.push(turso_ext::Value::from_text(current_arg.trim().to_string()));
                         current_arg.clear();
                         // Skip until comma or end
                         while let Some(&nc) = chars.peek() {
@@ -256,7 +256,7 @@ fn module_args_from_sql(sql: &str) -> Result<Vec<limbo_ext::Value>> {
             ',' => {
                 if !in_quotes {
                     if !current_arg.trim().is_empty() {
-                        args.push(limbo_ext::Value::from_text(current_arg.trim().to_string()));
+                        args.push(turso_ext::Value::from_text(current_arg.trim().to_string()));
                         current_arg.clear();
                     }
                 } else {
@@ -270,7 +270,7 @@ fn module_args_from_sql(sql: &str) -> Result<Vec<limbo_ext::Value>> {
     }
 
     if !current_arg.trim().is_empty() && !in_quotes {
-        args.push(limbo_ext::Value::from_text(current_arg.trim().to_string()));
+        args.push(turso_ext::Value::from_text(current_arg.trim().to_string()));
     }
 
     if in_quotes {
@@ -529,7 +529,7 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
                         .constraints
                         .iter()
                         .find_map(|c| match &c.constraint {
-                            limbo_sqlite3_parser::ast::ColumnConstraint::Default(val) => {
+                            turso_sqlite3_parser::ast::ColumnConstraint::Default(val) => {
                                 Some(val.clone())
                             }
                             _ => None,
@@ -537,7 +537,7 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
                     notnull: column_def.constraints.iter().any(|c| {
                         matches!(
                             c.constraint,
-                            limbo_sqlite3_parser::ast::ColumnConstraint::NotNull { .. }
+                            turso_sqlite3_parser::ast::ColumnConstraint::NotNull { .. }
                         )
                     }),
                     ty_str: column_def
@@ -548,14 +548,14 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
                     primary_key: column_def.constraints.iter().any(|c| {
                         matches!(
                             c.constraint,
-                            limbo_sqlite3_parser::ast::ColumnConstraint::PrimaryKey { .. }
+                            turso_sqlite3_parser::ast::ColumnConstraint::PrimaryKey { .. }
                         )
                     }),
                     is_rowid_alias: false,
                     unique: column_def.constraints.iter().any(|c| {
                         matches!(
                             c.constraint,
-                            limbo_sqlite3_parser::ast::ColumnConstraint::Unique(..)
+                            turso_sqlite3_parser::ast::ColumnConstraint::Unique(..)
                         )
                     }),
                     collation: column_def
@@ -567,7 +567,7 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
                             // But in the future, when a user defines a collation sequence, creates a table with it,
                             // then closes the db and opens it again. This may panic here if the collation seq is not registered
                             // before reading the columns
-                            limbo_sqlite3_parser::ast::ColumnConstraint::Collate {
+                            turso_sqlite3_parser::ast::ColumnConstraint::Collate {
                                 collation_name,
                             } => Some(CollationSeq::new(collation_name.0.as_str()).expect(
                                 "collation should have been set correctly in create table",
@@ -670,6 +670,7 @@ impl OpenMode {
             ))),
         }
     }
+    #[allow(dead_code)]
     pub fn get_flags(&self) -> OpenFlags {
         match self {
             OpenMode::ReadWriteCreate => OpenFlags::Create,
@@ -705,6 +706,7 @@ fn normalize_windows_path(path: &str) -> String {
 }
 
 /// Parses a SQLite URI, handling Windows and Unix paths separately.
+#[allow(dead_code)]
 pub fn parse_sqlite_uri(uri: &str) -> Result<OpenOptions> {
     if !uri.starts_with("file:") {
         return Ok(OpenOptions {
@@ -1032,29 +1034,29 @@ pub fn parse_signed_number(expr: &Expr) -> Result<Value> {
 }
 
 // for TVF's we need these at planning time so we cannot emit translate_expr
-pub fn vtable_args(args: &[ast::Expr]) -> Vec<limbo_ext::Value> {
+pub fn vtable_args(args: &[ast::Expr]) -> Vec<turso_ext::Value> {
     let mut vtable_args = Vec::new();
     for arg in args {
         match arg {
             Expr::Literal(lit) => match lit {
                 Literal::Numeric(i) => {
                     if i.contains('.') {
-                        vtable_args.push(limbo_ext::Value::from_float(i.parse().unwrap()));
+                        vtable_args.push(turso_ext::Value::from_float(i.parse().unwrap()));
                     } else {
-                        vtable_args.push(limbo_ext::Value::from_integer(i.parse().unwrap()));
+                        vtable_args.push(turso_ext::Value::from_integer(i.parse().unwrap()));
                     }
                 }
                 Literal::String(s) => {
-                    vtable_args.push(limbo_ext::Value::from_text(s.clone()));
+                    vtable_args.push(turso_ext::Value::from_text(s.clone()));
                 }
                 Literal::Blob(b) => {
-                    vtable_args.push(limbo_ext::Value::from_blob(b.as_bytes().into()));
+                    vtable_args.push(turso_ext::Value::from_blob(b.as_bytes().into()));
                 }
                 _ => {
-                    vtable_args.push(limbo_ext::Value::null());
+                    vtable_args.push(turso_ext::Value::null());
                 }
             },
-            _ => vtable_args.push(limbo_ext::Value::null()),
+            _ => vtable_args.push(turso_ext::Value::null()),
         }
     }
     vtable_args
@@ -1063,7 +1065,7 @@ pub fn vtable_args(args: &[ast::Expr]) -> Vec<limbo_ext::Value> {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use limbo_sqlite3_parser::ast::{self, Expr, Id, Literal, Operator::*, Type};
+    use turso_sqlite3_parser::ast::{self, Expr, Id, Literal, Operator::*, Type};
 
     #[test]
     fn test_normalize_ident() {

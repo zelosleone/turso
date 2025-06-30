@@ -5,7 +5,6 @@ use antithesis_sdk::random::{get_random, AntithesisRng};
 use antithesis_sdk::*;
 use clap::Parser;
 use core::panic;
-use limbo::Builder;
 use opts::Opts;
 use std::collections::HashSet;
 use std::fs::File;
@@ -16,6 +15,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
+use turso::Builder;
 
 pub struct Plan {
     pub ddl_statements: Vec<String>,
@@ -349,11 +349,7 @@ fn generate_plan(opts: &Opts) -> Result<Plan, Box<dyn std::error::Error + Send +
             }
             queries.push(sql);
             if tx.is_some() {
-                if get_random() % 2 == 0 {
-                    queries.push("COMMIT".to_string());
-                } else {
-                    queries.push("ROLLBACK".to_string());
-                }
+                queries.push("COMMIT".to_string());
             }
         }
         plan.queries_per_thread.push(queries);
@@ -427,7 +423,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let opts = Opts::parse();
     if opts.nr_threads > 1 {
-        println!("ERROR: Multi-threaded data access is not yet supported: https://github.com/tursodatabase/limbo/issues/1552");
+        println!("ERROR: Multi-threaded data access is not yet supported: https://github.com/tursodatabase/turso/issues/1552");
         return Ok(());
     }
 
@@ -462,7 +458,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             }
             if let Err(e) = conn.execute(stmt, ()).await {
                 match e {
-                    limbo::Error::SqlExecutionFailure(e) => {
+                    turso::Error::SqlExecutionFailure(e) => {
                         if e.contains("Corrupt database") {
                             panic!("Error creating table: {}", e);
                         } else {
@@ -482,12 +478,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             println!("\rExecuting queries...");
             for query_index in 0..nr_iterations {
                 if gen_bool(0.001) {
+                    if opts.verbose {
+                        println!("Reopening database");
+                    }
                     // Reopen the database
                     let mut db_guard = db.lock().await;
                     *db_guard = Builder::new_local(&db_file).build().await?;
                     conn = db_guard.connect()?;
                 } else if gen_bool(0.01) {
                     // Reconnect to the database
+                    if opts.verbose {
+                        println!("Reconnecting to database");
+                    }
                     let db_guard = db.lock().await;
                     conn = db_guard.connect()?;
                 }
@@ -505,7 +507,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
                 if let Err(e) = conn.execute(sql, ()).await {
                     match e {
-                        limbo::Error::SqlExecutionFailure(e) => {
+                        turso::Error::SqlExecutionFailure(e) => {
                             if e.contains("Corrupt database") {
                                 panic!("Error executing query: {}", e);
                             } else if e.contains("UNIQUE constraint failed") {

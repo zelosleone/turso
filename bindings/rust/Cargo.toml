@@ -1,16 +1,21 @@
-# Copyright 2025 the Limbo authors. All rights reserved. MIT license.
+# Copyright 2025 the Turso authors. All rights reserved. MIT license.
 
 [package]
-name = "limbo"
+name = "turso"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Limbo Rust API"
+description = "Turso Rust API"
+
+[features]
+default = []
+experimental_indexes = []
+antithesis = ["turso_core/antithesis"]
 
 [dependencies]
-limbo_core = { workspace = true, features = ["io_uring"] }
+turso_core = { workspace = true, features = ["io_uring"] }
 thiserror = "2.0.9"
 
 [dev-dependencies]

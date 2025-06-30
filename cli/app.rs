@@ -10,12 +10,9 @@ use crate::{
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
     HISTORY_FILE,
 };
-use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table};
-use limbo_core::{Database, LimboError, Statement, StepResult, Value};
-use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-
+use anyhow::anyhow;
 use clap::Parser;
+use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table};
 use rustyline::{error::ReadlineError, history::DefaultHistory, Editor};
 use std::{
     fmt,
@@ -27,9 +24,12 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use turso_core::{Database, LimboError, Statement, StepResult, Value};
 
 #[derive(Parser)]
-#[command(name = "limbo")]
+#[command(name = "Turso")]
 #[command(author, version, about, long_about = None)]
 pub struct Opts {
     #[clap(index = 1, help = "SQLite database file", default_value = ":memory:")]
@@ -63,13 +63,13 @@ pub struct Opts {
     pub tracing_output: Option<String>,
 }
 
-const PROMPT: &str = "limbo> ";
+const PROMPT: &str = "turso> ";
 
 pub struct Limbo {
     pub prompt: String,
-    io: Arc<dyn limbo_core::IO>,
+    io: Arc<dyn turso_core::IO>,
     writer: Box<dyn Write>,
-    conn: Arc<limbo_core::Connection>,
+    conn: Arc<turso_core::Connection>,
     pub interrupt_count: Arc<AtomicUsize>,
     input_buff: String,
     opts: Settings,
@@ -140,6 +140,12 @@ impl Limbo {
             )
         };
         let conn = db.connect()?;
+        let mut ext_api = conn.build_turso_ext();
+        if unsafe { !limbo_completion::register_extension_static(&mut ext_api).is_ok() } {
+            return Err(anyhow!(
+                "Failed to register completion extension".to_string()
+            ));
+        }
         let interrupt_count = Arc::new(AtomicUsize::new(0));
         {
             let interrupt_count: Arc<AtomicUsize> = Arc::clone(&interrupt_count);
@@ -187,8 +193,11 @@ impl Limbo {
             self.handle_first_input(&sql)?;
         }
         if !quiet {
-            self.write_fmt(format_args!("Limbo v{}", env!("CARGO_PKG_VERSION")))?;
+            self.write_fmt(format_args!("Turso v{}", env!("CARGO_PKG_VERSION")))?;
             self.writeln("Enter \".help\" for usage hints.")?;
+            self.writeln(
+                "This software is ALPHA, only use for development, testing, and experimentation.",
+            )?;
             self.display_in_memory()?;
         }
         Ok(())
@@ -219,7 +228,7 @@ impl Limbo {
 
     #[cfg(not(target_family = "wasm"))]
     fn handle_load_extension(&mut self, path: &str) -> Result<(), String> {
-        let ext_path = limbo_core::resolve_ext_path(path).map_err(|e| e.to_string())?;
+        let ext_path = turso_core::resolve_ext_path(path).map_err(|e| e.to_string())?;
         self.conn
             .load_extension(ext_path)
             .map_err(|e| e.to_string())
@@ -232,7 +241,7 @@ impl Limbo {
         query_internal!(
             self,
             query,
-            |row: &limbo_core::Row| -> Result<(), LimboError> {
+            |row: &turso_core::Row| -> Result<(), LimboError> {
                 let name: &str = row.get::<&str>(1)?;
                 cols.push(name.to_string());
                 let value_type: &str = row.get::<&str>(2)?;
@@ -248,7 +257,7 @@ impl Limbo {
         query_internal!(
             self,
             select,
-            |row: &limbo_core::Row| -> Result<(), LimboError> {
+            |row: &turso_core::Row| -> Result<(), LimboError> {
                 let values = row
                     .get_values()
                     .zip(value_types.iter())
@@ -299,7 +308,7 @@ impl Limbo {
         let res = query_internal!(
             self,
             query,
-            |row: &limbo_core::Row| -> Result<(), LimboError> {
+            |row: &turso_core::Row| -> Result<(), LimboError> {
                 let sql: &str = row.get::<&str>(2)?;
                 let name: &str = row.get::<&str>(0)?;
                 self.write_fmt(format_args!("{};", sql))?;

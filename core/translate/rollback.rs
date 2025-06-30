@@ -1,4 +1,4 @@
-use limbo_sqlite3_parser::ast::Name;
+use turso_sqlite3_parser::ast::Name;
 
 use crate::{
     schema::Schema,
@@ -10,6 +10,7 @@ use crate::{
     Result, SymbolTable,
 };
 
+#[allow(dead_code)]
 pub fn translate_rollback(
     _query_mode: QueryMode,
     _schema: &Schema,

@@ -1,4 +1,3 @@
-use limbo_core::{Connection, Database, PagerCacheflushStatus, IO};
 use rand::{rng, RngCore};
 use rusqlite::params;
 use std::path::{Path, PathBuf};
@@ -7,6 +6,7 @@ use tempfile::TempDir;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
+use turso_core::{Connection, Database, PagerCacheflushStatus, IO};
 
 #[allow(dead_code)]
 pub struct TempDatabase {
@@ -25,11 +25,11 @@ impl TempDatabase {
     pub fn new(db_name: &str, enable_indexes: bool) -> Self {
         let mut path = TempDir::new().unwrap().keep();
         path.push(db_name);
-        let io: Arc<dyn IO + Send> = Arc::new(limbo_core::PlatformIO::new().unwrap());
+        let io: Arc<dyn IO + Send> = Arc::new(turso_core::PlatformIO::new().unwrap());
         let db = Database::open_file_with_flags(
             io.clone(),
             path.to_str().unwrap(),
-            limbo_core::OpenFlags::default(),
+            turso_core::OpenFlags::default(),
             false,
             enable_indexes,
         )
@@ -40,17 +40,17 @@ impl TempDatabase {
     pub fn new_with_existent(db_path: &Path, enable_indexes: bool) -> Self {
         Self::new_with_existent_with_flags(
             db_path,
-            limbo_core::OpenFlags::default(),
+            turso_core::OpenFlags::default(),
             enable_indexes,
         )
     }
 
     pub fn new_with_existent_with_flags(
         db_path: &Path,
-        flags: limbo_core::OpenFlags,
+        flags: turso_core::OpenFlags,
         enable_indexes: bool,
     ) -> Self {
-        let io: Arc<dyn IO + Send> = Arc::new(limbo_core::PlatformIO::new().unwrap());
+        let io: Arc<dyn IO + Send> = Arc::new(turso_core::PlatformIO::new().unwrap());
         let db = Database::open_file_with_flags(
             io.clone(),
             db_path.to_str().unwrap(),
@@ -79,11 +79,11 @@ impl TempDatabase {
                 .unwrap();
             connection.execute(table_sql, ()).unwrap();
         }
-        let io: Arc<dyn limbo_core::IO> = Arc::new(limbo_core::PlatformIO::new().unwrap());
+        let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
         let db = Database::open_file_with_flags(
             io.clone(),
             path.to_str().unwrap(),
-            limbo_core::OpenFlags::default(),
+            turso_core::OpenFlags::default(),
             false,
             enable_indexes,
         )
@@ -92,7 +92,7 @@ impl TempDatabase {
         Self { path, io, db }
     }
 
-    pub fn connect_limbo(&self) -> Arc<limbo_core::Connection> {
+    pub fn connect_limbo(&self) -> Arc<turso_core::Connection> {
         log::debug!("conneting to limbo");
 
         let conn = self.db.connect().unwrap();
@@ -100,7 +100,7 @@ impl TempDatabase {
         conn
     }
 
-    pub fn limbo_database(&self, enable_indexes: bool) -> Arc<limbo_core::Database> {
+    pub fn limbo_database(&self, enable_indexes: bool) -> Arc<turso_core::Database> {
         log::debug!("conneting to limbo");
         Database::open_file(
             self.io.clone(),
@@ -184,7 +184,7 @@ pub(crate) fn sqlite_exec_rows(
 
 pub(crate) fn limbo_exec_rows(
     db: &TempDatabase,
-    conn: &Arc<limbo_core::Connection>,
+    conn: &Arc<turso_core::Connection>,
     query: &str,
 ) -> Vec<Vec<rusqlite::types::Value>> {
     let mut stmt = conn.prepare(query).unwrap();
@@ -193,26 +193,26 @@ pub(crate) fn limbo_exec_rows(
         let row = loop {
             let result = stmt.step().unwrap();
             match result {
-                limbo_core::StepResult::Row => {
+                turso_core::StepResult::Row => {
                     let row = stmt.row().unwrap();
                     break row;
                 }
-                limbo_core::StepResult::IO => {
+                turso_core::StepResult::IO => {
                     db.io.run_once().unwrap();
                     continue;
                 }
-                limbo_core::StepResult::Done => break 'outer,
+                turso_core::StepResult::Done => break 'outer,
                 r => panic!("unexpected result {:?}: expecting single row", r),
             }
         };
         let row = row
             .get_values()
             .map(|x| match x {
-                limbo_core::Value::Null => rusqlite::types::Value::Null,
-                limbo_core::Value::Integer(x) => rusqlite::types::Value::Integer(*x),
-                limbo_core::Value::Float(x) => rusqlite::types::Value::Real(*x),
-                limbo_core::Value::Text(x) => rusqlite::types::Value::Text(x.as_str().to_string()),
-                limbo_core::Value::Blob(x) => rusqlite::types::Value::Blob(x.to_vec()),
+                turso_core::Value::Null => rusqlite::types::Value::Null,
+                turso_core::Value::Integer(x) => rusqlite::types::Value::Integer(*x),
+                turso_core::Value::Float(x) => rusqlite::types::Value::Real(*x),
+                turso_core::Value::Text(x) => rusqlite::types::Value::Text(x.as_str().to_string()),
+                turso_core::Value::Blob(x) => rusqlite::types::Value::Blob(x.to_vec()),
             })
             .collect();
         rows.push(row);
@@ -222,18 +222,18 @@ pub(crate) fn limbo_exec_rows(
 
 pub(crate) fn limbo_exec_rows_error(
     db: &TempDatabase,
-    conn: &Arc<limbo_core::Connection>,
+    conn: &Arc<turso_core::Connection>,
     query: &str,
-) -> limbo_core::Result<()> {
+) -> turso_core::Result<()> {
     let mut stmt = conn.prepare(query)?;
     loop {
         let result = stmt.step()?;
         match result {
-            limbo_core::StepResult::IO => {
+            turso_core::StepResult::IO => {
                 db.io.run_once()?;
                 continue;
             }
-            limbo_core::StepResult::Done => return Ok(()),
+            turso_core::StepResult::Done => return Ok(()),
             r => panic!("unexpected result {:?}: expecting single row", r),
         }
     }
@@ -292,7 +292,7 @@ mod tests {
         {
             let db = TempDatabase::new_with_existent_with_flags(
                 &path,
-                limbo_core::OpenFlags::default(),
+                turso_core::OpenFlags::default(),
                 false,
             );
             let conn = db.connect_limbo();
@@ -305,7 +305,7 @@ mod tests {
         {
             let db = TempDatabase::new_with_existent_with_flags(
                 &path,
-                limbo_core::OpenFlags::default() | limbo_core::OpenFlags::ReadOnly,
+                turso_core::OpenFlags::default() | turso_core::OpenFlags::ReadOnly,
                 false,
             );
             let conn = db.connect_limbo();
@@ -313,7 +313,7 @@ mod tests {
             assert_eq!(ret, vec![vec![Value::Integer(1)]]);
 
             let err = limbo_exec_rows_error(&db, &conn, "INSERT INTO t values (1)").unwrap_err();
-            assert!(matches!(err, limbo_core::LimboError::ReadOnly), "{:?}", err);
+            assert!(matches!(err, turso_core::LimboError::ReadOnly), "{:?}", err);
         }
         Ok(())
     }

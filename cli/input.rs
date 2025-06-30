@@ -145,28 +145,28 @@ pub fn get_writer(output: &str) -> Box<dyn Write> {
     }
 }
 
-pub fn get_io(db_location: DbLocation, io_choice: &str) -> anyhow::Result<Arc<dyn limbo_core::IO>> {
+pub fn get_io(db_location: DbLocation, io_choice: &str) -> anyhow::Result<Arc<dyn turso_core::IO>> {
     Ok(match db_location {
-        DbLocation::Memory => Arc::new(limbo_core::MemoryIO::new()),
+        DbLocation::Memory => Arc::new(turso_core::MemoryIO::new()),
         DbLocation::Path => {
             match io_choice {
-                "memory" => Arc::new(limbo_core::MemoryIO::new()),
+                "memory" => Arc::new(turso_core::MemoryIO::new()),
                 "syscall" => {
                     // We are building for Linux/macOS and syscall backend has been selected
                     #[cfg(target_family = "unix")]
                     {
-                        Arc::new(limbo_core::UnixIO::new()?)
+                        Arc::new(turso_core::UnixIO::new()?)
                     }
                     // We are not building for Linux/macOS and syscall backend has been selected
                     #[cfg(not(target_family = "unix"))]
                     {
-                        Arc::new(limbo_core::PlatformIO::new()?)
+                        Arc::new(turso_core::PlatformIO::new()?)
                     }
                 }
                 // We are building for Linux and io_uring backend has been selected
                 #[cfg(all(target_os = "linux", feature = "io_uring"))]
-                "io_uring" => Arc::new(limbo_core::UringIO::new()?),
-                _ => Arc::new(limbo_core::PlatformIO::new()?),
+                "io_uring" => Arc::new(turso_core::UringIO::new()?),
+                _ => Arc::new(turso_core::PlatformIO::new()?),
             }
         }
     })

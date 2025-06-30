@@ -1,7 +1,7 @@
 use std::net::IpAddr;
 
 use ipnetwork::IpNetwork;
-use limbo_ext::{register_extension, scalar, ResultCode, Value};
+use turso_ext::{register_extension, scalar, ResultCode, Value};
 
 register_extension! {
     scalars: { ip_contains, ip_family, ip_host, ip_masklen, ip_network },

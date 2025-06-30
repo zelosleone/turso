@@ -6,10 +6,10 @@ use std::num::NonZeroUsize;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use limbo_core::{LimboError, StepResult};
 use napi::iterator::Generator;
 use napi::{bindgen_prelude::ObjectFinalize, Env, JsUnknown};
 use napi_derive::napi;
+use turso_core::{LimboError, StepResult};
 
 #[derive(Default)]
 #[napi(object)]
@@ -39,9 +39,9 @@ pub struct Database {
     pub open: bool,
     #[napi(writable = false)]
     pub name: String,
-    _db: Arc<limbo_core::Database>,
-    conn: Arc<limbo_core::Connection>,
-    io: Arc<dyn limbo_core::IO>,
+    _db: Arc<turso_core::Database>,
+    conn: Arc<turso_core::Connection>,
+    io: Arc<dyn turso_core::IO>,
 }
 
 impl ObjectFinalize for Database {
@@ -57,21 +57,21 @@ impl Database {
     #[napi(constructor)]
     pub fn new(path: String, options: Option<OpenDatabaseOptions>) -> napi::Result<Self> {
         let memory = path == ":memory:";
-        let io: Arc<dyn limbo_core::IO> = if memory {
-            Arc::new(limbo_core::MemoryIO::new())
+        let io: Arc<dyn turso_core::IO> = if memory {
+            Arc::new(turso_core::MemoryIO::new())
         } else {
-            Arc::new(limbo_core::PlatformIO::new().map_err(into_napi_error)?)
+            Arc::new(turso_core::PlatformIO::new().map_err(into_napi_error)?)
         };
         let opts = options.unwrap_or_default();
         let flag = if opts.readonly {
-            limbo_core::OpenFlags::ReadOnly
+            turso_core::OpenFlags::ReadOnly
         } else {
-            limbo_core::OpenFlags::Create
+            turso_core::OpenFlags::Create
         };
         let file = io.open_file(&path, flag, false).map_err(into_napi_error)?;
 
         let db_file = Arc::new(DatabaseFile::new(file));
-        let db = limbo_core::Database::open(io.clone(), &path, db_file, false, false)
+        let db = turso_core::Database::open(io.clone(), &path, db_file, false, false)
             .map_err(into_napi_error)?;
         let conn = db.connect().map_err(into_napi_error)?;
 
@@ -104,18 +104,27 @@ impl Database {
         match options {
             Some(PragmaOptions { simple: true, .. }) => {
                 let mut stmt = stmt.inner.borrow_mut();
-                match stmt.step().map_err(into_napi_error)? {
-                    limbo_core::StepResult::Row => {
-                        let row: Vec<_> = stmt.row().unwrap().get_values().cloned().collect();
-                        to_js_value(&env, &row[0])
+                loop {
+                    match stmt.step().map_err(into_napi_error)? {
+                        turso_core::StepResult::Row => {
+                            let row: Vec<_> = stmt.row().unwrap().get_values().cloned().collect();
+                            return to_js_value(&env, &row[0]);
+                        }
+                        turso_core::StepResult::Done => {
+                            return Ok(env.get_undefined()?.into_unknown())
+                        }
+                        turso_core::StepResult::IO => {
+                            self.io.run_once().map_err(into_napi_error)?;
+                            continue;
+                        }
+                        step @ turso_core::StepResult::Interrupt
+                        | step @ turso_core::StepResult::Busy => {
+                            return Err(napi::Error::new(
+                                napi::Status::GenericFailure,
+                                format!("{:?}", step),
+                            ))
+                        }
                     }
-                    limbo_core::StepResult::Done => Ok(env.get_undefined()?.into_unknown()),
-                    limbo_core::StepResult::IO => todo!(),
-                    step @ limbo_core::StepResult::Interrupt
-                    | step @ limbo_core::StepResult::Busy => Err(napi::Error::new(
-                        napi::Status::GenericFailure,
-                        format!("{:?}", step),
-                    )),
                 }
             }
             _ => stmt.run(env, None),
@@ -159,7 +168,7 @@ impl Database {
 
     #[napi]
     pub fn load_extension(&self, path: String) -> napi::Result<()> {
-        let ext_path = limbo_core::resolve_ext_path(path.as_str()).map_err(into_napi_error)?;
+        let ext_path = turso_core::resolve_ext_path(path.as_str()).map_err(into_napi_error)?;
         self.conn
             .load_extension(ext_path)
             .map_err(into_napi_error)?;
@@ -237,12 +246,12 @@ pub struct Statement {
     database: Database,
     presentation_mode: PresentationMode,
     binded: bool,
-    inner: Rc<RefCell<limbo_core::Statement>>,
+    inner: Rc<RefCell<turso_core::Statement>>,
 }
 
 #[napi]
 impl Statement {
-    pub fn new(inner: RefCell<limbo_core::Statement>, database: Database, source: String) -> Self {
+    pub fn new(inner: RefCell<turso_core::Statement>, database: Database, source: String) -> Self {
         Self {
             inner: Rc::new(inner),
             database,
@@ -256,51 +265,59 @@ impl Statement {
     pub fn get(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<JsUnknown> {
         let mut stmt = self.check_and_bind(args)?;
 
-        let step = stmt.step().map_err(into_napi_error)?;
-        match step {
-            limbo_core::StepResult::Row => {
-                let row = stmt.row().unwrap();
+        loop {
+            let step = stmt.step().map_err(into_napi_error)?;
+            match step {
+                turso_core::StepResult::Row => {
+                    let row = stmt.row().unwrap();
 
-                match self.presentation_mode {
-                    PresentationMode::Raw => {
-                        let mut raw_obj = env.create_array(row.len() as u32)?;
-                        for (idx, value) in row.get_values().enumerate() {
-                            let js_value = to_js_value(&env, value);
+                    match self.presentation_mode {
+                        PresentationMode::Raw => {
+                            let mut raw_obj = env.create_array(row.len() as u32)?;
+                            for (idx, value) in row.get_values().enumerate() {
+                                let js_value = to_js_value(&env, value);
 
-                            raw_obj.set(idx as u32, js_value)?;
+                                raw_obj.set(idx as u32, js_value)?;
+                            }
+
+                            return Ok(raw_obj.coerce_to_object()?.into_unknown());
                         }
+                        PresentationMode::Pluck => {
+                            let (_, value) =
+                                row.get_values().enumerate().next().ok_or(napi::Error::new(
+                                    napi::Status::GenericFailure,
+                                    "Pluck mode requires at least one column in the result",
+                                ))?;
+                            let js_value = to_js_value(&env, value)?;
 
-                        Ok(raw_obj.coerce_to_object()?.into_unknown())
-                    }
-                    PresentationMode::Pluck => {
-                        let (_, value) =
-                            row.get_values().enumerate().next().ok_or(napi::Error::new(
-                                napi::Status::GenericFailure,
-                                "Pluck mode requires at least one column in the result",
-                            ))?;
-                        let js_value = to_js_value(&env, value)?;
-
-                        Ok(js_value)
-                    }
-                    PresentationMode::None => {
-                        let mut obj = env.create_object()?;
-
-                        for (idx, value) in row.get_values().enumerate() {
-                            let key = stmt.get_column_name(idx);
-                            let js_value = to_js_value(&env, value);
-
-                            obj.set_named_property(&key, js_value)?;
+                            return Ok(js_value);
                         }
+                        PresentationMode::None => {
+                            let mut obj = env.create_object()?;
 
-                        Ok(obj.into_unknown())
+                            for (idx, value) in row.get_values().enumerate() {
+                                let key = stmt.get_column_name(idx);
+                                let js_value = to_js_value(&env, value);
+
+                                obj.set_named_property(&key, js_value)?;
+                            }
+
+                            return Ok(obj.into_unknown());
+                        }
                     }
                 }
+                turso_core::StepResult::Done => return Ok(env.get_undefined()?.into_unknown()),
+                turso_core::StepResult::IO => {
+                    self.database.io.run_once().map_err(into_napi_error)?;
+                    continue;
+                }
+                turso_core::StepResult::Interrupt | turso_core::StepResult::Busy => {
+                    return Err(napi::Error::new(
+                        napi::Status::GenericFailure,
+                        format!("{:?}", step),
+                    ))
+                }
             }
-            limbo_core::StepResult::Done => Ok(env.get_undefined()?.into_unknown()),
-            limbo_core::StepResult::IO => todo!(),
-            limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => Err(
-                napi::Error::new(napi::Status::GenericFailure, format!("{:?}", step)),
-            ),
         }
     }
 
@@ -337,13 +354,13 @@ impl Statement {
     fn internal_all(
         &self,
         env: Env,
-        mut stmt: RefMut<'_, limbo_core::Statement>,
+        mut stmt: RefMut<'_, turso_core::Statement>,
     ) -> napi::Result<JsUnknown> {
         let mut results = env.create_empty_array()?;
         let mut index = 0;
         loop {
             match stmt.step().map_err(into_napi_error)? {
-                limbo_core::StepResult::Row => {
+                turso_core::StepResult::Row => {
                     let row = stmt.row().unwrap();
 
                     match self.presentation_mode {
@@ -380,13 +397,13 @@ impl Statement {
                         }
                     }
                 }
-                limbo_core::StepResult::Done => {
+                turso_core::StepResult::Done => {
                     break;
                 }
-                limbo_core::StepResult::IO => {
+                turso_core::StepResult::IO => {
                     self.database.io.run_once().map_err(into_napi_error)?;
                 }
-                limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => {
+                turso_core::StepResult::Interrupt | turso_core::StepResult::Busy => {
                     return Err(napi::Error::new(
                         napi::Status::GenericFailure,
                         format!("{:?}", stmt.step()),
@@ -439,7 +456,7 @@ impl Statement {
     fn check_and_bind(
         &self,
         args: Option<Vec<JsUnknown>>,
-    ) -> napi::Result<RefMut<'_, limbo_core::Statement>> {
+    ) -> napi::Result<RefMut<'_, turso_core::Statement>> {
         let mut stmt = self.inner.borrow_mut();
         stmt.reset();
         if let Some(args) = args {
@@ -462,7 +479,7 @@ impl Statement {
 
 #[napi(iterator)]
 pub struct IteratorStatement {
-    stmt: Rc<RefCell<limbo_core::Statement>>,
+    stmt: Rc<RefCell<turso_core::Statement>>,
     database: Database,
     env: Env,
     presentation_mode: PresentationMode,
@@ -478,76 +495,78 @@ impl Generator for IteratorStatement {
     fn next(&mut self, _: Option<Self::Next>) -> Option<Self::Yield> {
         let mut stmt = self.stmt.borrow_mut();
 
-        match stmt.step().ok()? {
-            limbo_core::StepResult::Row => {
-                let row = stmt.row().unwrap();
+        loop {
+            match stmt.step().ok()? {
+                turso_core::StepResult::Row => {
+                    let row = stmt.row().unwrap();
 
-                match self.presentation_mode {
-                    PresentationMode::Raw => {
-                        let mut raw_array = self.env.create_array(row.len() as u32).ok()?;
-                        for (idx, value) in row.get_values().enumerate() {
-                            let js_value = to_js_value(&self.env, value);
-                            raw_array.set(idx as u32, js_value).ok()?;
+                    match self.presentation_mode {
+                        PresentationMode::Raw => {
+                            let mut raw_array = self.env.create_array(row.len() as u32).ok()?;
+                            for (idx, value) in row.get_values().enumerate() {
+                                let js_value = to_js_value(&self.env, value);
+                                raw_array.set(idx as u32, js_value).ok()?;
+                            }
+
+                            return Some(raw_array.coerce_to_object().ok()?.into_unknown());
                         }
-
-                        Some(raw_array.coerce_to_object().ok()?.into_unknown())
-                    }
-                    PresentationMode::Pluck => {
-                        let (_, value) = row.get_values().enumerate().next()?;
-                        to_js_value(&self.env, value).ok()
-                    }
-                    PresentationMode::None => {
-                        let mut js_row = self.env.create_object().ok()?;
-                        for (idx, value) in row.get_values().enumerate() {
-                            let key = stmt.get_column_name(idx);
-                            let js_value = to_js_value(&self.env, value);
-                            js_row.set_named_property(&key, js_value).ok()?;
+                        PresentationMode::Pluck => {
+                            let (_, value) = row.get_values().enumerate().next()?;
+                            return to_js_value(&self.env, value).ok();
                         }
+                        PresentationMode::None => {
+                            let mut js_row = self.env.create_object().ok()?;
+                            for (idx, value) in row.get_values().enumerate() {
+                                let key = stmt.get_column_name(idx);
+                                let js_value = to_js_value(&self.env, value);
+                                js_row.set_named_property(&key, js_value).ok()?;
+                            }
 
-                        Some(js_row.into_unknown())
+                            return Some(js_row.into_unknown());
+                        }
                     }
                 }
+                turso_core::StepResult::Done => return None,
+                turso_core::StepResult::IO => {
+                    self.database.io.run_once().ok()?;
+                    continue;
+                }
+                turso_core::StepResult::Interrupt | turso_core::StepResult::Busy => return None,
             }
-            limbo_core::StepResult::Done => None,
-            limbo_core::StepResult::IO => {
-                self.database.io.run_once().ok()?;
-                None // clearly it's incorrect, it should return to user
-            }
-            limbo_core::StepResult::Interrupt | limbo_core::StepResult::Busy => None,
         }
     }
 }
 
-fn to_js_value(env: &napi::Env, value: &limbo_core::Value) -> napi::Result<JsUnknown> {
+fn to_js_value(env: &napi::Env, value: &turso_core::Value) -> napi::Result<JsUnknown> {
     match value {
-        limbo_core::Value::Null => Ok(env.get_null()?.into_unknown()),
-        limbo_core::Value::Integer(i) => Ok(env.create_int64(*i)?.into_unknown()),
-        limbo_core::Value::Float(f) => Ok(env.create_double(*f)?.into_unknown()),
-        limbo_core::Value::Text(s) => Ok(env.create_string(s.as_str())?.into_unknown()),
-        limbo_core::Value::Blob(b) => Ok(env.create_buffer_copy(b.as_slice())?.into_unknown()),
+        turso_core::Value::Null => Ok(env.get_null()?.into_unknown()),
+        turso_core::Value::Integer(i) => Ok(env.create_int64(*i)?.into_unknown()),
+        turso_core::Value::Float(f) => Ok(env.create_double(*f)?.into_unknown()),
+        turso_core::Value::Text(s) => Ok(env.create_string(s.as_str())?.into_unknown()),
+        turso_core::Value::Blob(b) => Ok(env.create_buffer_copy(b.as_slice())?.into_unknown()),
     }
 }
 
-fn from_js_value(value: JsUnknown) -> napi::Result<limbo_core::Value> {
+fn from_js_value(value: JsUnknown) -> napi::Result<turso_core::Value> {
     match value.get_type()? {
         napi::ValueType::Undefined | napi::ValueType::Null | napi::ValueType::Unknown => {
-            Ok(limbo_core::Value::Null)
+            Ok(turso_core::Value::Null)
         }
         napi::ValueType::Boolean => {
             let b = value.coerce_to_bool()?.get_value()?;
-            Ok(limbo_core::Value::Integer(b as i64))
+            Ok(turso_core::Value::Integer(b as i64))
         }
         napi::ValueType::Number => {
             let num = value.coerce_to_number()?.get_double()?;
             if num.fract() == 0.0 {
-                Ok(limbo_core::Value::Integer(num as i64))
+                Ok(turso_core::Value::Integer(num as i64))
             } else {
-                Ok(limbo_core::Value::Float(num))
+                Ok(turso_core::Value::Float(num))
             }
         }
         napi::ValueType::String => {
             let s = value.coerce_to_string()?;
-            Ok(limbo_core::Value::Text(s.into_utf8()?.as_str()?.into()))
+            Ok(turso_core::Value::Text(s.into_utf8()?.as_str()?.into()))
         }
         napi::ValueType::Symbol
         | napi::ValueType::Object
@@ -560,28 +579,28 @@ fn from_js_value(value: JsUnknown) -> napi::Result<limbo_core::Value> {
 }
 
 struct DatabaseFile {
-    file: Arc<dyn limbo_core::File>,
+    file: Arc<dyn turso_core::File>,
 }
 
 unsafe impl Send for DatabaseFile {}
 unsafe impl Sync for DatabaseFile {}
 
 impl DatabaseFile {
-    pub fn new(file: Arc<dyn limbo_core::File>) -> Self {
+    pub fn new(file: Arc<dyn turso_core::File>) -> Self {
         Self { file }
     }
 }
 
-impl limbo_core::DatabaseStorage for DatabaseFile {
-    fn read_page(&self, page_idx: usize, c: Arc<limbo_core::Completion>) -> limbo_core::Result<()> {
-        let r = match *c {
-            limbo_core::Completion::Read(ref r) => r,
+impl turso_core::DatabaseStorage for DatabaseFile {
+    fn read_page(&self, page_idx: usize, c: turso_core::Completion) -> turso_core::Result<()> {
+        let r = match c.completion_type {
+            turso_core::CompletionType::Read(ref r) => r,
             _ => unreachable!(),
         };
         let size = r.buf().len();
         assert!(page_idx > 0);
         if !(512..=65536).contains(&size) || size & (size - 1) != 0 {
-            return Err(limbo_core::LimboError::NotADB);
+            return Err(turso_core::LimboError::NotADB);
         }
         let pos = (page_idx - 1) * size;
         self.file.pread(pos, c)?;
@@ -591,20 +610,21 @@ impl limbo_core::DatabaseStorage for DatabaseFile {
     fn write_page(
         &self,
         page_idx: usize,
-        buffer: Arc<std::cell::RefCell<limbo_core::Buffer>>,
-        c: Arc<limbo_core::Completion>,
-    ) -> limbo_core::Result<()> {
+        buffer: Arc<std::cell::RefCell<turso_core::Buffer>>,
+        c: turso_core::Completion,
+    ) -> turso_core::Result<()> {
         let size = buffer.borrow().len();
         let pos = (page_idx - 1) * size;
         self.file.pwrite(pos, buffer, c)?;
         Ok(())
     }
 
-    fn sync(&self, c: Arc<limbo_core::Completion>) -> limbo_core::Result<()> {
-        self.file.sync(c)
+    fn sync(&self, c: turso_core::Completion) -> turso_core::Result<()> {
+        let _ = self.file.sync(c)?;
+        Ok(())
     }
 
-    fn size(&self) -> limbo_core::Result<u64> {
+    fn size(&self) -> turso_core::Result<u64> {
         self.file.size()
     }
 }

@@ -2,13 +2,13 @@
 
 ## Mobibench
 
-1. Clone the source repository of Mobibench fork for Limbo:
+1. Clone the source repository of Mobibench fork for Turso:
 
 ```console
 git clone git@github.com:penberg/Mobibench.git
 ```
 
-2. Change `LIBS` in `shell/Makefile` to point to your Limbo source repository.
+2. Change `LIBS` in `shell/Makefile` to point to your Turso source repository.
 
 3. Build Mobibench:
 
@@ -30,8 +30,8 @@ We have a modified version of the Clickbench benchmark script that can be run wi
 make clickbench
 ```
 
-This will build Limbo in release mode, create a database, and run the benchmarks with a small subset of the Clickbench dataset.
-It will run the queries for both Limbo and SQLite, and print the results.
+This will build Turso in release mode, create a database, and run the benchmarks with a small subset of the Clickbench dataset.
+It will run the queries for both Turso and SQLite, and print the results.
 
 
 

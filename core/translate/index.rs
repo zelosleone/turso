@@ -10,7 +10,7 @@ use crate::{
         insn::{IdxInsertFlags, Insn, RegisterOrLiteral},
     },
 };
-use limbo_sqlite3_parser::ast::{self, Expr, Id, SortOrder, SortedColumn};
+use turso_sqlite3_parser::ast::{self, Expr, Id, SortOrder, SortedColumn};
 
 use super::schema::{emit_schema_entry, SchemaEntryType, SQLITE_TABLEID};
 
