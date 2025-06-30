@@ -19,10 +19,11 @@ impl Clone for Rows {
 unsafe impl Send for Rows {}
 unsafe impl Sync for Rows {}
 
+#[cfg(not(feature = "futures"))]
 impl Rows {
-    #[cfg(not(feature = "futures"))]
     /// Fetch the next row of this result set.
-    pub async fn next(&mut self) -> Result<Option<Row>> {
+    pub async fn next(&mut self) -> crate::Result<Option<Row>> {
+        use crate::Error;
         loop {
             let mut stmt = self
                 .inner
@@ -139,4 +140,11 @@ impl<'a> FromIterator<&'a turso_core::Value> for Row {
 
         Row { values }
     }
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[tokio::test]
+    async fn test_row() {}
 }

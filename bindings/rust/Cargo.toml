@@ -10,7 +10,7 @@ repository.workspace = true
 description = "Turso Rust API"
 
 [features]
-default = []
+default = ["futures"]
 experimental_indexes = []
 antithesis = ["turso_core/antithesis"]
 futures = ["dep:futures-util"]

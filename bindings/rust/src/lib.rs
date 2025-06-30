@@ -37,9 +37,10 @@ pub mod row;
 pub mod statement;
 pub mod value;
 
-pub use value::Value;
-
+#[cfg(feature = "futures")]
+pub use futures_util;
 pub use params::params_from_iter;
+pub use value::Value;
 
 use crate::params::*;
 use crate::row::{Row, Rows};
@@ -65,7 +66,7 @@ impl From<turso_core::LimboError> for Error {
 
 pub(crate) type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
-pub(crate) type Result<T> = std::result::Result<T, Error>;
+pub(crate) type Result<T, E = Error> = std::result::Result<T, E>;
 
 /// A builder for `Database`.
 pub struct Builder {
