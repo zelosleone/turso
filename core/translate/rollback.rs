@@ -10,6 +10,7 @@ use crate::{
     Result, SymbolTable,
 };
 
+#[allow(dead_code)]
 pub fn translate_rollback(
     _query_mode: QueryMode,
     _schema: &Schema,
