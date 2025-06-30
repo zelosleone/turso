@@ -989,7 +989,6 @@ impl JoinedTable {
                 let index_cursor_id = None;
                 Ok((table_cursor_id, index_cursor_id))
             }
-            Table::Pseudo(_) => Ok((None, None)),
             Table::FromClauseSubquery(..) => Ok((None, None)),
         }
     }

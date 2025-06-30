@@ -539,7 +539,7 @@ pub fn insn_to_str(
                         let name = &index.columns.get(*column).unwrap().name;
                         Some(name)
                     }
-                    CursorType::Pseudo(pseudo_table) => None,
+                    CursorType::Pseudo(_) => None,
                     CursorType::Sorter => None,
                     CursorType::VirtualTable(v) => v.columns.get(*column).unwrap().name.as_ref(),
                 };

@@ -136,7 +136,6 @@ impl Schema {
 #[derive(Clone, Debug)]
 pub enum Table {
     BTree(Rc<BTreeTable>),
-    Pseudo(Rc<PseudoTable>),
     Virtual(Rc<VirtualTable>),
     FromClauseSubquery(FromClauseSubquery),
 }
@@ -145,7 +144,6 @@ impl Table {
     pub fn get_root_page(&self) -> usize {
         match self {
             Table::BTree(table) => table.root_page,
-            Table::Pseudo(_) => unimplemented!(),
             Table::Virtual(_) => unimplemented!(),
             Table::FromClauseSubquery(_) => unimplemented!(),
         }
@@ -154,7 +152,6 @@ impl Table {
     pub fn get_name(&self) -> &str {
         match self {
             Self::BTree(table) => &table.name,
-            Self::Pseudo(_) => "",
             Self::Virtual(table) => &table.name,
             Self::FromClauseSubquery(from_clause_subquery) => &from_clause_subquery.name,
         }
@@ -163,7 +160,6 @@ impl Table {
     pub fn get_column_at(&self, index: usize) -> Option<&Column> {
         match self {
             Self::BTree(table) => table.columns.get(index),
-            Self::Pseudo(table) => unimplemented!(),
             Self::Virtual(table) => table.columns.get(index),
             Self::FromClauseSubquery(from_clause_subquery) => {
                 from_clause_subquery.columns.get(index)
@@ -174,7 +170,6 @@ impl Table {
     pub fn columns(&self) -> &Vec<Column> {
         match self {
             Self::BTree(table) => &table.columns,
-            Self::Pseudo(table) => unimplemented!(),
             Self::Virtual(table) => &table.columns,
             Self::FromClauseSubquery(from_clause_subquery) => &from_clause_subquery.columns,
         }
@@ -183,7 +178,6 @@ impl Table {
     pub fn btree(&self) -> Option<Rc<BTreeTable>> {
         match self {
             Self::BTree(table) => Some(table.clone()),
-            Self::Pseudo(_) => None,
             Self::Virtual(_) => None,
             Self::FromClauseSubquery(_) => None,
         }
@@ -201,7 +195,6 @@ impl PartialEq for Table {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::BTree(a), Self::BTree(b)) => Rc::ptr_eq(a, b),
-            (Self::Pseudo(a), Self::Pseudo(b)) => Rc::ptr_eq(a, b),
             (Self::Virtual(a), Self::Virtual(b)) => Rc::ptr_eq(a, b),
             _ => false,
         }
@@ -291,12 +284,12 @@ impl BTreeTable {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct PseudoTable {
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PseudoCursorType {
     pub column_count: usize,
 }
 
-impl PseudoTable {
+impl PseudoCursorType {
     pub fn new() -> Self {
         Self { column_count: 0 }
     }
@@ -557,8 +550,8 @@ fn create_table(
     })
 }
 
-pub fn _build_pseudo_table(columns: &[ResultColumn]) -> PseudoTable {
-    let table = PseudoTable::new();
+pub fn _build_pseudo_table(columns: &[ResultColumn]) -> PseudoCursorType {
+    let table = PseudoCursorType::new();
     for column in columns {
         match column {
             ResultColumn::Expr(expr, _as_name) => {

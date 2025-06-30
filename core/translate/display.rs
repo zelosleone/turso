@@ -321,7 +321,7 @@ impl ToSqlString for JoinedTable {
     ) -> String {
         let table_or_subquery =
             match &self.table {
-                Table::BTree(..) | Table::Pseudo(..) | Table::Virtual(..) => {
+                Table::BTree(..) | Table::Virtual(..) => {
                     self.table.get_name().to_string()
                 }
                 Table::FromClauseSubquery(from_clause_subquery) => {

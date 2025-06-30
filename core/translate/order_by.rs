@@ -1,9 +1,7 @@
-use std::rc::Rc;
-
 use turso_sqlite3_parser::ast::{self, SortOrder};
 
 use crate::{
-    schema::PseudoTable,
+    schema::PseudoCursorType,
     translate::collate::CollationSeq,
     util::exprs_are_equivalent,
     vdbe::{
@@ -95,10 +93,9 @@ pub fn emit_order_by(
             .map(|v| v.len())
             .unwrap_or(0);
 
-    let pseudo_table = Rc::new(PseudoTable {
+    let pseudo_cursor = program.alloc_cursor_id(CursorType::Pseudo(PseudoCursorType {
         column_count: sorter_column_count,
-    });
-    let pseudo_cursor = program.alloc_cursor_id(CursorType::Pseudo(pseudo_table.clone()));
+    }));
     let SortMetadata {
         sort_cursor,
         reg_sorter_data,

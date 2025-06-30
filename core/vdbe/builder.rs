@@ -6,7 +6,7 @@ use turso_sqlite3_parser::ast::{self, TableInternalId};
 use crate::{
     numeric::Numeric,
     parameters::Parameters,
-    schema::{BTreeTable, Index, PseudoTable, Table},
+    schema::{BTreeTable, Index, PseudoCursorType, Table},
     translate::{
         collate::CollationSeq,
         emitter::TransactionMode,
@@ -116,7 +116,7 @@ pub struct ProgramBuilder {
 pub enum CursorType {
     BTreeTable(Rc<BTreeTable>),
     BTreeIndex(Arc<Index>),
-    Pseudo(Rc<PseudoTable>),
+    Pseudo(PseudoCursorType),
     Sorter,
     VirtualTable(Rc<VirtualTable>),
 }

@@ -1,12 +1,10 @@
-use std::rc::Rc;
-
 use turso_sqlite3_parser::ast;
 
 use crate::translate::expr::{walk_expr, WalkControl};
 use crate::translate::plan::ResultSetColumn;
 use crate::{
     function::AggFunc,
-    schema::PseudoTable,
+    schema::PseudoCursorType,
     translate::collate::CollationSeq,
     util::exprs_are_equivalent,
     vdbe::{
@@ -306,11 +304,9 @@ pub fn group_by_create_pseudo_table(
 ) -> usize {
     // Create a pseudo-table to read one row at a time from the sorter
     // This allows us to use standard table access operations on the sorted data
-    let pseudo_table = Rc::new(PseudoTable {
+    program.alloc_cursor_id(CursorType::Pseudo(PseudoCursorType {
         column_count: sorter_column_count,
-    });
-
-    program.alloc_cursor_id(CursorType::Pseudo(pseudo_table.clone()))
+    }))
 }
 
 /// In case sorting is needed for GROUP BY, sorts the rows in the GROUP BY sorter
