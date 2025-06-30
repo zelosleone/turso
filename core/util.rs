@@ -670,6 +670,7 @@ impl OpenMode {
             ))),
         }
     }
+    #[allow(dead_code)]
     pub fn get_flags(&self) -> OpenFlags {
         match self {
             OpenMode::ReadWriteCreate => OpenFlags::Create,
@@ -705,6 +706,7 @@ fn normalize_windows_path(path: &str) -> String {
 }
 
 /// Parses a SQLite URI, handling Windows and Unix paths separately.
+#[allow(dead_code)]
 pub fn parse_sqlite_uri(uri: &str) -> Result<OpenOptions> {
     if !uri.starts_with("file:") {
         return Ok(OpenOptions {
