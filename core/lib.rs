@@ -16,6 +16,8 @@ mod pragma;
 mod pseudo;
 pub mod result;
 mod schema;
+#[cfg(feature = "series")]
+mod series;
 mod storage;
 #[allow(dead_code)]
 #[cfg(feature = "time")]

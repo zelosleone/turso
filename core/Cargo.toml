@@ -15,7 +15,7 @@ path = "lib.rs"
 
 [features]
 antithesis = ["dep:antithesis_sdk"]
-default = ["fs", "uuid", "time", "json"]
+default = ["fs", "uuid", "time", "json", "series"]
 fs = ["turso_ext/vfs"]
 json = []
 uuid = ["dep:uuid"]
@@ -25,6 +25,7 @@ fuzz = []
 omit_autovacuum = []
 simulator = ["fuzz", "serde"]
 serde = ["dep:serde"]
+series = []
 
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.7.5", optional = true }

@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
 use turso_ext::{
-    register_extension, Connection, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive,
+    Connection, ExtensionApi, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive,
     VTable, Value,
 };
 
-register_extension! {
-    vtabs: { GenerateSeriesVTabModule }
+pub fn register_extension(ext_api: &mut ExtensionApi) {
+    // FIXME: Add macro magic to register functions automatically.
+    unsafe {
+        GenerateSeriesVTabModule::register_GenerateSeriesVTabModule(ext_api);
+    }
 }
 
 macro_rules! try_option {
