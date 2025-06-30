@@ -15,6 +15,7 @@ members = [
     "extensions/core",
     "extensions/crypto",
     "extensions/csv",
+    "extensions/ipaddr",
     "extensions/percentile",
     "extensions/regexp",
     "extensions/tests",
