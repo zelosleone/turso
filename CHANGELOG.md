@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.1 -- 2025-06-30
+
+### Fixed
+
+* JavaScript packaging (Pekka Enberg)
+
+### Updated
+
+* simulator: FsyncNoWait + Faulty Query (Pedro Muniz)
+
 ## 0.1.0 -- 2025-06-30
 
 ### Added
