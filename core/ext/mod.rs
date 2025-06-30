@@ -173,37 +173,9 @@ impl Connection {
         #[allow(unused_variables)]
         let mut ext_api = self.build_turso_ext();
         #[cfg(feature = "uuid")]
-        if unsafe { !limbo_uuid::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register uuid extension".to_string());
-        }
-        #[cfg(feature = "percentile")]
-        if unsafe { !limbo_percentile::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register percentile extension".to_string());
-        }
-        #[cfg(feature = "regexp")]
-        if unsafe { !limbo_regexp::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register regexp extension".to_string());
-        }
-        #[cfg(feature = "time")]
-        if unsafe { !limbo_time::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register time extension".to_string());
-        }
-        #[cfg(feature = "crypto")]
-        if unsafe { !limbo_crypto::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register crypto extension".to_string());
-        }
+        crate::uuid::register_extension(&mut ext_api);
         #[cfg(feature = "series")]
-        if unsafe { !limbo_series::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register series extension".to_string());
-        }
-        #[cfg(feature = "ipaddr")]
-        if unsafe { !limbo_ipaddr::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register ipaddr extension".to_string());
-        }
-        #[cfg(feature = "csv")]
-        if unsafe { !limbo_csv::register_extension_static(&mut ext_api).is_ok() } {
-            return Err("Failed to register csv extension".to_string());
-        }
+        crate::series::register_extension(&mut ext_api);
         #[cfg(feature = "fs")]
         {
             let vfslist = add_builtin_vfs_extensions(Some(ext_api)).map_err(|e| e.to_string())?;
