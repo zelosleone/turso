@@ -6,7 +6,7 @@ use crate::translate::expr::{walk_expr, WalkControl};
 use crate::translate::plan::ResultSetColumn;
 use crate::{
     function::AggFunc,
-    schema::{Column, PseudoTable},
+    schema::PseudoTable,
     translate::collate::CollationSeq,
     util::exprs_are_equivalent,
     vdbe::{

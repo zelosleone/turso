@@ -3,7 +3,7 @@ use std::rc::Rc;
 use turso_sqlite3_parser::ast::{self, SortOrder};
 
 use crate::{
-    schema::{Column, PseudoTable},
+    schema::PseudoTable,
     translate::collate::CollationSeq,
     util::exprs_are_equivalent,
     vdbe::{
