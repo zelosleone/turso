@@ -1,8 +1,7 @@
 use crate::common::{self, maybe_setup_tracing};
 use crate::common::{compare_string, do_flush, TempDatabase};
 use log::debug;
-use std::io::Write;
-use std::os::unix::fs::FileExt;
+use std::io::{Read, Seek, Write};
 use std::sync::Arc;
 use turso_core::{Connection, Database, Row, Statement, StepResult, Value};
 
@@ -677,14 +676,16 @@ fn test_wal_bad_frame() -> anyhow::Result<()> {
             .unwrap();
         let offset = WAL_HEADER_SIZE + (WAL_FRAME_HEADER_SIZE + 4096) * 2;
         let mut buf = [0u8; WAL_FRAME_HEADER_SIZE];
-        file.read_at(&mut buf, offset as u64).unwrap();
+        file.seek(std::io::SeekFrom::Start(offset as u64)).unwrap();
+        file.read_exact(&mut buf).unwrap();
         dbg!(&buf);
         let db_size = u32::from_be_bytes(buf[4..8].try_into().unwrap());
         dbg!(offset);
         assert_eq!(db_size, 4);
         // let's overwrite size_after to be 0 so that we think transaction never finished
         buf[4..8].copy_from_slice(&[0, 0, 0, 0]);
-        file.write_at(&buf, offset as u64).unwrap();
+        file.seek(std::io::SeekFrom::Start(offset as u64)).unwrap();
+        file.write_all(&buf).unwrap();
         file.flush().unwrap();
 
         db_path
