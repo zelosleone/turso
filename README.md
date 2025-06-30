@@ -99,13 +99,13 @@ let res = conn.query("SELECT * FROM users", ()).await?;
 <br>
 
 ```console
-npm i limbo-wasm
+npm i @tursodatabase/turso
 ```
 
 Example usage:
 
 ```js
-import { Database } from 'limbo-wasm';
+import { Database } from '@tursodatabase/turso';
 
 const db = new Database('sqlite.db');
 const stmt = db.prepare('SELECT * FROM users');
