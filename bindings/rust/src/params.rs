@@ -106,7 +106,7 @@ pub enum Params {
 /// # Example
 ///
 /// ```rust
-/// # use turso::{Connection, params_from_iter, Rows};
+/// # use turso::{Connection, params_from_iter};
 /// # async fn run(conn: &Connection) {
 ///
 /// let iter = vec![1, 2, 3];

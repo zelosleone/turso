@@ -20,13 +20,14 @@
 //! You can also prepare statements with the [`Connection`] object and then execute the [`Statement`] objects:
 //!
 //! ```rust,no_run
+//! # use crate::turso::futures_util::TryStreamExt;
 //! # async fn run() {
 //! # use turso::Builder;
 //! # let db = Builder::new_local(":memory:").build().await.unwrap();
 //! # let conn = db.connect().unwrap();
 //! let mut stmt = conn.prepare("SELECT * FROM users WHERE email = ?1").await.unwrap();
 //! let mut rows = stmt.query(["foo@example.com"]).await.unwrap();
-//! let row = rows.next().await.unwrap().unwrap();
+//! let row = rows.try_next().await.unwrap().unwrap();
 //! let value = row.get_value(0).unwrap();
 //! println!("Row: {:?}", value);
 //! # }
