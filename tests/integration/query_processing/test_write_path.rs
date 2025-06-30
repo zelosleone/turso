@@ -691,11 +691,11 @@ fn test_wal_bad_frame() -> anyhow::Result<()> {
     };
     {
         let result = std::panic::catch_unwind(|| {
-            let io: Arc<dyn limbo_core::IO> = Arc::new(limbo_core::PlatformIO::new().unwrap());
+            let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
             let db = Database::open_file_with_flags(
                 io.clone(),
                 db_path.to_str().unwrap(),
-                limbo_core::OpenFlags::default(),
+                turso_core::OpenFlags::default(),
                 false,
                 false,
             )
