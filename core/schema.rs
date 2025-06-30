@@ -163,7 +163,7 @@ impl Table {
     pub fn get_column_at(&self, index: usize) -> Option<&Column> {
         match self {
             Self::BTree(table) => table.columns.get(index),
-            Self::Pseudo(table) => table.columns.get(index),
+            Self::Pseudo(table) => unimplemented!(),
             Self::Virtual(table) => table.columns.get(index),
             Self::FromClauseSubquery(from_clause_subquery) => {
                 from_clause_subquery.columns.get(index)
@@ -174,7 +174,7 @@ impl Table {
     pub fn columns(&self) -> &Vec<Column> {
         match self {
             Self::BTree(table) => &table.columns,
-            Self::Pseudo(table) => &table.columns,
+            Self::Pseudo(table) => unimplemented!(),
             Self::Virtual(table) => &table.columns,
             Self::FromClauseSubquery(from_clause_subquery) => &from_clause_subquery.columns,
         }
@@ -293,39 +293,16 @@ impl BTreeTable {
 
 #[derive(Debug, Default)]
 pub struct PseudoTable {
-    pub columns: Vec<Column>,
+    pub column_count: usize,
 }
 
 impl PseudoTable {
     pub fn new() -> Self {
-        Self { columns: vec![] }
+        Self { column_count: 0 }
     }
 
-    pub fn new_with_columns(columns: Vec<Column>) -> Self {
-        Self { columns }
-    }
-
-    pub fn add_column(&mut self, name: &str, ty: Type, primary_key: bool) {
-        self.columns.push(Column {
-            name: Some(normalize_ident(name)),
-            ty,
-            ty_str: ty.to_string().to_uppercase(),
-            primary_key,
-            is_rowid_alias: false,
-            notnull: false,
-            default: None,
-            unique: false,
-            collation: None,
-        });
-    }
-    pub fn get_column(&self, name: &str) -> Option<(usize, &Column)> {
-        let name = normalize_ident(name);
-        for (i, column) in self.columns.iter().enumerate() {
-            if column.name.as_ref().map_or(false, |n| *n == name) {
-                return Some((i, column));
-            }
-        }
-        None
+    pub fn new_with_columns(columns: impl AsRef<[Column]>) -> Self {
+        Self { column_count: columns.as_ref().len() }
     }
 }
 
