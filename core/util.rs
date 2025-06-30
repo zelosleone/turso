@@ -631,6 +631,8 @@ pub struct OpenOptions<'a> {
     pub immutable: bool,
 }
 
+pub const MEMORY_PATH: &str = ":memory:";
+
 #[derive(Clone, Default, Debug, Copy, PartialEq)]
 pub enum OpenMode {
     ReadOnly,
@@ -670,13 +672,6 @@ impl OpenMode {
             ))),
         }
     }
-    #[allow(dead_code)]
-    pub fn get_flags(&self) -> OpenFlags {
-        match self {
-            OpenMode::ReadWriteCreate => OpenFlags::Create,
-            _ => OpenFlags::None,
-        }
-    }
 }
 
 fn is_windows_path(path: &str) -> bool {
@@ -705,58 +700,74 @@ fn normalize_windows_path(path: &str) -> String {
     normalized
 }
 
-/// Parses a SQLite URI, handling Windows and Unix paths separately.
-#[allow(dead_code)]
-pub fn parse_sqlite_uri(uri: &str) -> Result<OpenOptions> {
-    if !uri.starts_with("file:") {
-        return Ok(OpenOptions {
-            path: uri.to_string(),
-            ..Default::default()
-        });
+impl<'a> OpenOptions<'a> {
+    /// Parses a SQLite URI, handling Windows and Unix paths separately.
+    pub fn parse(uri: &'a str) -> Result<OpenOptions<'a>> {
+        if !uri.starts_with("file:") {
+            return Ok(OpenOptions {
+                path: uri.to_string(),
+                ..Default::default()
+            });
+        }
+
+        let mut opts = OpenOptions::default();
+        let without_scheme = &uri[5..];
+
+        let (without_fragment, _) = without_scheme
+            .split_once('#')
+            .unwrap_or((without_scheme, ""));
+
+        let (without_query, query) = without_fragment
+            .split_once('?')
+            .unwrap_or((without_fragment, ""));
+        parse_query_params(query, &mut opts)?;
+
+        // handle authority + path separately
+        if let Some(after_slashes) = without_query.strip_prefix("//") {
+            let (authority, path) = after_slashes.split_once('/').unwrap_or((after_slashes, ""));
+
+            // sqlite allows only `localhost` or empty authority.
+            if !(authority.is_empty() || authority == "localhost") {
+                return Err(LimboError::InvalidArgument(format!(
+                    "Invalid authority '{}'. Only '' or 'localhost' allowed.",
+                    authority
+                )));
+            }
+            opts.authority = if authority.is_empty() {
+                None
+            } else {
+                Some(authority)
+            };
+
+            if is_windows_path(path) {
+                opts.path = normalize_windows_path(&decode_percent(path));
+            } else if !path.is_empty() {
+                opts.path = format!("/{}", decode_percent(path));
+            } else {
+                opts.path = String::new();
+            }
+        } else {
+            // no authority, must be a normal absolute or relative path.
+            opts.path = decode_percent(without_query);
+        }
+
+        Ok(opts)
     }
 
-    let mut opts = OpenOptions::default();
-    let without_scheme = &uri[5..];
-
-    let (without_fragment, _) = without_scheme
-        .split_once('#')
-        .unwrap_or((without_scheme, ""));
-
-    let (without_query, query) = without_fragment
-        .split_once('?')
-        .unwrap_or((without_fragment, ""));
-    parse_query_params(query, &mut opts)?;
-
-    // handle authority + path separately
-    if let Some(after_slashes) = without_query.strip_prefix("//") {
-        let (authority, path) = after_slashes.split_once('/').unwrap_or((after_slashes, ""));
-
-        // sqlite allows only `localhost` or empty authority.
-        if !(authority.is_empty() || authority == "localhost") {
-            return Err(LimboError::InvalidArgument(format!(
-                "Invalid authority '{}'. Only '' or 'localhost' allowed.",
-                authority
-            )));
+    pub fn get_flags(&self) -> Result<OpenFlags> {
+        // Only use modeof if we're in a mode that can create files
+        if self.mode != OpenMode::ReadWriteCreate && self.modeof.is_some() {
+            return Err(LimboError::InvalidArgument(
+                "modeof is not applicable without mode=rwc".to_string(),
+            ));
         }
-        opts.authority = if authority.is_empty() {
-            None
-        } else {
-            Some(authority)
-        };
-
-        if is_windows_path(path) {
-            opts.path = normalize_windows_path(&decode_percent(path));
-        } else if !path.is_empty() {
-            opts.path = format!("/{}", decode_percent(path));
-        } else {
-            opts.path = String::new();
-        }
-    } else {
-        // no authority, must be a normal absolute or relative path.
-        opts.path = decode_percent(without_query);
+        // If modeof is not applicable or file doesn't exist, use default flags
+        Ok(match self.mode {
+            OpenMode::ReadWriteCreate => OpenFlags::Create,
+            OpenMode::ReadOnly => OpenFlags::ReadOnly,
+            _ => OpenFlags::default(),
+        })
     }
-
-    Ok(opts)
 }
 
 // parses query parameters and updates OpenOptions
@@ -1339,7 +1350,7 @@ pub mod tests {
     #[test]
     fn test_simple_uri() {
         let uri = "file:/home/user/db.sqlite";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/home/user/db.sqlite");
         assert_eq!(opts.authority, None);
     }
@@ -1347,7 +1358,7 @@ pub mod tests {
     #[test]
     fn test_uri_with_authority() {
         let uri = "file://localhost/home/user/db.sqlite";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/home/user/db.sqlite");
         assert_eq!(opts.authority, Some("localhost"));
     }
@@ -1355,14 +1366,14 @@ pub mod tests {
     #[test]
     fn test_uri_with_invalid_authority() {
         let uri = "file://example.com/home/user/db.sqlite";
-        let result = parse_sqlite_uri(uri);
+        let result = OpenOptions::parse(uri);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_uri_with_query_params() {
         let uri = "file:/home/user/db.sqlite?vfs=unix&mode=ro&immutable=1";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/home/user/db.sqlite");
         assert_eq!(opts.vfs, Some("unix".to_string()));
         assert_eq!(opts.mode, OpenMode::ReadOnly);
@@ -1372,14 +1383,14 @@ pub mod tests {
     #[test]
     fn test_uri_with_fragment() {
         let uri = "file:/home/user/db.sqlite#section1";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/home/user/db.sqlite");
     }
 
     #[test]
     fn test_uri_with_percent_encoding() {
         let uri = "file:/home/user/db%20with%20spaces.sqlite?vfs=unix";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/home/user/db with spaces.sqlite");
         assert_eq!(opts.vfs, Some("unix".to_string()));
     }
@@ -1387,7 +1398,7 @@ pub mod tests {
     #[test]
     fn test_uri_without_scheme() {
         let uri = "/home/user/db.sqlite";
-        let result = parse_sqlite_uri(uri);
+        let result = OpenOptions::parse(uri);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().path, "/home/user/db.sqlite");
     }
@@ -1395,7 +1406,7 @@ pub mod tests {
     #[test]
     fn test_uri_with_empty_query() {
         let uri = "file:/home/user/db.sqlite?";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/home/user/db.sqlite");
         assert_eq!(opts.vfs, None);
     }
@@ -1403,7 +1414,7 @@ pub mod tests {
     #[test]
     fn test_uri_with_partial_query() {
         let uri = "file:/home/user/db.sqlite?mode=rw";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/home/user/db.sqlite");
         assert_eq!(opts.mode, OpenMode::ReadWrite);
         assert_eq!(opts.vfs, None);
@@ -1412,14 +1423,14 @@ pub mod tests {
     #[test]
     fn test_uri_windows_style_path() {
         let uri = "file:///C:/Users/test/db.sqlite";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/C:/Users/test/db.sqlite");
     }
 
     #[test]
     fn test_uri_with_only_query_params() {
         let uri = "file:?mode=memory&cache=shared";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "");
         assert_eq!(opts.mode, OpenMode::Memory);
         assert_eq!(opts.cache, CacheMode::Shared);
@@ -1428,14 +1439,14 @@ pub mod tests {
     #[test]
     fn test_uri_with_only_fragment() {
         let uri = "file:#fragment";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "");
     }
 
     #[test]
     fn test_uri_with_invalid_scheme() {
         let uri = "http:/home/user/db.sqlite";
-        let result = parse_sqlite_uri(uri);
+        let result = OpenOptions::parse(uri);
         assert!(result.is_ok());
         assert_eq!(result.unwrap().path, "http:/home/user/db.sqlite");
     }
@@ -1443,7 +1454,7 @@ pub mod tests {
     #[test]
     fn test_uri_with_multiple_query_params() {
         let uri = "file:/home/user/db.sqlite?vfs=unix&mode=rw&cache=private&immutable=0";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/home/user/db.sqlite");
         assert_eq!(opts.vfs, Some("unix".to_string()));
         assert_eq!(opts.mode, OpenMode::ReadWrite);
@@ -1454,7 +1465,7 @@ pub mod tests {
     #[test]
     fn test_uri_with_unknown_query_param() {
         let uri = "file:/home/user/db.sqlite?unknown=param";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/home/user/db.sqlite");
         assert_eq!(opts.vfs, None);
     }
@@ -1462,7 +1473,7 @@ pub mod tests {
     #[test]
     fn test_uri_with_multiple_equal_signs() {
         let uri = "file:/home/user/db.sqlite?vfs=unix=custom";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/home/user/db.sqlite");
         assert_eq!(opts.vfs, Some("unix=custom".to_string()));
     }
@@ -1470,14 +1481,14 @@ pub mod tests {
     #[test]
     fn test_uri_with_trailing_slash() {
         let uri = "file:/home/user/db.sqlite/";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/home/user/db.sqlite/");
     }
 
     #[test]
     fn test_uri_with_encoded_characters_in_query() {
         let uri = "file:/home/user/db.sqlite?vfs=unix%20mode";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/home/user/db.sqlite");
         assert_eq!(opts.vfs, Some("unix mode".to_string()));
     }
@@ -1485,21 +1496,21 @@ pub mod tests {
     #[test]
     fn test_uri_windows_network_path() {
         let uri = "file://server/share/db.sqlite";
-        let result = parse_sqlite_uri(uri);
+        let result = OpenOptions::parse(uri);
         assert!(result.is_err()); // non-localhost authority should fail
     }
 
     #[test]
     fn test_uri_windows_drive_letter_with_slash() {
         let uri = "file:///C:/database.sqlite";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/C:/database.sqlite");
     }
 
     #[test]
     fn test_localhost_with_double_slash_and_no_path() {
         let uri = "file://localhost";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "");
         assert_eq!(opts.authority, Some("localhost"));
     }
@@ -1507,7 +1518,7 @@ pub mod tests {
     #[test]
     fn test_uri_windows_drive_letter_without_slash() {
         let uri = "file:///C:/database.sqlite";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/C:/database.sqlite");
     }
 
@@ -1516,11 +1527,11 @@ pub mod tests {
         // any other mode but ro, rwc, rw, memory should fail per sqlite
 
         let uri = "file:data.db?mode=readonly";
-        let res = parse_sqlite_uri(uri);
+        let res = OpenOptions::parse(uri);
         assert!(res.is_err());
         // including empty
         let uri = "file:/home/user/db.sqlite?vfs=&mode=";
-        let res = parse_sqlite_uri(uri);
+        let res = OpenOptions::parse(uri);
         assert!(res.is_err());
     }
 
@@ -1528,7 +1539,7 @@ pub mod tests {
     #[test]
     fn test_simple_file_current_dir() {
         let uri = "file:data.db";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "data.db");
         assert_eq!(opts.authority, None);
         assert_eq!(opts.vfs, None);
@@ -1538,7 +1549,7 @@ pub mod tests {
     #[test]
     fn test_simple_file_three_slash() {
         let uri = "file:///home/data/data.db";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/home/data/data.db");
         assert_eq!(opts.authority, None);
         assert_eq!(opts.vfs, None);
@@ -1548,7 +1559,7 @@ pub mod tests {
     #[test]
     fn test_simple_file_two_slash_localhost() {
         let uri = "file://localhost/home/fred/data.db";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/home/fred/data.db");
         assert_eq!(opts.authority, Some("localhost"));
         assert_eq!(opts.vfs, None);
@@ -1557,14 +1568,14 @@ pub mod tests {
     #[test]
     fn test_windows_double_invalid() {
         let uri = "file://C:/home/fred/data.db?mode=ro";
-        let opts = parse_sqlite_uri(uri);
+        let opts = OpenOptions::parse(uri);
         assert!(opts.is_err());
     }
 
     #[test]
     fn test_simple_file_two_slash() {
         let uri = "file:///C:/Documents%20and%20Settings/fred/Desktop/data.db";
-        let opts = parse_sqlite_uri(uri).unwrap();
+        let opts = OpenOptions::parse(uri).unwrap();
         assert_eq!(opts.path, "/C:/Documents and Settings/fred/Desktop/data.db");
         assert_eq!(opts.vfs, None);
     }
