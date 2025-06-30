@@ -300,29 +300,13 @@ impl Drop for Connection {
 #[allow(clippy::arc_with_non_send_sync)]
 #[pyfunction]
 pub fn connect(path: &str) -> Result<Connection> {
-    #[inline(always)]
-    fn open_or(
-        io: Arc<dyn turso_core::IO>,
-        path: &str,
-    ) -> std::result::Result<Arc<turso_core::Database>, PyErr> {
-        turso_core::Database::open_file(io, path, false, false).map_err(|e| {
-            PyErr::new::<DatabaseError, _>(format!("Failed to open database: {:?}", e))
-        })
-    }
-
-    match path {
-        ":memory:" => {
-            let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::MemoryIO::new());
-            let db = open_or(io.clone(), path)?;
-            let conn: Arc<turso_core::Connection> = db.connect().unwrap();
-            Ok(Connection { conn, io })
-        }
-        path => {
-            let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new()?);
-            let db = open_or(io.clone(), path)?;
-            let conn: Arc<turso_core::Connection> = db.connect().unwrap();
-            Ok(Connection { conn, io })
-        }
+    match turso_core::Connection::from_uri(path) {
+        Ok((io, conn)) => Ok(Connection { conn, io }),
+        Err(e) => Err(PyErr::new::<ProgrammingError, _>(format!(
+            "Failed to create connection: {:?}",
+            e
+        ))
+        .into()),
     }
 }
 
