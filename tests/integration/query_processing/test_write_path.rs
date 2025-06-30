@@ -1,8 +1,13 @@
 use crate::common::{self, maybe_setup_tracing};
 use crate::common::{compare_string, do_flush, TempDatabase};
 use log::debug;
+use std::io::Write;
+use std::os::unix::fs::FileExt;
 use std::sync::Arc;
-use turso_core::{Connection, Row, Statement, StepResult, Value};
+use turso_core::{Connection, Database, Row, Statement, StepResult, Value};
+
+const WAL_HEADER_SIZE: usize = 32;
+const WAL_FRAME_HEADER_SIZE: usize = 24;
 
 #[macro_export]
 macro_rules! change_state {
@@ -634,6 +639,96 @@ fn test_write_concurrent_connections() -> anyhow::Result<()> {
             "received wrong number of rows"
         );
     })?;
+
+    Ok(())
+}
+
+#[test]
+fn test_wal_bad_frame() -> anyhow::Result<()> {
+    maybe_setup_tracing();
+    let _ = env_logger::try_init();
+    let db_path = {
+        let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE t1(x)", false);
+        let db_path = tmp_db.path.clone();
+        let conn = tmp_db.connect_limbo();
+        conn.execute("BEGIN")?;
+        conn.execute("CREATE TABLE t2(x)")?;
+        conn.execute("CREATE TABLE t3(x)")?;
+        conn.execute("INSERT INTO t2(x) VALUES (1)")?;
+        conn.execute("INSERT INTO t3(x) VALUES (1)")?;
+        conn.execute("COMMIT")?;
+        run_query_on_row(&tmp_db, &conn, "SELECT count(1) from t2", |row| {
+            let x = row.get::<i64>(0).unwrap();
+            assert_eq!(x, 1);
+        })
+        .unwrap();
+        run_query_on_row(&tmp_db, &conn, "SELECT count(1) from t3", |row| {
+            let x = row.get::<i64>(0).unwrap();
+            assert_eq!(x, 1);
+        })
+        .unwrap();
+        // Now let's modify last frame record
+        let path = tmp_db.path.clone();
+        let path = path.with_extension("db-wal");
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let offset = WAL_HEADER_SIZE + (WAL_FRAME_HEADER_SIZE + 4096) * 2;
+        let mut buf = [0u8; WAL_FRAME_HEADER_SIZE];
+        file.read_at(&mut buf, offset as u64).unwrap();
+        dbg!(&buf);
+        let db_size = u32::from_be_bytes(buf[4..8].try_into().unwrap());
+        dbg!(offset);
+        assert_eq!(db_size, 4);
+        // let's overwrite size_after to be 0 so that we think transaction never finished
+        buf[4..8].copy_from_slice(&[0, 0, 0, 0]);
+        file.write_at(&buf, offset as u64).unwrap();
+        file.flush().unwrap();
+
+        db_path
+    };
+    {
+        let result = std::panic::catch_unwind(|| {
+            let io: Arc<dyn limbo_core::IO> = Arc::new(limbo_core::PlatformIO::new().unwrap());
+            let db = Database::open_file_with_flags(
+                io.clone(),
+                db_path.to_str().unwrap(),
+                limbo_core::OpenFlags::default(),
+                false,
+                false,
+            )
+            .unwrap();
+            let tmp_db = TempDatabase {
+                path: db_path,
+                io,
+                db,
+            };
+            let conn = tmp_db.connect_limbo();
+            run_query_on_row(&tmp_db, &conn, "SELECT count(1) from t2", |row| {
+                let x = row.get::<i64>(0).unwrap();
+                assert_eq!(x, 0);
+            })
+        });
+
+        match result {
+            Err(panic_info) => {
+                let panic_msg = panic_info
+                    .downcast_ref::<String>()
+                    .map(|s| s.as_str())
+                    .or_else(|| panic_info.downcast_ref::<&str>().copied())
+                    .unwrap_or("Unknown panic message");
+
+                assert!(
+                    panic_msg.contains("WAL frame checksum mismatch."),
+                    "Expected panic message not found. Got: {}",
+                    panic_msg
+                );
+            }
+            Ok(_) => panic!("Expected query to panic, but it succeeded"),
+        }
+    }
 
     Ok(())
 }
