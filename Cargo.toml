@@ -34,7 +34,7 @@ version = "0.1.0-pre.3"
 authors = ["the Limbo authors"]
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/tursodatabase/limbo"
+repository = "https://github.com/tursodatabase/turso"
 
 [workspace.dependencies]
 limbo_completion = { path = "extensions/completion", version = "0.1.0-pre.3" }

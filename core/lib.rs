@@ -213,7 +213,7 @@ impl Database {
         };
         let db = Arc::new(db);
 
-        // Check: https://github.com/tursodatabase/limbo/pull/1761#discussion_r2154013123
+        // Check: https://github.com/tursodatabase/turso/pull/1761#discussion_r2154013123
         if is_empty == 2 {
             // parse schema
             let conn = db.connect()?;

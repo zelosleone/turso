@@ -232,7 +232,7 @@ do_execsql_test select_fuzz_failure_case {
   SELECT (-9 << ((-6) << (9)) >> ((5)) % -10 - + - (-9));
 } {-16}
 
-# regression test for https://github.com/tursodatabase/limbo/issues/1157
+# regression test for https://github.com/tursodatabase/turso/issues/1157
 do_execsql_test select-invalid-numeric-text {
   select -'e';
 } {0}

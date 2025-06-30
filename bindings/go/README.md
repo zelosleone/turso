@@ -14,7 +14,7 @@ To build with embedded library support, follow these steps:
 
 ```bash
 # Clone the repository
-git clone https://github.com/tursodatabase/limbo
+git clone https://github.com/tursodatabase/turso
 
 # Navigate to the Go bindings directory
 cd limbo/bindings/go
@@ -79,13 +79,13 @@ go test
 ```
 **Temporarily** you may have to clone the limbo repository and run:
 
-`go mod edit -replace github.com/tursodatabase/limbo=/path/to/limbo/bindings/go`
+`go mod edit -replace github.com/tursodatabase/turso=/path/to/limbo/bindings/go`
 
 ```go
 import (
     "fmt"
     "database/sql"
-    _"github.com/tursodatabase/limbo"
+    _"github.com/tursodatabase/turso"
 )
 
 func main() {

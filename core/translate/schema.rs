@@ -719,10 +719,10 @@ pub fn translate_drop_table(
         });
 
         //  3. TODO: Open an ephemeral table, and read over triggers from schema table into ephemeral table
-        //  Requires support via https://github.com/tursodatabase/limbo/pull/768
+        //  Requires support via https://github.com/tursodatabase/turso/pull/768
 
         //  4. TODO: Open a write cursor to the schema table and re-insert all triggers into the sqlite schema table from the ephemeral table and delete old trigger
-        //  Requires support via https://github.com/tursodatabase/limbo/pull/768
+        //  Requires support via https://github.com/tursodatabase/turso/pull/768
     }
 
     //  3. Destroy the table structure

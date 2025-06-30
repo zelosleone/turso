@@ -8,16 +8,16 @@
 </p>
 
 <p align="center">
-  <a title="Build Status" target="_blank" href="https://github.com/tursodatabase/limbo/actions/workflows/rust.yml"><img src="https://img.shields.io/github/actions/workflow/status/tursodatabase/limbo/rust.yml?style=flat-square"></a>
-  <a title="Releases" target="_blank" href="https://github.com/tursodatabase/limbo/releases"><img src="https://img.shields.io/github/release/tursodatabase/limbo?style=flat-square&color=9CF"></a>
+  <a title="Build Status" target="_blank" href="https://github.com/tursodatabase/turso/actions/workflows/rust.yml"><img src="https://img.shields.io/github/actions/workflow/status/tursodatabase/turso/rust.yml?style=flat-square"></a>
+  <a title="Releases" target="_blank" href="https://github.com/tursodatabase/turso/releases"><img src="https://img.shields.io/github/release/tursodatabase/turso?style=flat-square&color=9CF"></a>
   <a title="Rust" target="_blank" href="https://crates.io/crates/limbo"><img alt="PyPI" src="https://img.shields.io/crates/v/limbo"></a>
   <a title="JavaScript" target="_blank" href="https://www.npmjs.com/package/@tursodatabase/turso"><img alt="PyPI" src="https://img.shields.io/npm/v/@tursodatabase/turso"></a>
   <a title="Python" target="_blank" href="https://pypi.org/project/pyturso/"><img alt="PyPI" src="https://img.shields.io/pypi/v/pyturso"></a>
-  <a title="MIT" target="_blank" href="https://github.com/tursodatabase/limbo/blob/main/LICENSE.md"><img src="http://img.shields.io/badge/license-MIT-orange.svg?style=flat-square"></a>
+  <a title="MIT" target="_blank" href="https://github.com/tursodatabase/turso/blob/main/LICENSE.md"><img src="http://img.shields.io/badge/license-MIT-orange.svg?style=flat-square"></a>
   <br>
-  <a title="GitHub Pull Requests" target="_blank" href="https://github.com/tursodatabase/limbo/pulls"><img src="https://img.shields.io/github/issues-pr-closed/tursodatabase/limbo.svg?style=flat-square&color=FF9966"></a>
-  <a title="GitHub Commits" target="_blank" href="https://github.com/tursodatabase/limbo/commits/main"><img src="https://img.shields.io/github/commit-activity/m/tursodatabase/limbo.svg?style=flat-square"></a>
-  <a title="Last Commit" target="_blank" href="https://github.com/tursodatabase/limbo/commits/main"><img src="https://img.shields.io/github/last-commit/tursodatabase/limbo.svg?style=flat-square&color=FF9900"></a>
+  <a title="GitHub Pull Requests" target="_blank" href="https://github.com/tursodatabase/turso/pulls"><img src="https://img.shields.io/github/issues-pr-closed/tursodatabase/turso.svg?style=flat-square&color=FF9966"></a>
+  <a title="GitHub Commits" target="_blank" href="https://github.com/tursodatabase/turso/commits/main"><img src="https://img.shields.io/github/commit-activity/m/tursodatabase/turso.svg?style=flat-square"></a>
+  <a title="Last Commit" target="_blank" href="https://github.com/tursodatabase/turso/commits/main"><img src="https://img.shields.io/github/last-commit/tursodatabase/turso.svg?style=flat-square&color=FF9900"></a>
 </p>
 <p align="center">
   <a title="Developer's Discord" target="_blank" href="https://discord.gg/jgjmyYgHwB"><img alt="Chat with developers on Discord" src="https://img.shields.io/discord/1258658826257961020?label=Discord&logo=Discord&style=social"></a>
@@ -214,8 +214,8 @@ Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in Turso Database by you, shall be licensed as MIT, without any additional
 terms or conditions.
 
-[contribution guide]: https://github.com/tursodatabase/limbo/blob/main/CONTRIBUTING.md
-[MIT license]: https://github.com/tursodatabase/limbo/blob/main/LICENSE.md
+[contribution guide]: https://github.com/tursodatabase/turso/blob/main/CONTRIBUTING.md
+[MIT license]: https://github.com/tursodatabase/turso/blob/main/LICENSE.md
 
 ## Partners
 
@@ -229,6 +229,6 @@ Thanks to all the partners of Turso!
 
 Thanks to all the contributors to Turso Database!
 
-<a href="https://github.com/tursodatabase/limbo/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=tursodatabase/limbo" />
+<a href="https://github.com/tursodatabase/turso/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=tursodatabase/turso" />
 </a>

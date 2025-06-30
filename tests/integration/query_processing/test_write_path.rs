@@ -189,7 +189,7 @@ fn test_sequential_write() -> anyhow::Result<()> {
 
 #[test]
 /// There was a regression with inserting multiple rows with a column containing an unary operator :)
-/// https://github.com/tursodatabase/limbo/pull/679
+/// https://github.com/tursodatabase/turso/pull/679
 fn test_regression_multi_row_insert() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
     let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE test (x REAL);", false);

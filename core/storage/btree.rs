@@ -7808,7 +7808,7 @@ mod tests {
 
     #[test]
     pub fn test_fuzz_drop_defragment_insert_issue_1085() {
-        // This test is used to demonstrate that issue at https://github.com/tursodatabase/limbo/issues/1085
+        // This test is used to demonstrate that issue at https://github.com/tursodatabase/turso/issues/1085
         // is FIXED.
         let db = get_database();
         let conn = db.connect().unwrap();

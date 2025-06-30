@@ -12,7 +12,7 @@ fn rusqlite_open() -> rusqlite::Connection {
 }
 
 fn bench_prepare_query(criterion: &mut Criterion) {
-    // https://github.com/tursodatabase/limbo/issues/174
+    // https://github.com/tursodatabase/turso/issues/174
     // The rusqlite benchmark crashes on Mac M1 when using the flamegraph features
     let enable_rusqlite = std::env::var("DISABLE_RUSQLITE_BENCHMARK").is_err();
 
@@ -59,7 +59,7 @@ fn bench_prepare_query(criterion: &mut Criterion) {
 }
 
 fn bench_execute_select_rows(criterion: &mut Criterion) {
-    // https://github.com/tursodatabase/limbo/issues/174
+    // https://github.com/tursodatabase/turso/issues/174
     // The rusqlite benchmark crashes on Mac M1 when using the flamegraph features
     let enable_rusqlite = std::env::var("DISABLE_RUSQLITE_BENCHMARK").is_err();
 
@@ -128,7 +128,7 @@ fn bench_execute_select_rows(criterion: &mut Criterion) {
 }
 
 fn bench_execute_select_1(criterion: &mut Criterion) {
-    // https://github.com/tursodatabase/limbo/issues/174
+    // https://github.com/tursodatabase/turso/issues/174
     // The rusqlite benchmark crashes on Mac M1 when using the flamegraph features
     let enable_rusqlite = std::env::var("DISABLE_RUSQLITE_BENCHMARK").is_err();
 
@@ -181,7 +181,7 @@ fn bench_execute_select_1(criterion: &mut Criterion) {
 }
 
 fn bench_execute_select_count(criterion: &mut Criterion) {
-    // https://github.com/tursodatabase/limbo/issues/174
+    // https://github.com/tursodatabase/turso/issues/174
     // The rusqlite benchmark crashes on Mac M1 when using the flamegraph features
     let enable_rusqlite = std::env::var("DISABLE_RUSQLITE_BENCHMARK").is_err();
 
