@@ -4,11 +4,11 @@ import time
 from pathlib import Path
 
 from cli_tests import console
-from cli_tests.test_limbo_cli import TestLimboShell
+from cli_tests.test_turso_cli import TestTursoShell
 
 
 def test_basic_queries():
-    shell = TestLimboShell()
+    shell = TestTursoShell()
     shell.run_test("select-1", "SELECT 1;", "1")
     shell.run_test("select-avg", "SELECT avg(age) FROM users;", "47.75")
     shell.run_test("select-sum", "SELECT sum(age) FROM users;", "191")
@@ -19,7 +19,7 @@ def test_basic_queries():
 
 
 def test_schema_operations():
-    shell = TestLimboShell(init_blobs_table=True)
+    shell = TestTursoShell(init_blobs_table=True)
     expected = (
         "CREATE TABLE users (id INTEGER PRIMARY KEY, first_name TEXT, last_name TEXT, age INTEGER);\n"
         "CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price INTEGER);\n"
@@ -30,12 +30,12 @@ def test_schema_operations():
 
 
 def test_file_operations():
-    shell = TestLimboShell()
+    shell = TestTursoShell()
     shell.run_test("file-open", ".open testing/testing.db", "")
     shell.run_test("file-users-count", "select count(*) from users;", "10000")
     shell.quit()
 
-    shell = TestLimboShell()
+    shell = TestTursoShell()
     shell.run_test("file-schema-1", ".open testing/testing.db", "")
     expected_user_schema = (
         "CREATE TABLE users (\n"
@@ -57,7 +57,7 @@ def test_file_operations():
 
 
 def test_joins():
-    shell = TestLimboShell()
+    shell = TestTursoShell()
     shell.run_test("open-file", ".open testing/testing.db", "")
     shell.run_test("verify-tables", ".tables", "products users")
     shell.run_test(
@@ -69,7 +69,7 @@ def test_joins():
 
 
 def test_left_join_self():
-    shell = TestLimboShell(
+    shell = TestTursoShell(
         init_commands="""
     .open testing/testing.db
     """
@@ -84,7 +84,7 @@ def test_left_join_self():
 
 
 def test_where_clauses():
-    shell = TestLimboShell()
+    shell = TestTursoShell()
     shell.run_test("open-testing-db-file", ".open testing/testing.db", "")
     shell.run_test(
         "where-clause-eq-string",
@@ -95,7 +95,7 @@ def test_where_clauses():
 
 
 def test_switch_back_to_in_memory():
-    shell = TestLimboShell()
+    shell = TestTursoShell()
     # First, open the file-based DB.
     shell.run_test("open-testing-db-file", ".open testing/testing.db", "")
     # Then switch back to :memory:
@@ -105,8 +105,8 @@ def test_switch_back_to_in_memory():
 
 
 def test_verify_null_value():
-    shell = TestLimboShell()
-    shell.run_test("verify-null", "select NULL;", "LIMBO")
+    shell = TestTursoShell()
+    shell.run_test("verify-null", "select NULL;", "TURSO")
     shell.quit()
 
 
@@ -118,8 +118,8 @@ def verify_output_file(filepath: Path, expected_lines: dict) -> None:
 
 
 def test_output_file():
-    shell = TestLimboShell()
-    output_filename = "limbo_output.txt"
+    shell = TestTursoShell()
+    output_filename = "turso_output.txt"
     output_file = shell.config.test_dir / shell.config.py_folder / output_filename
 
     shell.execute_dot(".open testing/testing.db")
@@ -132,7 +132,7 @@ def test_output_file():
     shell.execute_dot("SELECT 'TEST_ECHO';")
     shell.execute_dot("")
     shell.execute_dot(".echo off")
-    shell.execute_dot(".nullvalue LIMBO")
+    shell.execute_dot(".nullvalue turso")
     shell.execute_dot(".show")
     shell.execute_dot(".output stdout")
     time.sleep(3)
@@ -146,21 +146,21 @@ def test_output_file():
         "Error: pretty output can only be written to a tty": "Error message for pretty mode",
         "SELECT 'TEST_ECHO'": "Echoed command",
         "TEST_ECHO": "Echoed result",
-        "Null value: LIMBO": "Null value setting",
+        "Null value: turso": "Null value setting",
         f"CWD: {shell.config.cwd}/{shell.config.test_dir}": "Working directory changed",
         "DB: testing/testing.db": "File database opened",
         "Echo: off": "Echo turned off",
     }
 
-    for line, _ in expected_lines.items():
-        assert line in contents, f"Expected line not found in file: {line}"
+    for line, test in expected_lines.items():
+        assert line in contents, f"Expected line not found in file: {line} for {test}"
 
     # Clean up
     os.remove(output_file)
 
 
 def test_multi_line_single_line_comments_succession():
-    shell = TestLimboShell()
+    shell = TestTursoShell()
     comments = """-- First of the comments
 -- Second line of the comments
 SELECT 2;"""
@@ -169,7 +169,7 @@ SELECT 2;"""
 
 
 def test_comments():
-    shell = TestLimboShell()
+    shell = TestTursoShell()
     shell.run_test("single-line-comment", "-- this is a comment\nSELECT 1;", "1")
     shell.run_test("multi-line-comments", "-- First comment\n-- Second comment\nSELECT 2;", "2")
     shell.run_test("block-comment", "/*\nMulti-line block comment\n*/\nSELECT 3;", "3")
@@ -182,7 +182,7 @@ def test_comments():
 
 
 def test_import_csv():
-    shell = TestLimboShell()
+    shell = TestTursoShell()
     shell.run_test("memory-db", ".open :memory:", "")
     shell.run_test("create-csv-table", "CREATE TABLE csv_table (c1 INT, c2 REAL, c3 String);", "")
     shell.run_test(
@@ -199,7 +199,7 @@ def test_import_csv():
 
 
 def test_import_csv_verbose():
-    shell = TestLimboShell()
+    shell = TestTursoShell()
     shell.run_test("open-memory", ".open :memory:", "")
     shell.run_test("create-csv-table", "CREATE TABLE csv_table (c1 INT, c2 REAL, c3 String);", "")
     shell.run_test(
@@ -216,7 +216,7 @@ def test_import_csv_verbose():
 
 
 def test_import_csv_skip():
-    shell = TestLimboShell()
+    shell = TestTursoShell()
     shell.run_test("open-memory", ".open :memory:", "")
     shell.run_test("create-csv-table", "CREATE TABLE csv_table (c1 INT, c2 REAL, c3 String);", "")
     shell.run_test(
@@ -229,49 +229,49 @@ def test_import_csv_skip():
 
 
 def test_table_patterns():
-    shell = TestLimboShell()
+    shell = TestTursoShell()
     shell.run_test("tables-pattern", ".tables us%", "users")
     shell.quit()
 
 
 def test_update_with_limit():
-    limbo = TestLimboShell(
+    turso = TestTursoShell(
         "CREATE TABLE t (a,b,c); insert into t values (1,2,3), (4,5,6), (7,8,9), (1,2,3),(4,5,6), (7,8,9);"
     )
-    limbo.run_test("update-limit", "UPDATE t SET a = 10 LIMIT 1;", "")
-    limbo.run_test("update-limit-result", "SELECT COUNT(*) from t WHERE a = 10;", "1")
-    limbo.run_test("update-limit-zero", "UPDATE t SET a = 100 LIMIT 0;", "")
-    limbo.run_test("update-limit-zero-result", "SELECT COUNT(*) from t WHERE a = 100;", "0")
-    limbo.run_test("update-limit-all", "UPDATE t SET a = 100 LIMIT -1;", "")
+    turso.run_test("update-limit", "UPDATE t SET a = 10 LIMIT 1;", "")
+    turso.run_test("update-limit-result", "SELECT COUNT(*) from t WHERE a = 10;", "1")
+    turso.run_test("update-limit-zero", "UPDATE t SET a = 100 LIMIT 0;", "")
+    turso.run_test("update-limit-zero-result", "SELECT COUNT(*) from t WHERE a = 100;", "0")
+    turso.run_test("update-limit-all", "UPDATE t SET a = 100 LIMIT -1;", "")
     # negative limit is treated as no limit in sqlite due to check for --val = 0
-    limbo.run_test("update-limit-result", "SELECT COUNT(*) from t WHERE a = 100;", "6")
-    limbo.run_test("udpate-limit-where", "UPDATE t SET a = 333 WHERE b = 5 LIMIT 1;", "")
-    limbo.run_test("update-limit-where-result", "SELECT COUNT(*) from t WHERE a = 333;", "1")
-    limbo.quit()
+    turso.run_test("update-limit-result", "SELECT COUNT(*) from t WHERE a = 100;", "6")
+    turso.run_test("udpate-limit-where", "UPDATE t SET a = 333 WHERE b = 5 LIMIT 1;", "")
+    turso.run_test("update-limit-where-result", "SELECT COUNT(*) from t WHERE a = 333;", "1")
+    turso.quit()
 
 
 def test_update_with_limit_and_offset():
-    limbo = TestLimboShell(
+    turso = TestTursoShell(
         "CREATE TABLE t (a,b,c); insert into t values (1,2,3), (4,5,6), (7,8,9), (1,2,3),(4,5,6), (7,8,9);"
     )
-    limbo.run_test("update-limit-offset", "UPDATE t SET a = 10 LIMIT 1 OFFSET 3;", "")
-    limbo.run_test("update-limit-offset-result", "SELECT COUNT(*) from t WHERE a = 10;", "1")
-    limbo.run_test("update-limit-result", "SELECT a from t LIMIT 4;", "1\n4\n7\n10")
-    limbo.run_test("update-limit-offset-zero", "UPDATE t SET a = 100 LIMIT 0 OFFSET 0;", "")
-    limbo.run_test("update-limit-zero-result", "SELECT COUNT(*) from t WHERE a = 100;", "0")
-    limbo.run_test("update-limit-all", "UPDATE t SET a = 100 LIMIT -1 OFFSET 1;", "")
-    limbo.run_test("update-limit-result", "SELECT COUNT(*) from t WHERE a = 100;", "5")
-    limbo.run_test("udpate-limit-where", "UPDATE t SET a = 333 WHERE b = 5 LIMIT 1 OFFSET 2;", "")
-    limbo.run_test("update-limit-where-result", "SELECT COUNT(*) from t WHERE a = 333;", "0")
-    limbo.quit()
+    turso.run_test("update-limit-offset", "UPDATE t SET a = 10 LIMIT 1 OFFSET 3;", "")
+    turso.run_test("update-limit-offset-result", "SELECT COUNT(*) from t WHERE a = 10;", "1")
+    turso.run_test("update-limit-result", "SELECT a from t LIMIT 4;", "1\n4\n7\n10")
+    turso.run_test("update-limit-offset-zero", "UPDATE t SET a = 100 LIMIT 0 OFFSET 0;", "")
+    turso.run_test("update-limit-zero-result", "SELECT COUNT(*) from t WHERE a = 100;", "0")
+    turso.run_test("update-limit-all", "UPDATE t SET a = 100 LIMIT -1 OFFSET 1;", "")
+    turso.run_test("update-limit-result", "SELECT COUNT(*) from t WHERE a = 100;", "5")
+    turso.run_test("udpate-limit-where", "UPDATE t SET a = 333 WHERE b = 5 LIMIT 1 OFFSET 2;", "")
+    turso.run_test("update-limit-where-result", "SELECT COUNT(*) from t WHERE a = 333;", "0")
+    turso.quit()
 
 
 def test_insert_default_values():
-    limbo = TestLimboShell("CREATE TABLE t (a integer default(42),b integer default (43),c integer default(44));")
+    turso = TestTursoShell("CREATE TABLE t (a integer default(42),b integer default (43),c integer default(44));")
     for _ in range(1, 10):
-        limbo.execute_dot("INSERT INTO t DEFAULT VALUES;")
-    limbo.run_test("insert-default-values", "SELECT * FROM t;", "42|43|44\n" * 9)
-    limbo.quit()
+        turso.execute_dot("INSERT INTO t DEFAULT VALUES;")
+    turso.run_test("insert-default-values", "SELECT * FROM t;", "42|43|44\n" * 9)
+    turso.quit()
 
 
 def test_uri_readonly():
@@ -289,7 +289,7 @@ def test_uri_readonly():
 
 
 def main():
-    console.info("Running all Limbo CLI tests...")
+    console.info("Running all turso CLI tests...")
     test_basic_queries()
     test_schema_operations()
     test_file_operations()

@@ -8,7 +8,7 @@ import tempfile
 from enum import Enum
 
 from cli_tests import console
-from cli_tests.test_limbo_cli import TestLimboShell
+from cli_tests.test_limbo_cli import TestTursoShell
 from faker import Faker
 from faker.providers.lorem.en_US import Provider as P
 from pydantic import BaseModel
@@ -248,7 +248,7 @@ class ConstraintTest(BaseModel):
 
     def run(
         self,
-        limbo: TestLimboShell,
+        limbo: TestTursoShell,
     ):
         big_stmt = [self.table.create_table()]
         for insert_stmt in self.insert_stmts:
@@ -333,7 +333,7 @@ def custom_test_1() -> ConstraintTest:
     )
 
 
-def custom_test_2(limbo: TestLimboShell):
+def custom_test_2(limbo: TestTursoShell):
     create = "CREATE TABLE users (id INT PRIMARY KEY, username TEXT);"
     first_insert = "INSERT INTO users VALUES (1, 'alice');"
     limbo.run_test("Create unique INT index", create + first_insert, "")
@@ -345,7 +345,7 @@ def custom_test_2(limbo: TestLimboShell):
 
 
 # Issue #1482
-def regression_test_update_single_key(limbo: TestLimboShell):
+def regression_test_update_single_key(limbo: TestTursoShell):
     create = "CREATE TABLE t(a unique);"
     first_insert = "INSERT INTO t VALUES (1);"
     limbo.run_test("Create simple table with 1 unique value", create + first_insert, "")
@@ -374,7 +374,7 @@ def main():
         with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
             try:
                 # Use with syntax to automatically close shell on error
-                with TestLimboShell("") as limbo:
+                with TestTursoShell("") as limbo:
                     limbo.execute_dot(f".open {tmp.name}")
                     test.run(limbo)
             except Exception as e:
@@ -386,7 +386,7 @@ def main():
     for test in tests:
         with tempfile.NamedTemporaryFile(suffix=".db") as tmp:
             try:
-                with TestLimboShell("") as limbo:
+                with TestTursoShell("") as limbo:
                     limbo.execute_dot(f".open {tmp.name}")
                     test(limbo)
             except Exception as e:

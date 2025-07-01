@@ -2,7 +2,7 @@
 import os
 
 from cli_tests import console
-from cli_tests.test_limbo_cli import TestLimboShell
+from cli_tests.test_limbo_cli import TestTursoShell
 from pydantic import BaseModel
 
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
@@ -17,7 +17,7 @@ class UpdateTest(BaseModel):
     db_path: str = "testing/update.db"
 
     def init_db(self):
-        with TestLimboShell(
+        with TestTursoShell(
             init_commands="",
             exec_name="sqlite3",
             flags=f"{self.db_path}",
@@ -48,7 +48,7 @@ class UpdateTest(BaseModel):
                 "\n".join(expected),
             )
 
-    def run(self, limbo: TestLimboShell):
+    def run(self, limbo: TestTursoShell):
         limbo.execute_dot(f".open {self.db_path}")
         # TODO blobs are hard. Forget about blob updates for now
         # one_blob = ("0" * ((self.blob_size * 2) - 1)) + "1"
@@ -61,7 +61,7 @@ class UpdateTest(BaseModel):
     def test_compat(self):
         console.info("Testing in SQLite\n")
 
-        with TestLimboShell(
+        with TestTursoShell(
             init_commands="",
             exec_name="sqlite3",
             flags=f"{self.db_path}",
@@ -112,7 +112,7 @@ def main():
     try:
         test.init_db()
         # Use with syntax to automatically close shell on error
-        with TestLimboShell("") as limbo:
+        with TestTursoShell("") as limbo:
             test.run(limbo)
 
         test.test_compat()
