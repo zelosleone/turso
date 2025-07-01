@@ -274,6 +274,20 @@ def test_insert_default_values():
     limbo.quit()
 
 
+def test_uri_readonly():
+    turso = TestLimboShell(flags="-q file:testing/testing_small.db?mode=ro", init_commands="")
+    turso.run_test("read-only-uri-reads-work", "SELECT COUNT(*) FROM demo;", "5")
+    turso.run_test_fn(
+        "INSERT INTO demo (id, value) values (6, 'demo');",
+        lambda res: "read-only" in res,
+        "read-only-uri-writes-fail",
+    )
+    turso.run_test_fn("CREATE TABLE t(a);", lambda res: "read-only" in res, "read-only-uri-cant-create-table")
+    turso.run_test_fn("DROP TABLE demo;", lambda res: "read-only" in res, "read-only-uri-cant-drop-table")
+    turso.init_test_db()
+    turso.quit()
+
+
 def main():
     console.info("Running all Limbo CLI tests...")
     test_basic_queries()
@@ -293,6 +307,7 @@ def main():
     test_table_patterns()
     test_update_with_limit()
     test_update_with_limit_and_offset()
+    test_uri_readonly()
     console.info("All tests have passed")
 
 
