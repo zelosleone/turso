@@ -136,7 +136,6 @@ impl Schema {
 #[derive(Clone, Debug)]
 pub enum Table {
     BTree(Rc<BTreeTable>),
-    Pseudo(Rc<PseudoTable>),
     Virtual(Rc<VirtualTable>),
     FromClauseSubquery(FromClauseSubquery),
 }
@@ -145,7 +144,6 @@ impl Table {
     pub fn get_root_page(&self) -> usize {
         match self {
             Table::BTree(table) => table.root_page,
-            Table::Pseudo(_) => unimplemented!(),
             Table::Virtual(_) => unimplemented!(),
             Table::FromClauseSubquery(_) => unimplemented!(),
         }
@@ -154,7 +152,6 @@ impl Table {
     pub fn get_name(&self) -> &str {
         match self {
             Self::BTree(table) => &table.name,
-            Self::Pseudo(_) => "",
             Self::Virtual(table) => &table.name,
             Self::FromClauseSubquery(from_clause_subquery) => &from_clause_subquery.name,
         }
@@ -163,7 +160,6 @@ impl Table {
     pub fn get_column_at(&self, index: usize) -> Option<&Column> {
         match self {
             Self::BTree(table) => table.columns.get(index),
-            Self::Pseudo(table) => table.columns.get(index),
             Self::Virtual(table) => table.columns.get(index),
             Self::FromClauseSubquery(from_clause_subquery) => {
                 from_clause_subquery.columns.get(index)
@@ -174,7 +170,6 @@ impl Table {
     pub fn columns(&self) -> &Vec<Column> {
         match self {
             Self::BTree(table) => &table.columns,
-            Self::Pseudo(table) => &table.columns,
             Self::Virtual(table) => &table.columns,
             Self::FromClauseSubquery(from_clause_subquery) => &from_clause_subquery.columns,
         }
@@ -183,7 +178,6 @@ impl Table {
     pub fn btree(&self) -> Option<Rc<BTreeTable>> {
         match self {
             Self::BTree(table) => Some(table.clone()),
-            Self::Pseudo(_) => None,
             Self::Virtual(_) => None,
             Self::FromClauseSubquery(_) => None,
         }
@@ -201,7 +195,6 @@ impl PartialEq for Table {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::BTree(a), Self::BTree(b)) => Rc::ptr_eq(a, b),
-            (Self::Pseudo(a), Self::Pseudo(b)) => Rc::ptr_eq(a, b),
             (Self::Virtual(a), Self::Virtual(b)) => Rc::ptr_eq(a, b),
             _ => false,
         }
@@ -291,41 +284,20 @@ impl BTreeTable {
     }
 }
 
-#[derive(Debug, Default)]
-pub struct PseudoTable {
-    pub columns: Vec<Column>,
+#[derive(Debug, Default, Clone, Copy)]
+pub struct PseudoCursorType {
+    pub column_count: usize,
 }
 
-impl PseudoTable {
+impl PseudoCursorType {
     pub fn new() -> Self {
-        Self { columns: vec![] }
+        Self { column_count: 0 }
     }
 
-    pub fn new_with_columns(columns: Vec<Column>) -> Self {
-        Self { columns }
-    }
-
-    pub fn add_column(&mut self, name: &str, ty: Type, primary_key: bool) {
-        self.columns.push(Column {
-            name: Some(normalize_ident(name)),
-            ty,
-            ty_str: ty.to_string().to_uppercase(),
-            primary_key,
-            is_rowid_alias: false,
-            notnull: false,
-            default: None,
-            unique: false,
-            collation: None,
-        });
-    }
-    pub fn get_column(&self, name: &str) -> Option<(usize, &Column)> {
-        let name = normalize_ident(name);
-        for (i, column) in self.columns.iter().enumerate() {
-            if column.name.as_ref().map_or(false, |n| *n == name) {
-                return Some((i, column));
-            }
+    pub fn new_with_columns(columns: impl AsRef<[Column]>) -> Self {
+        Self {
+            column_count: columns.as_ref().len(),
         }
-        None
     }
 }
 
@@ -580,8 +552,8 @@ fn create_table(
     })
 }
 
-pub fn _build_pseudo_table(columns: &[ResultColumn]) -> PseudoTable {
-    let table = PseudoTable::new();
+pub fn _build_pseudo_table(columns: &[ResultColumn]) -> PseudoCursorType {
+    let table = PseudoCursorType::new();
     for column in columns {
         match column {
             ResultColumn::Expr(expr, _as_name) => {

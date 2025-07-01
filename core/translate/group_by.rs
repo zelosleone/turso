@@ -1,12 +1,10 @@
-use std::rc::Rc;
-
 use turso_sqlite3_parser::ast;
 
 use crate::translate::expr::{walk_expr, WalkControl};
 use crate::translate::plan::ResultSetColumn;
 use crate::{
     function::AggFunc,
-    schema::{Column, PseudoTable},
+    schema::PseudoCursorType,
     translate::collate::CollationSeq,
     util::exprs_are_equivalent,
     vdbe::{
@@ -304,30 +302,11 @@ pub fn group_by_create_pseudo_table(
     program: &mut ProgramBuilder,
     sorter_column_count: usize,
 ) -> usize {
-    // Create pseudo-columns for the pseudo-table
-    // (these are placeholders as we only care about structure, not semantics)
-    let ty = crate::schema::Type::Null;
-    let pseudo_columns = (0..sorter_column_count)
-        .map(|_| Column {
-            name: None,
-            primary_key: false,
-            ty,
-            ty_str: ty.to_string().to_uppercase(),
-            is_rowid_alias: false,
-            notnull: false,
-            default: None,
-            unique: false,
-            collation: None,
-        })
-        .collect::<Vec<_>>();
-
     // Create a pseudo-table to read one row at a time from the sorter
     // This allows us to use standard table access operations on the sorted data
-    let pseudo_table = Rc::new(PseudoTable {
-        columns: pseudo_columns,
-    });
-
-    program.alloc_cursor_id(CursorType::Pseudo(pseudo_table.clone()))
+    program.alloc_cursor_id(CursorType::Pseudo(PseudoCursorType {
+        column_count: sorter_column_count,
+    }))
 }
 
 /// In case sorting is needed for GROUP BY, sorts the rows in the GROUP BY sorter

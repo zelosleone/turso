@@ -749,7 +749,6 @@ pub fn translate_drop_table(
                 db: 0, // TODO change this for multiple databases
             });
         }
-        Table::Pseudo(..) => unimplemented!(),
         Table::FromClauseSubquery(..) => panic!("FromClauseSubquery can't be dropped"),
     };
 

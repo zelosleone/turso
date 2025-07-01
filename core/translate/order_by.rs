@@ -1,9 +1,7 @@
-use std::rc::Rc;
-
 use turso_sqlite3_parser::ast::{self, SortOrder};
 
 use crate::{
-    schema::{Column, PseudoTable},
+    schema::PseudoCursorType,
     translate::collate::CollationSeq,
     util::exprs_are_equivalent,
     vdbe::{
@@ -87,54 +85,17 @@ pub fn emit_order_by(
     let sort_loop_start_label = program.allocate_label();
     let sort_loop_next_label = program.allocate_label();
     let sort_loop_end_label = program.allocate_label();
-    let mut pseudo_columns = vec![];
-    for _ in 0..order_by.len() {
-        let ty = crate::schema::Type::Null;
-        pseudo_columns.push(Column {
-            // Names don't matter. We are tracking which result column is in which position in the ORDER BY clause in m.result_column_indexes_in_orderby_sorter.
-            name: None,
-            primary_key: false,
-            ty,
-            ty_str: ty.to_string().to_uppercase(),
-            is_rowid_alias: false,
-            notnull: false,
-            default: None,
-            unique: false,
-            collation: None,
-        });
-    }
-    for i in 0..result_columns.len() {
-        // If any result columns are not in the ORDER BY sorter, it's because they are equal to a sort key and were already added to the pseudo columns above.
-        if let Some(ref v) = t_ctx.result_columns_to_skip_in_orderby_sorter {
-            if v.contains(&i) {
-                continue;
-            }
-        }
-        let ty = crate::schema::Type::Null;
-        pseudo_columns.push(Column {
-            name: None,
-            primary_key: false,
-            ty,
-            ty_str: ty.to_string().to_uppercase(),
-            is_rowid_alias: false,
-            notnull: false,
-            default: None,
-            unique: false,
-            collation: None,
-        });
-    }
 
-    let num_columns_in_sorter = order_by.len() + result_columns.len()
+    let sorter_column_count = order_by.len() + result_columns.len()
         - t_ctx
             .result_columns_to_skip_in_orderby_sorter
             .as_ref()
             .map(|v| v.len())
             .unwrap_or(0);
 
-    let pseudo_table = Rc::new(PseudoTable {
-        columns: pseudo_columns,
-    });
-    let pseudo_cursor = program.alloc_cursor_id(CursorType::Pseudo(pseudo_table.clone()));
+    let pseudo_cursor = program.alloc_cursor_id(CursorType::Pseudo(PseudoCursorType {
+        column_count: sorter_column_count,
+    }));
     let SortMetadata {
         sort_cursor,
         reg_sorter_data,
@@ -143,7 +104,7 @@ pub fn emit_order_by(
     program.emit_insn(Insn::OpenPseudo {
         cursor_id: pseudo_cursor,
         content_reg: reg_sorter_data,
-        num_fields: num_columns_in_sorter,
+        num_fields: sorter_column_count,
     });
 
     program.emit_insn(Insn::SorterSort {

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::vdbe::insn::CmpInsFlags;
 use crate::{
-    schema::{BTreeTable, Column, Index, IndexColumn, PseudoTable, Schema},
+    schema::{BTreeTable, Column, Index, IndexColumn, PseudoCursorType, Schema},
     storage::pager::CreateBTreeFlags,
     util::normalize_ident,
     vdbe::{
@@ -83,8 +83,9 @@ pub fn translate_create_index(
     let btree_cursor_id = program.alloc_cursor_id(CursorType::BTreeIndex(idx.clone()));
     let table_cursor_id = program.alloc_cursor_id(CursorType::BTreeTable(tbl.clone()));
     let sorter_cursor_id = program.alloc_cursor_id(CursorType::Sorter);
-    let pseudo_table = PseudoTable::new_with_columns(tbl.columns.clone());
-    let pseudo_cursor_id = program.alloc_cursor_id(CursorType::Pseudo(pseudo_table.into()));
+    let pseudo_cursor_id = program.alloc_cursor_id(CursorType::Pseudo(PseudoCursorType {
+        column_count: tbl.columns.len(),
+    }));
 
     // Create a new B-Tree and store the root page index in a register
     let root_page_reg = program.alloc_register();
