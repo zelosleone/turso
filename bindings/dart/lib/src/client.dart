@@ -53,7 +53,7 @@ class LibsqlClient {
             )
           : positional != null
           ? Params.positional(positional.map(toValue).toList())
-          : Params.none(),
+          : const Params.none(),
     );
     return res.rows
         .map(
@@ -102,7 +102,7 @@ class LibsqlClient {
             )
           : positional != null
           ? Params.positional(positional.map(toValue).toList())
-          : Params.none(),
+          : const Params.none(),
     );
     return res.rowsAffected.toInt();
   }

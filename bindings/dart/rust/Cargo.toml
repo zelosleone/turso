@@ -1,5 +1,5 @@
 [package]
-name = "turso-dart"
+name = "turso_dart"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -12,7 +12,7 @@ crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
 flutter_rust_bridge = "=2.10.0"
-turso_core = { workspace = true }
+turso_core = { workspace = true, features = ["fs"] }
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }

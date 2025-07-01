@@ -3826,14 +3826,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "turso-dart"
-version = "0.1.1"
-dependencies = [
- "flutter_rust_bridge",
- "turso_core",
-]
-
-[[package]]
 name = "turso_cli"
 version = "0.1.1"
 dependencies = [
@@ -3914,6 +3906,14 @@ dependencies = [
  "turso_sqlite3_parser",
  "uncased",
  "uuid",
+]
+
+[[package]]
+name = "turso_dart"
+version = "0.1.1"
+dependencies = [
+ "flutter_rust_bridge",
+ "turso_core",
 ]
 
 [[package]]
