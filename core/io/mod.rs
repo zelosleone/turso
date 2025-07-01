@@ -230,8 +230,7 @@ cfg_block! {
         pub use PlatformIO as SyscallIO;
     }
 
-
-    #[cfg(target_os = "android")] {
+    #[cfg(any(target_os = "android", target_os = "ios"))] {
         mod unix;
         #[cfg(feature = "fs")]
         pub use unix::UnixIO;
@@ -245,7 +244,7 @@ cfg_block! {
         pub use PlatformIO as SyscallIO;
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "android")))] {
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "android", target_os = "ios")))] {
         mod generic;
         pub use generic::GenericIO as PlatformIO;
         pub use PlatformIO as SyscallIO;
