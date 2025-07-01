@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use flutter_rust_bridge::{frb, RustAutoOpaqueNom};
+use flutter_rust_bridge::frb;
 pub use turso_core::{Connection, Database};
 
 use crate::{
@@ -14,8 +14,8 @@ use crate::{
 
 #[frb(opaque)]
 pub struct LibsqlConnection {
-    inner: RustAutoOpaqueNom<Wrapper<Arc<Connection>>>,
-    database: RustAutoOpaqueNom<Wrapper<Arc<Database>>>,
+    inner: Wrapper<Arc<Connection>>,
+    database: Wrapper<Arc<Database>>,
 }
 
 impl LibsqlConnection {
@@ -24,8 +24,8 @@ impl LibsqlConnection {
         database: Wrapper<Arc<Database>>,
     ) -> LibsqlConnection {
         LibsqlConnection {
-            inner: RustAutoOpaqueNom::new(connection),
-            database: RustAutoOpaqueNom::new(database),
+            inner: connection,
+            database: database,
         }
     }
 
@@ -38,11 +38,11 @@ impl LibsqlConnection {
     }
 
     pub async fn prepare(&self, sql: String) -> LibsqlStatement {
-        let statement = self.inner.try_write().unwrap().prepare(&sql).unwrap();
+        let statement = self.inner.prepare(&sql).unwrap();
         LibsqlStatement::new(
             Wrapper { inner: statement },
             Wrapper {
-                inner: self.inner.try_write().unwrap().to_owned(),
+                inner: self.inner.to_owned(),
             },
         )
     }
