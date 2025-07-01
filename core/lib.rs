@@ -343,6 +343,8 @@ impl Database {
         path: &str,
         vfs: Option<S>,
         flags: OpenFlags,
+        indexes: bool,
+        mvcc: bool,
     ) -> Result<(Arc<dyn IO>, Arc<Database>)>
     where
         S: AsRef<str> + std::fmt::Display,
@@ -370,7 +372,7 @@ impl Database {
                         }
                     },
                 };
-                let db = Self::open_file_with_flags(io.clone(), path, flags, false, false)?;
+                let db = Self::open_file_with_flags(io.clone(), path, flags, indexes, mvcc)?;
                 Ok((io, db))
             }
             None => {
@@ -378,7 +380,7 @@ impl Database {
                     MEMORY_PATH => Arc::new(MemoryIO::new()),
                     _ => Arc::new(PlatformIO::new()?),
                 };
-                let db = Self::open_file_with_flags(io.clone(), path, flags, false, false)?;
+                let db = Self::open_file_with_flags(io.clone(), path, flags, indexes, mvcc)?;
                 Ok((io, db))
             }
         }
@@ -588,7 +590,11 @@ impl Connection {
     }
 
     #[cfg(feature = "fs")]
-    pub fn from_uri(uri: &str) -> Result<(Arc<dyn IO>, Arc<Connection>)> {
+    pub fn from_uri(
+        uri: &str,
+        use_indexes: bool,
+        mvcc: bool,
+    ) -> Result<(Arc<dyn IO>, Arc<Connection>)> {
         use crate::util::MEMORY_PATH;
         let opts = OpenOptions::parse(uri)?;
         let flags = opts.get_flags()?;
@@ -598,7 +604,7 @@ impl Connection {
             let conn = db.connect()?;
             return Ok((io, conn));
         }
-        let (io, db) = Database::open_new(&opts.path, opts.vfs.as_ref(), flags)?;
+        let (io, db) = Database::open_new(&opts.path, opts.vfs.as_ref(), flags, use_indexes, mvcc)?;
         if let Some(modeof) = opts.modeof {
             let perms = std::fs::metadata(modeof)?;
             std::fs::set_permissions(&opts.path, perms.permissions())?;

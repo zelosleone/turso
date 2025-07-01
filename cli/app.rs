@@ -116,16 +116,21 @@ impl Limbo {
             .database
             .as_ref()
             .map_or(":memory:".to_string(), |p| p.to_string_lossy().to_string());
-        let (io, conn) = if db_file.contains(['?', '&', '#']) {
-            // likely a URI
-            Connection::from_uri(&db_file)?
+        let (io, conn) = if db_file.contains([':', '?', '&', '#']) {
+            Connection::from_uri(&db_file, opts.experimental_indexes, opts.experimental_mvcc)?
         } else {
             let flags = if opts.readonly {
                 OpenFlags::ReadOnly
             } else {
                 OpenFlags::default()
             };
-            let (io, db) = Database::open_new(&db_file, opts.vfs.as_ref(), flags)?;
+            let (io, db) = Database::open_new(
+                &db_file,
+                opts.vfs.as_ref(),
+                flags,
+                opts.experimental_indexes,
+                opts.experimental_mvcc,
+            )?;
             let conn = db.connect()?;
             (io, conn)
         };

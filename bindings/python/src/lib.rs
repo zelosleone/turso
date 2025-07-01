@@ -300,7 +300,7 @@ impl Drop for Connection {
 #[allow(clippy::arc_with_non_send_sync)]
 #[pyfunction]
 pub fn connect(path: &str) -> Result<Connection> {
-    match turso_core::Connection::from_uri(path) {
+    match turso_core::Connection::from_uri(path, false, false) {
         Ok((io, conn)) => Ok(Connection { conn, io }),
         Err(e) => Err(PyErr::new::<ProgrammingError, _>(format!(
             "Failed to create connection: {:?}",
