@@ -1188,6 +1188,17 @@ pub unsafe extern "C" fn libsql_wal_get_frame(
     }
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn libsql_wal_disable_checkpoint(db: *mut sqlite3) -> ffi::c_int {
+    if db.is_null() {
+        return SQLITE_MISUSE;
+    }
+    let db: &mut sqlite3 = &mut *db;
+    let db = db.inner.lock().unwrap();
+    db.conn.wal_disable_checkpoint();
+    SQLITE_OK
+}
+
 fn sqlite3_safety_check_sick_or_ok(db: &sqlite3Inner) -> bool {
     match db.e_open_state {
         SQLITE_STATE_SICK | SQLITE_STATE_OPEN | SQLITE_STATE_BUSY => true,

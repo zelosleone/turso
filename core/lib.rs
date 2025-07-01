@@ -118,8 +118,8 @@ pub struct Database {
     maybe_shared_wal: RwLock<Option<Arc<UnsafeCell<WalFileShared>>>>,
     is_empty: Arc<AtomicUsize>,
     init_lock: Arc<Mutex<()>>,
-
     open_flags: OpenFlags,
+    wal_checkpoint_disabled: Cell<bool>,
 }
 
 unsafe impl Send for Database {}
@@ -211,6 +211,7 @@ impl Database {
             open_flags: flags,
             is_empty: Arc::new(AtomicUsize::new(is_empty)),
             init_lock: Arc::new(Mutex::new(())),
+            wal_checkpoint_disabled: Cell::new(false),
         };
         let db = Arc::new(db);
 
@@ -674,7 +675,8 @@ impl Connection {
     /// If the WAL size is over the checkpoint threshold, it will checkpoint the WAL to
     /// the database file and then fsync the database file.
     pub fn cacheflush(&self) -> Result<PagerCacheflushStatus> {
-        self.pager.cacheflush()
+        self.pager
+            .cacheflush(self._db.wal_checkpoint_disabled.get())
     }
 
     pub fn clear_page_cache(&self) -> Result<()> {
@@ -683,12 +685,18 @@ impl Connection {
     }
 
     pub fn checkpoint(&self) -> Result<CheckpointResult> {
-        self.pager.wal_checkpoint()
+        self.pager
+            .wal_checkpoint(self._db.wal_checkpoint_disabled.get())
     }
 
     /// Close a connection and checkpoint.
     pub fn close(&self) -> Result<()> {
-        self.pager.checkpoint_shutdown()
+        self.pager
+            .checkpoint_shutdown(self._db.wal_checkpoint_disabled.get())
+    }
+
+    pub fn wal_disable_checkpoint(&self) {
+        self._db.wal_checkpoint_disabled.set(true);
     }
 
     pub fn last_insert_rowid(&self) -> i64 {
