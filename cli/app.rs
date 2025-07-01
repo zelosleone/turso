@@ -589,7 +589,7 @@ impl Limbo {
                     std::process::exit(args.code);
                 }
                 Command::Quit => {
-                    let _ = self.writeln("Exiting Limbo SQL Shell.");
+                    let _ = self.writeln("Exiting Turso SQL Shell.");
                     let _ = self.close_conn();
                     self.save_history();
                     std::process::exit(0)
