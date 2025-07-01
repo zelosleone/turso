@@ -5218,7 +5218,7 @@ pub fn op_open_ephemeral(
             let file = io.open_file("", OpenFlags::Create, true)?;
             let db_file = Arc::new(FileMemoryStorage::new(file));
 
-            let buffer_pool = Rc::new(BufferPool::new(None));
+            let buffer_pool = Arc::new(BufferPool::new(None));
             let page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
 
             let pager = Rc::new(Pager::new(

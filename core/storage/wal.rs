@@ -211,13 +211,13 @@ pub trait Wal {
     fn find_frame(&self, page_id: u64) -> Result<Option<u64>>;
 
     /// Read a frame from the WAL.
-    fn read_frame(&self, frame_id: u64, page: PageRef, buffer_pool: Rc<BufferPool>) -> Result<()>;
+    fn read_frame(&self, frame_id: u64, page: PageRef, buffer_pool: Arc<BufferPool>) -> Result<()>;
 
     /// Read a frame from the WAL.
     fn read_frame_raw(
         &self,
         frame_id: u64,
-        buffer_pool: Rc<BufferPool>,
+        buffer_pool: Arc<BufferPool>,
         frame: *mut u8,
         frame_len: u32,
     ) -> Result<Arc<Completion>>;
@@ -283,7 +283,7 @@ impl Wal for DummyWAL {
         &self,
         _frame_id: u64,
         _page: crate::PageRef,
-        _buffer_pool: Rc<BufferPool>,
+        _buffer_pool: Arc<BufferPool>,
     ) -> Result<()> {
         Ok(())
     }
@@ -291,7 +291,7 @@ impl Wal for DummyWAL {
     fn read_frame_raw(
         &self,
         _frame_id: u64,
-        _buffer_pool: Rc<BufferPool>,
+        _buffer_pool: Arc<BufferPool>,
         _frame: *mut u8,
         _frame_len: u32,
     ) -> Result<Arc<Completion>> {
@@ -408,7 +408,7 @@ impl fmt::Debug for OngoingCheckpoint {
 #[allow(dead_code)]
 pub struct WalFile {
     io: Arc<dyn IO>,
-    buffer_pool: Rc<BufferPool>,
+    buffer_pool: Arc<BufferPool>,
 
     syncing: Rc<Cell<bool>>,
     sync_state: Cell<SyncState>,
@@ -606,7 +606,7 @@ impl Wal for WalFile {
     }
 
     /// Read a frame from the WAL.
-    fn read_frame(&self, frame_id: u64, page: PageRef, buffer_pool: Rc<BufferPool>) -> Result<()> {
+    fn read_frame(&self, frame_id: u64, page: PageRef, buffer_pool: Arc<BufferPool>) -> Result<()> {
         tracing::debug!("read_frame({})", frame_id);
         let offset = self.frame_offset(frame_id);
         page.set_locked();
@@ -627,7 +627,7 @@ impl Wal for WalFile {
     fn read_frame_raw(
         &self,
         frame_id: u64,
-        buffer_pool: Rc<BufferPool>,
+        buffer_pool: Arc<BufferPool>,
         frame: *mut u8,
         frame_len: u32,
     ) -> Result<Arc<Completion>> {
@@ -953,7 +953,7 @@ impl WalFile {
     pub fn new(
         io: Arc<dyn IO>,
         shared: Arc<UnsafeCell<WalFileShared>>,
-        buffer_pool: Rc<BufferPool>,
+        buffer_pool: Arc<BufferPool>,
     ) -> Self {
         let checkpoint_page = Arc::new(Page::new(0));
         let buffer = buffer_pool.get();

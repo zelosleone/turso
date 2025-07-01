@@ -205,7 +205,7 @@ pub struct Pager {
     /// A page cache for the database.
     page_cache: Arc<RwLock<DumbLruPageCache>>,
     /// Buffer pool for temporary data storage.
-    pub buffer_pool: Rc<BufferPool>,
+    pub buffer_pool: Arc<BufferPool>,
     /// I/O interface for input/output operations.
     pub io: Arc<dyn crate::io::IO>,
     dirty_pages: Rc<RefCell<HashSet<usize>>>,
@@ -264,7 +264,7 @@ impl Pager {
         wal: Rc<RefCell<dyn Wal>>,
         io: Arc<dyn crate::io::IO>,
         page_cache: Arc<RwLock<DumbLruPageCache>>,
-        buffer_pool: Rc<BufferPool>,
+        buffer_pool: Arc<BufferPool>,
         is_empty: Arc<AtomicUsize>,
         init_lock: Arc<Mutex<()>>,
     ) -> Result<Self> {
@@ -1183,7 +1183,7 @@ impl Pager {
     }
 }
 
-pub fn allocate_page(page_id: usize, buffer_pool: &Rc<BufferPool>, offset: usize) -> PageRef {
+pub fn allocate_page(page_id: usize, buffer_pool: &Arc<BufferPool>, offset: usize) -> PageRef {
     let page = Arc::new(Page::new(page_id));
     {
         let buffer = buffer_pool.get();
@@ -1469,7 +1469,7 @@ mod ptrmap_tests {
         ));
 
         //  Construct interfaces for the pager
-        let buffer_pool = Rc::new(BufferPool::new(Some(page_size as usize)));
+        let buffer_pool = Arc::new(BufferPool::new(Some(page_size as usize)));
         let page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(
             (initial_db_pages + 10) as usize,
         )));

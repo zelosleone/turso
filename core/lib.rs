@@ -234,7 +234,7 @@ impl Database {
     }
 
     pub fn connect(self: &Arc<Database>) -> Result<Arc<Connection>> {
-        let buffer_pool = Rc::new(BufferPool::new(None));
+        let buffer_pool = Arc::new(BufferPool::new(None));
 
         // Open existing WAL file if present
         if let Some(shared_wal) = self.maybe_shared_wal.read().clone() {

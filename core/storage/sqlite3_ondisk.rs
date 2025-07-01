@@ -729,7 +729,7 @@ impl PageContent {
 
 pub fn begin_read_page(
     db_file: Arc<dyn DatabaseStorage>,
-    buffer_pool: Rc<BufferPool>,
+    buffer_pool: Arc<BufferPool>,
     page: PageRef,
     page_idx: usize,
 ) -> Result<()> {
@@ -1465,7 +1465,7 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
 pub fn begin_read_wal_frame(
     io: &Arc<dyn File>,
     offset: usize,
-    buffer_pool: Rc<BufferPool>,
+    buffer_pool: Arc<BufferPool>,
     complete: Box<dyn Fn(Arc<RefCell<Buffer>>)>,
 ) -> Result<Arc<Completion>> {
     tracing::trace!("begin_read_wal_frame(offset={})", offset);
