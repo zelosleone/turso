@@ -2,14 +2,60 @@
 
 Dart/Flutter binding for turso database.
 
-## Pre-requisites
+## Getting Started
 
-- [Flutter](https://docs.flutter.dev/get-started/install)
-- [Rust](https://www.rust-lang.org/tools/install)
-- [frb](https://cjycode.com/flutter_rust_bridge/quickstart)
+### Add it to your `pubspec.yaml`.
 
-## Development
+```
+turso_dart:
+```
 
-- Modify rust code under `rust` directory;
-- Inside this directory, run `flutter_rust_bridge_codegen generate`
-- Modify dart code under `lib` directory;
+### Create the client
+
+- In memory
+
+```dart
+final client = TursoClient.memory();
+```
+
+- Local
+
+```dart
+final dir = await getApplicationCacheDirectory();
+final path = '${dir.path}/local.db';
+final client = TursoClient.local(path);
+```
+
+### Connect
+
+```dart
+await client.connect();
+```
+
+### Run SQL statements
+
+- Create table
+
+```dart
+await client.execute("create table if not exists customers (id integer primary key, name text);");
+```
+
+- Insert query
+
+```dart
+await client.query("insert into customers(name) values ('John Doe')");
+```
+
+- Select query
+
+```dart
+print(await client.query("select * from customers"));
+```
+
+- Prepared statement
+
+```dart
+final statement = await client
+	.prepare("select * from customers where id = ?");
+await statement.query(positional: [1])
+```
