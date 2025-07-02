@@ -2,7 +2,7 @@
 import os
 
 from cli_tests import console
-from cli_tests.test_limbo_cli import TestLimboShell
+from cli_tests.test_limbo_cli import TestTursoShell
 
 sqlite_exec = "./scripts/limbo-sqlite3"
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
@@ -31,7 +31,7 @@ def validate_string_uuid(res):
 
 
 def test_uuid():
-    limbo = TestLimboShell()
+    limbo = TestTursoShell()
     specific_time = "01945ca0-3189-76c0-9a8f-caf310fc8b8e"
     # these are built into the binary, so we just test they work
     limbo.run_test_fn(
@@ -71,7 +71,7 @@ def null(res):
 
 
 def test_regexp():
-    limbo = TestLimboShell(test_data)
+    limbo = TestTursoShell(test_data)
     extension_path = "./target/debug/liblimbo_regexp"
     # before extension loads, assert no function
     limbo.run_test_fn(
@@ -127,7 +127,7 @@ def validate_percentile_disc(res):
 
 
 def test_aggregates():
-    limbo = TestLimboShell(init_commands=test_data)
+    limbo = TestTursoShell(init_commands=test_data)
     extension_path = "./target/debug/liblimbo_percentile"
     # assert no function before extension loads
     limbo.run_test_fn(
@@ -204,7 +204,7 @@ def validate_base64_decode(a):
 
 
 def test_crypto():
-    limbo = TestLimboShell()
+    limbo = TestTursoShell()
     extension_path = "./target/debug/liblimbo_crypto"
     # assert no function before extension loads
     limbo.run_test_fn(
@@ -303,15 +303,15 @@ def test_crypto():
 
 def test_series():
     console.info("Running test_series for Limbo")
-    limbo = TestLimboShell()
+    limbo = TestTursoShell()
     _test_series(limbo)
 
     console.info("Running test_series for SQLite")
-    limbo = TestLimboShell(exec_name="sqlite3")
+    limbo = TestTursoShell(exec_name="sqlite3")
     _test_series(limbo)
 
 
-def _test_series(limbo: TestLimboShell):
+def _test_series(limbo: TestTursoShell):
     limbo.run_test_fn(
         "SELECT * FROM generate_series(1, 10);",
         lambda res: res == "1\n2\n3\n4\n5\n6\n7\n8\n9\n10",
@@ -345,7 +345,7 @@ def test_kv():
 def _test_kv(exec_name, ext_path):
     console.info(f"Running test_kv for {ext_path}")
 
-    limbo = TestLimboShell(
+    limbo = TestTursoShell(
         exec_name=exec_name,
     )
     # first, create a normal table to ensure no issues
@@ -436,7 +436,7 @@ def _test_kv(exec_name, ext_path):
 
 
 def test_ipaddr():
-    limbo = TestLimboShell()
+    limbo = TestTursoShell()
     ext_path = "./target/debug/liblimbo_ipaddr"
 
     limbo.run_test_fn(
@@ -504,7 +504,7 @@ def test_ipaddr():
 
 
 def test_vfs():
-    limbo = TestLimboShell()
+    limbo = TestTursoShell()
     ext_path = "target/debug/libturso_ext_tests"
     limbo.run_test_fn(".vfslist", lambda x: "testvfs" not in x, "testvfs not loaded")
     limbo.execute_dot(f".load {ext_path}")
@@ -531,7 +531,7 @@ def test_vfs():
 
 def test_drop_virtual_table():
     ext_path = "target/debug/libturso_ext_tests"
-    limbo = TestLimboShell()
+    limbo = TestTursoShell()
     limbo.execute_dot(f".load {ext_path}")
     limbo.run_debug(
         "create virtual table t using kv_store;",
@@ -556,7 +556,7 @@ def test_drop_virtual_table():
 
 
 def test_sqlite_vfs_compat():
-    sqlite = TestLimboShell(
+    sqlite = TestTursoShell(
         init_commands="",
         exec_name="sqlite3",
         flags="testing/vfs.db",
@@ -587,7 +587,7 @@ def test_sqlite_vfs_compat():
 def test_create_virtual_table():
     ext_path = "target/debug/libturso_ext_tests"
 
-    limbo = TestLimboShell()
+    limbo = TestTursoShell()
     limbo.execute_dot(f".load {ext_path}")
 
     limbo.run_debug("CREATE VIRTUAL TABLE t1 USING kv_store;")
@@ -625,7 +625,7 @@ def test_create_virtual_table():
 
 
 def test_csv():
-    limbo = TestLimboShell()
+    limbo = TestTursoShell()
     ext_path = "./target/debug/liblimbo_csv"
     limbo.execute_dot(f".load {ext_path}")
 
@@ -712,7 +712,7 @@ def cleanup():
 
 def test_tablestats():
     ext_path = "target/debug/libturso_ext_tests"
-    limbo = TestLimboShell(use_testing_db=True)
+    limbo = TestTursoShell(use_testing_db=True)
     limbo.execute_dot("CREATE TABLE people(id INTEGER PRIMARY KEY, name TEXT);")
     limbo.execute_dot("INSERT INTO people(name) VALUES ('Ada'), ('Grace'), ('Linus');")
 

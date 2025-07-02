@@ -35,13 +35,13 @@ You can freely write queries against these tables during compatibility testing.
 
 For cases where output or behavior differs intentionally from SQLite (e.g. due to new features or limitations), tests should be placed in the testing/cli_tests/ directory and written in Python.
 
-These tests use the TestLimboShell class:
+These tests use the TestTursoShell class:
 
 ```python
-from cli_tests.common import TestLimboShell
+from cli_tests.common import TestTursoShell
 
 def test_uuid():
-    limbo = TestLimboShell()
+    limbo = TestTursoShell()
     limbo.run_test_fn("SELECT uuid4_str();", lambda res: len(res) == 36)
     limbo.quit()
 ```

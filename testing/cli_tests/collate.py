@@ -2,7 +2,7 @@
 import os
 
 from cli_tests import console
-from cli_tests.test_limbo_cli import TestLimboShell
+from cli_tests.test_limbo_cli import TestTursoShell
 from pydantic import BaseModel
 
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
@@ -20,7 +20,7 @@ class CollateTest(BaseModel):
     db_path: str = "testing/collate.db"
 
     def init_db(self):
-        with TestLimboShell(
+        with TestTursoShell(
             init_commands="",
             exec_name="sqlite3",
             flags=f"{self.db_path}",
@@ -41,7 +41,7 @@ class CollateTest(BaseModel):
                 f"{4}",
             )
 
-    def run(self, limbo: TestLimboShell):
+    def run(self, limbo: TestTursoShell):
         limbo.execute_dot(f".open {self.db_path}")
 
         limbo.run_test(
@@ -130,7 +130,7 @@ def main():
     try:
         test.init_db()
         # Use with syntax to automatically close shell on error
-        with TestLimboShell("") as limbo:
+        with TestTursoShell("") as limbo:
             test.run(limbo)
 
         # test.test_compat()
