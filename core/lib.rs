@@ -278,6 +278,7 @@ impl Database {
                 cache_size: Cell::new(default_cache_size),
                 readonly: Cell::new(false),
                 wal_checkpoint_disabled: Cell::new(false),
+                capture_changes: Cell::new(false),
             });
             if let Err(e) = conn.register_builtins() {
                 return Err(LimboError::ExtensionError(e));
@@ -330,6 +331,7 @@ impl Database {
             cache_size: Cell::new(default_cache_size),
             readonly: Cell::new(false),
             wal_checkpoint_disabled: Cell::new(false),
+            capture_changes: Cell::new(false),
         });
 
         if let Err(e) = conn.register_builtins() {
@@ -450,6 +452,7 @@ pub struct Connection {
     cache_size: Cell<i32>,
     readonly: Cell<bool>,
     wal_checkpoint_disabled: Cell<bool>,
+    capture_changes: Cell<bool>,
 }
 
 impl Connection {
@@ -722,6 +725,13 @@ impl Connection {
     }
     pub fn set_cache_size(&self, size: i32) {
         self.cache_size.set(size);
+    }
+
+    pub fn get_capture_changes(&self) -> bool {
+        self.capture_changes.get()
+    }
+    pub fn set_capture_changes(&self, value: bool) {
+        self.capture_changes.set(value);
     }
 
     #[cfg(feature = "fs")]
