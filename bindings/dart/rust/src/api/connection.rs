@@ -15,18 +15,11 @@ use crate::{
 #[frb(opaque)]
 pub struct RustConnection {
     inner: Wrapper<Arc<Connection>>,
-    database: Wrapper<Arc<Database>>,
 }
 
 impl RustConnection {
-    pub fn new(
-        connection: Wrapper<Arc<Connection>>,
-        database: Wrapper<Arc<Database>>,
-    ) -> RustConnection {
-        RustConnection {
-            inner: connection,
-            database: database,
-        }
+    pub fn new(connection: Wrapper<Arc<Connection>>) -> RustConnection {
+        RustConnection { inner: connection }
     }
 
     pub async fn query(&self, sql: String, params: Params) -> QueryResult {

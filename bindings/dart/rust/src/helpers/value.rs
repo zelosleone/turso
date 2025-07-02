@@ -6,9 +6,9 @@ pub enum Value {
     Null,
 }
 
-impl Into<turso_core::Value> for Value {
-    fn into(self) -> turso_core::Value {
-        match self {
+impl From<Value> for turso_core::Value {
+    fn from(val: Value) -> Self {
+        match val {
             Value::Null => turso_core::Value::Null,
             Value::Integer(n) => turso_core::Value::Integer(n),
             Value::Real(n) => turso_core::Value::Float(n),

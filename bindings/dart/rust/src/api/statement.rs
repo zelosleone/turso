@@ -25,7 +25,7 @@ impl RustStatement {
     ) -> RustStatement {
         RustStatement {
             inner: statement,
-            connection: connection,
+            connection,
         }
     }
 

@@ -90,7 +90,6 @@ abstract class RustLibApi extends BaseApi {
 
   Future<RustConnection> crateApiConnectionRustConnectionNew({
     required WrapperArcConnection connection,
-    required WrapperArcDatabase database,
   });
 
   Future<RustStatement> crateApiConnectionRustConnectionPrepare({
@@ -155,15 +154,6 @@ abstract class RustLibApi extends BaseApi {
   get rust_arc_decrement_strong_count_WrapperArcConnectionPtr;
 
   RustArcIncrementStrongCountFnType
-  get rust_arc_increment_strong_count_WrapperArcDatabase;
-
-  RustArcDecrementStrongCountFnType
-  get rust_arc_decrement_strong_count_WrapperArcDatabase;
-
-  CrossPlatformFinalizerArg
-  get rust_arc_decrement_strong_count_WrapperArcDatabasePtr;
-
-  RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_WrapperStatement;
 
   RustArcDecrementStrongCountFnType
@@ -224,7 +214,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   @override
   Future<RustConnection> crateApiConnectionRustConnectionNew({
     required WrapperArcConnection connection,
-    required WrapperArcDatabase database,
   }) {
     return handler.executeNormal(
       NormalTask(
@@ -232,10 +221,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           final serializer = SseSerializer(generalizedFrbRustBinding);
           sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperArcConnection(
             connection,
-            serializer,
-          );
-          sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperArcDatabase(
-            database,
             serializer,
           );
           pdeCallFfi(
@@ -251,7 +236,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
           decodeErrorData: null,
         ),
         constMeta: kCrateApiConnectionRustConnectionNewConstMeta,
-        argValues: [connection, database],
+        argValues: [connection],
         apiImpl: this,
       ),
     );
@@ -260,7 +245,7 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   TaskConstMeta get kCrateApiConnectionRustConnectionNewConstMeta =>
       const TaskConstMeta(
         debugName: "RustConnection_new",
-        argNames: ["connection", "database"],
+        argNames: ["connection"],
       );
 
   @override
@@ -574,14 +559,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
       .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperArcConnection;
 
   RustArcIncrementStrongCountFnType
-  get rust_arc_increment_strong_count_WrapperArcDatabase => wire
-      .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperArcDatabase;
-
-  RustArcDecrementStrongCountFnType
-  get rust_arc_decrement_strong_count_WrapperArcDatabase => wire
-      .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperArcDatabase;
-
-  RustArcIncrementStrongCountFnType
   get rust_arc_increment_strong_count_WrapperStatement => wire
       .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperStatement;
 
@@ -614,15 +591,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return WrapperArcConnectionImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  WrapperArcDatabase
-  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperArcDatabase(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return WrapperArcDatabaseImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -689,15 +657,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return WrapperArcConnectionImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  WrapperArcDatabase
-  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperArcDatabase(
-    dynamic raw,
-  ) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return WrapperArcDatabaseImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -1018,18 +977,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   }
 
   @protected
-  WrapperArcDatabase
-  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperArcDatabase(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return WrapperArcDatabaseImpl.frbInternalSseDecode(
-      sse_decode_usize(deserializer),
-      sse_decode_i_32(deserializer),
-    );
-  }
-
-  @protected
   WrapperStatement
   sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperStatement(
     SseDeserializer deserializer,
@@ -1105,18 +1052,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
   ) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return WrapperArcConnectionImpl.frbInternalSseDecode(
-      sse_decode_usize(deserializer),
-      sse_decode_i_32(deserializer),
-    );
-  }
-
-  @protected
-  WrapperArcDatabase
-  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperArcDatabase(
-    SseDeserializer deserializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return WrapperArcDatabaseImpl.frbInternalSseDecode(
       sse_decode_usize(deserializer),
       sse_decode_i_32(deserializer),
     );
@@ -1519,19 +1454,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
 
   @protected
   void
-  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperArcDatabase(
-    WrapperArcDatabase self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-      (self as WrapperArcDatabaseImpl).frbInternalSseEncode(move: true),
-      serializer,
-    );
-  }
-
-  @protected
-  void
   sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperStatement(
     WrapperStatement self,
     SseSerializer serializer,
@@ -1616,19 +1538,6 @@ class RustLibApiImpl extends RustLibApiImplPlatform implements RustLibApi {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
       (self as WrapperArcConnectionImpl).frbInternalSseEncode(move: null),
-      serializer,
-    );
-  }
-
-  @protected
-  void
-  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperArcDatabase(
-    WrapperArcDatabase self,
-    SseSerializer serializer,
-  ) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-      (self as WrapperArcDatabaseImpl).frbInternalSseEncode(move: null),
       serializer,
     );
   }
@@ -2050,30 +1959,6 @@ class WrapperArcConnectionImpl extends RustOpaque
         .instance
         .api
         .rust_arc_decrement_strong_count_WrapperArcConnectionPtr,
-  );
-}
-
-@sealed
-class WrapperArcDatabaseImpl extends RustOpaque implements WrapperArcDatabase {
-  // Not to be used by end users
-  WrapperArcDatabaseImpl.frbInternalDcoDecode(List<dynamic> wire)
-    : super.frbInternalDcoDecode(wire, _kStaticData);
-
-  // Not to be used by end users
-  WrapperArcDatabaseImpl.frbInternalSseDecode(
-    BigInt ptr,
-    int externalSizeOnNative,
-  ) : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
-
-  static final _kStaticData = RustArcStaticData(
-    rustArcIncrementStrongCount:
-        RustLib.instance.api.rust_arc_increment_strong_count_WrapperArcDatabase,
-    rustArcDecrementStrongCount:
-        RustLib.instance.api.rust_arc_decrement_strong_count_WrapperArcDatabase,
-    rustArcDecrementStrongCountPtr: RustLib
-        .instance
-        .api
-        .rust_arc_decrement_strong_count_WrapperArcDatabasePtr,
   );
 }
 

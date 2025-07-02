@@ -9,8 +9,5 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Wrapper < Arc < Connection > >>>
 abstract class WrapperArcConnection implements RustOpaqueInterface {}
 
-// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Wrapper < Arc < Database > >>>
-abstract class WrapperArcDatabase implements RustOpaqueInterface {}
-
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Wrapper < Statement >>>
 abstract class WrapperStatement implements RustOpaqueInterface {}

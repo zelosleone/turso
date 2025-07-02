@@ -30,5 +30,5 @@ pub async fn connect(args: ConnectArgs) -> RustConnection {
     }
     .unwrap();
     let connection = database.connect().unwrap();
-    RustConnection::new(Wrapper { inner: connection }, Wrapper { inner: database })
+    RustConnection::new(Wrapper { inner: connection })
 }
