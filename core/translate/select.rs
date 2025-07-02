@@ -12,7 +12,7 @@ use crate::translate::planner::{
     parse_where, resolve_aggregates,
 };
 use crate::util::normalize_ident;
-use crate::vdbe::builder::{ProgramBuilderOpts, QueryMode, TableRefIdCounter};
+use crate::vdbe::builder::{ProgramBuilderOpts, TableRefIdCounter};
 use crate::vdbe::insn::Insn;
 use crate::SymbolTable;
 use crate::{schema::Schema, vdbe::builder::ProgramBuilder, Result};
@@ -25,7 +25,6 @@ pub struct TranslateSelectResult {
 }
 
 pub fn translate_select(
-    query_mode: QueryMode,
     schema: &Schema,
     select: ast::Select,
     syms: &SymbolTable,
@@ -46,7 +45,6 @@ pub fn translate_select(
         Plan::Select(select) => {
             num_result_cols = select.result_columns.len();
             ProgramBuilderOpts {
-                query_mode,
                 num_cursors: count_plan_required_cursors(select),
                 approx_num_insns: estimate_num_instructions(select),
                 approx_num_labels: estimate_num_labels(select),
@@ -59,7 +57,6 @@ pub fn translate_select(
             num_result_cols = right_most.result_columns.len();
 
             ProgramBuilderOpts {
-                query_mode,
                 num_cursors: count_plan_required_cursors(right_most)
                     + left
                         .iter()

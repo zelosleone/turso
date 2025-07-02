@@ -11,7 +11,7 @@ use crate::storage::pager::AutoVacuumMode;
 use crate::storage::sqlite3_ondisk::MIN_PAGE_CACHE_SIZE;
 use crate::storage::wal::CheckpointMode;
 use crate::util::{normalize_ident, parse_signed_number};
-use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
+use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts};
 use crate::vdbe::insn::{Cookie, Insn};
 use crate::{bail_parse_error, storage, LimboError, Value};
 use std::str::FromStr;
@@ -32,7 +32,6 @@ fn list_pragmas(program: &mut ProgramBuilder) {
 
 #[allow(clippy::too_many_arguments)]
 pub fn translate_pragma(
-    query_mode: QueryMode,
     schema: &Schema,
     name: &ast::QualifiedName,
     body: Option<ast::PragmaBody>,
@@ -41,7 +40,6 @@ pub fn translate_pragma(
     mut program: ProgramBuilder,
 ) -> crate::Result<ProgramBuilder> {
     let opts = ProgramBuilderOpts {
-        query_mode,
         num_cursors: 0,
         approx_num_insns: 20,
         approx_num_labels: 0,

@@ -7,7 +7,7 @@ use turso_sqlite3_parser::ast::{
 use crate::error::{SQLITE_CONSTRAINT_NOTNULL, SQLITE_CONSTRAINT_PRIMARYKEY};
 use crate::schema::{IndexColumn, Table};
 use crate::util::normalize_ident;
-use crate::vdbe::builder::{ProgramBuilderOpts, QueryMode};
+use crate::vdbe::builder::ProgramBuilderOpts;
 use crate::vdbe::insn::{IdxInsertFlags, InsertFlags, RegisterOrLiteral};
 use crate::vdbe::BranchOffset;
 use crate::{
@@ -33,7 +33,6 @@ struct TempTableCtx {
 
 #[allow(clippy::too_many_arguments)]
 pub fn translate_insert(
-    query_mode: QueryMode,
     schema: &Schema,
     with: Option<With>,
     on_conflict: Option<ResolveType>,
@@ -45,7 +44,6 @@ pub fn translate_insert(
     mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     let opts = ProgramBuilderOpts {
-        query_mode,
         num_cursors: 1,
         approx_num_insns: 30,
         approx_num_labels: 5,
@@ -148,14 +146,7 @@ pub fn translate_insert(
                     coroutine_implementation_start: halt_label,
                 };
                 program.incr_nesting();
-                let result = translate_select(
-                    query_mode,
-                    schema,
-                    *select,
-                    syms,
-                    program,
-                    query_destination,
-                )?;
+                let result = translate_select(schema, *select, syms, program, query_destination)?;
                 program = result.program;
                 program.decr_nesting();
 

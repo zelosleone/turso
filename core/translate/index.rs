@@ -6,7 +6,7 @@ use crate::{
     storage::pager::CreateBTreeFlags,
     util::normalize_ident,
     vdbe::{
-        builder::{CursorType, ProgramBuilder, QueryMode},
+        builder::{CursorType, ProgramBuilder},
         insn::{IdxInsertFlags, Insn, RegisterOrLiteral},
     },
 };
@@ -15,7 +15,6 @@ use turso_sqlite3_parser::ast::{self, Expr, Id, SortOrder, SortedColumn};
 use super::schema::{emit_schema_entry, SchemaEntryType, SQLITE_TABLEID};
 
 pub fn translate_create_index(
-    mode: QueryMode,
     unique_if_not_exists: (bool, bool),
     idx_name: &str,
     tbl_name: &str,
@@ -31,7 +30,6 @@ pub fn translate_create_index(
     let idx_name = normalize_ident(idx_name);
     let tbl_name = normalize_ident(tbl_name);
     let opts = crate::vdbe::builder::ProgramBuilderOpts {
-        query_mode: mode,
         num_cursors: 5,
         approx_num_insns: 40,
         approx_num_labels: 5,
@@ -296,7 +294,6 @@ fn create_idx_stmt_to_sql(
 }
 
 pub fn translate_drop_index(
-    mode: QueryMode,
     idx_name: &str,
     if_exists: bool,
     schema: &Schema,
@@ -309,7 +306,6 @@ pub fn translate_drop_index(
     }
     let idx_name = normalize_ident(idx_name);
     let opts = crate::vdbe::builder::ProgramBuilderOpts {
-        query_mode: mode,
         num_cursors: 5,
         approx_num_insns: 40,
         approx_num_labels: 5,
