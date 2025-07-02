@@ -21,10 +21,8 @@ class TursoTaskRepository extends TaskRepository {
 
   @override
   Future<void> deleteTask(int id) async {
-    await _client.execute(
-      "delete from tasks where id = :id",
-      named: {":id": id},
-    );
+    final statement = await _client.prepare("delete from tasks where id = :id");
+    await statement.execute(named: {":id": id});
   }
 
   @override

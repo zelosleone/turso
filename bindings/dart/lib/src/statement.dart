@@ -1,48 +1,31 @@
 import 'package:turso_dart/src/helpers.dart';
-import 'package:turso_dart/src/rust/api/connection.dart';
-import 'package:turso_dart/src/rust/frb_generated.dart';
+import 'package:turso_dart/src/rust/api/statement.dart';
 import 'package:turso_dart/src/rust/helpers/params.dart';
 import 'package:turso_dart/src/rust/helpers/value.dart';
-import 'package:turso_dart/src/statement.dart';
 
-import 'rust/api/connect.dart' as c;
+// This is for internal only
+class Statement {
+  Statement(this.inner);
 
-class TursoClient {
-  TursoClient(this.url);
+  final RustStatement inner;
 
-  TursoClient.memory() : url = ':memory:';
-
-  TursoClient.local(this.url);
-
-  final String url;
-
-  RustConnection? _connection;
-
-  /// Connect the database, must be called first after creation
-  Future<void> connect() async {
-    if (!RustLib.instance.initialized) {
-      await RustLib.init();
-    }
-    _connection = await c.connect(args: c.ConnectArgs(url: url));
+  Future<void> reset() async {
+    inner.reset();
   }
 
-  /// Query the database, you can provide either named or positional parameters
+  /// Query the statement, you can provide either named or positional parameters
   ///
   /// # Args
-  /// * `sql` - SQL query
   /// * `named` - Named parameters
   /// * `positional` - Positional parameters
   ///
   /// # Returns
   /// Returns a list of object, eg: [{'id': 1, 'name': 'John'}, {'id': 2, 'name': 'Jane'}]
-  Future<List<Map<String, dynamic>>> query(
-    String sql, {
+  Future<List<Map<String, dynamic>>> query({
     Map<String, dynamic>? named,
     List<dynamic>? positional,
   }) async {
-    if (_connection == null) throw Exception('Database is not connected');
-    final res = await _connection!.query(
-      sql: sql,
+    final res = await inner.query(
       params: named != null
           ? Params.named(
               named.entries
@@ -84,14 +67,11 @@ class TursoClient {
   ///
   /// # Returns
   /// Number of rows affected by the statement
-  Future<int> execute(
-    String sql, {
+  Future<int> execute({
     Map<String, dynamic>? named,
     List<dynamic>? positional,
   }) async {
-    if (_connection == null) throw Exception('Database is not connected');
-    final res = await _connection!.execute(
-      sql: sql,
+    final res = await inner.execute(
       params: named != null
           ? Params.named(
               named.entries
@@ -105,23 +85,5 @@ class TursoClient {
           : const Params.none(),
     );
     return res.rowsAffected.toInt();
-  }
-
-  /// Create a prepared statement
-  ///
-  /// # Args
-  /// * `sql` - SQL query
-  ///
-  /// # Returns
-  /// Statement object
-  Future<Statement> prepare(String sql) async {
-    if (_connection == null) throw Exception('Database is not connected');
-    final inner = await _connection!.prepare(sql: sql);
-    return Statement(inner);
-  }
-
-  /// Close the database
-  Future<void> dispose() async {
-    _connection?.dispose();
   }
 }
