@@ -172,7 +172,7 @@ pub fn translate_inner(
         ast::Stmt::Rollback {
             tx_name,
             savepoint_name,
-        } => translate_rollback(query_mode, schema, syms, program, tx_name, savepoint_name)?,
+        } => translate_rollback(schema, syms, program, tx_name, savepoint_name)?,
         ast::Stmt::Savepoint(_) => bail_parse_error!("SAVEPOINT not supported yet"),
         ast::Stmt::Select(select) => {
             translate_select(

@@ -3,15 +3,11 @@ use turso_sqlite3_parser::ast::Name;
 use crate::{
     schema::Schema,
     translate::emitter::TransactionMode,
-    vdbe::{
-        builder::{ProgramBuilder, QueryMode},
-        insn::Insn,
-    },
+    vdbe::{builder::ProgramBuilder, insn::Insn},
     Result, SymbolTable,
 };
 
 pub fn translate_rollback(
-    _query_mode: QueryMode,
     _schema: &Schema,
     _syms: &SymbolTable,
     mut program: ProgramBuilder,
