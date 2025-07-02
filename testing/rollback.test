@@ -80,6 +80,19 @@ do_execsql_test_on_specific_db {:memory:} schema-change-rollback {
     PRAGMA integrity_check;
 } {ok}
 
+do_execsql_test_on_specific_db {:memory:} schema-change-rollback-version {
+    begin;
+    create table t (x);
+    insert into t values (1);
+    rollback;
+    PRAGMA schema_version;
+} {0}
+
+do_execsql_test_on_specific_db {:memory:} schema-version-after-update {
+    create table t (x);
+    PRAGMA schema_version;
+} {1}
+
 do_execsql_test_on_specific_db {:memory:} schema-change-rollback-2 {
     begin;
     create table t (x);
@@ -95,3 +108,21 @@ do_execsql_test_on_specific_db {:memory:} schema-change-rollback-2 {
     create table after (x);
     select tbl_name from sqlite_schema;
 } {before after}
+
+
+do_execsql_test_on_specific_db {:memory:} schema-alter-rollback {
+    create table t (x);
+    begin;
+    alter table t add column y;
+    rollback;
+    select sql from sqlite_schema;
+} {"CREATE TABLE t (x)"}
+
+do_execsql_test_on_specific_db {:memory:} schema-alter-rollback-and-repeat {
+    create table t (x);
+    begin;
+    alter table t add column y;
+    rollback;
+    alter table t add column y;
+    select sql from sqlite_schema;
+} {"CREATE TABLE t ( x, y)"}
