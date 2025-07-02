@@ -70,3 +70,28 @@ do_execsql_test_on_specific_db {:memory:} insert-after-rollback {
     insert into t2 values (1);
     select * from t2 order by x;
 } {1}
+
+
+do_execsql_test_on_specific_db {:memory:} schema-change-rollback {
+    begin;
+    create table t (x);
+    insert into t values (1);
+    rollback;
+    PRAGMA integrity_check;
+} {ok}
+
+do_execsql_test_on_specific_db {:memory:} schema-change-rollback-2 {
+    begin;
+    create table t (x);
+    rollback;
+    select tbl_name from sqlite_schema;
+} {}
+
+do_execsql_test_on_specific_db {:memory:} schema-change-rollback-2 {
+    create table before (x);
+    begin;
+    create table t (x);
+    rollback;
+    create table after (x);
+    select tbl_name from sqlite_schema;
+} {before after}
