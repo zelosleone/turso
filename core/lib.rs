@@ -200,6 +200,7 @@ impl Database {
 
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
         let schema = Arc::new(RwLock::new(Schema::new(enable_indexes)));
+        dbg!(enable_indexes);
         let db = Database {
             mv_store,
             path: path.to_string(),
@@ -372,7 +373,7 @@ impl Database {
                         }
                     },
                 };
-                let db = Self::open_file_with_flags(io.clone(), path, flags, indexes, mvcc)?;
+                let db = Self::open_file_with_flags(io.clone(), path, flags, mvcc, indexes)?;
                 Ok((io, db))
             }
             None => {
@@ -380,7 +381,7 @@ impl Database {
                     MEMORY_PATH => Arc::new(MemoryIO::new()),
                     _ => Arc::new(PlatformIO::new()?),
                 };
-                let db = Self::open_file_with_flags(io.clone(), path, flags, indexes, mvcc)?;
+                let db = Self::open_file_with_flags(io.clone(), path, flags, mvcc, indexes)?;
                 Ok((io, db))
             }
         }
@@ -600,7 +601,8 @@ impl Connection {
         let flags = opts.get_flags()?;
         if opts.path == MEMORY_PATH || matches!(opts.mode, OpenMode::Memory) {
             let io = Arc::new(MemoryIO::new());
-            let db = Database::open_file_with_flags(io.clone(), MEMORY_PATH, flags, false, false)?;
+            let db =
+                Database::open_file_with_flags(io.clone(), MEMORY_PATH, flags, mvcc, use_indexes)?;
             let conn = db.connect()?;
             return Ok((io, conn));
         }

@@ -28,7 +28,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use turso_core::{Connection, Database, LimboError, OpenFlags, Statement, StepResult, Value};
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(name = "Turso")]
 #[command(author, version, about, long_about = None)]
 pub struct Opts {
