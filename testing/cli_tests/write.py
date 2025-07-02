@@ -4,7 +4,7 @@ import tempfile
 from time import sleep
 
 from cli_tests import console
-from cli_tests.test_limbo_cli import TestTursoShell
+from cli_tests.test_turso_cli import TestTursoShell
 from pydantic import BaseModel
 
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
@@ -39,8 +39,8 @@ class InsertTest(BaseModel):
         big_stmt.append("SELECT count(*) FROM test;")
         expected.append(str(self.vals * 2))
 
-        big_stmt.append("DELETE FROM temp;")
-        big_stmt.append("SELECT count(*) FROM temp;")
+        big_stmt.append("DELETE FROM test;")
+        big_stmt.append("SELECT count(*) FROM test;")
         expected.append(str(0))
 
         big_stmt = "".join(big_stmt)

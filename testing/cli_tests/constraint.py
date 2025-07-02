@@ -8,7 +8,7 @@ import tempfile
 from enum import Enum
 
 from cli_tests import console
-from cli_tests.test_limbo_cli import TestTursoShell
+from cli_tests.test_turso_cli import TestTursoShell
 from faker import Faker
 from faker.providers.lorem.en_US import Provider as P
 from pydantic import BaseModel

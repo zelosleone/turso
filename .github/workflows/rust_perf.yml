@@ -160,3 +160,28 @@ jobs:
       - uses: actions/checkout@v3
       - name: TPC-H
         run: ./perf/tpc-h/benchmark.sh
+
+  vfs-bench-compile:
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v3
+      - uses: useblacksmith/rust-cache@v3
+        with:
+          prefix-key: "v1-rust" # can be updated if we need to reset caches due to non-trivial change in the dependencies (for example, custom env var were set for single workspace project)
+
+      - name: Build
+        run: cargo build --release --verbose
+
+      - name: Install uv
+        uses: useblacksmith/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install the project
+        run: uv sync --package turso_test
+
+      - name: Run benchmark
+        run: uv run bench-vfs "SELECT 1;" 100
