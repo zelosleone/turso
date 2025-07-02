@@ -39,7 +39,7 @@ use crate::storage::pager::Pager;
 use crate::translate::delete::translate_delete;
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
 use crate::vdbe::Program;
-use crate::{bail_parse_error, Connection, Result, SymbolTable, TransactionState};
+use crate::{bail_parse_error, Connection, Result, SymbolTable};
 use alter::translate_alter_table;
 use index::{translate_create_index, translate_drop_index};
 use insert::translate_insert;

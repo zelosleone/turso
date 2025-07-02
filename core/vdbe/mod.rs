@@ -47,7 +47,6 @@ use execute::{
     OpOpenEphemeralState,
 };
 
-use libloading::changelog;
 use rand::Rng;
 use regex::Regex;
 use std::{
