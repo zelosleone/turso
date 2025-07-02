@@ -12,20 +12,20 @@ import '../helpers/wrapper.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'statement.dart';
 
-// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlConnection>>
-abstract class LibsqlConnection implements RustOpaqueInterface {
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustConnection>>
+abstract class RustConnection implements RustOpaqueInterface {
   Future<ExecuteResult> execute({required String sql, required Params params});
 
   // HINT: Make it `#[frb(sync)]` to let it become the default constructor of Dart class.
-  static Future<LibsqlConnection> newInstance({
+  static Future<RustConnection> newInstance({
     required WrapperArcConnection connection,
     required WrapperArcDatabase database,
-  }) => RustLib.instance.api.crateApiConnectionLibsqlConnectionNew(
+  }) => RustLib.instance.api.crateApiConnectionRustConnectionNew(
     connection: connection,
     database: database,
   );
 
-  Future<LibsqlStatement> prepare({required String sql});
+  Future<RustStatement> prepare({required String sql});
 
   Future<QueryResult> query({required String sql, required Params params});
 }

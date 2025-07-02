@@ -40,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.10.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -691987803;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -2084080956;
 
 // Section: executor
 
@@ -48,7 +48,7 @@ flutter_rust_bridge::frb_generated_default_handler!();
 
 // Section: wire_funcs
 
-fn wire__crate__api__connection__LibsqlConnection_execute_impl(
+fn wire__crate__api__connection__RustConnection_execute_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -56,7 +56,7 @@ fn wire__crate__api__connection__LibsqlConnection_execute_impl(
 ) {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LibsqlConnection_execute",
+            debug_name: "RustConnection_execute",
             port: Some(port_),
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
@@ -71,7 +71,7 @@ fn wire__crate__api__connection__LibsqlConnection_execute_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlConnection>,
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustConnection>,
             >>::sse_decode(&mut deserializer);
             let api_sql = <String>::sse_decode(&mut deserializer);
             let api_params = <crate::helpers::params::Params>::sse_decode(&mut deserializer);
@@ -97,7 +97,7 @@ fn wire__crate__api__connection__LibsqlConnection_execute_impl(
                         }
                         let api_that_guard = api_that_guard.unwrap();
                         let output_ok = Result::<_, ()>::Ok(
-                            crate::api::connection::LibsqlConnection::execute(
+                            crate::api::connection::RustConnection::execute(
                                 &*api_that_guard,
                                 api_sql,
                                 api_params,
@@ -112,7 +112,7 @@ fn wire__crate__api__connection__LibsqlConnection_execute_impl(
         },
     )
 }
-fn wire__crate__api__connection__LibsqlConnection_new_impl(
+fn wire__crate__api__connection__RustConnection_new_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -120,7 +120,7 @@ fn wire__crate__api__connection__LibsqlConnection_new_impl(
 ) {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LibsqlConnection_new",
+            debug_name: "RustConnection_new",
             port: Some(port_),
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
@@ -140,7 +140,7 @@ fn wire__crate__api__connection__LibsqlConnection_new_impl(
             move |context| {
                 transform_result_sse::<_, ()>((move || {
                     let output_ok = Result::<_, ()>::Ok(
-                        crate::api::connection::LibsqlConnection::new(api_connection, api_database),
+                        crate::api::connection::RustConnection::new(api_connection, api_database),
                     )?;
                     Ok(output_ok)
                 })())
@@ -148,7 +148,7 @@ fn wire__crate__api__connection__LibsqlConnection_new_impl(
         },
     )
 }
-fn wire__crate__api__connection__LibsqlConnection_prepare_impl(
+fn wire__crate__api__connection__RustConnection_prepare_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -156,7 +156,7 @@ fn wire__crate__api__connection__LibsqlConnection_prepare_impl(
 ) {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LibsqlConnection_prepare",
+            debug_name: "RustConnection_prepare",
             port: Some(port_),
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
@@ -171,7 +171,7 @@ fn wire__crate__api__connection__LibsqlConnection_prepare_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlConnection>,
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustConnection>,
             >>::sse_decode(&mut deserializer);
             let api_sql = <String>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -196,7 +196,7 @@ fn wire__crate__api__connection__LibsqlConnection_prepare_impl(
                         }
                         let api_that_guard = api_that_guard.unwrap();
                         let output_ok = Result::<_, ()>::Ok(
-                            crate::api::connection::LibsqlConnection::prepare(
+                            crate::api::connection::RustConnection::prepare(
                                 &*api_that_guard,
                                 api_sql,
                             )
@@ -210,7 +210,7 @@ fn wire__crate__api__connection__LibsqlConnection_prepare_impl(
         },
     )
 }
-fn wire__crate__api__connection__LibsqlConnection_query_impl(
+fn wire__crate__api__connection__RustConnection_query_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -218,7 +218,7 @@ fn wire__crate__api__connection__LibsqlConnection_query_impl(
 ) {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LibsqlConnection_query",
+            debug_name: "RustConnection_query",
             port: Some(port_),
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
@@ -233,7 +233,7 @@ fn wire__crate__api__connection__LibsqlConnection_query_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlConnection>,
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustConnection>,
             >>::sse_decode(&mut deserializer);
             let api_sql = <String>::sse_decode(&mut deserializer);
             let api_params = <crate::helpers::params::Params>::sse_decode(&mut deserializer);
@@ -259,7 +259,7 @@ fn wire__crate__api__connection__LibsqlConnection_query_impl(
                         }
                         let api_that_guard = api_that_guard.unwrap();
                         let output_ok = Result::<_, ()>::Ok(
-                            crate::api::connection::LibsqlConnection::query(
+                            crate::api::connection::RustConnection::query(
                                 &*api_that_guard,
                                 api_sql,
                                 api_params,
@@ -274,7 +274,7 @@ fn wire__crate__api__connection__LibsqlConnection_query_impl(
         },
     )
 }
-fn wire__crate__api__statement__LibsqlStatement_execute_impl(
+fn wire__crate__api__statement__RustStatement_execute_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -282,7 +282,7 @@ fn wire__crate__api__statement__LibsqlStatement_execute_impl(
 ) {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LibsqlStatement_execute",
+            debug_name: "RustStatement_execute",
             port: Some(port_),
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
@@ -297,7 +297,7 @@ fn wire__crate__api__statement__LibsqlStatement_execute_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlStatement>,
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustStatement>,
             >>::sse_decode(&mut deserializer);
             let api_params = <crate::helpers::params::Params>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -322,7 +322,7 @@ fn wire__crate__api__statement__LibsqlStatement_execute_impl(
                         }
                         let mut api_that_guard = api_that_guard.unwrap();
                         let output_ok = Result::<_, ()>::Ok(
-                            crate::api::statement::LibsqlStatement::execute(
+                            crate::api::statement::RustStatement::execute(
                                 &mut *api_that_guard,
                                 api_params,
                             )
@@ -336,7 +336,7 @@ fn wire__crate__api__statement__LibsqlStatement_execute_impl(
         },
     )
 }
-fn wire__crate__api__statement__LibsqlStatement_new_impl(
+fn wire__crate__api__statement__RustStatement_new_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -344,7 +344,7 @@ fn wire__crate__api__statement__LibsqlStatement_new_impl(
 ) {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LibsqlStatement_new",
+            debug_name: "RustStatement_new",
             port: Some(port_),
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
@@ -364,7 +364,7 @@ fn wire__crate__api__statement__LibsqlStatement_new_impl(
             move |context| {
                 transform_result_sse::<_, ()>((move || {
                     let output_ok = Result::<_, ()>::Ok(
-                        crate::api::statement::LibsqlStatement::new(api_statement, api_connection),
+                        crate::api::statement::RustStatement::new(api_statement, api_connection),
                     )?;
                     Ok(output_ok)
                 })())
@@ -372,7 +372,7 @@ fn wire__crate__api__statement__LibsqlStatement_new_impl(
         },
     )
 }
-fn wire__crate__api__statement__LibsqlStatement_query_impl(
+fn wire__crate__api__statement__RustStatement_query_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -380,7 +380,7 @@ fn wire__crate__api__statement__LibsqlStatement_query_impl(
 ) {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LibsqlStatement_query",
+            debug_name: "RustStatement_query",
             port: Some(port_),
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
@@ -395,7 +395,7 @@ fn wire__crate__api__statement__LibsqlStatement_query_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlStatement>,
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustStatement>,
             >>::sse_decode(&mut deserializer);
             let api_params = <crate::helpers::params::Params>::sse_decode(&mut deserializer);
             deserializer.end();
@@ -420,7 +420,7 @@ fn wire__crate__api__statement__LibsqlStatement_query_impl(
                         }
                         let mut api_that_guard = api_that_guard.unwrap();
                         let output_ok = Result::<_, ()>::Ok(
-                            crate::api::statement::LibsqlStatement::query(
+                            crate::api::statement::RustStatement::query(
                                 &mut *api_that_guard,
                                 api_params,
                             )
@@ -434,7 +434,7 @@ fn wire__crate__api__statement__LibsqlStatement_query_impl(
         },
     )
 }
-fn wire__crate__api__statement__LibsqlStatement_reset_impl(
+fn wire__crate__api__statement__RustStatement_reset_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -442,7 +442,7 @@ fn wire__crate__api__statement__LibsqlStatement_reset_impl(
 ) {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_async::<flutter_rust_bridge::for_generated::SseCodec, _, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LibsqlStatement_reset",
+            debug_name: "RustStatement_reset",
             port: Some(port_),
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
@@ -457,7 +457,7 @@ fn wire__crate__api__statement__LibsqlStatement_reset_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlStatement>,
+                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustStatement>,
             >>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| async move {
@@ -481,8 +481,7 @@ fn wire__crate__api__statement__LibsqlStatement_reset_impl(
                         }
                         let mut api_that_guard = api_that_guard.unwrap();
                         let output_ok = Result::<_, ()>::Ok({
-                            crate::api::statement::LibsqlStatement::reset(&mut *api_that_guard)
-                                .await;
+                            crate::api::statement::RustStatement::reset(&mut *api_that_guard).await;
                         })?;
                         Ok(output_ok)
                     })()
@@ -567,10 +566,10 @@ fn wire__crate__api__init__init_app_impl(
 // Section: related_funcs
 
 flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
-    flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlConnection>
+    flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustConnection>
 );
 flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
-    flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlStatement>
+    flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustStatement>
 );
 flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
     flutter_rust_bridge::for_generated::RustAutoOpaqueInner<Wrapper<Arc<Connection>>>
@@ -584,21 +583,21 @@ flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
 
 // Section: dart2rust
 
-impl SseDecode for LibsqlConnection {
+impl SseDecode for RustConnection {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut inner = <RustOpaqueMoi<
-            flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlConnection>,
+            flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustConnection>,
         >>::sse_decode(deserializer);
         return flutter_rust_bridge::for_generated::rust_auto_opaque_decode_owned(inner);
     }
 }
 
-impl SseDecode for LibsqlStatement {
+impl SseDecode for RustStatement {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut inner = <RustOpaqueMoi<
-            flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlStatement>,
+            flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustStatement>,
         >>::sse_decode(deserializer);
         return flutter_rust_bridge::for_generated::rust_auto_opaque_decode_owned(inner);
     }
@@ -644,7 +643,7 @@ impl SseDecode for std::collections::HashMap<String, crate::helpers::return_valu
 }
 
 impl SseDecode
-    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlConnection>>
+    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustConnection>>
 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -654,7 +653,7 @@ impl SseDecode
 }
 
 impl SseDecode
-    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlStatement>>
+    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustStatement>>
 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -721,8 +720,7 @@ impl SseDecode for crate::api::connect::ConnectArgs {
         let mut var_syncIntervalSeconds = <Option<u64>>::sse_decode(deserializer);
         let mut var_encryptionKey = <Option<String>>::sse_decode(deserializer);
         let mut var_readYourWrites = <Option<bool>>::sse_decode(deserializer);
-        let mut var_openFlags =
-            <Option<crate::api::connect::LibsqlOpenFlags>>::sse_decode(deserializer);
+        let mut var_openFlags = <Option<crate::api::connect::OpenFlags>>::sse_decode(deserializer);
         let mut var_offline = <Option<bool>>::sse_decode(deserializer);
         return crate::api::connect::ConnectArgs {
             url: var_url,
@@ -765,19 +763,6 @@ impl SseDecode for i64 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         deserializer.cursor.read_i64::<NativeEndian>().unwrap()
-    }
-}
-
-impl SseDecode for crate::api::connect::LibsqlOpenFlags {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut inner = <i32>::sse_decode(deserializer);
-        return match inner {
-            0 => crate::api::connect::LibsqlOpenFlags::ReadOnly,
-            1 => crate::api::connect::LibsqlOpenFlags::ReadWrite,
-            2 => crate::api::connect::LibsqlOpenFlags::Create,
-            _ => unreachable!("Invalid variant for LibsqlOpenFlags: {}", inner),
-        };
     }
 }
 
@@ -862,6 +847,19 @@ impl SseDecode for Vec<crate::helpers::value::Value> {
     }
 }
 
+impl SseDecode for crate::api::connect::OpenFlags {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <i32>::sse_decode(deserializer);
+        return match inner {
+            0 => crate::api::connect::OpenFlags::ReadOnly,
+            1 => crate::api::connect::OpenFlags::ReadWrite,
+            2 => crate::api::connect::OpenFlags::Create,
+            _ => unreachable!("Invalid variant for OpenFlags: {}", inner),
+        };
+    }
+}
+
 impl SseDecode for Option<String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -884,13 +882,11 @@ impl SseDecode for Option<bool> {
     }
 }
 
-impl SseDecode for Option<crate::api::connect::LibsqlOpenFlags> {
+impl SseDecode for Option<crate::api::connect::OpenFlags> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
-            return Some(<crate::api::connect::LibsqlOpenFlags>::sse_decode(
-                deserializer,
-            ));
+            return Some(<crate::api::connect::OpenFlags>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -1065,51 +1061,40 @@ fn pde_ffi_dispatcher_primary_impl(
 ) {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        1 => wire__crate__api__connection__LibsqlConnection_execute_impl(
+        1 => wire__crate__api__connection__RustConnection_execute_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        2 => wire__crate__api__connection__LibsqlConnection_new_impl(
-            port,
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        3 => wire__crate__api__connection__LibsqlConnection_prepare_impl(
-            port,
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        4 => wire__crate__api__connection__LibsqlConnection_query_impl(
-            port,
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        5 => wire__crate__api__statement__LibsqlStatement_execute_impl(
-            port,
-            ptr,
-            rust_vec_len,
-            data_len,
-        ),
-        6 => {
-            wire__crate__api__statement__LibsqlStatement_new_impl(port, ptr, rust_vec_len, data_len)
+        2 => {
+            wire__crate__api__connection__RustConnection_new_impl(port, ptr, rust_vec_len, data_len)
         }
-        7 => wire__crate__api__statement__LibsqlStatement_query_impl(
+        3 => wire__crate__api__connection__RustConnection_prepare_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
-        8 => wire__crate__api__statement__LibsqlStatement_reset_impl(
+        4 => wire__crate__api__connection__RustConnection_query_impl(
             port,
             ptr,
             rust_vec_len,
             data_len,
         ),
+        5 => wire__crate__api__statement__RustStatement_execute_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        6 => wire__crate__api__statement__RustStatement_new_impl(port, ptr, rust_vec_len, data_len),
+        7 => {
+            wire__crate__api__statement__RustStatement_query_impl(port, ptr, rust_vec_len, data_len)
+        }
+        8 => {
+            wire__crate__api__statement__RustStatement_reset_impl(port, ptr, rust_vec_len, data_len)
+        }
         9 => wire__crate__api__connect__connect_impl(port, ptr, rust_vec_len, data_len),
         10 => wire__crate__api__init__init_app_impl(port, ptr, rust_vec_len, data_len),
         _ => unreachable!(),
@@ -1131,31 +1116,31 @@ fn pde_ffi_dispatcher_sync_impl(
 // Section: rust2dart
 
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for FrbWrapper<LibsqlConnection> {
+impl flutter_rust_bridge::IntoDart for FrbWrapper<RustConnection> {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self.0)
             .into_dart()
     }
 }
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<LibsqlConnection> {}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<RustConnection> {}
 
-impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<LibsqlConnection>> for LibsqlConnection {
-    fn into_into_dart(self) -> FrbWrapper<LibsqlConnection> {
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<RustConnection>> for RustConnection {
+    fn into_into_dart(self) -> FrbWrapper<RustConnection> {
         self.into()
     }
 }
 
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for FrbWrapper<LibsqlStatement> {
+impl flutter_rust_bridge::IntoDart for FrbWrapper<RustStatement> {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self.0)
             .into_dart()
     }
 }
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<LibsqlStatement> {}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<RustStatement> {}
 
-impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<LibsqlStatement>> for LibsqlStatement {
-    fn into_into_dart(self) -> FrbWrapper<LibsqlStatement> {
+impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<RustStatement>> for RustStatement {
+    fn into_into_dart(self) -> FrbWrapper<RustStatement> {
         self.into()
     }
 }
@@ -1263,7 +1248,7 @@ impl flutter_rust_bridge::IntoIntoDart<crate::helpers::result::ExecuteResult>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for crate::api::connect::LibsqlOpenFlags {
+impl flutter_rust_bridge::IntoDart for crate::api::connect::OpenFlags {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
             Self::ReadOnly => 0.into_dart(),
@@ -1274,13 +1259,13 @@ impl flutter_rust_bridge::IntoDart for crate::api::connect::LibsqlOpenFlags {
     }
 }
 impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
-    for crate::api::connect::LibsqlOpenFlags
+    for crate::api::connect::OpenFlags
 {
 }
-impl flutter_rust_bridge::IntoIntoDart<crate::api::connect::LibsqlOpenFlags>
-    for crate::api::connect::LibsqlOpenFlags
+impl flutter_rust_bridge::IntoIntoDart<crate::api::connect::OpenFlags>
+    for crate::api::connect::OpenFlags
 {
-    fn into_into_dart(self) -> crate::api::connect::LibsqlOpenFlags {
+    fn into_into_dart(self) -> crate::api::connect::OpenFlags {
         self
     }
 }
@@ -1401,17 +1386,17 @@ impl flutter_rust_bridge::IntoIntoDart<crate::helpers::value::Value>
     }
 }
 
-impl SseEncode for LibsqlConnection {
+impl SseEncode for RustConnection {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlConnection>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
+        <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustConnection>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
     }
 }
 
-impl SseEncode for LibsqlStatement {
+impl SseEncode for RustStatement {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlStatement>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
+        <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustStatement>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
     }
 }
 
@@ -1457,7 +1442,7 @@ impl SseEncode for std::collections::HashMap<String, crate::helpers::return_valu
 }
 
 impl SseEncode
-    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlConnection>>
+    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustConnection>>
 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1468,7 +1453,7 @@ impl SseEncode
 }
 
 impl SseEncode
-    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlStatement>>
+    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustStatement>>
 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1538,7 +1523,7 @@ impl SseEncode for crate::api::connect::ConnectArgs {
         <Option<u64>>::sse_encode(self.sync_interval_seconds, serializer);
         <Option<String>>::sse_encode(self.encryption_key, serializer);
         <Option<bool>>::sse_encode(self.read_your_writes, serializer);
-        <Option<crate::api::connect::LibsqlOpenFlags>>::sse_encode(self.open_flags, serializer);
+        <Option<crate::api::connect::OpenFlags>>::sse_encode(self.open_flags, serializer);
         <Option<bool>>::sse_encode(self.offline, serializer);
     }
 }
@@ -1568,23 +1553,6 @@ impl SseEncode for i64 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_i64::<NativeEndian>(self).unwrap();
-    }
-}
-
-impl SseEncode for crate::api::connect::LibsqlOpenFlags {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <i32>::sse_encode(
-            match self {
-                crate::api::connect::LibsqlOpenFlags::ReadOnly => 0,
-                crate::api::connect::LibsqlOpenFlags::ReadWrite => 1,
-                crate::api::connect::LibsqlOpenFlags::Create => 2,
-                _ => {
-                    unimplemented!("");
-                }
-            },
-            serializer,
-        );
     }
 }
 
@@ -1650,6 +1618,23 @@ impl SseEncode for Vec<crate::helpers::value::Value> {
     }
 }
 
+impl SseEncode for crate::api::connect::OpenFlags {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(
+            match self {
+                crate::api::connect::OpenFlags::ReadOnly => 0,
+                crate::api::connect::OpenFlags::ReadWrite => 1,
+                crate::api::connect::OpenFlags::Create => 2,
+                _ => {
+                    unimplemented!("");
+                }
+            },
+            serializer,
+        );
+    }
+}
+
 impl SseEncode for Option<String> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1670,12 +1655,12 @@ impl SseEncode for Option<bool> {
     }
 }
 
-impl SseEncode for Option<crate::api::connect::LibsqlOpenFlags> {
+impl SseEncode for Option<crate::api::connect::OpenFlags> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
-            <crate::api::connect::LibsqlOpenFlags>::sse_encode(value, serializer);
+            <crate::api::connect::OpenFlags>::sse_encode(value, serializer);
         }
     }
 }
@@ -1849,31 +1834,31 @@ mod io {
     flutter_rust_bridge::frb_generated_boilerplate_io!();
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn frbgen_turso_dart_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
+    pub extern "C" fn frbgen_turso_dart_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
         ptr: *const std::ffi::c_void,
     ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlConnection>>::increment_strong_count(ptr as _);
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustConnection>>::increment_strong_count(ptr as _);
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn frbgen_turso_dart_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
+    pub extern "C" fn frbgen_turso_dart_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
         ptr: *const std::ffi::c_void,
     ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlConnection>>::decrement_strong_count(ptr as _);
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustConnection>>::decrement_strong_count(ptr as _);
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn frbgen_turso_dart_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
+    pub extern "C" fn frbgen_turso_dart_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
         ptr: *const std::ffi::c_void,
     ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlStatement>>::increment_strong_count(ptr as _);
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustStatement>>::increment_strong_count(ptr as _);
     }
 
     #[unsafe(no_mangle)]
-    pub extern "C" fn frbgen_turso_dart_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
+    pub extern "C" fn frbgen_turso_dart_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
         ptr: *const std::ffi::c_void,
     ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlStatement>>::decrement_strong_count(ptr as _);
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustStatement>>::decrement_strong_count(ptr as _);
     }
 
     #[unsafe(no_mangle)]
@@ -1946,31 +1931,31 @@ mod web {
     flutter_rust_bridge::frb_generated_boilerplate_web!();
 
     #[wasm_bindgen]
-    pub fn rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
+    pub fn rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
         ptr: *const std::ffi::c_void,
     ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlConnection>>::increment_strong_count(ptr as _);
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustConnection>>::increment_strong_count(ptr as _);
     }
 
     #[wasm_bindgen]
-    pub fn rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
+    pub fn rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
         ptr: *const std::ffi::c_void,
     ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlConnection>>::decrement_strong_count(ptr as _);
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustConnection>>::decrement_strong_count(ptr as _);
     }
 
     #[wasm_bindgen]
-    pub fn rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
+    pub fn rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
         ptr: *const std::ffi::c_void,
     ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlStatement>>::increment_strong_count(ptr as _);
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustStatement>>::increment_strong_count(ptr as _);
     }
 
     #[wasm_bindgen]
-    pub fn rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
+    pub fn rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
         ptr: *const std::ffi::c_void,
     ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlStatement>>::decrement_strong_count(ptr as _);
+        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustStatement>>::decrement_strong_count(ptr as _);
     }
 
     #[wasm_bindgen]

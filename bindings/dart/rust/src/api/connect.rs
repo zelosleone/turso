@@ -1,9 +1,9 @@
 use crate::helpers::wrapper::Wrapper;
 
-pub use super::connection::LibsqlConnection;
+pub use super::connection::RustConnection;
 use std::sync::Arc;
 
-pub enum LibsqlOpenFlags {
+pub enum OpenFlags {
     ReadOnly,
     ReadWrite,
     Create,
@@ -16,11 +16,11 @@ pub struct ConnectArgs {
     pub sync_interval_seconds: Option<u64>,
     pub encryption_key: Option<String>,
     pub read_your_writes: Option<bool>,
-    pub open_flags: Option<LibsqlOpenFlags>,
+    pub open_flags: Option<OpenFlags>,
     pub offline: Option<bool>,
 }
 
-pub async fn connect(args: ConnectArgs) -> LibsqlConnection {
+pub async fn connect(args: ConnectArgs) -> RustConnection {
     let database = if args.url == ":memory:" {
         let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::MemoryIO::new());
         turso_core::Database::open_file(io, args.url.as_str(), false, false)
@@ -30,5 +30,5 @@ pub async fn connect(args: ConnectArgs) -> LibsqlConnection {
     }
     .unwrap();
     let connection = database.connect().unwrap();
-    LibsqlConnection::new(Wrapper { inner: connection }, Wrapper { inner: database })
+    RustConnection::new(Wrapper { inner: connection }, Wrapper { inner: database })
 }

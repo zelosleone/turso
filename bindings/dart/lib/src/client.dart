@@ -7,16 +7,16 @@ import 'package:turso_dart/src/rust/helpers/value.dart';
 
 import 'rust/api/connect.dart' as c;
 
-class LibsqlClient {
-  LibsqlClient(this.url);
+class TursoClient {
+  TursoClient(this.url);
 
-  LibsqlClient.memory() : url = ':memory:';
+  TursoClient.memory() : url = ':memory:';
 
-  LibsqlClient.local(this.url);
+  TursoClient.local(this.url);
 
   final String url;
 
-  LibsqlConnection? _connection;
+  RustConnection? _connection;
 
   /// Connect the database, must be called first after creation
   Future<void> connect() async {
@@ -114,7 +114,7 @@ class LibsqlClient {
   ///
   /// # Returns
   /// Statement object
-  Future<LibsqlStatement> prepare(String sql) async {
+  Future<RustStatement> prepare(String sql) async {
     if (_connection == null) throw Exception('Database is not connected');
     return _connection!.prepare(sql: sql);
   }

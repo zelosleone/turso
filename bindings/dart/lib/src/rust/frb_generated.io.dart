@@ -26,12 +26,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   });
 
   CrossPlatformFinalizerArg
-  get rust_arc_decrement_strong_count_LibsqlConnectionPtr => wire
-      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnectionPtr;
+  get rust_arc_decrement_strong_count_RustConnectionPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnectionPtr;
 
   CrossPlatformFinalizerArg
-  get rust_arc_decrement_strong_count_LibsqlStatementPtr => wire
-      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatementPtr;
+  get rust_arc_decrement_strong_count_RustStatementPtr => wire
+      ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatementPtr;
 
   CrossPlatformFinalizerArg
   get rust_arc_decrement_strong_count_WrapperArcConnectionPtr => wire
@@ -46,14 +46,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
       ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerWrapperStatementPtr;
 
   @protected
-  LibsqlConnection
-  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
+  RustConnection
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
     dynamic raw,
   );
 
   @protected
-  LibsqlStatement
-  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
+  RustStatement
+  dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
     dynamic raw,
   );
 
@@ -76,14 +76,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  LibsqlStatement
-  dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
+  RustStatement
+  dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
     dynamic raw,
   );
 
   @protected
-  LibsqlConnection
-  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
+  RustConnection
+  dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
     dynamic raw,
   );
 
@@ -91,14 +91,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Map<String, ReturnValue> dco_decode_Map_String_return_value_None(dynamic raw);
 
   @protected
-  LibsqlConnection
-  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
+  RustConnection
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
     dynamic raw,
   );
 
   @protected
-  LibsqlStatement
-  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
+  RustStatement
+  dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
     dynamic raw,
   );
 
@@ -133,7 +133,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ConnectArgs dco_decode_box_autoadd_connect_args(dynamic raw);
 
   @protected
-  LibsqlOpenFlags dco_decode_box_autoadd_libsql_open_flags(dynamic raw);
+  OpenFlags dco_decode_box_autoadd_open_flags(dynamic raw);
 
   @protected
   Params dco_decode_box_autoadd_params(dynamic raw);
@@ -155,9 +155,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64 dco_decode_i_64(dynamic raw);
-
-  @protected
-  LibsqlOpenFlags dco_decode_libsql_open_flags(dynamic raw);
 
   @protected
   List<Map<String, ReturnValue>> dco_decode_list_Map_String_return_value_None(
@@ -182,13 +179,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Value> dco_decode_list_value(dynamic raw);
 
   @protected
+  OpenFlags dco_decode_open_flags(dynamic raw);
+
+  @protected
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
   bool? dco_decode_opt_box_autoadd_bool(dynamic raw);
 
   @protected
-  LibsqlOpenFlags? dco_decode_opt_box_autoadd_libsql_open_flags(dynamic raw);
+  OpenFlags? dco_decode_opt_box_autoadd_open_flags(dynamic raw);
 
   @protected
   BigInt? dco_decode_opt_box_autoadd_u_64(dynamic raw);
@@ -224,14 +224,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   Value dco_decode_value(dynamic raw);
 
   @protected
-  LibsqlConnection
-  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
+  RustConnection
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
     SseDeserializer deserializer,
   );
 
   @protected
-  LibsqlStatement
-  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
+  RustStatement
+  sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
     SseDeserializer deserializer,
   );
 
@@ -254,14 +254,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  LibsqlStatement
-  sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
+  RustStatement
+  sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
     SseDeserializer deserializer,
   );
 
   @protected
-  LibsqlConnection
-  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
+  RustConnection
+  sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
     SseDeserializer deserializer,
   );
 
@@ -271,14 +271,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  LibsqlConnection
-  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
+  RustConnection
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
     SseDeserializer deserializer,
   );
 
   @protected
-  LibsqlStatement
-  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
+  RustStatement
+  sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
     SseDeserializer deserializer,
   );
 
@@ -313,9 +313,7 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ConnectArgs sse_decode_box_autoadd_connect_args(SseDeserializer deserializer);
 
   @protected
-  LibsqlOpenFlags sse_decode_box_autoadd_libsql_open_flags(
-    SseDeserializer deserializer,
-  );
+  OpenFlags sse_decode_box_autoadd_open_flags(SseDeserializer deserializer);
 
   @protected
   Params sse_decode_box_autoadd_params(SseDeserializer deserializer);
@@ -337,9 +335,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
-
-  @protected
-  LibsqlOpenFlags sse_decode_libsql_open_flags(SseDeserializer deserializer);
 
   @protected
   List<Map<String, ReturnValue>> sse_decode_list_Map_String_return_value_None(
@@ -366,13 +361,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<Value> sse_decode_list_value(SseDeserializer deserializer);
 
   @protected
+  OpenFlags sse_decode_open_flags(SseDeserializer deserializer);
+
+  @protected
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
   bool? sse_decode_opt_box_autoadd_bool(SseDeserializer deserializer);
 
   @protected
-  LibsqlOpenFlags? sse_decode_opt_box_autoadd_libsql_open_flags(
+  OpenFlags? sse_decode_opt_box_autoadd_open_flags(
     SseDeserializer deserializer,
   );
 
@@ -413,15 +411,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
-  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
-    LibsqlConnection self,
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
+    RustConnection self,
     SseSerializer serializer,
   );
 
   @protected
   void
-  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
-    LibsqlStatement self,
+  sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
+    RustStatement self,
     SseSerializer serializer,
   );
 
@@ -448,15 +446,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
-  sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
-    LibsqlStatement self,
+  sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
+    RustStatement self,
     SseSerializer serializer,
   );
 
   @protected
   void
-  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
-    LibsqlConnection self,
+  sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
+    RustConnection self,
     SseSerializer serializer,
   );
 
@@ -468,15 +466,15 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void
-  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
-    LibsqlConnection self,
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
+    RustConnection self,
     SseSerializer serializer,
   );
 
   @protected
   void
-  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
-    LibsqlStatement self,
+  sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
+    RustStatement self,
     SseSerializer serializer,
   );
 
@@ -517,8 +515,8 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
-  void sse_encode_box_autoadd_libsql_open_flags(
-    LibsqlOpenFlags self,
+  void sse_encode_box_autoadd_open_flags(
+    OpenFlags self,
     SseSerializer serializer,
   );
 
@@ -542,12 +540,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_libsql_open_flags(
-    LibsqlOpenFlags self,
-    SseSerializer serializer,
-  );
 
   @protected
   void sse_encode_list_Map_String_return_value_None(
@@ -580,14 +572,17 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_value(List<Value> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_open_flags(OpenFlags self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_bool(bool? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_libsql_open_flags(
-    LibsqlOpenFlags? self,
+  void sse_encode_opt_box_autoadd_open_flags(
+    OpenFlags? self,
     SseSerializer serializer,
   );
 
@@ -646,71 +641,71 @@ class RustLibWire implements BaseWire {
     : _lookup = dynamicLibrary.lookup;
 
   void
-  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
     ffi.Pointer<ffi.Void> ptr,
   ) {
-    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
+    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
       ptr,
     );
   }
 
-  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnectionPtr =
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnectionPtr =
       _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-        'frbgen_turso_dart_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection',
+        'frbgen_turso_dart_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection',
       );
-  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection =
-      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnectionPtr
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection =
+      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnectionPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
   void
-  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
     ffi.Pointer<ffi.Void> ptr,
   ) {
-    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection(
+    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection(
       ptr,
     );
   }
 
-  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnectionPtr =
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnectionPtr =
       _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-        'frbgen_turso_dart_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection',
+        'frbgen_turso_dart_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection',
       );
-  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnection =
-      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlConnectionPtr
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnection =
+      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustConnectionPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
   void
-  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
+  rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
     ffi.Pointer<ffi.Void> ptr,
   ) {
-    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
+    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
       ptr,
     );
   }
 
-  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatementPtr =
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatementPtr =
       _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-        'frbgen_turso_dart_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement',
+        'frbgen_turso_dart_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement',
       );
-  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement =
-      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatementPtr
+  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement =
+      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatementPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
   void
-  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
+  rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
     ffi.Pointer<ffi.Void> ptr,
   ) {
-    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement(
+    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement(
       ptr,
     );
   }
 
-  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatementPtr =
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatementPtr =
       _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-        'frbgen_turso_dart_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement',
+        'frbgen_turso_dart_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement',
       );
-  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatement =
-      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLibsqlStatementPtr
+  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatement =
+      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerRustStatementPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 
   void

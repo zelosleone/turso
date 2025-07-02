@@ -13,15 +13,15 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `run`
 
-// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LibsqlStatement>>
-abstract class LibsqlStatement implements RustOpaqueInterface {
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<RustStatement>>
+abstract class RustStatement implements RustOpaqueInterface {
   Future<ExecuteResult> execute({required Params params});
 
   // HINT: Make it `#[frb(sync)]` to let it become the default constructor of Dart class.
-  static Future<LibsqlStatement> newInstance({
+  static Future<RustStatement> newInstance({
     required WrapperStatement statement,
     required WrapperArcConnection connection,
-  }) => RustLib.instance.api.crateApiStatementLibsqlStatementNew(
+  }) => RustLib.instance.api.crateApiStatementRustStatementNew(
     statement: statement,
     connection: connection,
   );

@@ -6,10 +6,10 @@ import 'package:turso_dart_example/features/task/models/task.dart';
 import 'package:turso_dart_example/features/task/repositories/repositories.dart';
 import 'package:watcher/watcher.dart';
 
-class LibsqlTaskRepository extends TaskRepository {
-  final LibsqlClient _client;
+class TursoTaskRepository extends TaskRepository {
+  final TursoClient _client;
 
-  LibsqlTaskRepository(this._client);
+  TursoTaskRepository(this._client);
 
   @override
   Future<void> addTask(Task task) async {

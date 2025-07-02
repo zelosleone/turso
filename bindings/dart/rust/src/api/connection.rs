@@ -4,7 +4,7 @@ use flutter_rust_bridge::frb;
 pub use turso_core::{Connection, Database};
 
 use crate::{
-    api::statement::LibsqlStatement,
+    api::statement::RustStatement,
     helpers::{
         params::Params,
         result::{ExecuteResult, QueryResult},
@@ -13,17 +13,17 @@ use crate::{
 };
 
 #[frb(opaque)]
-pub struct LibsqlConnection {
+pub struct RustConnection {
     inner: Wrapper<Arc<Connection>>,
     database: Wrapper<Arc<Database>>,
 }
 
-impl LibsqlConnection {
+impl RustConnection {
     pub fn new(
         connection: Wrapper<Arc<Connection>>,
         database: Wrapper<Arc<Database>>,
-    ) -> LibsqlConnection {
-        LibsqlConnection {
+    ) -> RustConnection {
+        RustConnection {
             inner: connection,
             database: database,
         }
@@ -37,9 +37,9 @@ impl LibsqlConnection {
         self.prepare(sql).await.execute(params).await
     }
 
-    pub async fn prepare(&self, sql: String) -> LibsqlStatement {
+    pub async fn prepare(&self, sql: String) -> RustStatement {
         let statement = self.inner.prepare(&sql).unwrap();
-        LibsqlStatement::new(
+        RustStatement::new(
             Wrapper { inner: statement },
             Wrapper {
                 inner: self.inner.to_owned(),

@@ -1,6 +1,6 @@
 import 'package:turso_dart/turso_dart.dart';
 
-Future<void> bootstrapDatabase(LibsqlClient client, {bool sync = false}) async {
+Future<void> bootstrapDatabase(TursoClient client, {bool sync = false}) async {
   await client.connect();
   await client.execute("drop table if exists tasks");
   await client.execute(

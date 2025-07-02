@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'connection.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-Future<LibsqlConnection> connect({required ConnectArgs args}) =>
+Future<RustConnection> connect({required ConnectArgs args}) =>
     RustLib.instance.api.crateApiConnectConnect(args: args);
 
 class ConnectArgs {
@@ -17,7 +17,7 @@ class ConnectArgs {
   final BigInt? syncIntervalSeconds;
   final String? encryptionKey;
   final bool? readYourWrites;
-  final LibsqlOpenFlags? openFlags;
+  final OpenFlags? openFlags;
   final bool? offline;
 
   const ConnectArgs({
@@ -57,4 +57,4 @@ class ConnectArgs {
           offline == other.offline;
 }
 
-enum LibsqlOpenFlags { readOnly, readWrite, create }
+enum OpenFlags { readOnly, readWrite, create }

@@ -13,17 +13,17 @@ use crate::helpers::wrapper::Wrapper;
 use crate::helpers::{params::Params, result::QueryResult};
 
 #[frb(opaque)]
-pub struct LibsqlStatement {
+pub struct RustStatement {
     inner: Wrapper<Statement>,
     connection: Wrapper<Arc<Connection>>,
 }
 
-impl LibsqlStatement {
+impl RustStatement {
     pub fn new(
         statement: Wrapper<Statement>,
         connection: Wrapper<Arc<Connection>>,
-    ) -> LibsqlStatement {
-        LibsqlStatement {
+    ) -> RustStatement {
+        RustStatement {
             inner: statement,
             connection: connection,
         }

@@ -5,10 +5,10 @@ import 'package:turso_dart/turso_dart.dart';
 import 'package:turso_dart_example/bootstrap.dart';
 import 'package:turso_dart_example/features/task/repositories/task_repository.dart';
 import 'package:turso_dart_example/features/task/task_list.dart';
-import 'package:turso_dart_example/infra/libsql_task_repository.dart';
+import 'package:turso_dart_example/infra/turso_task_repository.dart';
 
-late LibsqlClient memoryClient;
-late LibsqlClient localClient;
+late TursoClient memoryClient;
+late TursoClient localClient;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -17,11 +17,9 @@ Future<void> main() async {
   await dir.delete(recursive: true);
   await dir.create(recursive: true);
 
-  // memoryClient = LibsqlClient(":memory:");
-  memoryClient = LibsqlClient.memory();
+  memoryClient = TursoClient.memory();
 
-  // localClient = LibsqlClient("${dir.path}/local.db");
-  localClient = LibsqlClient.local("${dir.path}/local.db");
+  localClient = TursoClient.local("${dir.path}/local.db");
 
   await bootstrapDatabase(memoryClient);
   await bootstrapDatabase(localClient);
@@ -36,7 +34,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       home: Scaffold(
-        appBar: AppBar(title: const Text('Libsql Dart Example')),
+        appBar: AppBar(title: const Text('Turso Dart Example')),
         body: Padding(
           padding: const EdgeInsets.all(24),
           child: Builder(
@@ -51,7 +49,7 @@ class MyApp extends StatelessWidget {
                           MaterialPageRoute(
                             builder: (context) => Provider<TaskRepository>(
                               create: (context) =>
-                                  LibsqlTaskRepository(memoryClient),
+                                  TursoTaskRepository(memoryClient),
                               child: const TaskList(),
                             ),
                           ),
@@ -65,7 +63,7 @@ class MyApp extends StatelessWidget {
                           MaterialPageRoute(
                             builder: (context) => Provider<TaskRepository>(
                               create: (context) =>
-                                  LibsqlTaskRepository(localClient),
+                                  TursoTaskRepository(localClient),
                               child: const TaskList(),
                             ),
                           ),
