@@ -143,14 +143,13 @@ impl From<ast::Cmd> for QueryMode {
 }
 
 pub struct ProgramBuilderOpts {
-    pub query_mode: QueryMode,
     pub num_cursors: usize,
     pub approx_num_insns: usize,
     pub approx_num_labels: usize,
 }
 
 impl ProgramBuilder {
-    pub fn new(opts: ProgramBuilderOpts) -> Self {
+    pub fn new(query_mode: QueryMode, opts: ProgramBuilderOpts) -> Self {
         Self {
             table_reference_counter: TableRefIdCounter::new(),
             next_free_register: 1,
@@ -160,7 +159,7 @@ impl ProgramBuilder {
             constant_spans: Vec::new(),
             label_to_resolved_offset: Vec::with_capacity(opts.approx_num_labels),
             seekrowid_emitted_bitmask: 0,
-            comments: if opts.query_mode == QueryMode::Explain {
+            comments: if query_mode == QueryMode::Explain {
                 Some(Vec::new())
             } else {
                 None

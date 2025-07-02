@@ -1,6 +1,6 @@
 use crate::translate::{ProgramBuilder, ProgramBuilderOpts};
 use crate::vdbe::insn::Insn;
-use crate::{QueryMode, Result};
+use crate::Result;
 use turso_sqlite3_parser::ast::{Name, TransactionType};
 
 pub fn translate_tx_begin(
@@ -9,7 +9,6 @@ pub fn translate_tx_begin(
     mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     program.extend(&ProgramBuilderOpts {
-        query_mode: QueryMode::Normal,
         num_cursors: 0,
         approx_num_insns: 0,
         approx_num_labels: 0,
@@ -40,7 +39,6 @@ pub fn translate_tx_commit(
     mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     program.extend(&ProgramBuilderOpts {
-        query_mode: QueryMode::Normal,
         num_cursors: 0,
         approx_num_insns: 0,
         approx_num_labels: 0,

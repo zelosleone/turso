@@ -3,14 +3,13 @@ use crate::translate::emitter::emit_program;
 use crate::translate::optimizer::optimize_plan;
 use crate::translate::plan::{DeletePlan, Operation, Plan};
 use crate::translate::planner::{parse_limit, parse_where};
-use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode, TableRefIdCounter};
+use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, TableRefIdCounter};
 use crate::{schema::Schema, Result, SymbolTable};
 use turso_sqlite3_parser::ast::{Expr, Limit, QualifiedName};
 
 use super::plan::{ColumnUsedMask, IterationDirection, JoinedTable, TableReferences};
 
 pub fn translate_delete(
-    query_mode: QueryMode,
     schema: &Schema,
     tbl_name: &QualifiedName,
     where_clause: Option<Box<Expr>>,
@@ -37,7 +36,6 @@ pub fn translate_delete(
         panic!("delete_plan is not a DeletePlan");
     };
     let opts = ProgramBuilderOpts {
-        query_mode,
         num_cursors: 1,
         approx_num_insns: estimate_num_instructions(delete),
         approx_num_labels: 0,
