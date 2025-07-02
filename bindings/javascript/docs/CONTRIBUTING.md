@@ -2,7 +2,7 @@
 
 So you want to contribute to Limbo's binding for the ~second~ best language in the world? Awesome.
 
-First things first you'll need to install [napi-rs](https://napi.rs/), follow the instructions [here](https://napi.rs/docs/introduction/getting-started) althought is highly recommended to use `yarn` with:
+First things first you'll need to install [napi-rs](https://napi.rs/), follow the instructions [here](https://napi.rs/docs/introduction/getting-started) although is highly recommended to use `yarn` with:
 
 ```sh
 yarn global add @napi-rs/cli
@@ -26,6 +26,7 @@ All tests should be within the [__test__](../__test__/) folder.
 Please be assured that:
 
 - Your fix/feature has a test checking the new behaviour;
-- Your code follows Rust's conventions with `cargo fmt`;
+- Your Rust code is formatted with `cargo fmt`;
+- Your JavaScript code is formatted with `tsserver` (VSCode's default);
 - If applicable, update the [API docs](./API.md) to match the current implementation;
 
