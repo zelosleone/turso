@@ -6860,34 +6860,13 @@ mod tests {
         }
     }
 
-    fn empty_btree() -> (Rc<Pager>, usize) {
-        let page_size = 4096;
-
+    fn empty_btree() -> (Rc<Pager>, usize, Arc<Database>, Arc<Connection>) {
         #[allow(clippy::arc_with_non_send_sync)]
         let io: Arc<dyn IO> = Arc::new(MemoryIO::new());
-        let io_file = io.open_file("test.db", OpenFlags::Create, false).unwrap();
-        let db_file = Arc::new(DatabaseFile::new(io_file));
-        let wal_file = io.open_file("test.wal", OpenFlags::Create, false).unwrap();
+        let db = Database::open_file(io.clone(), "test.db", false, false).unwrap();
+        let conn = db.connect().unwrap();
+        let pager = conn.pager.clone();
 
-        let buffer_pool = Arc::new(BufferPool::new(Some(page_size as usize)));
-        let wal_shared = WalFileShared::new_shared(page_size, &io, wal_file).unwrap();
-        let wal_file = WalFile::new(io.clone(), wal_shared, buffer_pool.clone());
-        let wal = Rc::new(RefCell::new(wal_file));
-
-        let page_cache = Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(2000)));
-        let pager = {
-            Pager::new(
-                db_file,
-                wal,
-                io,
-                page_cache,
-                buffer_pool,
-                Arc::new(AtomicUsize::new(0)),
-                Arc::new(Mutex::new(())),
-            )
-            .unwrap()
-        };
-        let pager = Rc::new(pager);
         // FIXME: handle page cache is full
         let _ = run_until_done(|| pager.allocate_page1(), &pager);
         let page2 = pager.allocate_page().unwrap();
@@ -6895,7 +6874,7 @@ mod tests {
             page: RefCell::new(page2),
         });
         btree_init_page(&page2, PageType::TableLeaf, 0, 4096);
-        (pager, page2.get().get().id)
+        (pager, page2.get().get().id, db, conn)
     }
 
     #[test]
@@ -6945,7 +6924,7 @@ mod tests {
             ]
             .as_slice(),
         ] {
-            let (pager, root_page) = empty_btree();
+            let (pager, root_page, _, _) = empty_btree();
             let mut cursor = BTreeCursor::new_table(None, pager.clone(), root_page);
             for (key, size) in sequence.iter() {
                 run_until_done(
@@ -7010,7 +6989,7 @@ mod tests {
         let mut seen = HashSet::new();
         tracing::info!("super seed: {}", seed);
         for _ in 0..attempts {
-            let (pager, root_page) = empty_btree();
+            let (pager, root_page, _db, conn) = empty_btree();
             let mut cursor = BTreeCursor::new_table(None, pager.clone(), root_page);
             let mut keys = SortedVec::new();
             tracing::info!("seed: {}", seed);
@@ -7061,7 +7040,7 @@ mod tests {
                 )
                 .unwrap();
                 loop {
-                    match pager.end_tx(false).unwrap() {
+                    match pager.end_tx(false, false, &conn).unwrap() {
                         crate::PagerCacheflushStatus::Done(_) => break,
                         crate::PagerCacheflushStatus::IO => {
                             pager.io.run_once().unwrap();
@@ -7137,7 +7116,7 @@ mod tests {
         let mut seen = HashSet::new();
         tracing::info!("super seed: {}", seed);
         for _ in 0..attempts {
-            let (pager, _) = empty_btree();
+            let (pager, _, _db, conn) = empty_btree();
             let index_root_page_result =
                 pager.btree_create(&CreateBTreeFlags::new_index()).unwrap();
             let index_root_page = match index_root_page_result {
@@ -7187,7 +7166,7 @@ mod tests {
                 .unwrap();
                 cursor.move_to_root();
                 loop {
-                    match pager.end_tx(false).unwrap() {
+                    match pager.end_tx(false, false, &conn).unwrap() {
                         crate::PagerCacheflushStatus::Done(_) => break,
                         crate::PagerCacheflushStatus::IO => {
                             pager.io.run_once().unwrap();
@@ -8246,7 +8225,7 @@ mod tests {
 
     #[test]
     pub fn btree_insert_sequential() {
-        let (pager, root_page) = empty_btree();
+        let (pager, root_page, _, _) = empty_btree();
         let mut keys = Vec::new();
         for i in 0..10000 {
             let mut cursor = BTreeCursor::new_table(None, pager.clone(), root_page);
@@ -8322,7 +8301,7 @@ mod tests {
         // 3. Verify validity/integrity of btree after deleting and also verify that these
         //    values are actually deleted.
 
-        let (pager, root_page) = empty_btree();
+        let (pager, root_page, _, _) = empty_btree();
 
         // Insert 10,000 records in to the BTree.
         for i in 1..=10000 {
@@ -8399,7 +8378,7 @@ mod tests {
             huge_texts.push(huge_text);
         }
 
-        let (pager, root_page) = empty_btree();
+        let (pager, root_page, _, _) = empty_btree();
 
         for (i, huge_text) in huge_texts.iter().enumerate().take(iterations) {
             let mut cursor = BTreeCursor::new_table(None, pager.clone(), root_page);
@@ -8448,7 +8427,7 @@ mod tests {
 
     #[test]
     pub fn test_read_write_payload_with_offset() {
-        let (pager, root_page) = empty_btree();
+        let (pager, root_page, _, _) = empty_btree();
         let mut cursor = BTreeCursor::new(None, pager.clone(), root_page, vec![]);
         let offset = 2; // blobs data starts at offset 2
         let initial_text = "hello world";
@@ -8524,7 +8503,7 @@ mod tests {
 
     #[test]
     pub fn test_read_write_payload_with_overflow_page() {
-        let (pager, root_page) = empty_btree();
+        let (pager, root_page, _, _) = empty_btree();
         let mut cursor = BTreeCursor::new(None, pager.clone(), root_page, vec![]);
         let mut large_blob = vec![b'A'; 40960 - 11]; // insert large blob. 40960 = 10 page long.
         let hello_world = b"hello world";
@@ -8632,7 +8611,7 @@ mod tests {
                 number_of_cells_per_page: [0; 5],
             };
             let mut cells_cloned = Vec::new();
-            let (pager, _) = empty_btree();
+            let (pager, _, _, _) = empty_btree();
             let page_type = PageType::TableLeaf;
             let page = pager.allocate_page().unwrap();
             let page = Arc::new(BTreePageInner {

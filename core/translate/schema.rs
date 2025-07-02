@@ -14,6 +14,7 @@ use crate::translate::ProgramBuilder;
 use crate::translate::ProgramBuilderOpts;
 use crate::util::PRIMARY_KEY_AUTOMATIC_INDEX_NAME_PREFIX;
 use crate::vdbe::builder::CursorType;
+use crate::vdbe::insn::Cookie;
 use crate::vdbe::insn::{CmpInsFlags, InsertFlags, Insn};
 use crate::LimboError;
 use crate::SymbolTable;
@@ -144,7 +145,12 @@ pub fn translate_create_table(
 
     program.resolve_label(parse_schema_label, program.offset());
     // TODO: SetCookie
-    //
+    program.emit_insn(Insn::SetCookie {
+        db: 0,
+        cookie: Cookie::SchemaVersion,
+        value: schema.schema_version as i32 + 1,
+        p5: 0,
+    });
     // TODO: remove format, it sucks for performance but is convenient
     let parse_schema_where_clause = format!("tbl_name = '{}' AND type != 'trigger'", tbl_name);
     program.emit_insn(Insn::ParseSchema {

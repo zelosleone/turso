@@ -17,12 +17,14 @@ use turso_sqlite3_parser::{
 const SCHEMA_TABLE_NAME: &str = "sqlite_schema";
 const SCHEMA_TABLE_NAME_ALT: &str = "sqlite_master";
 
+#[derive(Debug, Clone)]
 pub struct Schema {
     pub tables: HashMap<String, Arc<Table>>,
     /// table_name to list of indexes for the table
     pub indexes: HashMap<String, Vec<Arc<Index>>>,
     pub has_indexes: std::collections::HashSet<String>,
     pub indexes_enabled: bool,
+    pub schema_version: u32,
 }
 
 impl Schema {
@@ -40,6 +42,7 @@ impl Schema {
             indexes,
             has_indexes,
             indexes_enabled,
+            schema_version: 0,
         }
     }
 

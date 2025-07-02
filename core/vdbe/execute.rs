@@ -1700,11 +1700,11 @@ pub fn op_transaction(
     } else {
         let current_state = conn.transaction_state.get();
         let (new_transaction_state, updated) = match (current_state, write) {
-            (TransactionState::Write, true) => (TransactionState::Write, false),
-            (TransactionState::Write, false) => (TransactionState::Write, false),
-            (TransactionState::Read, true) => (TransactionState::Write, true),
+            (TransactionState::Write { change_schema}, true) => (TransactionState::Write { change_schema}, false),
+            (TransactionState::Write { change_schema}, false) => (TransactionState::Write { change_schema}, false),
+            (TransactionState::Read, true) => (TransactionState::Write { change_schema: false}, true),
             (TransactionState::Read, false) => (TransactionState::Read, false),
-            (TransactionState::None, true) => (TransactionState::Write, true),
+            (TransactionState::None, true) => (TransactionState::Write { change_schema: false}, true),
             (TransactionState::None, false) => (TransactionState::Read, true),
         };
 
@@ -1714,7 +1714,7 @@ pub fn op_transaction(
             }
         }
 
-        if updated && matches!(new_transaction_state, TransactionState::Write) {
+        if updated && matches!(new_transaction_state, TransactionState::Write { .. }) {
             if let LimboResult::Busy = return_if_io!(pager.begin_write_tx()) {
                 pager.end_read_tx()?;
                 tracing::trace!("begin_write_tx busy");
@@ -5028,6 +5028,19 @@ pub fn op_set_cookie(
         }
         Cookie::IncrementalVacuum => {
             header_accessor::set_incremental_vacuum_enabled(pager, *value as u32)?;
+        }
+        Cookie::SchemaVersion => {
+            // we update transaction state to indicate that the schema has changed
+            match program.connection.transaction_state.get() {
+                TransactionState::Write { change_schema } => {
+                    program.connection.transaction_state.set(TransactionState::Write { change_schema: true });
+                    
+                },
+                TransactionState::Read => unreachable!("invalid transaction state for SetCookie: TransactionState::Read, should be write"),
+                TransactionState::None => unreachable!("invalid transaction state for SetCookie: TransactionState::None, should be write"),
+            }
+            
+            header_accessor::set_schema_cookie(pager, *value as u32)?;
         }
         cookie => todo!("{cookie:?} is not yet implement for SetCookie"),
     }

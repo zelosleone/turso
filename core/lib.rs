@@ -97,7 +97,7 @@ pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum TransactionState {
-    Write,
+    Write { change_schema: bool },
     Read,
     None,
 }
@@ -218,6 +218,8 @@ impl Database {
         if is_empty == 2 {
             // parse schema
             let conn = db.connect()?;
+            let schema_version = get_schema_version(&conn, &io)?;
+            schema.write().schema_version = schema_version;
             let rows = conn.query("SELECT * FROM sqlite_schema")?;
             let mut schema = schema
                 .try_write()
@@ -382,6 +384,50 @@ impl Database {
                 };
                 let db = Self::open_file_with_flags(io.clone(), path, flags, mvcc, indexes)?;
                 Ok((io, db))
+            }
+        }
+    }
+}
+
+fn get_schema_version(conn: &Arc<Connection>, io: &Arc<dyn IO>) -> Result<u32> {
+    let mut rows = conn
+        .query("PRAGMA schema_version")?
+        .ok_or(LimboError::InternalError(
+            "failed to parse pragma schema_version on initialization".to_string(),
+        ))?;
+    let mut schema_version = None;
+    loop {
+        match rows.step()? {
+            StepResult::Row => {
+                let row = rows.row().unwrap();
+                if schema_version.is_some() {
+                    return Err(LimboError::InternalError(
+                        "PRAGMA schema_version; returned more that one row".to_string(),
+                    ));
+                }
+                schema_version = Some(row.get::<i64>(0)? as u32);
+            }
+            StepResult::IO => {
+                io.run_once()?;
+            }
+            StepResult::Interrupt => {
+                return Err(LimboError::InternalError(
+                    "PRAGMA schema_version; returned more that one row".to_string(),
+                ));
+            }
+            StepResult::Done => {
+                if let Some(version) = schema_version {
+                    return Ok(version);
+                } else {
+                    return Err(LimboError::InternalError(
+                        "failed to get schema_version".to_string(),
+                    ));
+                }
+            }
+            StepResult::Busy => {
+                return Err(LimboError::InternalError(
+                    "PRAGMA schema_version; returned more that one row".to_string(),
+                ));
             }
         }
     }
