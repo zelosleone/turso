@@ -469,6 +469,7 @@ impl Connection {
         let input = str::from_utf8(&sql.as_bytes()[..byte_offset_end])
             .unwrap()
             .trim();
+        self.maybe_update_schema();
         match cmd {
             Cmd::Stmt(stmt) => {
                 let program = Rc::new(translate::translate(
@@ -570,6 +571,7 @@ impl Connection {
             let input = str::from_utf8(&sql.as_bytes()[..byte_offset_end])
                 .unwrap()
                 .trim();
+            self.maybe_update_schema();
             match cmd {
                 Cmd::Explain(stmt) => {
                     let program = translate::translate(
@@ -642,6 +644,16 @@ impl Connection {
 
     pub fn set_readonly(&self, readonly: bool) {
         self.readonly.replace(readonly);
+    }
+
+    pub fn maybe_update_schema(&self) {
+        let current_schema_version = self.schema.borrow().schema_version;
+        if matches!(self.transaction_state.get(), TransactionState::None)
+            && current_schema_version < self._db.schema.read().schema_version
+        {
+            let new_schema = self._db.schema.read();
+            self.schema.replace(new_schema.clone());
+        }
     }
 
     pub fn wal_frame_count(&self) -> Result<u64> {

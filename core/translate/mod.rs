@@ -64,12 +64,6 @@ pub fn translate(
     _input: &str, // TODO: going to be used for CREATE VIEW
 ) -> Result<Program> {
     tracing::trace!("querying {}", _input);
-    if matches!(connection.transaction_state.get(), TransactionState::None)
-        && connection.schema.borrow().schema_version < connection._db.schema.read().schema_version
-    {
-        let new_schema = connection._db.schema.read();
-        connection.schema.replace(new_schema.clone());
-    }
     let change_cnt_on = matches!(
         stmt,
         ast::Stmt::CreateIndex { .. }

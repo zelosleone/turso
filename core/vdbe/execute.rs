@@ -1753,11 +1753,14 @@ pub fn op_auto_commit(
             super::StepResult::Busy => Ok(InsnFunctionStepResult::Busy),
         };
     }
+    let change_schema = if let TransactionState::Write { change_schema } = conn.transaction_state.get() {change_schema } else {
+        false
+    };
 
     if *auto_commit != conn.auto_commit.get() {
         if *rollback {
             // TODO(pere): add rollback I/O logic once we implement rollback journal
-            pager.rollback()?;
+            pager.rollback(change_schema, &conn)?;
             conn.auto_commit.replace(true);
         } else {
             conn.auto_commit.replace(*auto_commit);

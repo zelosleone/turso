@@ -1188,11 +1188,15 @@ impl Pager {
         (page_size - reserved_space) as usize
     }
 
-    pub fn rollback(&self) -> Result<(), LimboError> {
+    pub fn rollback(&self, change_schema: bool, connection: &Connection) -> Result<(), LimboError> {
         self.dirty_pages.borrow_mut().clear();
         let mut cache = self.page_cache.write();
         cache.unset_dirty_all_pages();
         cache.clear().expect("failed to clear page cache");
+        if change_schema {
+            let prev_schema = connection._db.schema.read().clone();
+            connection.schema.replace(prev_schema);
+        }
         self.wal.borrow_mut().rollback()?;
 
         Ok(())
