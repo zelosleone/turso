@@ -639,27 +639,27 @@ impl Pager {
     ) -> Result<PagerCacheflushStatus> {
         tracing::trace!("end_tx(rollback={})", rollback);
         if rollback {
-            let maybe_schema_pair = if change_schema {
-                let schema = connection.schema.borrow().clone();
-                // Lock first before writing to the database schema in case someone tries to read the schema before it's updated
-                let db_schema = connection._db.schema.write();
-                Some((schema, db_schema))
-            } else {
-                None
-            };
             self.wal.borrow().end_write_tx()?;
             self.wal.borrow().end_read_tx()?;
-            if let Some((schema, mut db_schema)) = maybe_schema_pair {
-                *db_schema = schema;
-            }
             return Ok(PagerCacheflushStatus::Done(PagerCacheflushResult::Rollback));
         }
         let cacheflush_status = self.cacheflush()?;
         match cacheflush_status {
             PagerCacheflushStatus::IO => Ok(PagerCacheflushStatus::IO),
             PagerCacheflushStatus::Done(_) => {
+                let maybe_schema_pair = if change_schema {
+                    let schema = connection.schema.borrow().clone();
+                    // Lock first before writing to the database schema in case someone tries to read the schema before it's updated
+                    let db_schema = connection._db.schema.write();
+                    Some((schema, db_schema))
+                } else {
+                    None
+                };
                 self.wal.borrow().end_write_tx()?;
                 self.wal.borrow().end_read_tx()?;
+                if let Some((schema, mut db_schema)) = maybe_schema_pair {
+                    *db_schema = schema;
+                }
                 Ok(cacheflush_status)
             }
         }
