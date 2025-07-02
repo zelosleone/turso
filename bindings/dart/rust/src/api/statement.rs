@@ -78,7 +78,12 @@ impl RustStatement {
                         .bind_at(NonZero::new(i + 1).unwrap(), value.into());
                 }
             }
-            Params::Named(_items) => todo!(),
+            Params::Named(values) => {
+                for (name, value) in values.into_iter() {
+                    let i = self.inner.parameters().index(name).unwrap();
+                    self.inner.bind_at(i, value.into());
+                }
+            }
         }
         let mut rows: Vec<Vec<Value>> = Vec::new();
         loop {
