@@ -125,7 +125,7 @@ do_execsql_test_on_specific_db {:memory:} schema-alter-rollback-and-repeat {
     rollback;
     alter table t add column y;
     select sql from sqlite_schema;
-} {"CREATE TABLE t ( x , y  )"}
+} {"CREATE TABLE t (x, y)"}
 
 if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-sqlite3-index-experimental" || $::env(SQLITE_EXEC) eq "sqlite3")} {
     do_execsql_test_on_specific_db {:memory:} schema-create-index-rollback {
