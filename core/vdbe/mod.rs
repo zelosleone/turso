@@ -422,7 +422,10 @@ impl Program {
                 program_state.commit_state
             );
             if program_state.commit_state == CommitState::Committing {
-                let TransactionState::Write { change_schema } = connection.transaction_state.get() else {unreachable!("invalid state for write commit step")};
+                let TransactionState::Write { change_schema } = connection.transaction_state.get()
+                else {
+                    unreachable!("invalid state for write commit step")
+                };
                 self.step_end_write_txn(
                     &pager,
                     &mut program_state.commit_state,

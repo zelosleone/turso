@@ -1699,11 +1699,25 @@ pub fn op_transaction(
     } else {
         let current_state = conn.transaction_state.get();
         let (new_transaction_state, updated) = match (current_state, write) {
-            (TransactionState::Write { change_schema}, true) => (TransactionState::Write { change_schema}, false),
-            (TransactionState::Write { change_schema}, false) => (TransactionState::Write { change_schema}, false),
-            (TransactionState::Read, true) => (TransactionState::Write { change_schema: false}, true),
+            (TransactionState::Write { change_schema }, true) => {
+                (TransactionState::Write { change_schema }, false)
+            }
+            (TransactionState::Write { change_schema }, false) => {
+                (TransactionState::Write { change_schema }, false)
+            }
+            (TransactionState::Read, true) => (
+                TransactionState::Write {
+                    change_schema: false,
+                },
+                true,
+            ),
             (TransactionState::Read, false) => (TransactionState::Read, false),
-            (TransactionState::None, true) => (TransactionState::Write { change_schema: false}, true),
+            (TransactionState::None, true) => (
+                TransactionState::Write {
+                    change_schema: false,
+                },
+                true,
+            ),
             (TransactionState::None, false) => (TransactionState::Read, true),
         };
 
@@ -1752,9 +1766,12 @@ pub fn op_auto_commit(
             super::StepResult::Busy => Ok(InsnFunctionStepResult::Busy),
         };
     }
-    let change_schema = if let TransactionState::Write { change_schema } = conn.transaction_state.get() {change_schema } else {
-        false
-    };
+    let change_schema =
+        if let TransactionState::Write { change_schema } = conn.transaction_state.get() {
+            change_schema
+        } else {
+            false
+        };
 
     if *auto_commit != conn.auto_commit.get() {
         if *rollback {
@@ -5041,12 +5058,11 @@ pub fn op_set_cookie(
             match program.connection.transaction_state.get() {
                 TransactionState::Write { change_schema } => {
                     program.connection.transaction_state.set(TransactionState::Write { change_schema: true });
-                    
                 },
                 TransactionState::Read => unreachable!("invalid transaction state for SetCookie: TransactionState::Read, should be write"),
                 TransactionState::None => unreachable!("invalid transaction state for SetCookie: TransactionState::None, should be write"),
             }
-            
+
             program.connection.schema.borrow_mut().schema_version = *value as u32;
             header_accessor::set_schema_cookie(pager, *value as u32)?;
         }
