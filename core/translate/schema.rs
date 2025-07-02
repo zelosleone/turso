@@ -596,6 +596,12 @@ pub fn translate_create_virtual_table(
         Some(sql),
     );
 
+    program.emit_insn(Insn::SetCookie {
+        db: 0,
+        cookie: Cookie::SchemaVersion,
+        value: schema.schema_version as i32 + 1,
+        p5: 0,
+    });
     let parse_schema_where_clause = format!("tbl_name = '{}' AND type != 'trigger'", table_name);
     program.emit_insn(Insn::ParseSchema {
         db: sqlite_schema_cursor_id,
