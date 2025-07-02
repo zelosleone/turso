@@ -4692,6 +4692,9 @@ pub fn op_open_write(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
+    if program.connection.readonly.get() {
+        return Err(LimboError::ReadOnly);
+    }
     let root_page = match root_page {
         RegisterOrLiteral::Literal(lit) => *lit as u64,
         RegisterOrLiteral::Register(reg) => match &state.registers[*reg].get_owned_value() {
@@ -4794,6 +4797,9 @@ pub fn op_create_btree(
     let Insn::CreateBtree { db, root, flags } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
+    if program.connection.readonly.get() {
+        return Err(LimboError::ReadOnly);
+    }
     if *db > 0 {
         // TODO: implement temp databases
         todo!("temp databases not implemented yet");

@@ -26,7 +26,7 @@ use std::{
 };
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use turso_core::{Database, LimboError, Statement, StepResult, Value};
+use turso_core::{Connection, Database, LimboError, OpenFlags, Statement, StepResult, Value};
 
 #[derive(Parser)]
 #[command(name = "Turso")]
@@ -55,6 +55,8 @@ pub struct Opts {
         help = "Select VFS. options are io_uring (if feature enabled), memory, and syscall"
     )]
     pub vfs: Option<String>,
+    #[clap(long, help = "Open the database in read-only mode")]
+    pub readonly: bool,
     #[clap(long, help = "Enable experimental MVCC feature")]
     pub experimental_mvcc: bool,
     #[clap(long, help = "Enable experimental indexing feature")]
@@ -114,32 +116,24 @@ impl Limbo {
             .database
             .as_ref()
             .map_or(":memory:".to_string(), |p| p.to_string_lossy().to_string());
-        let (io, db) = if let Some(ref vfs) = opts.vfs {
-            Database::open_new(&db_file, vfs)?
+        let (io, conn) = if db_file.contains([':', '?', '&', '#']) {
+            Connection::from_uri(&db_file, opts.experimental_indexes, opts.experimental_mvcc)?
         } else {
-            let io = {
-                match db_file.as_str() {
-                    ":memory:" => get_io(
-                        DbLocation::Memory,
-                        opts.vfs.as_ref().map_or("", |s| s.as_str()),
-                    )?,
-                    _path => get_io(
-                        DbLocation::Path,
-                        opts.vfs.as_ref().map_or("", |s| s.as_str()),
-                    )?,
-                }
+            let flags = if opts.readonly {
+                OpenFlags::ReadOnly
+            } else {
+                OpenFlags::default()
             };
-            (
-                io.clone(),
-                Database::open_file(
-                    io.clone(),
-                    &db_file,
-                    opts.experimental_mvcc,
-                    opts.experimental_indexes,
-                )?,
-            )
+            let (io, db) = Database::open_new(
+                &db_file,
+                opts.vfs.as_ref(),
+                flags,
+                opts.experimental_indexes,
+                opts.experimental_mvcc,
+            )?;
+            let conn = db.connect()?;
+            (io, conn)
         };
-        let conn = db.connect()?;
         let mut ext_api = conn.build_turso_ext();
         if unsafe { !limbo_completion::register_extension_static(&mut ext_api).is_ok() } {
             return Err(anyhow!(

@@ -6,7 +6,7 @@ use std::{
     ffi::{c_char, c_void},
     sync::Arc,
 };
-use turso_core::{Connection, Database, LimboError, IO};
+use turso_core::{Connection, LimboError};
 
 /// # Safety
 /// Safe to be called from Go with null terminated DSN string.
@@ -20,21 +20,10 @@ pub unsafe extern "C" fn db_open(path: *const c_char) -> *mut c_void {
     }
     let path = unsafe { std::ffi::CStr::from_ptr(path) };
     let path = path.to_str().unwrap();
-    let io: Arc<dyn IO> = match path {
-        p if p.contains(":memory:") => Arc::new(turso_core::MemoryIO::new()),
-        _ => Arc::new(turso_core::PlatformIO::new().expect("Failed to create IO")),
+    let Ok((io, conn)) = Connection::from_uri(path, false, false) else {
+        panic!("Failed to open connection with path: {}", path);
     };
-    let db = Database::open_file(io.clone(), path, false, false);
-    match db {
-        Ok(db) => {
-            let conn = db.connect().unwrap();
-            LimboConn::new(conn, io).to_ptr()
-        }
-        Err(e) => {
-            eprintln!("Error: {}", e);
-            std::ptr::null_mut()
-        }
-    }
+    LimboConn::new(conn, io).to_ptr()
 }
 
 #[allow(dead_code)]
