@@ -1197,8 +1197,7 @@ pub unsafe extern "C" fn libsql_wal_get_frame(
 
 /// Disable WAL checkpointing.
 ///
-/// Note: This function disables WAL checkpointing entirely, including when
-/// the last database connection is closed. This is different from
+/// Note: This function disables WAL checkpointing entirely for the connection. This is different from
 /// sqlite3_wal_autocheckpoint() which only disables automatic checkpoints
 /// for the current connection, but still allows checkpointing when the
 /// connection is closed.

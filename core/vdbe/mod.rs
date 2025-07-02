@@ -469,8 +469,12 @@ impl Program {
         rollback: bool,
         change_schema: bool,
     ) -> Result<StepResult> {
-        let cacheflush_status =
-            pager.end_tx(rollback, change_schema, connection, connection._db.wal_checkpoint_disabled.get())?;
+        let cacheflush_status = pager.end_tx(
+            rollback,
+            change_schema,
+            connection,
+            connection.wal_checkpoint_disabled.get(),
+        )?;
         match cacheflush_status {
             PagerCacheflushStatus::Done(_) => {
                 if self.change_cnt_on {
