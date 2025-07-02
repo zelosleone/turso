@@ -2,9 +2,9 @@
 import os
 import select
 import subprocess
+import time
 from pathlib import Path
 from time import sleep
-import time
 from typing import Callable, List, Optional
 
 from cli_tests import console
