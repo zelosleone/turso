@@ -200,7 +200,6 @@ impl Database {
 
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
         let schema = Arc::new(RwLock::new(Schema::new(enable_indexes)));
-        dbg!(enable_indexes);
         let db = Database {
             mv_store,
             path: path.to_string(),
