@@ -216,7 +216,7 @@ pub fn op_drop_index(
     let Insn::DropIndex { index, db: _ } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let mut schema = program.connection.schema.write();
+    let mut schema = program.connection.schema.borrow_mut();
     schema.remove_index(index);
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -901,7 +901,7 @@ pub fn op_open_read(
         }
         CursorType::BTreeIndex(index) => {
             let conn = program.connection.clone();
-            let schema = conn.schema.try_read().ok_or(LimboError::SchemaLocked)?;
+            let schema = conn.schema.borrow();
             let table = schema
                 .get_table(&index.table_name)
                 .and_then(|table| table.btree());
@@ -4725,7 +4725,7 @@ pub fn op_open_write(
     };
     if let Some(index) = maybe_index {
         let conn = program.connection.clone();
-        let schema = conn.schema.try_read().ok_or(LimboError::SchemaLocked)?;
+        let schema = conn.schema.borrow();
         let table = schema
             .get_table(&index.table_name)
             .and_then(|table| table.btree());
@@ -4855,7 +4855,7 @@ pub fn op_drop_table(
     }
     let conn = program.connection.clone();
     {
-        let mut schema = conn.schema.write();
+        let mut schema = conn.schema.borrow_mut();
         schema.remove_indices_for_table(table_name);
         schema.remove_table(table_name);
     }
@@ -4939,7 +4939,7 @@ pub fn op_parse_schema(
             where_clause
         ))?;
 
-        let mut schema = conn.schema.write();
+        let mut schema = conn.schema.borrow_mut();
 
         // TODO: This function below is synchronous, make it async
         {
@@ -4953,7 +4953,7 @@ pub fn op_parse_schema(
         }
     } else {
         let stmt = conn.prepare("SELECT * FROM sqlite_schema")?;
-        let mut new = Schema::new(conn.schema.read().indexes_enabled());
+        let mut new = Schema::new(conn.schema.borrow().indexes_enabled());
 
         // TODO: This function below is synchronous, make it async
         {
@@ -4966,7 +4966,7 @@ pub fn op_parse_schema(
             )?;
         }
 
-        let mut schema = conn.schema.write();
+        let mut schema = conn.schema.borrow_mut();
         *schema = new;
     }
     state.pc += 1;

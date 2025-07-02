@@ -640,7 +640,8 @@ impl Pager {
         tracing::trace!("end_tx(rollback={})", rollback);
         if rollback {
             let maybe_schema_pair = if change_schema {
-                let schema = connection.schema.clone().write().clone();
+                let schema = connection.schema.borrow().clone();
+                // Lock first before writing to the database schema in case someone tries to read the schema before it's updated
                 let db_schema = connection._db.schema.write();
                 Some((schema, db_schema))
             } else {

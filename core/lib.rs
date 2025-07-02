@@ -267,7 +267,7 @@ impl Database {
             let conn = Arc::new(Connection {
                 _db: self.clone(),
                 pager: pager.clone(),
-                schema: self.schema.clone(),
+                schema: RefCell::new(self.schema.read().clone()),
                 last_insert_rowid: Cell::new(0),
                 auto_commit: Cell::new(true),
                 mv_transactions: RefCell::new(Vec::new()),
@@ -318,7 +318,7 @@ impl Database {
         let conn = Arc::new(Connection {
             _db: self.clone(),
             pager: Rc::new(pager),
-            schema: self.schema.clone(),
+            schema: RefCell::new(self.schema.read().clone()),
             auto_commit: Cell::new(true),
             mv_transactions: RefCell::new(Vec::new()),
             transaction_state: Cell::new(TransactionState::None),
@@ -436,7 +436,7 @@ fn get_schema_version(conn: &Arc<Connection>, io: &Arc<dyn IO>) -> Result<u32> {
 pub struct Connection {
     _db: Arc<Database>,
     pager: Rc<Pager>,
-    schema: Arc<RwLock<Schema>>,
+    schema: RefCell<Schema>,
     /// Whether to automatically commit transaction
     auto_commit: Cell<bool>,
     mv_transactions: RefCell<Vec<crate::mvcc::database::TxID>>,
@@ -472,10 +472,7 @@ impl Connection {
         match cmd {
             Cmd::Stmt(stmt) => {
                 let program = Rc::new(translate::translate(
-                    self.schema
-                        .try_read()
-                        .ok_or(LimboError::SchemaLocked)?
-                        .deref(),
+                    self.schema.borrow().deref(),
                     stmt,
                     self.pager.clone(),
                     self.clone(),
@@ -520,10 +517,7 @@ impl Connection {
         match cmd {
             Cmd::Stmt(ref stmt) | Cmd::Explain(ref stmt) => {
                 let program = translate::translate(
-                    self.schema
-                        .try_read()
-                        .ok_or(LimboError::SchemaLocked)?
-                        .deref(),
+                    self.schema.borrow().deref(),
                     stmt.clone(),
                     self.pager.clone(),
                     self.clone(),
@@ -543,23 +537,14 @@ impl Connection {
                 match stmt {
                     ast::Stmt::Select(select) => {
                         let mut plan = prepare_select_plan(
-                            self.schema
-                                .try_read()
-                                .ok_or(LimboError::SchemaLocked)?
-                                .deref(),
+                            self.schema.borrow().deref(),
                             *select,
                             &syms,
                             &[],
                             &mut table_ref_counter,
                             translate::plan::QueryDestination::ResultRows,
                         )?;
-                        optimize_plan(
-                            &mut plan,
-                            self.schema
-                                .try_read()
-                                .ok_or(LimboError::SchemaLocked)?
-                                .deref(),
-                        )?;
+                        optimize_plan(&mut plan, self.schema.borrow().deref())?;
                         let _ = std::io::stdout().write_all(plan.to_string().as_bytes());
                     }
                     _ => todo!(),
@@ -588,10 +573,7 @@ impl Connection {
             match cmd {
                 Cmd::Explain(stmt) => {
                     let program = translate::translate(
-                        self.schema
-                            .try_read()
-                            .ok_or(LimboError::SchemaLocked)?
-                            .deref(),
+                        self.schema.borrow().deref(),
                         stmt,
                         self.pager.clone(),
                         self.clone(),
@@ -604,10 +586,7 @@ impl Connection {
                 Cmd::ExplainQueryPlan(_stmt) => todo!(),
                 Cmd::Stmt(stmt) => {
                     let program = translate::translate(
-                        self.schema
-                            .try_read()
-                            .ok_or(LimboError::SchemaLocked)?
-                            .deref(),
+                        self.schema.borrow().deref(),
                         stmt,
                         self.pager.clone(),
                         self.clone(),
@@ -753,10 +732,7 @@ impl Connection {
 
     pub fn parse_schema_rows(self: &Arc<Connection>) -> Result<()> {
         let rows = self.query("SELECT * FROM sqlite_schema")?;
-        let mut schema = self
-            .schema
-            .try_write()
-            .expect("lock on schema should succeed first try");
+        let mut schema = self.schema.borrow_mut();
         {
             let syms = self.syms.borrow();
             if let Err(LimboError::ExtensionError(e)) =
