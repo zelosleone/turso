@@ -1,7 +1,6 @@
 #![allow(unused_variables)]
 use crate::function::AlterTableFunc;
 use crate::numeric::{NullableInteger, Numeric};
-use crate::schema::Schema;
 use crate::storage::btree::{integrity_check, IntegrityCheckError, IntegrityCheckState};
 use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
@@ -4935,6 +4934,10 @@ pub fn op_parse_schema(
         unreachable!("unexpected Insn {:?}", insn)
     };
     let conn = program.connection.clone();
+    // set auto commit to false in order for parse schema to not commit changes as transaction state is stored in connection,
+    // and we use the same connection for nested query.
+    let previous_auto_commit = conn.auto_commit.get();
+    conn.auto_commit.set(false);
 
     if let Some(where_clause) = where_clause {
         let stmt = conn.prepare(format!(
@@ -4942,36 +4945,37 @@ pub fn op_parse_schema(
             where_clause
         ))?;
 
-        let mut schema = conn.schema.borrow_mut();
+        let mut new_schema = conn.schema.borrow().clone();
 
         // TODO: This function below is synchronous, make it async
         {
             parse_schema_rows(
                 Some(stmt),
-                &mut schema,
+                &mut new_schema,
                 conn.pager.io.clone(),
                 &conn.syms.borrow(),
                 state.mv_tx_id,
             )?;
         }
+        conn.schema.replace(new_schema);
     } else {
         let stmt = conn.prepare("SELECT * FROM sqlite_schema")?;
-        let mut new = Schema::new(conn.schema.borrow().indexes_enabled());
+        let mut new_schema = conn.schema.borrow().clone();
 
         // TODO: This function below is synchronous, make it async
         {
             parse_schema_rows(
                 Some(stmt),
-                &mut new,
+                &mut new_schema,
                 conn.pager.io.clone(),
                 &conn.syms.borrow(),
                 state.mv_tx_id,
             )?;
         }
 
-        let mut schema = conn.schema.borrow_mut();
-        *schema = new;
+        conn.schema.replace(new_schema);
     }
+    conn.auto_commit.set(previous_auto_commit);
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -5043,6 +5047,7 @@ pub fn op_set_cookie(
                 TransactionState::None => unreachable!("invalid transaction state for SetCookie: TransactionState::None, should be write"),
             }
             
+            program.connection.schema.borrow_mut().schema_version = *value as u32;
             header_accessor::set_schema_cookie(pager, *value as u32)?;
         }
         cookie => todo!("{cookie:?} is not yet implement for SetCookie"),
