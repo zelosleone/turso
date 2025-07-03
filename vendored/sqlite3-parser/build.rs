@@ -50,43 +50,43 @@ fn build_keyword_map(
 
     fn write_entry(writer: &mut impl Write, entry: &PathEntry) -> Result<()> {
         if let Some(result) = entry.result {
-            write!(writer, "if idx == buf.len() {{\n")?;
-            write!(writer, "return Some(TokenType::{});\n", result)?;
-            write!(writer, "}}\n")?;
+            writeln!(writer, "if idx == buf.len() {{")?;
+            writeln!(writer, "return Some(TokenType::{});", result)?;
+            writeln!(writer, "}}")?;
         }
 
-        write!(writer, "if idx >= buf.len() {{\n")?;
-        write!(writer, "return None;\n")?;
-        write!(writer, "}}\n")?;
+        writeln!(writer, "if idx >= buf.len() {{")?;
+        writeln!(writer, "return None;")?;
+        writeln!(writer, "}}")?;
 
-        write!(writer, "match buf[idx] {{\n")?;
+        writeln!(writer, "match buf[idx] {{")?;
         for (&b, sub_entry) in &entry.sub_entries {
             if b.is_ascii_alphabetic() {
-                write!(writer, "{} | {} => {{\n", b, b.to_ascii_lowercase())?;
+                writeln!(writer, "{} | {} => {{", b, b.to_ascii_lowercase())?;
             } else {
-                write!(writer, "{} => {{\n", b)?;
+                writeln!(writer, "{} => {{", b)?;
             }
-            write!(writer, "idx += 1;\n")?;
+            writeln!(writer, "idx += 1;")?;
             write_entry(writer, sub_entry)?;
-            write!(writer, "}}\n")?;
+            writeln!(writer, "}}")?;
         }
 
-        write!(writer, "_ => {{\n")?;
-        write!(writer, "return None;\n")?;
-        write!(writer, "}}\n")?;
-        write!(writer, "}}\n")?;
+        writeln!(writer, "_ => {{")?;
+        writeln!(writer, "return None;")?;
+        writeln!(writer, "}}")?;
+        writeln!(writer, "}}")?;
         Ok(())
     }
 
-    write!(writer, "/// Check if `word` is a keyword\n")?;
-    write!(
+    writeln!(writer, "/// Check if `word` is a keyword")?;
+    writeln!(
         writer,
-        "pub fn {}(buf: &[u8]) -> Option<TokenType> {{\n",
+        "pub fn {}(buf: &[u8]) -> Option<TokenType> {{",
         func_name
     )?;
-    write!(writer, "let mut idx = 0;\n")?;
+    writeln!(writer, "let mut idx = 0;")?;
     write_entry(writer, &paths)?;
-    write!(writer, "}}\n")?;
+    writeln!(writer, "}}")?;
     Ok(())
 }
 
