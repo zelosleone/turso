@@ -264,7 +264,7 @@ impl Connection {
 
     pub fn rollback(&self) -> PyResult<()> {
         if !self.conn.get_auto_commit() {
-            self.conn.execute("COMMIT").map_err(|e| {
+            self.conn.execute("ROLLBACK").map_err(|e| {
                 PyErr::new::<OperationalError, _>(format!("Failed to commit: {:?}", e))
             })?;
 
