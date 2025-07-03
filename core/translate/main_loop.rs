@@ -563,7 +563,6 @@ pub fn open_loop(
                             end_offset: loop_end,
                         });
                     }
-                    Table::Pseudo(_) => panic!("Pseudo tables should not loop"),
                 }
 
                 if let Some(table_cursor_id) = table_cursor_id {
@@ -1042,7 +1041,6 @@ pub fn close_loop(
                             target_pc: loop_labels.loop_start,
                         });
                     }
-                    other => unreachable!("Unsupported table reference type: {:?}", other),
                 }
                 program.preassign_label_to_next_insn(loop_labels.loop_end);
             }

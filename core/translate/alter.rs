@@ -6,7 +6,7 @@ use crate::{
     schema::{Column, Schema},
     util::normalize_ident,
     vdbe::{
-        builder::{ProgramBuilder, QueryMode},
+        builder::ProgramBuilder,
         insn::{Insn, RegisterOrLiteral},
     },
     LimboError, Result, SymbolTable,
@@ -96,66 +96,58 @@ pub fn translate_alter_table(
                 unreachable!();
             };
 
-            translate_update_with_after(
-                QueryMode::Normal,
-                schema,
-                &mut update,
-                syms,
-                program,
-                |program| {
-                    let column_count = btree.columns.len();
-                    let root_page = btree.root_page;
-                    let table_name = btree.name.clone();
+            translate_update_with_after(schema, &mut update, syms, program, |program| {
+                let column_count = btree.columns.len();
+                let root_page = btree.root_page;
+                let table_name = btree.name.clone();
 
-                    let cursor_id = program.alloc_cursor_id(
-                        crate::vdbe::builder::CursorType::BTreeTable(original_btree),
-                    );
+                let cursor_id = program
+                    .alloc_cursor_id(crate::vdbe::builder::CursorType::BTreeTable(original_btree));
 
-                    program.emit_insn(Insn::OpenWrite {
-                        cursor_id,
-                        root_page: RegisterOrLiteral::Literal(root_page),
-                        name: table_name.clone(),
-                    });
+                program.emit_insn(Insn::OpenWrite {
+                    cursor_id,
+                    root_page: RegisterOrLiteral::Literal(root_page),
+                    name: table_name.clone(),
+                });
 
-                    program.cursor_loop(cursor_id, |program, rowid| {
-                        let first_column = program.alloc_registers(column_count);
+                program.cursor_loop(cursor_id, |program, rowid| {
+                    let first_column = program.alloc_registers(column_count);
 
-                        let mut iter = first_column;
+                    let mut iter = first_column;
 
-                        for i in 0..(column_count + 1) {
-                            if i == dropped_index {
-                                continue;
-                            }
-
-                            program.emit_column(cursor_id, i, iter);
-
-                            iter += 1;
+                    for i in 0..(column_count + 1) {
+                        if i == dropped_index {
+                            continue;
                         }
 
-                        let record = program.alloc_register();
+                        program.emit_column(cursor_id, i, iter);
 
-                        program.emit_insn(Insn::MakeRecord {
-                            start_reg: first_column,
-                            count: column_count,
-                            dest_reg: record,
-                            index_name: None,
-                        });
+                        iter += 1;
+                    }
 
-                        program.emit_insn(Insn::Insert {
-                            cursor: cursor_id,
-                            key_reg: rowid,
-                            record_reg: record,
-                            flag: crate::vdbe::insn::InsertFlags(0),
-                            table_name: table_name.clone(),
-                        });
+                    let record = program.alloc_register();
+
+                    program.emit_insn(Insn::MakeRecord {
+                        start_reg: first_column,
+                        count: column_count,
+                        dest_reg: record,
+                        index_name: None,
                     });
 
-                    program.emit_insn(Insn::ParseSchema {
-                        db: usize::MAX, // TODO: This value is unused, change when we do something with it
-                        where_clause: None,
-                    })
-                },
-            )?
+                    program.emit_insn(Insn::Insert {
+                        cursor: cursor_id,
+                        key_reg: rowid,
+                        record_reg: record,
+                        flag: crate::vdbe::insn::InsertFlags(0),
+                        table_name: table_name.clone(),
+                    });
+                });
+
+                program.emit_insn(Insn::ParseSchema {
+                    db: usize::MAX, // TODO: This value is unused, change when we do something with it
+                    where_clause: None,
+                })
+            })?
         }
         ast::AlterTableBody::AddColumn(col_def) => {
             let column = Column::from(col_def);
@@ -203,19 +195,12 @@ pub fn translate_alter_table(
                 unreachable!();
             };
 
-            translate_update_with_after(
-                QueryMode::Normal,
-                schema,
-                &mut update,
-                syms,
-                program,
-                |program| {
-                    program.emit_insn(Insn::ParseSchema {
-                        db: usize::MAX, // TODO: This value is unused, change when we do something with it
-                        where_clause: None,
-                    });
-                },
-            )?
+            translate_update_with_after(schema, &mut update, syms, program, |program| {
+                program.emit_insn(Insn::ParseSchema {
+                    db: usize::MAX, // TODO: This value is unused, change when we do something with it
+                    where_clause: None,
+                });
+            })?
         }
         ast::AlterTableBody::RenameColumn { old, new } => {
             let ast::Name(rename_from) = old;

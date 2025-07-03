@@ -8,7 +8,7 @@ use crate::{
     bail_parse_error,
     schema::{Schema, Table},
     util::normalize_ident,
-    vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode},
+    vdbe::builder::{ProgramBuilder, ProgramBuilderOpts},
     SymbolTable,
 };
 use turso_sqlite3_parser::ast::{self, Expr, ResultColumn, SortOrder, Update};
@@ -51,7 +51,6 @@ addr  opcode         p1    p2    p3    p4             p5  comment
 18    Goto           0     1     0                    0
 */
 pub fn translate_update(
-    query_mode: QueryMode,
     schema: &Schema,
     body: &mut Update,
     syms: &SymbolTable,
@@ -61,7 +60,6 @@ pub fn translate_update(
     optimize_plan(&mut plan, schema)?;
     // TODO: freestyling these numbers
     let opts = ProgramBuilderOpts {
-        query_mode,
         num_cursors: 1,
         approx_num_insns: 20,
         approx_num_labels: 4,
@@ -72,7 +70,6 @@ pub fn translate_update(
 }
 
 pub fn translate_update_with_after(
-    query_mode: QueryMode,
     schema: &Schema,
     body: &mut Update,
     syms: &SymbolTable,
@@ -83,7 +80,6 @@ pub fn translate_update_with_after(
     optimize_plan(&mut plan, schema)?;
     // TODO: freestyling these numbers
     let opts = ProgramBuilderOpts {
-        query_mode,
         num_cursors: 1,
         approx_num_insns: 20,
         approx_num_labels: 4,

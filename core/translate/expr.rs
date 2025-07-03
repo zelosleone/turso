@@ -1930,7 +1930,6 @@ pub fn translate_expr(
                     });
                     Ok(target_register)
                 }
-                Table::Pseudo(_) => panic!("Column access on pseudo table"),
             }
         }
         ast::Expr::RowId {

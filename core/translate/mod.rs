@@ -72,20 +72,21 @@ pub fn translate(
             | ast::Stmt::Update(..)
     );
 
-    // These options will be extended whithin each translate program
-    let mut program = ProgramBuilder::new(ProgramBuilderOpts {
+    let mut program = ProgramBuilder::new(
         query_mode,
-        num_cursors: 1,
-        approx_num_insns: 2,
-        approx_num_labels: 2,
-    });
+        // These options will be extended whithin each translate program
+        ProgramBuilderOpts {
+            num_cursors: 1,
+            approx_num_insns: 2,
+            approx_num_labels: 2,
+        },
+    );
 
     program.prologue();
 
     program = match stmt {
         // There can be no nesting with pragma, so lift it up here
         ast::Stmt::Pragma(name, body) => pragma::translate_pragma(
-            query_mode,
             schema,
             &name,
             body.map(|b| *b),
@@ -93,7 +94,7 @@ pub fn translate(
             connection.clone(),
             program,
         )?,
-        stmt => translate_inner(schema, stmt, syms, query_mode, program)?,
+        stmt => translate_inner(schema, stmt, syms, program)?,
     };
 
     // TODO: bring epilogue here when I can sort out what instructions correspond to a Write or a Read transaction
@@ -108,7 +109,6 @@ pub fn translate_inner(
     schema: &Schema,
     stmt: ast::Stmt,
     syms: &SymbolTable,
-    query_mode: QueryMode,
     program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     let program = match stmt {
@@ -125,7 +125,6 @@ pub fn translate_inner(
             columns,
             ..
         } => translate_create_index(
-            query_mode,
             (unique, if_not_exists),
             &idx_name.name.0,
             &tbl_name.0,
@@ -138,19 +137,11 @@ pub fn translate_inner(
             if_not_exists,
             tbl_name,
             body,
-        } => translate_create_table(
-            query_mode,
-            tbl_name,
-            temporary,
-            *body,
-            if_not_exists,
-            schema,
-            program,
-        )?,
+        } => translate_create_table(tbl_name, temporary, *body, if_not_exists, schema, program)?,
         ast::Stmt::CreateTrigger { .. } => bail_parse_error!("CREATE TRIGGER not supported yet"),
         ast::Stmt::CreateView { .. } => bail_parse_error!("CREATE VIEW not supported yet"),
         ast::Stmt::CreateVirtualTable(vtab) => {
-            translate_create_virtual_table(*vtab, schema, query_mode, syms, program)?
+            translate_create_virtual_table(*vtab, schema, syms, program)?
         }
         ast::Stmt::Delete(delete) => {
             let Delete {
@@ -159,25 +150,17 @@ pub fn translate_inner(
                 limit,
                 ..
             } = *delete;
-            translate_delete(
-                query_mode,
-                schema,
-                &tbl_name,
-                where_clause,
-                limit,
-                syms,
-                program,
-            )?
+            translate_delete(schema, &tbl_name, where_clause, limit, syms, program)?
         }
         ast::Stmt::Detach(_) => bail_parse_error!("DETACH not supported yet"),
         ast::Stmt::DropIndex {
             if_exists,
             idx_name,
-        } => translate_drop_index(query_mode, &idx_name.name.0, if_exists, schema, program)?,
+        } => translate_drop_index(&idx_name.name.0, if_exists, schema, program)?,
         ast::Stmt::DropTable {
             if_exists,
             tbl_name,
-        } => translate_drop_table(query_mode, tbl_name, if_exists, schema, program)?,
+        } => translate_drop_table(tbl_name, if_exists, schema, program)?,
         ast::Stmt::DropTrigger { .. } => bail_parse_error!("DROP TRIGGER not supported yet"),
         ast::Stmt::DropView { .. } => bail_parse_error!("DROP VIEW not supported yet"),
         ast::Stmt::Pragma(..) => {
@@ -189,7 +172,6 @@ pub fn translate_inner(
         ast::Stmt::Savepoint(_) => bail_parse_error!("SAVEPOINT not supported yet"),
         ast::Stmt::Select(select) => {
             translate_select(
-                query_mode,
                 schema,
                 *select,
                 syms,
@@ -198,9 +180,7 @@ pub fn translate_inner(
             )?
             .program
         }
-        ast::Stmt::Update(mut update) => {
-            translate_update(query_mode, schema, &mut update, syms, program)?
-        }
+        ast::Stmt::Update(mut update) => translate_update(schema, &mut update, syms, program)?,
         ast::Stmt::Vacuum(_, _) => bail_parse_error!("VACUUM not supported yet"),
         ast::Stmt::Insert(insert) => {
             let Insert {
@@ -212,7 +192,6 @@ pub fn translate_inner(
                 returning,
             } = *insert;
             translate_insert(
-                query_mode,
                 schema,
                 with,
                 or_conflict,

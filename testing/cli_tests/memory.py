@@ -2,7 +2,7 @@
 import os
 
 from cli_tests import console
-from cli_tests.test_limbo_cli import TestLimboShell
+from cli_tests.test_limbo_cli import TestTursoShell
 
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
 
@@ -12,7 +12,7 @@ def validate_with_expected(result: str, expected: str):
 
 
 def stub_memory_test(
-    limbo: TestLimboShell,
+    limbo: TestTursoShell,
     name: str,
     blob_size: int = 1024**2,
     vals: int = 100,
@@ -106,7 +106,7 @@ def main():
     # TODO see how to parallelize this loop with different subprocesses
     for test in tests:
         try:
-            with TestLimboShell("") as limbo:
+            with TestTursoShell("") as limbo:
                 stub_memory_test(limbo, **test)
         except Exception as e:
             console.error(f"Test FAILED: {e}")

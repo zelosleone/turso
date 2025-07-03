@@ -10,7 +10,7 @@ from time import perf_counter, sleep
 from typing import Dict
 
 from cli_tests.console import error, info, test
-from cli_tests.test_limbo_cli import TestLimboShell
+from cli_tests.test_limbo_cli import TestTursoShell
 
 LIMBO_BIN = Path("./target/release/limbo")
 DB_FILE = Path("testing/temp.db")
@@ -27,7 +27,7 @@ def bench_one(vfs: str, sql: str, iterations: int) -> list[float]:
     Launch a single Limbo process with the requested VFS, run `sql`
     `iterations` times, return a list of elapsed wall‑clock times.
     """
-    shell = TestLimboShell(
+    shell = TestTursoShell(
         exec_name=str(LIMBO_BIN),
         flags=f"-q -m list --vfs {vfs} {DB_FILE}",
         init_commands="",

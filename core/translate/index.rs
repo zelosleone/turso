@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use crate::vdbe::insn::CmpInsFlags;
 use crate::{
-    schema::{BTreeTable, Column, Index, IndexColumn, PseudoTable, Schema},
+    schema::{BTreeTable, Column, Index, IndexColumn, PseudoCursorType, Schema},
     storage::pager::CreateBTreeFlags,
     util::normalize_ident,
     vdbe::{
-        builder::{CursorType, ProgramBuilder, QueryMode},
+        builder::{CursorType, ProgramBuilder},
         insn::{IdxInsertFlags, Insn, RegisterOrLiteral},
     },
 };
@@ -15,7 +15,6 @@ use turso_sqlite3_parser::ast::{self, Expr, Id, SortOrder, SortedColumn};
 use super::schema::{emit_schema_entry, SchemaEntryType, SQLITE_TABLEID};
 
 pub fn translate_create_index(
-    mode: QueryMode,
     unique_if_not_exists: (bool, bool),
     idx_name: &str,
     tbl_name: &str,
@@ -31,7 +30,6 @@ pub fn translate_create_index(
     let idx_name = normalize_ident(idx_name);
     let tbl_name = normalize_ident(tbl_name);
     let opts = crate::vdbe::builder::ProgramBuilderOpts {
-        query_mode: mode,
         num_cursors: 5,
         approx_num_insns: 40,
         approx_num_labels: 5,
@@ -83,8 +81,9 @@ pub fn translate_create_index(
     let btree_cursor_id = program.alloc_cursor_id(CursorType::BTreeIndex(idx.clone()));
     let table_cursor_id = program.alloc_cursor_id(CursorType::BTreeTable(tbl.clone()));
     let sorter_cursor_id = program.alloc_cursor_id(CursorType::Sorter);
-    let pseudo_table = PseudoTable::new_with_columns(tbl.columns.clone());
-    let pseudo_cursor_id = program.alloc_cursor_id(CursorType::Pseudo(pseudo_table.into()));
+    let pseudo_cursor_id = program.alloc_cursor_id(CursorType::Pseudo(PseudoCursorType {
+        column_count: tbl.columns.len(),
+    }));
 
     // Create a new B-Tree and store the root page index in a register
     let root_page_reg = program.alloc_register();
@@ -295,7 +294,6 @@ fn create_idx_stmt_to_sql(
 }
 
 pub fn translate_drop_index(
-    mode: QueryMode,
     idx_name: &str,
     if_exists: bool,
     schema: &Schema,
@@ -308,7 +306,6 @@ pub fn translate_drop_index(
     }
     let idx_name = normalize_ident(idx_name);
     let opts = crate::vdbe::builder::ProgramBuilderOpts {
-        query_mode: mode,
         num_cursors: 5,
         approx_num_insns: 40,
         approx_num_labels: 5,

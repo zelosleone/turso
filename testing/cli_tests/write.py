@@ -4,7 +4,7 @@ import tempfile
 from time import sleep
 
 from cli_tests import console
-from cli_tests.test_limbo_cli import TestLimboShell
+from cli_tests.test_limbo_cli import TestTursoShell
 from pydantic import BaseModel
 
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
@@ -18,7 +18,7 @@ class InsertTest(BaseModel):
     has_blob: bool = True
     db_path: str = ""
 
-    def run(self, limbo: TestLimboShell):
+    def run(self, limbo: TestTursoShell):
         zero_blob = "0" * self.blob_size * 2
         big_stmt = [self.db_schema, "CREATE INDEX test_index ON test(t1);"]
         big_stmt = big_stmt + [
@@ -51,7 +51,7 @@ class InsertTest(BaseModel):
     def test_compat(self):
         console.info("Testing in SQLite\n")
 
-        with TestLimboShell(
+        with TestTursoShell(
             init_commands="",
             exec_name="sqlite3",
             flags=f"{self.db_path}",
@@ -148,7 +148,7 @@ def main():
             test.db_path = tmp.name
             try:
                 # Use with syntax to automatically close shell on error
-                with TestLimboShell("") as limbo:
+                with TestTursoShell("") as limbo:
                     limbo.execute_dot(f".open {test.db_path}")
                     test.run(limbo)
                 sleep(0.3)

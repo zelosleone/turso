@@ -1,4 +1,5 @@
 mod palette;
+mod terminal;
 
 use crate::HOME_DIR;
 use nu_ansi_term::Color;
@@ -9,6 +10,7 @@ use std::fmt::Debug;
 use std::fs::read_to_string;
 use std::path::PathBuf;
 use std::sync::LazyLock;
+use terminal::{TerminalDetector, TerminalTheme};
 use validator::Validate;
 
 pub static CONFIG_DIR: LazyLock<PathBuf> = LazyLock::new(|| HOME_DIR.join(".config/limbo"));
@@ -91,26 +93,67 @@ pub struct TableConfig {
 
 impl Default for TableConfig {
     fn default() -> Self {
-        Self {
-            header_color: TableConfig::default_header_color(),
-            column_colors: TableConfig::default_column_colors(),
-        }
+        // Always use adaptive colors based on terminal theme
+        Self::adaptive_colors()
     }
 }
 
 impl TableConfig {
-    // Default colors for Pekka's tastes
+    // These methods are needed for serde default attributes
     fn default_header_color() -> LimboColor {
-        LimboColor(Color::White)
+        // Use adaptive colors for serde defaults too
+        Self::adaptive_colors().header_color
     }
 
     fn default_column_colors() -> Vec<LimboColor> {
-        vec![
-            LimboColor(Color::Green),
-            LimboColor(Color::Black),
-            // Comfy Table Color::Grey
-            LimboColor(Color::Fixed(7)),
-        ]
+        // Use adaptive colors for serde defaults too
+        Self::adaptive_colors().column_colors
+    }
+
+    /// Get adaptive colors based on detected terminal theme
+    pub fn adaptive_colors() -> Self {
+        let theme = TerminalDetector::detect_theme();
+        match theme {
+            TerminalTheme::Light => Self::light_theme_colors(),
+            TerminalTheme::Dark => Self::dark_theme_colors(),
+            TerminalTheme::Unknown => Self::no_colors(), // No colors for unsupported platforms
+        }
+    }
+
+    /// No colors configuration - for Windows or when detection fails
+    fn no_colors() -> Self {
+        Self {
+            header_color: LimboColor(Color::Default),
+            column_colors: vec![LimboColor(Color::Default)],
+        }
+    }
+
+    /// Colors optimized for light terminal backgrounds
+    fn light_theme_colors() -> Self {
+        Self {
+            header_color: LimboColor(Color::Black),
+            column_colors: vec![
+                LimboColor(Color::Fixed(22)), // Dark green
+                LimboColor(Color::Fixed(17)), // Dark blue
+                LimboColor(Color::Fixed(88)), // Dark red
+                LimboColor(Color::Fixed(94)), // Orange
+                LimboColor(Color::Fixed(55)), // Purple
+            ],
+        }
+    }
+
+    /// Colors optimized for dark terminal backgrounds
+    fn dark_theme_colors() -> Self {
+        Self {
+            header_color: LimboColor(Color::LightGray),
+            column_colors: vec![
+                LimboColor(Color::LightGreen),
+                LimboColor(Color::LightBlue),
+                LimboColor(Color::LightCyan),
+                LimboColor(Color::LightYellow),
+                LimboColor(Color::LightMagenta),
+            ],
+        }
     }
 }
 

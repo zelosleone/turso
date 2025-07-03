@@ -12,7 +12,6 @@ use crate::schema::Type;
 use crate::storage::pager::CreateBTreeFlags;
 use crate::translate::ProgramBuilder;
 use crate::translate::ProgramBuilderOpts;
-use crate::translate::QueryMode;
 use crate::util::PRIMARY_KEY_AUTOMATIC_INDEX_NAME_PREFIX;
 use crate::vdbe::builder::CursorType;
 use crate::vdbe::insn::{CmpInsFlags, InsertFlags, Insn};
@@ -24,7 +23,6 @@ use turso_ext::VTabKind;
 use turso_sqlite3_parser::ast::{fmt::ToTokens, CreateVirtualTable};
 
 pub fn translate_create_table(
-    query_mode: QueryMode,
     tbl_name: ast::QualifiedName,
     temporary: bool,
     body: ast::CreateTableBody,
@@ -36,7 +34,6 @@ pub fn translate_create_table(
         bail_parse_error!("TEMPORARY table not supported yet");
     }
     let opts = ProgramBuilderOpts {
-        query_mode,
         num_cursors: 1,
         approx_num_insns: 30,
         approx_num_labels: 1,
@@ -513,7 +510,6 @@ fn create_vtable_body_to_str(vtab: &CreateVirtualTable, module: Rc<VTabImpl>) ->
 pub fn translate_create_virtual_table(
     vtab: CreateVirtualTable,
     schema: &Schema,
-    query_mode: QueryMode,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
@@ -542,7 +538,6 @@ pub fn translate_create_virtual_table(
     }
 
     let opts = ProgramBuilderOpts {
-        query_mode,
         num_cursors: 2,
         approx_num_insns: 40,
         approx_num_labels: 2,
@@ -607,7 +602,6 @@ pub fn translate_create_virtual_table(
 }
 
 pub fn translate_drop_table(
-    query_mode: QueryMode,
     tbl_name: ast::QualifiedName,
     if_exists: bool,
     schema: &Schema,
@@ -619,7 +613,6 @@ pub fn translate_drop_table(
         );
     }
     let opts = ProgramBuilderOpts {
-        query_mode,
         num_cursors: 3,
         approx_num_insns: 40,
         approx_num_labels: 4,
@@ -749,7 +742,6 @@ pub fn translate_drop_table(
                 db: 0, // TODO change this for multiple databases
             });
         }
-        Table::Pseudo(..) => unimplemented!(),
         Table::FromClauseSubquery(..) => panic!("FromClauseSubquery can't be dropped"),
     };
 

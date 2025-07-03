@@ -22,9 +22,9 @@ The function returns a `Database` object.
 
 Prepares a SQL statement for execution.
 
-| Param  | Type                | Description                          |
-| ------ | ------------------- | ------------------------------------ |
-| sql    | <code>string</code> | The SQL statement string to prepare. |
+| Param | Type                | Description                          |
+| ----- | ------------------- | ------------------------------------ |
+| sql   | <code>string</code> | The SQL statement string to prepare. |
 
 The function returns a `Statement` object.
 
@@ -74,19 +74,19 @@ This function is currently not supported.
 
 ### loadExtension(path, [entryPoint]) ⇒ this
 
-Loads a SQLite3 extension
+Loads a SQLite3 extension.
 
-| Param  | Type                | Description                              |
-| ------ | ------------------- | -----------------------------------------|
-| path   | <code>string</code> | The path to the extention to be loaded.  |
+| Param | Type                | Description                             |
+| ----- | ------------------- | --------------------------------------- |
+| path  | <code>string</code> | The path to the extension to be loaded. |
 
 ### exec(sql) ⇒ this
 
 Executes a SQL statement.
 
-| Param  | Type                | Description                          |
-| ------ | ------------------- | ------------------------------------ |
-| sql    | <code>string</code> | The SQL statement string to execute. |
+| Param | Type                | Description                          |
+| ----- | ------------------- | ------------------------------------ |
+| sql   | <code>string</code> | The SQL statement string to execute. |
 
 This can execute strings that contain multiple SQL statements.
 
@@ -110,7 +110,7 @@ Closes the database connection.
 
 Executes the SQL statement and (currently) returns an array with results.
 
-**Note:** It should return an info object. 
+**Note:** It should return an info object.
 
 | Param          | Type                          | Description                                      |
 | -------------- | ----------------------------- | ------------------------------------------------ |
@@ -148,9 +148,9 @@ Executes the SQL statement and returns an iterator to the resulting rows.
 
 Makes the prepared statement only return the value of the first column of any rows that it retrieves.
 
-| Param          | Type                          | Description                                      |
-| -------------- | ----------------------------- | ------------------------------------------------ |
-| pluckMode       | <code>boolean</code>          | Enable of disable pluck mode. If you don't pass the paramenter, pluck mode is enabled.          |
+| Param     | Type                 | Description                                                                            |
+| --------- | -------------------- | -------------------------------------------------------------------------------------- |
+| pluckMode | <code>boolean</code> | Enable of disable pluck mode. If you don't pass the paramenter, pluck mode is enabled. |
 
 ```js
 stmt.pluck(); // plucking ON
@@ -195,3 +195,4 @@ This function is currently not supported.
 | bindParameters | <code>array of objects</code> | The bind parameters for executing the statement. |
 
 Binds **permanently** the given parameters to the statement. After a statement's parameters are bound this way, you may no longer provide it with execution-specific (temporary) bound parameters.
+

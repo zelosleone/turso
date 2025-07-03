@@ -43,6 +43,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use crate::storage::{header_accessor, wal::DummyWAL};
 use crate::translate::optimizer::optimize_plan;
+use crate::util::{OpenMode, OpenOptions};
 use crate::vtab::VirtualTable;
 use core::str;
 pub use error::LimboError;
@@ -274,6 +275,7 @@ impl Database {
                 total_changes: Cell::new(0),
                 _shared_cache: false,
                 cache_size: Cell::new(default_cache_size),
+                readonly: Cell::new(false),
             });
             if let Err(e) = conn.register_builtins() {
                 return Err(LimboError::ExtensionError(e));
@@ -324,6 +326,7 @@ impl Database {
             syms: RefCell::new(SymbolTable::new()),
             _shared_cache: false,
             cache_size: Cell::new(default_cache_size),
+            readonly: Cell::new(false),
         });
 
         if let Err(e) = conn.register_builtins() {
@@ -332,29 +335,55 @@ impl Database {
         Ok(conn)
     }
 
-    /// Open a new database file with a specified VFS without an existing database
+    /// Open a new database file with optionally specifying a VFS without an existing database
     /// connection and symbol table to register extensions.
     #[cfg(feature = "fs")]
     #[allow(clippy::arc_with_non_send_sync)]
-    pub fn open_new(path: &str, vfs: &str) -> Result<(Arc<dyn IO>, Arc<Database>)> {
+    pub fn open_new<S>(
+        path: &str,
+        vfs: Option<S>,
+        flags: OpenFlags,
+        indexes: bool,
+        mvcc: bool,
+    ) -> Result<(Arc<dyn IO>, Arc<Database>)>
+    where
+        S: AsRef<str> + std::fmt::Display,
+    {
+        use crate::util::MEMORY_PATH;
         let vfsmods = ext::add_builtin_vfs_extensions(None)?;
-        let io: Arc<dyn IO> = match vfsmods.iter().find(|v| v.0 == vfs).map(|v| v.1.clone()) {
-            Some(vfs) => vfs,
-            None => match vfs.trim() {
-                "memory" => Arc::new(MemoryIO::new()),
-                "syscall" => Arc::new(SyscallIO::new()?),
-                #[cfg(all(target_os = "linux", feature = "io_uring"))]
-                "io_uring" => Arc::new(UringIO::new()?),
-                other => {
-                    return Err(LimboError::InvalidArgument(format!(
-                        "no such VFS: {}",
-                        other
-                    )));
-                }
-            },
-        };
-        let db = Self::open_file(io.clone(), path, false, false)?;
-        Ok((io, db))
+        match vfs {
+            Some(vfs) => {
+                let io: Arc<dyn IO> = match vfsmods
+                    .iter()
+                    .find(|v| v.0 == vfs.as_ref())
+                    .map(|v| v.1.clone())
+                {
+                    Some(vfs) => vfs,
+                    None => match vfs.as_ref() {
+                        "memory" => Arc::new(MemoryIO::new()),
+                        "syscall" => Arc::new(SyscallIO::new()?),
+                        #[cfg(all(target_os = "linux", feature = "io_uring"))]
+                        "io_uring" => Arc::new(UringIO::new()?),
+                        other => {
+                            return Err(LimboError::InvalidArgument(format!(
+                                "no such VFS: {}",
+                                other
+                            )));
+                        }
+                    },
+                };
+                let db = Self::open_file_with_flags(io.clone(), path, flags, mvcc, indexes)?;
+                Ok((io, db))
+            }
+            None => {
+                let io: Arc<dyn IO> = match path.trim() {
+                    MEMORY_PATH => Arc::new(MemoryIO::new()),
+                    _ => Arc::new(PlatformIO::new()?),
+                };
+                let db = Self::open_file_with_flags(io.clone(), path, flags, mvcc, indexes)?;
+                Ok((io, db))
+            }
+        }
     }
 }
 
@@ -372,6 +401,7 @@ pub struct Connection {
     syms: RefCell<SymbolTable>,
     _shared_cache: bool,
     cache_size: Cell<i32>,
+    readonly: Cell<bool>,
 }
 
 impl Connection {
@@ -557,6 +587,36 @@ impl Connection {
             }
         }
         Ok(())
+    }
+
+    #[cfg(feature = "fs")]
+    pub fn from_uri(
+        uri: &str,
+        use_indexes: bool,
+        mvcc: bool,
+    ) -> Result<(Arc<dyn IO>, Arc<Connection>)> {
+        use crate::util::MEMORY_PATH;
+        let opts = OpenOptions::parse(uri)?;
+        let flags = opts.get_flags()?;
+        if opts.path == MEMORY_PATH || matches!(opts.mode, OpenMode::Memory) {
+            let io = Arc::new(MemoryIO::new());
+            let db =
+                Database::open_file_with_flags(io.clone(), MEMORY_PATH, flags, mvcc, use_indexes)?;
+            let conn = db.connect()?;
+            return Ok((io, conn));
+        }
+        let (io, db) = Database::open_new(&opts.path, opts.vfs.as_ref(), flags, use_indexes, mvcc)?;
+        if let Some(modeof) = opts.modeof {
+            let perms = std::fs::metadata(modeof)?;
+            std::fs::set_permissions(&opts.path, perms.permissions())?;
+        }
+        let conn = db.connect()?;
+        conn.set_readonly(opts.immutable);
+        Ok((io, conn))
+    }
+
+    pub fn set_readonly(&self, readonly: bool) {
+        self.readonly.replace(readonly);
     }
 
     pub fn wal_frame_count(&self) -> Result<u64> {
