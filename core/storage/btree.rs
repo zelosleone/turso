@@ -444,16 +444,16 @@ pub enum CursorSeekState {
 }
 
 #[derive(Debug)]
-struct FindCellState(Option<isize>);
+struct FindCellState(Option<(usize, usize)>); // low, high
 
 impl FindCellState {
     #[inline]
-    fn set(&mut self, cell_idx: isize) {
-        self.0 = Some(cell_idx)
+    fn set(&mut self, lowhigh: (usize, usize)) {
+        self.0 = Some(lowhigh);
     }
 
     #[inline]
-    fn get_cell_idx(&mut self) -> isize {
+    fn get_state(&mut self) -> (usize, usize) {
         self.0.expect("get can only be called after a set")
     }
 
@@ -3851,13 +3851,12 @@ impl BTreeCursor {
         let mut high = if cell_count > 0 { cell_count - 1 } else { 0 };
         let mut result_index = cell_count;
         if self.find_cell_state.0.is_some() {
-            low = self.find_cell_state.get_cell_idx() as usize;
+            (low, high) = self.find_cell_state.get_state();
         }
 
         while low <= high && cell_count > 0 {
             let mid = low + (high - low) / 2;
-            self.find_cell_state.set(mid as isize);
-
+            self.find_cell_state.set((low, high));
             let cell = match page.cell_get(
                 mid,
                 payload_overflow_threshold_max(page.page_type(), self.usable_space() as u16),
