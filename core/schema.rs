@@ -258,11 +258,9 @@ impl BTreeTable {
         let mut sql = format!("CREATE TABLE {} (", self.name);
         for (i, column) in self.columns.iter().enumerate() {
             if i > 0 {
-                sql.push(',');
+                sql.push_str(", ");
             }
-            sql.push(' ');
             sql.push_str(column.name.as_ref().expect("column name is None"));
-            sql.push(' ');
             sql.push_str(&column.ty.to_string());
 
             if column.unique {
@@ -278,7 +276,7 @@ impl BTreeTable {
                 sql.push_str(&default.to_string());
             }
         }
-        sql.push_str(" )");
+        sql.push_str(")");
         sql
     }
 
