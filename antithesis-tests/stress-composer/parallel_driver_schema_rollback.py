@@ -3,9 +3,8 @@
 import json
 
 import turso
-from antithesis.random import get_random
 from antithesis.assertions import always
-from utils import generate_random_value
+from antithesis.random import get_random
 
 # Get initial state
 try:
@@ -18,7 +17,8 @@ cur_init = con_init.cursor()
 
 tbl_len = cur_init.execute("SELECT count FROM tables").fetchone()[0]
 selected_tbl = get_random() % tbl_len
-tbl_schema = json.loads(cur_init.execute(f"SELECT schema FROM schemas WHERE tbl = {selected_tbl}").fetchone()[0])
+tbl_schema = json.loads(cur_init.execute(
+    f"SELECT schema FROM schemas WHERE tbl = {selected_tbl}").fetchone()[0])
 
 tbl_name = f"tbl_{selected_tbl}"
 
@@ -29,7 +29,8 @@ except Exception as e:
     exit(0)
 
 cur = con.cursor()
-cur.execute("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = '" + tbl_name + "'")
+cur.execute(
+    "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = '" + tbl_name + "'")
 
 result = cur.fetchone()
 
@@ -46,8 +47,10 @@ cur.execute("ALTER TABLE " + tbl_name + " RENAME TO " + tbl_name + "_old")
 con.rollback()
 
 cur = con.cursor()
-cur.execute("SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = '" + tbl_name + "'")
+cur.execute(
+    "SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = '" + tbl_name + "'")
 
 schema_after = cur.fetchone()[0]
 
-always(schema_before == schema_after, "schema should be the same after rollback", {})
+always(schema_before == schema_after,
+       "schema should be the same after rollback", {})
