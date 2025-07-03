@@ -97,7 +97,7 @@ pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum TransactionState {
-    Write,
+    Write { change_schema: bool },
     Read,
     None,
 }
@@ -218,6 +218,8 @@ impl Database {
         if is_empty == 2 {
             // parse schema
             let conn = db.connect()?;
+            let schema_version = get_schema_version(&conn, &io)?;
+            schema.write().schema_version = schema_version;
             let rows = conn.query("SELECT * FROM sqlite_schema")?;
             let mut schema = schema
                 .try_write()
@@ -265,7 +267,7 @@ impl Database {
             let conn = Arc::new(Connection {
                 _db: self.clone(),
                 pager: pager.clone(),
-                schema: self.schema.clone(),
+                schema: RefCell::new(self.schema.read().clone()),
                 last_insert_rowid: Cell::new(0),
                 auto_commit: Cell::new(true),
                 mv_transactions: RefCell::new(Vec::new()),
@@ -316,7 +318,7 @@ impl Database {
         let conn = Arc::new(Connection {
             _db: self.clone(),
             pager: Rc::new(pager),
-            schema: self.schema.clone(),
+            schema: RefCell::new(self.schema.read().clone()),
             auto_commit: Cell::new(true),
             mv_transactions: RefCell::new(Vec::new()),
             transaction_state: Cell::new(TransactionState::None),
@@ -387,10 +389,54 @@ impl Database {
     }
 }
 
+fn get_schema_version(conn: &Arc<Connection>, io: &Arc<dyn IO>) -> Result<u32> {
+    let mut rows = conn
+        .query("PRAGMA schema_version")?
+        .ok_or(LimboError::InternalError(
+            "failed to parse pragma schema_version on initialization".to_string(),
+        ))?;
+    let mut schema_version = None;
+    loop {
+        match rows.step()? {
+            StepResult::Row => {
+                let row = rows.row().unwrap();
+                if schema_version.is_some() {
+                    return Err(LimboError::InternalError(
+                        "PRAGMA schema_version; returned more that one row".to_string(),
+                    ));
+                }
+                schema_version = Some(row.get::<i64>(0)? as u32);
+            }
+            StepResult::IO => {
+                io.run_once()?;
+            }
+            StepResult::Interrupt => {
+                return Err(LimboError::InternalError(
+                    "PRAGMA schema_version; returned more that one row".to_string(),
+                ));
+            }
+            StepResult::Done => {
+                if let Some(version) = schema_version {
+                    return Ok(version);
+                } else {
+                    return Err(LimboError::InternalError(
+                        "failed to get schema_version".to_string(),
+                    ));
+                }
+            }
+            StepResult::Busy => {
+                return Err(LimboError::InternalError(
+                    "PRAGMA schema_version; returned more that one row".to_string(),
+                ));
+            }
+        }
+    }
+}
+
 pub struct Connection {
     _db: Arc<Database>,
     pager: Rc<Pager>,
-    schema: Arc<RwLock<Schema>>,
+    schema: RefCell<Schema>,
     /// Whether to automatically commit transaction
     auto_commit: Cell<bool>,
     mv_transactions: RefCell<Vec<crate::mvcc::database::TxID>>,
@@ -423,13 +469,11 @@ impl Connection {
         let input = str::from_utf8(&sql.as_bytes()[..byte_offset_end])
             .unwrap()
             .trim();
+        self.maybe_update_schema();
         match cmd {
             Cmd::Stmt(stmt) => {
                 let program = Rc::new(translate::translate(
-                    self.schema
-                        .try_read()
-                        .ok_or(LimboError::SchemaLocked)?
-                        .deref(),
+                    self.schema.borrow().deref(),
                     stmt,
                     self.pager.clone(),
                     self.clone(),
@@ -474,10 +518,7 @@ impl Connection {
         match cmd {
             Cmd::Stmt(ref stmt) | Cmd::Explain(ref stmt) => {
                 let program = translate::translate(
-                    self.schema
-                        .try_read()
-                        .ok_or(LimboError::SchemaLocked)?
-                        .deref(),
+                    self.schema.borrow().deref(),
                     stmt.clone(),
                     self.pager.clone(),
                     self.clone(),
@@ -497,23 +538,14 @@ impl Connection {
                 match stmt {
                     ast::Stmt::Select(select) => {
                         let mut plan = prepare_select_plan(
-                            self.schema
-                                .try_read()
-                                .ok_or(LimboError::SchemaLocked)?
-                                .deref(),
+                            self.schema.borrow().deref(),
                             *select,
                             &syms,
                             &[],
                             &mut table_ref_counter,
                             translate::plan::QueryDestination::ResultRows,
                         )?;
-                        optimize_plan(
-                            &mut plan,
-                            self.schema
-                                .try_read()
-                                .ok_or(LimboError::SchemaLocked)?
-                                .deref(),
-                        )?;
+                        optimize_plan(&mut plan, self.schema.borrow().deref())?;
                         let _ = std::io::stdout().write_all(plan.to_string().as_bytes());
                     }
                     _ => todo!(),
@@ -539,13 +571,11 @@ impl Connection {
             let input = str::from_utf8(&sql.as_bytes()[..byte_offset_end])
                 .unwrap()
                 .trim();
+            self.maybe_update_schema();
             match cmd {
                 Cmd::Explain(stmt) => {
                     let program = translate::translate(
-                        self.schema
-                            .try_read()
-                            .ok_or(LimboError::SchemaLocked)?
-                            .deref(),
+                        self.schema.borrow().deref(),
                         stmt,
                         self.pager.clone(),
                         self.clone(),
@@ -558,10 +588,7 @@ impl Connection {
                 Cmd::ExplainQueryPlan(_stmt) => todo!(),
                 Cmd::Stmt(stmt) => {
                     let program = translate::translate(
-                        self.schema
-                            .try_read()
-                            .ok_or(LimboError::SchemaLocked)?
-                            .deref(),
+                        self.schema.borrow().deref(),
                         stmt,
                         self.pager.clone(),
                         self.clone(),
@@ -617,6 +644,16 @@ impl Connection {
 
     pub fn set_readonly(&self, readonly: bool) {
         self.readonly.replace(readonly);
+    }
+
+    pub fn maybe_update_schema(&self) {
+        let current_schema_version = self.schema.borrow().schema_version;
+        if matches!(self.transaction_state.get(), TransactionState::None)
+            && current_schema_version < self._db.schema.read().schema_version
+        {
+            let new_schema = self._db.schema.read();
+            self.schema.replace(new_schema.clone());
+        }
     }
 
     pub fn wal_frame_count(&self) -> Result<u64> {
@@ -707,10 +744,7 @@ impl Connection {
 
     pub fn parse_schema_rows(self: &Arc<Connection>) -> Result<()> {
         let rows = self.query("SELECT * FROM sqlite_schema")?;
-        let mut schema = self
-            .schema
-            .try_write()
-            .expect("lock on schema should succeed first try");
+        let mut schema = self.schema.borrow_mut();
         {
             let syms = self.syms.borrow();
             if let Err(LimboError::ExtensionError(e)) =

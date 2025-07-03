@@ -1,7 +1,6 @@
 #![allow(unused_variables)]
 use crate::function::AlterTableFunc;
 use crate::numeric::{NullableInteger, Numeric};
-use crate::schema::Schema;
 use crate::storage::btree::{integrity_check, IntegrityCheckError, IntegrityCheckState};
 use crate::storage::database::FileMemoryStorage;
 use crate::storage::page_cache::DumbLruPageCache;
@@ -216,7 +215,7 @@ pub fn op_drop_index(
     let Insn::DropIndex { index, db: _ } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let mut schema = program.connection.schema.write();
+    let mut schema = program.connection.schema.borrow_mut();
     schema.remove_index(index);
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -901,7 +900,7 @@ pub fn op_open_read(
         }
         CursorType::BTreeIndex(index) => {
             let conn = program.connection.clone();
-            let schema = conn.schema.try_read().ok_or(LimboError::SchemaLocked)?;
+            let schema = conn.schema.borrow();
             let table = schema
                 .get_table(&index.table_name)
                 .and_then(|table| table.btree());
@@ -1700,11 +1699,25 @@ pub fn op_transaction(
     } else {
         let current_state = conn.transaction_state.get();
         let (new_transaction_state, updated) = match (current_state, write) {
-            (TransactionState::Write, true) => (TransactionState::Write, false),
-            (TransactionState::Write, false) => (TransactionState::Write, false),
-            (TransactionState::Read, true) => (TransactionState::Write, true),
+            (TransactionState::Write { change_schema }, true) => {
+                (TransactionState::Write { change_schema }, false)
+            }
+            (TransactionState::Write { change_schema }, false) => {
+                (TransactionState::Write { change_schema }, false)
+            }
+            (TransactionState::Read, true) => (
+                TransactionState::Write {
+                    change_schema: false,
+                },
+                true,
+            ),
             (TransactionState::Read, false) => (TransactionState::Read, false),
-            (TransactionState::None, true) => (TransactionState::Write, true),
+            (TransactionState::None, true) => (
+                TransactionState::Write {
+                    change_schema: false,
+                },
+                true,
+            ),
             (TransactionState::None, false) => (TransactionState::Read, true),
         };
 
@@ -1714,7 +1727,7 @@ pub fn op_transaction(
             }
         }
 
-        if updated && matches!(new_transaction_state, TransactionState::Write) {
+        if updated && matches!(new_transaction_state, TransactionState::Write { .. }) {
             if let LimboResult::Busy = return_if_io!(pager.begin_write_tx()) {
                 pager.end_read_tx()?;
                 tracing::trace!("begin_write_tx busy");
@@ -1753,11 +1766,17 @@ pub fn op_auto_commit(
             super::StepResult::Busy => Ok(InsnFunctionStepResult::Busy),
         };
     }
+    let change_schema =
+        if let TransactionState::Write { change_schema } = conn.transaction_state.get() {
+            change_schema
+        } else {
+            false
+        };
 
     if *auto_commit != conn.auto_commit.get() {
         if *rollback {
             // TODO(pere): add rollback I/O logic once we implement rollback journal
-            pager.rollback()?;
+            pager.rollback(change_schema, &conn)?;
             conn.auto_commit.replace(true);
         } else {
             conn.auto_commit.replace(*auto_commit);
@@ -4725,7 +4744,7 @@ pub fn op_open_write(
     };
     if let Some(index) = maybe_index {
         let conn = program.connection.clone();
-        let schema = conn.schema.try_read().ok_or(LimboError::SchemaLocked)?;
+        let schema = conn.schema.borrow();
         let table = schema
             .get_table(&index.table_name)
             .and_then(|table| table.btree());
@@ -4855,7 +4874,7 @@ pub fn op_drop_table(
     }
     let conn = program.connection.clone();
     {
-        let mut schema = conn.schema.write();
+        let mut schema = conn.schema.borrow_mut();
         schema.remove_indices_for_table(table_name);
         schema.remove_table(table_name);
     }
@@ -4932,6 +4951,10 @@ pub fn op_parse_schema(
         unreachable!("unexpected Insn {:?}", insn)
     };
     let conn = program.connection.clone();
+    // set auto commit to false in order for parse schema to not commit changes as transaction state is stored in connection,
+    // and we use the same connection for nested query.
+    let previous_auto_commit = conn.auto_commit.get();
+    conn.auto_commit.set(false);
 
     if let Some(where_clause) = where_clause {
         let stmt = conn.prepare(format!(
@@ -4939,36 +4962,37 @@ pub fn op_parse_schema(
             where_clause
         ))?;
 
-        let mut schema = conn.schema.write();
+        let mut new_schema = conn.schema.borrow().clone();
 
         // TODO: This function below is synchronous, make it async
         {
             parse_schema_rows(
                 Some(stmt),
-                &mut schema,
+                &mut new_schema,
                 conn.pager.io.clone(),
                 &conn.syms.borrow(),
                 state.mv_tx_id,
             )?;
         }
+        conn.schema.replace(new_schema);
     } else {
         let stmt = conn.prepare("SELECT * FROM sqlite_schema")?;
-        let mut new = Schema::new(conn.schema.read().indexes_enabled());
+        let mut new_schema = conn.schema.borrow().clone();
 
         // TODO: This function below is synchronous, make it async
         {
             parse_schema_rows(
                 Some(stmt),
-                &mut new,
+                &mut new_schema,
                 conn.pager.io.clone(),
                 &conn.syms.borrow(),
                 state.mv_tx_id,
             )?;
         }
 
-        let mut schema = conn.schema.write();
-        *schema = new;
+        conn.schema.replace(new_schema);
     }
+    conn.auto_commit.set(previous_auto_commit);
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -5028,6 +5052,19 @@ pub fn op_set_cookie(
         }
         Cookie::IncrementalVacuum => {
             header_accessor::set_incremental_vacuum_enabled(pager, *value as u32)?;
+        }
+        Cookie::SchemaVersion => {
+            // we update transaction state to indicate that the schema has changed
+            match program.connection.transaction_state.get() {
+                TransactionState::Write { change_schema } => {
+                    program.connection.transaction_state.set(TransactionState::Write { change_schema: true });
+                },
+                TransactionState::Read => unreachable!("invalid transaction state for SetCookie: TransactionState::Read, should be write"),
+                TransactionState::None => unreachable!("invalid transaction state for SetCookie: TransactionState::None, should be write"),
+            }
+
+            program.connection.schema.borrow_mut().schema_version = *value as u32;
+            header_accessor::set_schema_cookie(pager, *value as u32)?;
         }
         cookie => todo!("{cookie:?} is not yet implement for SetCookie"),
     }

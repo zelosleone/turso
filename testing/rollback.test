@@ -70,3 +70,84 @@ do_execsql_test_on_specific_db {:memory:} insert-after-rollback {
     insert into t2 values (1);
     select * from t2 order by x;
 } {1}
+
+
+do_execsql_test_on_specific_db {:memory:} schema-change-rollback {
+    begin;
+    create table t (x);
+    insert into t values (1);
+    rollback;
+    PRAGMA integrity_check;
+} {ok}
+
+do_execsql_test_on_specific_db {:memory:} schema-change-rollback-version {
+    begin;
+    create table t (x);
+    insert into t values (1);
+    rollback;
+    PRAGMA schema_version;
+} {0}
+
+do_execsql_test_on_specific_db {:memory:} schema-version-after-update {
+    create table t (x);
+    PRAGMA schema_version;
+} {1}
+
+do_execsql_test_on_specific_db {:memory:} schema-change-rollback-2 {
+    begin;
+    create table t (x);
+    rollback;
+    select tbl_name from sqlite_schema;
+} {}
+
+do_execsql_test_on_specific_db {:memory:} schema-change-rollback-2 {
+    create table before (x);
+    begin;
+    create table t (x);
+    rollback;
+    create table after (x);
+    select tbl_name from sqlite_schema;
+} {before after}
+
+
+do_execsql_test_on_specific_db {:memory:} schema-alter-rollback {
+    create table t (x);
+    begin;
+    alter table t add column y;
+    rollback;
+    select sql from sqlite_schema;
+} {"CREATE TABLE t (x)"}
+
+do_execsql_test_on_specific_db {:memory:} schema-alter-rollback-and-repeat {
+    create table t (x);
+    begin;
+    alter table t add column y;
+    rollback;
+    alter table t add column y;
+    select sql from sqlite_schema;
+} {"CREATE TABLE t (x, y)"}
+
+if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-sqlite3-index-experimental" || $::env(SQLITE_EXEC) eq "sqlite3")} {
+    do_execsql_test_on_specific_db {:memory:} schema-create-index-rollback {
+        create table t (x);
+        begin;
+        create index i on t(x);
+        rollback;
+        select sql from sqlite_schema;
+    } {"CREATE TABLE t (x)"}
+}
+
+
+do_execsql_test_on_specific_db {:memory:} schema-drop-table-rollback {
+    create table t (x);
+    begin;
+    drop table t; 
+    rollback;
+    select sql from sqlite_schema;
+} {"CREATE TABLE t (x)"}
+
+
+# TODO: add tests for:
+# * create virtual table 
+# * drop index
+# * views...

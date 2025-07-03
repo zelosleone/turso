@@ -17,12 +17,14 @@ use turso_sqlite3_parser::{
 const SCHEMA_TABLE_NAME: &str = "sqlite_schema";
 const SCHEMA_TABLE_NAME_ALT: &str = "sqlite_master";
 
+#[derive(Debug, Clone)]
 pub struct Schema {
     pub tables: HashMap<String, Arc<Table>>,
     /// table_name to list of indexes for the table
     pub indexes: HashMap<String, Vec<Arc<Index>>>,
     pub has_indexes: std::collections::HashSet<String>,
     pub indexes_enabled: bool,
+    pub schema_version: u32,
 }
 
 impl Schema {
@@ -40,6 +42,7 @@ impl Schema {
             indexes,
             has_indexes,
             indexes_enabled,
+            schema_version: 0,
         }
     }
 
@@ -255,11 +258,12 @@ impl BTreeTable {
         let mut sql = format!("CREATE TABLE {} (", self.name);
         for (i, column) in self.columns.iter().enumerate() {
             if i > 0 {
-                sql.push(',');
+                sql.push_str(", ");
             }
-            sql.push(' ');
             sql.push_str(column.name.as_ref().expect("column name is None"));
-            sql.push(' ');
+            if !matches!(column.ty, Type::Null) {
+                sql.push(' ');
+            }
             sql.push_str(&column.ty.to_string());
 
             if column.unique {
@@ -275,7 +279,7 @@ impl BTreeTable {
                 sql.push_str(&default.to_string());
             }
         }
-        sql.push_str(" )");
+        sql.push(')');
         sql
     }
 
@@ -1491,7 +1495,7 @@ mod tests {
 
     #[test]
     pub fn test_sqlite_schema() {
-        let expected = r#"CREATE TABLE sqlite_schema ( type TEXT, name TEXT, tbl_name TEXT, rootpage INTEGER, sql TEXT )"#;
+        let expected = r#"CREATE TABLE sqlite_schema (type TEXT, name TEXT, tbl_name TEXT, rootpage INTEGER, sql TEXT)"#;
         let actual = sqlite_schema_table().to_sql();
         assert_eq!(expected, actual);
     }

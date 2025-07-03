@@ -43,6 +43,7 @@ use crate::{bail_parse_error, Connection, Result, SymbolTable};
 use alter::translate_alter_table;
 use index::{translate_create_index, translate_drop_index};
 use insert::translate_insert;
+use rollback::translate_rollback;
 use schema::{translate_create_table, translate_create_virtual_table, translate_drop_table};
 use select::translate_select;
 use std::rc::Rc;
@@ -168,7 +169,10 @@ pub fn translate_inner(
         }
         ast::Stmt::Reindex { .. } => bail_parse_error!("REINDEX not supported yet"),
         ast::Stmt::Release(_) => bail_parse_error!("RELEASE not supported yet"),
-        ast::Stmt::Rollback { .. } => bail_parse_error!("ROLLBACK not supported yet"),
+        ast::Stmt::Rollback {
+            tx_name,
+            savepoint_name,
+        } => translate_rollback(schema, syms, program, tx_name, savepoint_name)?,
         ast::Stmt::Savepoint(_) => bail_parse_error!("SAVEPOINT not supported yet"),
         ast::Stmt::Select(select) => {
             translate_select(

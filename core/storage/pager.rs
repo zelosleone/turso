@@ -6,7 +6,7 @@ use crate::storage::header_accessor;
 use crate::storage::sqlite3_ondisk::{self, DatabaseHeader, PageContent, PageType};
 use crate::storage::wal::{CheckpointResult, Wal, WalFsyncStatus};
 use crate::types::CursorResult;
-use crate::{Buffer, LimboError, Result};
+use crate::{Buffer, Connection, LimboError, Result};
 use crate::{Completion, WalFile};
 use parking_lot::RwLock;
 use std::cell::{OnceCell, RefCell, UnsafeCell};
@@ -631,7 +631,12 @@ impl Pager {
         Ok(CursorResult::Ok(self.wal.borrow_mut().begin_write_tx()?))
     }
 
-    pub fn end_tx(&self, rollback: bool) -> Result<PagerCacheflushStatus> {
+    pub fn end_tx(
+        &self,
+        rollback: bool,
+        change_schema: bool,
+        connection: &Connection,
+    ) -> Result<PagerCacheflushStatus> {
         tracing::trace!("end_tx(rollback={})", rollback);
         if rollback {
             self.wal.borrow().end_write_tx()?;
@@ -642,8 +647,19 @@ impl Pager {
         match cacheflush_status {
             PagerCacheflushStatus::IO => Ok(PagerCacheflushStatus::IO),
             PagerCacheflushStatus::Done(_) => {
+                let maybe_schema_pair = if change_schema {
+                    let schema = connection.schema.borrow().clone();
+                    // Lock first before writing to the database schema in case someone tries to read the schema before it's updated
+                    let db_schema = connection._db.schema.write();
+                    Some((schema, db_schema))
+                } else {
+                    None
+                };
                 self.wal.borrow().end_write_tx()?;
                 self.wal.borrow().end_read_tx()?;
+                if let Some((schema, mut db_schema)) = maybe_schema_pair {
+                    *db_schema = schema;
+                }
                 Ok(cacheflush_status)
             }
         }
@@ -1172,11 +1188,15 @@ impl Pager {
         (page_size - reserved_space) as usize
     }
 
-    pub fn rollback(&self) -> Result<(), LimboError> {
+    pub fn rollback(&self, change_schema: bool, connection: &Connection) -> Result<(), LimboError> {
         self.dirty_pages.borrow_mut().clear();
         let mut cache = self.page_cache.write();
         cache.unset_dirty_all_pages();
         cache.clear().expect("failed to clear page cache");
+        if change_schema {
+            let prev_schema = connection._db.schema.read().clone();
+            connection.schema.replace(prev_schema);
+        }
         self.wal.borrow_mut().rollback()?;
 
         Ok(())

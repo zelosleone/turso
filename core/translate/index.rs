@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::vdbe::insn::CmpInsFlags;
+use crate::vdbe::insn::{CmpInsFlags, Cookie};
 use crate::{
     schema::{BTreeTable, Column, Index, IndexColumn, PseudoCursorType, Schema},
     storage::pager::CreateBTreeFlags,
@@ -219,8 +219,12 @@ pub fn translate_create_index(
     // Keep schema table open to emit ParseSchema, close the other cursors.
     program.close_cursors(&[sorter_cursor_id, table_cursor_id, btree_cursor_id]);
 
-    // TODO: SetCookie for schema change
-    //
+    program.emit_insn(Insn::SetCookie {
+        db: 0,
+        cookie: Cookie::SchemaVersion,
+        value: schema.schema_version as i32 + 1,
+        p5: 0,
+    });
     // Parse the schema table to get the index root page and add new index to Schema
     let parse_schema_where_clause = format!("name = '{}' AND type = 'index'", idx_name);
     program.emit_insn(Insn::ParseSchema {
@@ -423,11 +427,12 @@ pub fn translate_drop_index(
 
     program.resolve_label(loop_end_label, program.offset());
 
-    /* TODO do set cookie for real
     program.emit_insn(Insn::SetCookie {
-        ...
+        db: 0,
+        cookie: Cookie::SchemaVersion,
+        value: schema.schema_version as i32 + 1,
+        p5: 0,
     });
-    */
 
     // Destroy index btree
     program.emit_insn(Insn::Destroy {

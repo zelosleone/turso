@@ -349,7 +349,11 @@ fn generate_plan(opts: &Opts) -> Result<Plan, Box<dyn std::error::Error + Send +
             }
             queries.push(sql);
             if tx.is_some() {
-                queries.push("COMMIT".to_string());
+                if get_random() % 2 == 0 {
+                    queries.push("COMMIT".to_string());
+                } else {
+                    queries.push("ROLLBACK".to_string());
+                }
             }
         }
         plan.queries_per_thread.push(queries);

@@ -422,21 +422,27 @@ impl Program {
                 program_state.commit_state
             );
             if program_state.commit_state == CommitState::Committing {
+                let TransactionState::Write { change_schema } = connection.transaction_state.get()
+                else {
+                    unreachable!("invalid state for write commit step")
+                };
                 self.step_end_write_txn(
                     &pager,
                     &mut program_state.commit_state,
                     &connection,
                     rollback,
+                    change_schema,
                 )
             } else if auto_commit {
                 let current_state = connection.transaction_state.get();
                 tracing::trace!("Auto-commit state: {:?}", current_state);
                 match current_state {
-                    TransactionState::Write => self.step_end_write_txn(
+                    TransactionState::Write { change_schema } => self.step_end_write_txn(
                         &pager,
                         &mut program_state.commit_state,
                         &connection,
                         rollback,
+                        change_schema,
                     ),
                     TransactionState::Read => {
                         connection.transaction_state.replace(TransactionState::None);
@@ -461,8 +467,9 @@ impl Program {
         commit_state: &mut CommitState,
         connection: &Connection,
         rollback: bool,
+        change_schema: bool,
     ) -> Result<StepResult> {
-        let cacheflush_status = pager.end_tx(rollback)?;
+        let cacheflush_status = pager.end_tx(rollback, change_schema, connection)?;
         match cacheflush_status {
             PagerCacheflushStatus::Done(_) => {
                 if self.change_cnt_on {
