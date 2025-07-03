@@ -6,37 +6,38 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Properties;
 import tech.turso.annotations.NativeInvocation;
-import tech.turso.utils.LimboExceptionUtils;
 import tech.turso.utils.Logger;
 import tech.turso.utils.LoggerFactory;
+import tech.turso.utils.TursoExceptionUtils;
 
-public final class LimboConnection {
-  private static final Logger logger = LoggerFactory.getLogger(LimboConnection.class);
+public final class TursoConnection {
+
+  private static final Logger logger = LoggerFactory.getLogger(TursoConnection.class);
 
   private final String url;
   private final long connectionPtr;
-  private final LimboDB database;
+  private final TursoDB database;
   private boolean closed;
 
-  public LimboConnection(String url, String filePath) throws SQLException {
+  public TursoConnection(String url, String filePath) throws SQLException {
     this(url, filePath, new Properties());
   }
 
   /**
-   * Creates a connection to limbo database
+   * Creates a connection to turso database
    *
-   * @param url e.g. "jdbc:sqlite:fileName"
+   * @param url e.g. "jdbc:turso:fileName"
    * @param filePath path to file
    */
-  public LimboConnection(String url, String filePath, Properties properties) throws SQLException {
+  public TursoConnection(String url, String filePath, Properties properties) throws SQLException {
     this.url = url;
     this.database = open(url, filePath, properties);
     this.connectionPtr = this.database.connect();
   }
 
-  private static LimboDB open(String url, String filePath, Properties properties)
+  private static TursoDB open(String url, String filePath, Properties properties)
       throws SQLException {
-    return LimboDBFactory.open(url, filePath, properties);
+    return TursoDBFactory.open(url, filePath, properties);
   }
 
   public void checkOpen() throws SQLException {
@@ -61,7 +62,7 @@ public final class LimboConnection {
     return closed;
   }
 
-  public LimboDB getDatabase() {
+  public TursoDB getDatabase() {
     return database;
   }
 
@@ -72,18 +73,18 @@ public final class LimboConnection {
    * @return Pointer to statement.
    * @throws SQLException if a database access error occurs.
    */
-  public LimboStatement prepare(String sql) throws SQLException {
+  public TursoStatement prepare(String sql) throws SQLException {
     logger.trace("DriverManager [{}] [SQLite EXEC] {}", Thread.currentThread().getName(), sql);
     byte[] sqlBytes = stringToUtf8ByteArray(sql);
     if (sqlBytes == null) {
       throw new SQLException("Failed to convert " + sql + " into bytes");
     }
-    return new LimboStatement(sql, prepareUtf8(connectionPtr, sqlBytes));
+    return new TursoStatement(sql, prepareUtf8(connectionPtr, sqlBytes));
   }
 
   private native long prepareUtf8(long connectionPtr, byte[] sqlUtf8) throws SQLException;
 
-  // TODO: check whether this is still valid for limbo
+  // TODO: check whether this is still valid for turso
   /**
    * Checks whether the type, concurrency, and holdability settings for a {@link ResultSet} are
    * supported by the SQLite interface. Supported settings are:
@@ -117,8 +118,8 @@ public final class LimboConnection {
    * @param errorCode Error code.
    * @param errorMessageBytes Error message.
    */
-  @NativeInvocation(invokedFrom = "limbo_connection.rs")
-  private void throwLimboException(int errorCode, byte[] errorMessageBytes) throws SQLException {
-    LimboExceptionUtils.throwLimboException(errorCode, errorMessageBytes);
+  @NativeInvocation(invokedFrom = "turso_connection.rs")
+  private void throwTursoException(int errorCode, byte[] errorMessageBytes) throws SQLException {
+    TursoExceptionUtils.throwTursoException(errorCode, errorMessageBytes);
   }
 }

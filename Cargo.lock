@@ -1718,15 +1718,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "limbo-java"
-version = "0.1.1"
-dependencies = [
- "jni",
- "thiserror 2.0.12",
- "turso_core",
-]
-
-[[package]]
 name = "limbo-wasm"
 version = "0.1.1"
 dependencies = [
@@ -3634,6 +3625,15 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
+ "turso_core",
+]
+
+[[package]]
+name = "turso-java"
+version = "0.1.1"
+dependencies = [
+ "jni",
+ "thiserror 2.0.12",
  "turso_core",
 ]
 

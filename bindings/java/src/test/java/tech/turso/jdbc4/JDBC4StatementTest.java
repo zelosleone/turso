@@ -21,7 +21,7 @@ class JDBC4StatementTest {
   @BeforeEach
   void setUp() throws Exception {
     String filePath = TestUtils.createTempFile();
-    String url = "jdbc:sqlite:" + filePath;
+    String url = "jdbc:turso:" + filePath;
     final JDBC4Connection connection = new JDBC4Connection(url, filePath, new Properties());
     stmt =
         connection.createStatement(
@@ -38,20 +38,20 @@ class JDBC4StatementTest {
   @Test
   void execute_insert_should_return_false() throws Exception {
     stmt.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);");
-    assertFalse(stmt.execute("INSERT INTO users VALUES (1, 'limbo');"));
+    assertFalse(stmt.execute("INSERT INTO users VALUES (1, 'turso');"));
   }
 
   @Test
   void execute_update_should_return_false() throws Exception {
     stmt.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);");
-    stmt.execute("INSERT INTO users VALUES (1, 'limbo');");
+    stmt.execute("INSERT INTO users VALUES (1, 'turso');");
     assertFalse(stmt.execute("UPDATE users SET username = 'seonwoo' WHERE id = 1;"));
   }
 
   @Test
   void execute_select_should_return_true() throws Exception {
     stmt.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT);");
-    stmt.execute("INSERT INTO users VALUES (1, 'limbo');");
+    stmt.execute("INSERT INTO users VALUES (1, 'turso');");
     assertTrue(stmt.execute("SELECT * FROM users;"));
   }
 

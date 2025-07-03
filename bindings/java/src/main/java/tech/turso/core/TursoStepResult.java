@@ -4,8 +4,9 @@ import java.util.Arrays;
 import tech.turso.annotations.NativeInvocation;
 import tech.turso.annotations.Nullable;
 
-/** Represents the step result of limbo's statement's step function. */
-public final class LimboStepResult {
+/** Represents the step result of turso's statement's step function. */
+public final class TursoStepResult {
+
   private static final int STEP_RESULT_ID_ROW = 10;
   private static final int STEP_RESULT_ID_IO = 20;
   private static final int STEP_RESULT_ID_DONE = 30;
@@ -15,18 +16,19 @@ public final class LimboStepResult {
   private static final int STEP_RESULT_ID_BUSY = 50;
   private static final int STEP_RESULT_ID_ERROR = 60;
 
-  // Identifier for limbo's StepResult
+  // Identifier for Turso's StepResult
   private final int stepResultId;
+
   @Nullable private final Object[] result;
 
-  @NativeInvocation(invokedFrom = "limbo_statement.rs")
-  public LimboStepResult(int stepResultId) {
+  @NativeInvocation(invokedFrom = "turso_statement.rs")
+  public TursoStepResult(int stepResultId) {
     this.stepResultId = stepResultId;
     this.result = null;
   }
 
-  @NativeInvocation(invokedFrom = "limbo_statement.rs")
-  public LimboStepResult(int stepResultId, Object[] result) {
+  @NativeInvocation(invokedFrom = "turso_statement.rs")
+  public TursoStepResult(int stepResultId, Object[] result) {
     this.stepResultId = stepResultId;
     this.result = result;
   }
@@ -41,10 +43,10 @@ public final class LimboStepResult {
 
   public boolean isInInvalidState() {
     // current implementation doesn't allow STEP_RESULT_ID_IO to be returned
-    return stepResultId == STEP_RESULT_ID_IO
+    return (stepResultId == STEP_RESULT_ID_IO
         || stepResultId == STEP_RESULT_ID_INTERRUPT
         || stepResultId == STEP_RESULT_ID_BUSY
-        || stepResultId == STEP_RESULT_ID_ERROR;
+        || stepResultId == STEP_RESULT_ID_ERROR);
   }
 
   @Nullable
@@ -54,12 +56,12 @@ public final class LimboStepResult {
 
   @Override
   public String toString() {
-    return "LimboStepResult{"
+    return ("tursoStepResult{"
         + "stepResultName="
         + getStepResultName()
         + ", result="
         + Arrays.toString(result)
-        + '}';
+        + '}');
   }
 
   private String getStepResultName() {

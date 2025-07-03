@@ -3,21 +3,22 @@ package tech.turso.utils;
 import static tech.turso.utils.ByteArrayUtils.utf8ByteBufferToString;
 
 import java.sql.SQLException;
-import tech.turso.LimboErrorCode;
+import tech.turso.TursoErrorCode;
 import tech.turso.annotations.Nullable;
-import tech.turso.exceptions.LimboException;
+import tech.turso.exceptions.TursoException;
 
-public final class LimboExceptionUtils {
+public final class TursoExceptionUtils {
+
   /**
    * Throws formatted SQLException with error code and message.
    *
    * @param errorCode Error code.
    * @param errorMessageBytes Error message.
    */
-  public static void throwLimboException(int errorCode, byte[] errorMessageBytes)
+  public static void throwTursoException(int errorCode, byte[] errorMessageBytes)
       throws SQLException {
     String errorMessage = utf8ByteBufferToString(errorMessageBytes);
-    throw buildLimboException(errorCode, errorMessage);
+    throw buildTursoException(errorCode, errorMessage);
   }
 
   /**
@@ -26,16 +27,16 @@ public final class LimboExceptionUtils {
    * @param errorCode Error code.
    * @param errorMessage Error message.
    */
-  public static LimboException buildLimboException(int errorCode, @Nullable String errorMessage)
+  public static TursoException buildTursoException(int errorCode, @Nullable String errorMessage)
       throws SQLException {
-    LimboErrorCode code = LimboErrorCode.getErrorCode(errorCode);
+    TursoErrorCode code = TursoErrorCode.getErrorCode(errorCode);
     String msg;
-    if (code == LimboErrorCode.UNKNOWN_ERROR) {
+    if (code == TursoErrorCode.UNKNOWN_ERROR) {
       msg = String.format("%s:%s (%s)", code, errorCode, errorMessage);
     } else {
       msg = String.format("%s (%s)", code, errorMessage);
     }
 
-    return new LimboException(msg, code);
+    return new TursoException(msg, code);
   }
 }
