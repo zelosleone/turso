@@ -888,7 +888,16 @@ fn emit_update_insns(
         // allocate scratch registers for the index columns plus rowid
         let idx_start_reg = program.alloc_registers(num_cols + 1);
 
-        let rowid_reg = beg;
+        // Use the new rowid value (if the UPDATE statement sets the rowid alias),
+        // otherwise keep using the original rowid. This guarantees that any
+        // newly inserted/updated index entries point at the correct row after
+        // the primary key change.
+        let rowid_reg = if has_user_provided_rowid {
+            // Safe to unwrap because `has_user_provided_rowid` implies the register was allocated.
+            rowid_set_clause_reg.expect("rowid register must be set when updating rowid alias")
+        } else {
+            beg
+        };
         let idx_cols_start_reg = beg + 1;
 
         // copy each index column from the table's column registers into these scratch regs
