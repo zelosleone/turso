@@ -71,6 +71,7 @@ impl Cursor {
     pub fn execute(&mut self, sql: &str, parameters: Option<Py<PyTuple>>) -> Result<Self> {
         let stmt_is_dml = stmt_is_dml(sql);
         let stmt_is_ddl = stmt_is_ddl(sql);
+        let stmt_is_tx = stmt_is_tx(sql);
 
         let statement = self.conn.conn.prepare(sql).map_err(|e| {
             PyErr::new::<ProgrammingError, _>(format!("Failed to prepare statement: {:?}", e))
@@ -94,7 +95,7 @@ impl Cursor {
 
         // For DDL and DML statements,
         // we need to execute the statement immediately
-        if stmt_is_ddl || stmt_is_dml {
+        if stmt_is_ddl || stmt_is_dml || stmt_is_tx {
             while let turso_core::StepResult::IO = stmt
                 .borrow_mut()
                 .step()
@@ -220,6 +221,12 @@ fn stmt_is_ddl(sql: &str) -> bool {
     let sql = sql.trim();
     let sql = sql.to_uppercase();
     sql.starts_with("CREATE") || sql.starts_with("ALTER") || sql.starts_with("DROP")
+}
+
+fn stmt_is_tx(sql: &str) -> bool {
+    let sql = sql.trim();
+    let sql = sql.to_uppercase();
+    sql.starts_with("BEGIN") || sql.starts_with("COMMIT") || sql.starts_with("ROLLBACK")
 }
 
 #[pyclass(unsendable)]
