@@ -55,6 +55,11 @@ fn build_keyword_map(
             writeln!(writer, "}}")?;
         }
 
+        if entry.sub_entries.is_empty() {
+            writeln!(writer, "None")?;
+            return Ok(());
+        }
+
         writeln!(writer, "if idx >= buf.len() {{")?;
         writeln!(writer, "return None;")?;
         writeln!(writer, "}}")?;
@@ -71,9 +76,7 @@ fn build_keyword_map(
             writeln!(writer, "}}")?;
         }
 
-        writeln!(writer, "_ => {{")?;
-        writeln!(writer, "return None;")?;
-        writeln!(writer, "}}")?;
+        writeln!(writer, "_ => None")?;
         writeln!(writer, "}}")?;
         Ok(())
     }
