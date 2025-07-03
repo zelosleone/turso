@@ -2,7 +2,7 @@
 import os
 
 from cli_tests import console
-from cli_tests.test_limbo_cli import TestTursoShell
+from cli_tests.test_turso_cli import TestTursoShell
 
 sqlite_exec = "./scripts/limbo-sqlite3"
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
@@ -343,7 +343,7 @@ def test_kv():
 
 
 def _test_kv(exec_name, ext_path):
-    console.info(f"Running test_kv for {ext_path}")
+    console.info(f"Running test_kv for {ext_path} in {exec_name}")
 
     limbo = TestTursoShell(
         exec_name=exec_name,

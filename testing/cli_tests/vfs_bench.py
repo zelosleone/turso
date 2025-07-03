@@ -3,6 +3,7 @@
 # vfs benchmarking/comparison
 import argparse
 import os
+import platform
 import statistics
 import subprocess
 from pathlib import Path
@@ -10,11 +11,13 @@ from time import perf_counter, sleep
 from typing import Dict
 
 from cli_tests.console import error, info, test
-from cli_tests.test_limbo_cli import TestTursoShell
+from cli_tests.test_turso_cli import TestTursoShell
 
-LIMBO_BIN = Path("./target/release/limbo")
+LIMBO_BIN = Path("./target/release/tursodb")
 DB_FILE = Path("testing/temp.db")
-vfs_list = ["syscall", "io_uring"]
+vfs_list = ["syscall"]
+if platform.system() == "Linux":
+    vfs_list.append("io_uring")
 
 
 def append_time(times, start, perf_counter):

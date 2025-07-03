@@ -2,7 +2,7 @@
 import os
 
 from cli_tests import console
-from cli_tests.test_limbo_cli import TestTursoShell
+from cli_tests.test_turso_cli import TestTursoShell
 
 sqlite_flags = os.getenv("SQLITE_FLAGS", "-q").split(" ")
 
