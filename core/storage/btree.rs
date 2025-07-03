@@ -11,6 +11,7 @@ use crate::{
         },
     },
     translate::{collate::CollationSeq, plan::IterationDirection},
+    turso_assert,
     types::{IndexKeyInfo, IndexKeySortOrder, ParseRecordState},
     MvCursor,
 };
@@ -765,7 +766,7 @@ impl BTreeCursor {
             *next_page = next;
             return Ok(CursorResult::IO);
         }
-        assert!(
+        turso_assert!(
             *remaining_to_read == 0 && next == 0,
             "we can't have more pages to read while also have read everything"
         );
@@ -887,7 +888,10 @@ impl BTreeCursor {
                 ));
             }
         };
-        assert!(offset + amount <= payload_size as u32);
+        turso_assert!(
+            offset + amount <= payload_size as u32,
+            "offset + amount <= payload_size"
+        );
 
         let (local_size, _) =
             self.parse_cell_info(payload_size as usize, contents.page_type(), usable_size)?;
@@ -1200,7 +1204,7 @@ impl BTreeCursor {
                     return Ok(CursorResult::Ok(false));
                 }
             }
-            assert!(cell_idx < contents.cell_count());
+            turso_assert!(cell_idx < contents.cell_count(), "cell index out of bounds");
 
             let cell = contents.cell_get(
                 cell_idx,
@@ -1639,7 +1643,10 @@ impl BTreeCursor {
     /// of iterating cells in order.
     #[instrument(skip_all, level = Level::TRACE)]
     fn tablebtree_seek(&mut self, rowid: i64, seek_op: SeekOp) -> Result<CursorResult<bool>> {
-        assert!(self.mv_cursor.is_none());
+        turso_assert!(
+            self.mv_cursor.is_none(),
+            "attempting to seek with MV cursor"
+        );
         let iter_dir = seek_op.iteration_direction();
 
         if matches!(
@@ -1654,7 +1661,7 @@ impl BTreeCursor {
             return_if_locked_maybe_load!(self.pager, page);
             let page = page.get();
             let contents = page.get().contents.as_ref().unwrap();
-            assert!(
+            turso_assert!(
                 contents.is_leaf(),
                 "tablebtree_seek() called on non-leaf page"
             );
@@ -2027,7 +2034,10 @@ impl BTreeCursor {
 
     #[instrument(skip_all, level = Level::TRACE)]
     pub fn move_to(&mut self, key: SeekKey<'_>, cmp: SeekOp) -> Result<CursorResult<()>> {
-        assert!(self.mv_cursor.is_none());
+        turso_assert!(
+            self.mv_cursor.is_none(),
+            "attempting to move with MV cursor"
+        );
         tracing::trace!(?key, ?cmp);
         // For a table with N rows, we can find any row by row id in O(log(N)) time by starting at the root page and following the B-tree pointers.
         // B-trees consist of interior pages and leaf pages. Interior pages contain pointers to other pages, while leaf pages contain the actual row data.
@@ -2106,10 +2116,10 @@ impl BTreeCursor {
                         self.pager.add_dirty(page.get().id);
 
                         let page = page.get().contents.as_mut().unwrap();
-                        assert!(matches!(
-                            page.page_type(),
-                            PageType::TableLeaf | PageType::IndexLeaf
-                        ));
+                        turso_assert!(
+                            matches!(page.page_type(), PageType::TableLeaf | PageType::IndexLeaf),
+                            "expected table or index leaf page"
+                        );
 
                         // find cell
                         (return_if_io!(self.find_cell(page, bkey)), page.page_type())
@@ -2258,7 +2268,7 @@ impl BTreeCursor {
     /// Sqlite tries to have a page at least 40% full.
     #[instrument(skip(self), level = Level::TRACE)]
     fn balance(&mut self) -> Result<CursorResult<()>> {
-        assert!(
+        turso_assert!(
             matches!(self.state, CursorState::Write(_)),
             "Cursor must be in balancing state"
         );
@@ -2319,7 +2329,7 @@ impl BTreeCursor {
 
     /// Balance a non root page by trying to balance cells between a maximum of 3 siblings that should be neighboring the page that overflowed/underflowed.
     fn balance_non_root(&mut self) -> Result<CursorResult<()>> {
-        assert!(
+        turso_assert!(
             matches!(self.state, CursorState::Write(_)),
             "Cursor must be in balancing state"
         );
@@ -2353,20 +2363,23 @@ impl BTreeCursor {
                     parent_page.get().id,
                     page_to_balance_idx
                 );
-                assert!(matches!(
-                    parent_contents.page_type(),
-                    PageType::IndexInterior | PageType::TableInterior
-                ));
+                turso_assert!(
+                    matches!(
+                        parent_contents.page_type(),
+                        PageType::IndexInterior | PageType::TableInterior
+                    ),
+                    "expected index or table interior page"
+                );
                 // Part 1: Find the sibling pages to balance
                 let mut pages_to_balance: [Option<BTreePage>; 3] = [const { None }; 3];
                 let number_of_cells_in_parent =
                     parent_contents.cell_count() + parent_contents.overflow_cells.len();
 
-                assert!(
+                turso_assert!(
                     parent_contents.overflow_cells.is_empty(),
                     "balancing child page with overflowed parent not yet implemented"
                 );
-                assert!(
+                turso_assert!(
                     page_to_balance_idx <= parent_contents.cell_count(),
                     "page_to_balance_idx={} is out of bounds for parent cell count {}",
                     page_to_balance_idx,
@@ -2441,9 +2454,8 @@ impl BTreeCursor {
                         );
                     }
                     pages_to_balance[i].replace(page);
-                    assert_eq!(
-                        parent_contents.overflow_cells.len(),
-                        0,
+                    turso_assert!(
+                        parent_contents.overflow_cells.is_empty(),
                         "overflow in parent is not yet implented while balancing it"
                     );
                     if i == 0 {
@@ -2525,7 +2537,7 @@ impl BTreeCursor {
                 let parent_contents = parent_page.get_contents();
                 let parent_is_root = !self.stack.has_parent();
 
-                assert!(
+                turso_assert!(
                     parent_contents.overflow_cells.is_empty(),
                     "overflow parent not yet implemented"
                 );
@@ -2537,7 +2549,7 @@ impl BTreeCursor {
                 for i in (0..balance_info.sibling_count).rev() {
                     let sibling_page = balance_info.pages_to_balance[i].as_ref().unwrap();
                     let sibling_page = sibling_page.get();
-                    assert!(sibling_page.is_loaded());
+                    turso_assert!(sibling_page.is_loaded(), "sibling page is not loaded");
                     let sibling_contents = sibling_page.get_contents();
                     max_cells += sibling_contents.cell_count();
                     max_cells += sibling_contents.overflow_cells.len();
@@ -2659,7 +2671,7 @@ impl BTreeCursor {
                             divider_cell[..4].copy_from_slice(&right_pointer.to_be_bytes());
                         } else {
                             // index leaf
-                            assert!(divider_cell.len() >= 4);
+                            turso_assert!(divider_cell.len() >= 4, "divider cell is too short");
                             // let's strip the page pointer
                             divider_cell = &mut divider_cell[4..];
                         }
@@ -2668,9 +2680,8 @@ impl BTreeCursor {
                     total_cells_inserted += cells_inserted;
                 }
 
-                assert_eq!(
-                    cell_array.cells.capacity(),
-                    cells_capacity_start,
+                turso_assert!(
+                    cell_array.cells.capacity() == cells_capacity_start,
                     "calculation of max cells was wrong"
                 );
 
@@ -2733,7 +2744,7 @@ impl BTreeCursor {
                         let needs_new_page = i + 1 >= sibling_count_new;
                         if needs_new_page {
                             sibling_count_new = i + 2;
-                            assert!(
+                            turso_assert!(
                                 sibling_count_new <= 5,
                                 "it is corrupt to require more than 5 pages to balance 3 siblings"
                             );
@@ -3015,7 +3026,10 @@ impl BTreeCursor {
                     }
 
                     let left_pointer = read_u32(&new_divider_cell[..4], 0);
-                    assert!(left_pointer != parent_page.get().id as u32);
+                    turso_assert!(
+                        left_pointer != parent_page.get().id as u32,
+                        "left pointer is the same as parent page id"
+                    );
                     #[cfg(debug_assertions)]
                     pages_pointed_to.insert(left_pointer);
                     tracing::debug!(
@@ -3024,9 +3038,12 @@ impl BTreeCursor {
                         i,
                         left_pointer
                     );
-                    assert_eq!(left_pointer, page.get().get().id as u32);
+                    turso_assert!(
+                        left_pointer == page.get().get().id as u32,
+                        "left pointer is not the same as page id"
+                    );
                     // FIXME: remove this lock
-                    assert!(
+                    turso_assert!(
                         left_pointer <= header_accessor::get_database_size(&self.pager)?,
                         "invalid page number divider left pointer {} > database number of pages",
                         left_pointer,
