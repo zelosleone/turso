@@ -151,6 +151,7 @@ impl Limbo {
         }
         let sql = opts.sql.clone();
         let quiet = opts.quiet;
+        let config = Config::for_output_mode(opts.output_mode);
         let mut app = Self {
             prompt: PROMPT.to_string(),
             io,
@@ -160,7 +161,7 @@ impl Limbo {
             input_buff: String::new(),
             opts: Settings::from(opts),
             rl: None,
-            config: Some(Config::default()),
+            config: Some(config),
         };
         app.first_run(sql, quiet)?;
         Ok(app)

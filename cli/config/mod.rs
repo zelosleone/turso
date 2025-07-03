@@ -1,6 +1,7 @@
 mod palette;
 mod terminal;
 
+use crate::input::OutputMode;
 use crate::HOME_DIR;
 use nu_ansi_term::Color;
 use palette::LimboColor;
@@ -77,6 +78,18 @@ impl Config {
             result.ok()
         } else {
             None
+        }
+    }
+
+    pub fn for_output_mode(mode: OutputMode) -> Self {
+        let table = if mode == OutputMode::Pretty {
+            TableConfig::adaptive_colors()
+        } else {
+            TableConfig::no_colors()
+        };
+        Self {
+            table,
+            highlight: HighlightConfig::default(),
         }
     }
 }
