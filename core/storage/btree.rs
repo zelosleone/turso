@@ -5392,7 +5392,7 @@ pub fn integrity_check(
         contents.num_frag_free_bytes() as usize,
     );
 
-    Ok(CursorResult::IO)
+    Ok(CursorResult::Ok(()))
 }
 
 pub fn btree_read_page(pager: &Rc<Pager>, page_idx: usize) -> Result<BTreePage> {
@@ -6869,7 +6869,7 @@ mod tests {
         let db_file = Arc::new(DatabaseFile::new(io_file));
         let wal_file = io.open_file("test.wal", OpenFlags::Create, false).unwrap();
 
-        let buffer_pool = Rc::new(BufferPool::new(Some(page_size as usize)));
+        let buffer_pool = Arc::new(BufferPool::new(Some(page_size as usize)));
         let wal_shared = WalFileShared::new_shared(page_size, &io, wal_file).unwrap();
         let wal_file = WalFile::new(io.clone(), wal_shared, buffer_pool.clone());
         let wal = Rc::new(RefCell::new(wal_file));
@@ -7377,7 +7377,7 @@ mod tests {
     fn setup_test_env(database_size: u32) -> Rc<Pager> {
         let page_size = 512;
 
-        let buffer_pool = Rc::new(BufferPool::new(Some(page_size as usize)));
+        let buffer_pool = Arc::new(BufferPool::new(Some(page_size as usize)));
 
         // Initialize buffer pool with correctly sized buffers
         for _ in 0..10 {
