@@ -276,7 +276,7 @@ impl BTreeTable {
                 sql.push_str(&default.to_string());
             }
         }
-        sql.push_str(")");
+        sql.push(')');
         sql
     }
 
