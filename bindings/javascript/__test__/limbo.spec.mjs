@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { fileURLToPath } from "url";
 import path from "node:path";
 
-import { Database } from "../wrapper.js";
+import Database from "../wrapper.js";
 
 test("Open in-memory database", async (t) => {
   const [db] = await connect(":memory:");
