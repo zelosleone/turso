@@ -6,6 +6,6 @@ cargo:
 
 precompiled_binaries:
   # Uri prefix used when downloading precompiled binaries.
-  url_prefix: https://github.com/dikatok/libsql_dart/releases/download/v
+  url_prefix: https://github.com/tursodatabase/turso/releases/download/v
   # Public key for verifying downloaded precompiled binaries.
   public_key:
