@@ -11,6 +11,7 @@ use crate::{
             Create, Delete, Drop, Insert, Query, Select,
         },
         table::SimValue,
+        FAULT_ERROR_MSG,
     },
     runner::env::SimulatorEnv,
 };
@@ -489,7 +490,14 @@ impl Property {
                                 query_clone.shadow(env);
                                 Ok(true)
                             }
-                            Err(err) => Err(LimboError::InternalError(format!("{}", err))),
+                            Err(err) => {
+                                let msg = format!("{}", err);
+                                if msg.contains(FAULT_ERROR_MSG) {
+                                    Ok(true)
+                                } else {
+                                    Err(LimboError::InternalError(msg))
+                                }
+                            }
                         }
                     }),
                 };
