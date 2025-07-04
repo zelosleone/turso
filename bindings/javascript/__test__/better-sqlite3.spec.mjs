@@ -1,3 +1,6 @@
+import crypto from "crypto";
+import crypto from "crypto";
+import crypto from 'crypto';
 import fs from "node:fs";
 import { fileURLToPath } from "url";
 import path from "node:path"
@@ -26,6 +29,18 @@ new DualTest("foobar.db", { readonly: true })
     const db = t.context.db;
     t.is(db.readonly, true);
   });
+
+const genDatabaseFilename = () => {
+  return `test-${crypto.randomBytes(8).toString('hex')}.db`;
+};
+
+new DualTest().onlySqlitePasses("opening a read-only database fails if the file doesn't exist", async (t) => {
+  t.throws(() => t.context.connect(genDatabaseFilename(), { readonly: true }),
+    {
+      any: true,
+      code: 'SQLITE_CANTOPEN',
+    });
+})
 
 foobarTest.both("Property .readonly of database if not set", async (t) => {
   const db = t.context.db;
