@@ -7,14 +7,14 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use turso_core::{Connection, Result, StepResult, IO};
+use turso_core::{Connection, Result, StepResult};
 
 use crate::{
     model::{
         query::{update::Update, Create, CreateIndex, Delete, Drop, Insert, Query, Select},
         table::SimValue,
     },
-    runner::{env::SimConnection, io::SimulatorIO},
+    runner::env::SimConnection,
     SimulatorEnv,
 };
 
@@ -411,7 +411,7 @@ impl Interaction {
             }
         }
     }
-    pub(crate) fn execute_query(&self, conn: &mut Arc<Connection>, io: &SimulatorIO) -> ResultSet {
+    pub(crate) fn execute_query(&self, conn: &mut Arc<Connection>) -> ResultSet {
         if let Self::Query(query) = self {
             let query_str = query.to_string();
             let rows = conn.query(&query_str);
@@ -440,7 +440,7 @@ impl Interaction {
                         out.push(r);
                     }
                     StepResult::IO => {
-                        io.run_once().unwrap();
+                        rows.run_once().unwrap();
                     }
                     StepResult::Interrupt => {}
                     StepResult::Done => {

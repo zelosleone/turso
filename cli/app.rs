@@ -96,7 +96,7 @@ macro_rules! query_internal {
                         $body(row)?;
                     }
                     StepResult::IO => {
-                        $self.io.run_once()?;
+                        rows.run_once()?;
                     }
                     StepResult::Interrupt => break,
                     StepResult::Done => break,
@@ -176,7 +176,6 @@ impl Limbo {
     pub fn with_readline(mut self, mut rl: Editor<LimboHelper, DefaultHistory>) -> Self {
         let h = LimboHelper::new(
             self.conn.clone(),
-            self.io.clone(),
             self.config.as_ref().map(|c| c.highlight.clone()),
         );
         rl.set_helper(Some(h));
@@ -645,8 +644,7 @@ impl Limbo {
                     let _ = self.show_info();
                 }
                 Command::Import(args) => {
-                    let mut import_file =
-                        ImportFile::new(self.conn.clone(), self.io.clone(), &mut self.writer);
+                    let mut import_file = ImportFile::new(self.conn.clone(), &mut self.writer);
                     import_file.import(args)
                 }
                 Command::LoadExtension(args) => {
@@ -741,7 +739,7 @@ impl Limbo {
                             }
                             Ok(StepResult::IO) => {
                                 let start = Instant::now();
-                                self.io.run_once()?;
+                                rows.run_once()?;
                                 if let Some(ref mut stats) = statistics {
                                     stats.io_time_elapsed_samples.push(start.elapsed());
                                 }
@@ -834,7 +832,7 @@ impl Limbo {
                             }
                             Ok(StepResult::IO) => {
                                 let start = Instant::now();
-                                self.io.run_once()?;
+                                rows.run_once()?;
                                 if let Some(ref mut stats) = statistics {
                                     stats.io_time_elapsed_samples.push(start.elapsed());
                                 }
@@ -946,7 +944,7 @@ impl Limbo {
                             }
                         }
                         StepResult::IO => {
-                            self.io.run_once()?;
+                            rows.run_once()?;
                         }
                         StepResult::Interrupt => break,
                         StepResult::Done => break,
@@ -1002,7 +1000,7 @@ impl Limbo {
                             }
                         }
                         StepResult::IO => {
-                            self.io.run_once()?;
+                            rows.run_once()?;
                         }
                         StepResult::Interrupt => break,
                         StepResult::Done => break,
@@ -1053,7 +1051,7 @@ impl Limbo {
                             }
                         }
                         StepResult::IO => {
-                            self.io.run_once()?;
+                            rows.run_once()?;
                         }
                         StepResult::Interrupt => break,
                         StepResult::Done => break,

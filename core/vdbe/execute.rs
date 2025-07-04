@@ -4978,7 +4978,6 @@ pub fn op_parse_schema(
             parse_schema_rows(
                 Some(stmt),
                 &mut new_schema,
-                conn.pager.io.clone(),
                 &conn.syms.borrow(),
                 state.mv_tx_id,
             )?;
@@ -4993,7 +4992,6 @@ pub fn op_parse_schema(
             parse_schema_rows(
                 Some(stmt),
                 &mut new_schema,
-                conn.pager.io.clone(),
                 &conn.syms.borrow(),
                 state.mv_tx_id,
             )?;
