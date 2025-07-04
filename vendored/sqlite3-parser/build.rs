@@ -13,8 +13,8 @@ fn build_keyword_map(
     keywords: &[[&'static str; 2]],
 ) -> Result<()> {
     assert!(!keywords.is_empty());
-    let mut min_len = keywords[0][0].as_bytes().len();
-    let mut max_len = keywords[0][0].as_bytes().len();
+    let mut min_len = keywords[0][0].len();
+    let mut max_len = keywords[0][0].len();
 
     struct PathEntry {
         result: Option<&'static str>,
@@ -110,7 +110,10 @@ fn build_keyword_map(
         "pub fn {}(buf: &[u8]) -> Option<TokenType> {{",
         func_name
     )?;
-    writeln!(writer, "if buf.len() < MIN_KEYWORD_LEN || buf.len() > MAX_KEYWORD_LEN {{")?;
+    writeln!(
+        writer,
+        "if buf.len() < MIN_KEYWORD_LEN || buf.len() > MAX_KEYWORD_LEN {{"
+    )?;
     writeln!(writer, "return None;")?;
     writeln!(writer, "}}")?;
     writeln!(writer, "let mut idx = 0;")?;
