@@ -70,15 +70,15 @@ jobs:
         run: flutter pub get
       - name: Precompile
         if: (matrix.os == 'macOS-latest') || (matrix.os == 'windows-latest')
-        run: dart run build_tool precompile-binaries -v --manifest-dir=../../rust --repository=dikatok/libsql_dart
-        working-directory: cargokit/build_tool
+        run: dart run build_tool precompile-binaries -v --manifest-dir=../../rust --repository=tursodatabase/turso
+        working-directory: ${{ env.working-directory }}/cargokit/build_tool
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRIVATE_KEY: ${{ secrets.CARGOKIT_PRIVATE_KEY }}
       - name: Precompile (with Android)
         if: (matrix.os == 'ubuntu-latest')
-        run: dart run build_tool precompile-binaries -v --manifest-dir=../../rust --repository=dikatok/libsql_dart --android-sdk-location=/usr/local/lib/android/sdk --android-ndk-version=25.1.8937393 --android-min-sdk-version=23
-        working-directory: cargokit/build_tool
+        run: dart run build_tool precompile-binaries -v --manifest-dir=../../rust --repository=tursodatabase/turso --android-sdk-location=/usr/local/lib/android/sdk --android-ndk-version=25.1.8937393 --android-min-sdk-version=23
+        working-directory: ${{ env.working-directory }}/cargokit/build_tool
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PRIVATE_KEY: ${{ secrets.CARGOKIT_PRIVATE_KEY }}
@@ -91,7 +91,7 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: "Publish libsql_dart"
+      - name: Publish turso_dart to pub.dev
         uses: k-paxian/dart-package-publisher@v.1.6.2
         with:
           accessToken: ${{ secrets.PUBDEV_ACCESS_TOKEN }}
