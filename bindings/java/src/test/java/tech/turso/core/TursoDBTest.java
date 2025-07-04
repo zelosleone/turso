@@ -6,25 +6,25 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.sql.SQLException;
 import org.junit.jupiter.api.Test;
-import tech.turso.LimboErrorCode;
 import tech.turso.TestUtils;
-import tech.turso.exceptions.LimboException;
+import tech.turso.TursoErrorCode;
+import tech.turso.exceptions.TursoException;
 
-public class LimboDBTest {
+public class TursoDBTest {
 
   @Test
   void db_should_open_normally() throws Exception {
-    LimboDB.load();
+    TursoDB.load();
     String dbPath = TestUtils.createTempFile();
-    LimboDB db = LimboDB.create("jdbc:sqlite" + dbPath, dbPath);
+    TursoDB db = TursoDB.create("jdbc:turso" + dbPath, dbPath);
     db.open(0);
   }
 
   @Test
   void db_should_close_normally() throws Exception {
-    LimboDB.load();
+    TursoDB.load();
     String dbPath = TestUtils.createTempFile();
-    LimboDB db = LimboDB.create("jdbc:sqlite" + dbPath, dbPath);
+    TursoDB db = TursoDB.create("jdbc:turso" + dbPath, dbPath);
     db.open(0);
     db.close();
 
@@ -33,9 +33,9 @@ public class LimboDBTest {
 
   @Test
   void should_throw_exception_when_opened_twice() throws Exception {
-    LimboDB.load();
+    TursoDB.load();
     String dbPath = TestUtils.createTempFile();
-    LimboDB db = LimboDB.create("jdbc:sqlite:" + dbPath, dbPath);
+    TursoDB db = TursoDB.create("jdbc:turso:" + dbPath, dbPath);
     db.open(0);
 
     assertThatThrownBy(() -> db.open(0)).isInstanceOf(SQLException.class);
@@ -43,17 +43,17 @@ public class LimboDBTest {
 
   @Test
   void throwJavaException_should_throw_appropriate_java_exception() throws Exception {
-    LimboDB.load();
+    TursoDB.load();
     String dbPath = TestUtils.createTempFile();
-    LimboDB db = LimboDB.create("jdbc:sqlite:" + dbPath, dbPath);
+    TursoDB db = TursoDB.create("jdbc:turso:" + dbPath, dbPath);
 
-    final int limboExceptionCode = LimboErrorCode.LIMBO_ETC.code;
+    final int tursoExceptionCode = TursoErrorCode.TURSO_ETC.code;
     try {
-      db.throwJavaException(limboExceptionCode);
+      db.throwJavaException(tursoExceptionCode);
     } catch (Exception e) {
-      assertThat(e).isInstanceOf(LimboException.class);
-      LimboException limboException = (LimboException) e;
-      assertThat(limboException.getResultCode().code).isEqualTo(limboExceptionCode);
+      assertThat(e).isInstanceOf(TursoException.class);
+      TursoException tursoException = (TursoException) e;
+      assertThat(tursoException.getResultCode().code).isEqualTo(tursoExceptionCode);
     }
   }
 }

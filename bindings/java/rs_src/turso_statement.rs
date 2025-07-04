@@ -1,6 +1,6 @@
-use crate::errors::{LimboError, LIMBO_ETC};
 use crate::errors::{Result, SQLITE_ERROR, SQLITE_OK};
-use crate::limbo_connection::LimboConnection;
+use crate::errors::{TursoError, TURSO_ETC};
+use crate::turso_connection::TursoConnection;
 use crate::utils::set_err_msg_and_throw_exception;
 use jni::objects::{JByteArray, JObject, JObjectArray, JString, JValue};
 use jni::sys::{jdouble, jint, jlong};
@@ -16,14 +16,14 @@ pub const STEP_RESULT_ID_INTERRUPT: i32 = 40;
 pub const STEP_RESULT_ID_BUSY: i32 = 50;
 pub const STEP_RESULT_ID_ERROR: i32 = 60;
 
-pub struct LimboStatement {
+pub struct TursoStatement {
     pub(crate) stmt: Statement,
-    pub(crate) connection: LimboConnection,
+    pub(crate) connection: TursoConnection,
 }
 
-impl LimboStatement {
-    pub fn new(stmt: Statement, connection: LimboConnection) -> Self {
-        LimboStatement { stmt, connection }
+impl TursoStatement {
+    pub fn new(stmt: Statement, connection: TursoConnection) -> Self {
+        TursoStatement { stmt, connection }
     }
 
     #[allow(clippy::wrong_self_convention)]
@@ -32,71 +32,71 @@ impl LimboStatement {
     }
 
     pub fn drop(ptr: jlong) {
-        let _boxed = unsafe { Box::from_raw(ptr as *mut LimboStatement) };
+        let _boxed = unsafe { Box::from_raw(ptr as *mut TursoStatement) };
     }
 }
 
-pub fn to_limbo_statement(ptr: jlong) -> Result<&'static mut LimboStatement> {
+pub fn to_turso_statement(ptr: jlong) -> Result<&'static mut TursoStatement> {
     if ptr == 0 {
-        Err(LimboError::InvalidConnectionPointer)
+        Err(TursoError::InvalidConnectionPointer)
     } else {
-        unsafe { Ok(&mut *(ptr as *mut LimboStatement)) }
+        unsafe { Ok(&mut *(ptr as *mut TursoStatement)) }
     }
 }
 
 #[no_mangle]
-pub extern "system" fn Java_tech_turso_core_LimboStatement_step<'local>(
+pub extern "system" fn Java_tech_turso_core_TursoStatement_step<'local>(
     mut env: JNIEnv<'local>,
     obj: JObject<'local>,
     stmt_ptr: jlong,
 ) -> JObject<'local> {
-    let stmt = match to_limbo_statement(stmt_ptr) {
+    let stmt = match to_turso_statement(stmt_ptr) {
         Ok(stmt) => stmt,
         Err(e) => {
-            set_err_msg_and_throw_exception(&mut env, obj, LIMBO_ETC, e.to_string());
-            return to_limbo_step_result(&mut env, STEP_RESULT_ID_ERROR, None);
+            set_err_msg_and_throw_exception(&mut env, obj, TURSO_ETC, e.to_string());
+            return to_turso_step_result(&mut env, STEP_RESULT_ID_ERROR, None);
         }
     };
 
     loop {
         let step_result = match stmt.stmt.step() {
             Ok(result) => result,
-            Err(_) => return to_limbo_step_result(&mut env, STEP_RESULT_ID_ERROR, None),
+            Err(_) => return to_turso_step_result(&mut env, STEP_RESULT_ID_ERROR, None),
         };
 
         match step_result {
             StepResult::Row => {
                 let row = stmt.stmt.row().unwrap();
                 return match row_to_obj_array(&mut env, row) {
-                    Ok(row) => to_limbo_step_result(&mut env, STEP_RESULT_ID_ROW, Some(row)),
+                    Ok(row) => to_turso_step_result(&mut env, STEP_RESULT_ID_ROW, Some(row)),
                     Err(e) => {
-                        set_err_msg_and_throw_exception(&mut env, obj, LIMBO_ETC, e.to_string());
-                        to_limbo_step_result(&mut env, STEP_RESULT_ID_ERROR, None)
+                        set_err_msg_and_throw_exception(&mut env, obj, TURSO_ETC, e.to_string());
+                        to_turso_step_result(&mut env, STEP_RESULT_ID_ERROR, None)
                     }
                 };
             }
             StepResult::IO => {
                 if let Err(e) = stmt.connection.io.run_once() {
-                    set_err_msg_and_throw_exception(&mut env, obj, LIMBO_ETC, e.to_string());
-                    return to_limbo_step_result(&mut env, STEP_RESULT_ID_ERROR, None);
+                    set_err_msg_and_throw_exception(&mut env, obj, TURSO_ETC, e.to_string());
+                    return to_turso_step_result(&mut env, STEP_RESULT_ID_ERROR, None);
                 }
             }
-            StepResult::Done => return to_limbo_step_result(&mut env, STEP_RESULT_ID_DONE, None),
+            StepResult::Done => return to_turso_step_result(&mut env, STEP_RESULT_ID_DONE, None),
             StepResult::Interrupt => {
-                return to_limbo_step_result(&mut env, STEP_RESULT_ID_INTERRUPT, None)
+                return to_turso_step_result(&mut env, STEP_RESULT_ID_INTERRUPT, None)
             }
-            StepResult::Busy => return to_limbo_step_result(&mut env, STEP_RESULT_ID_BUSY, None),
+            StepResult::Busy => return to_turso_step_result(&mut env, STEP_RESULT_ID_BUSY, None),
         }
     }
 }
 
 #[no_mangle]
-pub extern "system" fn Java_tech_turso_core_LimboStatement__1close<'local>(
+pub extern "system" fn Java_tech_turso_core_TursoStatement__1close<'local>(
     _env: JNIEnv<'local>,
     _obj: JObject<'local>,
     stmt_ptr: jlong,
 ) {
-    LimboStatement::drop(stmt_ptr);
+    TursoStatement::drop(stmt_ptr);
 }
 
 fn row_to_obj_array<'local>(
@@ -126,12 +126,12 @@ fn row_to_obj_array<'local>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_tech_turso_core_LimboStatement_columns<'local>(
+pub extern "system" fn Java_tech_turso_core_TursoStatement_columns<'local>(
     mut env: JNIEnv<'local>,
     _obj: JObject<'local>,
     stmt_ptr: jlong,
 ) -> JObject<'local> {
-    let stmt = to_limbo_statement(stmt_ptr).unwrap();
+    let stmt = to_turso_statement(stmt_ptr).unwrap();
     let num_columns = stmt.stmt.num_columns();
     let obj_arr: JObjectArray = env
         .new_object_array(num_columns as i32, "java/lang/String", JObject::null())
@@ -148,13 +148,13 @@ pub extern "system" fn Java_tech_turso_core_LimboStatement_columns<'local>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_tech_turso_core_LimboStatement_bindNull<'local>(
+pub extern "system" fn Java_tech_turso_core_TursoStatement_bindNull<'local>(
     mut env: JNIEnv<'local>,
     obj: JObject<'local>,
     stmt_ptr: jlong,
     position: jint,
 ) -> jint {
-    let stmt = match to_limbo_statement(stmt_ptr) {
+    let stmt = match to_turso_statement(stmt_ptr) {
         Ok(stmt) => stmt,
         Err(e) => {
             set_err_msg_and_throw_exception(&mut env, obj, SQLITE_ERROR, e.to_string());
@@ -168,14 +168,14 @@ pub extern "system" fn Java_tech_turso_core_LimboStatement_bindNull<'local>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_tech_turso_core_LimboStatement_bindLong<'local>(
+pub extern "system" fn Java_tech_turso_core_TursoStatement_bindLong<'local>(
     mut env: JNIEnv<'local>,
     obj: JObject<'local>,
     stmt_ptr: jlong,
     position: jint,
     value: jlong,
 ) -> jint {
-    let stmt = match to_limbo_statement(stmt_ptr) {
+    let stmt = match to_turso_statement(stmt_ptr) {
         Ok(stmt) => stmt,
         Err(e) => {
             set_err_msg_and_throw_exception(&mut env, obj, SQLITE_ERROR, e.to_string());
@@ -191,14 +191,14 @@ pub extern "system" fn Java_tech_turso_core_LimboStatement_bindLong<'local>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_tech_turso_core_LimboStatement_bindDouble<'local>(
+pub extern "system" fn Java_tech_turso_core_TursoStatement_bindDouble<'local>(
     mut env: JNIEnv<'local>,
     obj: JObject<'local>,
     stmt_ptr: jlong,
     position: jint,
     value: jdouble,
 ) -> jint {
-    let stmt = match to_limbo_statement(stmt_ptr) {
+    let stmt = match to_turso_statement(stmt_ptr) {
         Ok(stmt) => stmt,
         Err(e) => {
             set_err_msg_and_throw_exception(&mut env, obj, SQLITE_ERROR, e.to_string());
@@ -214,14 +214,14 @@ pub extern "system" fn Java_tech_turso_core_LimboStatement_bindDouble<'local>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_tech_turso_core_LimboStatement_bindText<'local>(
+pub extern "system" fn Java_tech_turso_core_TursoStatement_bindText<'local>(
     mut env: JNIEnv<'local>,
     obj: JObject<'local>,
     stmt_ptr: jlong,
     position: jint,
     value: JString<'local>,
 ) -> jint {
-    let stmt = match to_limbo_statement(stmt_ptr) {
+    let stmt = match to_turso_statement(stmt_ptr) {
         Ok(stmt) => stmt,
         Err(e) => {
             set_err_msg_and_throw_exception(&mut env, obj, SQLITE_ERROR, e.to_string());
@@ -242,14 +242,14 @@ pub extern "system" fn Java_tech_turso_core_LimboStatement_bindText<'local>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_tech_turso_core_LimboStatement_bindBlob<'local>(
+pub extern "system" fn Java_tech_turso_core_TursoStatement_bindBlob<'local>(
     mut env: JNIEnv<'local>,
     obj: JObject<'local>,
     stmt_ptr: jlong,
     position: jint,
     value: JByteArray<'local>,
 ) -> jint {
-    let stmt = match to_limbo_statement(stmt_ptr) {
+    let stmt = match to_turso_statement(stmt_ptr) {
         Ok(stmt) => stmt,
         Err(e) => {
             set_err_msg_and_throw_exception(&mut env, obj, SQLITE_ERROR, e.to_string());
@@ -268,12 +268,12 @@ pub extern "system" fn Java_tech_turso_core_LimboStatement_bindBlob<'local>(
 }
 
 #[no_mangle]
-pub extern "system" fn Java_tech_turso_core_LimboStatement_totalChanges<'local>(
+pub extern "system" fn Java_tech_turso_core_TursoStatement_totalChanges<'local>(
     mut env: JNIEnv<'local>,
     obj: JObject<'local>,
     stmt_ptr: jlong,
 ) -> jlong {
-    let stmt = match to_limbo_statement(stmt_ptr) {
+    let stmt = match to_turso_statement(stmt_ptr) {
         Ok(stmt) => stmt,
         Err(e) => {
             set_err_msg_and_throw_exception(&mut env, obj, SQLITE_ERROR, e.to_string());
@@ -284,10 +284,10 @@ pub extern "system" fn Java_tech_turso_core_LimboStatement_totalChanges<'local>(
     stmt.connection.conn.total_changes()
 }
 
-/// Converts an optional `JObject` into Java's `LimboStepResult`.
+/// Converts an optional `JObject` into Java's `TursoStepResult`.
 ///
 /// This function takes an optional `JObject` and converts it into a Java object
-/// of type `LimboStepResult`. The conversion is done by creating a new Java object with the
+/// of type `TursoStepResult`. The conversion is done by creating a new Java object with the
 /// appropriate constructor arguments.
 ///
 /// # Arguments
@@ -298,9 +298,9 @@ pub extern "system" fn Java_tech_turso_core_LimboStatement_totalChanges<'local>(
 ///
 /// # Returns
 ///
-/// A `JObject` representing the `LimboStepResult` in Java. If the object creation fails,
+/// A `JObject` representing the `TursoStepResult` in Java. If the object creation fails,
 /// a null `JObject` is returned
-fn to_limbo_step_result<'local>(
+fn to_turso_step_result<'local>(
     env: &mut JNIEnv<'local>,
     id: i32,
     result: Option<JObject<'local>>,
@@ -309,12 +309,12 @@ fn to_limbo_step_result<'local>(
     if let Some(res) = result {
         ctor_args.push(JValue::Object(&res));
         env.new_object(
-            "tech/turso/core/LimboStepResult",
+            "tech/turso/core/TursoStepResult",
             "(I[Ljava/lang/Object;)V",
             &ctor_args,
         )
     } else {
-        env.new_object("tech/turso/core/LimboStepResult", "(I)V", &ctor_args)
+        env.new_object("tech/turso/core/TursoStepResult", "(I)V", &ctor_args)
     }
     .unwrap_or_else(|_| JObject::null())
 }

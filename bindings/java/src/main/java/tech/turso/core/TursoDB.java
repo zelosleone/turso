@@ -7,16 +7,17 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.SQLException;
-import tech.turso.LimboErrorCode;
+import tech.turso.TursoErrorCode;
 import tech.turso.annotations.NativeInvocation;
 import tech.turso.annotations.VisibleForTesting;
-import tech.turso.utils.LimboExceptionUtils;
 import tech.turso.utils.Logger;
 import tech.turso.utils.LoggerFactory;
+import tech.turso.utils.TursoExceptionUtils;
 
 /** This class provides a thin JNI layer over the SQLite3 C API. */
-public final class LimboDB implements AutoCloseable {
-  private static final Logger logger = LoggerFactory.getLogger(LimboDB.class);
+public final class TursoDB implements AutoCloseable {
+
+  private static final Logger logger = LoggerFactory.getLogger(TursoDB.class);
   // Pointer to database instance
   private long dbPointer;
   private boolean isOpen;
@@ -39,10 +40,10 @@ public final class LimboDB implements AutoCloseable {
    * extensions.
    */
   enum Architecture {
-    MACOS_ARM64("libs/macos_arm64/lib_limbo_java.dylib", ".dylib"),
-    MACOS_X86("libs/macos_x86/lib_limbo_java.dylib", ".dylib"),
-    LINUX_X86("libs/linux_x86/lib_limbo_java.so", ".so"),
-    WINDOWS("libs/windows/lib_limbo_java.dll", ".dll"),
+    MACOS_ARM64("libs/macos_arm64/lib_turso_java.dylib", ".dylib"),
+    MACOS_X86("libs/macos_x86/lib_turso_java.dylib", ".dylib"),
+    LINUX_X86("libs/linux_x86/lib_turso_java.so", ".so"),
+    WINDOWS("libs/windows/lib_turso_java.dll", ".dll"),
     UNSUPPORTED("", "");
 
     private final String libPath;
@@ -90,7 +91,7 @@ public final class LimboDB implements AutoCloseable {
   }
 
   /**
-   * This method attempts to load the native library required for Limbo operations. It first tries
+   * This method attempts to load the native library required for turso operations. It first tries
    * to load the library from the system's library path using {@link #loadFromSystemPath()}. If that
    * fails, it attempts to load the library from the JAR file using {@link #loadFromJar()}. If
    * either method succeeds, the `isLoaded` flag is set to true. If both methods fail, an {@link
@@ -115,14 +116,14 @@ public final class LimboDB implements AutoCloseable {
   /**
    * Load the native library from the system path.
    *
-   * <p>This method attempts to load the native library named "_limbo_java" from the system's
+   * <p>This method attempts to load the native library named "_turso_java" from the system's
    * library path. If the library is successfully loaded, the `isLoaded` flag is set to true.
    *
    * @return true if the library was successfully loaded, false otherwise.
    */
   private static boolean loadFromSystemPath() {
     try {
-      System.loadLibrary("_limbo_java");
+      System.loadLibrary("_turso_java");
       return true;
     } catch (Throwable t) {
       logger.info("Unable to load from default path: {}", String.valueOf(t));
@@ -148,7 +149,7 @@ public final class LimboDB implements AutoCloseable {
     }
 
     try {
-      InputStream is = LimboDB.class.getClassLoader().getResourceAsStream(arch.getLibPath());
+      InputStream is = TursoDB.class.getClassLoader().getResourceAsStream(arch.getLibPath());
       assert is != null;
       File file = convertInputStreamToFile(is, arch);
       System.load(file.getPath());
@@ -178,15 +179,15 @@ public final class LimboDB implements AutoCloseable {
   }
 
   /**
-   * @param url e.g. "jdbc:sqlite:fileName
+   * @param url eTurso.gTursoTurso. "jdbc:turso:fileName
    * @param filePath e.g. path to file
    */
-  public static LimboDB create(String url, String filePath) throws SQLException {
-    return new LimboDB(url, filePath);
+  public static TursoDB create(String url, String filePath) throws SQLException {
+    return new TursoDB(url, filePath);
   }
 
   // TODO: receive config as argument
-  private LimboDB(String url, String filePath) {
+  private TursoDB(String url, String filePath) {
     this.url = url;
     this.filePath = filePath;
   }
@@ -208,14 +209,14 @@ public final class LimboDB implements AutoCloseable {
 
   private void open0(String filePath, int openFlags) throws SQLException {
     if (isOpen) {
-      throw LimboExceptionUtils.buildLimboException(
-          LimboErrorCode.LIMBO_ETC.code, "Already opened");
+      throw TursoExceptionUtils.buildTursoException(
+          TursoErrorCode.TURSO_ETC.code, "Already opened");
     }
 
     byte[] filePathBytes = stringToUtf8ByteArray(filePath);
     if (filePathBytes == null) {
-      throw LimboExceptionUtils.buildLimboException(
-          LimboErrorCode.LIMBO_ETC.code,
+      throw TursoExceptionUtils.buildTursoException(
+          TursoErrorCode.TURSO_ETC.code,
           "File path cannot be converted to byteArray. File name: " + filePath);
     }
 
@@ -250,8 +251,8 @@ public final class LimboDB implements AutoCloseable {
    * @param errorCode Error code.
    * @param errorMessageBytes Error message.
    */
-  @NativeInvocation(invokedFrom = "limbo_db.rs")
-  private void throwLimboException(int errorCode, byte[] errorMessageBytes) throws SQLException {
-    LimboExceptionUtils.throwLimboException(errorCode, errorMessageBytes);
+  @NativeInvocation(invokedFrom = "turso_db.rs")
+  private void throwTursoException(int errorCode, byte[] errorMessageBytes) throws SQLException {
+    TursoExceptionUtils.throwTursoException(errorCode, errorMessageBytes);
   }
 }

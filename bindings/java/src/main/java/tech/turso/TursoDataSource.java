@@ -10,19 +10,19 @@ import javax.sql.DataSource;
 import tech.turso.annotations.Nullable;
 import tech.turso.annotations.SkipNullableCheck;
 
-/** Provides {@link DataSource} API for configuring Limbo database connection. */
-public final class LimboDataSource implements DataSource {
+/** Provides {@link DataSource} API for configuring Turso database connection. */
+public final class TursoDataSource implements DataSource {
 
-  private final LimboConfig limboConfig;
+  private final TursoConfig tursoConfig;
   private final String url;
 
   /**
    * Creates a datasource based on the provided configuration.
    *
-   * @param limboConfig The configuration for the datasource.
+   * @param tursoConfig The configuration for the datasource.
    */
-  public LimboDataSource(LimboConfig limboConfig, String url) {
-    this.limboConfig = limboConfig;
+  public TursoDataSource(TursoConfig tursoConfig, String url) {
+    this.tursoConfig = tursoConfig;
     this.url = url;
   }
 
@@ -36,7 +36,7 @@ public final class LimboDataSource implements DataSource {
   @Nullable
   public Connection getConnection(@Nullable String username, @Nullable String password)
       throws SQLException {
-    Properties properties = limboConfig.toProperties();
+    Properties properties = tursoConfig.toProperties();
     if (username != null) properties.put("user", username);
     if (password != null) properties.put("pass", password);
     return JDBC.createConnection(url, properties);

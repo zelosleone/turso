@@ -2,8 +2,8 @@ package tech.turso;
 
 import tech.turso.core.SqliteCode;
 
-/** Limbo error code. Superset of SQLite3 error code. */
-public enum LimboErrorCode {
+/** Turso error code. Superset of SQLite3 error code. */
+public enum TursoErrorCode {
   SQLITE_OK(SqliteCode.SQLITE_OK, "Successful result"),
   SQLITE_ERROR(SqliteCode.SQLITE_ERROR, "SQL error or missing database"),
   SQLITE_INTERNAL(SqliteCode.SQLITE_INTERNAL, "An internal logic error in SQLite"),
@@ -37,9 +37,9 @@ public enum LimboErrorCode {
   SQLITE_NULL(SqliteCode.SQLITE_NULL, "Null type"),
 
   UNKNOWN_ERROR(-1, "Unknown error"),
-  LIMBO_FAILED_TO_PARSE_BYTE_ARRAY(1100, "Failed to parse ut8 byte array"),
-  LIMBO_FAILED_TO_PREPARE_STATEMENT(1200, "Failed to prepare statement"),
-  LIMBO_ETC(9999, "Unclassified error");
+  TURSO_FAILED_TO_PARSE_BYTE_ARRAY(1100, "Failed to parse ut8 byte array"),
+  TURSO_FAILED_TO_PREPARE_STATEMENT(1200, "Failed to prepare statement"),
+  TURSO_ETC(9999, "Unclassified error");
 
   public final int code;
   public final String message;
@@ -48,14 +48,14 @@ public enum LimboErrorCode {
    * @param code Error code
    * @param message Message for the error.
    */
-  LimboErrorCode(int code, String message) {
+  TursoErrorCode(int code, String message) {
     this.code = code;
     this.message = message;
   }
 
-  public static LimboErrorCode getErrorCode(int errorCode) {
-    for (LimboErrorCode limboErrorCode : LimboErrorCode.values()) {
-      if (errorCode == limboErrorCode.code) return limboErrorCode;
+  public static TursoErrorCode getErrorCode(int errorCode) {
+    for (TursoErrorCode tursoErrorCode : TursoErrorCode.values()) {
+      if (errorCode == tursoErrorCode.code) return tursoErrorCode;
     }
 
     return UNKNOWN_ERROR;
@@ -63,6 +63,6 @@ public enum LimboErrorCode {
 
   @Override
   public String toString() {
-    return "LimboErrorCode{" + "code=" + code + ", message='" + message + '\'' + '}';
+    return ("tursoErrorCode{" + "code=" + code + ", message='" + message + '\'' + '}');
   }
 }

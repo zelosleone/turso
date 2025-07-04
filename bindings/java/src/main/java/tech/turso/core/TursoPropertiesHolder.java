@@ -7,21 +7,24 @@ import tech.turso.jdbc4.JDBC4DatabaseMetaData;
 import tech.turso.utils.Logger;
 import tech.turso.utils.LoggerFactory;
 
-public class LimboPropertiesHolder {
-  private static final Logger logger = LoggerFactory.getLogger(LimboPropertiesHolder.class);
+public class TursoPropertiesHolder {
+
+  private static final Logger logger = LoggerFactory.getLogger(TursoPropertiesHolder.class);
 
   private static String driverName = "";
   private static String driverVersion = "";
 
   static {
-    try (InputStream limboJdbcPropStream =
-        JDBC4DatabaseMetaData.class.getClassLoader().getResourceAsStream("limbo-jdbc.properties")) {
-      if (limboJdbcPropStream == null) {
-        throw new IOException("Cannot load limbo-jdbc.properties from jar");
+    try (InputStream tursoJdbcPropStream =
+        JDBC4DatabaseMetaData.class
+            .getClassLoader()
+            .getResourceAsStream("turso-jdbc.properties"); ) {
+      if (tursoJdbcPropStream == null) {
+        throw new IOException("Cannot load turso-jdbc.properties from jar");
       }
 
       final Properties properties = new Properties();
-      properties.load(limboJdbcPropStream);
+      properties.load(tursoJdbcPropStream);
       driverName = properties.getProperty("driverName");
       driverVersion = properties.getProperty("driverVersion");
     } catch (IOException e) {

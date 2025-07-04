@@ -5,12 +5,12 @@ import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Factory class for managing and creating instances of {@link LimboDB}. This class ensures that
- * multiple instances of {@link LimboDB} with the same URL are not created.
+ * Factory class for managing and creating instances of {@link TursoDB}. This class ensures that
+ * multiple instances of {@link TursoDB} with the same URL are not created.
  */
-public final class LimboDBFactory {
+public final class TursoDBFactory {
 
-  private static final ConcurrentHashMap<String, LimboDB> databaseHolder =
+  private static final ConcurrentHashMap<String, TursoDB> databaseHolder =
       new ConcurrentHashMap<>();
 
   /**
@@ -20,11 +20,11 @@ public final class LimboDBFactory {
    * @param url the URL of the database
    * @param filePath the path to the database file
    * @param properties additional properties for the database connection
-   * @return an instance of {@link LimboDB}
+   * @return an instance of {@link tursoDB}
    * @throws SQLException if there is an error opening the connection
    * @throws IllegalArgumentException if the fileName is empty
    */
-  public static LimboDB open(String url, String filePath, Properties properties)
+  public static TursoDB open(String url, String filePath, Properties properties)
       throws SQLException {
     if (databaseHolder.containsKey(url)) {
       return databaseHolder.get(url);
@@ -34,10 +34,10 @@ public final class LimboDBFactory {
       throw new IllegalArgumentException("filePath should not be empty");
     }
 
-    final LimboDB database;
+    final TursoDB database;
     try {
-      LimboDB.load();
-      database = LimboDB.create(url, filePath);
+      TursoDB.load();
+      database = TursoDB.create(url, filePath);
     } catch (Exception e) {
       throw new SQLException("Error opening connection", e);
     }

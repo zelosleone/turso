@@ -4,11 +4,12 @@ import java.sql.DriverPropertyInfo;
 import java.util.Arrays;
 import java.util.Properties;
 
-/** Limbo Configuration. */
-public final class LimboConfig {
-  private final Properties pragma;
+/** Turso Configuration. */
+public final class TursoConfig {
 
-  public LimboConfig(Properties properties) {
+  private Properties pragma;
+
+  public TursoConfig(Properties properties) {
     this.pragma = properties;
   }
 
@@ -33,6 +34,7 @@ public final class LimboConfig {
 
   public enum Pragma {
     ;
+
     private final String pragmaName;
     private final String description;
     private final String[] choices;
