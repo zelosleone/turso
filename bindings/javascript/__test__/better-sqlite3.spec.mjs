@@ -4,7 +4,7 @@ import path from "node:path"
 import DualTest from "./dual-test.mjs";
 
 const inMemoryTest = new DualTest(":memory:");
-const foobarTest = new DualTest("foorar.db");
+const foobarTest = new DualTest("foobar.db");
 
 inMemoryTest.both("Open in-memory database", async (t) => {
   const db = t.context.db;
