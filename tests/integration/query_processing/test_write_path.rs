@@ -724,13 +724,12 @@ fn test_wal_bad_frame() -> anyhow::Result<()> {
                 let panic_msg = error.downcast_ref::<LimboError>().unwrap();
                 let msg = match panic_msg {
                     LimboError::ParseError(message) => message,
-                    _ => panic!("Unexpected panic message: {}", panic_msg),
+                    _ => panic!("Unexpected panic message: {panic_msg}"),
                 };
 
                 assert!(
-                    msg.contains("Table t2 not found"),
-                    "Expected panic message not found. Got: {}",
-                    msg
+                    msg.contains("no such table: t2"),
+                    "Expected panic message not found. Got: {msg}"
                 );
             }
             Ok(_) => panic!("Expected query to panic, but it succeeded"),
@@ -786,8 +785,8 @@ pub fn run_query_core(
     query: &str,
     mut on_row: Option<impl FnMut(&Row)>,
 ) -> anyhow::Result<()> {
-    match conn.query(query)? {
-        Some(ref mut rows) => loop {
+    if let Some(ref mut rows) = conn.query(query)? {
+        loop {
             match rows.step()? {
                 StepResult::IO => {
                     rows.run_once()?;
@@ -801,8 +800,7 @@ pub fn run_query_core(
                 }
                 _ => unreachable!(),
             }
-        },
-        None => {}
+        }
     };
     Ok(())
 }
