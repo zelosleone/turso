@@ -12,6 +12,10 @@ fn build_keyword_map(
     func_name: &str,
     keywords: &[[&'static str; 2]],
 ) -> Result<()> {
+    assert!(!keywords.is_empty());
+    let mut min_len = keywords[0][0].as_bytes().len();
+    let mut max_len = keywords[0][0].as_bytes().len();
+
     struct PathEntry {
         result: Option<&'static str>,
         sub_entries: HashMap<u8, Box<PathEntry>>,
@@ -24,6 +28,15 @@ fn build_keyword_map(
 
     for keyword in keywords {
         let keyword_b = keyword[0].as_bytes();
+
+        if keyword_b.len() < min_len {
+            min_len = keyword_b.len();
+        }
+
+        if keyword_b.len() > max_len {
+            max_len = keyword_b.len();
+        }
+
         let mut current = &mut paths;
 
         for &b in keyword_b {
@@ -81,12 +94,25 @@ fn build_keyword_map(
         Ok(())
     }
 
+    writeln!(
+        writer,
+        "pub(crate) const MAX_KEYWORD_LEN: usize = {};",
+        max_len
+    )?;
+    writeln!(
+        writer,
+        "pub(crate) const MIN_KEYWORD_LEN: usize = {};",
+        min_len
+    )?;
     writeln!(writer, "/// Check if `word` is a keyword")?;
     writeln!(
         writer,
         "pub fn {}(buf: &[u8]) -> Option<TokenType> {{",
         func_name
     )?;
+    writeln!(writer, "if buf.len() < MIN_KEYWORD_LEN || buf.len() > MAX_KEYWORD_LEN {{")?;
+    writeln!(writer, "return None;")?;
+    writeln!(writer, "}}")?;
     writeln!(writer, "let mut idx = 0;")?;
     write_entry(writer, &paths)?;
     writeln!(writer, "}}")?;

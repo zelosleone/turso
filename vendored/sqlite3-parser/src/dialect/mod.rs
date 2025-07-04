@@ -41,7 +41,6 @@ pub(crate) fn from_bytes(bytes: &[u8]) -> String {
 }
 
 include!(concat!(env!("OUT_DIR"), "/keywords.rs"));
-pub(crate) const MAX_KEYWORD_LEN: usize = 17;
 
 pub(crate) fn is_identifier(name: &str) -> bool {
     if name.is_empty() {
