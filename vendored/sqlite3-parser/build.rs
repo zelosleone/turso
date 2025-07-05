@@ -7,6 +7,20 @@ use std::process::Command;
 
 use cc::Build;
 
+/// generates a trie-like function with nested match expressions for parsing SQL keywords
+/// example: input: [["ABORT", "TK_ABORT"], ["ACTION", "TK_ACTION"], ["ADD", "TK_ADD"],]
+/// A
+/// ├─ B
+/// │  ├─ O
+/// │  │  ├─ R
+/// │  │  │  ├─ T -> TK_ABORT
+/// ├─ C
+/// │  ├─ T
+/// │  │  ├─ I
+/// │  │  │  ├─ O
+/// │  │  │  │  ├─ N -> TK_ACTION
+/// ├─ D
+/// │  ├─ D -> TK_ADD
 fn build_keyword_map(
     writer: &mut impl Write,
     func_name: &str,
