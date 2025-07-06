@@ -119,16 +119,20 @@ pub fn translate_insert(
 
     let cdc_table = program.capture_data_changes_mode().table();
     let cdc_table = if let Some(cdc_table) = cdc_table {
-        let Some(turso_cdc_table) = schema.get_table(&cdc_table) else {
-            crate::bail_parse_error!("no such table: {}", cdc_table);
-        };
-        let Some(cdc_btree) = turso_cdc_table.btree().clone() else {
-            crate::bail_parse_error!("no such table: {}", cdc_table);
-        };
-        Some((
-            program.alloc_cursor_id(CursorType::BTreeTable(cdc_btree.clone())),
-            cdc_btree,
-        ))
+        if table.get_name() != cdc_table {
+            let Some(turso_cdc_table) = schema.get_table(&cdc_table) else {
+                crate::bail_parse_error!("no such table: {}", cdc_table);
+            };
+            let Some(cdc_btree) = turso_cdc_table.btree().clone() else {
+                crate::bail_parse_error!("no such table: {}", cdc_table);
+            };
+            Some((
+                program.alloc_cursor_id(CursorType::BTreeTable(cdc_btree.clone())),
+                cdc_btree,
+            ))
+        } else {
+            None
+        }
     } else {
         None
     };
