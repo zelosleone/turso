@@ -1232,14 +1232,17 @@ public final class JDBC4ResultSet implements ResultSet, ResultSetMetaData {
 
   @Override
   public String getColumnLabel(int column) throws SQLException {
-    // TODO
-    return "";
+    // TODO: should consider "AS" keyword
+    return getColumnName(column);
   }
 
   @Override
   public String getColumnName(int column) throws SQLException {
-    // TODO
-    return "";
+    if (column > 0 && column <= resultSet.getColumnNames().length) {
+      return resultSet.getColumnNames()[column - 1];
+    }
+
+    throw new SQLException("Index out of bound: " + column);
   }
 
   @Override
