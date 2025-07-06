@@ -7,7 +7,7 @@ use turso_sqlite3_parser::ast::PragmaName;
 bitflags! {
     // Flag names match those used in SQLite:
     // https://github.com/sqlite/sqlite/blob/b3c1884b65400da85636458298bd77cbbfdfb401/tool/mkpragmatab.tcl#L22-L29
-    struct PragmaFlags: u8 {
+    pub struct PragmaFlags: u8 {
         const NeedSchema = 0x01; /* Force schema load before running */
         const NoColumns  = 0x02; /* OP_ResultRow called with zero columns */
         const NoColumns1 = 0x04; /* zero columns if RHS argument is present */
@@ -19,9 +19,9 @@ bitflags! {
     }
 }
 
-struct Pragma {
-    flags: PragmaFlags,
-    columns: &'static [&'static str],
+pub struct Pragma {
+    pub flags: PragmaFlags,
+    pub columns: &'static [&'static str],
 }
 
 impl Pragma {
@@ -30,7 +30,7 @@ impl Pragma {
     }
 }
 
-fn pragma_for(pragma: PragmaName) -> Pragma {
+pub fn pragma_for(pragma: PragmaName) -> Pragma {
     use PragmaName::*;
 
     match pragma {
@@ -79,7 +79,7 @@ fn pragma_for(pragma: PragmaName) -> Pragma {
         ),
         CaptureDataChanges => Pragma::new(
             PragmaFlags::NeedSchema | PragmaFlags::Result0 | PragmaFlags::SchemaReq,
-            &["capture_data_changes"],
+            &["mode", "table"],
         ),
     }
 }

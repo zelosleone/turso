@@ -43,6 +43,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use crate::storage::{header_accessor, wal::DummyWAL};
 use crate::translate::optimizer::optimize_plan;
+use crate::translate::pragma::TURSO_CDC_TABLE_NAME;
 use crate::util::{OpenMode, OpenOptions};
 use crate::vtab::VirtualTable;
 use core::str;
@@ -278,7 +279,7 @@ impl Database {
                 cache_size: Cell::new(default_cache_size),
                 readonly: Cell::new(false),
                 wal_checkpoint_disabled: Cell::new(false),
-                capture_data_changes: Cell::new(false),
+                capture_data_changes: RefCell::new(CaptureDataChangesMode::Off),
             });
             if let Err(e) = conn.register_builtins() {
                 return Err(LimboError::ExtensionError(e));
@@ -331,7 +332,7 @@ impl Database {
             cache_size: Cell::new(default_cache_size),
             readonly: Cell::new(false),
             wal_checkpoint_disabled: Cell::new(false),
-            capture_data_changes: Cell::new(false),
+            capture_data_changes: RefCell::new(CaptureDataChangesMode::Off),
         });
 
         if let Err(e) = conn.register_builtins() {
@@ -436,6 +437,39 @@ fn get_schema_version(conn: &Arc<Connection>, io: &Arc<dyn IO>) -> Result<u32> {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum CaptureDataChangesMode {
+    Off,
+    RowidOnly { table: String },
+}
+
+impl CaptureDataChangesMode {
+    pub fn parse(value: &str) -> Result<CaptureDataChangesMode> {
+        let (mode, table) = value
+            .split_once(",")
+            .unwrap_or((value, TURSO_CDC_TABLE_NAME));
+        match mode {
+            "off" => Ok(CaptureDataChangesMode::Off),
+            "rowid-only" => Ok(CaptureDataChangesMode::RowidOnly { table: table.to_string() }),
+            _ => Err(LimboError::InvalidArgument(
+                "unexpected pragma value: expected '<mode>' or '<mode>,<cdc-table-name>' parameter where mode is one of off|rowid-only".to_string(),
+            ))
+        }
+    }
+    pub fn mode_name(&self) -> &str {
+        match self {
+            CaptureDataChangesMode::Off => "off",
+            CaptureDataChangesMode::RowidOnly { .. } => "rowid-only",
+        }
+    }
+    pub fn table(&self) -> Option<&str> {
+        match self {
+            CaptureDataChangesMode::Off => None,
+            CaptureDataChangesMode::RowidOnly { table } => Some(table.as_str()),
+        }
+    }
+}
+
 pub struct Connection {
     _db: Arc<Database>,
     pager: Rc<Pager>,
@@ -452,7 +486,7 @@ pub struct Connection {
     cache_size: Cell<i32>,
     readonly: Cell<bool>,
     wal_checkpoint_disabled: Cell<bool>,
-    capture_data_changes: Cell<bool>,
+    capture_data_changes: RefCell<CaptureDataChangesMode>,
 }
 
 impl Connection {
@@ -727,11 +761,11 @@ impl Connection {
         self.cache_size.set(size);
     }
 
-    pub fn get_capture_data_changes(&self) -> bool {
-        self.capture_data_changes.get()
+    pub fn get_capture_data_changes(&self) -> std::cell::Ref<'_, CaptureDataChangesMode> {
+        self.capture_data_changes.borrow()
     }
-    pub fn set_capture_data_changes(&self, value: bool) {
-        self.capture_data_changes.set(value);
+    pub fn set_capture_data_changes(&self, opts: CaptureDataChangesMode) {
+        self.capture_data_changes.replace(opts);
     }
 
     #[cfg(feature = "fs")]

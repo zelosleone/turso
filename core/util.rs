@@ -1044,6 +1044,19 @@ pub fn parse_signed_number(expr: &Expr) -> Result<Value> {
     }
 }
 
+pub fn parse_string(expr: &Expr) -> Result<String> {
+    match expr {
+        Expr::Name(ast::Name(s)) if s.len() >= 2 && s.starts_with("'") && s.ends_with("'") => {
+            Ok(s[1..s.len() - 1].to_string())
+        }
+        _ => Err(LimboError::InvalidArgument(format!(
+            "string parameter expected, got {:?} instead",
+            expr
+        ))),
+    }
+}
+
+#[allow(unused)]
 pub fn parse_pragma_bool(expr: &Expr) -> Result<bool> {
     const TRUE_VALUES: &[&str] = &["yes", "true", "on"];
     const FALSE_VALUES: &[&str] = &["no", "false", "off"];

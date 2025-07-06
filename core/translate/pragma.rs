@@ -6,15 +6,16 @@ use std::sync::Arc;
 use turso_sqlite3_parser::ast::{self, ColumnDefinition, Expr};
 use turso_sqlite3_parser::ast::{PragmaName, QualifiedName};
 
+use crate::pragma::pragma_for;
 use crate::schema::Schema;
 use crate::storage::pager::AutoVacuumMode;
 use crate::storage::sqlite3_ondisk::MIN_PAGE_CACHE_SIZE;
 use crate::storage::wal::CheckpointMode;
 use crate::translate::schema::translate_create_table;
-use crate::util::{normalize_ident, parse_pragma_bool, parse_signed_number};
+use crate::util::{normalize_ident, parse_signed_number, parse_string};
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts};
 use crate::vdbe::insn::{Cookie, Insn};
-use crate::{bail_parse_error, storage, LimboError, Value};
+use crate::{bail_parse_error, storage, CaptureDataChangesMode, LimboError, Value};
 use std::str::FromStr;
 use strum::IntoEnumIterator;
 
@@ -208,14 +209,14 @@ fn update_pragma(
         }
         PragmaName::IntegrityCheck => unreachable!("integrity_check cannot be set"),
         PragmaName::CaptureDataChanges => {
-            let value = parse_pragma_bool(&value)?;
+            let value = parse_string(&value)?;
             // todo(sivukhin): ideally, we should consistently update capture_data_changes connection flag only after successfull execution of schema change statement
             // but for now, let's keep it as is...
-            connection.set_capture_data_changes(value);
-            if value {
-                // make sure that we have turso_cdc table created
-                return translate_create_table(
-                    QualifiedName::single(ast::Name(TURSO_CDC_TABLE_NAME.into())),
+            let opts = CaptureDataChangesMode::parse(&value)?;
+            if let Some(table) = &opts.table() {
+                // make sure that we have table created
+                program = translate_create_table(
+                    QualifiedName::single(ast::Name(table.to_string())),
                     false,
                     ast::CreateTableBody::columns_and_constraints_from_definition(
                         turso_cdc_table_columns(),
@@ -226,8 +227,9 @@ fn update_pragma(
                     true,
                     schema,
                     program,
-                );
+                )?;
             }
+            connection.set_capture_data_changes(opts);
             Ok(program)
         }
     }
@@ -381,9 +383,18 @@ fn query_pragma(
             translate_integrity_check(schema, &mut program)?;
         }
         PragmaName::CaptureDataChanges => {
-            program.emit_bool(connection.get_capture_data_changes(), register);
-            program.emit_result_row(register, 1);
-            program.add_pragma_result_column(pragma.to_string());
+            let pragma = pragma_for(pragma);
+            let second_column = program.alloc_register();
+            let opts = connection.get_capture_data_changes();
+            program.emit_string8(opts.mode_name().to_string(), register);
+            if let Some(table) = &opts.table() {
+                program.emit_string8(table.to_string(), second_column);
+            } else {
+                program.emit_null(second_column, None);
+            }
+            program.emit_result_row(register, 2);
+            program.add_pragma_result_column(pragma.columns[0].to_string());
+            program.add_pragma_result_column(pragma.columns[1].to_string());
         }
     }
 

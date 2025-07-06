@@ -1,6 +1,5 @@
 use std::{cell::Cell, cmp::Ordering, rc::Rc, sync::Arc};
 
-use bitflags::bitflags;
 use tracing::{instrument, Level};
 use turso_sqlite3_parser::ast::{self, TableInternalId};
 
@@ -13,7 +12,7 @@ use crate::{
         emitter::TransactionMode,
         plan::{ResultSetColumn, TableReferences},
     },
-    Connection, Value, VirtualTable,
+    CaptureDataChangesMode, Connection, Value, VirtualTable,
 };
 
 #[derive(Default)]
@@ -111,7 +110,7 @@ pub struct ProgramBuilder {
     nested_level: usize,
     init_label: BranchOffset,
     start_offset: BranchOffset,
-    flags: ProgramBuilderFlags,
+    capture_data_changes_mode: CaptureDataChangesMode,
 }
 
 #[derive(Debug, Clone)]
@@ -135,12 +134,6 @@ pub enum QueryMode {
     Explain,
 }
 
-bitflags! {
-    pub struct ProgramBuilderFlags: u8 {
-        const CaptureDataChanges = 0x01; /* emit plans with capture data changes instructions for INSERT/DELETE/UPDATE statements */
-    }
-}
-
 impl From<ast::Cmd> for QueryMode {
     fn from(stmt: ast::Cmd) -> Self {
         match stmt {
@@ -159,7 +152,7 @@ pub struct ProgramBuilderOpts {
 impl ProgramBuilder {
     pub fn new(
         query_mode: QueryMode,
-        flags: ProgramBuilderFlags,
+        capture_data_changes_mode: CaptureDataChangesMode,
         opts: ProgramBuilderOpts,
     ) -> Self {
         Self {
@@ -184,12 +177,12 @@ impl ProgramBuilder {
             // These labels will be filled when `prologue()` is called
             init_label: BranchOffset::Placeholder,
             start_offset: BranchOffset::Placeholder,
-            flags,
+            capture_data_changes_mode,
         }
     }
 
-    pub fn flags(&self) -> &ProgramBuilderFlags {
-        &self.flags
+    pub fn capture_data_changes_mode(&self) -> &CaptureDataChangesMode {
+        &self.capture_data_changes_mode
     }
 
     pub fn extend(&mut self, opts: &ProgramBuilderOpts) {
