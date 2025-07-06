@@ -6364,7 +6364,11 @@ fn compute_free_space(page: &PageContent, usable_space: u16) -> u16 {
 
 /// Allocate space for a cell on a page.
 fn allocate_cell_space(page_ref: &PageContent, amount: u16, usable_space: u16) -> Result<u16> {
-    let amount = amount as usize;
+    let mut amount = amount as usize;
+    // the minimum cell size is 4 bytes, so we need to ensure that we allocate at least that much space.
+    if amount < 4 {
+        amount = 4;
+    }
 
     let (cell_offset, _) = page_ref.cell_pointer_array_offset_and_size();
     let gap = cell_offset + 2 * page_ref.cell_count();

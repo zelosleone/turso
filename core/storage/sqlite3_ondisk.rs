@@ -668,7 +668,11 @@ impl PageContent {
                 if overflows {
                     to_read + n_payload
                 } else {
-                    len_payload as usize + n_payload
+                    let mut size = len_payload as usize + n_payload;
+                    if size < 4 {
+                        size = 4;
+                    }
+                    size
                 }
             }
             PageType::TableLeaf => {
@@ -683,7 +687,11 @@ impl PageContent {
                 if overflows {
                     to_read + n_payload + n_rowid
                 } else {
-                    len_payload as usize + n_payload + n_rowid
+                    let mut size = len_payload as usize + n_payload + n_rowid;
+                    if size < 4 {
+                        size = 4;
+                    }
+                    size
                 }
             }
         };
