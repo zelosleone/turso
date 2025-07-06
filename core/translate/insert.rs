@@ -120,7 +120,7 @@ pub fn translate_insert(
     let cdc_table = program.capture_data_changes_mode().table();
     let cdc_table = if let Some(cdc_table) = cdc_table {
         if table.get_name() != cdc_table {
-            let Some(turso_cdc_table) = schema.get_table(&cdc_table) else {
+            let Some(turso_cdc_table) = schema.get_table(cdc_table) else {
                 crate::bail_parse_error!("no such table: {}", cdc_table);
             };
             let Some(cdc_btree) = turso_cdc_table.btree().clone() else {
