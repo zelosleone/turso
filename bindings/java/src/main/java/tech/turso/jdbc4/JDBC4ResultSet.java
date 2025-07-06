@@ -319,10 +319,8 @@ public final class JDBC4ResultSet implements ResultSet, ResultSetMetaData {
   }
 
   @Override
-  @SkipNullableCheck
   public Object getObject(int columnIndex) throws SQLException {
-    // TODO
-    return null;
+    return resultSet.get(columnIndex);
   }
 
   @Override
