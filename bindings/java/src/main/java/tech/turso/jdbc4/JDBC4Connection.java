@@ -24,7 +24,7 @@ public final class JDBC4Connection implements Connection {
   }
 
   public TursoStatement prepare(String sql) throws SQLException {
-    final TursoStatement statement =  connection.prepare(sql);
+    final TursoStatement statement = connection.prepare(sql);
     statement.initializeColumnMetadata();
     return statement;
   }
