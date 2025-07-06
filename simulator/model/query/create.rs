@@ -3,6 +3,7 @@ use std::fmt::Display;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    generation::Shadow,
     model::table::{SimValue, Table},
     SimulatorEnv,
 };
@@ -12,13 +13,21 @@ pub(crate) struct Create {
     pub(crate) table: Table,
 }
 
-impl Create {
-    pub(crate) fn shadow(&self, env: &mut SimulatorEnv) -> Vec<Vec<SimValue>> {
+impl Shadow for Create {
+    type Result = anyhow::Result<Vec<Vec<SimValue>>>;
+
+    fn shadow(&self, env: &mut SimulatorEnv) -> Self::Result {
         if !env.tables.iter().any(|t| t.name == self.table.name) {
             env.tables.push(self.table.clone());
+            Ok(vec![])
+        } else {
+            Err(anyhow::anyhow!(
+                "Table {} already exists. CREATE TABLE statement ignored.",
+                self.table.name
+            ))
         }
 
-        vec![]
+        
     }
 }
 

@@ -5,7 +5,7 @@ use turso_core::{Connection, LimboError, Result, StepResult};
 
 use crate::generation::{
     pick_index,
-    plan::{Interaction, InteractionPlan, InteractionPlanState, ResultSet},
+    plan::{Interaction, InteractionPlan, InteractionPlanState, ResultSet}, Shadow as _,
 };
 
 use super::env::{SimConnection, SimulatorEnv};

@@ -72,6 +72,7 @@ impl InteractionPlan {
                             }
                             Property::SelectLimit { .. }
                             | Property::SelectSelectOptimizer { .. }
+                            | Property::WhereTrueFalseNull { .. }
                             | Property::FsyncNoWait { .. }
                             | Property::FaultyQuery { .. } => {}
                         }

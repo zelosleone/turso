@@ -1,12 +1,16 @@
 use serde::{Deserialize, Serialize};
 use turso_core::LimboError;
-use turso_sqlite3_parser::ast;
+use turso_sqlite3_parser::ast::{self};
 
 use crate::{
     model::{
         query::{
             predicate::Predicate,
-            select::{Distinctness, ResultColumn},
+            select::{
+                CompoundOperator, CompoundSelect, Distinctness, ResultColumn, SelectBody,
+                SelectInner,
+            },
+            update::Update,
             Create, Delete, Drop, Insert, Query, Select,
         },
         table::SimValue,
@@ -127,6 +131,14 @@ pub(crate) enum Property {
         table: String,
         predicate: Predicate,
     },
+    /// Where-True-False-Null is a property that tests the boolean logic implementation
+    /// in the database. It relies on the fact that `P == true || P == false || P == null` should return true,
+    /// as SQLite uses a ternary logic system. This property is invented in "Finding Bugs in Database Systems via Query Partitioning"
+    /// by Rigger et al. and it is canonically called Ternary Logic Partitioning (TLP).
+    WhereTrueFalseNull {
+        select: Select,
+        predicate: Predicate,
+    },
     /// FsyncNoWait is a property which tests if we do not loose any data after not waiting for fsync.
     ///
     /// # Interactions
@@ -154,6 +166,7 @@ impl Property {
             Property::DeleteSelect { .. } => "Delete-Select",
             Property::DropSelect { .. } => "Drop-Select",
             Property::SelectSelectOptimizer { .. } => "Select-Select-Optimizer",
+            Property::WhereTrueFalseNull { .. } => "Where-True-False-Null",
             Property::FsyncNoWait { .. } => "FsyncNoWait",
             Property::FaultyQuery { .. } => "FaultyQuery",
         }
@@ -237,17 +250,17 @@ impl Property {
                 let table_name = create.table.name.clone();
 
                 let assertion = Interaction::Assertion(Assertion {
-                    message:
-                        "creating two tables with the name should result in a failure for the second query"
-                            .to_string(),
-                    func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
-                        let last = stack.last().unwrap();
-                        match last {
-                            Ok(_) => Ok(false),
-                            Err(e) => Ok(e.to_string().to_lowercase().contains(&format!("table {table_name} already exists"))),
-                        }
-                    }),
-                });
+                            message:
+                                "creating two tables with the name should result in a failure for the second query"
+                                    .to_string(),
+                            func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
+                                let last = stack.last().unwrap();
+                                match last {
+                                    Ok(_) => Ok(false),
+                                    Err(e) => Ok(e.to_string().to_lowercase().contains(&format!("table {table_name} already exists"))),
+                                }
+                            }),
+                        });
 
                 let mut interactions = Vec::new();
                 interactions.push(assumption);
@@ -259,14 +272,15 @@ impl Property {
                 interactions
             }
             Property::SelectLimit { select } => {
-                let table_name = select.table.clone();
 
                 let assumption = Interaction::Assumption(Assertion {
-                    message: format!("table {} exists", table_name),
+                    message: format!("table ({}) exists", select.dependencies().into_iter().collect::<Vec<_>>().join(", ")),
                     func: Box::new({
-                        let table_name = table_name.clone();
+                        let table_name = select.dependencies();
                         move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
-                            Ok(env.tables.iter().any(|t| t.name == table_name))
+                            Ok(table_name
+                                .iter()
+                                .all(|table| env.tables.iter().any(|t| t.name == *table)))
                         }
                     }),
                 });
@@ -312,13 +326,10 @@ impl Property {
                     predicate: predicate.clone(),
                 }));
 
-                let select = Interaction::Query(Query::Select(Select {
-                    table: table.clone(),
-                    result_columns: vec![ResultColumn::Star],
-                    predicate: predicate.clone(),
-                    limit: None,
-                    distinct: Distinctness::All,
-                }));
+                let select = Interaction::Query(Query::Select(Select::simple(
+                    table.clone(),
+                    predicate.clone(),
+                )));
 
                 let assertion = Interaction::Assertion(Assertion {
                     message: format!("`{}` should return no values for table `{}`", select, table,),
@@ -399,21 +410,17 @@ impl Property {
                         }
                     }),
                 });
-                let select1 = Interaction::Query(Query::Select(Select {
-                    table: table.clone(),
-                    result_columns: vec![ResultColumn::Expr(predicate.clone())],
-                    predicate: Predicate::true_(),
-                    limit: None,
-                    distinct: Distinctness::All,
-                }));
 
-                let select2_query = Query::Select(Select {
-                    table: table.clone(),
-                    result_columns: vec![ResultColumn::Star],
-                    predicate: predicate.clone(),
-                    limit: None,
-                    distinct: Distinctness::All,
-                });
+                let select1 = Interaction::Query(Query::Select(Select::single(
+                    table.clone(),
+                    vec![ResultColumn::Expr(predicate.clone())],
+                    Predicate::true_(),
+                    None,
+                    Distinctness::All,
+                )));
+
+                let select2_query = Query::Select(Select::simple(table.clone(), predicate.clone()));
+
                 let select2 = Interaction::Query(select2_query);
 
                 let assertion = Interaction::Assertion(Assertion {
@@ -426,8 +433,8 @@ impl Property {
                                 // If rows1 results have more than 1 column, there is a problem
                                 if rows1.iter().any(|vs| vs.len() > 1) {
                                     return Err(LimboError::InternalError(
-                                        "Select query without the star should return only one column".to_string(),
-                                    ));
+                                                "Select query without the star should return only one column".to_string(),
+                                            ));
                                 }
                                 // Count the 1s in the select query without the star
                                 let rows1_count = rows1
@@ -437,9 +444,21 @@ impl Property {
                                         v.as_bool()
                                     })
                                     .count();
+                                tracing::debug!(
+                                    "select1 returned {} rows, select2 returned {} rows",
+                                    rows1_count,
+                                    rows2.len()
+                                );
                                 Ok(rows1_count == rows2.len())
                             }
-                            _ => Ok(false),
+                            (Err(e1), Err(e2)) => {
+                                tracing::debug!("Error in select1 AND select2: {}, {}", e1, e2);
+                                Ok(true)
+                            }
+                            (Err(e), _) | (_, Err(e)) => {
+                                tracing::error!("Error in select1 OR select2: {}", e);
+                                Err(LimboError::InternalError(e.to_string()))
+                            }
                         }
                     }),
                 });
@@ -457,19 +476,141 @@ impl Property {
                 let first = std::iter::once(Interaction::FaultyQuery(query.clone()));
                 Vec::from_iter(first.chain(checks))
             }
+            Property::WhereTrueFalseNull { select, predicate } => {
+                let assumption = Interaction::Assumption(Assertion {
+                    message: format!(
+                        "tables ({}) exists",
+                        select
+                            .dependencies()
+                            .into_iter()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    func: Box::new({
+                        let tables = select.dependencies();
+                        move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
+                            Ok(tables
+                                .iter()
+                                .all(|table| env.tables.iter().any(|t| t.name == *table)))
+                        }
+                    }),
+                });
+
+                let old_predicate = select.body.select.where_clause.clone();
+
+                let p_true = Predicate::and(vec![old_predicate.clone(), predicate.clone()]);
+                let p_false = Predicate::and(vec![
+                    old_predicate.clone(),
+                    Predicate::not(predicate.clone()),
+                ]);
+                let p_null = Predicate::and(vec![
+                    old_predicate.clone(),
+                    Predicate::is(predicate.clone(), Predicate::null()),
+                ]);
+
+                let select_tlp = Select {
+                    body: SelectBody {
+                        select: Box::new(SelectInner {
+                            distinctness: select.body.select.distinctness,
+                            columns: select.body.select.columns.clone(),
+                            from: select.body.select.from.clone(),
+                            where_clause: p_true,
+                        }),
+                        compounds: vec![
+                            CompoundSelect {
+                                operator: CompoundOperator::UnionAll,
+                                select: Box::new(SelectInner {
+                                    distinctness: select.body.select.distinctness,
+                                    columns: select.body.select.columns.clone(),
+                                    from: select.body.select.from.clone(),
+                                    where_clause: p_false,
+                                }),
+                            },
+                            CompoundSelect {
+                                operator: CompoundOperator::UnionAll,
+                                select: Box::new(SelectInner {
+                                    distinctness: select.body.select.distinctness,
+                                    columns: select.body.select.columns.clone(),
+                                    from: select.body.select.from.clone(),
+                                    where_clause: p_null,
+                                }),
+                            },
+                        ],
+                    },
+                    limit: None,
+                };
+
+                let select = Interaction::Query(Query::Select(select.clone()));
+                let select_tlp = Interaction::Query(Query::Select(select_tlp));
+
+                // select and select_tlp should return the same rows
+                let assertion = Interaction::Assertion(Assertion {
+                    message: "select and select_tlp should return the same rows".to_string(),
+                    func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
+                        if stack.len() < 2 {
+                            return Err(LimboError::InternalError(
+                                "Not enough result sets on the stack".to_string(),
+                            ));
+                        }
+
+                        let select_result_set = stack.get(stack.len() - 2).unwrap();
+                        let select_tlp_result_set = stack.last().unwrap();
+
+                        match (select_result_set, select_tlp_result_set) {
+                            (Ok(select_rows), Ok(select_tlp_rows)) => {
+                                if select_rows.len() != select_tlp_rows.len() {
+                                    return Ok(false);
+                                }
+                                // Check if any row in select_rows is not in select_tlp_rows
+                                for row in select_rows.iter() {
+                                    if !select_tlp_rows.iter().any(|r| r == row) {
+                                        tracing::debug!(
+                                            "select and select_tlp returned different rows, ({}) is in select but not in select_tlp",
+                                            row.iter().map(|v| v.to_string()).collect::<Vec<String>>().join(", ")
+                                        );
+                                        return Ok(false);
+                                    }
+                                }
+                                // Check if any row in select_tlp_rows is not in select_rows
+                                for row in select_tlp_rows.iter() {
+                                    if !select_rows.iter().any(|r| r == row) {
+                                        tracing::debug!(
+                                            "select and select_tlp returned different rows, ({}) is in select_tlp but not in select",
+                                            row.iter().map(|v| v.to_string()).collect::<Vec<String>>().join(", ")
+                                        );
+
+                                        return Ok(false);
+                                    }
+                                }
+                                // If we reach here, the rows are the same
+                                tracing::trace!(
+                                    "select and select_tlp returned the same rows: {:?}",
+                                    select_rows
+                                );
+
+                                Ok(true)
+                            }
+                            (Err(e), _) | (_, Err(e)) => {
+                                tracing::error!("Error in select or select_tlp: {}", e);
+                                Err(LimboError::InternalError(e.to_string()))
+                            }
+                        }
+                    }),
+                });
+
+                vec![assumption, select, select_tlp, assertion]
+            }
         }
     }
 }
 
 fn assert_all_table_values(tables: &[String]) -> impl Iterator<Item = Interaction> + use<'_> {
     let checks = tables.iter().flat_map(|table| {
-        let select = Interaction::Query(Query::Select(Select {
-            table: table.clone(),
-            result_columns: vec![ResultColumn::Star],
-            predicate: Predicate::true_(),
-            limit: None,
-            distinct: Distinctness::All,
-        }));
+        let select = Interaction::Query(Query::Select(Select::simple(
+            table.clone(),
+            Predicate::true_(),
+        )));
+
         let assertion = Interaction::Assertion(Assertion {
             message: format!(
                 "table {} should contain all of its values after the wal reopened",
@@ -589,19 +730,28 @@ fn property_insert_values_select<R: rand::Rng>(
                     continue;
                 }
             }
+            Query::Update(Update {
+                table: t,
+                set_values: _,
+                predicate,
+            }) => {
+                // The inserted row will not be updated.
+                if t == &table.name && predicate.test(&row, table) {
+                    continue;
+                }
+            }
             _ => (),
         }
         queries.push(query);
     }
 
     // Select the row
-    let select_query = Select {
-        table: table.name.clone(),
-        result_columns: vec![ResultColumn::Star],
-        predicate: Predicate::arbitrary_from(rng, (table, &row)),
-        limit: None,
-        distinct: Distinctness::All,
-    };
+    let select_query = Select::simple(
+        table.name.clone(),
+        Predicate::arbitrary_from(rng, (table, &row)),
+    );
+
+    println!("Select query: {select_query:?}");
 
     Property::InsertValuesSelect {
         insert: insert_query,
@@ -614,14 +764,16 @@ fn property_insert_values_select<R: rand::Rng>(
 fn property_select_limit<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Property {
     // Get a random table
     let table = pick(&env.tables, rng);
+    println!("Selected table for 'property_select_limit': {}", table.name);
     // Select the table
-    let select = Select {
-        table: table.name.clone(),
-        result_columns: vec![ResultColumn::Star],
-        predicate: Predicate::arbitrary_from(rng, table),
-        limit: Some(rng.gen_range(1..=5)),
-        distinct: Distinctness::All,
-    };
+    let select = Select::single(
+        table.name.clone(),
+        vec![ResultColumn::Star],
+        Predicate::arbitrary_from(rng, table),
+        Some(rng.gen_range(1..=5)),
+        Distinctness::All,
+    );
+    println!("Select query for 'property_select_limit': {select:?}");
     Property::SelectLimit { select }
 }
 
@@ -726,13 +878,7 @@ fn property_drop_select<R: rand::Rng>(
         queries.push(query);
     }
 
-    let select = Select {
-        table: table.name.clone(),
-        result_columns: vec![ResultColumn::Star],
-        predicate: Predicate::arbitrary_from(rng, table),
-        limit: None,
-        distinct: Distinctness::All,
-    };
+    let select = Select::simple(table.name.clone(), Predicate::arbitrary_from(rng, table));
 
     Property::DropSelect {
         table: table.name.clone(),
@@ -759,6 +905,21 @@ fn property_select_select_optimizer<R: rand::Rng>(rng: &mut R, env: &SimulatorEn
     }
 }
 
+fn property_where_true_false_null<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Property {
+    // Get a random table
+    let table = pick(&env.tables, rng);
+    // Generate a random predicate
+    let p1 = Predicate::arbitrary_from(rng, table);
+    let p2 = Predicate::arbitrary_from(rng, table);
+
+    // Create the select query
+    let select = Select::simple(table.name.clone(), p1);
+
+    Property::WhereTrueFalseNull {
+        select,
+        predicate: p2,
+    }
+}
 fn property_fsync_no_wait<R: rand::Rng>(
     rng: &mut R,
     env: &SimulatorEnv,
@@ -837,6 +998,14 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
                         0.0
                     },
                     Box::new(|rng: &mut R| property_select_select_optimizer(rng, env)),
+                ),
+                (
+                    if !env.opts.disable_where_true_false_null {
+                        remaining_.read / 2.0
+                    } else {
+                        0.0
+                    },
+                    Box::new(|rng: &mut R| property_where_true_false_null(rng, env)),
                 ),
                 (
                     if !env.opts.disable_fsync_no_wait {

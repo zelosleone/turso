@@ -7,9 +7,13 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+
+use tracing;
+
 use turso_core::{Connection, Result, StepResult, IO};
 
 use crate::{
+    generation::Shadow,
     model::{
         query::{update::Update, Create, CreateIndex, Delete, Drop, Insert, Query, Select},
         table::SimValue,
@@ -104,6 +108,40 @@ pub(crate) enum Interactions {
     Property(Property),
     Query(Query),
     Fault(Fault),
+}
+
+impl Shadow for Interactions {
+    type Result = ();
+
+    fn shadow(&self, env: &mut SimulatorEnv) {
+        match self {
+            Interactions::Property(property) => {
+                let initial_tables = env.tables.clone();
+                let mut is_error = false;
+                for interaction in property.interactions() {
+                    match interaction {
+                        Interaction::Query(query)
+                        | Interaction::FsyncQuery(query)
+                        | Interaction::FaultyQuery(query) => {
+                            is_error = is_error || query.shadow(env).is_err();
+                        }
+                        Interaction::Assertion(_) => {}
+                        Interaction::Assumption(_) => {}
+                        Interaction::Fault(_) => {}
+                    }
+                    if is_error {
+                        // If any interaction fails, we reset the tables to the initial state
+                        env.tables = initial_tables.clone();
+                        break;
+                    }
+                }
+            }
+            Interactions::Query(query) => {
+                query.shadow(env);
+            }
+            Interactions::Fault(_) => {}
+        }
+    }
 }
 
 impl Interactions {
@@ -300,53 +338,45 @@ impl InteractionPlan {
     }
 
     pub(crate) fn stats(&self) -> InteractionStats {
-        let mut read = 0;
-        let mut write = 0;
-        let mut delete = 0;
-        let mut create = 0;
-        let mut drop = 0;
-        let mut update = 0;
-        let mut create_index = 0;
+        let mut stats = InteractionStats {
+            read_count: 0,
+            write_count: 0,
+            delete_count: 0,
+            update_count: 0,
+            create_count: 0,
+            create_index_count: 0,
+            drop_count: 0,
+        };
+
+        fn query_stat(q: &Query, stats: &mut InteractionStats) {
+            match q {
+                Query::Select(_) => stats.read_count += 1,
+                Query::Insert(_) => stats.write_count += 1,
+                Query::Delete(_) => stats.delete_count += 1,
+                Query::Create(_) => stats.create_count += 1,
+                Query::Drop(_) => stats.drop_count += 1,
+                Query::Update(_) => stats.update_count += 1,
+                Query::CreateIndex(_) => stats.create_index_count += 1,
+            }
+        }
 
         for interactions in &self.plan {
             match interactions {
                 Interactions::Property(property) => {
                     for interaction in &property.interactions() {
                         if let Interaction::Query(query) = interaction {
-                            match query {
-                                Query::Select(_) => read += 1,
-                                Query::Insert(_) => write += 1,
-                                Query::Delete(_) => delete += 1,
-                                Query::Create(_) => create += 1,
-                                Query::Drop(_) => drop += 1,
-                                Query::Update(_) => update += 1,
-                                Query::CreateIndex(_) => create_index += 1,
-                            }
+                            query_stat(query, &mut stats);
                         }
                     }
                 }
-                Interactions::Query(query) => match query {
-                    Query::Select(_) => read += 1,
-                    Query::Insert(_) => write += 1,
-                    Query::Delete(_) => delete += 1,
-                    Query::Create(_) => create += 1,
-                    Query::Drop(_) => drop += 1,
-                    Query::Update(_) => update += 1,
-                    Query::CreateIndex(_) => create_index += 1,
-                },
+                Interactions::Query(query) => {
+                    query_stat(query, &mut stats);
+                }
                 Interactions::Fault(_) => {}
             }
         }
 
-        InteractionStats {
-            read_count: read,
-            write_count: write,
-            delete_count: delete,
-            update_count: update,
-            create_count: create,
-            create_index_count: create_index,
-            drop_count: drop,
-        }
+        stats
     }
 }
 
@@ -370,6 +400,26 @@ impl ArbitraryFrom<&mut SimulatorEnv> for InteractionPlan {
                 num_interactions
             );
             let interactions = Interactions::arbitrary_from(rng, (env, plan.stats()));
+            interactions.shadow(env);
+            // println!(
+            //     "Generated interactions: {}",
+            //     interactions
+            //         .interactions()
+            //         .iter()
+            //         .map(|i| i.to_string())
+            //         .collect::<Vec<_>>()
+            //         .join(", ")
+            // );
+            // println!("tables states");
+            // for table in &env.tables {
+            //     println!("Table: {}", table.name);
+            //     for column in &table.columns {
+            //         println!("\tColumn: {} - Type: {:?}", column.name, column.column_type);
+            //     }
+            //     for row in &table.rows {
+            //         println!("\tRow: {:?}", row);
+            //     }
+            // }
 
             plan.plan.push(interactions);
         }
@@ -379,20 +429,23 @@ impl ArbitraryFrom<&mut SimulatorEnv> for InteractionPlan {
     }
 }
 
-impl Interaction {
-    pub(crate) fn shadow(&self, env: &mut SimulatorEnv) -> Vec<Vec<SimValue>> {
+impl Shadow for Interaction {
+    type Result = anyhow::Result<Vec<Vec<SimValue>>>;
+    fn shadow(&self, env: &mut SimulatorEnv) -> Self::Result {
         match self {
             Self::Query(query) => query.shadow(env),
             Self::FsyncQuery(query) => {
-                let mut first = query.shadow(env);
-                first.extend(query.shadow(env));
-                first
+                let mut first = query.shadow(env)?;
+                first.extend(query.shadow(env)?);
+                Ok(first)
             }
             Self::Assumption(_) | Self::Assertion(_) | Self::Fault(_) | Self::FaultyQuery(_) => {
-                vec![]
+                Ok(vec![])
             }
         }
     }
+}
+impl Interaction {
     pub(crate) fn execute_query(&self, conn: &mut Arc<Connection>, io: &SimulatorIO) -> ResultSet {
         if let Self::Query(query) = self {
             let query_str = query.to_string();

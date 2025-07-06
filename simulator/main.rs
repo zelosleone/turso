@@ -22,6 +22,8 @@ use tracing_subscriber::fmt::format;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::generation::Shadow;
+
 mod generation;
 mod model;
 mod runner;
@@ -246,7 +248,7 @@ fn watch_mode(
 
 fn run_simulator(
     seed: u64,
-    bugbase: Option<&mut BugBase>,
+    mut bugbase: Option<&mut BugBase>,
     cli_opts: &SimulatorCLI,
     paths: &Paths,
     env: SimulatorEnv,
@@ -321,6 +323,19 @@ fn run_simulator(
                 }
 
                 tracing::error!("simulation failed: '{}'", error);
+
+                if cli_opts.disable_shrinking {
+                    tracing::info!("shrinking is disabled, skipping shrinking");
+                    if let Some(bugbase) = bugbase.as_deref_mut() {
+                        bugbase
+                            .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
+                            .unwrap();
+                    }
+                    return Err(anyhow!("failed with error: '{}'", error));
+
+                }
+
+
                 tracing::info!("Starting to shrink");
 
                 let shrunk_plans = plans
@@ -334,6 +349,7 @@ fn run_simulator(
 
                 // Write the shrunk plan to a file
                 let mut f = std::fs::File::create(&paths.shrunk_plan).unwrap();
+                tracing::trace!("writing shrunk plan to {}", paths.shrunk_plan.display());
                 f.write_all(shrunk_plans[0].to_string().as_bytes()).unwrap();
 
                 let last_execution = Arc::new(Mutex::new(*last_execution));
@@ -360,17 +376,24 @@ fn run_simulator(
                         SandboxedResult::FoundBug { error: e1, .. },
                         SandboxedResult::FoundBug { error: e2, .. },
                     ) => {
+                        if let Some(bugbase) = bugbase.as_deref_mut() {
+                            tracing::trace!(
+                                "adding bug to bugbase, seed: {}, plan: {}, error: {}",
+                                seed,
+                                plans[0].plan.len(),
+                                error
+                            );
+                            bugbase
+                                .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
+                                .unwrap();
+                        }
+
                         if e1 != e2 {
                             tracing::error!(
                                 ?shrunk,
                                 ?result,
                                 "shrinking failed, the error was not properly reproduced"
                             );
-                            if let Some(bugbase) = bugbase {
-                                bugbase
-                                    .add_bug(seed, plans[0].clone(), Some(error.clone()), cli_opts)
-                                    .unwrap();
-                            }
                             Err(anyhow!("failed with error: '{}'", error))
                         } else {
                             tracing::info!(
@@ -379,15 +402,13 @@ fn run_simulator(
                                 shrunk_plans[0].plan.len()
                             );
                             // Save the shrunk database
-                            if let Some(bugbase) = bugbase {
-                                bugbase
-                                    .add_bug(
-                                        seed,
-                                        shrunk_plans[0].clone(),
-                                        Some(e1.clone()),
-                                        cli_opts,
-                                    )
-                                    .unwrap();
+                            if let Some(bugbase) = bugbase.as_deref_mut() {
+                                bugbase.make_shrunk(
+                                    seed,
+                                    cli_opts,
+                                    shrunk_plans[0].clone(),
+                                    Some(e1.clone()),
+                                )?;
                             }
                             Err(anyhow!("failed with error: '{}'", e1))
                         }

@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use turso_sqlite3_parser::to_sql_string::ToSqlContext;
 use update::Update;
 
-use crate::{model::table::SimValue, runner::env::SimulatorEnv};
+use crate::{generation::Shadow, model::table::SimValue, runner::env::SimulatorEnv};
 
 pub mod create;
 pub mod create_index;
@@ -36,9 +36,9 @@ pub(crate) enum Query {
 impl Query {
     pub(crate) fn dependencies(&self) -> HashSet<String> {
         match self {
+            Query::Select(select) => select.dependencies(),
             Query::Create(_) => HashSet::new(),
-            Query::Select(Select { table, .. })
-            | Query::Insert(Insert::Select { table, .. })
+            Query::Insert(Insert::Select { table, .. })
             | Query::Insert(Insert::Values { table, .. })
             | Query::Delete(Delete { table, .. })
             | Query::Update(Update { table, .. })
@@ -51,8 +51,8 @@ impl Query {
     pub(crate) fn uses(&self) -> Vec<String> {
         match self {
             Query::Create(Create { table }) => vec![table.name.clone()],
-            Query::Select(Select { table, .. })
-            | Query::Insert(Insert::Select { table, .. })
+            Query::Select(select) => select.dependencies().into_iter().collect(),
+            Query::Insert(Insert::Select { table, .. })
             | Query::Insert(Insert::Values { table, .. })
             | Query::Delete(Delete { table, .. })
             | Query::Update(Update { table, .. })
@@ -60,8 +60,12 @@ impl Query {
             Query::CreateIndex(CreateIndex { table_name, .. }) => vec![table_name.clone()],
         }
     }
+}
 
-    pub(crate) fn shadow(&self, env: &mut SimulatorEnv) -> Vec<Vec<SimValue>> {
+impl Shadow for Query {
+    type Result = anyhow::Result<Vec<Vec<SimValue>>>;
+
+    fn shadow(&self, env: &mut SimulatorEnv) -> Self::Result {
         match self {
             Query::Create(create) => create.shadow(env),
             Query::Insert(insert) => insert.shadow(env),
@@ -69,7 +73,7 @@ impl Query {
             Query::Select(select) => select.shadow(env),
             Query::Update(update) => update.shadow(env),
             Query::Drop(drop) => drop.shadow(env),
-            Query::CreateIndex(create_index) => create_index.shadow(env),
+            Query::CreateIndex(create_index) => Ok(create_index.shadow(env)),
         }
     }
 }

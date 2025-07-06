@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use crate::generation::{Arbitrary, ArbitraryFrom};
 use crate::model::query::predicate::Predicate;
 use crate::model::query::select::{Distinctness, ResultColumn};
@@ -23,13 +21,13 @@ impl Arbitrary for Create {
 impl ArbitraryFrom<&SimulatorEnv> for Select {
     fn arbitrary_from<R: Rng>(rng: &mut R, env: &SimulatorEnv) -> Self {
         let table = pick(&env.tables, rng);
-        Self {
-            table: table.name.clone(),
-            result_columns: vec![ResultColumn::Star],
-            predicate: Predicate::arbitrary_from(rng, table),
-            limit: Some(rng.gen_range(0..=1000)),
-            distinct: Distinctness::All,
-        }
+        Self::single(
+            table.name.clone(),
+            vec![ResultColumn::Star],
+            Predicate::arbitrary_from(rng, table),
+            Some(rng.gen_range(0..=1000)),
+            Distinctness::All,
+        )
     }
 }
 
@@ -59,13 +57,10 @@ impl ArbitraryFrom<&SimulatorEnv> for Insert {
             let row = pick(&select_table.rows, rng);
             let predicate = Predicate::arbitrary_from(rng, (select_table, row));
             // Pick another table to insert into
-            let select = Select {
-                table: select_table.name.clone(),
-                result_columns: vec![ResultColumn::Star],
+            let select = Select::simple(
+                select_table.name.clone(),
                 predicate,
-                limit: None,
-                distinct: Distinctness::All,
-            };
+            );
             let table = pick(&env.tables, rng);
             Some(Insert::Select {
                 table: table.name.clone(),
@@ -122,6 +117,10 @@ impl ArbitraryFrom<(&SimulatorEnv, &Remaining)> for Query {
                     Box::new(|rng| Self::Insert(Insert::arbitrary_from(rng, env))),
                 ),
                 (
+                    remaining.update,
+                    Box::new(|rng| Self::Update(Update::arbitrary_from(rng, env))),
+                ),
+                (
                     f64::min(remaining.write, remaining.delete),
                     Box::new(|rng| Self::Delete(Delete::arbitrary_from(rng, env))),
                 ),
@@ -134,18 +133,10 @@ impl ArbitraryFrom<(&SimulatorEnv, &Remaining)> for Query {
 impl ArbitraryFrom<&SimulatorEnv> for Update {
     fn arbitrary_from<R: Rng>(rng: &mut R, env: &SimulatorEnv) -> Self {
         let table = pick(&env.tables, rng);
-        let mut seen = HashSet::new();
         let num_cols = rng.gen_range(1..=table.columns.len());
         let set_values: Vec<(String, SimValue)> = (0..num_cols)
             .map(|_| {
-                let column = loop {
-                    let column = pick(&table.columns, rng);
-                    if seen.contains(&column.name) {
-                        continue;
-                    }
-                    break column;
-                };
-                seen.insert(column.name.clone());
+                let column = pick(&table.columns, rng);
                 (
                     column.name.clone(),
                     SimValue::arbitrary_from(rng, &column.column_type),

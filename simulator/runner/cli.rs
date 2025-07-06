@@ -48,6 +48,8 @@ pub struct SimulatorCLI {
     pub subcommand: Option<SimulatorCommand>,
     #[clap(long, help = "disable BugBase", default_value_t = false)]
     pub disable_bugbase: bool,
+    #[clap(long, help = "disable shrinking", default_value_t = false)]
+    pub disable_shrinking: bool,
     #[clap(long, help = "disable UPDATE Statement", default_value_t = false)]
     pub disable_update: bool,
     #[clap(long, help = "disable DELETE Statement", default_value_t = false)]
@@ -82,6 +84,12 @@ pub struct SimulatorCLI {
         default_value_t = false
     )]
     pub disable_select_optimizer: bool,
+    #[clap(
+        long,
+        help = "disable Where-True-False-Null Property",
+        default_value_t = false
+    )]
+    pub disable_where_true_false_null: bool,
     #[clap(long, help = "disable FsyncNoWait Property", default_value_t = true)]
     pub disable_fsync_no_wait: bool,
     #[clap(long, help = "disable FaultyQuery Property", default_value_t = true)]

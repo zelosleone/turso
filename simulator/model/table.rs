@@ -78,7 +78,7 @@ where
     s.parse().map_err(serde::de::Error::custom)
 }
 
-#[derive(Clone, Debug, PartialEq, PartialOrd, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Serialize, Deserialize)]
 pub(crate) struct SimValue(pub turso_core::Value);
 
 fn to_sqlite_blob(bytes: &[u8]) -> String {
@@ -131,9 +131,16 @@ impl SimValue {
             ast::Operator::Divide => self.0.exec_divide(&other.0).into(),
             ast::Operator::Greater => (self > other).into(),
             ast::Operator::GreaterEquals => (self >= other).into(),
-            // TODO: Should attempt to extract `Is` and `IsNot` handling in a function in Core
-            ast::Operator::Is => todo!(),
-            ast::Operator::IsNot => todo!(),
+            // TODO: Test these implementations
+            ast::Operator::Is => match (&self.0, &other.0) {
+                (types::Value::Null, types::Value::Null) => true.into(),
+                (types::Value::Null, _) => false.into(),
+                (_, types::Value::Null) => false.into(),
+                _ => self.binary_compare(other, ast::Operator::Equals),
+            },
+            ast::Operator::IsNot => self
+                .binary_compare(other, ast::Operator::Is)
+                .unary_exec(ast::UnaryOperator::Not),
             ast::Operator::LeftShift => self.0.exec_shift_left(&other.0).into(),
             ast::Operator::Less => (self < other).into(),
             ast::Operator::LessEquals => (self <= other).into(),
@@ -256,6 +263,12 @@ impl From<&ast::Literal> for SimValue {
                     })
                     .collect(),
             ),
+            ast::Literal::Keyword(keyword) => match keyword.to_uppercase().as_str() {
+                "TRUE" => types::Value::Integer(1),
+                "FALSE" => types::Value::Integer(0),
+                "NULL" => types::Value::Null,
+                _ => unimplemented!("Unsupported keyword literal: {}", keyword),
+            },
             lit => unimplemented!("{:?}", lit),
         };
         Self(new_value)
