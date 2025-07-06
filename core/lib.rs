@@ -43,7 +43,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use crate::storage::{header_accessor, wal::DummyWAL};
 use crate::translate::optimizer::optimize_plan;
-use crate::translate::pragma::TURSO_CDC_TABLE_NAME;
+use crate::translate::pragma::TURSO_CDC_DEFAULT_TABLE_NAME;
 use crate::util::{OpenMode, OpenOptions};
 use crate::vtab::VirtualTable;
 use core::str;
@@ -447,7 +447,7 @@ impl CaptureDataChangesMode {
     pub fn parse(value: &str) -> Result<CaptureDataChangesMode> {
         let (mode, table) = value
             .split_once(",")
-            .unwrap_or((value, TURSO_CDC_TABLE_NAME));
+            .unwrap_or((value, TURSO_CDC_DEFAULT_TABLE_NAME));
         match mode {
             "off" => Ok(CaptureDataChangesMode::Off),
             "rowid-only" => Ok(CaptureDataChangesMode::RowidOnly { table: table.to_string() }),

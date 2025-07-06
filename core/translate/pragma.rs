@@ -465,7 +465,7 @@ fn update_cache_size(
     Ok(())
 }
 
-pub const TURSO_CDC_TABLE_NAME: &str = "turso_cdc";
+pub const TURSO_CDC_DEFAULT_TABLE_NAME: &str = "turso_cdc";
 fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
     vec![
         ast::ColumnDefinition {
@@ -479,7 +479,7 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
                 constraint: ast::ColumnConstraint::PrimaryKey {
                     order: None,
                     conflict_clause: None,
-                    auto_increment: false,
+                    auto_increment: true,
                 },
             }],
         },
@@ -508,11 +508,8 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
             constraints: vec![],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name("row_key".to_string()),
-            col_type: Some(ast::Type {
-                name: "BLOB".to_string(),
-                size: None,
-            }),
+            col_name: ast::Name("id".to_string()),
+            col_type: None,
             constraints: vec![],
         },
     ]
