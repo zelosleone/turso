@@ -208,7 +208,7 @@ fn update_pragma(
             Ok(program)
         }
         PragmaName::IntegrityCheck => unreachable!("integrity_check cannot be set"),
-        PragmaName::CaptureDataChanges => {
+        PragmaName::UnstableCaptureDataChangesConn => {
             let value = parse_string(&value)?;
             // todo(sivukhin): ideally, we should consistently update capture_data_changes connection flag only after successfull execution of schema change statement
             // but for now, let's keep it as is...
@@ -382,7 +382,7 @@ fn query_pragma(
         PragmaName::IntegrityCheck => {
             translate_integrity_check(schema, &mut program)?;
         }
-        PragmaName::CaptureDataChanges => {
+        PragmaName::UnstableCaptureDataChangesConn => {
             let pragma = pragma_for(pragma);
             let second_column = program.alloc_register();
             let opts = connection.get_capture_data_changes();

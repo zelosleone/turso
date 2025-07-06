@@ -77,7 +77,7 @@ pub fn pragma_for(pragma: PragmaName) -> Pragma {
             PragmaFlags::NeedSchema | PragmaFlags::ReadOnly | PragmaFlags::Result0,
             &["message"],
         ),
-        CaptureDataChanges => Pragma::new(
+        UnstableCaptureDataChangesConn => Pragma::new(
             PragmaFlags::NeedSchema | PragmaFlags::Result0 | PragmaFlags::SchemaReq,
             &["mode", "table"],
         ),
