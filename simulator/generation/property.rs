@@ -751,8 +751,6 @@ fn property_insert_values_select<R: rand::Rng>(
         Predicate::arbitrary_from(rng, (table, &row)),
     );
 
-    println!("Select query: {select_query:?}");
-
     Property::InsertValuesSelect {
         insert: insert_query,
         row_index,
@@ -764,7 +762,6 @@ fn property_insert_values_select<R: rand::Rng>(
 fn property_select_limit<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Property {
     // Get a random table
     let table = pick(&env.tables, rng);
-    println!("Selected table for 'property_select_limit': {}", table.name);
     // Select the table
     let select = Select::single(
         table.name.clone(),
@@ -773,7 +770,6 @@ fn property_select_limit<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Prope
         Some(rng.gen_range(1..=5)),
         Distinctness::All,
     );
-    println!("Select query for 'property_select_limit': {select:?}");
     Property::SelectLimit { select }
 }
 

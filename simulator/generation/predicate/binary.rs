@@ -321,7 +321,6 @@ impl CompoundPredicate {
     ) -> Self {
         // Cannot pick a row if the table is empty
         if table.rows.is_empty() {
-            println!("Table is empty, returning a predicate that is always {}", predicate_value);
             return Self(if predicate_value {
                 Predicate::true_()
             } else {
@@ -329,17 +328,18 @@ impl CompoundPredicate {
             });
         }
         let row = pick(&table.rows, rng);
-        println!(
+
+        tracing::trace!(
             "Creating a {} CompoundPredicate for table: {} and row: {:?}",
             if predicate_value { "true" } else { "false" },
             table.name,
             row
         );
+        
         let predicate = if rng.gen_bool(0.7) {
             // An AND for true requires each of its children to be true
             // An AND for false requires at least one of its children to be false
             if predicate_value {
-                println!("Creating a true AND CompoundPredicate");
                 (0..rng.gen_range(1..=3))
                     .map(|_| SimplePredicate::arbitrary_from(rng, (table, row, true)).0)
                     .reduce(|accum, curr| {

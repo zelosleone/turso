@@ -262,9 +262,11 @@ impl ToSqlString for Expr {
                 ret.push(')');
             }
             Expr::Unary(unary_operator, expr) => {
+                ret.push('(');
                 ret.push_str(&unary_operator.to_string());
                 ret.push(' ');
                 ret.push_str(&expr.to_sql_string(context));
+                ret.push(')');
             }
             Expr::Variable(variable) => {
                 ret.push_str(variable);
