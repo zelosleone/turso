@@ -1226,8 +1226,7 @@ public final class JDBC4ResultSet implements ResultSet, ResultSetMetaData {
 
   @Override
   public int getColumnDisplaySize(int column) throws SQLException {
-    // TODO
-    return 0;
+    return Integer.MAX_VALUE;
   }
 
   @Override
