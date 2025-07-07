@@ -24,7 +24,7 @@ impl Arbitrary for Create {
 
 impl ArbitraryFrom<&Vec<Table>> for FromClause {
     fn arbitrary_from<R: Rng>(rng: &mut R, tables: &Vec<Table>) -> Self {
-        let query_size = rng.gen_range(0.0..=6.0_f32).log2().ceil() as usize;
+        let query_size = (rng.gen_range(0.0..=15.0_f32).log2().ceil() as usize).saturating_sub(2);
 
         let mut tables = tables.clone();
         let mut table = pick(&tables, rng).clone();
@@ -113,7 +113,7 @@ impl Arbitrary for CompoundOperator {
 
 impl ArbitraryFrom<&Vec<Table>> for Select {
     fn arbitrary_from<R: Rng>(rng: &mut R, tables: &Vec<Table>) -> Self {
-        let query_size = rng.gen_range(0.0..=6.0_f32).log2().ceil() as usize;
+        let query_size = (rng.gen_range(0.0..=15.0_f32).log2().ceil() as usize).saturating_sub(2);
 
         let table = pick(tables, rng);
 
