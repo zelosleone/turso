@@ -98,7 +98,7 @@ pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum TransactionState {
-    Write { change_schema: bool },
+    Write { schema_did_change: bool },
     Read,
     None,
 }
@@ -218,7 +218,7 @@ impl Database {
         if is_empty == 2 {
             // parse schema
             let conn = db.connect()?;
-            let schema_version = get_schema_version(&conn, &io)?;
+            let schema_version = get_schema_version(&conn)?;
             schema.write().schema_version = schema_version;
             let rows = conn.query("SELECT * FROM sqlite_schema")?;
             let mut schema = schema
@@ -226,7 +226,7 @@ impl Database {
                 .expect("lock on schema should succeed first try");
             let syms = conn.syms.borrow();
             if let Err(LimboError::ExtensionError(e)) =
-                parse_schema_rows(rows, &mut schema, io, &syms, None)
+                parse_schema_rows(rows, &mut schema, &syms, None)
             {
                 // this means that a vtab exists and we no longer have the module loaded. we print
                 // a warning to the user to load the module
@@ -393,7 +393,7 @@ impl Database {
     }
 }
 
-fn get_schema_version(conn: &Arc<Connection>, io: &Arc<dyn IO>) -> Result<u32> {
+fn get_schema_version(conn: &Arc<Connection>) -> Result<u32> {
     let mut rows = conn
         .query("PRAGMA schema_version")?
         .ok_or(LimboError::InternalError(
@@ -412,7 +412,7 @@ fn get_schema_version(conn: &Arc<Connection>, io: &Arc<dyn IO>) -> Result<u32> {
                 schema_version = Some(row.get::<i64>(0)? as u32);
             }
             StepResult::IO => {
-                io.run_once()?;
+                rows.run_once()?;
             }
             StepResult::Interrupt => {
                 return Err(LimboError::InternalError(
@@ -490,7 +490,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(skip_all, level = Level::INFO)]
     pub fn prepare(self: &Arc<Connection>, sql: impl AsRef<str>) -> Result<Statement> {
         if sql.as_ref().is_empty() {
             return Err(LimboError::InvalidArgument(
@@ -531,7 +531,7 @@ impl Connection {
         }
     }
 
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(skip_all, level = Level::INFO)]
     pub fn query(self: &Arc<Connection>, sql: impl AsRef<str>) -> Result<Option<Statement>> {
         let sql = sql.as_ref();
         tracing::trace!("Querying: {}", sql);
@@ -547,7 +547,7 @@ impl Connection {
         }
     }
 
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(skip_all, level = Level::INFO)]
     pub(crate) fn run_cmd(
         self: &Arc<Connection>,
         cmd: Cmd,
@@ -600,7 +600,7 @@ impl Connection {
 
     /// Execute will run a query from start to finish taking ownership of I/O because it will run pending I/Os if it didn't finish.
     /// TODO: make this api async
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(skip_all, level = Level::INFO)]
     pub fn execute(self: &Arc<Connection>, sql: impl AsRef<str>) -> Result<()> {
         let sql = sql.as_ref();
         let mut parser = Parser::new(sql.as_bytes());
@@ -647,12 +647,23 @@ impl Connection {
                         if matches!(res, StepResult::Done) {
                             break;
                         }
-                        self._db.io.run_once()?;
+                        self.run_once()?;
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    fn run_once(&self) -> Result<()> {
+        let res = self._db.io.run_once();
+        if res.is_err() {
+            let state = self.transaction_state.get();
+            if let TransactionState::Write { schema_did_change } = state {
+                self.pager.rollback(schema_did_change, self)?
+            }
+        }
+        res
     }
 
     #[cfg(feature = "fs")]
@@ -800,7 +811,7 @@ impl Connection {
         {
             let syms = self.syms.borrow();
             if let Err(LimboError::ExtensionError(e)) =
-                parse_schema_rows(rows, &mut schema, self.pager.io.clone(), &syms, None)
+                parse_schema_rows(rows, &mut schema, &syms, None)
             {
                 // this means that a vtab exists and we no longer have the module loaded. we print
                 // a warning to the user to load the module
@@ -927,7 +938,15 @@ impl Statement {
     }
 
     pub fn run_once(&self) -> Result<()> {
-        self.pager.io.run_once()
+        let res = self.pager.io.run_once();
+        if res.is_err() {
+            let state = self.program.connection.transaction_state.get();
+            if let TransactionState::Write { schema_did_change } = state {
+                self.pager
+                    .rollback(schema_did_change, &self.program.connection)?
+            }
+        }
+        res
     }
 
     pub fn num_columns(&self) -> usize {

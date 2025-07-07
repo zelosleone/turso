@@ -16,19 +16,24 @@ pub(crate) struct Commit;
 pub(crate) struct Rollback;
 
 impl Begin {
-    pub(crate) fn shadow(&self, _env: &mut SimulatorEnv) -> Vec<Vec<SimValue>> {
+    pub(crate) fn shadow(&self, env: &mut SimulatorEnv) -> Vec<Vec<SimValue>> {
+        env.tables_snapshot = Some(env.tables.clone());
         vec![]
     }
 }
 
 impl Commit {
-    pub(crate) fn shadow(&self, _env: &mut SimulatorEnv) -> Vec<Vec<SimValue>> {
+    pub(crate) fn shadow(&self, env: &mut SimulatorEnv) -> Vec<Vec<SimValue>> {
+        env.tables_snapshot = None;
         vec![]
     }
 }
 
 impl Rollback {
-    pub(crate) fn shadow(&self, _env: &mut SimulatorEnv) -> Vec<Vec<SimValue>> {
+    pub(crate) fn shadow(&self, env: &mut SimulatorEnv) -> Vec<Vec<SimValue>> {
+        if let Some(tables) = env.tables_snapshot.take() {
+            env.tables = tables;
+        }
         vec![]
     }
 }

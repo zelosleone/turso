@@ -1699,22 +1699,22 @@ pub fn op_transaction(
     } else {
         let current_state = conn.transaction_state.get();
         let (new_transaction_state, updated) = match (current_state, write) {
-            (TransactionState::Write { change_schema }, true) => {
-                (TransactionState::Write { change_schema }, false)
+            (TransactionState::Write { schema_did_change }, true) => {
+                (TransactionState::Write { schema_did_change }, false)
             }
-            (TransactionState::Write { change_schema }, false) => {
-                (TransactionState::Write { change_schema }, false)
+            (TransactionState::Write { schema_did_change }, false) => {
+                (TransactionState::Write { schema_did_change }, false)
             }
             (TransactionState::Read, true) => (
                 TransactionState::Write {
-                    change_schema: false,
+                    schema_did_change: false,
                 },
                 true,
             ),
             (TransactionState::Read, false) => (TransactionState::Read, false),
             (TransactionState::None, true) => (
                 TransactionState::Write {
-                    change_schema: false,
+                    schema_did_change: false,
                 },
                 true,
             ),
@@ -1766,9 +1766,9 @@ pub fn op_auto_commit(
             super::StepResult::Busy => Ok(InsnFunctionStepResult::Busy),
         };
     }
-    let change_schema =
-        if let TransactionState::Write { change_schema } = conn.transaction_state.get() {
-            change_schema
+    let schema_did_change =
+        if let TransactionState::Write { schema_did_change } = conn.transaction_state.get() {
+            schema_did_change
         } else {
             false
         };
@@ -1776,7 +1776,7 @@ pub fn op_auto_commit(
     if *auto_commit != conn.auto_commit.get() {
         if *rollback {
             // TODO(pere): add rollback I/O logic once we implement rollback journal
-            pager.rollback(change_schema, &conn)?;
+            pager.rollback(schema_did_change, &conn)?;
             conn.auto_commit.replace(true);
         } else {
             conn.auto_commit.replace(*auto_commit);
@@ -4978,7 +4978,6 @@ pub fn op_parse_schema(
             parse_schema_rows(
                 Some(stmt),
                 &mut new_schema,
-                conn.pager.io.clone(),
                 &conn.syms.borrow(),
                 state.mv_tx_id,
             )?;
@@ -4993,7 +4992,6 @@ pub fn op_parse_schema(
             parse_schema_rows(
                 Some(stmt),
                 &mut new_schema,
-                conn.pager.io.clone(),
                 &conn.syms.borrow(),
                 state.mv_tx_id,
             )?;
@@ -5065,8 +5063,8 @@ pub fn op_set_cookie(
         Cookie::SchemaVersion => {
             // we update transaction state to indicate that the schema has changed
             match program.connection.transaction_state.get() {
-                TransactionState::Write { change_schema } => {
-                    program.connection.transaction_state.set(TransactionState::Write { change_schema: true });
+                TransactionState::Write { schema_did_change } => {
+                    program.connection.transaction_state.set(TransactionState::Write { schema_did_change: true });
                 },
                 TransactionState::Read => unreachable!("invalid transaction state for SetCookie: TransactionState::Read, should be write"),
                 TransactionState::None => unreachable!("invalid transaction state for SetCookie: TransactionState::None, should be write"),
