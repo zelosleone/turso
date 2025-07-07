@@ -2077,15 +2077,14 @@ impl BTreeCursor {
                     return_if_locked_maybe_load!(self.pager, page);
 
                     // get page and find cell
-                    let (cell_idx, page_type) = {
+                    let cell_idx = {
                         return_if_locked!(page.get());
                         let page = page.get();
 
                         page.set_dirty();
                         self.pager.add_dirty(page.get().id);
 
-                        let page = page.get().contents.as_mut().unwrap();
-                        (self.stack.current_cell_index() as usize, page.page_type())
+                        self.stack.current_cell_index() as usize
                     };
                     tracing::debug!(cell_idx);
 
@@ -2118,7 +2117,7 @@ impl BTreeCursor {
                                 }
                             }
                             BTreeCell::IndexLeafCell(..) | BTreeCell::IndexInteriorCell(..) => {
-                                // Not necessary to read record again here, as the prior seek() call already does that for us
+                                return_if_io!(self.record());
                                 let cmp = compare_immutable(
                                     record_values.as_slice(),
                                     self.get_immutable_record()
@@ -2145,18 +2144,25 @@ impl BTreeCursor {
                                         self.save_context(CursorContext::IndexKeyRowId((*record).clone()));
                                     }
                                     continue;
+                                } else {
+                                    turso_assert!(
+                                        !matches!(cell, BTreeCell::IndexInteriorCell(..)),
+                                         "we should not be inserting a new index interior cell. the only valid operation on an index interior cell is an overwrite!"
+                                    );
                                 }
                             }
                             other => panic!("unexpected cell type, expected TableLeaf or IndexLeaf, found: {other:?}"),
                         }
                     }
+
                     // insert cell
 
                     let mut cell_payload: Vec<u8> = Vec::with_capacity(record_values.len() + 4);
                     fill_cell_payload(
-                        page_type,
+                        page.get().get().contents.as_ref().unwrap(),
                         bkey.maybe_rowid(),
                         &mut cell_payload,
+                        cell_idx,
                         record,
                         self.usable_space() as u16,
                         self.pager.clone(),
@@ -4819,14 +4825,16 @@ impl BTreeCursor {
         record: &ImmutableRecord,
     ) -> Result<IOResult<()>> {
         // build the new payload
-        let page_type = page_ref.get().get().contents.as_ref().unwrap().page_type();
+        let page = page_ref.get();
+        let page_contents = page.get().contents.as_ref().unwrap();
         let serial_types_len = self.record_cursor.borrow_mut().len(record);
         let mut new_payload = Vec::with_capacity(serial_types_len);
         let rowid = return_if_io!(self.rowid());
         fill_cell_payload(
-            page_type,
+            page_contents,
             rowid,
             &mut new_payload,
+            cell_idx,
             record,
             self.usable_space() as u16,
             self.pager.clone(),
@@ -6127,9 +6135,10 @@ fn _insert_into_cell(
 ) -> Result<()> {
     assert!(
         cell_idx <= page.cell_count() + page.overflow_cells.len(),
-        "attempting to add cell to an incorrect place cell_idx={} cell_count={}",
+        "attempting to add cell to an incorrect place cell_idx={} cell_count={} page_type={:?}",
         cell_idx,
-        page.cell_count()
+        page.cell_count(),
+        page.page_type()
     );
     let already_has_overflow = !page.overflow_cells.is_empty();
     let enough_space = if already_has_overflow && !allow_regular_insert_despite_overflow {
@@ -6317,21 +6326,25 @@ fn allocate_cell_space(page_ref: &PageContent, amount: u16, usable_space: u16) -
 /// Fill in the cell payload with the record.
 /// If the record is too large to fit in the cell, it will spill onto overflow pages.
 fn fill_cell_payload(
-    page_type: PageType,
+    page_contents: &PageContent,
     int_key: Option<i64>,
     cell_payload: &mut Vec<u8>,
+    cell_idx: usize,
     record: &ImmutableRecord,
     usable_space: u16,
     pager: Rc<Pager>,
 ) {
-    assert!(matches!(
-        page_type,
-        PageType::TableLeaf | PageType::IndexLeaf
-    ));
     // TODO: make record raw from start, having to serialize is not good
     let record_buf = record.get_payload().to_vec();
 
+    let page_type = page_contents.page_type();
     // fill in header
+    if matches!(page_type, PageType::IndexInterior) {
+        // if a write happened on an index interior page, it is always an overwrite.
+        // we must copy the left child pointer of the replaced cell to the new cell.
+        let left_child_page = page_contents.cell_interior_read_left_child_page(cell_idx);
+        cell_payload.extend_from_slice(&left_child_page.to_be_bytes());
+    }
     if matches!(page_type, PageType::TableLeaf) {
         let int_key = int_key.unwrap();
         write_varint_to_vec(record_buf.len() as u64, cell_payload);
@@ -6565,9 +6578,10 @@ mod tests {
     ) -> Vec<u8> {
         let mut payload: Vec<u8> = Vec::new();
         fill_cell_payload(
-            page.page_type(),
+            page,
             Some(id as i64),
             &mut payload,
+            pos,
             &record,
             4096,
             conn.pager.borrow().clone(),
@@ -7711,9 +7725,10 @@ mod tests {
                     let record = ImmutableRecord::from_registers(regs, regs.len());
                     let mut payload: Vec<u8> = Vec::new();
                     fill_cell_payload(
-                        page.page_type(),
+                        page,
                         Some(i as i64),
                         &mut payload,
+                        cell_idx,
                         &record,
                         4096,
                         conn.pager.borrow().clone(),
@@ -7784,9 +7799,10 @@ mod tests {
                         let record = ImmutableRecord::from_registers(regs, regs.len());
                         let mut payload: Vec<u8> = Vec::new();
                         fill_cell_payload(
-                            page.page_type(),
+                            page,
                             Some(i),
                             &mut payload,
+                            cell_idx,
                             &record,
                             4096,
                             conn.pager.borrow().clone(),
@@ -8148,9 +8164,10 @@ mod tests {
         let record = ImmutableRecord::from_registers(regs, regs.len());
         let mut payload: Vec<u8> = Vec::new();
         fill_cell_payload(
-            page.get().get_contents().page_type(),
+            page.get().get_contents(),
             Some(0),
             &mut payload,
+            0,
             &record,
             4096,
             conn.pager.borrow().clone(),
@@ -8225,9 +8242,10 @@ mod tests {
         let record = ImmutableRecord::from_registers(regs, regs.len());
         let mut payload: Vec<u8> = Vec::new();
         fill_cell_payload(
-            page.get().get_contents().page_type(),
+            page.get().get_contents(),
             Some(0),
             &mut payload,
+            0,
             &record,
             4096,
             conn.pager.borrow().clone(),
@@ -8580,7 +8598,7 @@ mod tests {
             // add a bunch of cells
             while compute_free_space(page.get_contents(), pager.usable_space() as u16) >= size + 10
             {
-                insert_cell(i, size, page.get_contents(), pager.clone(), page_type);
+                insert_cell(i, size, page.get_contents(), pager.clone());
                 i += 1;
                 size = (rng.next_u64() % 1024) as u16;
             }
@@ -8637,24 +8655,25 @@ mod tests {
         }
     }
 
-    fn insert_cell(
-        i: u64,
-        size: u16,
-        contents: &mut PageContent,
-        pager: Rc<Pager>,
-        page_type: PageType,
-    ) {
+    fn insert_cell(cell_idx: u64, size: u16, contents: &mut PageContent, pager: Rc<Pager>) {
         let mut payload = Vec::new();
         let regs = &[Register::Value(Value::Blob(vec![0; size as usize]))];
         let record = ImmutableRecord::from_registers(regs, regs.len());
         fill_cell_payload(
-            page_type,
-            Some(i as i64),
+            contents,
+            Some(cell_idx as i64),
             &mut payload,
+            cell_idx as usize,
             &record,
             pager.usable_space() as u16,
             pager.clone(),
         );
-        insert_into_cell(contents, &payload, i as usize, pager.usable_space() as u16).unwrap();
+        insert_into_cell(
+            contents,
+            &payload,
+            cell_idx as usize,
+            pager.usable_space() as u16,
+        )
+        .unwrap();
     }
 }
