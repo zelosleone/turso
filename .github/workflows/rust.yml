@@ -79,13 +79,6 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 20
     steps:
-      - name: Install cargo-c
-        env:
-          LINK: https://github.com/lu-zero/cargo-c/releases/download/v0.10.7
-          CARGO_C_FILE: cargo-c-x86_64-unknown-linux-musl.tar.gz
-        run: |
-          curl -L $LINK/$CARGO_C_FILE | tar xz -C ~/.cargo/bin
-
       - uses: actions/checkout@v3
 
       - name: Install uv
@@ -95,9 +88,6 @@ jobs:
 
       - name: Set up Python
         run: uv python install
-
-      - name: Install the project
-        run: uv sync --all-extras --dev --all-packages
 
       - uses: "./.github/shared/install_sqlite"
       - name: Test
