@@ -76,35 +76,35 @@ do_test 2.2 {
   set ::selectH_cnt
 } {0}
 
-do_execsql_test 3.1 {
-  CREATE VIEW v1 AS
-    SELECT c16 AS a, *, counter(1) AS x FROM t1
-    UNION ALL
-    SELECT c17 AS a, *, counter(1) AS x FROM t1
-    UNION ALL
-    SELECT c18 AS a, *, counter(1) AS x FROM t1
-    UNION ALL
-    SELECT c19 AS a, *, counter(1) AS x FROM t1;
-  SELECT count(*) FROM v1 WHERE c60=60;
-} {4}
-do_test 3.2 {
-  set ::selectH_cnt
-} {0}
-do_execsql_test 3.3 {
-  SELECT count(a) FROM v1 WHERE c60=60;
-} {4}
-do_execsql_test 3.4 {
-  SELECT a FROM v1 WHERE c60=60;
-} {16 17 18 19}
-do_test 3.5 {
-  set ::selectH_cnt
-} {0}
-do_execsql_test 3.6 {
-  SELECT x FROM v1 WHERE c60=60;
-} {1 2 3 4}
-do_test 3.7 {
-  set ::selectH_cnt
-} {4}
+#do_execsql_test 3.1 {
+#  CREATE VIEW v1 AS
+#    SELECT c16 AS a, *, counter(1) AS x FROM t1
+#    UNION ALL
+##    SELECT c17 AS a, *, counter(1) AS x FROM t1
+##    UNION ALL
+#    SELECT c18 AS a, *, counter(1) AS x FROM t1
+#    UNION ALL
+#    SELECT c19 AS a, *, counter(1) AS x FROM t1;
+#  SELECT count(*) FROM v1 WHERE c60=60;
+#} {4}
+#do_test 3.2 {
+#  set ::selectH_cnt
+#} {0}
+#do_execsql_test 3.3 {
+#  SELECT count(a) FROM v1 WHERE c60=60;
+#} {4}
+#do_execsql_test 3.4 {
+#  SELECT a FROM v1 WHERE c60=60;
+#} {16 17 18 19}
+#do_test 3.5 {
+#  set ::selectH_cnt
+#} {0}
+#do_execsql_test 3.6 {
+#  SELECT x FROM v1 WHERE c60=60;
+#} {1 2 3 4}
+#do_test 3.7 {
+#  set ::selectH_cnt
+#} {4}
 
 # 2023-02-25 dbsqlfuzz bf1d3ed6e0e0dd8766027797d43db40c776d2b15
 #

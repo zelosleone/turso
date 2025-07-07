@@ -230,10 +230,11 @@ do_execsql_test selectC-4.2 {
   select a from (select distinct a, b from t_distinct_bug)
 } {1 1 1}
 
-do_execsql_test selectC-4.2b {
-  CREATE VIEW v42b AS SELECT DISTINCT a, b FROM t_distinct_bug;
-  SELECT a FROM v42b;
-} {1 1 1}
+# TODO: Views are not supported.
+#do_execsql_test selectC-4.2b {
+#  CREATE VIEW v42b AS SELECT DISTINCT a, b FROM t_distinct_bug;
+#  SELECT a FROM v42b;
+#} {1 1 1}
 
 do_execsql_test selectC-4.3 {
   select a, udf() from (select distinct a, b from t_distinct_bug)
@@ -242,34 +243,35 @@ do_execsql_test selectC-4.3 {
 #-------------------------------------------------------------------------
 # Test that the problem in ticket #190c2507 has been fixed.
 #
-do_execsql_test 5.0 {
-  CREATE TABLE x1(a);
-  CREATE TABLE x2(b);
-  CREATE TABLE x3(c);
-  CREATE VIEW vvv AS SELECT b FROM x2 ORDER BY 1;
+# TODO: Views are not supported.
+#do_execsql_test 5.0 {
+#  CREATE TABLE x1(a);
+#  CREATE TABLE x2(b);
+#  CREATE TABLE x3(c);
+#  CREATE VIEW vvv AS SELECT b FROM x2 ORDER BY 1;
+#
+#  INSERT INTO x1 VALUES('a'), ('b');
+#  INSERT INTO x2 VALUES(22), (23), (25), (24), (21);
+#  INSERT INTO x3 VALUES(302), (303), (301);
+#}
 
-  INSERT INTO x1 VALUES('a'), ('b');
-  INSERT INTO x2 VALUES(22), (23), (25), (24), (21);
-  INSERT INTO x3 VALUES(302), (303), (301);
-}
+#do_execsql_test 5.1 {
+#  CREATE TABLE x4 AS SELECT b FROM vvv UNION ALL SELECT c from x3;
+#  SELECT * FROM x4;
+#} {21 22 23 24 25 302 303 301}
 
-do_execsql_test 5.1 {
-  CREATE TABLE x4 AS SELECT b FROM vvv UNION ALL SELECT c from x3;
-  SELECT * FROM x4;
-} {21 22 23 24 25 302 303 301}
+#do_execsql_test 5.2 {
+#  SELECT * FROM x1, x4
+#} {
+#  a 21 a 22 a 23 a 24 a 25 a 302 a 303 a 301
+#  b 21 b 22 b 23 b 24 b 25 b 302 b 303 b 301
+#}
 
-do_execsql_test 5.2 {
-  SELECT * FROM x1, x4
-} {
-  a 21 a 22 a 23 a 24 a 25 a 302 a 303 a 301
-  b 21 b 22 b 23 b 24 b 25 b 302 b 303 b 301
-}
-
-do_execsql_test 5.3 {
-  SELECT * FROM x1, (SELECT b FROM vvv UNION ALL SELECT c from x3) ORDER BY 1,2;
-} {
-  a 21 a 22 a 23 a 24 a 25 a 301 a 302 a 303
-  b 21 b 22 b 23 b 24 b 25 b 301 b 302 b 303
-}
+#do_execsql_test 5.3 {
+#  SELECT * FROM x1, (SELECT b FROM vvv UNION ALL SELECT c from x3) ORDER BY 1,2;
+#} {
+#  a 21 a 22 a 23 a 24 a 25 a 301 a 302 a 303
+#  b 21 b 22 b 23 b 24 b 25 b 301 b 302 b 303
+#}
 
 finish_test
