@@ -1,0 +1,21 @@
+#!/usr/bin/env tclsh
+
+set testdir [file dirname $argv0]
+
+source $testdir/select1.test
+source $testdir/select2.test
+source $testdir/select3.test
+source $testdir/select4.test
+source $testdir/select5.test
+source $testdir/select6.test
+source $testdir/select7.test
+source $testdir/select8.test
+source $testdir/select9.test
+source $testdir/selectA.test
+source $testdir/selectB.test
+source $testdir/selectC.test
+source $testdir/selectD.test
+source $testdir/selectE.test
+source $testdir/selectF.test
+source $testdir/selectG.test
+source $testdir/selectH.test
