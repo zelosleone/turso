@@ -105,8 +105,6 @@ class TestTursoShell:
     ):
         if exec_name is None:
             exec_name = os.environ.get("SQLITE_EXEC", "./scripts/limbo-sqlite3")
-            if flags == "":
-                flags = "-q"
         self.config = ShellConfig(exe_name=exec_name, flags=flags)
         if use_testing_db:
             self.init_test_db()

@@ -275,7 +275,7 @@ def test_insert_default_values():
 
 
 def test_uri_readonly():
-    turso = TestTursoShell(flags="-q file:testing/testing_small.db?mode=ro", init_commands="")
+    turso = TestTursoShell(flags="file:testing/testing_small.db?mode=ro", init_commands="")
     turso.run_test("read-only-uri-reads-work", "SELECT COUNT(*) FROM demo;", "5")
     turso.run_test_fn(
         "INSERT INTO demo (id, value) values (6, 'demo');",

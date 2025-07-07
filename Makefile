@@ -52,14 +52,18 @@ uv-sync:
 	uv sync --all-packages
 .PHONE: uv-sync
 
-test: limbo uv-sync test-compat test-vector test-sqlite3 test-shell test-extensions test-memory test-write test-update test-constraint test-collate
+uv-sync-test:
+	uv sync --all-extras --dev --package turso_test
+.PHONE: uv-sync
+
+test: limbo uv-sync-test test-compat test-vector test-sqlite3 test-shell test-memory test-write test-update test-constraint test-collate test-extensions
 .PHONY: test
 
-test-extensions: limbo uv-sync
+test-extensions: limbo uv-sync-test
 	RUST_LOG=$(RUST_LOG) uv run --project limbo_test test-extensions
 .PHONY: test-extensions
 
-test-shell: limbo uv-sync
+test-shell: limbo uv-sync-test
 	RUST_LOG=$(RUST_LOG) SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-shell
 .PHONY: test-shell
 
@@ -89,11 +93,11 @@ test-json:
 	RUST_LOG=$(RUST_LOG) SQLITE_EXEC=$(SQLITE_EXEC) ./testing/json.test
 .PHONY: test-json
 
-test-memory: limbo uv-sync
+test-memory: limbo uv-sync-test
 	RUST_LOG=$(RUST_LOG) SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-memory
 .PHONY: test-memory
 
-test-write: limbo uv-sync
+test-write: limbo uv-sync-test
 	@if [ "$(SQLITE_EXEC)" != "scripts/limbo-sqlite3" ]; then \
 		RUST_LOG=$(RUST_LOG) SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-write; \
 	else \
@@ -101,7 +105,7 @@ test-write: limbo uv-sync
 	fi
 .PHONY: test-write
 
-test-update: limbo uv-sync
+test-update: limbo uv-sync-test
 	@if [ "$(SQLITE_EXEC)" != "scripts/limbo-sqlite3" ]; then \
 		RUST_LOG=$(RUST_LOG) SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-update; \
 	else \
@@ -109,7 +113,7 @@ test-update: limbo uv-sync
 	fi
 .PHONY: test-update
 
-test-collate: limbo uv-sync
+test-collate: limbo uv-sync-test
 	@if [ "$(SQLITE_EXEC)" != "scripts/limbo-sqlite3" ]; then \
 		RUST_LOG=$(RUST_LOG) SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-collate; \
 	else \
@@ -117,7 +121,7 @@ test-collate: limbo uv-sync
 	fi
 .PHONY: test-collate
 
-test-constraint: limbo uv-sync
+test-constraint: limbo uv-sync-test
 	@if [ "$(SQLITE_EXEC)" != "scripts/limbo-sqlite3" ]; then \
 		RUST_LOG=$(RUST_LOG) SQLITE_EXEC=$(SQLITE_EXEC) uv run --project limbo_test test-constraint; \
 	else \
@@ -125,7 +129,7 @@ test-constraint: limbo uv-sync
 	fi
 .PHONY: test-constraint
 
-bench-vfs: uv-sync
+bench-vfs: uv-sync-test
 	cargo build --release
 	RUST_LOG=$(RUST_LOG) uv run --project limbo_test bench-vfs "$(SQL)" "$(N)"
 
