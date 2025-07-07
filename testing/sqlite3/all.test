@@ -19,3 +19,9 @@ source $testdir/selectE.test
 source $testdir/selectF.test
 source $testdir/selectG.test
 source $testdir/selectH.test
+
+source $testdir/insert.test
+source $testdir/insert2.test
+source $testdir/insert3.test
+source $testdir/insert4.test
+source $testdir/insert5.test
