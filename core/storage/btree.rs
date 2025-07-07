@@ -4637,8 +4637,13 @@ impl BTreeCursor {
         let record_opt = return_if_io!(self.record());
         match record_opt.as_ref() {
             Some(record) => {
-                // Existing record found — compare prefix
-                let existing_key = &record.get_values()[..record.count().saturating_sub(1)];
+                // Existing record found; if the index has a rowid, exclude it from the comparison since it's a pointer to the table row;
+                // UNIQUE indexes disallow duplicates like (a=1,b=2,rowid=1) and (a=1,b=2,rowid=2).
+                let existing_key = if self.has_rowid() {
+                    &record.get_values()[..record.count().saturating_sub(1)]
+                } else {
+                    record.get_values()
+                };
                 let inserted_key_vals = &key.get_values();
                 // Need this check because .all returns True on an empty iterator,
                 // So when record_opt is invalidated, it would always indicate show up as a duplicate key
@@ -4647,10 +4652,12 @@ impl BTreeCursor {
                 }
 
                 Ok(CursorResult::Ok(
-                    existing_key
-                        .iter()
-                        .zip(inserted_key_vals.iter())
-                        .all(|(a, b)| a == b),
+                    compare_immutable(
+                        existing_key,
+                        inserted_key_vals,
+                        self.key_sort_order(),
+                        &self.collations,
+                    ) == std::cmp::Ordering::Equal,
                 ))
             }
             None => {
