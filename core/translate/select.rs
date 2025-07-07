@@ -298,7 +298,7 @@ fn prepare_one_select_plan(
                             .find(|t| t.identifier == name_normalized);
 
                         if referenced_table.is_none() {
-                            crate::bail_parse_error!("Table {} not found", name.0);
+                            crate::bail_parse_error!("no such table: {}", name.0);
                         }
                         let table = referenced_table.unwrap();
                         let num_columns = table.columns().len();
