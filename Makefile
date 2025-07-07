@@ -52,7 +52,7 @@ uv-sync:
 	uv sync --all-packages
 .PHONE: uv-sync
 
-test: limbo uv-sync test-compat test-vector test-sqlite3 test-shell test-extensions test-memory test-write test-update test-constraint test-collate
+test: limbo uv-sync test-compat test-vector test-sqlite3 test-shell test-memory test-write test-update test-constraint test-collate test-extensions
 .PHONY: test
 
 test-extensions: limbo uv-sync
