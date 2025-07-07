@@ -102,17 +102,6 @@ enum TransactionState {
     None,
 }
 
-impl TransactionState {
-    fn schema_did_change(&self) -> bool {
-        matches!(
-            self,
-            TransactionState::Write {
-                schema_did_change: true
-            }
-        )
-    }
-}
-
 pub(crate) type MvStore = mvcc::MvStore<mvcc::LocalClock>;
 
 pub(crate) type MvCursor = mvcc::cursor::ScanCursor<mvcc::LocalClock>;
@@ -633,7 +622,9 @@ impl Connection {
         let res = self._db.io.run_once();
         if res.is_err() {
             let state = self.transaction_state.get();
-            self.pager.rollback(state.schema_did_change(), self)?;
+            if let TransactionState::Write { schema_did_change } = state {
+                self.pager.rollback(schema_did_change, self)?
+            }
         }
         res
     }
@@ -906,8 +897,10 @@ impl Statement {
         let res = self.pager.io.run_once();
         if res.is_err() {
             let state = self.program.connection.transaction_state.get();
-            self.pager
-                .rollback(state.schema_did_change(), &self.program.connection)?;
+            if let TransactionState::Write { schema_did_change } = state {
+                self.pager
+                    .rollback(schema_did_change, &self.program.connection)?
+            }
         }
         res
     }

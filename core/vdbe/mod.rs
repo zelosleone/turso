@@ -386,7 +386,9 @@ impl Program {
             let res = insn_function(self, state, insn, &pager, mv_store.as_ref());
             if res.is_err() {
                 let state = self.connection.transaction_state.get();
-                pager.rollback(state.schema_did_change(), &self.connection)?
+                if let TransactionState::Write { schema_did_change } = state {
+                    pager.rollback(schema_did_change, &self.connection)?
+                }
             }
             match res? {
                 InsnFunctionStepResult::Step => {}
