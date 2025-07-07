@@ -581,7 +581,7 @@ fn emit_delete_insns(
                 OperationMode::DELETE,
                 turso_cdc_cursor_id,
                 rowid_reg,
-                &table_reference.identifier, // is it OK to use identifier here?
+                table_reference.table.get_name(),
             )?;
         }
 
@@ -1108,7 +1108,7 @@ fn emit_update_insns(
                     OperationMode::DELETE,
                     cdc_cursor_id,
                     rowid_reg,
-                    &table_ref.identifier, // is it OK to use identifier here?
+                    table_ref.table.get_name(),
                 )?;
                 program.emit_insn(Insn::Copy {
                     src_reg: rowid_set_clause_reg.expect(
@@ -1123,7 +1123,7 @@ fn emit_update_insns(
                     OperationMode::INSERT,
                     cdc_cursor_id,
                     rowid_reg,
-                    &table_ref.identifier, // is it OK to use identifier here?
+                    table_ref.table.get_name(),
                 )?;
             } else {
                 program.emit_insn(Insn::Copy {
@@ -1137,7 +1137,7 @@ fn emit_update_insns(
                     OperationMode::UPDATE,
                     cdc_cursor_id,
                     rowid_reg,
-                    &table_ref.identifier, // is it OK to use identifier here?
+                    table_ref.table.get_name(),
                 )?;
             }
         }
@@ -1189,7 +1189,7 @@ pub fn emit_cdc_insns(
     rowid_reg: usize,
     table_name: &str,
 ) -> Result<()> {
-    // (operation_id INTEGER PRIMARY KEY, operation_time INTEGER, operation_type INTEGER, table_name TEXT, row_key BLOB)
+    // (operation_id INTEGER PRIMARY KEY AUTOINCREMENT, operation_time INTEGER, operation_type INTEGER, table_name TEXT, id)
     let turso_cdc_registers = program.alloc_registers(5);
     program.emit_insn(Insn::Null {
         dest: turso_cdc_registers,
@@ -1230,11 +1230,10 @@ pub fn emit_cdc_insns(
     });
 
     let rowid_reg = program.alloc_register();
-    // todo(sivukhin): we **must** guarantee sequential generation or operation_id column
     program.emit_insn(Insn::NewRowid {
         cursor: cdc_cursor_id,
         rowid_reg,
-        prev_largest_reg: 0,
+        prev_largest_reg: 0, // todo(sivukhin): properly set value here from sqlite_sequence table when AUTOINCREMENT will be properly implemented in Turso
     });
 
     let record_reg = program.alloc_register();
