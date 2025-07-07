@@ -25,3 +25,20 @@ source $testdir/insert2.test
 source $testdir/insert3.test
 source $testdir/insert4.test
 source $testdir/insert5.test
+
+source $testdir/join.test
+source $testdir/join2.test
+source $testdir/join3.test
+source $testdir/join4.test
+source $testdir/join5.test
+source $testdir/join6.test
+source $testdir/join7.test
+source $testdir/join8.test
+source $testdir/join9.test
+source $testdir/joinA.test
+source $testdir/joinB.test
+source $testdir/joinC.test
+source $testdir/joinD.test
+source $testdir/joinE.test
+source $testdir/joinF.test
+source $testdir/joinH.test
