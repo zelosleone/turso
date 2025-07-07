@@ -452,32 +452,46 @@ fn prepare_one_select_plan(
                                 name,
                                 filter_over: _,
                             } => {
-                                if let Ok(Func::Agg(f)) = Func::resolve_function(
+                                match Func::resolve_function(
                                     normalize_ident(name.0.as_str()).as_str(),
                                     0,
                                 ) {
-                                    let agg = Aggregate {
-                                        func: f,
-                                        args: vec![ast::Expr::Literal(ast::Literal::Numeric(
-                                            "1".to_string(),
-                                        ))],
-                                        original_expr: expr.clone(),
-                                        distinctness: Distinctness::NonDistinct,
-                                    };
-                                    aggregate_expressions.push(agg.clone());
-                                    plan.result_columns.push(ResultSetColumn {
-                                        alias: maybe_alias.as_ref().map(|alias| match alias {
-                                            ast::As::Elided(alias) => alias.0.clone(),
-                                            ast::As::As(alias) => alias.0.clone(),
-                                        }),
-                                        expr: expr.clone(),
-                                        contains_aggregates: true,
-                                    });
-                                } else {
-                                    crate::bail_parse_error!(
-                                        "Invalid aggregate function: {}",
-                                        name.0
-                                    );
+                                    Ok(Func::Agg(f)) => {
+                                        let agg = Aggregate {
+                                            func: f,
+                                            args: vec![ast::Expr::Literal(ast::Literal::Numeric(
+                                                "1".to_string(),
+                                            ))],
+                                            original_expr: expr.clone(),
+                                            distinctness: Distinctness::NonDistinct,
+                                        };
+                                        aggregate_expressions.push(agg.clone());
+                                        plan.result_columns.push(ResultSetColumn {
+                                            alias: maybe_alias.as_ref().map(|alias| match alias {
+                                                ast::As::Elided(alias) => alias.0.clone(),
+                                                ast::As::As(alias) => alias.0.clone(),
+                                            }),
+                                            expr: expr.clone(),
+                                            contains_aggregates: true,
+                                        });
+                                    }
+                                    Ok(_) => {
+                                        crate::bail_parse_error!(
+                                            "Invalid aggregate function: {}",
+                                            name.0
+                                        );
+                                    }
+                                    Err(e) => match e {
+                                        crate::LimboError::ParseError(e) => {
+                                            crate::bail_parse_error!("{}", e);
+                                        }
+                                        _ => {
+                                            crate::bail_parse_error!(
+                                                "Invalid aggregate function: {}",
+                                                name.0
+                                            );
+                                        }
+                                    },
                                 }
                             }
                             expr => {
