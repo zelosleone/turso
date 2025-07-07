@@ -1,6 +1,6 @@
 use crate::{
     commands::{
-        args::{EchoMode, TimerMode},
+        args::{EchoMode, HeadersMode, TimerMode},
         import::ImportFile,
         Command, CommandParser,
     },
@@ -676,6 +676,12 @@ impl Limbo {
                         TimerMode::Off => false,
                     };
                 }
+                Command::Headers(headers_mode) => {
+                    self.opts.headers = match headers_mode.mode {
+                        HeadersMode::On => true,
+                        HeadersMode::Off => false,
+                    };
+                }
             },
         }
     }
@@ -688,62 +694,83 @@ impl Limbo {
     ) -> anyhow::Result<()> {
         match output {
             Ok(Some(ref mut rows)) => match self.opts.output_mode {
-                OutputMode::List => loop {
-                    if self.interrupt_count.load(Ordering::SeqCst) > 0 {
-                        println!("Query interrupted.");
-                        return Ok(());
-                    }
+                OutputMode::List => {
+                    let mut headers_printed = false;
+                    loop {
+                        if self.interrupt_count.load(Ordering::SeqCst) > 0 {
+                            println!("Query interrupted.");
+                            return Ok(());
+                        }
 
-                    let start = Instant::now();
+                        let start = Instant::now();
 
-                    match rows.step() {
-                        Ok(StepResult::Row) => {
-                            if let Some(ref mut stats) = statistics {
-                                stats.execute_time_elapsed_samples.push(start.elapsed());
-                            }
-                            let row = rows.row().unwrap();
-                            for (i, value) in row.get_values().enumerate() {
-                                if i > 0 {
-                                    let _ = self.writer.write(b"|");
+                        match rows.step() {
+                            Ok(StepResult::Row) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
                                 }
-                                if matches!(value, Value::Null) {
-                                    let _ = self.writer.write(self.opts.null_value.as_bytes())?;
-                                } else {
-                                    let _ = self.writer.write(format!("{}", value).as_bytes())?;
+
+                                // Print headers if enabled and not already printed
+                                if self.opts.headers && !headers_printed {
+                                    for i in 0..rows.num_columns() {
+                                        if i > 0 {
+                                            let _ = self.writer.write(b"|");
+                                        }
+                                        let _ =
+                                            self.writer.write(rows.get_column_name(i).as_bytes());
+                                    }
+                                    let _ = self.writeln("");
+                                    headers_printed = true;
+                                }
+
+                                let row = rows.row().unwrap();
+                                for (i, value) in row.get_values().enumerate() {
+                                    if i > 0 {
+                                        let _ = self.writer.write(b"|");
+                                    }
+                                    if matches!(value, Value::Null) {
+                                        let _ =
+                                            self.writer.write(self.opts.null_value.as_bytes())?;
+                                    } else {
+                                        let _ =
+                                            self.writer.write(format!("{}", value).as_bytes())?;
+                                    }
+                                }
+                                let _ = self.writeln("");
+                            }
+                            Ok(StepResult::IO) => {
+                                let start = Instant::now();
+                                self.io.run_once()?;
+                                if let Some(ref mut stats) = statistics {
+                                    stats.io_time_elapsed_samples.push(start.elapsed());
                                 }
                             }
-                            let _ = self.writeln("");
-                        }
-                        Ok(StepResult::IO) => {
-                            let start = Instant::now();
-                            self.io.run_once()?;
-                            if let Some(ref mut stats) = statistics {
-                                stats.io_time_elapsed_samples.push(start.elapsed());
+                            Ok(StepResult::Interrupt) => break,
+                            Ok(StepResult::Done) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                break;
                             }
-                        }
-                        Ok(StepResult::Interrupt) => break,
-                        Ok(StepResult::Done) => {
-                            if let Some(ref mut stats) = statistics {
-                                stats.execute_time_elapsed_samples.push(start.elapsed());
+                            Ok(StepResult::Busy) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                let _ = self.writeln("database is busy");
+                                break;
                             }
-                            break;
-                        }
-                        Ok(StepResult::Busy) => {
-                            if let Some(ref mut stats) = statistics {
-                                stats.execute_time_elapsed_samples.push(start.elapsed());
+                            Err(err) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                let report =
+                                    miette::Error::from(err).with_source_code(sql.to_owned());
+                                let _ = self.write_fmt(format_args!("{:?}", report));
+                                break;
                             }
-                            let _ = self.writeln("database is busy");
-                            break;
-                        }
-                        Err(err) => {
-                            if let Some(ref mut stats) = statistics {
-                                stats.execute_time_elapsed_samples.push(start.elapsed());
-                            }
-                            let _ = self.writeln(err.to_string());
-                            break;
                         }
                     }
-                },
+                }
                 OutputMode::Pretty => {
                     if self.interrupt_count.load(Ordering::SeqCst) > 0 {
                         println!("Query interrupted.");
