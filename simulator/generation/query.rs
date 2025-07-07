@@ -1,7 +1,8 @@
 use crate::generation::{Arbitrary, ArbitraryFrom, Shadow};
 use crate::model::query::predicate::Predicate;
 use crate::model::query::select::{
-    CompoundOperator, CompoundSelect, Distinctness, FromClause, JoinTable, JoinType, JoinedTable, ResultColumn, SelectBody, SelectInner
+    CompoundOperator, CompoundSelect, Distinctness, FromClause, JoinTable, JoinType, JoinedTable,
+    ResultColumn, SelectBody, SelectInner,
 };
 use crate::model::query::update::Update;
 use crate::model::query::{Create, Delete, Drop, Insert, Query, Select};
@@ -23,48 +24,53 @@ impl Arbitrary for Create {
 
 impl ArbitraryFrom<&Vec<Table>> for FromClause {
     fn arbitrary_from<R: Rng>(rng: &mut R, tables: &Vec<Table>) -> Self {
-        match rng.gen_range(5..=5) {
-            0..=4 => FromClause {
-                table: pick(tables, rng).name.clone(),
-                joins: vec![],
-            },
-            _ => {
-                let mut tables = tables.clone();
-                let mut table = pick(&tables, rng).clone();
-                tables.retain(|t| t.name != table.name);
-                let name = table.name.clone();
-                let num_joins = rng.gen_range(0..=3.min(tables.len()));
-                
-                let joins: Vec<_> = (0..num_joins)
-                    .map(|_| {
-                        let join_table = pick(&tables, rng).clone();
-                        tables.retain(|t| t.name != join_table.name);
-                        table = JoinTable {
-                            tables: vec![table.clone(), join_table.clone()],
-                            rows: table.rows.iter().cartesian_product(join_table.rows.iter()).map(|(t_row, j_row)| {
-                                let mut row = t_row.clone();
-                                row.extend(j_row.clone());
-                                row
-                            }).collect(),
-                        }.into_table();
-                        for row in &mut table.rows {
-                            assert_eq!(row.len(), table.columns.len(), "Row length does not match column length after join");
-                        }
+        let query_size = rng.gen_range(0.0..=6.0_f32).log2().ceil() as usize;
 
-                        let predicate = Predicate::arbitrary_from(rng, &table);
-                        JoinedTable {
-                            table: join_table.name.clone(),
-                            join_type: JoinType::Inner,
-                            on: predicate,
-                        }
-                    })
-                    .collect();
-                FromClause {
-                    table: name,
-                    joins,
+        let mut tables = tables.clone();
+        let mut table = pick(&tables, rng).clone();
+
+        tables.retain(|t| t.name != table.name);
+
+        let name = table.name.clone();
+
+        let joins: Vec<_> = (0..query_size)
+            .filter_map(|_| {
+                if tables.is_empty() {
+                    return None;
                 }
-            }
-        }
+                let join_table = pick(&tables, rng).clone();
+                tables.retain(|t| t.name != join_table.name);
+                table = JoinTable {
+                    tables: vec![table.clone(), join_table.clone()],
+                    rows: table
+                        .rows
+                        .iter()
+                        .cartesian_product(join_table.rows.iter())
+                        .map(|(t_row, j_row)| {
+                            let mut row = t_row.clone();
+                            row.extend(j_row.clone());
+                            row
+                        })
+                        .collect(),
+                }
+                .into_table();
+                for row in &mut table.rows {
+                    assert_eq!(
+                        row.len(),
+                        table.columns.len(),
+                        "Row length does not match column length after join"
+                    );
+                }
+
+                let predicate = Predicate::arbitrary_from(rng, &table);
+                Some(JoinedTable {
+                    table: join_table.name.clone(),
+                    join_type: JoinType::Inner,
+                    on: predicate,
+                })
+            })
+            .collect();
+        FromClause { table: name, joins }
     }
 }
 
@@ -73,7 +79,10 @@ impl ArbitraryFrom<&Vec<Table>> for SelectInner {
         let from = FromClause::arbitrary_from(rng, tables);
         let mut tables = tables.clone();
         // todo: this is a temporary hack because env is not separated from the tables
-        let join_table = from.shadow(&mut tables).expect("Failed to shadow FromClause").into_table();
+        let join_table = from
+            .shadow(&mut tables)
+            .expect("Failed to shadow FromClause")
+            .into_table();
 
         SelectInner {
             distinctness: Distinctness::arbitrary(rng),
@@ -104,44 +113,33 @@ impl Arbitrary for CompoundOperator {
 
 impl ArbitraryFrom<&Vec<Table>> for Select {
     fn arbitrary_from<R: Rng>(rng: &mut R, tables: &Vec<Table>) -> Self {
+        let query_size = rng.gen_range(0.0..=6.0_f32).log2().ceil() as usize;
+
         let table = pick(tables, rng);
 
-        match rng.gen_range(5..=5) {
-            // Generate a simple select in the form of `SELECT * FROM <table>`
-            0..=4 => Self::single(
-                table.name.clone(),
-                vec![ResultColumn::Star],
-                Predicate::arbitrary_from(rng, table),
-                Some(rng.gen_range(0..=1000)),
-                Distinctness::All,
-            ),
-            // Generate a compound select with some unions
-            _ => {
-                let num_selects = rng.gen_range(1..=3);
-                let first = SelectInner::arbitrary_from(rng, tables);
+        let num_selects = rng.gen_range(0..=query_size);
+        let first = SelectInner::arbitrary_from(rng, tables);
 
-                let rest: Vec<SelectInner> = (0..num_selects)
-                    .map(|_| {
-                        let mut select = first.clone();
-                        select.where_clause = Predicate::arbitrary_from(rng, table);
-                        select
+        let rest: Vec<SelectInner> = (0..num_selects)
+            .map(|_| {
+                let mut select = first.clone();
+                select.where_clause = Predicate::arbitrary_from(rng, table);
+                select
+            })
+            .collect();
+
+        Self {
+            body: SelectBody {
+                select: Box::new(first),
+                compounds: rest
+                    .into_iter()
+                    .map(|s| CompoundSelect {
+                        operator: CompoundOperator::arbitrary(rng),
+                        select: Box::new(s),
                     })
-                    .collect();
-
-                Self {
-                    body: SelectBody {
-                        select: Box::new(first),
-                        compounds: rest
-                            .into_iter()
-                            .map(|s| CompoundSelect {
-                                operator: CompoundOperator::arbitrary(rng),
-                                select: Box::new(s),
-                            })
-                            .collect(),
-                    },
-                    limit: None,
-                }
-            }
+                    .collect(),
+            },
+            limit: None,
         }
     }
 }
@@ -301,8 +299,14 @@ mod query_generation_tests {
                     },
                 ],
                 rows: vec![
-                    vec![SimValue(Value::Integer(1)), SimValue(Value::Text("Alice".into()))],
-                    vec![SimValue(Value::Integer(2)), SimValue(Value::Text("Bob".into()))],
+                    vec![
+                        SimValue(Value::Integer(1)),
+                        SimValue(Value::Text("Alice".into())),
+                    ],
+                    vec![
+                        SimValue(Value::Integer(2)),
+                        SimValue(Value::Text("Bob".into())),
+                    ],
                 ],
             },
             Table {
@@ -343,8 +347,14 @@ mod query_generation_tests {
                     },
                 ],
                 rows: vec![
-                    vec![SimValue(Value::Integer(1)), SimValue(Value::Text("Widget".into()))],
-                    vec![SimValue(Value::Integer(2)), SimValue(Value::Text("Gadget".into()))],
+                    vec![
+                        SimValue(Value::Integer(1)),
+                        SimValue(Value::Text("Widget".into())),
+                    ],
+                    vec![
+                        SimValue(Value::Integer(2)),
+                        SimValue(Value::Text("Gadget".into())),
+                    ],
                 ],
             },
         ];

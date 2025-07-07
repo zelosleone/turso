@@ -84,11 +84,6 @@ pub fn expr_to_value(expr: &ast::Expr, row: &[SimValue], table: &Table) -> Optio
         ast::Expr::DoublyQualified(_, _, ast::Name(col_name))
         | ast::Expr::Qualified(_, ast::Name(col_name))
         | ast::Expr::Id(ast::Id(col_name)) => {
-            // println!("Resolving column: {}", col_name);
-            // println!("Row: {:?}", row);
-            // println!("Row length: {}", row.len());
-            // println!("Table: {:?}", table.columns);
-            // println!("Table columns length: {}", table.columns.len());
             assert_eq!(row.len(), table.columns.len());
             table
                 .columns
