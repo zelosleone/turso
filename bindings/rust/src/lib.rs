@@ -569,7 +569,7 @@ mod tests {
             Ok(_) => panic!("Query succeeded after WAL deletion and DB reopen, but was expected to fail because the table definition should have been in the WAL."),
             Err(Error::SqlExecutionFailure(msg)) => {
                 assert!(
-                    msg.contains("test_large_persistence not found"),
+                    msg.contains("no such table: test_large_persistence"),
                     "Expected 'test_large_persistence not found' error, but got: {}",
                     msg
                 );

@@ -662,7 +662,7 @@ def test_csv():
     limbo.run_test_fn("DROP TABLE temp.csv;", null, "Drop CSV table")
     limbo.run_test_fn(
         "SELECT * FROM temp.csv;",
-        lambda res: "Parse error: Table csv not found" in res,
+        lambda res: "Parse error: no such table: csv" in res,
         "Query dropped CSV table should fail",
     )
     limbo.run_test_fn(
