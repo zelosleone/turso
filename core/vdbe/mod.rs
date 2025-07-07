@@ -386,7 +386,7 @@ impl Program {
             let res = insn_function(self, state, insn, &pager, mv_store.as_ref());
             if res.is_err() {
                 let state = self.connection.transaction_state.get();
-                pager.rollback(state.change_schema(), &self.connection)?
+                pager.rollback(state.schema_did_change(), &self.connection)?
             }
             match res? {
                 InsnFunctionStepResult::Step => {}
@@ -427,7 +427,8 @@ impl Program {
                 program_state.commit_state
             );
             if program_state.commit_state == CommitState::Committing {
-                let TransactionState::Write { change_schema } = connection.transaction_state.get()
+                let TransactionState::Write { schema_did_change } =
+                    connection.transaction_state.get()
                 else {
                     unreachable!("invalid state for write commit step")
                 };
@@ -436,18 +437,18 @@ impl Program {
                     &mut program_state.commit_state,
                     &connection,
                     rollback,
-                    change_schema,
+                    schema_did_change,
                 )
             } else if auto_commit {
                 let current_state = connection.transaction_state.get();
                 tracing::trace!("Auto-commit state: {:?}", current_state);
                 match current_state {
-                    TransactionState::Write { change_schema } => self.step_end_write_txn(
+                    TransactionState::Write { schema_did_change } => self.step_end_write_txn(
                         &pager,
                         &mut program_state.commit_state,
                         &connection,
                         rollback,
-                        change_schema,
+                        schema_did_change,
                     ),
                     TransactionState::Read => {
                         connection.transaction_state.replace(TransactionState::None);
@@ -472,11 +473,11 @@ impl Program {
         commit_state: &mut CommitState,
         connection: &Connection,
         rollback: bool,
-        change_schema: bool,
+        schema_did_change: bool,
     ) -> Result<StepResult> {
         let cacheflush_status = pager.end_tx(
             rollback,
-            change_schema,
+            schema_did_change,
             connection,
             connection.wal_checkpoint_disabled.get(),
         )?;
@@ -489,7 +490,7 @@ impl Program {
                     status,
                     crate::storage::pager::PagerCacheflushResult::Rollback
                 ) {
-                    pager.rollback(change_schema, connection)?;
+                    pager.rollback(schema_did_change, connection)?;
                 }
                 connection.transaction_state.replace(TransactionState::None);
                 *commit_state = CommitState::Ready;

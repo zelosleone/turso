@@ -97,17 +97,17 @@ pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum TransactionState {
-    Write { change_schema: bool },
+    Write { schema_did_change: bool },
     Read,
     None,
 }
 
 impl TransactionState {
-    fn change_schema(&self) -> bool {
+    fn schema_did_change(&self) -> bool {
         matches!(
             self,
             TransactionState::Write {
-                change_schema: true
+                schema_did_change: true
             }
         )
     }
@@ -633,7 +633,7 @@ impl Connection {
         let res = self._db.io.run_once();
         if res.is_err() {
             let state = self.transaction_state.get();
-            self.pager.rollback(state.change_schema(), self)?;
+            self.pager.rollback(state.schema_did_change(), self)?;
         }
         res
     }
@@ -907,7 +907,7 @@ impl Statement {
         if res.is_err() {
             let state = self.program.connection.transaction_state.get();
             self.pager
-                .rollback(state.change_schema(), &self.program.connection)?;
+                .rollback(state.schema_did_change(), &self.program.connection)?;
         }
         res
     }

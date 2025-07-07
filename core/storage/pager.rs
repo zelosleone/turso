@@ -639,7 +639,7 @@ impl Pager {
     pub fn end_tx(
         &self,
         rollback: bool,
-        change_schema: bool,
+        schema_did_change: bool,
         connection: &Connection,
         wal_checkpoint_disabled: bool,
     ) -> Result<PagerCacheflushStatus> {
@@ -653,7 +653,7 @@ impl Pager {
         match cacheflush_status {
             PagerCacheflushStatus::IO => Ok(PagerCacheflushStatus::IO),
             PagerCacheflushStatus::Done(_) => {
-                let maybe_schema_pair = if change_schema {
+                let maybe_schema_pair = if schema_did_change {
                     let schema = connection.schema.borrow().clone();
                     // Lock first before writing to the database schema in case someone tries to read the schema before it's updated
                     let db_schema = connection._db.schema.write();
@@ -1206,13 +1206,17 @@ impl Pager {
     }
 
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn rollback(&self, change_schema: bool, connection: &Connection) -> Result<(), LimboError> {
-        tracing::debug!(change_schema);
+    pub fn rollback(
+        &self,
+        schema_did_change: bool,
+        connection: &Connection,
+    ) -> Result<(), LimboError> {
+        tracing::debug!(schema_did_change);
         self.dirty_pages.borrow_mut().clear();
         let mut cache = self.page_cache.write();
         cache.unset_dirty_all_pages();
         cache.clear().expect("failed to clear page cache");
-        if change_schema {
+        if schema_did_change {
             let prev_schema = connection._db.schema.read().clone();
             connection.schema.replace(prev_schema);
         }
