@@ -454,6 +454,18 @@ pub enum CursorSeekState {
         /// 1. We have not seen an EQ during the traversal
         /// 2. We are looking for an exact match ([SeekOp::GE] or [SeekOp::LE] with eq_only: true)
         eq_seen: Cell<bool>,
+        /// In multiple places, we do a seek that checks for an exact match (SeekOp::EQ) in the tree.
+        /// In those cases, we need to know where to land if we don't find an exact match in the leaf page.
+        /// For non-eq-only conditions (GT, LT, GE, LE), this is pretty simple:
+        /// - If we are looking for GT/GE and don't find a match, we should end up beyond the end of the page (idx=cell count).
+        /// - If we are looking for LT/LE and don't find a match, we should end up before the beginning of the page (idx=-1).
+        ///
+        /// For eq-only conditions (GE { eq_only: true } or LE { eq_only: true }), we need to know where to land if we don't find an exact match.
+        /// For GE, we want to land at the first cell that is greater than the seek key.
+        /// For LE, we want to land at the last cell that is less than the seek key.
+        /// This is because e.g. when we attempt to insert rowid 666, we first check if it exists.
+        /// If it doesn't, we want to land in the place where rowid 666 WOULD be inserted.
+        target_cell_when_not_found: Cell<i32>,
     },
 }
 
@@ -1712,6 +1724,10 @@ impl BTreeCursor {
                 max_cell_idx,
                 nearest_matching_cell,
                 eq_seen: Cell::new(false), // not relevant for table btrees
+                target_cell_when_not_found: Cell::new(match seek_op.iteration_direction() {
+                    IterationDirection::Forwards => cell_count as i32,
+                    IterationDirection::Backwards => -1,
+                }),
             };
         }
 
@@ -1719,6 +1735,7 @@ impl BTreeCursor {
             min_cell_idx,
             max_cell_idx,
             nearest_matching_cell,
+            target_cell_when_not_found,
             ..
         } = &self.seek_state
         else {
@@ -1736,6 +1753,7 @@ impl BTreeCursor {
             if min > max {
                 if let Some(nearest_matching_cell) = nearest_matching_cell.get() {
                     self.stack.set_cell_index(nearest_matching_cell as i32);
+                    self.has_record.set(true);
                     return Ok(IOResult::Done(SeekResult::Found));
                 } else {
                     // if !eq_only - matching entry can exist in neighbour leaf page
@@ -1743,19 +1761,14 @@ impl BTreeCursor {
                     // in such case BTree can navigate to the leaf which no longer has matching key for seek_op
                     // in this case, caller must advance cursor if necessary
                     return Ok(IOResult::Done(if seek_op.eq_only() {
+                        let has_record = target_cell_when_not_found.get() >= 0
+                            && target_cell_when_not_found.get() < contents.cell_count() as i32;
+                        self.has_record.set(has_record);
+                        self.stack.set_cell_index(target_cell_when_not_found.get());
                         SeekResult::NotFound
                     } else {
-                        let contents = page.get().contents.as_ref().unwrap();
-                        turso_assert!(
-                            contents.is_leaf(),
-                            "tablebtree_seek() called on non-leaf page"
-                        );
-                        let cell_count = contents.cell_count();
                         // set cursor to the position where which would hold the op-boundary if it were present
-                        self.stack.set_cell_index(match &seek_op {
-                            SeekOp::GT | SeekOp::GE { .. } => cell_count as i32,
-                            SeekOp::LT | SeekOp::LE { .. } => 0,
-                        });
+                        self.stack.set_cell_index(target_cell_when_not_found.get());
                         SeekResult::TryAdvance
                     }));
                 };
@@ -1778,6 +1791,7 @@ impl BTreeCursor {
             // rowids are unique, so we can return the rowid immediately
             if found && seek_op.eq_only() {
                 self.stack.set_cell_index(cur_cell_idx as i32);
+                self.has_record.set(true);
                 return Ok(IOResult::Done(SeekResult::Found));
             }
 
@@ -1792,8 +1806,16 @@ impl BTreeCursor {
                     }
                 }
             } else if cmp.is_gt() {
+                if matches!(seek_op, SeekOp::GE { eq_only: true }) {
+                    target_cell_when_not_found
+                        .set(target_cell_when_not_found.get().min(cur_cell_idx as i32));
+                }
                 max_cell_idx.set(cur_cell_idx - 1);
             } else if cmp.is_lt() {
+                if matches!(seek_op, SeekOp::LE { eq_only: true }) {
+                    target_cell_when_not_found
+                        .set(target_cell_when_not_found.get().max(cur_cell_idx as i32));
+                }
                 min_cell_idx.set(cur_cell_idx + 1);
             } else {
                 match iter_dir {
@@ -1865,6 +1887,10 @@ impl BTreeCursor {
                 max_cell_idx: max,
                 nearest_matching_cell,
                 eq_seen: Cell::new(eq_seen),
+                target_cell_when_not_found: Cell::new(match seek_op.iteration_direction() {
+                    IterationDirection::Forwards => cell_count as i32,
+                    IterationDirection::Backwards => -1,
+                }),
             };
         }
 
@@ -1873,6 +1899,7 @@ impl BTreeCursor {
             max_cell_idx,
             nearest_matching_cell,
             eq_seen,
+            target_cell_when_not_found,
         } = &self.seek_state
         else {
             unreachable!(
@@ -1885,7 +1912,6 @@ impl BTreeCursor {
         return_if_locked_maybe_load!(self.pager, page);
         let page = page.get();
         let contents = page.get().contents.as_ref().unwrap();
-        let cell_count = contents.cell_count();
 
         let iter_dir = seek_op.iteration_direction();
 
@@ -1895,19 +1921,21 @@ impl BTreeCursor {
             if min > max {
                 if let Some(nearest_matching_cell) = nearest_matching_cell.get() {
                     self.stack.set_cell_index(nearest_matching_cell as i32);
+                    self.has_record.set(true);
                     return Ok(IOResult::Done(SeekResult::Found));
                 } else {
+                    // set cursor to the position where which would hold the op-boundary if it were present
+                    let target_cell = target_cell_when_not_found.get();
+                    self.stack.set_cell_index(target_cell);
+                    let has_record = target_cell >= 0 && target_cell < contents.cell_count() as i32;
+                    self.has_record.set(has_record);
+
                     // Similar logic as in tablebtree_seek(), but for indexes.
                     // The difference is that since index keys are not necessarily unique, we need to TryAdvance
                     // even when eq_only=true and we have seen an EQ match up in the tree in an interior node.
                     if seek_op.eq_only() && !eq_seen.get() {
                         return Ok(IOResult::Done(SeekResult::NotFound));
                     }
-                    // set cursor to the position where which would hold the op-boundary if it were present
-                    self.stack.set_cell_index(match &seek_op {
-                        SeekOp::GT | SeekOp::GE { .. } => cell_count as i32,
-                        SeekOp::LT | SeekOp::LE { .. } => 0,
-                    });
                     return Ok(IOResult::Done(SeekResult::TryAdvance));
                 };
             }
@@ -1958,8 +1986,16 @@ impl BTreeCursor {
                     }
                 }
             } else if cmp.is_gt() {
+                if matches!(seek_op, SeekOp::GE { eq_only: true }) {
+                    target_cell_when_not_found
+                        .set(target_cell_when_not_found.get().min(cur_cell_idx as i32));
+                }
                 max_cell_idx.set(cur_cell_idx - 1);
             } else if cmp.is_lt() {
+                if matches!(seek_op, SeekOp::LE { eq_only: true }) {
+                    target_cell_when_not_found
+                        .set(target_cell_when_not_found.get().max(cur_cell_idx as i32));
+                }
                 min_cell_idx.set(cur_cell_idx + 1);
             } else {
                 match iter_dir {
@@ -2084,8 +2120,13 @@ impl BTreeCursor {
                         page.set_dirty();
                         self.pager.add_dirty(page.get().id);
 
-                        self.stack.current_cell_index() as usize
+                        self.stack.current_cell_index()
                     };
+                    if cell_idx == -1 {
+                        // This might be a brand new table and the cursor hasn't moved yet. Let's advance it to the first slot.
+                        self.stack.set_cell_index(0);
+                    }
+                    let cell_idx = self.stack.current_cell_index() as usize;
                     tracing::debug!(cell_idx);
 
                     // if the cell index is less than the total cells, check: if its an existing
@@ -4013,8 +4054,6 @@ impl BTreeCursor {
         // Reset seek state
         self.seek_state = CursorSeekState::Start;
         self.valid_state = CursorValidState::Valid;
-        self.has_record
-            .replace(matches!(seek_result, SeekResult::Found));
         Ok(IOResult::Done(seek_result))
     }
 
@@ -4560,10 +4599,9 @@ impl BTreeCursor {
         };
         let seek_result =
             return_if_io!(self.seek(SeekKey::TableRowId(*int_key), SeekOp::GE { eq_only: true }));
-        let has_record = matches!(seek_result, SeekResult::Found);
-        self.has_record.set(has_record);
+        let exists = matches!(seek_result, SeekResult::Found);
         self.invalidate_record();
-        Ok(IOResult::Done(has_record))
+        Ok(IOResult::Done(exists))
     }
 
     /// Clear the overflow pages linked to a specific page provided by the leaf cell
