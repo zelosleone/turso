@@ -147,7 +147,7 @@ pub(crate) enum Property {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct InteractiveQueryInfo {
+pub struct InteractiveQueryInfo {
     start_with_immediate: bool,
     end_with_commit: bool,
 }
