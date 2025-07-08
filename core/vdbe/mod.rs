@@ -334,7 +334,11 @@ impl Register {
     pub fn get_owned_value(&self) -> &Value {
         match self {
             Register::Value(v) => v,
-            _ => unreachable!(),
+            Register::Record(r) => {
+                assert!(!r.is_invalidated());
+                r.as_blob_value()
+            }
+            _ => panic!("register holds unexpected value: {:?}", self),
         }
     }
 }
