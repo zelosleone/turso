@@ -63,6 +63,7 @@ impl IdxInsertFlags {
     pub const APPEND: u8 = 0x01; // Hint: insert likely at the end
     pub const NCHANGE: u8 = 0x02; // Increment the change counter
     pub const USE_SEEK: u8 = 0x04; // Skip seek if last one was same key
+    pub const NO_OP_DUPLICATE: u8 = 0x08; // Do not error on duplicate key
     pub fn new() -> Self {
         IdxInsertFlags(0)
     }
@@ -91,6 +92,14 @@ impl IdxInsertFlags {
         } else {
             self.0 &= !IdxInsertFlags::NCHANGE;
         }
+        self
+    }
+    /// If this is set, we will not error on duplicate key.
+    /// This is a bit of a hack we use to make ephemeral indexes for UNION work --
+    /// instead we should allow overwriting index interior cells, which we currently don't;
+    /// this should (and will) be fixed in a future PR.
+    pub fn no_op_duplicate(mut self) -> Self {
+        self.0 |= IdxInsertFlags::NO_OP_DUPLICATE;
         self
     }
 }
