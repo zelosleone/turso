@@ -132,7 +132,7 @@ impl Callbacks {
     fn get(&self, fd: usize) -> Option<&CompletionCallback> {
         if let Some(pos) = self.find_inline(fd) {
             let (_, callback) = unsafe { self.inline_entries[pos].assume_init_ref() };
-            return Some(&callback);
+            return Some(callback);
         } else if let Some(pos) = self.heap_entries.iter().position(|&(k, _)| k == fd) {
             return Some(&self.heap_entries[pos].1);
         }
