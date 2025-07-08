@@ -22,6 +22,13 @@ use crate::{
     LimboError, Result,
 };
 
+use super::{
+    pager::PageRef,
+    sqlite3_ondisk::{
+        write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell, DATABASE_HEADER_SIZE,
+        MINIMUM_CELL_SIZE,
+    },
+};
 #[cfg(debug_assertions)]
 use std::collections::HashSet;
 use std::{
@@ -32,13 +39,6 @@ use std::{
     pin::Pin,
     rc::Rc,
     sync::Arc,
-};
-
-use super::{
-    pager::PageRef,
-    sqlite3_ondisk::{
-        write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell, DATABASE_HEADER_SIZE,
-    },
 };
 
 /// The B-Tree page header is 12 bytes for interior pages and 8 bytes for leaf pages.
@@ -6364,7 +6364,10 @@ fn compute_free_space(page: &PageContent, usable_space: u16) -> u16 {
 
 /// Allocate space for a cell on a page.
 fn allocate_cell_space(page_ref: &PageContent, amount: u16, usable_space: u16) -> Result<u16> {
-    let amount = amount as usize;
+    let mut amount = amount as usize;
+    if amount < MINIMUM_CELL_SIZE {
+        amount = MINIMUM_CELL_SIZE;
+    }
 
     let (cell_offset, _) = page_ref.cell_pointer_array_offset_and_size();
     let gap = cell_offset + 2 * page_ref.cell_count();

@@ -88,6 +88,9 @@ pub const DEFAULT_PAGE_SIZE: u16 = 4096;
 
 pub const DATABASE_HEADER_PAGE_ID: usize = 1;
 
+/// The minimum size of a cell in bytes.
+pub const MINIMUM_CELL_SIZE: usize = 4;
+
 /// The database header.
 /// The first 100 bytes of the database file comprise the database file header.
 /// The database file header is divided into fields as shown by the table below.
@@ -668,7 +671,11 @@ impl PageContent {
                 if overflows {
                     to_read + n_payload
                 } else {
-                    len_payload as usize + n_payload
+                    let mut size = len_payload as usize + n_payload;
+                    if size < MINIMUM_CELL_SIZE {
+                        size = MINIMUM_CELL_SIZE;
+                    }
+                    size
                 }
             }
             PageType::TableLeaf => {
@@ -683,7 +690,11 @@ impl PageContent {
                 if overflows {
                     to_read + n_payload + n_rowid
                 } else {
-                    len_payload as usize + n_payload + n_rowid
+                    let mut size = len_payload as usize + n_payload + n_rowid;
+                    if size < MINIMUM_CELL_SIZE {
+                        size = MINIMUM_CELL_SIZE;
+                    }
+                    size
                 }
             }
         };

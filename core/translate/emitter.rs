@@ -565,6 +565,7 @@ fn emit_delete_insns(
                     start_reg,
                     num_regs,
                     cursor_id: index_cursor_id,
+                    raise_error_if_no_matching_entry: true,
                 });
             }
         }
@@ -1083,6 +1084,7 @@ fn emit_update_insns(
                 start_reg,
                 num_regs,
                 cursor_id: idx_cursor_id,
+                raise_error_if_no_matching_entry: true,
             });
 
             // Insert new index key (filled further above with values from set_clauses)
