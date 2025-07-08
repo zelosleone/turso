@@ -31,7 +31,7 @@ impl Execution {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct ExecutionHistory {
     pub(crate) history: Vec<Execution>,
 }
