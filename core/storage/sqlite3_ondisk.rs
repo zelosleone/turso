@@ -88,6 +88,9 @@ pub const DEFAULT_PAGE_SIZE: u16 = 4096;
 
 pub const DATABASE_HEADER_PAGE_ID: usize = 1;
 
+/// The minimum size of a cell in bytes.
+pub const MINIMUM_CELL_SIZE: usize = 4;
+
 /// The database header.
 /// The first 100 bytes of the database file comprise the database file header.
 /// The database file header is divided into fields as shown by the table below.
@@ -669,8 +672,8 @@ impl PageContent {
                     to_read + n_payload
                 } else {
                     let mut size = len_payload as usize + n_payload;
-                    if size < 4 {
-                        size = 4;
+                    if size < MINIMUM_CELL_SIZE {
+                        size = MINIMUM_CELL_SIZE;
                     }
                     size
                 }
@@ -688,8 +691,8 @@ impl PageContent {
                     to_read + n_payload + n_rowid
                 } else {
                     let mut size = len_payload as usize + n_payload + n_rowid;
-                    if size < 4 {
-                        size = 4;
+                    if size < MINIMUM_CELL_SIZE {
+                        size = MINIMUM_CELL_SIZE;
                     }
                     size
                 }
