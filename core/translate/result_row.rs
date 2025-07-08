@@ -98,7 +98,7 @@ pub fn emit_result_row_and_limit(
                 record_reg,
                 unpacked_start: None,
                 unpacked_count: None,
-                flags: IdxInsertFlags::new(),
+                flags: IdxInsertFlags::new().no_op_duplicate(),
             });
         }
         QueryDestination::EphemeralTable {

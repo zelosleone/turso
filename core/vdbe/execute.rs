@@ -4450,7 +4450,7 @@ pub fn op_idx_insert(
         let CursorType::BTreeIndex(index_meta) = cursor_type else {
             panic!("IdxInsert: not a BTree index cursor");
         };
-        {
+        'block: {
             let mut cursor = state.get_cursor(cursor_id);
             let cursor = cursor.as_btree_mut();
             let record = match &state.registers[record_reg] {
@@ -4470,9 +4470,12 @@ pub fn op_idx_insert(
                 // check for uniqueness violation
                 match cursor.key_exists_in_index(record)? {
                     CursorResult::Ok(true) => {
+                        if flags.has(IdxInsertFlags::NO_OP_DUPLICATE) {
+                            break 'block;
+                        }
                         return Err(LimboError::Constraint(
                             "UNIQUE constraint failed: duplicate key".into(),
-                        ))
+                        ));
                     }
                     CursorResult::IO => return Ok(InsnFunctionStepResult::IO),
                     CursorResult::Ok(false) => {}
