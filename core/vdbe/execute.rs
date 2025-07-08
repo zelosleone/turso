@@ -4324,11 +4324,10 @@ pub fn op_insert(
     };
     if root_page != 1 {
         state.op_insert_state = OpInsertState::UpdateLastRowid;
-        return Ok(InsnFunctionStepResult::Step);
     } else {
         state.pc += 1;
-        return Ok(InsnFunctionStepResult::Step);
     }
+    Ok(InsnFunctionStepResult::Step)
 }
 
 pub fn op_int_64(
