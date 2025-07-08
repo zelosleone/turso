@@ -1023,7 +1023,7 @@ impl ImmutableRecord {
     }
 
     pub fn get_payload(&self) -> &[u8] {
-        &self.payload.as_blob()
+        self.payload.as_blob()
     }
 
     pub fn as_blob_value(&self) -> &Value {
