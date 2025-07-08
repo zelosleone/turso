@@ -742,6 +742,7 @@ impl Connection {
 
     /// Close a connection and checkpoint.
     pub fn close(&self) -> Result<()> {
+        turso_assert!(!self.closed.get(), "Connection already closed");
         self.closed.set(true);
         self.pager
             .checkpoint_shutdown(self.wal_checkpoint_disabled.get())
