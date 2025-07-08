@@ -296,9 +296,11 @@ impl Connection {
 
 impl Drop for Connection {
     fn drop(&mut self) {
-        self.conn
-            .close()
-            .expect("Failed to drop (close) connection");
+        if Arc::strong_count(&self.conn) == 1 {
+            self.conn
+                .close()
+                .expect("Failed to drop (close) connection");
+        }
     }
 }
 

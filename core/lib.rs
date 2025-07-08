@@ -280,6 +280,7 @@ impl Database {
                 readonly: Cell::new(false),
                 wal_checkpoint_disabled: Cell::new(false),
                 capture_data_changes: RefCell::new(CaptureDataChangesMode::Off),
+                closed: Cell::new(false),
             });
             if let Err(e) = conn.register_builtins() {
                 return Err(LimboError::ExtensionError(e));
@@ -333,6 +334,7 @@ impl Database {
             readonly: Cell::new(false),
             wal_checkpoint_disabled: Cell::new(false),
             capture_data_changes: RefCell::new(CaptureDataChangesMode::Off),
+            closed: Cell::new(false),
         });
 
         if let Err(e) = conn.register_builtins() {
@@ -487,6 +489,7 @@ pub struct Connection {
     readonly: Cell<bool>,
     wal_checkpoint_disabled: Cell<bool>,
     capture_data_changes: RefCell<CaptureDataChangesMode>,
+    closed: Cell<bool>,
 }
 
 impl Connection {
@@ -739,6 +742,8 @@ impl Connection {
 
     /// Close a connection and checkpoint.
     pub fn close(&self) -> Result<()> {
+        turso_assert!(!self.closed.get(), "Connection already closed");
+        self.closed.set(true);
         self.pager
             .checkpoint_shutdown(self.wal_checkpoint_disabled.get())
     }
