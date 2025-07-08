@@ -4,7 +4,6 @@ import logging
 from logging.handlers import RotatingFileHandler
 
 import turso
-from antithesis.assertions import reachable
 from antithesis.random import get_random
 
 handler = RotatingFileHandler(
@@ -38,10 +37,8 @@ def transaction():
 
         logger.info(f"Sender ID: {sender} | Recipient ID: {recipient} | Txn Val: {value}")
 
-        reachable("[GENERATE TRANSACTION] BEGIN TRANSACTION")
         cur.execute("BEGIN TRANSACTION;")
 
-        reachable("[GENERATE TRANSACTION] UPDATE ACCOUNTS - subtract value from balance of the sender account")
         # subtract value from balance of the sender account
         cur.execute(f"""
             UPDATE accounts
@@ -49,7 +46,6 @@ def transaction():
             WHERE account_id = {sender};
         """)
 
-        reachable("[GENERATE TRANSACTION] UPDATE ACCOUNTS - add value to balance of the recipient account")
         # add value to balance of the recipient account
         cur.execute(f"""
             UPDATE accounts
@@ -57,7 +53,6 @@ def transaction():
             WHERE account_id = {recipient};
         """)
 
-        reachable("[GENERATE TRANSACTION] COMMIT TRANSACTION")
         cur.execute("COMMIT;")
 
 
