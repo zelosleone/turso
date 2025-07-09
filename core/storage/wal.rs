@@ -23,7 +23,7 @@ use crate::storage::sqlite3_ondisk::{
     begin_read_wal_frame, begin_write_wal_frame, finish_read_page, WAL_FRAME_HEADER_SIZE,
     WAL_HEADER_SIZE,
 };
-use crate::{Buffer, Result};
+use crate::{Buffer, LimboError, Result};
 use crate::{Completion, Page};
 
 use self::sqlite3_ondisk::{checksum_wal, PageContent, WAL_MAGIC_BE, WAL_MAGIC_LE};
@@ -479,6 +479,7 @@ pub struct WalFileShared {
     /// There is only one write allowed in WAL mode. This lock takes care of ensuring there is only
     /// one used.
     pub write_lock: LimboRwLock,
+    pub checkpoint_lock: LimboRwLock,
     pub loaded: AtomicBool,
 }
 
@@ -728,6 +729,10 @@ impl Wal for WalFile {
                     // TODO(pere): check what frames are safe to checkpoint between many readers!
                     self.ongoing_checkpoint.min_frame = self.min_frame;
                     let shared = self.get_shared();
+                    let busy = !shared.checkpoint_lock.write();
+                    if busy {
+                        return Err(LimboError::Busy);
+                    }
                     let mut max_safe_frame = shared.max_frame.load(Ordering::SeqCst);
                     for (read_lock_idx, read_lock) in shared.read_locks.iter_mut().enumerate() {
                         let this_mark = read_lock.value.load(Ordering::SeqCst);
@@ -751,8 +756,8 @@ impl Wal for WalFile {
                     self.ongoing_checkpoint.state = CheckpointState::ReadFrame;
                     tracing::trace!(
                         "checkpoint_start(min_frame={}, max_frame={})",
+                        self.ongoing_checkpoint.min_frame,
                         self.ongoing_checkpoint.max_frame,
-                        self.ongoing_checkpoint.min_frame
                     );
                 }
                 CheckpointState::ReadFrame => {
@@ -835,6 +840,7 @@ impl Wal for WalFile {
                         return Ok(CheckpointStatus::IO);
                     }
                     let shared = self.get_shared();
+                    shared.checkpoint_lock.unlock();
 
                     // Record two num pages fields to return as checkpoint result to caller.
                     // Ref: pnLog, pnCkpt on https://www.sqlite.org/c3ref/wal_checkpoint_v2.html
@@ -1096,6 +1102,7 @@ impl WalFileShared {
                 nreads: AtomicU32::new(0),
                 value: AtomicU32::new(READMARK_NOT_USED),
             },
+            checkpoint_lock: LimboRwLock::new(),
             loaded: AtomicBool::new(true),
         };
         Ok(Arc::new(UnsafeCell::new(shared)))

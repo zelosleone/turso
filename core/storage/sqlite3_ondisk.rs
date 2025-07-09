@@ -1331,6 +1331,7 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
         ],
         write_lock: LimboRwLock::new(),
         loaded: AtomicBool::new(false),
+        checkpoint_lock: LimboRwLock::new(),
     }));
     let wal_file_shared_for_completion = wal_file_shared_ret.clone();
 
