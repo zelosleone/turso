@@ -4249,6 +4249,14 @@ pub fn op_yield(
     Ok(InsnFunctionStepResult::Step)
 }
 
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum OpInsertState {
+    Insert,
+    /// Updating last_insert_rowid may return IO, so we need a separate state for it so that we don't
+    /// start inserting the same row multiple times.
+    UpdateLastRowid,
+}
+
 pub fn op_insert(
     program: &Program,
     state: &mut ProgramState,
@@ -4257,7 +4265,7 @@ pub fn op_insert(
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Insert {
-        cursor,
+        cursor: cursor_id,
         key_reg,
         record_reg,
         flag,
@@ -4266,9 +4274,27 @@ pub fn op_insert(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
+
+    if state.op_insert_state == OpInsertState::UpdateLastRowid {
+        let maybe_rowid = {
+            let mut cursor = state.get_cursor(*cursor_id);
+            let cursor = cursor.as_btree_mut();
+            return_if_io!(cursor.rowid())
+        };
+        if let Some(rowid) = maybe_rowid {
+            program.connection.update_last_rowid(rowid);
+
+            let prev_changes = program.n_change.get();
+            program.n_change.set(prev_changes + 1);
+        }
+        state.op_insert_state = OpInsertState::Insert;
+        state.pc += 1;
+        return Ok(InsnFunctionStepResult::Step);
+    }
+
     {
-        let mut cursor = state.get_cursor(*cursor);
-        let cursor = cursor.as_btree_mut();
+        let mut cursor_ref = state.get_cursor(*cursor_id);
+        let cursor = cursor_ref.as_btree_mut();
 
         let key = match &state.registers[*key_reg].get_owned_value() {
             Value::Integer(i) => *i,
@@ -4288,18 +4314,19 @@ pub fn op_insert(
         };
 
         return_if_io!(cursor.insert(&BTreeKey::new_table_rowid(key, Some(record.as_ref())), true));
-        // Only update last_insert_rowid for regular table inserts, not schema modifications
-        if cursor.root_page() != 1 {
-            if let Some(rowid) = return_if_io!(cursor.rowid()) {
-                program.connection.update_last_rowid(rowid);
-
-                let prev_changes = program.n_change.get();
-                program.n_change.set(prev_changes + 1);
-            }
-        }
     }
 
-    state.pc += 1;
+    // Only update last_insert_rowid for regular table inserts, not schema modifications
+    let root_page = {
+        let mut cursor = state.get_cursor(*cursor_id);
+        let cursor = cursor.as_btree_mut();
+        cursor.root_page()
+    };
+    if root_page != 1 {
+        state.op_insert_state = OpInsertState::UpdateLastRowid;
+    } else {
+        state.pc += 1;
+    }
     Ok(InsnFunctionStepResult::Step)
 }
 
