@@ -139,6 +139,16 @@ pub(crate) enum Property {
         select: Select,
         predicate: Predicate,
     },
+    /// UNION-ALL-Preserves-Cardinality is a property that tests the UNION ALL operator
+    /// implementation in the database. It relies on the fact that `SELECT * FROM <t
+    /// > WHERE <predicate> UNION ALL SELECT * FROM <t> WHERE <predicate>`
+    /// should return the same number of rows as `SELECT <predicate> FROM <t> WHERE <predicate>`.
+    /// The property is succesfull when the UNION ALL of 2 select queries returns the same number of rows
+    /// as the sum of the two select queries.
+    UNIONAllPreservesCardinality {
+        select: Select,
+        where_clause: Predicate,
+    },
     /// FsyncNoWait is a property which tests if we do not loose any data after not waiting for fsync.
     ///
     /// # Interactions
@@ -169,6 +179,7 @@ impl Property {
             Property::WhereTrueFalseNull { .. } => "Where-True-False-Null",
             Property::FsyncNoWait { .. } => "FsyncNoWait",
             Property::FaultyQuery { .. } => "FaultyQuery",
+            Property::UNIONAllPreservesCardinality { .. } => "UNION-All-Preserves-Cardinality",
         }
     }
     /// interactions construct a list of interactions, which is an executable representation of the property.
@@ -250,17 +261,17 @@ impl Property {
                 let table_name = create.table.name.clone();
 
                 let assertion = Interaction::Assertion(Assertion {
-                            message:
-                                "creating two tables with the name should result in a failure for the second query"
-                                    .to_string(),
-                            func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
-                                let last = stack.last().unwrap();
-                                match last {
-                                    Ok(_) => Ok(false),
-                                    Err(e) => Ok(e.to_string().to_lowercase().contains(&format!("table {table_name} already exists"))),
-                                }
-                            }),
-                        });
+                                    message:
+                                        "creating two tables with the name should result in a failure for the second query"
+                                            .to_string(),
+                                    func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
+                                        let last = stack.last().unwrap();
+                                        match last {
+                                            Ok(_) => Ok(false),
+                                            Err(e) => Ok(e.to_string().to_lowercase().contains(&format!("table {table_name} already exists"))),
+                                        }
+                                    }),
+                                });
 
                 let mut interactions = Vec::new();
                 interactions.push(assumption);
@@ -272,9 +283,15 @@ impl Property {
                 interactions
             }
             Property::SelectLimit { select } => {
-
                 let assumption = Interaction::Assumption(Assertion {
-                    message: format!("table ({}) exists", select.dependencies().into_iter().collect::<Vec<_>>().join(", ")),
+                    message: format!(
+                        "table ({}) exists",
+                        select
+                            .dependencies()
+                            .into_iter()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
                     func: Box::new({
                         let table_name = select.dependencies();
                         move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
@@ -433,8 +450,8 @@ impl Property {
                                 // If rows1 results have more than 1 column, there is a problem
                                 if rows1.iter().any(|vs| vs.len() > 1) {
                                     return Err(LimboError::InternalError(
-                                                "Select query without the star should return only one column".to_string(),
-                                            ));
+                                                        "Select query without the star should return only one column".to_string(),
+                                                    ));
                                 }
                                 // Count the 1s in the select query without the star
                                 let rows1_count = rows1
@@ -565,9 +582,9 @@ impl Property {
                                 for row in select_rows.iter() {
                                     if !select_tlp_rows.iter().any(|r| r == row) {
                                         tracing::debug!(
-                                            "select and select_tlp returned different rows, ({}) is in select but not in select_tlp",
-                                            row.iter().map(|v| v.to_string()).collect::<Vec<String>>().join(", ")
-                                        );
+                                                    "select and select_tlp returned different rows, ({}) is in select but not in select_tlp",
+                                                    row.iter().map(|v| v.to_string()).collect::<Vec<String>>().join(", ")
+                                                );
                                         return Ok(false);
                                     }
                                 }
@@ -575,9 +592,9 @@ impl Property {
                                 for row in select_tlp_rows.iter() {
                                     if !select_rows.iter().any(|r| r == row) {
                                         tracing::debug!(
-                                            "select and select_tlp returned different rows, ({}) is in select_tlp but not in select",
-                                            row.iter().map(|v| v.to_string()).collect::<Vec<String>>().join(", ")
-                                        );
+                                                    "select and select_tlp returned different rows, ({}) is in select_tlp but not in select",
+                                                    row.iter().map(|v| v.to_string()).collect::<Vec<String>>().join(", ")
+                                                );
 
                                         return Ok(false);
                                     }
@@ -599,6 +616,45 @@ impl Property {
                 });
 
                 vec![assumption, select, select_tlp, assertion]
+            }
+            Property::UNIONAllPreservesCardinality { select, where_clause } => {
+                let s1 = select.clone();
+                let mut s2 = select.clone();
+                s2.body.select.where_clause = where_clause.clone();
+                let s3 = Select::compound(s1.clone(), s2.clone(), CompoundOperator::UnionAll);
+
+                vec![
+                    Interaction::Query(Query::Select(s1.clone())),
+                    Interaction::Query(Query::Select(s2.clone())),
+                    Interaction::Query(Query::Select(s3.clone())),
+                    Interaction::Assertion(Assertion {
+                        message: "UNION ALL should preserve cardinality".to_string(),
+                        func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
+                            if stack.len() < 3 {
+                                return Err(LimboError::InternalError(
+                                    "Not enough result sets on the stack".to_string(),
+                                ));
+                            }
+
+                            let select1 = stack.get(stack.len() - 3).unwrap();
+                            let select2 = stack.get(stack.len() - 2).unwrap();
+                            let union_all = stack.last().unwrap();
+
+                            match (select1, select2, union_all) {
+                                (Ok(rows1), Ok(rows2), Ok(union_rows)) => {
+                                    let count1 = rows1.len();
+                                    let count2 = rows2.len();
+                                    let union_count = union_rows.len();
+                                    Ok(union_count == count1 + count2)
+                                }
+                                (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
+                                    tracing::error!("Error in select queries: {}", e);
+                                    Err(LimboError::InternalError(e.to_string()))
+                                }
+                            }
+                        }),
+                    }),
+                ]
             }
         }
     }
@@ -916,6 +972,32 @@ fn property_where_true_false_null<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv)
         predicate: p2,
     }
 }
+
+fn property_union_all_preserves_cardinality<R: rand::Rng>(
+    rng: &mut R,
+    env: &SimulatorEnv,
+) -> Property {
+    // Get a random table
+    let table = pick(&env.tables, rng);
+    // Generate a random predicate
+    let p1 = Predicate::arbitrary_from(rng, table);
+    let p2 = Predicate::arbitrary_from(rng, table);
+
+    // Create the select query
+    let select = Select::single(
+        table.name.clone(),
+        vec![ResultColumn::Star],
+        p1,
+        None,
+        Distinctness::All,
+    );
+
+    Property::UNIONAllPreservesCardinality {
+        select,
+        where_clause: p2,
+    }
+}
+
 fn property_fsync_no_wait<R: rand::Rng>(
     rng: &mut R,
     env: &SimulatorEnv,
@@ -1002,6 +1084,14 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
                         0.0
                     },
                     Box::new(|rng: &mut R| property_where_true_false_null(rng, env)),
+                ),
+                (
+                    if !env.opts.disable_union_all_preserves_cardinality {
+                        remaining_.read / 3.0
+                    } else {
+                        0.0
+                    },
+                    Box::new(|rng: &mut R| property_union_all_preserves_cardinality(rng, env)),
                 ),
                 (
                     if !env.opts.disable_fsync_no_wait {

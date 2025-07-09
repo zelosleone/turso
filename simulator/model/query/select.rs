@@ -78,6 +78,18 @@ impl Select {
         }
     }
 
+    pub fn compound(left: Select, right: Select, operator: CompoundOperator) -> Self {
+        let mut body = left.body;
+        body.compounds.push(CompoundSelect {
+            operator,
+            select: Box::new(right.body.select.as_ref().clone()),
+        });
+        Select {
+            body,
+            limit: left.limit.or(right.limit),
+        }
+    }
+
     pub(crate) fn dependencies(&self) -> HashSet<String> {
         let mut tables = HashSet::new();
         tables.insert(self.body.select.from.table.clone());

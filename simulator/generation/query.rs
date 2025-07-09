@@ -164,7 +164,7 @@ impl ArbitraryFrom<&SimulatorEnv> for Insert {
             })
         };
 
-        let _gen_select = |rng: &mut R| {
+        let gen_select = |rng: &mut R| {
             // Find a non-empty table
             let select_table = env.tables.iter().find(|t| !t.rows.is_empty())?;
             let row = pick(&select_table.rows, rng);
@@ -182,8 +182,7 @@ impl ArbitraryFrom<&SimulatorEnv> for Insert {
         backtrack(
             vec![
                 (1, Box::new(gen_values)),
-                // todo: test and enable this once `INSERT INTO <table> SELECT * FROM <table>` is supported
-                // (1, Box::new(|rng| gen_select(rng))),
+                (1, Box::new(|rng| gen_select(rng))),
             ],
             rng,
         )

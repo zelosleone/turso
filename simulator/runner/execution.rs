@@ -65,16 +65,14 @@ pub(crate) fn execute_plans(
     let now = std::time::Instant::now();
     env.clear_poison();
     let mut env = env.lock().unwrap();
+    
+    env.tables.clear();
+    
     for _tick in 0..env.opts.ticks {
         // Pick the connection to interact with
         let connection_index = pick_index(env.connections.len(), &mut env.rng);
         let state = &mut states[connection_index];
-        std::thread::sleep(std::time::Duration::from_millis(
-            std::env::var("TICK_SLEEP")
-                .unwrap_or("0".into())
-                .parse()
-                .unwrap_or(0),
-        ));
+        
         history.history.push(Execution::new(
             connection_index,
             state.interaction_pointer,
@@ -129,7 +127,7 @@ fn execute_plan(
         tracing::debug!("connection {} already connected", connection_index);
         match execute_interaction(env, connection_index, interaction, &mut state.stack) {
             Ok(next_execution) => {
-                interaction.shadow(&mut env.tables);
+                let _ = interaction.shadow(&mut env.tables);
                 tracing::debug!("connection {} processed", connection_index);
                 // Move to the next interaction or property
                 match next_execution {
