@@ -855,15 +855,15 @@ pub enum BTreeCell {
 
 #[derive(Debug, Clone)]
 pub struct TableInteriorCell {
-    pub _left_child_page: u32,
-    pub _rowid: i64,
+    pub left_child_page: u32,
+    pub rowid: i64,
 }
 
 #[derive(Debug, Clone)]
 pub struct TableLeafCell {
-    pub _rowid: i64,
+    pub rowid: i64,
     /// Payload of cell, if it overflows it won't include overflowed payload.
-    pub _payload: &'static [u8],
+    pub payload: &'static [u8],
     /// This is the complete payload size including overflow pages.
     pub payload_size: u64,
     pub first_overflow_page: Option<u32>,
@@ -881,9 +881,9 @@ pub struct IndexInteriorCell {
 #[derive(Debug, Clone)]
 pub struct IndexLeafCell {
     pub payload: &'static [u8],
-    pub first_overflow_page: Option<u32>,
     /// This is the complete payload size including overflow pages.
     pub payload_size: u64,
+    pub first_overflow_page: Option<u32>,
 }
 
 /// read_btree_cell contructs a BTreeCell which is basically a wrapper around pointer to the payload of a cell.
@@ -925,8 +925,8 @@ pub fn read_btree_cell(
             pos += 4;
             let (rowid, _) = read_varint(&page[pos..])?;
             Ok(BTreeCell::TableInteriorCell(TableInteriorCell {
-                _left_child_page: left_child_page,
-                _rowid: rowid as i64,
+                left_child_page,
+                rowid: rowid as i64,
             }))
         }
         PageType::IndexLeaf => {
@@ -960,8 +960,8 @@ pub fn read_btree_cell(
             let (payload, first_overflow_page) =
                 read_payload(&page[pos..pos + to_read], payload_size as usize);
             Ok(BTreeCell::TableLeafCell(TableLeafCell {
-                _rowid: rowid as i64,
-                _payload: payload,
+                rowid: rowid as i64,
+                payload,
                 first_overflow_page,
                 payload_size,
             }))
