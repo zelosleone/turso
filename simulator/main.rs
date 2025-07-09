@@ -324,7 +324,7 @@ fn run_simulator(
 
                 tracing::error!("simulation failed: '{}'", error);
 
-                if cli_opts.disable_shrinking {
+                if cli_opts.disable_heuristic_shrinking && !cli_opts.brute_force_shrink {
                     tracing::info!("shrinking is disabled, skipping shrinking");
                     if let Some(bugbase) = bugbase.as_deref_mut() {
                         bugbase
@@ -335,8 +335,8 @@ fn run_simulator(
                 }
 
                 tracing::info!("Starting to shrink");
-
-                let shrunk_plans = plans
+                let (shrunk_plans, shrunk) = if !cli_opts.disable_heuristic_shrinking {
+                    let shrunk_plans = plans
                     .iter()
                     .map(|plan| {
                         let shrunk = plan.shrink_interaction_plan(last_execution);
@@ -344,26 +344,30 @@ fn run_simulator(
                         shrunk
                     })
                     .collect::<Vec<_>>();
+                    // Write the shrunk plan to a file
+                    let mut f = std::fs::File::create(&paths.shrunk_plan).unwrap();
+                    tracing::trace!("writing shrunk plan to {}", paths.shrunk_plan.display());
+                    f.write_all(shrunk_plans[0].to_string().as_bytes()).unwrap();
+                    
+                    let last_execution = Arc::new(Mutex::new(*last_execution));
+                    let env = SimulatorEnv::new(seed, cli_opts, &paths.shrunk_db);
 
-                // Write the shrunk plan to a file
-                let mut f = std::fs::File::create(&paths.shrunk_plan).unwrap();
-                tracing::trace!("writing shrunk plan to {}", paths.shrunk_plan.display());
-                f.write_all(shrunk_plans[0].to_string().as_bytes()).unwrap();
+                    let env = Arc::new(Mutex::new(env));
+                    let shrunk = SandboxedResult::from(
+                        std::panic::catch_unwind(|| {
+                            run_simulation(
+                                env.clone(),
+                                &mut shrunk_plans.clone(),
+                                last_execution.clone(),
+                            )
+                        }),
+                        last_execution,
+                    );
+                    (shrunk_plans, shrunk)
+                } else {
+                    (plans.to_vec(), result.clone())
+                };
 
-                let last_execution = Arc::new(Mutex::new(*last_execution));
-                let env = SimulatorEnv::new(seed, cli_opts, &paths.shrunk_db);
-
-                let env = Arc::new(Mutex::new(env));
-                let shrunk = SandboxedResult::from(
-                    std::panic::catch_unwind(|| {
-                        run_simulation(
-                            env.clone(),
-                            &mut shrunk_plans.clone(),
-                            last_execution.clone(),
-                        )
-                    }),
-                    last_execution,
-                );
 
                 match (&shrunk, &result) {
                     (
@@ -394,17 +398,28 @@ fn run_simulator(
                             );
                             Err(anyhow!("failed with error: '{}'", error))
                         } else {
+                            let final_plans = if cli_opts.brute_force_shrink {
+                                let brute_shrunk_plans = shrunk_plans
+                                    .iter()
+                                    .map(|plan| plan.brute_shrink_interaction_plan(&shrunk))
+                                    .collect::<Vec<_>>();
+                                tracing::info!("Brute force shrinking completed");
+                                brute_shrunk_plans
+                            } else {
+                                shrunk_plans
+                            };
+                            
                             tracing::info!(
                                 "shrinking succeeded, reduced the plan from {} to {}",
                                 plans[0].plan.len(),
-                                shrunk_plans[0].plan.len()
+                                final_plans[0].plan.len()
                             );
                             // Save the shrunk database
                             if let Some(bugbase) = bugbase.as_deref_mut() {
                                 bugbase.make_shrunk(
                                     seed,
                                     cli_opts,
-                                    shrunk_plans[0].clone(),
+                                    final_plans[0].clone(),
                                     Some(e1.clone()),
                                 )?;
                             }
@@ -555,6 +570,7 @@ fn differential_testing(
 }
 
 #[derive(Debug)]
+#[derive(Clone)]
 enum SandboxedResult {
     Panicked {
         error: String,
