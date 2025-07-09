@@ -110,7 +110,7 @@ pub(crate) type MvCursor = mvcc::cursor::ScanCursor<mvcc::LocalClock>;
 
 pub struct Database {
     mv_store: Option<Rc<MvStore>>,
-    schema: Arc<RwLock<Schema>>,
+    schema: RefCell<Arc<Schema>>,
     db_file: Arc<dyn DatabaseStorage>,
     path: String,
     io: Arc<dyn IO>,
@@ -197,11 +197,11 @@ impl Database {
         };
 
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
-        let schema = Arc::new(RwLock::new(Schema::new(enable_indexes)));
-        let db = Database {
+
+        let db = Arc::new(Database {
             mv_store,
             path: path.to_string(),
-            schema: schema.clone(),
+            schema: RefCell::new(Arc::new(Schema::new(enable_indexes))),
             _shared_page_cache: shared_page_cache.clone(),
             maybe_shared_wal: RwLock::new(maybe_shared_wal),
             db_file,
@@ -209,19 +209,16 @@ impl Database {
             open_flags: flags,
             db_state: Arc::new(AtomicUsize::new(db_state)),
             init_lock: Arc::new(Mutex::new(())),
-        };
-        let db = Arc::new(db);
+        });
 
         // Check: https://github.com/tursodatabase/turso/pull/1761#discussion_r2154013123
         if db_state == DB_STATE_INITIALIZED {
             // parse schema
             let conn = db.connect()?;
-            let schema_version = get_schema_version(&conn)?;
-            schema.write().schema_version = schema_version;
 
-            let mut schema = schema
-                .try_write()
-                .expect("lock on schema should succeed first try");
+            let mut schema_ref = db.schema.borrow_mut();
+            let schema = Arc::make_mut(&mut *schema_ref);
+            schema.schema_version = get_schema_version(&conn)?;
 
             let syms = conn.syms.borrow();
             let pager = conn.pager.borrow().clone();
@@ -235,6 +232,7 @@ impl Database {
         Ok(db)
     }
 
+    #[instrument(skip_all, level = Level::INFO)]
     pub fn connect(self: &Arc<Database>) -> Result<Arc<Connection>> {
         let pager = self.init_pager(None)?;
 
@@ -246,7 +244,7 @@ impl Database {
         let conn = Arc::new(Connection {
             _db: self.clone(),
             pager: RefCell::new(Rc::new(pager)),
-            schema: RefCell::new(self.schema.read().clone()),
+            schema: RefCell::new(self.schema.borrow().clone()),
             auto_commit: Cell::new(true),
             mv_transactions: RefCell::new(Vec::new()),
             transaction_state: Cell::new(TransactionState::None),
@@ -492,7 +490,7 @@ impl CaptureDataChangesMode {
 pub struct Connection {
     _db: Arc<Database>,
     pager: RefCell<Rc<Pager>>,
-    schema: RefCell<Schema>,
+    schema: RefCell<Arc<Schema>>,
     /// Whether to automatically commit transaction
     auto_commit: Cell<bool>,
     mv_transactions: RefCell<Vec<crate::mvcc::database::TxID>>,
@@ -729,10 +727,10 @@ impl Connection {
     pub fn maybe_update_schema(&self) {
         let current_schema_version = self.schema.borrow().schema_version;
         if matches!(self.transaction_state.get(), TransactionState::None)
-            && current_schema_version < self._db.schema.read().schema_version
+            && current_schema_version < self._db.schema.borrow().schema_version
         {
-            let new_schema = self._db.schema.read();
-            self.schema.replace(new_schema.clone());
+            let new_schema = self._db.schema.borrow().clone();
+            self.schema.replace(new_schema);
         }
     }
 
@@ -882,11 +880,11 @@ impl Connection {
             return Err(LimboError::InternalError("Connection closed".to_string()));
         }
         let rows = self.query("SELECT * FROM sqlite_schema")?;
-        let mut schema = self.schema.borrow_mut();
+        let mut schema_ref = self.schema.borrow_mut();
+        let schema = Arc::make_mut(&mut *schema_ref);
         {
             let syms = self.syms.borrow();
-            if let Err(LimboError::ExtensionError(e)) =
-                parse_schema_rows(rows, &mut schema, &syms, None)
+            if let Err(LimboError::ExtensionError(e)) = parse_schema_rows(rows, schema, &syms, None)
             {
                 // this means that a vtab exists and we no longer have the module loaded. we print
                 // a warning to the user to load the module
