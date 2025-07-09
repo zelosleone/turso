@@ -258,14 +258,22 @@ impl IO for UnixIO {
                 };
                 match result {
                     Ok(n) => {
-                        self.callbacks.remove(event.key);
-                        match &cf {
-                            CompletionCallback::Read(_, ref c, _) => c.complete(0),
-                            CompletionCallback::Write(_, ref c, _, _) => c.complete(n as i32),
+                        let cf = self
+                            .callbacks
+                            .remove(event.key)
+                            .expect("callback should exist");
+                        match cf {
+                            CompletionCallback::Read(_, c, _) => c.complete(0),
+                            CompletionCallback::Write(_, c, _, _) => c.complete(n as i32),
                         }
                     }
-                    Err(Errno::AGAIN) => {}
-                    Err(e) => return Err(e.into()),
+                    Err(Errno::AGAIN) => (),
+                    Err(e) => {
+                        self.callbacks.remove(event.key);
+
+                        trace!("run_once() error: {}", e);
+                        return Err(e.into());
+                    }
                 }
             }
         }
