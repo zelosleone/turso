@@ -546,10 +546,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                                 if opts.verbose {
                                     println!("Skipping UNIQUE constraint violation: {}", e);
                                 }
-                            } else {
-                                if opts.verbose {
-                                    println!("Error executing query: {}", e);
-                                }
+                            } else if opts.verbose {
+                                println!("Error executing query: {}", e);
                             }
                         }
                         _ => panic!("Error executing query: {}", e),
