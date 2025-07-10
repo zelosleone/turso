@@ -5481,6 +5481,7 @@ impl PageStack {
 /// Used for redistributing cells during a balance operation.
 struct CellArray {
     /// The actual cell data.
+    /// For all other page types except table leaves, this will also contain the associated divider cell from the parent page.
     cell_payloads: Vec<&'static mut [u8]>,
 
     /// Prefix sum of cells in each page.
