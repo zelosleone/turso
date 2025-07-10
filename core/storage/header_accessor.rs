@@ -35,7 +35,7 @@ const HEADER_OFFSET_VERSION_NUMBER: usize = 96;
 
 // Helper to get a read-only reference to the header page.
 fn get_header_page(pager: &Pager) -> Result<CursorResult<PageRef>> {
-    if pager.is_empty.load(Ordering::SeqCst) < 2 {
+    if pager.db_state.load(Ordering::SeqCst) < 2 {
         return Err(LimboError::InternalError(
             "Database is empty, header does not exist - page 1 should've been allocated before this".to_string(),
         ));
@@ -49,7 +49,7 @@ fn get_header_page(pager: &Pager) -> Result<CursorResult<PageRef>> {
 
 // Helper to get a writable reference to the header page and mark it dirty.
 fn get_header_page_for_write(pager: &Pager) -> Result<CursorResult<PageRef>> {
-    if pager.is_empty.load(Ordering::SeqCst) < 2 {
+    if pager.db_state.load(Ordering::SeqCst) < 2 {
         // This should not be called on an empty DB for writing, as page 1 is allocated on first transaction.
         return Err(LimboError::InternalError(
             "Cannot write to header of an empty database - page 1 should've been allocated before this".to_string(),
@@ -103,7 +103,7 @@ macro_rules! impl_header_field_accessor {
             // Async version
             #[allow(dead_code)]
             pub fn [<get_ $field_name _async>](pager: &Pager) -> Result<CursorResult<$type>> {
-                if pager.is_empty.load(Ordering::SeqCst) < 2 {
+                if pager.db_state.load(Ordering::SeqCst) < 2 {
                     return Err(LimboError::InternalError(format!("Database is empty, header does not exist - page 1 should've been allocated before this")));
                 }
                 let page = match get_header_page(pager)? {

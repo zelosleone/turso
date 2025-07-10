@@ -6593,7 +6593,7 @@ mod tests {
             &mut payload,
             &record,
             4096,
-            conn.pager.clone(),
+            conn.pager.borrow().clone(),
         );
         insert_into_cell(page, &payload, pos, 4096).unwrap();
         payload
@@ -6831,7 +6831,7 @@ mod tests {
         let io: Arc<dyn IO> = Arc::new(MemoryIO::new());
         let db = Database::open_file(io.clone(), "test.db", false, false).unwrap();
         let conn = db.connect().unwrap();
-        let pager = conn.pager.clone();
+        let pager = conn.pager.borrow().clone();
 
         // FIXME: handle page cache is full
         let _ = run_until_done(|| pager.allocate_page1(), &pager);
@@ -7717,7 +7717,7 @@ mod tests {
                         &mut payload,
                         &record,
                         4096,
-                        conn.pager.clone(),
+                        conn.pager.borrow().clone(),
                     );
                     if (free as usize) < payload.len() + 2 {
                         // do not try to insert overflow pages because they require balancing
@@ -7790,7 +7790,7 @@ mod tests {
                             &mut payload,
                             &record,
                             4096,
-                            conn.pager.clone(),
+                            conn.pager.borrow().clone(),
                         );
                         if (free as usize) < payload.len() - 2 {
                             // do not try to insert overflow pages because they require balancing
@@ -8154,7 +8154,7 @@ mod tests {
             &mut payload,
             &record,
             4096,
-            conn.pager.clone(),
+            conn.pager.borrow().clone(),
         );
         let page = page.get();
         insert(0, page.get_contents());
@@ -8231,7 +8231,7 @@ mod tests {
             &mut payload,
             &record,
             4096,
-            conn.pager.clone(),
+            conn.pager.borrow().clone(),
         );
         insert_into_cell(page.get().get_contents(), &payload, 0, 4096).unwrap();
         let free = compute_free_space(page.get().get_contents(), usable_space);
