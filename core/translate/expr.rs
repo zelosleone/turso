@@ -9,7 +9,7 @@ use crate::function::JsonFunc;
 use crate::function::{Func, FuncCtx, MathFuncArity, ScalarFunc, VectorFunc};
 use crate::functions::datetime;
 use crate::schema::{Affinity, Table, Type};
-use crate::util::{exprs_are_equivalent, normalize_ident, parse_numeric_literal};
+use crate::util::{exprs_are_equivalent, parse_numeric_literal};
 use crate::vdbe::builder::CursorKey;
 use crate::vdbe::{
     builder::ProgramBuilder,
@@ -27,7 +27,7 @@ pub struct ConditionMetadata {
     pub jump_target_when_false: BranchOffset,
 }
 
-#[instrument(skip_all, level = Level::TRACE)]
+#[instrument(skip_all, level = Level::INFO)]
 fn emit_cond_jump(program: &mut ProgramBuilder, cond_meta: ConditionMetadata, reg: usize) {
     if cond_meta.jump_if_condition_is_true {
         program.emit_insn(Insn::If {
@@ -131,7 +131,7 @@ macro_rules! expect_arguments_even {
     }};
 }
 
-#[instrument(skip(program, referenced_tables, expr, resolver), level = Level::TRACE)]
+#[instrument(skip(program, referenced_tables, expr, resolver), level = Level::INFO)]
 pub fn translate_condition_expr(
     program: &mut ProgramBuilder,
     referenced_tables: &TableReferences,
@@ -680,8 +680,7 @@ pub fn translate_expr(
             order_by: _,
         } => {
             let args_count = if let Some(args) = args { args.len() } else { 0 };
-            let func_name = normalize_ident(name.0.as_str());
-            let func_type = resolver.resolve_function(&func_name, args_count);
+            let func_type = resolver.resolve_function(&name.0, args_count);
 
             if func_type.is_none() {
                 crate::bail_parse_error!("unknown function {}", name.0);

@@ -1362,6 +1362,23 @@ impl CreateTableBody {
             options,
         })
     }
+
+    /// Constructor from Vec of column definition
+    pub fn columns_and_constraints_from_definition(
+        columns_vec: Vec<ColumnDefinition>,
+        constraints: Option<Vec<NamedTableConstraint>>,
+        options: TableOptions,
+    ) -> Result<Self, ParserError> {
+        let mut columns = IndexMap::new();
+        for def in columns_vec {
+            columns.insert(def.col_name.clone(), def);
+        }
+        Ok(Self::ColumnsAndConstraints {
+            columns,
+            constraints,
+            options,
+        })
+    }
 }
 
 /// Table column definition
@@ -1744,6 +1761,8 @@ pub enum PragmaName {
     SchemaVersion,
     /// returns information about the columns of a table
     TableInfo,
+    /// enable capture-changes logic for the connection
+    UnstableCaptureDataChangesConn,
     /// Returns the user version of the database file.
     UserVersion,
     /// trigger a checkpoint to run on database(s) if WAL is enabled

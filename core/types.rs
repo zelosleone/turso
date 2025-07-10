@@ -141,7 +141,13 @@ where
     D: serde::Deserializer<'de>,
 {
     let s = String::deserialize(deserializer)?;
-    s.parse().map_err(serde::de::Error::custom)
+    match crate::numeric::str_to_f64(s) {
+        Some(result) => Ok(match result {
+            crate::numeric::StrToF64::Fractional(non_nan) => non_nan.into(),
+            crate::numeric::StrToF64::Decimal(non_nan) => non_nan.into(),
+        }),
+        None => Err(serde::de::Error::custom("")),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +234,20 @@ impl Value {
         match self {
             Value::Text(t) => Some(t.as_str()),
             _ => None,
+        }
+    }
+
+    pub fn as_blob(&self) -> &Vec<u8> {
+        match self {
+            Value::Blob(b) => b,
+            _ => panic!("as_blob must be called only for Value::Blob"),
+        }
+    }
+
+    pub fn as_blob_mut(&mut self) -> &mut Vec<u8> {
+        match self {
+            Value::Blob(b) => b,
+            _ => panic!("as_blob must be called only for Value::Blob"),
         }
     }
 
@@ -738,7 +758,9 @@ pub struct ImmutableRecord {
     // We have to be super careful with this buffer since we make values point to the payload we need to take care reallocations
     // happen in a controlled manner. If we realocate with values that should be correct, they will now point to undefined data.
     // We don't use pin here because it would make it imposible to reuse the buffer if we need to push a new record in the same struct.
-    payload: Vec<u8>,
+    //
+    // payload is the Vec<u8> but in order to use Register which holds ImmutableRecord as a Value - we store Vec<u8> as Value::Blob
+    payload: Value,
     pub values: Vec<RefValue>,
     recreating: bool,
 }
@@ -828,7 +850,7 @@ impl<'a> AppendWriter<'a> {
 impl ImmutableRecord {
     pub fn new(payload_capacity: usize, value_capacity: usize) -> Self {
         Self {
-            payload: Vec::with_capacity(payload_capacity),
+            payload: Value::Blob(Vec::with_capacity(payload_capacity)),
             values: Vec::with_capacity(value_capacity),
             recreating: false,
         }
@@ -977,7 +999,7 @@ impl ImmutableRecord {
 
         writer.assert_finish_capacity();
         Self {
-            payload: buf,
+            payload: Value::Blob(buf),
             values,
             recreating: false,
         }
@@ -985,7 +1007,7 @@ impl ImmutableRecord {
 
     pub fn start_serialization(&mut self, payload: &[u8]) {
         self.recreating = true;
-        self.payload.extend_from_slice(payload);
+        self.payload.as_blob_mut().extend_from_slice(payload);
     }
     pub fn end_serialization(&mut self) {
         assert!(self.recreating);
@@ -998,15 +1020,19 @@ impl ImmutableRecord {
     }
 
     pub fn invalidate(&mut self) {
-        self.payload.clear();
+        self.payload.as_blob_mut().clear();
         self.values.clear();
     }
 
     pub fn is_invalidated(&self) -> bool {
-        self.payload.is_empty()
+        self.payload.as_blob().is_empty()
     }
 
     pub fn get_payload(&self) -> &[u8] {
+        self.payload.as_blob()
+    }
+
+    pub fn as_blob_value(&self) -> &Value {
         &self.payload
     }
 }
@@ -1042,20 +1068,20 @@ impl Clone for ImmutableRecord {
                 RefValue::Float(f) => RefValue::Float(*f),
                 RefValue::Text(text_ref) => {
                     // let's update pointer
-                    let ptr_start = self.payload.as_ptr() as usize;
+                    let ptr_start = self.payload.as_blob().as_ptr() as usize;
                     let ptr_end = text_ref.value.data as usize;
                     let len = ptr_end - ptr_start;
-                    let new_ptr = unsafe { new_payload.as_ptr().add(len) };
+                    let new_ptr = unsafe { new_payload.as_blob().as_ptr().add(len) };
                     RefValue::Text(TextRef {
                         value: RawSlice::new(new_ptr, text_ref.value.len),
                         subtype: text_ref.subtype.clone(),
                     })
                 }
                 RefValue::Blob(raw_slice) => {
-                    let ptr_start = self.payload.as_ptr() as usize;
+                    let ptr_start = self.payload.as_blob().as_ptr() as usize;
                     let ptr_end = raw_slice.data as usize;
                     let len = ptr_end - ptr_start;
-                    let new_ptr = unsafe { new_payload.as_ptr().add(len) };
+                    let new_ptr = unsafe { new_payload.as_blob().as_ptr().add(len) };
                     RefValue::Blob(RawSlice::new(new_ptr, raw_slice.len))
                 }
             };

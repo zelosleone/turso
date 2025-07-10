@@ -21,6 +21,7 @@ pub(crate) struct SimulatorEnv {
     pub(crate) db: Arc<Database>,
     pub(crate) rng: ChaCha8Rng,
     pub(crate) db_path: String,
+    pub tables_snapshot: Option<Vec<Table>>,
 }
 
 impl SimulatorEnv {
@@ -35,6 +36,7 @@ impl SimulatorEnv {
             db: self.db.clone(),
             rng: self.rng.clone(),
             db_path: self.db_path.clone(),
+            tables_snapshot: None,
         }
     }
 }
@@ -164,6 +166,7 @@ impl SimulatorEnv {
             io,
             db,
             db_path: db_path.to_str().unwrap().to_string(),
+            tables_snapshot: None,
         }
     }
 }

@@ -43,6 +43,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 use crate::storage::{header_accessor, wal::DummyWAL};
 use crate::translate::optimizer::optimize_plan;
+use crate::translate::pragma::TURSO_CDC_DEFAULT_TABLE_NAME;
 use crate::util::{OpenMode, OpenOptions};
 use crate::vtab::VirtualTable;
 use core::str;
@@ -97,7 +98,7 @@ pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum TransactionState {
-    Write { change_schema: bool },
+    Write { schema_did_change: bool },
     Read,
     None,
 }
@@ -217,7 +218,7 @@ impl Database {
         if is_empty == 2 {
             // parse schema
             let conn = db.connect()?;
-            let schema_version = get_schema_version(&conn, &io)?;
+            let schema_version = get_schema_version(&conn)?;
             schema.write().schema_version = schema_version;
             let rows = conn.query("SELECT * FROM sqlite_schema")?;
             let mut schema = schema
@@ -225,7 +226,7 @@ impl Database {
                 .expect("lock on schema should succeed first try");
             let syms = conn.syms.borrow();
             if let Err(LimboError::ExtensionError(e)) =
-                parse_schema_rows(rows, &mut schema, io, &syms, None)
+                parse_schema_rows(rows, &mut schema, &syms, None)
             {
                 // this means that a vtab exists and we no longer have the module loaded. we print
                 // a warning to the user to load the module
@@ -278,6 +279,8 @@ impl Database {
                 cache_size: Cell::new(default_cache_size),
                 readonly: Cell::new(false),
                 wal_checkpoint_disabled: Cell::new(false),
+                capture_data_changes: RefCell::new(CaptureDataChangesMode::Off),
+                closed: Cell::new(false),
             });
             if let Err(e) = conn.register_builtins() {
                 return Err(LimboError::ExtensionError(e));
@@ -330,6 +333,8 @@ impl Database {
             cache_size: Cell::new(default_cache_size),
             readonly: Cell::new(false),
             wal_checkpoint_disabled: Cell::new(false),
+            capture_data_changes: RefCell::new(CaptureDataChangesMode::Off),
+            closed: Cell::new(false),
         });
 
         if let Err(e) = conn.register_builtins() {
@@ -390,7 +395,7 @@ impl Database {
     }
 }
 
-fn get_schema_version(conn: &Arc<Connection>, io: &Arc<dyn IO>) -> Result<u32> {
+fn get_schema_version(conn: &Arc<Connection>) -> Result<u32> {
     let mut rows = conn
         .query("PRAGMA schema_version")?
         .ok_or(LimboError::InternalError(
@@ -409,7 +414,7 @@ fn get_schema_version(conn: &Arc<Connection>, io: &Arc<dyn IO>) -> Result<u32> {
                 schema_version = Some(row.get::<i64>(0)? as u32);
             }
             StepResult::IO => {
-                io.run_once()?;
+                rows.run_once()?;
             }
             StepResult::Interrupt => {
                 return Err(LimboError::InternalError(
@@ -434,6 +439,39 @@ fn get_schema_version(conn: &Arc<Connection>, io: &Arc<dyn IO>) -> Result<u32> {
     }
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum CaptureDataChangesMode {
+    Off,
+    RowidOnly { table: String },
+}
+
+impl CaptureDataChangesMode {
+    pub fn parse(value: &str) -> Result<CaptureDataChangesMode> {
+        let (mode, table) = value
+            .split_once(",")
+            .unwrap_or((value, TURSO_CDC_DEFAULT_TABLE_NAME));
+        match mode {
+            "off" => Ok(CaptureDataChangesMode::Off),
+            "rowid-only" => Ok(CaptureDataChangesMode::RowidOnly { table: table.to_string() }),
+            _ => Err(LimboError::InvalidArgument(
+                "unexpected pragma value: expected '<mode>' or '<mode>,<cdc-table-name>' parameter where mode is one of off|rowid-only".to_string(),
+            ))
+        }
+    }
+    pub fn mode_name(&self) -> &str {
+        match self {
+            CaptureDataChangesMode::Off => "off",
+            CaptureDataChangesMode::RowidOnly { .. } => "rowid-only",
+        }
+    }
+    pub fn table(&self) -> Option<&str> {
+        match self {
+            CaptureDataChangesMode::Off => None,
+            CaptureDataChangesMode::RowidOnly { table } => Some(table.as_str()),
+        }
+    }
+}
+
 pub struct Connection {
     _db: Arc<Database>,
     pager: Rc<Pager>,
@@ -450,11 +488,16 @@ pub struct Connection {
     cache_size: Cell<i32>,
     readonly: Cell<bool>,
     wal_checkpoint_disabled: Cell<bool>,
+    capture_data_changes: RefCell<CaptureDataChangesMode>,
+    closed: Cell<bool>,
 }
 
 impl Connection {
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(skip_all, level = Level::INFO)]
     pub fn prepare(self: &Arc<Connection>, sql: impl AsRef<str>) -> Result<Statement> {
+        if self.closed.get() {
+            return Err(LimboError::InternalError("Connection closed".to_string()));
+        }
         if sql.as_ref().is_empty() {
             return Err(LimboError::InvalidArgument(
                 "The supplied SQL string contains no statements".to_string(),
@@ -494,8 +537,11 @@ impl Connection {
         }
     }
 
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(skip_all, level = Level::INFO)]
     pub fn query(self: &Arc<Connection>, sql: impl AsRef<str>) -> Result<Option<Statement>> {
+        if self.closed.get() {
+            return Err(LimboError::InternalError("Connection closed".to_string()));
+        }
         let sql = sql.as_ref();
         tracing::trace!("Querying: {}", sql);
         let mut parser = Parser::new(sql.as_bytes());
@@ -510,12 +556,15 @@ impl Connection {
         }
     }
 
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(skip_all, level = Level::INFO)]
     pub(crate) fn run_cmd(
         self: &Arc<Connection>,
         cmd: Cmd,
         input: &str,
     ) -> Result<Option<Statement>> {
+        if self.closed.get() {
+            return Err(LimboError::InternalError("Connection closed".to_string()));
+        }
         let syms = self.syms.borrow();
         match cmd {
             Cmd::Stmt(ref stmt) | Cmd::Explain(ref stmt) => {
@@ -563,8 +612,11 @@ impl Connection {
 
     /// Execute will run a query from start to finish taking ownership of I/O because it will run pending I/Os if it didn't finish.
     /// TODO: make this api async
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(skip_all, level = Level::INFO)]
     pub fn execute(self: &Arc<Connection>, sql: impl AsRef<str>) -> Result<()> {
+        if self.closed.get() {
+            return Err(LimboError::InternalError("Connection closed".to_string()));
+        }
         let sql = sql.as_ref();
         let mut parser = Parser::new(sql.as_bytes());
         while let Some(cmd) = parser.next()? {
@@ -610,12 +662,26 @@ impl Connection {
                         if matches!(res, StepResult::Done) {
                             break;
                         }
-                        self._db.io.run_once()?;
+                        self.run_once()?;
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    fn run_once(&self) -> Result<()> {
+        if self.closed.get() {
+            return Err(LimboError::InternalError("Connection closed".to_string()));
+        }
+        let res = self._db.io.run_once();
+        if res.is_err() {
+            let state = self.transaction_state.get();
+            if let TransactionState::Write { schema_did_change } = state {
+                self.pager.rollback(schema_did_change, self)?
+            }
+        }
+        res
     }
 
     #[cfg(feature = "fs")]
@@ -676,6 +742,9 @@ impl Connection {
     /// If the WAL size is over the checkpoint threshold, it will checkpoint the WAL to
     /// the database file and then fsync the database file.
     pub fn cacheflush(&self) -> Result<PagerCacheflushStatus> {
+        if self.closed.get() {
+            return Err(LimboError::InternalError("Connection closed".to_string()));
+        }
         self.pager.cacheflush(self.wal_checkpoint_disabled.get())
     }
 
@@ -685,12 +754,19 @@ impl Connection {
     }
 
     pub fn checkpoint(&self) -> Result<CheckpointResult> {
+        if self.closed.get() {
+            return Err(LimboError::InternalError("Connection closed".to_string()));
+        }
         self.pager
             .wal_checkpoint(self.wal_checkpoint_disabled.get())
     }
 
     /// Close a connection and checkpoint.
     pub fn close(&self) -> Result<()> {
+        if self.closed.get() {
+            return Ok(());
+        }
+        self.closed.set(true);
         self.pager
             .checkpoint_shutdown(self.wal_checkpoint_disabled.get())
     }
@@ -724,6 +800,13 @@ impl Connection {
         self.cache_size.set(size);
     }
 
+    pub fn get_capture_data_changes(&self) -> std::cell::Ref<'_, CaptureDataChangesMode> {
+        self.capture_data_changes.borrow()
+    }
+    pub fn set_capture_data_changes(&self, opts: CaptureDataChangesMode) {
+        self.capture_data_changes.replace(opts);
+    }
+
     #[cfg(feature = "fs")]
     pub fn open_new(&self, path: &str, vfs: &str) -> Result<(Arc<dyn IO>, Arc<Database>)> {
         Database::open_with_vfs(&self._db, path, vfs)
@@ -751,12 +834,15 @@ impl Connection {
     }
 
     pub fn parse_schema_rows(self: &Arc<Connection>) -> Result<()> {
+        if self.closed.get() {
+            return Err(LimboError::InternalError("Connection closed".to_string()));
+        }
         let rows = self.query("SELECT * FROM sqlite_schema")?;
         let mut schema = self.schema.borrow_mut();
         {
             let syms = self.syms.borrow();
             if let Err(LimboError::ExtensionError(e)) =
-                parse_schema_rows(rows, &mut schema, self.pager.io.clone(), &syms, None)
+                parse_schema_rows(rows, &mut schema, &syms, None)
             {
                 // this means that a vtab exists and we no longer have the module loaded. we print
                 // a warning to the user to load the module
@@ -769,6 +855,9 @@ impl Connection {
     // Clearly there is something to improve here, Vec<Vec<Value>> isn't a couple of tea
     /// Query the current rows/values of `pragma_name`.
     pub fn pragma_query(self: &Arc<Connection>, pragma_name: &str) -> Result<Vec<Vec<Value>>> {
+        if self.closed.get() {
+            return Err(LimboError::InternalError("Connection closed".to_string()));
+        }
         let pragma = format!("PRAGMA {}", pragma_name);
         let mut stmt = self.prepare(pragma)?;
         let mut results = Vec::new();
@@ -797,6 +886,9 @@ impl Connection {
         pragma_name: &str,
         pragma_value: V,
     ) -> Result<Vec<Vec<Value>>> {
+        if self.closed.get() {
+            return Err(LimboError::InternalError("Connection closed".to_string()));
+        }
         let pragma = format!("PRAGMA {} = {}", pragma_name, pragma_value);
         let mut stmt = self.prepare(pragma)?;
         let mut results = Vec::new();
@@ -827,6 +919,9 @@ impl Connection {
         pragma_name: &str,
         pragma_value: V,
     ) -> Result<Vec<Vec<Value>>> {
+        if self.closed.get() {
+            return Err(LimboError::InternalError("Connection closed".to_string()));
+        }
         let pragma = format!("PRAGMA {}({})", pragma_name, pragma_value);
         let mut stmt = self.prepare(pragma)?;
         let mut results = Vec::new();
@@ -883,7 +978,15 @@ impl Statement {
     }
 
     pub fn run_once(&self) -> Result<()> {
-        self.pager.io.run_once()
+        let res = self.pager.io.run_once();
+        if res.is_err() {
+            let state = self.program.connection.transaction_state.get();
+            if let TransactionState::Write { schema_did_change } = state {
+                self.pager
+                    .rollback(schema_did_change, &self.program.connection)?
+            }
+        }
+        res
     }
 
     pub fn num_columns(&self) -> usize {

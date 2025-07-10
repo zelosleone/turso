@@ -29,6 +29,8 @@ use crate::{
     function::{AggFunc, FuncCtx},
     storage::{pager::PagerCacheflushStatus, sqlite3_ondisk::SmallVec},
     translate::plan::TableReferences,
+    vdbe::execute::OpIdxInsertState,
+    vdbe::execute::OpInsertState,
 };
 
 use crate::{
@@ -250,6 +252,8 @@ pub struct ProgramState {
     op_idx_delete_state: Option<OpIdxDeleteState>,
     op_integrity_check_state: OpIntegrityCheckState,
     op_open_ephemeral_state: OpOpenEphemeralState,
+    op_idx_insert_state: OpIdxInsertState,
+    op_insert_state: OpInsertState,
 }
 
 impl ProgramState {
@@ -276,6 +280,8 @@ impl ProgramState {
             op_idx_delete_state: None,
             op_integrity_check_state: OpIntegrityCheckState::Start,
             op_open_ephemeral_state: OpOpenEphemeralState::Start,
+            op_idx_insert_state: OpIdxInsertState::SeekIfUnique,
+            op_insert_state: OpInsertState::Insert,
         }
     }
 
@@ -334,7 +340,11 @@ impl Register {
     pub fn get_owned_value(&self) -> &Value {
         match self {
             Register::Value(v) => v,
-            _ => unreachable!(),
+            Register::Record(r) => {
+                assert!(!r.is_invalidated());
+                r.as_blob_value()
+            }
+            _ => panic!("register holds unexpected value: {:?}", self),
         }
     }
 }
@@ -368,6 +378,7 @@ pub struct Program {
 }
 
 impl Program {
+    #[instrument(skip_all, level = Level::INFO)]
     pub fn step(
         &self,
         state: &mut ProgramState,
@@ -375,6 +386,14 @@ impl Program {
         pager: Rc<Pager>,
     ) -> Result<StepResult> {
         loop {
+            if self.connection.closed.get() {
+                // Connection is closed for whatever reason, rollback the transaction.
+                let state = self.connection.transaction_state.get();
+                if let TransactionState::Write { schema_did_change } = state {
+                    pager.rollback(schema_did_change, &self.connection)?
+                }
+                return Err(LimboError::InternalError("Connection closed".to_string()));
+            }
             if state.is_interrupted() {
                 return Ok(StepResult::Interrupt);
             }
@@ -382,8 +401,14 @@ impl Program {
             let _ = state.result_row.take();
             let (insn, insn_function) = &self.insns[state.pc as usize];
             trace_insn(self, state.pc as InsnReference, insn);
-            let res = insn_function(self, state, insn, &pager, mv_store.as_ref())?;
-            match res {
+            let res = insn_function(self, state, insn, &pager, mv_store.as_ref());
+            if res.is_err() {
+                let state = self.connection.transaction_state.get();
+                if let TransactionState::Write { schema_did_change } = state {
+                    pager.rollback(schema_did_change, &self.connection)?
+                }
+            }
+            match res? {
                 InsnFunctionStepResult::Step => {}
                 InsnFunctionStepResult::Done => return Ok(StepResult::Done),
                 InsnFunctionStepResult::IO => return Ok(StepResult::IO),
@@ -394,7 +419,7 @@ impl Program {
         }
     }
 
-    #[instrument(skip_all, level = Level::TRACE)]
+    #[instrument(skip_all, level = Level::INFO)]
     pub fn commit_txn(
         &self,
         pager: Rc<Pager>,
@@ -422,7 +447,8 @@ impl Program {
                 program_state.commit_state
             );
             if program_state.commit_state == CommitState::Committing {
-                let TransactionState::Write { change_schema } = connection.transaction_state.get()
+                let TransactionState::Write { schema_did_change } =
+                    connection.transaction_state.get()
                 else {
                     unreachable!("invalid state for write commit step")
                 };
@@ -431,18 +457,18 @@ impl Program {
                     &mut program_state.commit_state,
                     &connection,
                     rollback,
-                    change_schema,
+                    schema_did_change,
                 )
             } else if auto_commit {
                 let current_state = connection.transaction_state.get();
                 tracing::trace!("Auto-commit state: {:?}", current_state);
                 match current_state {
-                    TransactionState::Write { change_schema } => self.step_end_write_txn(
+                    TransactionState::Write { schema_did_change } => self.step_end_write_txn(
                         &pager,
                         &mut program_state.commit_state,
                         &connection,
                         rollback,
-                        change_schema,
+                        schema_did_change,
                     ),
                     TransactionState::Read => {
                         connection.transaction_state.replace(TransactionState::None);
@@ -460,25 +486,31 @@ impl Program {
         }
     }
 
-    #[instrument(skip(self, pager, connection), level = Level::TRACE)]
+    #[instrument(skip(self, pager, connection), level = Level::INFO)]
     fn step_end_write_txn(
         &self,
         pager: &Rc<Pager>,
         commit_state: &mut CommitState,
         connection: &Connection,
         rollback: bool,
-        change_schema: bool,
+        schema_did_change: bool,
     ) -> Result<StepResult> {
         let cacheflush_status = pager.end_tx(
             rollback,
-            change_schema,
+            schema_did_change,
             connection,
             connection.wal_checkpoint_disabled.get(),
         )?;
         match cacheflush_status {
-            PagerCacheflushStatus::Done(_) => {
+            PagerCacheflushStatus::Done(status) => {
                 if self.change_cnt_on {
                     self.connection.set_changes(self.n_change.get());
+                }
+                if matches!(
+                    status,
+                    crate::storage::pager::PagerCacheflushResult::Rollback
+                ) {
+                    pager.rollback(schema_did_change, connection)?;
                 }
                 connection.transaction_state.replace(TransactionState::None);
                 *commit_state = CommitState::Ready;
@@ -553,7 +585,7 @@ fn make_record(registers: &[Register], start_reg: &usize, count: &usize) -> Immu
     ImmutableRecord::from_registers(regs, regs.len())
 }
 
-#[instrument(skip(program), level = Level::TRACE)]
+#[instrument(skip(program), level = Level::INFO)]
 fn trace_insn(program: &Program, addr: InsnReference, insn: &Insn) {
     if !tracing::enabled!(tracing::Level::TRACE) {
         return;

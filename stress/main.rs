@@ -543,8 +543,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             if e.contains("Corrupt database") {
                                 panic!("Error executing query: {}", e);
                             } else if e.contains("UNIQUE constraint failed") {
-                                println!("Skipping UNIQUE constraint violation: {}", e);
-                            } else {
+                                if opts.verbose {
+                                    println!("Skipping UNIQUE constraint violation: {}", e);
+                                }
+                            } else if opts.verbose {
                                 println!("Error executing query: {}", e);
                             }
                         }
