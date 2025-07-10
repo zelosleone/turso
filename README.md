@@ -224,9 +224,13 @@ terms or conditions.
 
 Thanks to all the partners of Turso!
 
+<a href="https://nyrkio.com/"><img src="assets/turso-nyrkio.png" width="400"></a>
+
 <a href="https://blacksmith.sh"><img src="assets/blacksmith.svg" width="400"></a>
 
 <a href="https://antithesis.com/"><img src="assets/antithesis.jpg" width="400"></a>
+
+
 
 ## Contributors
 
