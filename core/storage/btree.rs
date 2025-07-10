@@ -683,10 +683,9 @@ impl BTreeCursor {
 
             match cell {
                 BTreeCell::TableInteriorCell(TableInteriorCell {
-                    _left_child_page,
-                    _rowid,
+                    left_child_page, ..
                 }) => {
-                    let mem_page = self.read_page(_left_child_page as usize)?;
+                    let mem_page = self.read_page(left_child_page as usize)?;
                     self.stack.push_backwards(mem_page);
                     continue;
                 }
@@ -883,7 +882,7 @@ impl BTreeCursor {
 
         let (payload, payload_size, first_overflow_page) = match cell {
             BTreeCell::TableLeafCell(cell) => {
-                (cell._payload, cell.payload_size, cell.first_overflow_page)
+                (cell.payload, cell.payload_size, cell.first_overflow_page)
             }
             BTreeCell::IndexLeafCell(cell) => {
                 (cell.payload, cell.payload_size, cell.first_overflow_page)
@@ -1224,10 +1223,9 @@ impl BTreeCursor {
             )?;
             match &cell {
                 BTreeCell::TableInteriorCell(TableInteriorCell {
-                    _left_child_page,
-                    _rowid,
+                    left_child_page, ..
                 }) => {
-                    let mem_page = self.read_page(*_left_child_page as usize)?;
+                    let mem_page = self.read_page(*left_child_page as usize)?;
                     self.stack.push(mem_page);
                     continue;
                 }
@@ -2149,7 +2147,7 @@ impl BTreeCursor {
                         )?;
                         match cell {
                             BTreeCell::TableLeafCell(tbl_leaf) => {
-                                if tbl_leaf._rowid == bkey.to_rowid() {
+                                if tbl_leaf.rowid == bkey.to_rowid() {
                                     tracing::debug!("TableLeafCell: found exact match with cell_idx={cell_idx}, overwriting");
                                     self.overwrite_cell(page.clone(), cell_idx, record)?;
                                     let write_info = self
@@ -2487,7 +2485,7 @@ impl BTreeCursor {
                         self.usable_space(),
                     )? {
                         BTreeCell::TableInteriorCell(table_interior_cell) => {
-                            table_interior_cell._left_child_page
+                            table_interior_cell.left_child_page
                         }
                         BTreeCell::IndexInteriorCell(index_interior_cell) => {
                             index_interior_cell.left_child_page
@@ -3340,7 +3338,7 @@ impl BTreeCursor {
                 .unwrap();
             match cell {
                 BTreeCell::TableInteriorCell(table_interior_cell) => {
-                    let left_child_page = table_interior_cell._left_child_page;
+                    let left_child_page = table_interior_cell.left_child_page;
                     if left_child_page == parent_page.get().get().id as u32 {
                         tracing::error!("balance_non_root(parent_divider_points_to_same_page, page_id={}, cell_left_child_page={})",
                                 parent_page.get().get().id,
@@ -3414,7 +3412,7 @@ impl BTreeCursor {
                 .unwrap();
                 match &cell {
                     BTreeCell::TableInteriorCell(table_interior_cell) => {
-                        let left_child_page = table_interior_cell._left_child_page;
+                        let left_child_page = table_interior_cell.left_child_page;
                         if left_child_page == page.get().id as u32 {
                             tracing::error!("balance_non_root(child_page_points_same_page, page_id={}, cell_left_child_page={}, page_idx={})",
                                 page.get().id,
@@ -3685,12 +3683,12 @@ impl BTreeCursor {
                         )
                         .unwrap();
                     let rowid = match cell {
-                        BTreeCell::TableLeafCell(table_leaf_cell) => table_leaf_cell._rowid,
+                        BTreeCell::TableLeafCell(table_leaf_cell) => table_leaf_cell.rowid,
                         _ => unreachable!(),
                     };
                     let rowid_parent = match parent_cell {
                         BTreeCell::TableInteriorCell(table_interior_cell) => {
-                            table_interior_cell._rowid
+                            table_interior_cell.rowid
                         }
                         _ => unreachable!(),
                     };
@@ -3899,8 +3897,8 @@ impl BTreeCursor {
             };
 
             let comparison_result = match cell {
-                BTreeCell::TableLeafCell(cell) => key.to_rowid().cmp(&cell._rowid),
-                BTreeCell::TableInteriorCell(cell) => key.to_rowid().cmp(&cell._rowid),
+                BTreeCell::TableLeafCell(cell) => key.to_rowid().cmp(&cell.rowid),
+                BTreeCell::TableInteriorCell(cell) => key.to_rowid().cmp(&cell.rowid),
                 BTreeCell::IndexInteriorCell(IndexInteriorCell {
                     payload,
                     first_overflow_page,
@@ -4083,16 +4081,13 @@ impl BTreeCursor {
                 self.usable_space(),
             )?;
             if page_type.is_table() {
-                let BTreeCell::TableLeafCell(TableLeafCell {
-                    _rowid, _payload, ..
-                }) = cell
-                else {
+                let BTreeCell::TableLeafCell(TableLeafCell { rowid, .. }) = cell else {
                     unreachable!(
                         "BTreeCursor::rowid(): unexpected page_type: {:?}",
                         page_type
                     );
                 };
-                Ok(CursorResult::Ok(Some(_rowid)))
+                Ok(CursorResult::Ok(Some(rowid)))
             } else {
                 Ok(CursorResult::Ok(self.get_index_rowid_from_record()))
             }
@@ -4157,16 +4152,16 @@ impl BTreeCursor {
         )?;
         let (payload, payload_size, first_overflow_page) = match cell {
             BTreeCell::TableLeafCell(TableLeafCell {
-                _rowid,
-                _payload,
-                payload_size,
-                first_overflow_page,
-            }) => (_payload, payload_size, first_overflow_page),
-            BTreeCell::IndexInteriorCell(IndexInteriorCell {
-                left_child_page: _,
                 payload,
                 payload_size,
                 first_overflow_page,
+                ..
+            }) => (payload, payload_size, first_overflow_page),
+            BTreeCell::IndexInteriorCell(IndexInteriorCell {
+                payload,
+                payload_size,
+                first_overflow_page,
+                ..
             }) => (payload, payload_size, first_overflow_page),
             BTreeCell::IndexLeafCell(IndexLeafCell {
                 payload,
@@ -4373,7 +4368,7 @@ impl BTreeCursor {
                     )?;
 
                     let original_child_pointer = match &cell {
-                        BTreeCell::TableInteriorCell(interior) => Some(interior._left_child_page),
+                        BTreeCell::TableInteriorCell(interior) => Some(interior.left_child_page),
                         BTreeCell::IndexInteriorCell(interior) => Some(interior.left_child_page),
                         _ => None,
                     };
@@ -4458,7 +4453,7 @@ impl BTreeCursor {
                             BTreeCell::TableLeafCell(leaf_cell) => {
                                 // Table interior cells contain the left child pointer and the rowid as varint.
                                 cell_payload.extend_from_slice(&child_pointer.to_be_bytes());
-                                write_varint_to_vec(leaf_cell._rowid as u64, &mut cell_payload);
+                                write_varint_to_vec(leaf_cell.rowid as u64, &mut cell_payload);
                             }
                             BTreeCell::IndexLeafCell(leaf_cell) => {
                                 // Index interior cells contain:
@@ -4839,7 +4834,7 @@ impl BTreeCursor {
                             //  For all other interior cells, load the left child page
                             _ => {
                                 let child_page_id = match &cell {
-                                    BTreeCell::TableInteriorCell(cell) => cell._left_child_page,
+                                    BTreeCell::TableInteriorCell(cell) => cell.left_child_page,
                                     BTreeCell::IndexInteriorCell(cell) => cell.left_child_page,
                                     _ => panic!("expected interior cell"),
                                 };
@@ -5079,8 +5074,7 @@ impl BTreeCursor {
 
                 match cell {
                     BTreeCell::TableInteriorCell(TableInteriorCell {
-                        _left_child_page: left_child_page,
-                        ..
+                        left_child_page, ..
                     })
                     | BTreeCell::IndexInteriorCell(IndexInteriorCell {
                         left_child_page, ..
@@ -5311,11 +5305,11 @@ pub fn integrity_check(
         match cell {
             BTreeCell::TableInteriorCell(table_interior_cell) => {
                 state.page_stack.push(IntegrityCheckPageEntry {
-                    page_idx: table_interior_cell._left_child_page as usize,
+                    page_idx: table_interior_cell.left_child_page as usize,
                     level: level + 1,
-                    max_intkey: table_interior_cell._rowid,
+                    max_intkey: table_interior_cell.rowid,
                 });
-                let rowid = table_interior_cell._rowid;
+                let rowid = table_interior_cell.rowid;
                 if rowid > max_intkey || rowid > next_rowid {
                     errors.push(IntegrityCheckError::CellRowidOutOfRange {
                         page_id: page.get().id,
@@ -5340,7 +5334,7 @@ pub fn integrity_check(
                 } else {
                     state.first_leaf_level = Some(level);
                 }
-                let rowid = table_leaf_cell._rowid;
+                let rowid = table_leaf_cell.rowid;
                 if rowid > max_intkey || rowid > next_rowid {
                     errors.push(IntegrityCheckError::CellRowidOutOfRange {
                         page_id: page.get().id,
@@ -6698,23 +6692,23 @@ mod tests {
             let current_depth = match cell {
                 BTreeCell::TableLeafCell(..) => 1,
                 BTreeCell::TableInteriorCell(TableInteriorCell {
-                    _left_child_page, ..
+                    left_child_page, ..
                 }) => {
-                    let child_page = cursor.read_page(_left_child_page as usize).unwrap();
+                    let child_page = cursor.read_page(left_child_page as usize).unwrap();
                     while child_page.get().is_locked() {
                         pager.io.run_once().unwrap();
                     }
                     child_pages.push(child_page);
-                    if _left_child_page == page.get().id as u32 {
+                    if left_child_page == page.get().id as u32 {
                         valid = false;
                         tracing::error!(
                             "left child page is the same as parent {}",
-                            _left_child_page
+                            left_child_page
                         );
                         continue;
                     }
                     let (child_depth, child_valid) =
-                        validate_btree(pager.clone(), _left_child_page as usize);
+                        validate_btree(pager.clone(), left_child_page as usize);
                     valid &= child_valid;
                     child_depth
                 }
@@ -6731,17 +6725,17 @@ mod tests {
                 valid = false;
             }
             match cell {
-                BTreeCell::TableInteriorCell(TableInteriorCell { _rowid, .. })
-                | BTreeCell::TableLeafCell(TableLeafCell { _rowid, .. }) => {
-                    if previous_key.is_some() && previous_key.unwrap() >= _rowid {
+                BTreeCell::TableInteriorCell(TableInteriorCell { rowid, .. })
+                | BTreeCell::TableLeafCell(TableLeafCell { rowid, .. }) => {
+                    if previous_key.is_some() && previous_key.unwrap() >= rowid {
                         tracing::error!(
                             "keys are in bad order: prev={:?}, current={}",
                             previous_key,
-                            _rowid
+                            rowid
                         );
                         valid = false;
                     }
-                    previous_key = Some(_rowid);
+                    previous_key = Some(rowid);
                 }
                 _ => panic!("unsupported btree cell: {:?}", cell),
             }
@@ -6813,19 +6807,19 @@ mod tests {
                 BTreeCell::TableInteriorCell(cell) => {
                     current.push(format!(
                         "node[rowid:{}, ptr(<=):{}]",
-                        cell._rowid, cell._left_child_page
+                        cell.rowid, cell.left_child_page
                     ));
                     child.push(format_btree(
                         pager.clone(),
-                        cell._left_child_page as usize,
+                        cell.left_child_page as usize,
                         depth + 2,
                     ));
                 }
                 BTreeCell::TableLeafCell(cell) => {
                     current.push(format!(
                         "leaf[rowid:{}, len(payload):{}, overflow:{}]",
-                        cell._rowid,
-                        cell._payload.len(),
+                        cell.rowid,
+                        cell.payload.len(),
                         cell.first_overflow_page.is_some()
                     ));
                 }
@@ -7448,8 +7442,8 @@ mod tests {
 
         // Create leaf cell pointing to start of overflow chain
         let leaf_cell = BTreeCell::TableLeafCell(TableLeafCell {
-            _rowid: 1,
-            _payload: unsafe { transmute::<&[u8], &'static [u8]>(large_payload.as_slice()) },
+            rowid: 1,
+            payload: unsafe { transmute::<&[u8], &'static [u8]>(large_payload.as_slice()) },
             first_overflow_page: Some(2), // Point to first overflow page
             payload_size: large_payload.len() as u64,
         });
@@ -7504,8 +7498,8 @@ mod tests {
 
         // Create leaf cell with no overflow pages
         let leaf_cell = BTreeCell::TableLeafCell(TableLeafCell {
-            _rowid: 1,
-            _payload: unsafe { transmute::<&[u8], &'static [u8]>(small_payload.as_slice()) },
+            rowid: 1,
+            payload: unsafe { transmute::<&[u8], &'static [u8]>(small_payload.as_slice()) },
             first_overflow_page: None,
             payload_size: small_payload.len() as u64,
         });
