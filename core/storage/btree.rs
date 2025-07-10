@@ -2535,10 +2535,10 @@ impl BTreeCursor {
 
                 /* 2. Initialize CellArray with all the cells used for distribution, this includes divider cells if !leaf. */
                 let mut cell_array = CellArray {
-                    cell_data: Vec::with_capacity(total_cells_to_redistribute),
+                    cell_payloads: Vec::with_capacity(total_cells_to_redistribute),
                     cell_count_per_page_cumulative: [0; 5],
                 };
-                let cells_capacity_start = cell_array.cell_data.capacity();
+                let cells_capacity_start = cell_array.cell_payloads.capacity();
 
                 let mut total_cells_inserted = 0;
                 // This is otherwise identical to CellArray.cell_count_per_page_cumulative,
@@ -2569,18 +2569,18 @@ impl BTreeCursor {
                         let buf = old_page_contents.as_ptr();
                         let cell_buf = &mut buf[cell_start..cell_start + cell_len];
                         // TODO(pere): make this reference and not copy
-                        cell_array.cell_data.push(to_static_buf(cell_buf));
+                        cell_array.cell_payloads.push(to_static_buf(cell_buf));
                     }
                     // Insert overflow cells into correct place
                     let offset = total_cells_inserted;
                     for overflow_cell in old_page_contents.overflow_cells.iter_mut() {
-                        cell_array.cell_data.insert(
+                        cell_array.cell_payloads.insert(
                             offset + overflow_cell.index,
                             to_static_buf(&mut Pin::as_mut(&mut overflow_cell.payload)),
                         );
                     }
 
-                    old_cell_count_per_page_cumulative[i] = cell_array.cell_data.len() as u16;
+                    old_cell_count_per_page_cumulative[i] = cell_array.cell_payloads.len() as u16;
 
                     let mut cells_inserted =
                         old_page_contents.cell_count() + old_page_contents.overflow_cells.len();
@@ -2605,13 +2605,13 @@ impl BTreeCursor {
                             // let's strip the page pointer
                             divider_cell = &mut divider_cell[4..];
                         }
-                        cell_array.cell_data.push(to_static_buf(divider_cell));
+                        cell_array.cell_payloads.push(to_static_buf(divider_cell));
                     }
                     total_cells_inserted += cells_inserted;
                 }
 
                 turso_assert!(
-                    cell_array.cell_data.capacity() == cells_capacity_start,
+                    cell_array.cell_payloads.capacity() == cells_capacity_start,
                     "calculation of max cells was wrong"
                 );
 
@@ -2620,7 +2620,7 @@ impl BTreeCursor {
                 let mut cells_debug = Vec::new();
                 #[cfg(debug_assertions)]
                 {
-                    for cell in &cell_array.cell_data {
+                    for cell in &cell_array.cell_payloads {
                         cells_debug.push(cell.to_vec());
                         if is_leaf {
                             assert!(cell[0] != 0)
@@ -2652,8 +2652,9 @@ impl BTreeCursor {
                     }
                     if !is_leaf && i < balance_info.sibling_count - 1 {
                         // Account for divider cell which is included in this page.
-                        new_page_sizes[i] +=
-                            cell_array.cell_data[cell_array.cell_count_up_to_page(i)].len() as i64;
+                        new_page_sizes[i] += cell_array.cell_payloads
+                            [cell_array.cell_count_up_to_page(i)]
+                        .len() as i64;
                     }
                 }
 
@@ -2682,20 +2683,20 @@ impl BTreeCursor {
 
                             new_page_sizes[sibling_count_new - 1] = 0;
                             cell_array.cell_count_per_page_cumulative[sibling_count_new - 1] =
-                                cell_array.cell_data.len() as u16;
+                                cell_array.cell_payloads.len() as u16;
                         }
                         let size_of_cell_to_remove_from_left =
-                            2 + cell_array.cell_data[cell_array.cell_count_up_to_page(i) - 1].len()
-                                as i64;
+                            2 + cell_array.cell_payloads[cell_array.cell_count_up_to_page(i) - 1]
+                                .len() as i64;
                         new_page_sizes[i] -= size_of_cell_to_remove_from_left;
                         let size_of_cell_to_move_right = if !is_table_leaf {
                             if cell_array.cell_count_per_page_cumulative[i]
-                                < cell_array.cell_data.len() as u16
+                                < cell_array.cell_payloads.len() as u16
                             {
                                 // This means we move to the right page the divider cell and we
                                 // promote left cell to divider
-                                2 + cell_array.cell_data[cell_array.cell_count_up_to_page(i)].len()
-                                    as i64
+                                2 + cell_array.cell_payloads[cell_array.cell_count_up_to_page(i)]
+                                    .len() as i64
                             } else {
                                 0
                             }
@@ -2708,10 +2709,10 @@ impl BTreeCursor {
 
                     // Now try to take from the right if we didn't have enough
                     while cell_array.cell_count_per_page_cumulative[i]
-                        < cell_array.cell_data.len() as u16
+                        < cell_array.cell_payloads.len() as u16
                     {
                         let size_of_cell_to_remove_from_right =
-                            2 + cell_array.cell_data[cell_array.cell_count_up_to_page(i)].len()
+                            2 + cell_array.cell_payloads[cell_array.cell_count_up_to_page(i)].len()
                                 as i64;
                         let can_take = new_page_sizes[i] + size_of_cell_to_remove_from_right
                             > usable_space as i64;
@@ -2723,10 +2724,10 @@ impl BTreeCursor {
 
                         let size_of_cell_to_remove_from_right = if !is_table_leaf {
                             if cell_array.cell_count_per_page_cumulative[i]
-                                < cell_array.cell_data.len() as u16
+                                < cell_array.cell_payloads.len() as u16
                             {
-                                2 + cell_array.cell_data[cell_array.cell_count_up_to_page(i)].len()
-                                    as i64
+                                2 + cell_array.cell_payloads[cell_array.cell_count_up_to_page(i)]
+                                    .len() as i64
                             } else {
                                 0
                             }
@@ -2740,7 +2741,7 @@ impl BTreeCursor {
                     // Check if this page contains up to the last cell. If this happens it means we really just need up to this page.
                     // Let's update the number of new pages to be up to this page (i+1)
                     let page_completes_all_cells = cell_array.cell_count_per_page_cumulative[i]
-                        >= cell_array.cell_data.len() as u16;
+                        >= cell_array.cell_payloads.len() as u16;
                     if page_completes_all_cells {
                         sibling_count_new = i + 1;
                         break;
@@ -2755,7 +2756,7 @@ impl BTreeCursor {
                     "balance_non_root(sibling_count={}, sibling_count_new={}, cells={})",
                     balance_info.sibling_count,
                     sibling_count_new,
-                    cell_array.cell_data.len()
+                    cell_array.cell_payloads.len()
                 );
 
                 /* 5. Balance pages starting from a left stacked cell state and move them to right trying to maintain a balanced state
@@ -2878,7 +2879,8 @@ impl BTreeCursor {
                         pages_to_balance_new[i].replace(page);
                         // Since this page didn't exist before, we can set it to cells length as it
                         // marks them as empty since it is a prefix sum of cells.
-                        old_cell_count_per_page_cumulative[i] = cell_array.cell_data.len() as u16;
+                        old_cell_count_per_page_cumulative[i] =
+                            cell_array.cell_payloads.len() as u16;
                     }
                 }
 
@@ -2975,7 +2977,7 @@ impl BTreeCursor {
                 {
                     let page = page.as_ref().unwrap();
                     let divider_cell_idx = cell_array.cell_count_up_to_page(i);
-                    let mut divider_cell = &mut cell_array.cell_data[divider_cell_idx];
+                    let mut divider_cell = &mut cell_array.cell_payloads[divider_cell_idx];
                     // FIXME: dont use auxiliary space, could be done without allocations
                     let mut new_divider_cell = Vec::new();
                     if !is_leaf_page {
@@ -3003,7 +3005,7 @@ impl BTreeCursor {
                         // FIXME: not needed conversion
                         // FIXME: need to update cell size in order to free correctly?
                         // insert into cell with correct range should be enough
-                        divider_cell = &mut cell_array.cell_data[divider_cell_idx - 1];
+                        divider_cell = &mut cell_array.cell_payloads[divider_cell_idx - 1];
                         let (_, n_bytes_payload) = read_varint(divider_cell)?;
                         let (rowid, _) = read_varint(&divider_cell[n_bytes_payload..])?;
                         new_divider_cell
@@ -3129,7 +3131,7 @@ impl BTreeCursor {
                                 old_cell_count_per_page_cumulative[page_idx - 1] as usize
                                     + (!is_table_leaf) as usize
                             } else {
-                                cell_array.cell_data.len()
+                                cell_array.cell_payloads.len()
                             };
                             let start_new_cells = cell_array.cell_count_up_to_page(page_idx - 1)
                                 + (!is_table_leaf) as usize;
@@ -5256,7 +5258,7 @@ impl PartialOrd for IntegrityCheckCellRange {
 
 #[cfg(debug_assertions)]
 fn validate_cells_after_insertion(cell_array: &CellArray, leaf_data: bool) {
-    for cell in &cell_array.cell_data {
+    for cell in &cell_array.cell_payloads {
         assert!(cell.len() >= 4);
 
         if leaf_data {
@@ -5480,7 +5482,7 @@ impl PageStack {
 struct CellArray {
     /// The actual cell data.
     /// TODO(pere): make this with references
-    cell_data: Vec<&'static mut [u8]>,
+    cell_payloads: Vec<&'static mut [u8]>,
 
     /// Prefix sum of cells in each page.
     /// For example, if three pages have 1, 2, and 3 cells, respectively,
@@ -5490,7 +5492,7 @@ struct CellArray {
 
 impl CellArray {
     pub fn cell_size_bytes(&self, cell_idx: usize) -> u16 {
-        self.cell_data[cell_idx].len() as u16
+        self.cell_payloads[cell_idx].len() as u16
     }
 
     /// Returns the number of cells up to and including the given page.
@@ -5598,7 +5600,7 @@ fn edit_page(
         start_old_cells,
         start_new_cells,
         number_new_cells,
-        cell_array.cell_data.len()
+        cell_array.cell_payloads.len()
     );
     let end_old_cells = start_old_cells + page.cell_count() + page.overflow_cells.len();
     let end_new_cells = start_new_cells + number_new_cells;
@@ -5709,7 +5711,7 @@ fn page_free_array(
     let mut buffered_cells_offsets: [u16; 10] = [0; 10];
     let mut buffered_cells_ends: [u16; 10] = [0; 10];
     for i in first..first + count {
-        let cell = &cell_array.cell_data[i];
+        let cell = &cell_array.cell_payloads[i];
         let cell_pointer = cell.as_ptr_range();
         // check if not overflow cell
         if cell_pointer.start >= buf_range.start && cell_pointer.start < buf_range.end {
@@ -5795,7 +5797,12 @@ fn page_insert_array(
         page.page_type()
     );
     for i in first..first + count {
-        insert_into_cell(page, cell_array.cell_data[i], start_insert, usable_space)?;
+        insert_into_cell(
+            page,
+            cell_array.cell_payloads[i],
+            start_insert,
+            usable_space,
+        )?;
         start_insert += 1;
     }
     debug_validate_cells!(page, usable_space);
@@ -8358,7 +8365,7 @@ mod tests {
         const ITERATIONS: usize = 10000;
         for _ in 0..ITERATIONS {
             let mut cell_array = CellArray {
-                cell_data: Vec::new(),
+                cell_payloads: Vec::new(),
                 cell_count_per_page_cumulative: [0; 5],
             };
             let mut cells_cloned = Vec::new();
@@ -8386,7 +8393,7 @@ mod tests {
                 let buf = contents.as_ptr();
                 let (start, len) = contents.cell_get_raw_region(cell_idx, pager.usable_space());
                 cell_array
-                    .cell_data
+                    .cell_payloads
                     .push(to_static_buf(&mut buf[start..start + len]));
                 cells_cloned.push(buf[start..start + len].to_vec());
             }
