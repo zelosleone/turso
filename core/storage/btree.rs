@@ -2541,8 +2541,9 @@ impl BTreeCursor {
                 let cells_capacity_start = cell_array.cell_data.capacity();
 
                 let mut total_cells_inserted = 0;
-                // count_cells_in_old_pages is the prefix sum of cells of each page
-                let mut count_cells_in_old_pages: [u16; 5] = [0; 5];
+                // This is otherwise identical to CellArray.cell_count_per_page_cumulative,
+                // but we exclusively track what the prefix sums were _before_ we started redistributing cells.
+                let mut old_cell_count_per_page_cumulative: [u16; 5] = [0; 5];
 
                 let page_type = balance_info.pages_to_balance[0]
                     .as_ref()
@@ -2579,7 +2580,7 @@ impl BTreeCursor {
                         );
                     }
 
-                    count_cells_in_old_pages[i] = cell_array.cell_data.len() as u16;
+                    old_cell_count_per_page_cumulative[i] = cell_array.cell_data.len() as u16;
 
                     let mut cells_inserted =
                         old_page_contents.cell_count() + old_page_contents.overflow_cells.len();
@@ -2637,7 +2638,7 @@ impl BTreeCursor {
                 // header
                 let usable_space = self.usable_space() - 12 + leaf_correction;
                 for i in 0..balance_info.sibling_count {
-                    cell_array.cell_count_per_page_cumulative[i] = count_cells_in_old_pages[i];
+                    cell_array.cell_count_per_page_cumulative[i] = old_cell_count_per_page_cumulative[i];
                     let page = &balance_info.pages_to_balance[i].as_ref().unwrap();
                     let page = page.get();
                     let page_contents = page.get_contents();
@@ -2818,7 +2819,7 @@ impl BTreeCursor {
                         pages_to_balance_new[i].replace(page);
                         // Since this page didn't exist before, we can set it to cells length as it
                         // marks them as empty since it is a prefix sum of cells.
-                        count_cells_in_old_pages[i] = cell_array.cell_data.len() as u16;
+                        old_cell_count_per_page_cumulative[i] = cell_array.cell_data.len() as u16;
                     }
                 }
 
@@ -3041,7 +3042,7 @@ impl BTreeCursor {
                         continue;
                     }
                     if i >= 0
-                        || count_cells_in_old_pages[page_idx - 1]
+                        || old_cell_count_per_page_cumulative[page_idx - 1]
                             >= cell_array.cell_count_per_page_cumulative[page_idx - 1]
                     {
                         let (start_old_cells, start_new_cells, number_new_cells) = if page_idx == 0
@@ -3051,7 +3052,7 @@ impl BTreeCursor {
                             let this_was_old_page = page_idx < balance_info.sibling_count;
                             // We add !leaf_data because we want to skip 1 in case of divider cell which is encountared between pages assigned
                             let start_old_cells = if this_was_old_page {
-                                count_cells_in_old_pages[page_idx - 1] as usize
+                                old_cell_count_per_page_cumulative[page_idx - 1] as usize
                                     + (!leaf_data) as usize
                             } else {
                                 cell_array.cell_data.len()
