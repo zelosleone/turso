@@ -2491,7 +2491,7 @@ impl BTreeCursor {
                 // 1. Collect cell data from divider cells, and count the total number of cells to be distributed.
                 // The count includes: all cells and overflow cells from the sibling pages, and divider cells from the parent page,
                 // excluding the rightmost divider, which will not be dropped from the parent; instead it will be updated at the end.
-                let mut max_cells = 0;
+                let mut total_cells_to_redistribute = 0;
                 // We only need maximum 5 pages to balance 3 pages, because we can guarantee that cells from 3 pages will fit in 5 pages.
                 let mut pages_to_balance_new: [Option<BTreePage>; 5] = [const { None }; 5];
                 for i in (0..balance_info.sibling_count).rev() {
@@ -2499,8 +2499,8 @@ impl BTreeCursor {
                     let sibling_page = sibling_page.get();
                     turso_assert!(sibling_page.is_loaded(), "sibling page is not loaded");
                     let sibling_contents = sibling_page.get_contents();
-                    max_cells += sibling_contents.cell_count();
-                    max_cells += sibling_contents.overflow_cells.len();
+                    total_cells_to_redistribute += sibling_contents.cell_count();
+                    total_cells_to_redistribute += sibling_contents.overflow_cells.len();
 
                     // Right pointer is not dropped, we simply update it at the end. This could be a divider cell that points
                     // to the last page in the list of pages to balance or this could be the rightmost pointer that points to a page.
@@ -2513,7 +2513,7 @@ impl BTreeCursor {
                         parent_contents.cell_get_raw_region(cell_idx, self.usable_space());
                     let buf = parent_contents.as_ptr();
                     let cell_buf = &buf[cell_start..cell_start + cell_len];
-                    max_cells += 1;
+                    total_cells_to_redistribute += 1;
 
                     tracing::debug!(
                         "balance_non_root(drop_divider_cell, first_divider_cell={}, divider_cell={}, left_pointer={})",
@@ -2534,7 +2534,7 @@ impl BTreeCursor {
 
                 /* 2. Initialize CellArray with all the cells used for distribution, this includes divider cells if !leaf. */
                 let mut cell_array = CellArray {
-                    cells: Vec::with_capacity(max_cells),
+                    cells: Vec::with_capacity(total_cells_to_redistribute),
                     number_of_cells_per_page: [0; 5],
                 };
                 let cells_capacity_start = cell_array.cells.capacity();
