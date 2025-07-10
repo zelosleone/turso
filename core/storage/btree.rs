@@ -5481,7 +5481,6 @@ impl PageStack {
 /// Used for redistributing cells during a balance operation.
 struct CellArray {
     /// The actual cell data.
-    /// TODO(pere): make this with references
     cell_payloads: Vec<&'static mut [u8]>,
 
     /// Prefix sum of cells in each page.
