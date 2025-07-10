@@ -1345,6 +1345,7 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
             u32::from_be_bytes([buf_slice[24], buf_slice[25], buf_slice[26], buf_slice[27]]);
         header_locked.checksum_2 =
             u32::from_be_bytes([buf_slice[28], buf_slice[29], buf_slice[30], buf_slice[31]]);
+        tracing::debug!("read_entire_wal_dumb(header={:?})", *header_locked);
 
         // Read frames into frame_cache and pages_in_frames
         if buf_slice.len() < WAL_HEADER_SIZE {
@@ -1427,6 +1428,13 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
                 use_native_endian_checksum,
             );
 
+            tracing::debug!(
+                "read_entire_wal_dumb(frame_h_checksum=({}, {}), calculated_frame_checksum=({}, {}))",
+                frame_h_checksum_1,
+                frame_h_checksum_2,
+                calculated_frame_checksum.0,
+                calculated_frame_checksum.1
+            );
             if calculated_frame_checksum != (frame_h_checksum_1, frame_h_checksum_2) {
                 panic!(
                     "WAL frame checksum mismatch. Expected ({}, {}), Got ({}, {})",
@@ -1453,13 +1461,13 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
             let is_commit_record = frame_h_db_size > 0;
             if is_commit_record {
                 wfs_data.max_frame.store(frame_idx, Ordering::SeqCst);
-                wfs_data.last_checksum = cumulative_checksum;
             }
 
             frame_idx += 1;
             current_offset += WAL_FRAME_HEADER_SIZE + page_size;
         }
 
+        wfs_data.last_checksum = cumulative_checksum;
         wfs_data.loaded.store(true, Ordering::SeqCst);
     });
     let c = Completion::new(CompletionType::Read(ReadCompletion::new(
@@ -1549,6 +1557,11 @@ pub fn begin_write_wal_frame(
         );
         header.checksum_1 = final_checksum.0;
         header.checksum_2 = final_checksum.1;
+        tracing::trace!(
+            "begin_write_wal_frame(checksum=({}, {}))",
+            header.checksum_1,
+            header.checksum_2
+        );
 
         buf[16..20].copy_from_slice(&header.checksum_1.to_be_bytes());
         buf[20..24].copy_from_slice(&header.checksum_2.to_be_bytes());
@@ -1585,6 +1598,7 @@ pub fn begin_write_wal_frame(
 }
 
 pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<()> {
+    tracing::trace!("begin_write_wal_header");
     let buffer = {
         let drop_fn = Rc::new(|_buf| {});
 
