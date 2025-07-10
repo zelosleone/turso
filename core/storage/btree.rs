@@ -3040,10 +3040,23 @@ impl BTreeCursor {
                  */
                 let mut done = [false; 5];
                 for i in (1 - sibling_count_new as i64)..sibling_count_new as i64 {
+                    // As mentioned above, we do two passes over the pages:
+                    // 1. Downward pass: Process pages in decreasing order
+                    // 2. Upward pass: Process pages in increasing order
+                    // Hence if we have 3 siblings:
+                    // the order of 'i' will be: -2, -1, 0, 1, 2.
+                    // and the page processing order is: 2, 1, 0, 1, 2.
                     let page_idx = i.unsigned_abs() as usize;
                     if done[page_idx] {
                         continue;
                     }
+                    // As outlined above, this condition ensures we process pages in the correct order to avoid disrupting cells that still need to be read.
+                    // 1. i >= 0 handles the upward pass where we process any pages not processed in the downward pass.
+                    //    - condition (1) is not violated: if cells are moving right-to-left, righthand sibling has not been updated yet.
+                    //    - condition (2) is not violated: if cells are moving left-to-right, righthand sibling has already been updated in the downward pass.
+                    // 2. The second condition checks if it's safe to process a page during the downward pass.
+                    //    - condition (1) is not violated: if cells are moving right-to-left, we do nothing.
+                    //    - condition (2) is not violated: if cells are moving left-to-right, we are allowed to update.
                     if i >= 0
                         || old_cell_count_per_page_cumulative[page_idx - 1]
                             >= cell_array.cell_count_per_page_cumulative[page_idx - 1]
@@ -3053,7 +3066,7 @@ impl BTreeCursor {
                             (0, 0, cell_array.cell_count(0))
                         } else {
                             let this_was_old_page = page_idx < balance_info.sibling_count;
-                            // We add !leaf_data because we want to skip 1 in case of divider cell which is encountared between pages assigned
+                            // We add !is_table_leaf because we want to skip 1 in case of divider cell which is encountared between pages assigned
                             let start_old_cells = if this_was_old_page {
                                 old_cell_count_per_page_cumulative[page_idx - 1] as usize
                                     + (!is_table_leaf) as usize
