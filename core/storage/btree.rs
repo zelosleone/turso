@@ -217,8 +217,15 @@ struct DeleteInfo {
 enum WriteState {
     Start,
     BalanceStart,
-    BalanceNonRoot,
-    BalanceNonRootWaitLoadPages,
+    /// Choose which sibling pages to balance (max 3).
+    /// Generally, the siblings involved will be the page that triggered the balancing and its left and right siblings.
+    /// The exceptions are:
+    /// 1. If the leftmost page triggered balancing, up to 3 leftmost pages will be balanced.
+    /// 2. If the rightmost page triggered balancing, up to 3 rightmost pages will be balanced.
+    BalanceNonRootPickSiblings,
+    /// Perform the actual balancing. This will result in 1-5 pages depending on the number of total cells to be distributed
+    /// from the source pages.
+    BalanceNonRootDoBalancing,
     Finish,
 }
 
@@ -2199,8 +2206,8 @@ impl BTreeCursor {
                     }
                 }
                 WriteState::BalanceStart
-                | WriteState::BalanceNonRoot
-                | WriteState::BalanceNonRootWaitLoadPages => {
+                | WriteState::BalanceNonRootPickSiblings
+                | WriteState::BalanceNonRootDoBalancing => {
                     return_if_io!(self.balance());
                 }
                 WriteState::Finish => {
@@ -2273,11 +2280,11 @@ impl BTreeCursor {
                     }
 
                     let write_info = self.state.mut_write_info().unwrap();
-                    write_info.state = WriteState::BalanceNonRoot;
+                    write_info.state = WriteState::BalanceNonRootPickSiblings;
                     self.stack.pop();
                     return_if_io!(self.balance_non_root());
                 }
-                WriteState::BalanceNonRoot | WriteState::BalanceNonRootWaitLoadPages => {
+                WriteState::BalanceNonRootPickSiblings | WriteState::BalanceNonRootDoBalancing => {
                     return_if_io!(self.balance_non_root());
                 }
                 WriteState::Finish => return Ok(CursorResult::Ok(())),
@@ -2298,7 +2305,7 @@ impl BTreeCursor {
         let (next_write_state, result) = match state {
             WriteState::Start => todo!(),
             WriteState::BalanceStart => todo!(),
-            WriteState::BalanceNonRoot => {
+            WriteState::BalanceNonRootPickSiblings => {
                 let parent_page = self.stack.top();
                 return_if_locked_maybe_load!(self.pager, parent_page);
                 let parent_page = parent_page.get();
@@ -2455,11 +2462,11 @@ impl BTreeCursor {
                         first_divider_cell: first_cell_divider,
                     }));
                 (
-                    WriteState::BalanceNonRootWaitLoadPages,
+                    WriteState::BalanceNonRootDoBalancing,
                     Ok(CursorResult::IO),
                 )
             }
-            WriteState::BalanceNonRootWaitLoadPages => {
+            WriteState::BalanceNonRootDoBalancing => {
                 let write_info = self.state.write_info().unwrap();
                 let mut balance_info = write_info.balance_info.borrow_mut();
                 let balance_info = balance_info.as_mut().unwrap();
