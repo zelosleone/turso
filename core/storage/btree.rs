@@ -2553,7 +2553,7 @@ impl BTreeCursor {
                     .page_type();
                 tracing::debug!("balance_non_root(page_type={:?})", page_type);
                 let is_table_leaf = matches!(page_type, PageType::TableLeaf);
-                let leaf = matches!(page_type, PageType::TableLeaf | PageType::IndexLeaf);
+                let is_leaf = matches!(page_type, PageType::TableLeaf | PageType::IndexLeaf);
                 for (i, old_page) in balance_info
                     .pages_to_balance
                     .iter()
@@ -2595,7 +2595,7 @@ impl BTreeCursor {
                         // TODO(pere): in case of old pages are leaf pages, so index leaf page, we need to strip page pointers
                         // from divider cells in index interior pages (parent) because those should not be included.
                         cells_inserted += 1;
-                        if !leaf {
+                        if !is_leaf {
                             // This divider cell needs to be updated with new left pointer,
                             let right_pointer = old_page_contents.rightmost_pointer().unwrap();
                             divider_cell[..4].copy_from_slice(&right_pointer.to_be_bytes());
@@ -2622,7 +2622,7 @@ impl BTreeCursor {
                 {
                     for cell in &cell_array.cell_data {
                         cells_debug.push(cell.to_vec());
-                        if leaf {
+                        if is_leaf {
                             assert!(cell[0] != 0)
                         }
                     }
@@ -2633,7 +2633,7 @@ impl BTreeCursor {
 
                 /* 3. Initiliaze current size of every page including overflow cells and divider cells that might be included. */
                 let mut new_page_sizes: [i64; 5] = [0; 5];
-                let leaf_correction = if leaf { 4 } else { 0 };
+                let leaf_correction = if is_leaf { 4 } else { 0 };
                 // number of bytes beyond header, different from global usableSapce which includes
                 // header
                 let usable_space = self.usable_space() - 12 + leaf_correction;
@@ -2650,7 +2650,7 @@ impl BTreeCursor {
                         // 2 to account of pointer
                         new_page_sizes[i] += 2 + overflow.payload.len() as i64;
                     }
-                    if !leaf && i < balance_info.sibling_count - 1 {
+                    if !is_leaf && i < balance_info.sibling_count - 1 {
                         // Account for divider cell which is included in this page.
                         new_page_sizes[i] +=
                             cell_array.cell_data[cell_array.cell_count(i)].len() as i64;
