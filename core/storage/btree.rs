@@ -2776,9 +2776,60 @@ impl BTreeCursor {
                     let mut size_right_page = new_page_sizes[i];
                     let mut size_left_page = new_page_sizes[i - 1];
                     let mut cell_left = cell_array.cell_count_per_page_cumulative[i - 1] - 1;
-                    // if leaf_data means we don't have divider, so the one we move from left is
-                    // the same we add to right (we don't add divider to right).
-                    let mut cell_right = cell_left + 1 - is_table_leaf as u16;
+                    // When table leaves are being balanced, divider cells are not part of the balancing,
+                    // because table dividers don't have payloads unlike index dividers.
+                    // Hence:
+                    // - For table leaves: the same cell that is removed from left is added to right.
+                    // - For all other page types: the divider cell is added to right, and the last non-divider cell is removed from left;
+                    //   the cell removed from the left will later become a new divider cell in the parent page.
+                    // TABLE LEAVES BALANCING:
+                    // =======================
+                    // Before balancing:
+                    // LEFT                          RIGHT
+                    // +-----+-----+-----+-----+    +-----+-----+
+                    // | C1  | C2  | C3  | C4  |    | C5  | C6  |
+                    // +-----+-----+-----+-----+    +-----+-----+
+                    //         ^                           ^
+                    //    (too full)                  (has space)
+                    // After balancing:
+                    // LEFT                     RIGHT
+                    // +-----+-----+-----+      +-----+-----+-----+
+                    // | C1  | C2  | C3  |      | C4  | C5  | C6  |
+                    // +-----+-----+-----+      +-----+-----+-----+
+                    //                               ^
+                    //                          (C4 moved directly)
+                    //
+                    // (C3's rowid also becomes the divider cell's rowid in the parent page
+                    //
+                    // OTHER PAGE TYPES BALANCING:
+                    // ===========================
+                    // Before balancing:
+                    // PARENT: [...|D1|...]
+                    //            |
+                    // LEFT                          RIGHT
+                    // +-----+-----+-----+-----+    +-----+-----+
+                    // | K1  | K2  | K3  | K4  |    | K5  | K6  |
+                    // +-----+-----+-----+-----+    +-----+-----+
+                    //         ^                           ^
+                    //    (too full)                  (has space)
+                    // After balancing:
+                    // PARENT: [...|K4|...]  <-- K4 becomes new divider
+                    //            |
+                    // LEFT                     RIGHT
+                    // +-----+-----+-----+      +-----+-----+-----+
+                    // | K1  | K2  | K3  |      | D1  | K5  | K6  |
+                    // +-----+-----+-----+      +-----+-----+-----+
+                    //                               ^
+                    //                     (old divider D1 added to right)
+                    // Legend:
+                    // - C# = Cell (table leaf)
+                    // - K# = Key cell (index/internal node)
+                    // - D# = Divider cell
+                    let mut cell_right = if is_table_leaf {
+                        cell_left
+                    } else {
+                        cell_left + 1
+                    };
                     loop {
                         let cell_left_size = cell_array.cell_size_bytes(cell_left as usize) as i64;
                         let cell_right_size =
@@ -2946,7 +2997,9 @@ impl BTreeCursor {
                         //   * first overflow page (u32 optional)
                         new_divider_cell.extend_from_slice(&divider_cell[4..]);
                     } else if is_table_leaf {
-                        // Leaf table
+                        // For table leaves, divider_cell_idx effectively points to the last cell of the old left page.
+                        // The new divider cell's rowid becomes the second-to-last cell's rowid.
+                        // i.e. in the diagram above, the new divider cell's rowid becomes the rowid of C3.
                         // FIXME: not needed conversion
                         // FIXME: need to update cell size in order to free correctly?
                         // insert into cell with correct range should be enough
