@@ -2638,7 +2638,8 @@ impl BTreeCursor {
                 // header
                 let usable_space = self.usable_space() - 12 + leaf_correction;
                 for i in 0..balance_info.sibling_count {
-                    cell_array.cell_count_per_page_cumulative[i] = old_cell_count_per_page_cumulative[i];
+                    cell_array.cell_count_per_page_cumulative[i] =
+                        old_cell_count_per_page_cumulative[i];
                     let page = &balance_info.pages_to_balance[i].as_ref().unwrap();
                     let page = page.get();
                     let page_contents = page.get_contents();
@@ -2704,7 +2705,9 @@ impl BTreeCursor {
                     }
 
                     // Now try to take from the right if we didn't have enough
-                    while cell_array.cell_count_per_page_cumulative[i] < cell_array.cell_data.len() as u16 {
+                    while cell_array.cell_count_per_page_cumulative[i]
+                        < cell_array.cell_data.len() as u16
+                    {
                         let size_of_cell_to_remove_from_right =
                             2 + cell_array.cell_data[cell_array.cell_count(i)].len() as i64;
                         let can_take = new_page_sizes[i] + size_of_cell_to_remove_from_right
@@ -2732,8 +2735,8 @@ impl BTreeCursor {
 
                     // Check if this page contains up to the last cell. If this happens it means we really just need up to this page.
                     // Let's update the number of new pages to be up to this page (i+1)
-                    let page_completes_all_cells =
-                        cell_array.cell_count_per_page_cumulative[i] >= cell_array.cell_data.len() as u16;
+                    let page_completes_all_cells = cell_array.cell_count_per_page_cumulative[i]
+                        >= cell_array.cell_data.len() as u16;
                     if page_completes_all_cells {
                         sibling_count_new = i + 1;
                         break;
