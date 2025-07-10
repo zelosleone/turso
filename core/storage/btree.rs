@@ -2653,7 +2653,7 @@ impl BTreeCursor {
                     if !is_leaf && i < balance_info.sibling_count - 1 {
                         // Account for divider cell which is included in this page.
                         new_page_sizes[i] +=
-                            cell_array.cell_data[cell_array.cell_count(i)].len() as i64;
+                            cell_array.cell_data[cell_array.cell_count_up_to_page(i)].len() as i64;
                     }
                 }
 
@@ -2685,7 +2685,8 @@ impl BTreeCursor {
                                 cell_array.cell_data.len() as u16;
                         }
                         let size_of_cell_to_remove_from_left =
-                            2 + cell_array.cell_data[cell_array.cell_count(i) - 1].len() as i64;
+                            2 + cell_array.cell_data[cell_array.cell_count_up_to_page(i) - 1].len()
+                                as i64;
                         new_page_sizes[i] -= size_of_cell_to_remove_from_left;
                         let size_of_cell_to_move_right = if !is_table_leaf {
                             if cell_array.cell_count_per_page_cumulative[i]
@@ -2693,7 +2694,8 @@ impl BTreeCursor {
                             {
                                 // This means we move to the right page the divider cell and we
                                 // promote left cell to divider
-                                2 + cell_array.cell_data[cell_array.cell_count(i)].len() as i64
+                                2 + cell_array.cell_data[cell_array.cell_count_up_to_page(i)].len()
+                                    as i64
                             } else {
                                 0
                             }
@@ -2709,7 +2711,8 @@ impl BTreeCursor {
                         < cell_array.cell_data.len() as u16
                     {
                         let size_of_cell_to_remove_from_right =
-                            2 + cell_array.cell_data[cell_array.cell_count(i)].len() as i64;
+                            2 + cell_array.cell_data[cell_array.cell_count_up_to_page(i)].len()
+                                as i64;
                         let can_take = new_page_sizes[i] + size_of_cell_to_remove_from_right
                             > usable_space as i64;
                         if can_take {
@@ -2722,7 +2725,8 @@ impl BTreeCursor {
                             if cell_array.cell_count_per_page_cumulative[i]
                                 < cell_array.cell_data.len() as u16
                             {
-                                2 + cell_array.cell_data[cell_array.cell_count(i)].len() as i64
+                                2 + cell_array.cell_data[cell_array.cell_count_up_to_page(i)].len()
+                                    as i64
                             } else {
                                 0
                             }
@@ -2919,7 +2923,7 @@ impl BTreeCursor {
                 /* do not take last page */
                 {
                     let page = page.as_ref().unwrap();
-                    let divider_cell_idx = cell_array.cell_count(i);
+                    let divider_cell_idx = cell_array.cell_count_up_to_page(i);
                     let mut divider_cell = &mut cell_array.cell_data[divider_cell_idx];
                     // FIXME: dont use auxiliary space, could be done without allocations
                     let mut new_divider_cell = Vec::new();
@@ -3064,7 +3068,7 @@ impl BTreeCursor {
                     {
                         let (start_old_cells, start_new_cells, number_new_cells) = if page_idx == 0
                         {
-                            (0, 0, cell_array.cell_count(0))
+                            (0, 0, cell_array.cell_count_up_to_page(0))
                         } else {
                             let this_was_old_page = page_idx < balance_info.sibling_count;
                             // We add !is_table_leaf because we want to skip 1 in case of divider cell which is encountared between pages assigned
@@ -3074,12 +3078,12 @@ impl BTreeCursor {
                             } else {
                                 cell_array.cell_data.len()
                             };
-                            let start_new_cells =
-                                cell_array.cell_count(page_idx - 1) + (!is_table_leaf) as usize;
+                            let start_new_cells = cell_array.cell_count_up_to_page(page_idx - 1)
+                                + (!is_table_leaf) as usize;
                             (
                                 start_old_cells,
                                 start_new_cells,
-                                cell_array.cell_count(page_idx) - start_new_cells,
+                                cell_array.cell_count_up_to_page(page_idx) - start_new_cells,
                             )
                         };
                         let page = pages_to_balance_new[page_idx].as_ref().unwrap();
@@ -5436,7 +5440,8 @@ impl CellArray {
         self.cell_data[cell_idx].len() as u16
     }
 
-    pub fn cell_count(&self, page_idx: usize) -> usize {
+    /// Returns the number of cells up to and including the given page.
+    pub fn cell_count_up_to_page(&self, page_idx: usize) -> usize {
         self.cell_count_per_page_cumulative[page_idx] as usize
     }
 }
