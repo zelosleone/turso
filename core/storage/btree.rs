@@ -2776,8 +2776,9 @@ impl BTreeCursor {
                     // the same we add to right (we don't add divider to right).
                     let mut cell_right = cell_left + 1 - is_table_leaf as u16;
                     loop {
-                        let cell_left_size = cell_array.cell_size(cell_left as usize) as i64;
-                        let cell_right_size = cell_array.cell_size(cell_right as usize) as i64;
+                        let cell_left_size = cell_array.cell_size_bytes(cell_left as usize) as i64;
+                        let cell_right_size =
+                            cell_array.cell_size_bytes(cell_right as usize) as i64;
                         // TODO: add assert nMaxCells
 
                         let pointer_size = if i == sibling_count_new - 1 { 0 } else { 2 };
@@ -5431,7 +5432,7 @@ struct CellArray {
 }
 
 impl CellArray {
-    pub fn cell_size(&self, cell_idx: usize) -> u16 {
+    pub fn cell_size_bytes(&self, cell_idx: usize) -> u16 {
         self.cell_data[cell_idx].len() as u16
     }
 
