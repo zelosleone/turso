@@ -742,8 +742,7 @@ fn test_read_wal_dumb_no_frames() -> anyhow::Result<()> {
         let tmp_db = TempDatabase::new_empty(false);
         let conn = tmp_db.connect_limbo();
         conn.close()?;
-        let db_path = tmp_db.path.clone();
-        db_path
+        tmp_db.path.clone()
     };
     // Second connection must recover from the WAL file. Last checksum should be filled correctly.
     {
