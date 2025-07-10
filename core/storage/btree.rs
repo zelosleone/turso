@@ -2552,7 +2552,7 @@ impl BTreeCursor {
                     .get_contents()
                     .page_type();
                 tracing::debug!("balance_non_root(page_type={:?})", page_type);
-                let leaf_data = matches!(page_type, PageType::TableLeaf);
+                let is_table_leaf = matches!(page_type, PageType::TableLeaf);
                 let leaf = matches!(page_type, PageType::TableLeaf | PageType::IndexLeaf);
                 for (i, old_page) in balance_info
                     .pages_to_balance
@@ -2585,7 +2585,7 @@ impl BTreeCursor {
                     let mut cells_inserted =
                         old_page_contents.cell_count() + old_page_contents.overflow_cells.len();
 
-                    if i < balance_info.sibling_count - 1 && !leaf_data {
+                    if i < balance_info.sibling_count - 1 && !is_table_leaf {
                         // If we are a index page or a interior table page we need to take the divider cell too.
                         // But we don't need the last divider as it will remain the same.
                         let mut divider_cell = balance_info.divider_cells[i]
@@ -2629,7 +2629,7 @@ impl BTreeCursor {
                 }
 
                 #[cfg(debug_assertions)]
-                validate_cells_after_insertion(&cell_array, leaf_data);
+                validate_cells_after_insertion(&cell_array, is_table_leaf);
 
                 /* 3. Initiliaze current size of every page including overflow cells and divider cells that might be included. */
                 let mut new_page_sizes: [i64; 5] = [0; 5];
@@ -2687,7 +2687,7 @@ impl BTreeCursor {
                         let size_of_cell_to_remove_from_left =
                             2 + cell_array.cell_data[cell_array.cell_count(i) - 1].len() as i64;
                         new_page_sizes[i] -= size_of_cell_to_remove_from_left;
-                        let size_of_cell_to_move_right = if !leaf_data {
+                        let size_of_cell_to_move_right = if !is_table_leaf {
                             if cell_array.cell_count_per_page_cumulative[i]
                                 < cell_array.cell_data.len() as u16
                             {
@@ -2718,7 +2718,7 @@ impl BTreeCursor {
                         new_page_sizes[i] += size_of_cell_to_remove_from_right;
                         cell_array.cell_count_per_page_cumulative[i] += 1;
 
-                        let size_of_cell_to_remove_from_right = if !leaf_data {
+                        let size_of_cell_to_remove_from_right = if !is_table_leaf {
                             if cell_array.cell_count_per_page_cumulative[i]
                                 < cell_array.cell_data.len() as u16
                             {
@@ -2774,7 +2774,7 @@ impl BTreeCursor {
                     let mut cell_left = cell_array.cell_count_per_page_cumulative[i - 1] - 1;
                     // if leaf_data means we don't have divider, so the one we move from left is
                     // the same we add to right (we don't add divider to right).
-                    let mut cell_right = cell_left + 1 - leaf_data as u16;
+                    let mut cell_right = cell_left + 1 - is_table_leaf as u16;
                     loop {
                         let cell_left_size = cell_array.cell_size(cell_left as usize) as i64;
                         let cell_right_size = cell_array.cell_size(cell_right as usize) as i64;
@@ -2940,7 +2940,7 @@ impl BTreeCursor {
                         //   * payload
                         //   * first overflow page (u32 optional)
                         new_divider_cell.extend_from_slice(&divider_cell[4..]);
-                    } else if leaf_data {
+                    } else if is_table_leaf {
                         // Leaf table
                         // FIXME: not needed conversion
                         // FIXME: need to update cell size in order to free correctly?
@@ -3056,12 +3056,12 @@ impl BTreeCursor {
                             // We add !leaf_data because we want to skip 1 in case of divider cell which is encountared between pages assigned
                             let start_old_cells = if this_was_old_page {
                                 old_cell_count_per_page_cumulative[page_idx - 1] as usize
-                                    + (!leaf_data) as usize
+                                    + (!is_table_leaf) as usize
                             } else {
                                 cell_array.cell_data.len()
                             };
                             let start_new_cells =
-                                cell_array.cell_count(page_idx - 1) + (!leaf_data) as usize;
+                                cell_array.cell_count(page_idx - 1) + (!is_table_leaf) as usize;
                             (
                                 start_old_cells,
                                 start_new_cells,
@@ -3156,7 +3156,7 @@ impl BTreeCursor {
                     parent_contents,
                     pages_to_balance_new,
                     page_type,
-                    leaf_data,
+                    is_table_leaf,
                     cells_debug,
                     sibling_count_new,
                     rightmost_pointer,
