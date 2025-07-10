@@ -2422,14 +2422,14 @@ impl BTreeCursor {
                     }
                     let next_cell_divider = i + first_cell_divider - 1;
                     pgno = match parent_contents.cell_get(next_cell_divider, self.usable_space())? {
-                        BTreeCell::TableInteriorCell(table_interior_cell) => {
-                            table_interior_cell.left_child_page
-                        }
-                        BTreeCell::IndexInteriorCell(index_interior_cell) => {
-                            index_interior_cell.left_child_page
-                        }
-                        BTreeCell::TableLeafCell(..) | BTreeCell::IndexLeafCell(..) => {
-                            unreachable!()
+                        BTreeCell::TableInteriorCell(TableInteriorCell {
+                            left_child_page, ..
+                        })
+                        | BTreeCell::IndexInteriorCell(IndexInteriorCell {
+                            left_child_page, ..
+                        }) => left_child_page,
+                        other => {
+                            crate::bail_corrupt_error!("expected interior cell, got {:?}", other)
                         }
                     };
                 }
@@ -2461,10 +2461,7 @@ impl BTreeCursor {
                         sibling_count,
                         first_divider_cell: first_cell_divider,
                     }));
-                (
-                    WriteState::BalanceNonRootDoBalancing,
-                    Ok(CursorResult::IO),
-                )
+                (WriteState::BalanceNonRootDoBalancing, Ok(CursorResult::IO))
             }
             WriteState::BalanceNonRootDoBalancing => {
                 let write_info = self.state.write_info().unwrap();
