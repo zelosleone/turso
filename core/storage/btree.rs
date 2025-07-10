@@ -2488,9 +2488,11 @@ impl BTreeCursor {
                     "overflow parent not yet implemented"
                 );
 
-                /* 1. Get divider cells and max_cells */
+                // 1. Collect cell data from divider cells, and count the total number of cells to be distributed.
+                // The count includes: all cells and overflow cells from the sibling pages, and divider cells from the parent page,
+                // excluding the rightmost divider, which will not be dropped from the parent; instead it will be updated at the end.
                 let mut max_cells = 0;
-                // we only need maximum 5 pages to balance 3 pages
+                // We only need maximum 5 pages to balance 3 pages, because we can guarantee that cells from 3 pages will fit in 5 pages.
                 let mut pages_to_balance_new: [Option<BTreePage>; 5] = [const { None }; 5];
                 for i in (0..balance_info.sibling_count).rev() {
                     let sibling_page = balance_info.pages_to_balance[i].as_ref().unwrap();
