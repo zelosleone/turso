@@ -7368,7 +7368,7 @@ mod tests {
             pager.allocate_page().unwrap();
         }
 
-        header_accessor::set_page_size(&pager, page_size as u16).unwrap();
+        header_accessor::set_page_size(&pager, page_size).unwrap();
 
         pager
     }
