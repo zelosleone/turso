@@ -2513,6 +2513,7 @@ impl BTreeCursor {
                         parent_contents.cell_get_raw_region(cell_idx, self.usable_space());
                     let buf = parent_contents.as_ptr();
                     let cell_buf = &buf[cell_start..cell_start + cell_len];
+                    // Count the divider cell itself (which will be dropped from the parent)
                     total_cells_to_redistribute += 1;
 
                     tracing::debug!(
