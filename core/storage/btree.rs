@@ -2464,6 +2464,7 @@ impl BTreeCursor {
                 (WriteState::BalanceNonRootDoBalancing, Ok(CursorResult::IO))
             }
             WriteState::BalanceNonRootDoBalancing => {
+                // Ensure all involved pages are in memory.
                 let write_info = self.state.write_info().unwrap();
                 let mut balance_info = write_info.balance_info.borrow_mut();
                 let balance_info = balance_info.as_mut().unwrap();
@@ -2475,7 +2476,7 @@ impl BTreeCursor {
                     let page = page.as_ref().unwrap();
                     return_if_locked_maybe_load!(self.pager, page);
                 }
-                // Now do real balancing
+                // Start balancing.
                 let parent_page_btree = self.stack.top();
                 let parent_page = parent_page_btree.get();
 
