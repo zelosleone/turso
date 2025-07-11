@@ -157,36 +157,40 @@ impl FromClause {
                 None,
                 None,
             ))),
-            joins: Some(
-                self.joins
-                    .iter()
-                    .map(|join| ast::JoinedSelectTable {
-                        operator: match join.join_type {
-                            JoinType::Inner => {
-                                ast::JoinOperator::TypedJoin(Some(ast::JoinType::INNER))
-                            }
-                            JoinType::Left => {
-                                ast::JoinOperator::TypedJoin(Some(ast::JoinType::LEFT))
-                            }
-                            JoinType::Right => {
-                                ast::JoinOperator::TypedJoin(Some(ast::JoinType::RIGHT))
-                            }
-                            JoinType::Full => {
-                                ast::JoinOperator::TypedJoin(Some(ast::JoinType::OUTER))
-                            }
-                            JoinType::Cross => {
-                                ast::JoinOperator::TypedJoin(Some(ast::JoinType::CROSS))
-                            }
-                        },
-                        table: ast::SelectTable::Table(
-                            ast::QualifiedName::single(ast::Name(join.table.clone())),
-                            None,
-                            None,
-                        ),
-                        constraint: Some(ast::JoinConstraint::On(join.on.0.clone())),
-                    })
-                    .collect(),
-            ),
+            joins: if self.joins.is_empty() {
+                None
+            } else {
+                Some(
+                    self.joins
+                        .iter()
+                        .map(|join| ast::JoinedSelectTable {
+                            operator: match join.join_type {
+                                JoinType::Inner => {
+                                    ast::JoinOperator::TypedJoin(Some(ast::JoinType::INNER))
+                                }
+                                JoinType::Left => {
+                                    ast::JoinOperator::TypedJoin(Some(ast::JoinType::LEFT))
+                                }
+                                JoinType::Right => {
+                                    ast::JoinOperator::TypedJoin(Some(ast::JoinType::RIGHT))
+                                }
+                                JoinType::Full => {
+                                    ast::JoinOperator::TypedJoin(Some(ast::JoinType::OUTER))
+                                }
+                                JoinType::Cross => {
+                                    ast::JoinOperator::TypedJoin(Some(ast::JoinType::CROSS))
+                                }
+                            },
+                            table: ast::SelectTable::Table(
+                                ast::QualifiedName::single(ast::Name(join.table.clone())),
+                                None,
+                                None,
+                            ),
+                            constraint: Some(ast::JoinConstraint::On(join.on.0.clone())),
+                        })
+                        .collect(),
+                )
+            },
             op: None, // FIXME: this is a temporary fix, we should remove this field
         }
     }
@@ -373,7 +377,11 @@ impl Select {
             with: None,
             body: ast::SelectBody {
                 select: Box::new(ast::OneSelect::Select(Box::new(ast::SelectInner {
-                    distinctness: Some(self.body.select.distinctness),
+                    distinctness: if self.body.select.distinctness == Distinctness::Distinct {
+                        Some(ast::Distinctness::Distinct)
+                    } else {
+                        None
+                    },
                     columns: self
                         .body
                         .select

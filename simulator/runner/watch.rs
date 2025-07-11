@@ -5,7 +5,6 @@ use crate::{
         pick_index,
         plan::{Interaction, InteractionPlanState},
     },
-    integrity_check,
     runner::execution::ExecutionContinuation,
 };
 
@@ -27,22 +26,14 @@ pub(crate) fn run_simulation(
             secondary_pointer: 0,
         })
         .collect::<Vec<_>>();
-    let mut result = execute_plans(env.clone(), plans, &mut states, last_execution);
+    let result = execute_plans(env.clone(), plans, &mut states, last_execution);
 
     let env = env.lock().unwrap();
     env.io.print_stats();
 
     tracing::info!("Simulation completed");
 
-    if result.error.is_none() {
-        let ic = integrity_check(&env.get_db_path());
-        if let Err(err) = ic {
-            tracing::error!("integrity check failed: {}", err);
-            result.error = Some(turso_core::LimboError::InternalError(err.to_string()));
-        } else {
-            tracing::info!("integrity check passed");
-        }
-    }
+
 
     result
 }

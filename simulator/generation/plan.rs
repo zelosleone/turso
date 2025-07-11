@@ -79,11 +79,21 @@ impl InteractionPlan {
                     let _ = plan[j].split_off(k);
                     break;
                 }
+                log::error!(
+                    "Comparing '{}' with '{}'",
+                    interactions[i],
+                    plan[j][k].to_string()
+                );
                 if interactions[i].contains(plan[j][k].to_string().as_str()) {
                     i += 1;
                     k += 1;
                 } else {
                     plan[j].remove(k);
+                    panic!(
+                        "Comparing '{}' with '{}'",
+                        interactions[i],
+                        plan[j][k].to_string()
+                    );
                 }
             }
 
@@ -228,7 +238,7 @@ impl Display for InteractionPlan {
                                 writeln!(f, "{query};")?
                             }
                             Interaction::FaultyQuery(query) => {
-                                writeln!(f, "{query}; --FAULTY QUERY")?
+                                writeln!(f, "{query}; -- FAULTY QUERY")?
                             }
                         }
                     }
@@ -300,7 +310,7 @@ impl Display for Interaction {
             Self::Assertion(assertion) => write!(f, "ASSERT {}", assertion.message),
             Self::Fault(fault) => write!(f, "FAULT '{fault}'"),
             Self::FsyncQuery(query) => write!(f, "{query}"),
-            Self::FaultyQuery(query) => write!(f, "{query} -- FAULTY QUERY"),
+            Self::FaultyQuery(query) => write!(f, "{query}; -- FAULTY QUERY"),
         }
     }
 }
@@ -737,10 +747,7 @@ fn random_create<R: rand::Rng>(rng: &mut R, _env: &SimulatorEnv) -> Interactions
 }
 
 fn random_read<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
-    Interactions::Query(Query::Select(Select::arbitrary_from(
-        rng,
-        &env.tables.tables,
-    )))
+    Interactions::Query(Query::Select(Select::arbitrary_from(rng, env)))
 }
 
 fn random_write<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {

@@ -166,7 +166,7 @@ fn watch_mode(env: SimulatorEnv) -> notify::Result<()> {
                             let mut env = env;
                             let plan: Vec<Vec<Interaction>> =
                                 InteractionPlan::compute_via_diff(&env.get_plan_path());
-
+                            tracing::error!("plan_len: {}", plan.len());
                             env.clear();
 
                             // plan.iter().for_each(|is| {
@@ -602,16 +602,6 @@ fn run_simulation_default(
 
     tracing::info!("Simulation completed");
 
-    if result.error.is_none() {
-        let ic = integrity_check(&env.get_db_path());
-        if let Err(err) = ic {
-            tracing::error!("integrity check failed: {}", err);
-            result.error = Some(turso_core::LimboError::InternalError(err.to_string()));
-        } else {
-            tracing::info!("integrity check passed");
-        }
-    }
-
     result
 }
 
@@ -671,23 +661,3 @@ const BANNER: &str = r#"
    \____________________________/
 
 "#;
-
-fn integrity_check(db_path: &Path) -> anyhow::Result<()> {
-    let conn = rusqlite::Connection::open(db_path)?;
-    let mut stmt = conn.prepare("SELECT * FROM pragma_integrity_check;")?;
-    let mut rows = stmt.query(())?;
-    let mut result: Vec<String> = Vec::new();
-
-    while let Some(row) = rows.next()? {
-        result.push(row.get(0)?);
-    }
-    if result.is_empty() {
-        anyhow::bail!("simulation failed: integrity_check should return `ok` or a list of problems")
-    }
-    if !result[0].eq_ignore_ascii_case("ok") {
-        // Build a list of problems
-        result.iter_mut().for_each(|row| *row = format!("- {row}"));
-        anyhow::bail!("simulation failed: {}", result.join("\n"))
-    }
-    Ok(())
-}

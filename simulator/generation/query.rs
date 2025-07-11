@@ -115,14 +115,22 @@ impl Arbitrary for CompoundOperator {
     }
 }
 
-impl ArbitraryFrom<&Vec<Table>> for Select {
-    fn arbitrary_from<R: Rng>(rng: &mut R, tables: &Vec<Table>) -> Self {
+impl ArbitraryFrom<&SimulatorEnv> for Select {
+    fn arbitrary_from<R: Rng>(rng: &mut R, env: &SimulatorEnv) -> Self {
         let query_size = (rng.gen_range(0.0..=15.0_f32).log2().ceil() as usize).saturating_sub(2);
 
-        let table = pick(tables, rng);
+        let table = pick(&env.tables, rng);
 
-        let num_selects = rng.gen_range(0..=query_size);
-        let first = SelectInner::arbitrary_from(rng, tables);
+        // Generate a number of selects based on the query size
+        // If experimental indexes are enabled, we can have selects with compounds
+        // Otherwise, we just have a single select with no compounds
+        let num_selects = if env.opts.experimental_indexes {
+            rng.gen_range(0..=query_size)
+        } else {
+            0
+        };
+
+        let first = SelectInner::arbitrary_from(rng, &env.tables);
 
         let rest: Vec<SelectInner> = (0..num_selects)
             .map(|_| {
@@ -184,10 +192,7 @@ impl ArbitraryFrom<&SimulatorEnv> for Insert {
 
         // Backtrack here cannot return None
         backtrack(
-            vec![
-                (1, Box::new(gen_values)),
-                (1, Box::new(gen_select)),
-            ],
+            vec![(1, Box::new(gen_values)), (1, Box::new(gen_select))],
             rng,
         )
         .unwrap()
@@ -223,7 +228,7 @@ impl ArbitraryFrom<(&SimulatorEnv, &Remaining)> for Query {
                 ),
                 (
                     remaining.read,
-                    Box::new(|rng| Self::Select(Select::arbitrary_from(rng, &env.tables))),
+                    Box::new(|rng| Self::Select(Select::arbitrary_from(rng, env))),
                 ),
                 (
                     remaining.write,
@@ -260,111 +265,6 @@ impl ArbitraryFrom<&SimulatorEnv> for Update {
             table: table.name.clone(),
             set_values,
             predicate: Predicate::arbitrary_from(rng, table),
-        }
-    }
-}
-
-#[cfg(test)]
-mod query_generation_tests {
-    
-    use turso_core::Value;
-    use turso_sqlite3_parser::to_sql_string::ToSqlString;
-
-    use super::*;
-    
-    use crate::model::query::EmptyContext;
-    use crate::model::table::{Column, ColumnType};
-    
-
-    #[test]
-    fn test_select_query_generation() {
-        let mut rng = rand::thread_rng();
-        // CREATE TABLE users (id INTEGER, name TEXT);
-        // INSERT INTO users (id, name) VALUES (1, 'Alice'), (2, 'Bob');
-        // CREATE TABLE orders (order_id INTEGER, user_id INTEGER);
-        // INSERT INTO orders (order_id, user_id) VALUES (1, 1), (2, 2);
-
-        let tables = vec![
-            Table {
-                name: "users".to_string(),
-                columns: vec![
-                    Column {
-                        name: "id".to_string(),
-                        column_type: ColumnType::Integer,
-                        primary: false,
-                        unique: false,
-                    },
-                    Column {
-                        name: "name".to_string(),
-                        column_type: ColumnType::Text,
-                        primary: false,
-                        unique: false,
-                    },
-                ],
-                rows: vec![
-                    vec![
-                        SimValue(Value::Integer(1)),
-                        SimValue(Value::Text("Alice".into())),
-                    ],
-                    vec![
-                        SimValue(Value::Integer(2)),
-                        SimValue(Value::Text("Bob".into())),
-                    ],
-                ],
-            },
-            Table {
-                name: "orders".to_string(),
-                columns: vec![
-                    Column {
-                        name: "order_id".to_string(),
-                        column_type: ColumnType::Integer,
-                        primary: false,
-                        unique: false,
-                    },
-                    Column {
-                        name: "user_id".to_string(),
-                        column_type: ColumnType::Integer,
-                        primary: false,
-                        unique: false,
-                    },
-                ],
-                rows: vec![
-                    vec![SimValue(Value::Integer(1)), SimValue(Value::Integer(1))],
-                    vec![SimValue(Value::Integer(2)), SimValue(Value::Integer(2))],
-                ],
-            },
-            Table {
-                name: "products".to_string(),
-                columns: vec![
-                    Column {
-                        name: "product_id".to_string(),
-                        column_type: ColumnType::Integer,
-                        primary: true,
-                        unique: true,
-                    },
-                    Column {
-                        name: "product_name".to_string(),
-                        column_type: ColumnType::Text,
-                        primary: false,
-                        unique: false,
-                    },
-                ],
-                rows: vec![
-                    vec![
-                        SimValue(Value::Integer(1)),
-                        SimValue(Value::Text("Widget".into())),
-                    ],
-                    vec![
-                        SimValue(Value::Integer(2)),
-                        SimValue(Value::Text("Gadget".into())),
-                    ],
-                ],
-            },
-        ];
-        for _ in 0..100 {
-            let query = Select::arbitrary_from(&mut rng, &tables);
-            println!("{}", query.to_sql_ast().to_sql_string(&EmptyContext {}));
-            // println!("{:?}", query.to_sql_ast());
         }
     }
 }

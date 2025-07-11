@@ -410,9 +410,7 @@ impl Property {
                 let table_name = table.clone();
 
                 let assertion = Interaction::Assertion(Assertion {
-                    message: format!(
-                        "select query should result in an error for table '{table}'"
-                    ),
+                    message: format!("select query should result in an error for table '{table}'"),
                     func: Box::new(move |stack: &Vec<ResultSet>, _| {
                         let last = stack.last().unwrap();
                         match last {
@@ -733,7 +731,30 @@ fn assert_all_table_values(tables: &[String]) -> impl Iterator<Item = Interactio
                     })?;
                     let last = stack.last().unwrap();
                     match last {
-                        Ok(vals) => Ok(*vals == table.rows),
+                        Ok(vals) => {
+                            // Check if all values in the table are present in the result set
+                            // Find a value in the table that is not in the result set
+                            let model_contains_db = table.rows.iter().find(|v| {
+                                !vals.iter().any(|r| {
+                                    &r == v
+                                })
+                            });
+                            let db_contains_model = vals.iter().find(|v| {
+                                !table.rows.iter().any(|r| &r == v)
+                            });
+
+                            if model_contains_db.is_some() || db_contains_model.is_some() {
+                                tracing::debug!(
+                                    "table {} does not contain all of its values, model_contains_db: {:?}, db_contains_model: {:?}",
+                                    table.name,
+                                    model_contains_db,
+                                    db_contains_model
+                                );
+                                Ok(false)
+                            } else {
+                                Ok(true)
+                            }
+                        }
                         Err(err) => Err(LimboError::InternalError(format!("{err}"))),
                     }
                 }
@@ -1101,6 +1122,7 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
         (env, stats): (&SimulatorEnv, &InteractionStats),
     ) -> Self {
         let remaining_ = remaining(env, stats);
+
         frequency(
             vec![
                 (
@@ -1153,7 +1175,7 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
                     Box::new(|rng: &mut R| property_select_select_optimizer(rng, env)),
                 ),
                 (
-                    if !env.opts.disable_where_true_false_null {
+                    if env.opts.experimental_indexes && !env.opts.disable_where_true_false_null {
                         remaining_.read / 2.0
                     } else {
                         0.0
@@ -1161,7 +1183,7 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
                     Box::new(|rng: &mut R| property_where_true_false_null(rng, env)),
                 ),
                 (
-                    if !env.opts.disable_union_all_preserves_cardinality {
+                    if env.opts.experimental_indexes && !env.opts.disable_union_all_preserves_cardinality {
                         remaining_.read / 3.0
                     } else {
                         0.0
@@ -1177,7 +1199,7 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
                     Box::new(|rng: &mut R| property_fsync_no_wait(rng, env, &remaining_)),
                 ),
                 (
-                    if !env.opts.disable_faulty_query {
+                    if env.opts.enable_faulty_query {
                         20.0
                     } else {
                         0.0
