@@ -30,13 +30,11 @@ impl ToSqlString for Expr {
                 ret.push_str(&end.to_sql_string(context));
             }
             Expr::Binary(lhs, op, rhs) => {
-                ret.push('(');
                 ret.push_str(&lhs.to_sql_string(context));
                 ret.push(' ');
                 ret.push_str(&op.to_string());
                 ret.push(' ');
                 ret.push_str(&rhs.to_sql_string(context));
-                ret.push(')');
             }
             Expr::Case {
                 base,
@@ -262,11 +260,9 @@ impl ToSqlString for Expr {
                 ret.push(')');
             }
             Expr::Unary(unary_operator, expr) => {
-                ret.push('(');
                 ret.push_str(&unary_operator.to_string());
                 ret.push(' ');
                 ret.push_str(&expr.to_sql_string(context));
-                ret.push(')');
             }
             Expr::Variable(variable) => {
                 ret.push_str(variable);
