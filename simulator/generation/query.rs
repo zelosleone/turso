@@ -186,7 +186,7 @@ impl ArbitraryFrom<&SimulatorEnv> for Insert {
         backtrack(
             vec![
                 (1, Box::new(gen_values)),
-                (1, Box::new(|rng| gen_select(rng))),
+                (1, Box::new(gen_select)),
             ],
             rng,
         )
@@ -266,15 +266,15 @@ impl ArbitraryFrom<&SimulatorEnv> for Update {
 
 #[cfg(test)]
 mod query_generation_tests {
-    use rand::RngCore;
+    
     use turso_core::Value;
     use turso_sqlite3_parser::to_sql_string::ToSqlString;
 
     use super::*;
-    use crate::model::query::predicate::Predicate;
+    
     use crate::model::query::EmptyContext;
     use crate::model::table::{Column, ColumnType};
-    use crate::SimulatorEnv;
+    
 
     #[test]
     fn test_select_query_generation() {

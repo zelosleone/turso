@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     generation::Shadow,
-    model::table::{SimValue, Table}, runner::env::SimulatorTables,
+    model::table::{SimValue, Table},
+    runner::env::SimulatorTables,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

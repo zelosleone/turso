@@ -737,7 +737,10 @@ fn random_create<R: rand::Rng>(rng: &mut R, _env: &SimulatorEnv) -> Interactions
 }
 
 fn random_read<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
-    Interactions::Query(Query::Select(Select::arbitrary_from(rng, &env.tables.tables)))
+    Interactions::Query(Query::Select(Select::arbitrary_from(
+        rng,
+        &env.tables.tables,
+    )))
 }
 
 fn random_write<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {

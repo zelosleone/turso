@@ -12,7 +12,10 @@ use update::Update;
 
 use crate::{
     generation::Shadow,
-    model::{query::transaction::{Begin, Commit, Rollback}, table::SimValue},
+    model::{
+        query::transaction::{Begin, Commit, Rollback},
+        table::SimValue,
+    },
     runner::env::SimulatorTables,
 };
 

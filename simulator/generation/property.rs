@@ -3,16 +3,22 @@ use turso_core::LimboError;
 use turso_sqlite3_parser::ast::{self};
 
 use crate::{
-    generation::Shadow as _, model::{
+    generation::Shadow as _,
+    model::{
         query::{
-            predicate::Predicate, select::{
+            predicate::Predicate,
+            select::{
                 CompoundOperator, CompoundSelect, Distinctness, ResultColumn, SelectBody,
                 SelectInner,
-            }, transaction::{Begin, Commit, Rollback}, update::Update, Create, Delete, Drop, Insert, Query, Select
+            },
+            transaction::{Begin, Commit, Rollback},
+            update::Update,
+            Create, Delete, Drop, Insert, Query, Select,
         },
         table::SimValue,
         FAULT_ERROR_MSG,
-    }, runner::env::SimulatorEnv
+    },
+    runner::env::SimulatorEnv,
 };
 
 use super::{
@@ -367,7 +373,7 @@ impl Property {
                 )));
 
                 let assertion = Interaction::Assertion(Assertion {
-                    message: format!("`{}` should return no values for table `{}`", select, table,),
+                    message: format!("`{select}` should return no values for table `{table}`",),
                     func: Box::new(move |stack: &Vec<ResultSet>, _| {
                         let rows = stack.last().unwrap();
                         match rows {
@@ -405,8 +411,7 @@ impl Property {
 
                 let assertion = Interaction::Assertion(Assertion {
                     message: format!(
-                        "select query should result in an error for table '{}'",
-                        table
+                        "select query should result in an error for table '{table}'"
                     ),
                     func: Box::new(move |stack: &Vec<ResultSet>, _| {
                         let last = stack.last().unwrap();
@@ -522,7 +527,7 @@ impl Property {
                                 Ok(true)
                             }
                             Err(err) => {
-                                let msg = format!("{}", err);
+                                let msg = format!("{err}");
                                 if msg.contains(FAULT_ERROR_MSG) {
                                     Ok(true)
                                 } else {
@@ -717,14 +722,13 @@ fn assert_all_table_values(tables: &[String]) -> impl Iterator<Item = Interactio
         )));
 
         let assertion = Interaction::Assertion(Assertion {
-            message: format!("table {} should contain all of its values", table),
+            message: format!("table {table} should contain all of its values"),
             func: Box::new({
                 let table = table.clone();
                 move |stack: &Vec<ResultSet>, env: &mut SimulatorEnv| {
                     let table = env.tables.iter().find(|t| t.name == table).ok_or_else(|| {
                         LimboError::InternalError(format!(
-                            "table {} should exist in simulator env",
-                            table
+                            "table {table} should exist in simulator env"
                         ))
                     })?;
                     let last = stack.last().unwrap();

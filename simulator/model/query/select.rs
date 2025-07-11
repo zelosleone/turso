@@ -11,7 +11,8 @@ use crate::{
     model::{
         query::EmptyContext,
         table::{SimValue, Table},
-    }, runner::env::SimulatorTables,
+    },
+    runner::env::SimulatorTables,
 };
 
 use super::predicate::Predicate;
@@ -255,7 +256,7 @@ impl Shadow for FromClause {
     type Result = anyhow::Result<JoinTable>;
     fn shadow(&self, env: &mut SimulatorTables) -> Self::Result {
         let tables = &mut env.tables;
-        
+
         let first_table = tables
             .iter()
             .find(|t| t.name == self.table)

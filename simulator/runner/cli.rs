@@ -44,7 +44,10 @@ pub struct SimulatorCLI {
     pub watch: bool,
     #[clap(long, help = "run differential testing between sqlite and Limbo")]
     pub differential: bool,
-    #[clap(long, help = "enable brute force shrink (warning: it might take a long time)")]
+    #[clap(
+        long,
+        help = "enable brute force shrink (warning: it might take a long time)"
+    )]
     pub enable_brute_force_shrinking: bool,
     #[clap(subcommand)]
     pub subcommand: Option<SimulatorCommand>,

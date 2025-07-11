@@ -28,7 +28,6 @@ pub(crate) enum SimulationPhase {
     Shrink,
 }
 
-
 #[derive(Debug, Clone)]
 pub(crate) struct SimulatorTables {
     pub(crate) tables: Vec<Table>,

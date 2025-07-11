@@ -2,11 +2,7 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    generation::Shadow,
-    model::table::SimValue,
-    runner::env::SimulatorTables,
-};
+use crate::{generation::Shadow, model::table::SimValue, runner::env::SimulatorTables};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct Begin {
