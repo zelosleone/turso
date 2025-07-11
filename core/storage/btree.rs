@@ -7,7 +7,8 @@ use crate::{
         pager::{BtreePageAllocMode, Pager},
         sqlite3_ondisk::{
             read_u32, read_varint, BTreeCell, PageContent, PageType, TableInteriorCell,
-            TableLeafCell,
+            TableLeafCell, CELL_PTR_SIZE_BYTES, INTERIOR_PAGE_HEADER_SIZE_BYTES,
+            LEAF_PAGE_HEADER_SIZE_BYTES, LEFT_CHILD_PTR_SIZE_BYTES,
         },
     },
     translate::{collate::CollationSeq, plan::IterationDirection},
@@ -99,6 +100,12 @@ pub mod offset {
 /// If a tree that appears to be taller than this is encountered, it is
 /// assumed that the database is corrupt.
 pub const BTCURSOR_MAX_DEPTH: usize = 20;
+
+/// Maximum number of sibling pages that balancing is performed on.
+pub const MAX_SIBLING_PAGES_TO_BALANCE: usize = 3;
+
+/// We only need maximum 5 pages to balance 3 pages, because we can guarantee that cells from 3 pages will fit in 5 pages.
+pub const MAX_NEW_SIBLING_PAGES_AFTER_BALANCE: usize = 5;
 
 /// Evaluate a Result<CursorResult<T>>, if IO return IO.
 macro_rules! return_if_io {
@@ -309,11 +316,11 @@ impl BTreeKey<'_> {
 #[derive(Clone)]
 struct BalanceInfo {
     /// Old pages being balanced. We can have maximum 3 pages being balanced at the same time.
-    pages_to_balance: [Option<BTreePage>; 3],
+    pages_to_balance: [Option<BTreePage>; MAX_SIBLING_PAGES_TO_BALANCE],
     /// Bookkeeping of the rightmost pointer so the offset::BTREE_RIGHTMOST_PTR can be updated.
     rightmost_pointer: *mut u8,
     /// Divider cells of old pages. We can have maximum 2 divider cells because of 3 pages.
-    divider_cells: [Option<Vec<u8>>; 2],
+    divider_cell_payloads: [Option<Vec<u8>>; MAX_SIBLING_PAGES_TO_BALANCE - 1],
     /// Number of siblings being used to balance
     sibling_count: usize,
     /// First divider cell to remove that marks the first sibling
@@ -2338,7 +2345,8 @@ impl BTreeCursor {
                     "expected index or table interior page"
                 );
                 // Part 1: Find the sibling pages to balance
-                let mut pages_to_balance: [Option<BTreePage>; 3] = [const { None }; 3];
+                let mut pages_to_balance: [Option<BTreePage>; MAX_SIBLING_PAGES_TO_BALANCE] =
+                    [const { None }; MAX_SIBLING_PAGES_TO_BALANCE];
                 let number_of_cells_in_parent =
                     parent_contents.cell_count() + parent_contents.overflow_cells.len();
 
@@ -2457,7 +2465,7 @@ impl BTreeCursor {
                     .replace(Some(BalanceInfo {
                         pages_to_balance,
                         rightmost_pointer: right_pointer,
-                        divider_cells: [const { None }; 2],
+                        divider_cell_payloads: [const { None }; MAX_SIBLING_PAGES_TO_BALANCE - 1],
                         sibling_count,
                         first_divider_cell: first_cell_divider,
                     }));
@@ -2492,8 +2500,9 @@ impl BTreeCursor {
                 // The count includes: all cells and overflow cells from the sibling pages, and divider cells from the parent page,
                 // excluding the rightmost divider, which will not be dropped from the parent; instead it will be updated at the end.
                 let mut total_cells_to_redistribute = 0;
-                // We only need maximum 5 pages to balance 3 pages, because we can guarantee that cells from 3 pages will fit in 5 pages.
-                let mut pages_to_balance_new: [Option<BTreePage>; 5] = [const { None }; 5];
+                let mut pages_to_balance_new: [Option<BTreePage>;
+                    MAX_NEW_SIBLING_PAGES_AFTER_BALANCE] =
+                    [const { None }; MAX_NEW_SIBLING_PAGES_AFTER_BALANCE];
                 for i in (0..balance_info.sibling_count).rev() {
                     let sibling_page = balance_info.pages_to_balance[i].as_ref().unwrap();
                     let sibling_page = sibling_page.get();
@@ -2504,7 +2513,8 @@ impl BTreeCursor {
 
                     // Right pointer is not dropped, we simply update it at the end. This could be a divider cell that points
                     // to the last page in the list of pages to balance or this could be the rightmost pointer that points to a page.
-                    if i == balance_info.sibling_count - 1 {
+                    let is_last_sibling = i == balance_info.sibling_count - 1;
+                    if is_last_sibling {
                         continue;
                     }
                     // Since we know we have a left sibling, take the divider that points to left sibling of this page
@@ -2524,7 +2534,7 @@ impl BTreeCursor {
                     );
 
                     // TODO(pere): make this reference and not copy
-                    balance_info.divider_cells[i].replace(cell_buf.to_vec());
+                    balance_info.divider_cell_payloads[i].replace(cell_buf.to_vec());
                     tracing::trace!(
                         "dropping divider cell from parent cell_idx={} count={}",
                         cell_idx,
@@ -2536,14 +2546,15 @@ impl BTreeCursor {
                 /* 2. Initialize CellArray with all the cells used for distribution, this includes divider cells if !leaf. */
                 let mut cell_array = CellArray {
                     cell_payloads: Vec::with_capacity(total_cells_to_redistribute),
-                    cell_count_per_page_cumulative: [0; 5],
+                    cell_count_per_page_cumulative: [0; MAX_NEW_SIBLING_PAGES_AFTER_BALANCE],
                 };
                 let cells_capacity_start = cell_array.cell_payloads.capacity();
 
                 let mut total_cells_inserted = 0;
                 // This is otherwise identical to CellArray.cell_count_per_page_cumulative,
                 // but we exclusively track what the prefix sums were _before_ we started redistributing cells.
-                let mut old_cell_count_per_page_cumulative: [u16; 5] = [0; 5];
+                let mut old_cell_count_per_page_cumulative: [u16;
+                    MAX_NEW_SIBLING_PAGES_AFTER_BALANCE] = [0; MAX_NEW_SIBLING_PAGES_AFTER_BALANCE];
 
                 let page_type = balance_info.pages_to_balance[0]
                     .as_ref()
@@ -2585,10 +2596,11 @@ impl BTreeCursor {
                     let mut cells_inserted =
                         old_page_contents.cell_count() + old_page_contents.overflow_cells.len();
 
-                    if i < balance_info.sibling_count - 1 && !is_table_leaf {
+                    let is_last_sibling = i == balance_info.sibling_count - 1;
+                    if !is_last_sibling && !is_table_leaf {
                         // If we are a index page or a interior table page we need to take the divider cell too.
                         // But we don't need the last divider as it will remain the same.
-                        let mut divider_cell = balance_info.divider_cells[i]
+                        let mut divider_cell = balance_info.divider_cell_payloads[i]
                             .as_mut()
                             .unwrap()
                             .as_mut_slice();
@@ -2598,12 +2610,16 @@ impl BTreeCursor {
                         if !is_leaf {
                             // This divider cell needs to be updated with new left pointer,
                             let right_pointer = old_page_contents.rightmost_pointer().unwrap();
-                            divider_cell[..4].copy_from_slice(&right_pointer.to_be_bytes());
+                            divider_cell[..LEFT_CHILD_PTR_SIZE_BYTES]
+                                .copy_from_slice(&right_pointer.to_be_bytes());
                         } else {
                             // index leaf
-                            turso_assert!(divider_cell.len() >= 4, "divider cell is too short");
+                            turso_assert!(
+                                divider_cell.len() >= LEFT_CHILD_PTR_SIZE_BYTES,
+                                "divider cell is too short"
+                            );
                             // let's strip the page pointer
-                            divider_cell = &mut divider_cell[4..];
+                            divider_cell = &mut divider_cell[LEFT_CHILD_PTR_SIZE_BYTES..];
                         }
                         cell_array.cell_payloads.push(to_static_buf(divider_cell));
                     }
@@ -2632,11 +2648,16 @@ impl BTreeCursor {
                 validate_cells_after_insertion(&cell_array, is_table_leaf);
 
                 /* 3. Initiliaze current size of every page including overflow cells and divider cells that might be included. */
-                let mut new_page_sizes: [i64; 5] = [0; 5];
-                let leaf_correction = if is_leaf { 4 } else { 0 };
+                let mut new_page_sizes: [i64; MAX_NEW_SIBLING_PAGES_AFTER_BALANCE] =
+                    [0; MAX_NEW_SIBLING_PAGES_AFTER_BALANCE];
+                let header_size = if is_leaf {
+                    LEAF_PAGE_HEADER_SIZE_BYTES
+                } else {
+                    INTERIOR_PAGE_HEADER_SIZE_BYTES
+                };
                 // number of bytes beyond header, different from global usableSapce which includes
                 // header
-                let usable_space = self.usable_space() - 12 + leaf_correction;
+                let usable_space = self.usable_space() - header_size;
                 for i in 0..balance_info.sibling_count {
                     cell_array.cell_count_per_page_cumulative[i] =
                         old_cell_count_per_page_cumulative[i];
@@ -2650,7 +2671,8 @@ impl BTreeCursor {
                         // 2 to account of pointer
                         new_page_sizes[i] += 2 + overflow.payload.len() as i64;
                     }
-                    if !is_leaf && i < balance_info.sibling_count - 1 {
+                    let is_last_sibling = i == balance_info.sibling_count - 1;
+                    if !is_leaf && !is_last_sibling {
                         // Account for divider cell which is included in this page.
                         new_page_sizes[i] += cell_array.cell_payloads
                             [cell_array.cell_count_up_to_page(i)]
@@ -2695,8 +2717,9 @@ impl BTreeCursor {
                             {
                                 // This means we move to the right page the divider cell and we
                                 // promote left cell to divider
-                                2 + cell_array.cell_payloads[cell_array.cell_count_up_to_page(i)]
-                                    .len() as i64
+                                CELL_PTR_SIZE_BYTES as i64
+                                    + cell_array.cell_payloads[cell_array.cell_count_up_to_page(i)]
+                                        .len() as i64
                             } else {
                                 0
                             }
@@ -2711,8 +2734,8 @@ impl BTreeCursor {
                     while cell_array.cell_count_per_page_cumulative[i]
                         < cell_array.cell_payloads.len() as u16
                     {
-                        let size_of_cell_to_remove_from_right =
-                            2 + cell_array.cell_payloads[cell_array.cell_count_up_to_page(i)].len()
+                        let size_of_cell_to_remove_from_right = CELL_PTR_SIZE_BYTES as i64
+                            + cell_array.cell_payloads[cell_array.cell_count_up_to_page(i)].len()
                                 as i64;
                         let can_take = new_page_sizes[i] + size_of_cell_to_remove_from_right
                             > usable_space as i64;
@@ -2726,8 +2749,9 @@ impl BTreeCursor {
                             if cell_array.cell_count_per_page_cumulative[i]
                                 < cell_array.cell_payloads.len() as u16
                             {
-                                2 + cell_array.cell_payloads[cell_array.cell_count_up_to_page(i)]
-                                    .len() as i64
+                                CELL_PTR_SIZE_BYTES as i64
+                                    + cell_array.cell_payloads[cell_array.cell_count_up_to_page(i)]
+                                        .len() as i64
                             } else {
                                 0
                             }
@@ -2837,15 +2861,24 @@ impl BTreeCursor {
                             cell_array.cell_size_bytes(cell_right as usize) as i64;
                         // TODO: add assert nMaxCells
 
-                        let pointer_size = if i == sibling_count_new - 1 { 0 } else { 2 };
-                        let would_not_improve_balance = size_right_page + cell_right_size + 2
-                            > size_left_page - (cell_left_size + pointer_size);
+                        let is_last_sibling = i == sibling_count_new - 1;
+                        let pointer_size = if is_last_sibling {
+                            0
+                        } else {
+                            CELL_PTR_SIZE_BYTES as i64
+                        };
+                        // As mentioned, this step rebalances the siblings so that cells are moved from left to right, since the previous step just
+                        // packed as much as possible to the left. However, if the right-hand-side page would become larger than the left-hand-side page,
+                        // we stop.
+                        let would_not_improve_balance =
+                            size_right_page + cell_right_size + (CELL_PTR_SIZE_BYTES as i64)
+                                > size_left_page - (cell_left_size + pointer_size);
                         if size_right_page != 0 && would_not_improve_balance {
                             break;
                         }
 
-                        size_left_page -= cell_left_size + 2;
-                        size_right_page += cell_right_size + 2;
+                        size_left_page -= cell_left_size + (CELL_PTR_SIZE_BYTES as i64);
+                        size_right_page += cell_right_size + (CELL_PTR_SIZE_BYTES as i64);
                         cell_array.cell_count_per_page_cumulative[i - 1] = cell_left;
 
                         if cell_left == 0 {
@@ -2886,7 +2919,8 @@ impl BTreeCursor {
 
                 // Reassign page numbers in increasing order
                 {
-                    let mut page_numbers: [usize; 5] = [0; 5];
+                    let mut page_numbers: [usize; MAX_NEW_SIBLING_PAGES_AFTER_BALANCE] =
+                        [0; MAX_NEW_SIBLING_PAGES_AFTER_BALANCE];
                     for (i, page) in pages_to_balance_new
                         .iter()
                         .take(sibling_count_new)
@@ -2955,7 +2989,8 @@ impl BTreeCursor {
                 // that was originally on that place.
                 let is_leaf_page = matches!(page_type, PageType::TableLeaf | PageType::IndexLeaf);
                 if !is_leaf_page {
-                    let last_page = balance_info.pages_to_balance[balance_info.sibling_count - 1]
+                    let last_sibling_idx = balance_info.sibling_count - 1;
+                    let last_page = balance_info.pages_to_balance[last_sibling_idx]
                         .as_ref()
                         .unwrap();
                     let right_pointer = last_page.get().get_contents().rightmost_pointer().unwrap();
@@ -3018,7 +3053,7 @@ impl BTreeCursor {
                         new_divider_cell.extend_from_slice(divider_cell);
                     }
 
-                    let left_pointer = read_u32(&new_divider_cell[..4], 0);
+                    let left_pointer = read_u32(&new_divider_cell[..LEFT_CHILD_PTR_SIZE_BYTES], 0);
                     turso_assert!(
                         left_pointer != parent_page.get().id as u32,
                         "left pointer is the same as parent page id"
@@ -3098,8 +3133,10 @@ impl BTreeCursor {
                  ** upwards pass simply processes pages that were missed on the downward
                  ** pass.
                  */
-                let mut done = [false; 5];
-                for i in (1 - sibling_count_new as i64)..sibling_count_new as i64 {
+                let mut done = [false; MAX_NEW_SIBLING_PAGES_AFTER_BALANCE];
+                let rightmost_page_negative_idx = 1 - sibling_count_new as i64;
+                let rightmost_page_positive_idx = sibling_count_new as i64 - 1;
+                for i in rightmost_page_negative_idx..=rightmost_page_positive_idx {
                     // As mentioned above, we do two passes over the pages:
                     // 1. Downward pass: Process pages in decreasing order
                     // 2. Upward pass: Process pages in increasing order
@@ -3298,7 +3335,7 @@ impl BTreeCursor {
         parent_page: &BTreePage,
         balance_info: &mut BalanceInfo,
         parent_contents: &mut PageContent,
-        pages_to_balance_new: [Option<BTreePage>; 5],
+        pages_to_balance_new: [Option<BTreePage>; MAX_NEW_SIBLING_PAGES_AFTER_BALANCE],
         page_type: PageType,
         leaf_data: bool,
         mut cells_debug: Vec<Vec<u8>>,
@@ -3572,7 +3609,8 @@ impl BTreeCursor {
                 if leaf_data {
                     // If we are in a table leaf page, we just need to check that this cell that should be a divider cell is in the parent
                     // This means we already check cell in leaf pages but not on parent so we don't advance current_index_cell
-                    if page_idx >= balance_info.sibling_count - 1 {
+                    let last_sibling_idx = balance_info.sibling_count - 1;
+                    if page_idx >= last_sibling_idx {
                         // This means we are in the last page and we don't need to check anything
                         continue;
                     }
@@ -5485,7 +5523,7 @@ struct CellArray {
     /// Prefix sum of cells in each page.
     /// For example, if three pages have 1, 2, and 3 cells, respectively,
     /// then cell_count_per_page_cumulative will be [1, 3, 6].
-    cell_count_per_page_cumulative: [u16; 5],
+    cell_count_per_page_cumulative: [u16; MAX_NEW_SIBLING_PAGES_AFTER_BALANCE],
 }
 
 impl CellArray {
@@ -6012,8 +6050,7 @@ fn insert_into_cell(
         page.cell_count()
     );
     let free = compute_free_space(page, usable_space);
-    const CELL_POINTER_SIZE_BYTES: usize = 2;
-    let enough_space = payload.len() + CELL_POINTER_SIZE_BYTES <= free as usize;
+    let enough_space = payload.len() + CELL_PTR_SIZE_BYTES <= free as usize;
     if !enough_space {
         // add to overflow cell
         page.overflow_cells.push(OverflowCell {
@@ -6038,15 +6075,15 @@ fn insert_into_cell(
         .copy_from_slice(payload);
     //  memmove(pIns+2, pIns, 2*(pPage->nCell - i));
     let (cell_pointer_array_start, _) = page.cell_pointer_array_offset_and_size();
-    let cell_pointer_cur_idx = cell_pointer_array_start + (CELL_POINTER_SIZE_BYTES * cell_idx);
+    let cell_pointer_cur_idx = cell_pointer_array_start + (CELL_PTR_SIZE_BYTES * cell_idx);
 
-    // move existing pointers forward by CELL_POINTER_SIZE_BYTES...
+    // move existing pointers forward by CELL_PTR_SIZE_BYTES...
     let n_cells_forward = page.cell_count() - cell_idx;
-    let n_bytes_forward = CELL_POINTER_SIZE_BYTES * n_cells_forward;
+    let n_bytes_forward = CELL_PTR_SIZE_BYTES * n_cells_forward;
     if n_bytes_forward > 0 {
         buf.copy_within(
             cell_pointer_cur_idx..cell_pointer_cur_idx + n_bytes_forward,
-            cell_pointer_cur_idx + CELL_POINTER_SIZE_BYTES,
+            cell_pointer_cur_idx + CELL_PTR_SIZE_BYTES,
         );
     }
     // ...and insert new cell pointer at the current index
@@ -8364,7 +8401,7 @@ mod tests {
         for _ in 0..ITERATIONS {
             let mut cell_array = CellArray {
                 cell_payloads: Vec::new(),
-                cell_count_per_page_cumulative: [0; 5],
+                cell_count_per_page_cumulative: [0; MAX_NEW_SIBLING_PAGES_AFTER_BALANCE],
             };
             let mut cells_cloned = Vec::new();
             let (pager, _, _, _) = empty_btree();
