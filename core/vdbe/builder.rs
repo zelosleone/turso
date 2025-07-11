@@ -12,7 +12,7 @@ use crate::{
         emitter::TransactionMode,
         plan::{ResultSetColumn, TableReferences},
     },
-    Connection, Value, VirtualTable,
+    CaptureDataChangesMode, Connection, Value, VirtualTable,
 };
 
 #[derive(Default)]
@@ -110,6 +110,7 @@ pub struct ProgramBuilder {
     nested_level: usize,
     init_label: BranchOffset,
     start_offset: BranchOffset,
+    capture_data_changes_mode: CaptureDataChangesMode,
 }
 
 #[derive(Debug, Clone)]
@@ -149,7 +150,11 @@ pub struct ProgramBuilderOpts {
 }
 
 impl ProgramBuilder {
-    pub fn new(query_mode: QueryMode, opts: ProgramBuilderOpts) -> Self {
+    pub fn new(
+        query_mode: QueryMode,
+        capture_data_changes_mode: CaptureDataChangesMode,
+        opts: ProgramBuilderOpts,
+    ) -> Self {
         Self {
             table_reference_counter: TableRefIdCounter::new(),
             next_free_register: 1,
@@ -172,7 +177,12 @@ impl ProgramBuilder {
             // These labels will be filled when `prologue()` is called
             init_label: BranchOffset::Placeholder,
             start_offset: BranchOffset::Placeholder,
+            capture_data_changes_mode,
         }
+    }
+
+    pub fn capture_data_changes_mode(&self) -> &CaptureDataChangesMode {
+        &self.capture_data_changes_mode
     }
 
     pub fn extend(&mut self, opts: &ProgramBuilderOpts) {
@@ -291,7 +301,7 @@ impl ProgramBuilder {
         });
     }
 
-    #[instrument(skip(self), level = Level::TRACE)]
+    #[instrument(skip(self), level = Level::INFO)]
     pub fn emit_insn(&mut self, insn: Insn) {
         let function = insn.to_function();
         // This seemingly empty trace here is needed so that a function span is emmited with it

@@ -1,6 +1,6 @@
 use crate::{
     commands::{
-        args::{EchoMode, TimerMode},
+        args::{EchoMode, HeadersMode, TimerMode},
         import::ImportFile,
         Command, CommandParser,
     },
@@ -24,6 +24,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
+use tracing::level_filters::LevelFilter;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 use turso_core::{Connection, Database, LimboError, OpenFlags, Statement, StepResult, Value};
@@ -95,7 +96,7 @@ macro_rules! query_internal {
                         $body(row)?;
                     }
                     StepResult::IO => {
-                        $self.io.run_once()?;
+                        rows.run_once()?;
                     }
                     StepResult::Interrupt => break,
                     StepResult::Done => break,
@@ -175,7 +176,6 @@ impl Limbo {
     pub fn with_readline(mut self, mut rl: Editor<LimboHelper, DefaultHistory>) -> Self {
         let h = LimboHelper::new(
             self.conn.clone(),
-            self.io.clone(),
             self.config.as_ref().map(|c| c.highlight.clone()),
         );
         rl.set_helper(Some(h));
@@ -644,8 +644,7 @@ impl Limbo {
                     let _ = self.show_info();
                 }
                 Command::Import(args) => {
-                    let mut import_file =
-                        ImportFile::new(self.conn.clone(), self.io.clone(), &mut self.writer);
+                    let mut import_file = ImportFile::new(self.conn.clone(), &mut self.writer);
                     import_file.import(args)
                 }
                 Command::LoadExtension(args) => {
@@ -676,6 +675,12 @@ impl Limbo {
                         TimerMode::Off => false,
                     };
                 }
+                Command::Headers(headers_mode) => {
+                    self.opts.headers = match headers_mode.mode {
+                        HeadersMode::On => true,
+                        HeadersMode::Off => false,
+                    };
+                }
             },
         }
     }
@@ -688,62 +693,83 @@ impl Limbo {
     ) -> anyhow::Result<()> {
         match output {
             Ok(Some(ref mut rows)) => match self.opts.output_mode {
-                OutputMode::List => loop {
-                    if self.interrupt_count.load(Ordering::SeqCst) > 0 {
-                        println!("Query interrupted.");
-                        return Ok(());
-                    }
+                OutputMode::List => {
+                    let mut headers_printed = false;
+                    loop {
+                        if self.interrupt_count.load(Ordering::SeqCst) > 0 {
+                            println!("Query interrupted.");
+                            return Ok(());
+                        }
 
-                    let start = Instant::now();
+                        let start = Instant::now();
 
-                    match rows.step() {
-                        Ok(StepResult::Row) => {
-                            if let Some(ref mut stats) = statistics {
-                                stats.execute_time_elapsed_samples.push(start.elapsed());
-                            }
-                            let row = rows.row().unwrap();
-                            for (i, value) in row.get_values().enumerate() {
-                                if i > 0 {
-                                    let _ = self.writer.write(b"|");
+                        match rows.step() {
+                            Ok(StepResult::Row) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
                                 }
-                                if matches!(value, Value::Null) {
-                                    let _ = self.writer.write(self.opts.null_value.as_bytes())?;
-                                } else {
-                                    let _ = self.writer.write(format!("{}", value).as_bytes())?;
+
+                                // Print headers if enabled and not already printed
+                                if self.opts.headers && !headers_printed {
+                                    for i in 0..rows.num_columns() {
+                                        if i > 0 {
+                                            let _ = self.writer.write(b"|");
+                                        }
+                                        let _ =
+                                            self.writer.write(rows.get_column_name(i).as_bytes());
+                                    }
+                                    let _ = self.writeln("");
+                                    headers_printed = true;
+                                }
+
+                                let row = rows.row().unwrap();
+                                for (i, value) in row.get_values().enumerate() {
+                                    if i > 0 {
+                                        let _ = self.writer.write(b"|");
+                                    }
+                                    if matches!(value, Value::Null) {
+                                        let _ =
+                                            self.writer.write(self.opts.null_value.as_bytes())?;
+                                    } else {
+                                        let _ =
+                                            self.writer.write(format!("{}", value).as_bytes())?;
+                                    }
+                                }
+                                let _ = self.writeln("");
+                            }
+                            Ok(StepResult::IO) => {
+                                let start = Instant::now();
+                                rows.run_once()?;
+                                if let Some(ref mut stats) = statistics {
+                                    stats.io_time_elapsed_samples.push(start.elapsed());
                                 }
                             }
-                            let _ = self.writeln("");
-                        }
-                        Ok(StepResult::IO) => {
-                            let start = Instant::now();
-                            self.io.run_once()?;
-                            if let Some(ref mut stats) = statistics {
-                                stats.io_time_elapsed_samples.push(start.elapsed());
+                            Ok(StepResult::Interrupt) => break,
+                            Ok(StepResult::Done) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                break;
                             }
-                        }
-                        Ok(StepResult::Interrupt) => break,
-                        Ok(StepResult::Done) => {
-                            if let Some(ref mut stats) = statistics {
-                                stats.execute_time_elapsed_samples.push(start.elapsed());
+                            Ok(StepResult::Busy) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                let _ = self.writeln("database is busy");
+                                break;
                             }
-                            break;
-                        }
-                        Ok(StepResult::Busy) => {
-                            if let Some(ref mut stats) = statistics {
-                                stats.execute_time_elapsed_samples.push(start.elapsed());
+                            Err(err) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                let report =
+                                    miette::Error::from(err).with_source_code(sql.to_owned());
+                                let _ = self.write_fmt(format_args!("{:?}", report));
+                                break;
                             }
-                            let _ = self.writeln("database is busy");
-                            break;
-                        }
-                        Err(err) => {
-                            if let Some(ref mut stats) = statistics {
-                                stats.execute_time_elapsed_samples.push(start.elapsed());
-                            }
-                            let _ = self.writeln(err.to_string());
-                            break;
                         }
                     }
-                },
+                }
                 OutputMode::Pretty => {
                     if self.interrupt_count.load(Ordering::SeqCst) > 0 {
                         println!("Query interrupted.");
@@ -806,7 +832,7 @@ impl Limbo {
                             }
                             Ok(StepResult::IO) => {
                                 let start = Instant::now();
-                                self.io.run_once()?;
+                                rows.run_once()?;
                                 if let Some(ref mut stats) = statistics {
                                     stats.io_time_elapsed_samples.push(start.elapsed());
                                 }
@@ -881,7 +907,12 @@ impl Limbo {
                     .with_thread_ids(true)
                     .with_ansi(should_emit_ansi),
             )
-            .with(EnvFilter::from_default_env().add_directive("rustyline=off".parse().unwrap()))
+            .with(
+                EnvFilter::builder()
+                    .with_default_directive(LevelFilter::OFF.into())
+                    .from_env_lossy()
+                    .add_directive("rustyline=off".parse().unwrap()),
+            )
             .try_init()
         {
             println!("Unable to setup tracing appender: {:?}", e);
@@ -913,7 +944,7 @@ impl Limbo {
                             }
                         }
                         StepResult::IO => {
-                            self.io.run_once()?;
+                            rows.run_once()?;
                         }
                         StepResult::Interrupt => break,
                         StepResult::Done => break,
@@ -969,7 +1000,7 @@ impl Limbo {
                             }
                         }
                         StepResult::IO => {
-                            self.io.run_once()?;
+                            rows.run_once()?;
                         }
                         StepResult::Interrupt => break,
                         StepResult::Done => break,
@@ -1020,7 +1051,7 @@ impl Limbo {
                             }
                         }
                         StepResult::IO => {
-                            self.io.run_once()?;
+                            rows.run_once()?;
                         }
                         StepResult::Interrupt => break,
                         StepResult::Done => break,

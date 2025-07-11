@@ -6,6 +6,7 @@ use turso_sqlite3_parser::ast::{
 
 use crate::error::{SQLITE_CONSTRAINT_NOTNULL, SQLITE_CONSTRAINT_PRIMARYKEY};
 use crate::schema::{IndexColumn, Table};
+use crate::translate::emitter::{emit_cdc_insns, OperationMode};
 use crate::util::normalize_ident;
 use crate::vdbe::builder::ProgramBuilderOpts;
 use crate::vdbe::insn::{IdxInsertFlags, InsertFlags, RegisterOrLiteral};
@@ -115,6 +116,26 @@ pub fn translate_insert(
 
     let halt_label = program.allocate_label();
     let loop_start_label = program.allocate_label();
+
+    let cdc_table = program.capture_data_changes_mode().table();
+    let cdc_table = if let Some(cdc_table) = cdc_table {
+        if table.get_name() != cdc_table {
+            let Some(turso_cdc_table) = schema.get_table(cdc_table) else {
+                crate::bail_parse_error!("no such table: {}", cdc_table);
+            };
+            let Some(cdc_btree) = turso_cdc_table.btree().clone() else {
+                crate::bail_parse_error!("no such table: {}", cdc_table);
+            };
+            Some((
+                program.alloc_cursor_id(CursorType::BTreeTable(cdc_btree.clone())),
+                cdc_btree,
+            ))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let mut yield_reg_opt = None;
     let mut temp_table_ctx = None;
@@ -328,6 +349,15 @@ pub fn translate_insert(
             &resolver,
         )?;
     }
+    // Open turso_cdc table btree for writing if necessary
+    if let Some((cdc_cursor_id, cdc_btree)) = &cdc_table {
+        program.emit_insn(Insn::OpenWrite {
+            cursor_id: *cdc_cursor_id,
+            root_page: cdc_btree.root_page.into(),
+            name: cdc_btree.name.clone(),
+        });
+    }
+
     // Open all the index btrees for writing
     for idx_cursor in idx_cursors.iter() {
         program.emit_insn(Insn::OpenWrite {
@@ -412,6 +442,18 @@ pub fn translate_insert(
             });
         }
         _ => (),
+    }
+
+    // Write record to the turso_cdc table if necessary
+    if let Some((cdc_cursor_id, _)) = &cdc_table {
+        emit_cdc_insns(
+            &mut program,
+            &resolver,
+            OperationMode::INSERT,
+            *cdc_cursor_id,
+            rowid_reg,
+            &table_name.0,
+        )?;
     }
 
     let index_col_mappings = resolve_indicies_for_insert(schema, table.as_ref(), &column_mappings)?;

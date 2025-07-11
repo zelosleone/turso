@@ -10,10 +10,13 @@ use crate::{
                 CompoundOperator, CompoundSelect, Distinctness, ResultColumn, SelectBody,
                 SelectInner,
             },
+            select::{Distinctness, ResultColumn},
+            transaction::{Begin, Commit, Rollback},
             update::Update,
             Create, Delete, Drop, Insert, Query, Select,
         },
         table::SimValue,
+        FAULT_ERROR_MSG,
     },
     runner::env::SimulatorEnv,
 };
@@ -52,6 +55,8 @@ pub(crate) enum Property {
         queries: Vec<Query>,
         /// The select query
         select: Select,
+        /// Interactive query information if any
+        interactive: Option<InteractiveQueryInfo>,
     },
     /// Double Create Failure is a property in which creating
     /// the same table twice leads to an error.
@@ -167,6 +172,12 @@ pub(crate) enum Property {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InteractiveQueryInfo {
+    start_with_immediate: bool,
+    end_with_commit: bool,
+}
+
 impl Property {
     pub(crate) fn name(&self) -> &str {
         match self {
@@ -192,6 +203,7 @@ impl Property {
                 row_index,
                 queries,
                 select,
+                interactive,
             } => {
                 let (table, values) = if let Insert::Values { table, values } = insert {
                     (table, values)
@@ -214,7 +226,7 @@ impl Property {
                     message: format!("table {} exists", insert.table()),
                     func: Box::new({
                         let table_name = table.clone();
-                        move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
+                        move |_: &Vec<ResultSet>, env: &mut SimulatorEnv| {
                             Ok(env.tables.iter().any(|t| t.name == table_name))
                         }
                     }),
@@ -222,14 +234,26 @@ impl Property {
 
                 let assertion = Interaction::Assertion(Assertion {
                     message: format!(
-                        "row [{:?}] not found in table {}",
+                        "row [{:?}] not found in table {}, interactive={} commit={}, rollback={}",
                         row.iter().map(|v| v.to_string()).collect::<Vec<String>>(),
                         insert.table(),
+                        interactive.is_some(),
+                        interactive
+                            .as_ref()
+                            .map(|i| i.end_with_commit)
+                            .unwrap_or(false),
+                        interactive
+                            .as_ref()
+                            .map(|i| !i.end_with_commit)
+                            .unwrap_or(false),
                     ),
-                    func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
+                    func: Box::new(move |stack: &Vec<ResultSet>, _| {
                         let rows = stack.last().unwrap();
                         match rows {
-                            Ok(rows) => Ok(rows.iter().any(|r| r == &row)),
+                            Ok(rows) => {
+                                let found = rows.iter().any(|r| r == &row);
+                                Ok(found)
+                            }
                             Err(err) => Err(LimboError::InternalError(err.to_string())),
                         }
                     }),
@@ -250,7 +274,7 @@ impl Property {
                 let assumption = Interaction::Assumption(Assertion {
                     message: "Double-Create-Failure should not be called on an existing table"
                         .to_string(),
-                    func: Box::new(move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
+                    func: Box::new(move |_: &Vec<ResultSet>, env: &mut SimulatorEnv| {
                         Ok(!env.tables.iter().any(|t| t.name == table_name))
                     }),
                 });
@@ -308,7 +332,7 @@ impl Property {
 
                 let assertion = Interaction::Assertion(Assertion {
                     message: "select query should respect the limit clause".to_string(),
-                    func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
+                    func: Box::new(move |stack: &Vec<ResultSet>, _| {
                         let last = stack.last().unwrap();
                         match last {
                             Ok(rows) => Ok(limit >= rows.len()),
@@ -332,7 +356,7 @@ impl Property {
                     message: format!("table {table} exists"),
                     func: Box::new({
                         let table = table.clone();
-                        move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
+                        move |_: &Vec<ResultSet>, env: &mut SimulatorEnv| {
                             Ok(env.tables.iter().any(|t| t.name == table))
                         }
                     }),
@@ -377,7 +401,7 @@ impl Property {
                     message: format!("table {table} exists"),
                     func: Box::new({
                         let table = table.clone();
-                        move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
+                        move |_, env: &mut SimulatorEnv| {
                             Ok(env.tables.iter().any(|t| t.name == table))
                         }
                     }),
@@ -419,7 +443,7 @@ impl Property {
                     message: format!("table {table} exists"),
                     func: Box::new({
                         let table = table.clone();
-                        move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
+                        move |_: &Vec<ResultSet>, env: &mut SimulatorEnv| {
                             Ok(env.tables.iter().any(|t| t.name == table))
                         }
                     }),
@@ -439,7 +463,7 @@ impl Property {
 
                 let assertion = Interaction::Assertion(Assertion {
                     message: "select queries should return the same amount of results".to_string(),
-                    func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
+                    func: Box::new(move |stack: &Vec<ResultSet>, _| {
                         let select_star = stack.last().unwrap();
                         let select_predicate = stack.get(stack.len() - 2).unwrap();
                         match (select_predicate, select_star) {
@@ -487,7 +511,35 @@ impl Property {
             }
             Property::FaultyQuery { query, tables } => {
                 let checks = assert_all_table_values(tables);
-                let first = std::iter::once(Interaction::FaultyQuery(query.clone()));
+                let query_clone = query.clone();
+                let assumption = Assertion {
+                    // A fault may not occur as we first signal we want a fault injected,
+                    // then when IO is called the fault triggers. It may happen that a fault is injected
+                    // but no IO happens right after it
+                    message: "fault occured".to_string(),
+                    func: Box::new(move |stack, env| {
+                        let last = stack.last().unwrap();
+                        match last {
+                            Ok(_) => {
+                                query_clone.shadow(env);
+                                Ok(true)
+                            }
+                            Err(err) => {
+                                let msg = format!("{}", err);
+                                if msg.contains(FAULT_ERROR_MSG) {
+                                    Ok(true)
+                                } else {
+                                    Err(LimboError::InternalError(msg))
+                                }
+                            }
+                        }
+                    }),
+                };
+                let first = [
+                    Interaction::FaultyQuery(query.clone()),
+                    Interaction::Assumption(assumption),
+                ]
+                .into_iter();
                 Vec::from_iter(first.chain(checks))
             }
             Property::WhereTrueFalseNull { select, predicate } => {
@@ -673,9 +725,11 @@ fn assert_all_table_values(tables: &[String]) -> impl Iterator<Item = Interactio
             ),
             func: Box::new({
                 let table = table.clone();
-                move |stack: &Vec<ResultSet>, env: &SimulatorEnv| {
+                move |stack: &Vec<ResultSet>, env: &mut SimulatorEnv| {
                     let table = env.tables.iter().find(|t| t.name == table).ok_or_else(|| {
-                        LimboError::InternalError(format!("table {table} should exist"))
+                        LimboError::InternalError(format!(
+                            "table {table} should exist in simulator env",
+                        ))
                     })?;
                     let last = stack.last().unwrap();
                     match last {
@@ -760,12 +814,26 @@ fn property_insert_values_select<R: rand::Rng>(
         values: rows,
     };
 
+    // Choose if we want queries to be executed in an interactive transaction
+    let interactive = if rng.gen_bool(0.5) {
+        Some(InteractiveQueryInfo {
+            start_with_immediate: rng.gen_bool(0.5),
+            end_with_commit: rng.gen_bool(0.5),
+        })
+    } else {
+        None
+    };
     // Create random queries respecting the constraints
     let mut queries = Vec::new();
     // - [x] There will be no errors in the middle interactions. (this constraint is impossible to check, so this is just best effort)
     // - [x] The inserted row will not be deleted.
     // - [x] The inserted row will not be updated.
     // - [ ] The table `t` will not be renamed, dropped, or altered. (todo: add this constraint once ALTER or DROP is implemented)
+    if let Some(ref interactive) = interactive {
+        queries.push(Query::Begin(Begin {
+            immediate: interactive.start_with_immediate,
+        }));
+    }
     for _ in 0..rng.gen_range(0..3) {
         let query = Query::arbitrary_from(rng, (env, remaining));
         match &query {
@@ -799,6 +867,13 @@ fn property_insert_values_select<R: rand::Rng>(
         }
         queries.push(query);
     }
+    if let Some(ref interactive) = interactive {
+        queries.push(if interactive.end_with_commit {
+            Query::Commit(Commit)
+        } else {
+            Query::Rollback(Rollback)
+        });
+    }
 
     // Select the row
     let select_query = Select::simple(
@@ -811,6 +886,7 @@ fn property_insert_values_select<R: rand::Rng>(
         row_index,
         queries,
         select: select_query,
+        interactive,
     }
 }
 

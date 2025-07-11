@@ -124,15 +124,6 @@ pub fn prepare_select_plan(
 
             let mut left = Vec::with_capacity(compounds.len());
             for CompoundSelect { select, operator } in compounds {
-                // TODO: add support for EXCEPT
-                if operator != ast::CompoundOperator::UnionAll
-                    && operator != ast::CompoundOperator::Union
-                    && operator != ast::CompoundOperator::Intersect
-                {
-                    crate::bail_parse_error!(
-                        "only UNION ALL, UNION and INTERSECT are supported for compound SELECTs"
-                    );
-                }
                 left.push((last, operator));
                 last = prepare_one_select_plan(
                     schema,
@@ -214,6 +205,14 @@ fn prepare_one_select_plan(
             let mut where_predicates = vec![];
 
             let mut table_references = TableReferences::new(vec![], outer_query_refs.to_vec());
+
+            if from.is_none() {
+                for column in &columns {
+                    if matches!(column, ResultColumn::Star) {
+                        crate::bail_parse_error!("no tables specified");
+                    }
+                }
+            }
 
             // Parse the FROM clause into a vec of TableReferences. Fold all the join conditions expressions into the WHERE clause.
             parse_from(
@@ -298,7 +297,7 @@ fn prepare_one_select_plan(
                             .find(|t| t.identifier == name_normalized);
 
                         if referenced_table.is_none() {
-                            crate::bail_parse_error!("Table {} not found", name.0);
+                            crate::bail_parse_error!("no such table: {}", name.0);
                         }
                         let table = referenced_table.unwrap();
                         let num_columns = table.columns().len();
@@ -349,10 +348,7 @@ fn prepare_one_select_plan(
                                 if distinctness.is_distinct() && args_count != 1 {
                                     crate::bail_parse_error!("DISTINCT aggregate functions must have exactly one argument");
                                 }
-                                match Func::resolve_function(
-                                    normalize_ident(name.0.as_str()).as_str(),
-                                    args_count,
-                                ) {
+                                match Func::resolve_function(&name.0, args_count) {
                                     Ok(Func::Agg(f)) => {
                                         let agg_args = match (args, &f) {
                                             (None, crate::function::AggFunc::Count0) => {
@@ -451,11 +447,8 @@ fn prepare_one_select_plan(
                             ast::Expr::FunctionCallStar {
                                 name,
                                 filter_over: _,
-                            } => {
-                                if let Ok(Func::Agg(f)) = Func::resolve_function(
-                                    normalize_ident(name.0.as_str()).as_str(),
-                                    0,
-                                ) {
+                            } => match Func::resolve_function(&name.0, 0) {
+                                Ok(Func::Agg(f)) => {
                                     let agg = Aggregate {
                                         func: f,
                                         args: vec![ast::Expr::Literal(ast::Literal::Numeric(
@@ -473,13 +466,25 @@ fn prepare_one_select_plan(
                                         expr: expr.clone(),
                                         contains_aggregates: true,
                                     });
-                                } else {
+                                }
+                                Ok(_) => {
                                     crate::bail_parse_error!(
                                         "Invalid aggregate function: {}",
                                         name.0
                                     );
                                 }
-                            }
+                                Err(e) => match e {
+                                    crate::LimboError::ParseError(e) => {
+                                        crate::bail_parse_error!("{}", e);
+                                    }
+                                    _ => {
+                                        crate::bail_parse_error!(
+                                            "Invalid aggregate function: {}",
+                                            name.0
+                                        );
+                                    }
+                                },
+                            },
                             expr => {
                                 let contains_aggregates =
                                     resolve_aggregates(schema, expr, &mut aggregate_expressions)?;

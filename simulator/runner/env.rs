@@ -37,6 +37,7 @@ pub(crate) struct SimulatorEnv {
     pub(crate) paths: Paths,
     pub(crate) type_: SimulationType,
     pub(crate) phase: SimulationPhase,
+    pub tables_snapshot: Option<Vec<Table>>,
 }
 
 impl UnwindSafe for SimulatorEnv {}
@@ -55,6 +56,7 @@ impl SimulatorEnv {
             paths: self.paths.clone(),
             type_: self.type_,
             phase: self.phase,
+            tables_snapshot: None,
         }
     }
 
@@ -207,6 +209,8 @@ impl SimulatorEnv {
             max_time_simulation: cli_opts.maximum_time,
             disable_reopen_database: cli_opts.disable_reopen_database,
             latency_probability: cli_opts.latency_probability,
+            experimental_mvcc: cli_opts.experimental_mvcc,
+            experimental_indexes: cli_opts.experimental_indexes,
         };
 
         let io =
@@ -224,7 +228,12 @@ impl SimulatorEnv {
             std::fs::remove_file(&wal_path).unwrap();
         }
 
-        let db = match Database::open_file(io.clone(), db_path.to_str().unwrap(), false, true) {
+        let db = match Database::open_file(
+            io.clone(),
+            db_path.to_str().unwrap(),
+            opts.experimental_mvcc,
+            opts.experimental_indexes,
+        ) {
             Ok(db) => db,
             Err(e) => {
                 panic!("error opening simulator test file {db_path:?}: {e:?}");
@@ -245,6 +254,7 @@ impl SimulatorEnv {
             db,
             type_: simulation_type,
             phase: SimulationPhase::Test,
+            tables_snapshot: None,
         }
     }
 
@@ -362,6 +372,8 @@ pub(crate) struct SimulatorOpts {
     pub(crate) page_size: usize,
     pub(crate) max_time_simulation: usize,
     pub(crate) latency_probability: usize,
+    pub(crate) experimental_mvcc: bool,
+    pub(crate) experimental_indexes: bool,
 }
 
 #[derive(Debug, Clone)]

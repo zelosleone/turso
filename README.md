@@ -64,7 +64,7 @@ Turso
 Enter ".help" for usage hints.
 Connected to a transient in-memory database.
 Use ".open FILENAME" to reopen on a persistent database
-turso> CREATE TABLE users (id INT PRIMARY KEY, username TEXT);
+turso> CREATE TABLE users (id INT, username TEXT);
 turso> INSERT INTO users VALUES (1, 'alice');
 turso> INSERT INTO users VALUES (2, 'bob');
 turso> SELECT * FROM users;
@@ -224,9 +224,11 @@ terms or conditions.
 
 Thanks to all the partners of Turso!
 
+<a href="https://antithesis.com/"><img src="assets/antithesis.jpg" width="400"></a>
+
 <a href="https://blacksmith.sh"><img src="assets/blacksmith.svg" width="400"></a>
 
-<a href="https://antithesis.com/"><img src="assets/antithesis.jpg" width="400"></a>
+<a href="https://nyrkio.com/"><img src="assets/turso-nyrkio.png" width="400"></a>
 
 ## Contributors
 

@@ -8,8 +8,6 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use tracing;
-
 use turso_core::{Connection, Result, StepResult, IO};
 
 use crate::{
@@ -258,20 +256,26 @@ pub(crate) struct InteractionStats {
     pub(crate) create_count: usize,
     pub(crate) create_index_count: usize,
     pub(crate) drop_count: usize,
+    pub(crate) begin_count: usize,
+    pub(crate) commit_count: usize,
+    pub(crate) rollback_count: usize,
 }
 
 impl Display for InteractionStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "Read: {}, Write: {}, Delete: {}, Update: {}, Create: {}, CreateIndex: {}, Drop: {}",
+            "Read: {}, Write: {}, Delete: {}, Update: {}, Create: {}, CreateIndex: {}, Drop: {}, Begin: {}, Commit: {}, Rollback: {}",
             self.read_count,
             self.write_count,
             self.delete_count,
             self.update_count,
             self.create_count,
             self.create_index_count,
-            self.drop_count
+            self.drop_count,
+            self.begin_count,
+            self.commit_count,
+            self.rollback_count,
         )
     }
 }
@@ -301,7 +305,7 @@ impl Display for Interaction {
     }
 }
 
-type AssertionFunc = dyn Fn(&Vec<ResultSet>, &SimulatorEnv) -> Result<bool>;
+type AssertionFunc = dyn Fn(&Vec<ResultSet>, &mut SimulatorEnv) -> Result<bool>;
 
 enum AssertionAST {
     Pick(),
@@ -349,6 +353,9 @@ impl InteractionPlan {
             create_count: 0,
             create_index_count: 0,
             drop_count: 0,
+            begin_count: 0,
+            commit_count: 0,
+            rollback_count: 0,
         };
 
         fn query_stat(q: &Query, stats: &mut InteractionStats) {
@@ -360,9 +367,11 @@ impl InteractionPlan {
                 Query::Drop(_) => stats.drop_count += 1,
                 Query::Update(_) => stats.update_count += 1,
                 Query::CreateIndex(_) => stats.create_index_count += 1,
+                Query::Begin(_) => stats.begin_count += 1,
+                Query::Commit(_) => stats.commit_count += 1,
+                Query::Rollback(_) => stats.rollback_count += 1,
             }
         }
-
         for interactions in &self.plan {
             match interactions {
                 Interactions::Property(property) => {
@@ -458,7 +467,7 @@ impl Interaction {
                         out.push(r);
                     }
                     StepResult::IO => {
-                        io.run_once().unwrap();
+                        rows.run_once().unwrap();
                     }
                     StepResult::Interrupt => {}
                     StepResult::Done => {
@@ -477,7 +486,7 @@ impl Interaction {
     pub(crate) fn execute_assertion(
         &self,
         stack: &Vec<ResultSet>,
-        env: &SimulatorEnv,
+        env: &mut SimulatorEnv,
     ) -> Result<()> {
         match self {
             Self::Assertion(assertion) => {
@@ -502,7 +511,7 @@ impl Interaction {
     pub(crate) fn execute_assumption(
         &self,
         stack: &Vec<ResultSet>,
-        env: &SimulatorEnv,
+        env: &mut SimulatorEnv,
     ) -> Result<()> {
         match self {
             Self::Assumption(assumption) => {
@@ -682,6 +691,7 @@ fn reopen_database(env: &mut SimulatorEnv) {
     env.connections.clear();
 
     // Clear all open files
+    // TODO: for correct reporting of faults we should get all the recorded numbers and transfer to the new file
     env.io.files.borrow_mut().clear();
 
     // 2. Re-open database

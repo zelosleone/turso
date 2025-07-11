@@ -571,7 +571,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "core_tester"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1879,14 +1879,14 @@ dependencies = [
 
 [[package]]
 name = "limbo-go"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "turso_core",
 ]
 
 [[package]]
 name = "limbo-wasm"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.2.15",
@@ -1899,7 +1899,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_completion"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "mimalloc",
  "turso_ext",
@@ -1907,7 +1907,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_crypto"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "blake3",
  "data-encoding",
@@ -1920,7 +1920,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_csv"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "csv",
  "mimalloc",
@@ -1930,7 +1930,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_ipaddr"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "ipnetwork",
  "mimalloc",
@@ -1939,7 +1939,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_percentile"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "mimalloc",
  "turso_ext",
@@ -1947,7 +1947,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_regexp"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "mimalloc",
  "regex",
@@ -1956,7 +1956,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_sim"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "anarchist-readable-name-generator-lib",
  "anyhow",
@@ -1983,7 +1983,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_sqlite3"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "env_logger 0.11.7",
  "libc",
@@ -1996,7 +1996,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_sqlite_test_ext"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "cc",
 ]
@@ -2232,6 +2232,8 @@ dependencies = [
  "once_cell",
  "proc-macro2",
  "quote",
+ "regex",
+ "semver",
  "syn 2.0.100",
 ]
 
@@ -2475,45 +2477,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3148f5046208a5d56bcfc03053e3ca6334e51da8dfb19b6cdc8b306fae3283e"
 
 [[package]]
-name = "phf"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fd6780a80ae0c52cc120a26a1a42c1ae51b247a253e4e06113d23d2c2edd078"
-dependencies = [
- "phf_shared",
-]
-
-[[package]]
-name = "phf_codegen"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aef8048c789fa5e851558d709946d6d79a8ff88c0440c587967f8e94bfb1216a"
-dependencies = [
- "phf_generator",
- "phf_shared",
-]
-
-[[package]]
-name = "phf_generator"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c80231409c20246a13fddb31776fb942c38553c51e871f8cbd687a4cfb5843d"
-dependencies = [
- "phf_shared",
- "rand 0.8.5",
-]
-
-[[package]]
-name = "phf_shared"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67eabc2ef2a60eb7faa00097bd1ffdb5bd28e62bf39990626a582201b7a754e5"
-dependencies = [
- "siphasher",
- "uncased",
-]
-
-[[package]]
 name = "pin-project-lite"
 version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2700,7 +2663,7 @@ dependencies = [
 
 [[package]]
 name = "py-turso"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "anyhow",
  "pyo3",
@@ -3296,12 +3259,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "siphasher"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
-
-[[package]]
 name = "slab"
 version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3312,9 +3269,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.14.0"
+version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7fcf8323ef1faaee30a44a340193b1ac6814fd9b7b4e88e9d4519a3e4abe1cfd"
+checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
 name = "socket2"
@@ -3811,7 +3768,7 @@ dependencies = [
 
 [[package]]
 name = "turso"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "tempfile",
  "thiserror 2.0.12",
@@ -3821,7 +3778,7 @@ dependencies = [
 
 [[package]]
 name = "turso-java"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "jni",
  "thiserror 2.0.12",
@@ -3830,7 +3787,7 @@ dependencies = [
 
 [[package]]
 name = "turso_cli"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -3861,7 +3818,7 @@ dependencies = [
 
 [[package]]
 name = "turso_core"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "antithesis_sdk",
  "bitflags 2.9.0",
@@ -3914,7 +3871,7 @@ dependencies = [
 
 [[package]]
 name = "turso_dart"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "flutter_rust_bridge",
  "turso_core",
@@ -3922,7 +3879,7 @@ dependencies = [
 
 [[package]]
 name = "turso_ext"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "chrono",
  "getrandom 0.3.2",
@@ -3931,7 +3888,7 @@ dependencies = [
 
 [[package]]
 name = "turso_ext_tests"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "env_logger 0.11.7",
  "lazy_static",
@@ -3942,7 +3899,7 @@ dependencies = [
 
 [[package]]
 name = "turso_macros"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3951,7 +3908,7 @@ dependencies = [
 
 [[package]]
 name = "turso_node"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "napi",
  "napi-build",
@@ -3961,7 +3918,7 @@ dependencies = [
 
 [[package]]
 name = "turso_sqlite3_parser"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "bitflags 2.9.0",
  "cc",
@@ -3971,18 +3928,15 @@ dependencies = [
  "log",
  "memchr",
  "miette",
- "phf",
- "phf_codegen",
- "phf_shared",
  "serde",
+ "smallvec",
  "strum",
  "strum_macros",
- "uncased",
 ]
 
 [[package]]
 name = "turso_stress"
-version = "0.1.1"
+version = "0.1.2-pre.2"
 dependencies = [
  "anarchist-readable-name-generator-lib",
  "antithesis_sdk",

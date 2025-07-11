@@ -13,6 +13,11 @@ use update::Update;
 use crate::{
     generation::Shadow,
     model::table::{SimValue, Table},
+    model::{
+        query::transaction::{Begin, Commit, Rollback},
+        table::SimValue,
+    },
+    runner::env::SimulatorEnv,
 };
 
 pub mod create;
@@ -22,6 +27,7 @@ pub mod drop;
 pub mod insert;
 pub mod predicate;
 pub mod select;
+pub mod transaction;
 pub mod update;
 
 // This type represents the potential queries on the database.
@@ -34,6 +40,9 @@ pub(crate) enum Query {
     Update(Update),
     Drop(Drop),
     CreateIndex(CreateIndex),
+    Begin(Begin),
+    Commit(Commit),
+    Rollback(Rollback),
 }
 
 impl Query {
@@ -49,6 +58,7 @@ impl Query {
             Query::CreateIndex(CreateIndex { table_name, .. }) => {
                 HashSet::from_iter([table_name.clone()])
             }
+            Query::Begin(_) | Query::Commit(_) | Query::Rollback(_) => HashSet::new(),
         }
     }
     pub(crate) fn uses(&self) -> Vec<String> {
@@ -61,6 +71,7 @@ impl Query {
             | Query::Update(Update { table, .. })
             | Query::Drop(Drop { table, .. }) => vec![table.clone()],
             Query::CreateIndex(CreateIndex { table_name, .. }) => vec![table_name.clone()],
+            Query::Begin(..) | Query::Commit(..) | Query::Rollback(..) => vec![],
         }
     }
 }
@@ -77,6 +88,9 @@ impl Shadow for Query {
             Query::Update(update) => update.shadow(env),
             Query::Drop(drop) => drop.shadow(env),
             Query::CreateIndex(create_index) => Ok(create_index.shadow(env)),
+            Query::Begin(begin) => begin.shadow(env),
+            Query::Commit(commit) => commit.shadow(env),
+            Query::Rollback(rollback) => rollback.shadow(env),
         }
     }
 }
@@ -91,6 +105,9 @@ impl Display for Query {
             Self::Update(update) => write!(f, "{update}"),
             Self::Drop(drop) => write!(f, "{drop}"),
             Self::CreateIndex(create_index) => write!(f, "{create_index}"),
+            Self::Begin(begin) => write!(f, "{begin}"),
+            Self::Commit(commit) => write!(f, "{commit}"),
+            Self::Rollback(rollback) => write!(f, "{rollback}"),
         }
     }
 }

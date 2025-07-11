@@ -51,8 +51,7 @@ pub fn resolve_aggregates(
                 } else {
                     0
                 };
-                match Func::resolve_function(normalize_ident(name.0.as_str()).as_str(), args_count)
-                {
+                match Func::resolve_function(&name.0, args_count) {
                     Ok(Func::Agg(f)) => {
                         let distinctness = Distinctness::from_ast(distinctness.as_ref());
                         if !schema.indexes_enabled() && distinctness.is_distinct() {
@@ -84,9 +83,7 @@ pub fn resolve_aggregates(
                 }
             }
             Expr::FunctionCallStar { name, .. } => {
-                if let Ok(Func::Agg(f)) =
-                    Func::resolve_function(normalize_ident(name.0.as_str()).as_str(), 0)
-                {
+                if let Ok(Func::Agg(f)) = Func::resolve_function(&name.0, 0) {
                     aggs.push(Aggregate {
                         func: f,
                         args: vec![],
@@ -208,7 +205,7 @@ pub fn bind_column_references(
                 let matching_tbl = referenced_tables
                     .find_table_and_internal_id_by_identifier(&normalized_table_name);
                 if matching_tbl.is_none() {
-                    crate::bail_parse_error!("Table {} not found", normalized_table_name);
+                    crate::bail_parse_error!("no such table: {}", normalized_table_name);
                 }
                 let (tbl_id, tbl) = matching_tbl.unwrap();
                 let normalized_id = normalize_ident(id.0.as_str());
@@ -320,7 +317,7 @@ fn parse_from_clause_table(
                 }
             }
 
-            crate::bail_parse_error!("Table {} not found", normalized_qualified_name);
+            crate::bail_parse_error!("no such table: {}", normalized_qualified_name);
         }
         ast::SelectTable::Select(subselect, maybe_alias) => {
             let Plan::Select(subplan) = prepare_select_plan(
