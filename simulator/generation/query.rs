@@ -7,7 +7,6 @@ use crate::model::query::select::{
 use crate::model::query::update::Update;
 use crate::model::query::{Create, Delete, Drop, Insert, Query, Select};
 use crate::model::table::{SimValue, Table};
-use crate::runner::env::SimulatorTables;
 use crate::SimulatorEnv;
 use itertools::Itertools;
 use rand::Rng;
@@ -75,13 +74,10 @@ impl ArbitraryFrom<&Vec<Table>> for FromClause {
     }
 }
 
-impl ArbitraryFrom<&Vec<Table>> for SelectInner {
-    fn arbitrary_from<R: Rng>(rng: &mut R, tables: &Vec<Table>) -> Self {
-        let from = FromClause::arbitrary_from(rng, tables);
-        let mut tables = SimulatorTables {
-            tables: tables.clone(),
-            snapshot: None,
-        };
+impl ArbitraryFrom<&SimulatorEnv> for SelectInner {
+    fn arbitrary_from<R: Rng>(rng: &mut R, env: &SimulatorEnv) -> Self {
+        let from = FromClause::arbitrary_from(rng, &env.tables);
+        let mut tables = env.tables.clone();
         // todo: this is a temporary hack because env is not separated from the tables
         let join_table = from
             .shadow(&mut tables)
@@ -89,7 +85,11 @@ impl ArbitraryFrom<&Vec<Table>> for SelectInner {
             .into_table();
 
         SelectInner {
-            distinctness: Distinctness::arbitrary(rng),
+            distinctness: if env.opts.experimental_indexes {
+                Distinctness::arbitrary(rng)
+            } else {
+                Distinctness::All
+            },
             columns: vec![ResultColumn::Star],
             from,
             where_clause: Predicate::arbitrary_from(rng, &join_table),
@@ -130,7 +130,7 @@ impl ArbitraryFrom<&SimulatorEnv> for Select {
             0
         };
 
-        let first = SelectInner::arbitrary_from(rng, &env.tables);
+        let first = SelectInner::arbitrary_from(rng, env);
 
         let rest: Vec<SelectInner> = (0..num_selects)
             .map(|_| {
