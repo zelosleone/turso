@@ -1183,7 +1183,9 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
                     Box::new(|rng: &mut R| property_where_true_false_null(rng, env)),
                 ),
                 (
-                    if env.opts.experimental_indexes && !env.opts.disable_union_all_preserves_cardinality {
+                    if env.opts.experimental_indexes
+                        && !env.opts.disable_union_all_preserves_cardinality
+                    {
                         remaining_.read / 3.0
                     } else {
                         0.0

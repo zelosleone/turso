@@ -33,8 +33,6 @@ pub(crate) fn run_simulation(
 
     tracing::info!("Simulation completed");
 
-
-
     result
 }
 

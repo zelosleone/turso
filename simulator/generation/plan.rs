@@ -79,21 +79,13 @@ impl InteractionPlan {
                     let _ = plan[j].split_off(k);
                     break;
                 }
-                log::error!(
-                    "Comparing '{}' with '{}'",
-                    interactions[i],
-                    plan[j][k].to_string()
-                );
+                log::error!("Comparing '{}' with '{}'", interactions[i], plan[j][k]);
                 if interactions[i].contains(plan[j][k].to_string().as_str()) {
                     i += 1;
                     k += 1;
                 } else {
                     plan[j].remove(k);
-                    panic!(
-                        "Comparing '{}' with '{}'",
-                        interactions[i],
-                        plan[j][k].to_string()
-                    );
+                    panic!("Comparing '{}' with '{}'", interactions[i], plan[j][k]);
                 }
             }
 

@@ -114,7 +114,12 @@ impl SimulatorEnv {
             std::fs::remove_file(&wal_path).unwrap();
         }
 
-        let db = match Database::open_file(io.clone(), db_path.to_str().unwrap(), self.opts.experimental_mvcc, self.opts.experimental_indexes) {
+        let db = match Database::open_file(
+            io.clone(),
+            db_path.to_str().unwrap(),
+            self.opts.experimental_mvcc,
+            self.opts.experimental_indexes,
+        ) {
             Ok(db) => db,
             Err(e) => {
                 panic!("error opening simulator test file {db_path:?}: {e:?}");

@@ -15,7 +15,6 @@ use std::any::Any;
 use std::backtrace::Backtrace;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::Path;
 use std::sync::{mpsc, Arc, Mutex};
 use tracing_subscriber::field::MakeExt;
 use tracing_subscriber::fmt::format;
@@ -595,7 +594,7 @@ fn run_simulation_default(
         })
         .collect::<Vec<_>>();
 
-    let mut result = execute_plans(env.clone(), plans, &mut states, last_execution);
+    let result = execute_plans(env.clone(), plans, &mut states, last_execution);
 
     let env = env.lock().unwrap();
     env.io.print_stats();
