@@ -28,7 +28,10 @@ impl Predicate {
     }
 
     pub(crate) fn not(predicate: Predicate) -> Self {
-        let expr = ast::Expr::Unary(ast::UnaryOperator::Not, Box::new(predicate.0));
+        let expr = ast::Expr::Parenthesized(vec![ast::Expr::Unary(
+            ast::UnaryOperator::Not,
+            Box::new(predicate.0),
+        )]);
         Self(expr)
     }
 
@@ -38,11 +41,11 @@ impl Predicate {
         } else if predicates.len() == 1 {
             predicates.into_iter().next().unwrap()
         } else {
-            let expr = ast::Expr::Binary(
+            let expr = ast::Expr::Parenthesized(vec![ast::Expr::Binary(
                 Box::new(predicates[0].0.clone()),
                 ast::Operator::And,
                 Box::new(Self::and(predicates[1..].to_vec()).0),
-            );
+            )]);
             Self(expr)
         }
     }
