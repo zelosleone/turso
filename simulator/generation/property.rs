@@ -3,22 +3,16 @@ use turso_core::LimboError;
 use turso_sqlite3_parser::ast::{self};
 
 use crate::{
-    model::{
+    generation::Shadow as _, model::{
         query::{
-            predicate::Predicate,
-            select::{
+            predicate::Predicate, select::{
                 CompoundOperator, CompoundSelect, Distinctness, ResultColumn, SelectBody,
                 SelectInner,
-            },
-            select::{Distinctness, ResultColumn},
-            transaction::{Begin, Commit, Rollback},
-            update::Update,
-            Create, Delete, Drop, Insert, Query, Select,
+            }, transaction::{Begin, Commit, Rollback}, update::Update, Create, Delete, Drop, Insert, Query, Select
         },
         table::SimValue,
         FAULT_ERROR_MSG,
-    },
-    runner::env::SimulatorEnv,
+    }, runner::env::SimulatorEnv
 };
 
 use super::{
@@ -285,17 +279,17 @@ impl Property {
                 let table_name = create.table.name.clone();
 
                 let assertion = Interaction::Assertion(Assertion {
-                                    message:
-                                        "creating two tables with the name should result in a failure for the second query"
-                                            .to_string(),
-                                    func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
-                                        let last = stack.last().unwrap();
-                                        match last {
-                                            Ok(_) => Ok(false),
-                                            Err(e) => Ok(e.to_string().to_lowercase().contains(&format!("table {table_name} already exists"))),
-                                        }
-                                    }),
-                                });
+                            message:
+                                "creating two tables with the name should result in a failure for the second query"
+                                    .to_string(),
+                            func: Box::new(move |stack: &Vec<ResultSet>, _| {
+                                let last = stack.last().unwrap();
+                                match last {
+                                    Ok(_) => Ok(false),
+                                    Err(e) => Ok(e.to_string().to_lowercase().contains(&format!("table {table_name} already exists"))),
+                                }
+                            }),
+                        });
 
                 let mut interactions = Vec::new();
                 interactions.push(assumption);
@@ -318,7 +312,7 @@ impl Property {
                     ),
                     func: Box::new({
                         let table_name = select.dependencies();
-                        move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
+                        move |_: &Vec<ResultSet>, env: &mut SimulatorEnv| {
                             Ok(table_name
                                 .iter()
                                 .all(|table| env.tables.iter().any(|t| t.name == *table)))
@@ -373,8 +367,8 @@ impl Property {
                 )));
 
                 let assertion = Interaction::Assertion(Assertion {
-                    message: format!("`{select}` should return no values for table `{table}`",),
-                    func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
+                    message: format!("`{}` should return no values for table `{}`", select, table,),
+                    func: Box::new(move |stack: &Vec<ResultSet>, _| {
                         let rows = stack.last().unwrap();
                         match rows {
                             Ok(rows) => Ok(rows.is_empty()),
@@ -410,8 +404,11 @@ impl Property {
                 let table_name = table.clone();
 
                 let assertion = Interaction::Assertion(Assertion {
-                    message: format!("select query should result in an error for table '{table}'"),
-                    func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
+                    message: format!(
+                        "select query should result in an error for table '{}'",
+                        table
+                    ),
+                    func: Box::new(move |stack: &Vec<ResultSet>, _| {
                         let last = stack.last().unwrap();
                         match last {
                             Ok(_) => Ok(false),
@@ -471,8 +468,8 @@ impl Property {
                                 // If rows1 results have more than 1 column, there is a problem
                                 if rows1.iter().any(|vs| vs.len() > 1) {
                                     return Err(LimboError::InternalError(
-                                                        "Select query without the star should return only one column".to_string(),
-                                                    ));
+                                                "Select query without the star should return only one column".to_string(),
+                                            ));
                                 }
                                 // Count the 1s in the select query without the star
                                 let rows1_count = rows1
@@ -517,11 +514,11 @@ impl Property {
                     // then when IO is called the fault triggers. It may happen that a fault is injected
                     // but no IO happens right after it
                     message: "fault occured".to_string(),
-                    func: Box::new(move |stack, env| {
+                    func: Box::new(move |stack, env: &mut SimulatorEnv| {
                         let last = stack.last().unwrap();
                         match last {
                             Ok(_) => {
-                                query_clone.shadow(env);
+                                let _ = query_clone.shadow(&mut env.tables);
                                 Ok(true)
                             }
                             Err(err) => {
@@ -554,7 +551,7 @@ impl Property {
                     ),
                     func: Box::new({
                         let tables = select.dependencies();
-                        move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
+                        move |_: &Vec<ResultSet>, env: &mut SimulatorEnv| {
                             Ok(tables
                                 .iter()
                                 .all(|table| env.tables.iter().any(|t| t.name == *table)))
@@ -612,7 +609,7 @@ impl Property {
                 // select and select_tlp should return the same rows
                 let assertion = Interaction::Assertion(Assertion {
                     message: "select and select_tlp should return the same rows".to_string(),
-                    func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
+                    func: Box::new(move |stack: &Vec<ResultSet>, _: &mut SimulatorEnv| {
                         if stack.len() < 2 {
                             return Err(LimboError::InternalError(
                                 "Not enough result sets on the stack".to_string(),
@@ -681,7 +678,7 @@ impl Property {
                     Interaction::Query(Query::Select(s3.clone())),
                     Interaction::Assertion(Assertion {
                         message: "UNION ALL should preserve cardinality".to_string(),
-                        func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
+                        func: Box::new(move |stack: &Vec<ResultSet>, _: &mut SimulatorEnv| {
                             if stack.len() < 3 {
                                 return Err(LimboError::InternalError(
                                     "Not enough result sets on the stack".to_string(),
@@ -720,15 +717,14 @@ fn assert_all_table_values(tables: &[String]) -> impl Iterator<Item = Interactio
         )));
 
         let assertion = Interaction::Assertion(Assertion {
-            message: format!(
-                "table {table} should contain all of its values after the wal reopened"
-            ),
+            message: format!("table {} should contain all of its values", table),
             func: Box::new({
                 let table = table.clone();
                 move |stack: &Vec<ResultSet>, env: &mut SimulatorEnv| {
                     let table = env.tables.iter().find(|t| t.name == table).ok_or_else(|| {
                         LimboError::InternalError(format!(
-                            "table {table} should exist in simulator env",
+                            "table {} should exist in simulator env",
+                            table
                         ))
                     })?;
                     let last = stack.last().unwrap();

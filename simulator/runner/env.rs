@@ -1,5 +1,6 @@
 use std::fmt::Display;
 use std::mem;
+use std::ops::Deref;
 use std::panic::UnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,9 +28,39 @@ pub(crate) enum SimulationPhase {
     Shrink,
 }
 
+
+#[derive(Debug, Clone)]
+pub(crate) struct SimulatorTables {
+    pub(crate) tables: Vec<Table>,
+    pub(crate) snapshot: Option<Vec<Table>>,
+}
+impl SimulatorTables {
+    pub(crate) fn new() -> Self {
+        Self {
+            tables: Vec::new(),
+            snapshot: None,
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.tables.clear();
+        self.snapshot = None;
+    }
+
+    pub(crate) fn push(&mut self, table: Table) {
+        self.tables.push(table);
+    }
+}
+impl Deref for SimulatorTables {
+    type Target = Vec<Table>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.tables
+    }
+}
+
 pub(crate) struct SimulatorEnv {
     pub(crate) opts: SimulatorOpts,
-    pub(crate) tables: Vec<Table>,
     pub(crate) connections: Vec<SimConnection>,
     pub(crate) io: Arc<SimulatorIO>,
     pub(crate) db: Arc<Database>,
@@ -37,7 +68,7 @@ pub(crate) struct SimulatorEnv {
     pub(crate) paths: Paths,
     pub(crate) type_: SimulationType,
     pub(crate) phase: SimulationPhase,
-    pub tables_snapshot: Option<Vec<Table>>,
+    pub(crate) tables: SimulatorTables,
 }
 
 impl UnwindSafe for SimulatorEnv {}
@@ -56,7 +87,6 @@ impl SimulatorEnv {
             paths: self.paths.clone(),
             type_: self.type_,
             phase: self.phase,
-            tables_snapshot: None,
         }
     }
 
@@ -246,7 +276,7 @@ impl SimulatorEnv {
 
         SimulatorEnv {
             opts,
-            tables: Vec::new(),
+            tables: SimulatorTables::new(),
             connections,
             paths,
             rng,
@@ -254,7 +284,6 @@ impl SimulatorEnv {
             db,
             type_: simulation_type,
             phase: SimulationPhase::Test,
-            tables_snapshot: None,
         }
     }
 

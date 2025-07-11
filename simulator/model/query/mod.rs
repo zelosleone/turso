@@ -12,12 +12,8 @@ use update::Update;
 
 use crate::{
     generation::Shadow,
-    model::table::{SimValue, Table},
-    model::{
-        query::transaction::{Begin, Commit, Rollback},
-        table::SimValue,
-    },
-    runner::env::SimulatorEnv,
+    model::{query::transaction::{Begin, Commit, Rollback}, table::SimValue},
+    runner::env::SimulatorTables,
 };
 
 pub mod create;
@@ -79,7 +75,7 @@ impl Query {
 impl Shadow for Query {
     type Result = anyhow::Result<Vec<Vec<SimValue>>>;
 
-    fn shadow(&self, env: &mut Vec<Table>) -> Self::Result {
+    fn shadow(&self, env: &mut SimulatorTables) -> Self::Result {
         match self {
             Query::Create(create) => create.shadow(env),
             Query::Insert(insert) => insert.shadow(env),
@@ -88,9 +84,9 @@ impl Shadow for Query {
             Query::Update(update) => update.shadow(env),
             Query::Drop(drop) => drop.shadow(env),
             Query::CreateIndex(create_index) => Ok(create_index.shadow(env)),
-            Query::Begin(begin) => begin.shadow(env),
-            Query::Commit(commit) => commit.shadow(env),
-            Query::Rollback(rollback) => rollback.shadow(env),
+            Query::Begin(begin) => Ok(begin.shadow(env)),
+            Query::Commit(commit) => Ok(commit.shadow(env)),
+            Query::Rollback(rollback) => Ok(rollback.shadow(env)),
         }
     }
 }

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     generation::Shadow,
-    model::table::{SimValue, Table},
+    model::table::SimValue, runner::env::SimulatorTables,
 };
 
 use super::predicate::Predicate;
@@ -19,8 +19,8 @@ pub(crate) struct Update {
 impl Shadow for Update {
     type Result = anyhow::Result<Vec<Vec<SimValue>>>;
 
-    fn shadow(&self, tables: &mut Vec<Table>) -> Self::Result {
-        let table = tables.iter_mut().find(|t| t.name == self.table);
+    fn shadow(&self, tables: &mut SimulatorTables) -> Self::Result {
+        let table = tables.tables.iter_mut().find(|t| t.name == self.table);
 
         let table = if let Some(table) = table {
             table

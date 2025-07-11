@@ -7,6 +7,7 @@ use crate::model::query::select::{
 use crate::model::query::update::Update;
 use crate::model::query::{Create, Delete, Drop, Insert, Query, Select};
 use crate::model::table::{SimValue, Table};
+use crate::runner::env::SimulatorTables;
 use crate::SimulatorEnv;
 use itertools::Itertools;
 use rand::Rng;
@@ -77,7 +78,10 @@ impl ArbitraryFrom<&Vec<Table>> for FromClause {
 impl ArbitraryFrom<&Vec<Table>> for SelectInner {
     fn arbitrary_from<R: Rng>(rng: &mut R, tables: &Vec<Table>) -> Self {
         let from = FromClause::arbitrary_from(rng, tables);
-        let mut tables = tables.clone();
+        let mut tables = SimulatorTables {
+            tables: tables.clone(),
+            snapshot: None,
+        };
         // todo: this is a temporary hack because env is not separated from the tables
         let join_table = from
             .shadow(&mut tables)
@@ -180,7 +184,10 @@ impl ArbitraryFrom<&SimulatorEnv> for Insert {
 
         // Backtrack here cannot return None
         backtrack(
-            vec![(1, Box::new(gen_values)), (1, Box::new(gen_select))],
+            vec![
+                (1, Box::new(gen_values)),
+                (1, Box::new(|rng| gen_select(rng))),
+            ],
             rng,
         )
         .unwrap()
@@ -259,14 +266,15 @@ impl ArbitraryFrom<&SimulatorEnv> for Update {
 
 #[cfg(test)]
 mod query_generation_tests {
-
+    use rand::RngCore;
     use turso_core::Value;
     use turso_sqlite3_parser::to_sql_string::ToSqlString;
 
     use super::*;
-
+    use crate::model::query::predicate::Predicate;
     use crate::model::query::EmptyContext;
     use crate::model::table::{Column, ColumnType};
+    use crate::SimulatorEnv;
 
     #[test]
     fn test_select_query_generation() {

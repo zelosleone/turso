@@ -8,16 +8,16 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use turso_core::{Connection, Result, StepResult, IO};
+use turso_core::{Connection, Result, StepResult};
 
 use crate::{
     generation::Shadow,
     model::{
         query::{update::Update, Create, CreateIndex, Delete, Drop, Insert, Query, Select},
-        table::{SimValue, Table},
+        table::SimValue,
     },
     runner::{
-        env::{SimConnection, SimulationType},
+        env::{SimConnection, SimulationType, SimulatorTables},
         io::SimulatorIO,
     },
     SimulatorEnv,
@@ -114,7 +114,7 @@ pub(crate) enum Interactions {
 impl Shadow for Interactions {
     type Result = ();
 
-    fn shadow(&self, tables: &mut Vec<Table>) {
+    fn shadow(&self, tables: &mut SimulatorTables) {
         match self {
             Interactions::Property(property) => {
                 let initial_tables = tables.clone();
@@ -423,7 +423,7 @@ impl ArbitraryFrom<&mut SimulatorEnv> for InteractionPlan {
 
 impl Shadow for Interaction {
     type Result = anyhow::Result<Vec<Vec<SimValue>>>;
-    fn shadow(&self, env: &mut Vec<Table>) -> Self::Result {
+    fn shadow(&self, env: &mut SimulatorTables) -> Self::Result {
         match self {
             Self::Query(query) => query.shadow(env),
             Self::FsyncQuery(query) => {
@@ -438,7 +438,7 @@ impl Shadow for Interaction {
     }
 }
 impl Interaction {
-    pub(crate) fn execute_query(&self, conn: &mut Arc<Connection>, io: &SimulatorIO) -> ResultSet {
+    pub(crate) fn execute_query(&self, conn: &mut Arc<Connection>, _io: &SimulatorIO) -> ResultSet {
         if let Self::Query(query) = self {
             let query_str = query.to_string();
             let rows = conn.query(&query_str);
@@ -737,7 +737,7 @@ fn random_create<R: rand::Rng>(rng: &mut R, _env: &SimulatorEnv) -> Interactions
 }
 
 fn random_read<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
-    Interactions::Query(Query::Select(Select::arbitrary_from(rng, &env.tables)))
+    Interactions::Query(Query::Select(Select::arbitrary_from(rng, &env.tables.tables)))
 }
 
 fn random_write<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {

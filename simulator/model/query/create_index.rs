@@ -1,7 +1,7 @@
 use crate::{
     generation::{gen_random_text, pick, pick_n_unique, ArbitraryFrom, Shadow},
-    model::table::{SimValue, Table},
-    runner::env::SimulatorEnv,
+    model::table::SimValue,
+    runner::env::{SimulatorEnv, SimulatorTables},
 };
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -30,7 +30,7 @@ pub(crate) struct CreateIndex {
 
 impl Shadow for CreateIndex {
     type Result = Vec<Vec<SimValue>>;
-    fn shadow(&self, _env: &mut Vec<Table>) -> Vec<Vec<SimValue>> {
+    fn shadow(&self, _env: &mut SimulatorTables) -> Vec<Vec<SimValue>> {
         // CREATE INDEX doesn't require any shadowing; we don't need to keep track
         // in the simulator what indexes exist.
         vec![]

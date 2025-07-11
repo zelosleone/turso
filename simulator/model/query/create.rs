@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     generation::Shadow,
-    model::table::{SimValue, Table},
+    model::table::{SimValue, Table}, runner::env::SimulatorTables,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,7 +15,7 @@ pub(crate) struct Create {
 impl Shadow for Create {
     type Result = anyhow::Result<Vec<Vec<SimValue>>>;
 
-    fn shadow(&self, tables: &mut Vec<Table>) -> Self::Result {
+    fn shadow(&self, tables: &mut SimulatorTables) -> Self::Result {
         if !tables.iter().any(|t| t.name == self.table.name) {
             tables.push(self.table.clone());
             Ok(vec![])

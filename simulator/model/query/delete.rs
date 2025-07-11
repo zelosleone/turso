@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     generation::Shadow,
-    model::table::{SimValue, Table},
+    model::table::SimValue, runner::env::SimulatorTables,
 };
 
 use super::predicate::Predicate;
@@ -18,8 +18,8 @@ pub(crate) struct Delete {
 impl Shadow for Delete {
     type Result = anyhow::Result<Vec<Vec<SimValue>>>;
 
-    fn shadow(&self, tables: &mut Vec<Table>) -> Self::Result {
-        let table = tables.iter_mut().find(|t| t.name == self.table);
+    fn shadow(&self, tables: &mut SimulatorTables) -> Self::Result {
+        let table = tables.tables.iter_mut().find(|t| t.name == self.table);
 
         if let Some(table) = table {
             // If the table exists, we can delete from it

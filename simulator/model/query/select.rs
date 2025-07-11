@@ -11,7 +11,7 @@ use crate::{
     model::{
         query::EmptyContext,
         table::{SimValue, Table},
-    },
+    }, runner::env::SimulatorTables,
 };
 
 use super::predicate::Predicate;
@@ -253,7 +253,9 @@ impl JoinTable {
 
 impl Shadow for FromClause {
     type Result = anyhow::Result<JoinTable>;
-    fn shadow(&self, tables: &mut Vec<Table>) -> Self::Result {
+    fn shadow(&self, env: &mut SimulatorTables) -> Self::Result {
+        let tables = &mut env.tables;
+        
         let first_table = tables
             .iter()
             .find(|t| t.name == self.table)
@@ -309,7 +311,7 @@ impl Shadow for FromClause {
 impl Shadow for SelectInner {
     type Result = anyhow::Result<JoinTable>;
 
-    fn shadow(&self, env: &mut Vec<Table>) -> Self::Result {
+    fn shadow(&self, env: &mut SimulatorTables) -> Self::Result {
         let mut join_table = self.from.shadow(env)?;
         let as_table = join_table.clone().into_table();
         for row in &mut join_table.rows {
@@ -336,7 +338,7 @@ impl Shadow for SelectInner {
 impl Shadow for Select {
     type Result = anyhow::Result<Vec<Vec<SimValue>>>;
 
-    fn shadow(&self, env: &mut Vec<Table>) -> Self::Result {
+    fn shadow(&self, env: &mut SimulatorTables) -> Self::Result {
         let first_result = self.body.select.shadow(env)?;
 
         let mut rows = first_result.into_table().rows;

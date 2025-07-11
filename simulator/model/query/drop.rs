@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     generation::Shadow,
-    model::table::{SimValue, Table},
+    model::table::SimValue, runner::env::SimulatorTables,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -15,7 +15,7 @@ pub(crate) struct Drop {
 impl Shadow for Drop {
     type Result = anyhow::Result<Vec<Vec<SimValue>>>;
 
-    fn shadow(&self, tables: &mut Vec<Table>) -> Self::Result {
+    fn shadow(&self, tables: &mut SimulatorTables) -> Self::Result {
         if !tables.iter().any(|t| t.name == self.table) {
             // If the table does not exist, we return an error
             return Err(anyhow::anyhow!(
@@ -24,7 +24,7 @@ impl Shadow for Drop {
             ));
         }
 
-        tables.retain(|t| t.name != self.table);
+        tables.tables.retain(|t| t.name != self.table);
 
         Ok(vec![])
     }
