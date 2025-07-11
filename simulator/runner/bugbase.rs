@@ -291,18 +291,18 @@ impl BugBase {
             None => anyhow::bail!("No bugs found for seed {}", seed),
             Some(Bug::Unloaded { .. }) => {
                 let plan =
-                    std::fs::read_to_string(self.path.join(seed.to_string()).join("plan.json"))
+                    std::fs::read_to_string(self.path.join(seed.to_string()).join("test.json"))
                         .with_context(|| {
                             format!(
                                 "should be able to read plan file at {}",
-                                self.path.join(seed.to_string()).join("plan.json").display()
+                                self.path.join(seed.to_string()).join("test.json").display()
                             )
                         })?;
                 let plan: InteractionPlan = serde_json::from_str(&plan)
                     .with_context(|| "should be able to deserialize plan")?;
 
                 let shrunk_plan: Option<String> = std::fs::read_to_string(
-                    self.path.join(seed.to_string()).join("shrunk_plan.json"),
+                    self.path.join(seed.to_string()).join("shrunk_test.json"),
                 )
                 .with_context(|| "should be able to read shrunk plan file")
                 .and_then(|shrunk| serde_json::from_str(&shrunk).map_err(|e| anyhow!("{}", e)))
@@ -346,10 +346,9 @@ impl BugBase {
         let bug = self.get_bug(seed);
         match bug {
             None => {
-                // todo: do not forget to uncomment this
-                // tracing::debug!("removing bug base entry for {}", seed);
-                // std::fs::remove_dir_all(self.path.join(seed.to_string()))
-                //     .with_context(|| "should be able to remove bug directory")?;
+                tracing::debug!("removing bug base entry for {}", seed);
+                std::fs::remove_dir_all(self.path.join(seed.to_string()))
+                    .with_context(|| "should be able to remove bug directory")?;
             }
             Some(_) => {
                 let mut bug = self.load_bug(seed)?;
@@ -424,7 +423,7 @@ impl BugBase {
                     }
                 );
                 if let Some(error) = &run.error {
-                    println!("    error: {}", error);
+                    println!("    error: {error}");
                 }
             }
             println!("  ------------------");
@@ -442,12 +441,12 @@ impl BugBase {
 
     /// Get the path to the database file for a given seed.
     pub(crate) fn db_path(&self, seed: u64) -> PathBuf {
-        self.path.join(format!("{}/test.db", seed))
+        self.path.join(format!("{seed}/test.db"))
     }
 
     /// Get paths to all the files for a given seed.
     pub(crate) fn paths(&self, seed: u64) -> Paths {
-        let base = self.path.join(format!("{}/", seed));
+        let base = self.path.join(format!("{seed}/"));
         Paths::new(&base)
     }
 }

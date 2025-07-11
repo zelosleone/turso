@@ -18,7 +18,10 @@ use crate::{
         query::{update::Update, Create, CreateIndex, Delete, Drop, Insert, Query, Select},
         table::{SimValue, Table},
     },
-    runner::{env::SimConnection, io::SimulatorIO},
+    runner::{
+        env::{SimConnection, SimulationType},
+        io::SimulatorIO,
+    },
     SimulatorEnv,
 };
 
@@ -137,7 +140,7 @@ impl Shadow for Interactions {
                 }
             }
             Interactions::Query(query) => {
-                query.shadow(tables);
+                let _ = query.shadow(tables);
             }
             Interactions::Fault(_) => {}
         }
@@ -208,36 +211,36 @@ impl Display for InteractionPlan {
             match interactions {
                 Interactions::Property(property) => {
                     let name = property.name();
-                    writeln!(f, "-- begin testing '{}'", name)?;
+                    writeln!(f, "-- begin testing '{name}'")?;
                     for interaction in property.interactions() {
                         write!(f, "\t")?;
 
                         match interaction {
-                            Interaction::Query(query) => writeln!(f, "{};", query)?,
+                            Interaction::Query(query) => writeln!(f, "{query};")?,
                             Interaction::Assumption(assumption) => {
                                 writeln!(f, "-- ASSUME {};", assumption.message)?
                             }
                             Interaction::Assertion(assertion) => {
                                 writeln!(f, "-- ASSERT {};", assertion.message)?
                             }
-                            Interaction::Fault(fault) => writeln!(f, "-- FAULT '{}';", fault)?,
+                            Interaction::Fault(fault) => writeln!(f, "-- FAULT '{fault}';")?,
                             Interaction::FsyncQuery(query) => {
                                 writeln!(f, "-- FSYNC QUERY;")?;
-                                writeln!(f, "{};", query)?;
-                                writeln!(f, "{};", query)?
+                                writeln!(f, "{query};")?;
+                                writeln!(f, "{query};")?
                             }
                             Interaction::FaultyQuery(query) => {
-                                writeln!(f, "{}; --FAULTY QUERY", query)?
+                                writeln!(f, "{query}; --FAULTY QUERY")?
                             }
                         }
                     }
-                    writeln!(f, "-- end testing '{}'", name)?;
+                    writeln!(f, "-- end testing '{name}'")?;
                 }
                 Interactions::Fault(fault) => {
-                    writeln!(f, "-- FAULT '{}'", fault)?;
+                    writeln!(f, "-- FAULT '{fault}'")?;
                 }
                 Interactions::Query(query) => {
-                    writeln!(f, "{};", query)?;
+                    writeln!(f, "{query};")?;
                 }
             }
         }
@@ -288,12 +291,12 @@ pub(crate) enum Interaction {
 impl Display for Interaction {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Query(query) => write!(f, "{}", query),
+            Self::Query(query) => write!(f, "{query}"),
             Self::Assumption(assumption) => write!(f, "ASSUME {}", assumption.message),
             Self::Assertion(assertion) => write!(f, "ASSERT {}", assertion.message),
-            Self::Fault(fault) => write!(f, "FAULT '{}'", fault),
-            Self::FsyncQuery(query) => write!(f, "{}", query),
-            Self::FaultyQuery(query) => write!(f, "{} -- FAULTY QUERY", query),
+            Self::Fault(fault) => write!(f, "FAULT '{fault}'"),
+            Self::FsyncQuery(query) => write!(f, "{query}"),
+            Self::FaultyQuery(query) => write!(f, "{query} -- FAULTY QUERY"),
         }
     }
 }
@@ -401,26 +404,6 @@ impl ArbitraryFrom<&mut SimulatorEnv> for InteractionPlan {
             );
             let interactions = Interactions::arbitrary_from(rng, (env, plan.stats()));
             interactions.shadow(&mut env.tables);
-            // println!(
-            //     "Generated interactions: {}",
-            //     interactions
-            //         .interactions()
-            //         .iter()
-            //         .map(|i| i.to_string())
-            //         .collect::<Vec<_>>()
-            //         .join(", ")
-            // );
-            // println!("tables states");
-            // for table in &env.tables {
-            //     println!("Table: {}", table.name);
-            //     for column in &table.columns {
-            //         println!("\tColumn: {} - Type: {:?}", column.name, column.column_type);
-            //     }
-            //     for row in &table.rows {
-            //         println!("\tRow: {:?}", row);
-            //     }
-            // }
-
             plan.plan.push(interactions);
         }
 
@@ -702,19 +685,41 @@ fn reopen_database(env: &mut SimulatorEnv) {
     env.io.files.borrow_mut().clear();
 
     // 2. Re-open database
-    let db_path = env.db_path.clone();
-    let db = match turso_core::Database::open_file(env.io.clone(), &db_path, false, true) {
-        Ok(db) => db,
-        Err(e) => {
-            panic!("error opening simulator test file {:?}: {:?}", db_path, e);
+    match env.type_ {
+        SimulationType::Differential => {
+            for _ in 0..num_conns {
+                env.connections.push(SimConnection::SQLiteConnection(
+                    rusqlite::Connection::open(env.get_db_path())
+                        .expect("Failed to open SQLite connection"),
+                ));
+            }
+        }
+        SimulationType::Default | SimulationType::Doublecheck => {
+            let db = match turso_core::Database::open_file(
+                env.io.clone(),
+                env.get_db_path().to_str().expect("path should be 'to_str'"),
+                false,
+                true,
+            ) {
+                Ok(db) => db,
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to open database at {}: {}",
+                        env.get_db_path().display(),
+                        e
+                    );
+                    panic!("Failed to open database: {e}");
+                }
+            };
+
+            env.db = db;
+
+            for _ in 0..num_conns {
+                env.connections
+                    .push(SimConnection::LimboConnection(env.db.connect().unwrap()));
+            }
         }
     };
-    env.db = db;
-
-    for _ in 0..num_conns {
-        env.connections
-            .push(SimConnection::LimboConnection(env.db.connect().unwrap()));
-    }
 }
 
 fn random_create<R: rand::Rng>(rng: &mut R, _env: &SimulatorEnv) -> Interactions {

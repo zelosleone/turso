@@ -44,8 +44,8 @@ pub struct SimulatorCLI {
     pub watch: bool,
     #[clap(long, help = "run differential testing between sqlite and Limbo")]
     pub differential: bool,
-    #[clap(long, help = "run brute force shrink (warning: takes a long time)")]
-    pub brute_force_shrink: bool,
+    #[clap(long, help = "enable brute force shrink (warning: it might take a long time)")]
+    pub enable_brute_force_shrinking: bool,
     #[clap(subcommand)]
     pub subcommand: Option<SimulatorCommand>,
     #[clap(long, help = "disable BugBase", default_value_t = false)]
@@ -172,6 +172,10 @@ impl SimulatorCLI {
                 "latency probability must be a number between 0 and 100. Got `{}`",
                 self.latency_probability
             );
+        }
+
+        if self.doublecheck && self.differential {
+            anyhow::bail!("Cannot run doublecheck and differential testing at the same time");
         }
 
         Ok(())

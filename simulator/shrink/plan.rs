@@ -1,15 +1,13 @@
-use crate::model::query::{Query};
+use crate::model::query::Query;
 use crate::{
     generation::{
         plan::{Interaction, InteractionPlan, Interactions},
         property::Property,
     },
     run_simulation,
-    runner::{cli::SimulatorCLI, execution::Execution},
+    runner::execution::Execution,
     SandboxedResult, SimulatorEnv,
 };
-use clap::Parser;
-use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 impl InteractionPlan {
@@ -114,10 +112,18 @@ impl InteractionPlan {
     pub(crate) fn brute_shrink_interaction_plan(
         &self,
         result: &SandboxedResult,
+        env: Arc<Mutex<SimulatorEnv>>,
     ) -> InteractionPlan {
         let failing_execution = match result {
-            SandboxedResult::Panicked { error: _, last_execution: e } => e,
-            SandboxedResult::FoundBug { error: _, history: _, last_execution: e } => e,
+            SandboxedResult::Panicked {
+                error: _,
+                last_execution: e,
+            } => e,
+            SandboxedResult::FoundBug {
+                error: _,
+                history: _,
+                last_execution: e,
+            } => e,
             SandboxedResult::Correct => {
                 unreachable!("shrink is never called on correct result")
             }
@@ -168,8 +174,12 @@ impl InteractionPlan {
                                 .collect(),
                         };
 
-                        temp_plan =
-                            InteractionPlan::iterative_shrink(temp_plan, failing_execution, result);
+                        temp_plan = InteractionPlan::iterative_shrink(
+                            temp_plan,
+                            failing_execution,
+                            result,
+                            env.clone(),
+                        );
                         //temp_plan = Self::shrink_queries(temp_plan, failing_execution, result, env);
 
                         *queries = temp_plan
@@ -181,13 +191,18 @@ impl InteractionPlan {
                             })
                             .collect();
                     }
-                    Property::WhereTrueFalseNull { .. } | Property::SelectLimit { .. } | Property::SelectSelectOptimizer { .. } | Property::FaultyQuery { .. } | Property::FsyncNoWait { .. }=> {}
+                    Property::WhereTrueFalseNull { .. }
+                    | Property::UNIONAllPreservesCardinality { .. }
+                    | Property::SelectLimit { .. }
+                    | Property::SelectSelectOptimizer { .. }
+                    | Property::FaultyQuery { .. }
+                    | Property::FsyncNoWait { .. } => {}
                 }
             }
         }
 
         // phase 2: shrink the entire plan
-        plan = Self::iterative_shrink(plan, failing_execution, result);
+        plan = Self::iterative_shrink(plan, failing_execution, result, env);
 
         let after = plan.plan.len();
 
@@ -205,6 +220,7 @@ impl InteractionPlan {
         mut plan: InteractionPlan,
         failing_execution: &Execution,
         old_result: &SandboxedResult,
+        env: Arc<Mutex<SimulatorEnv>>,
     ) -> InteractionPlan {
         for i in (0..plan.plan.len()).rev() {
             if i == failing_execution.interaction_index {
@@ -214,7 +230,7 @@ impl InteractionPlan {
 
             test_plan.plan.remove(i);
 
-            if Self::test_shrunk_plan(&test_plan, failing_execution, old_result) {
+            if Self::test_shrunk_plan(&test_plan, failing_execution, old_result, env.clone()) {
                 plan = test_plan;
             }
         }
@@ -225,18 +241,9 @@ impl InteractionPlan {
         test_plan: &InteractionPlan,
         failing_execution: &Execution,
         old_result: &SandboxedResult,
+        env: Arc<Mutex<SimulatorEnv>>,
     ) -> bool {
-        let cli_opts = SimulatorCLI {
-            seed: Some(0),
-            ..SimulatorCLI::parse()
-        };
-        let env = Arc::new(Mutex::new(SimulatorEnv::new(
-            0,
-            &cli_opts,
-            Path::new("test.db"),
-        )));
         let last_execution = Arc::new(Mutex::new(*failing_execution));
-
         let result = SandboxedResult::from(
             std::panic::catch_unwind(|| {
                 run_simulation(
@@ -245,7 +252,7 @@ impl InteractionPlan {
                     last_execution.clone(),
                 )
             }),
-            last_execution.clone(),
+            last_execution,
         );
         match (old_result, &result) {
             (

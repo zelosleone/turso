@@ -2,7 +2,10 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{generation::Shadow, model::table::{SimValue, Table}, SimulatorEnv};
+use crate::{
+    generation::Shadow,
+    model::table::{SimValue, Table},
+};
 
 use super::predicate::Predicate;
 
@@ -35,14 +38,14 @@ impl Shadow for Update {
             .filter(|r| self.predicate.test(r, &t2))
         {
             for (column, set_value) in &self.set_values {
-                table
+                if let Some((idx, _)) = table
                     .columns
                     .iter()
                     .enumerate()
                     .find(|(_, c)| &c.name == column)
-                    .map(|(idx, _)| {
-                        row[idx] = set_value.clone();
-                    });
+                {
+                    row[idx] = set_value.clone();
+                }
             }
         }
 
@@ -57,7 +60,7 @@ impl Display for Update {
             if i != 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{} = {}", name, value)?;
+            write!(f, "{name} = {value}")?;
         }
         write!(f, " WHERE {}", self.predicate)?;
         Ok(())

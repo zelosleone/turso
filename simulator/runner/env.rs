@@ -1,6 +1,7 @@
 use std::fmt::Display;
 use std::mem;
-use std::path::Path;
+use std::panic::UnwindSafe;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rand::{Rng, SeedableRng};
@@ -13,6 +14,19 @@ use crate::runner::io::SimulatorIO;
 
 use super::cli::SimulatorCLI;
 
+#[derive(Debug, Copy, Clone)]
+pub(crate) enum SimulationType {
+    Default,
+    Doublecheck,
+    Differential,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub(crate) enum SimulationPhase {
+    Test,
+    Shrink,
+}
+
 pub(crate) struct SimulatorEnv {
     pub(crate) opts: SimulatorOpts,
     pub(crate) tables: Vec<Table>,
@@ -20,8 +34,12 @@ pub(crate) struct SimulatorEnv {
     pub(crate) io: Arc<SimulatorIO>,
     pub(crate) db: Arc<Database>,
     pub(crate) rng: ChaCha8Rng,
-    pub(crate) db_path: String,
+    pub(crate) paths: Paths,
+    pub(crate) type_: SimulationType,
+    pub(crate) phase: SimulationPhase,
 }
+
+impl UnwindSafe for SimulatorEnv {}
 
 impl SimulatorEnv {
     pub(crate) fn clone_without_connections(&self) -> Self {
@@ -34,13 +52,77 @@ impl SimulatorEnv {
             io: self.io.clone(),
             db: self.db.clone(),
             rng: self.rng.clone(),
-            db_path: self.db_path.clone(),
+            paths: self.paths.clone(),
+            type_: self.type_,
+            phase: self.phase,
         }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.tables.clear();
+        self.connections.iter_mut().for_each(|c| c.disconnect());
+        self.rng = ChaCha8Rng::seed_from_u64(self.opts.seed);
+
+        let io = Arc::new(
+            SimulatorIO::new(
+                self.opts.seed,
+                self.opts.page_size,
+                self.opts.latency_probability,
+            )
+            .unwrap(),
+        );
+
+        // Remove existing database file
+        let db_path = self.get_db_path();
+        if db_path.exists() {
+            std::fs::remove_file(&db_path).unwrap();
+        }
+
+        let wal_path = db_path.with_extension("db-wal");
+        if wal_path.exists() {
+            std::fs::remove_file(&wal_path).unwrap();
+        }
+
+        let db = match Database::open_file(io.clone(), db_path.to_str().unwrap(), false, true) {
+            Ok(db) => db,
+            Err(e) => {
+                panic!("error opening simulator test file {db_path:?}: {e:?}");
+            }
+        };
+        self.io = io;
+        self.db = db;
+    }
+
+    pub(crate) fn get_db_path(&self) -> PathBuf {
+        self.paths.db(&self.type_, &self.phase)
+    }
+
+    pub(crate) fn get_plan_path(&self) -> PathBuf {
+        self.paths.plan(&self.type_, &self.phase)
+    }
+
+    pub(crate) fn clone_as(&self, simulation_type: SimulationType) -> Self {
+        let mut env = self.clone_without_connections();
+        env.type_ = simulation_type;
+        env.clear();
+        env
+    }
+
+    pub(crate) fn clone_at_phase(&self, phase: SimulationPhase) -> Self {
+        let mut env = self.clone_without_connections();
+        env.phase = phase;
+        env.clear();
+        env
     }
 }
 
 impl SimulatorEnv {
-    pub(crate) fn new(seed: u64, cli_opts: &SimulatorCLI, db_path: &Path) -> Self {
+    pub(crate) fn new(
+        seed: u64,
+        cli_opts: &SimulatorCLI,
+        paths: Paths,
+        simulation_type: SimulationType,
+    ) -> Self {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
         let total = 100.0;
@@ -93,13 +175,11 @@ impl SimulatorEnv {
 
         let abs_diff = (summed_total - total).abs();
         if abs_diff > 0.0001 {
-            panic!(
-                "Summed total {} is not equal to total {}",
-                summed_total, total
-            );
+            panic!("Summed total {summed_total} is not equal to total {total}");
         }
 
         let opts = SimulatorOpts {
+            seed,
             ticks: rng.gen_range(cli_opts.minimum_tests..=cli_opts.maximum_tests),
             max_connections: 1, // TODO: for now let's use one connection as we didn't implement
             // correct transactions processing
@@ -118,32 +198,36 @@ impl SimulatorEnv {
             disable_delete_select: cli_opts.disable_delete_select,
             disable_drop_select: cli_opts.disable_drop_select,
             disable_where_true_false_null: cli_opts.disable_where_true_false_null,
-            disable_union_all_preserves_cardinality: cli_opts.disable_union_all_preserves_cardinality,
+            disable_union_all_preserves_cardinality: cli_opts
+                .disable_union_all_preserves_cardinality,
             disable_fsync_no_wait: cli_opts.disable_fsync_no_wait,
             disable_faulty_query: cli_opts.disable_faulty_query,
             page_size: 4096, // TODO: randomize this too
             max_interactions: rng.gen_range(cli_opts.minimum_tests..=cli_opts.maximum_tests),
             max_time_simulation: cli_opts.maximum_time,
             disable_reopen_database: cli_opts.disable_reopen_database,
+            latency_probability: cli_opts.latency_probability,
         };
 
         let io =
             Arc::new(SimulatorIO::new(seed, opts.page_size, cli_opts.latency_probability).unwrap());
 
         // Remove existing database file if it exists
+        let db_path = paths.db(&simulation_type, &SimulationPhase::Test);
+
         if db_path.exists() {
-            std::fs::remove_file(db_path).unwrap();
+            std::fs::remove_file(&db_path).unwrap();
         }
 
         let wal_path = db_path.with_extension("db-wal");
         if wal_path.exists() {
-            std::fs::remove_file(wal_path).unwrap();
+            std::fs::remove_file(&wal_path).unwrap();
         }
 
         let db = match Database::open_file(io.clone(), db_path.to_str().unwrap(), false, true) {
             Ok(db) => db,
             Err(e) => {
-                panic!("error opening simulator test file {:?}: {:?}", db_path, e);
+                panic!("error opening simulator test file {db_path:?}: {e:?}");
             }
         };
 
@@ -155,11 +239,42 @@ impl SimulatorEnv {
             opts,
             tables: Vec::new(),
             connections,
+            paths,
             rng,
             io,
             db,
-            db_path: db_path.to_str().unwrap().to_string(),
+            type_: simulation_type,
+            phase: SimulationPhase::Test,
         }
+    }
+
+    pub(crate) fn connect(&mut self, connection_index: usize) {
+        if connection_index >= self.connections.len() {
+            panic!("connection index out of bounds");
+        }
+
+        if self.connections[connection_index].is_connected() {
+            log::trace!(
+                "Connection {connection_index} is already connected, skipping reconnection"
+            );
+            return;
+        }
+
+        match self.type_ {
+            SimulationType::Default | SimulationType::Doublecheck => {
+                self.connections[connection_index] = SimConnection::LimboConnection(
+                    self.db
+                        .connect()
+                        .expect("Failed to connect to Limbo database"),
+                );
+            }
+            SimulationType::Differential => {
+                self.connections[connection_index] = SimConnection::SQLiteConnection(
+                    rusqlite::Connection::open(self.get_db_path())
+                        .expect("Failed to open SQLite connection"),
+                );
+            }
+        };
     }
 }
 
@@ -217,6 +332,7 @@ impl Display for SimConnection {
 
 #[derive(Debug, Clone)]
 pub(crate) struct SimulatorOpts {
+    pub(crate) seed: u64,
     pub(crate) ticks: usize,
     pub(crate) max_connections: usize,
     pub(crate) max_tables: usize,
@@ -245,4 +361,48 @@ pub(crate) struct SimulatorOpts {
     pub(crate) max_interactions: usize,
     pub(crate) page_size: usize,
     pub(crate) max_time_simulation: usize,
+    pub(crate) latency_probability: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Paths {
+    pub(crate) base: PathBuf,
+    pub(crate) history: PathBuf,
+}
+
+impl Paths {
+    pub(crate) fn new(output_dir: &Path) -> Self {
+        Paths {
+            base: output_dir.to_path_buf(),
+            history: PathBuf::from(output_dir).join("history.txt"),
+        }
+    }
+
+    fn path_(&self, type_: &SimulationType, phase: &SimulationPhase) -> PathBuf {
+        match (type_, phase) {
+            (SimulationType::Default, SimulationPhase::Test) => self.base.join(Path::new("test")),
+            (SimulationType::Default, SimulationPhase::Shrink) => {
+                self.base.join(Path::new("shrink"))
+            }
+            (SimulationType::Differential, SimulationPhase::Test) => {
+                self.base.join(Path::new("diff"))
+            }
+            (SimulationType::Differential, SimulationPhase::Shrink) => {
+                self.base.join(Path::new("diff_shrink"))
+            }
+            (SimulationType::Doublecheck, SimulationPhase::Test) => {
+                self.base.join(Path::new("doublecheck"))
+            }
+            (SimulationType::Doublecheck, SimulationPhase::Shrink) => {
+                self.base.join(Path::new("doublecheck_shrink"))
+            }
+        }
+    }
+
+    pub(crate) fn db(&self, type_: &SimulationType, phase: &SimulationPhase) -> PathBuf {
+        self.path_(type_, phase).with_extension("db")
+    }
+    pub(crate) fn plan(&self, type_: &SimulationType, phase: &SimulationPhase) -> PathBuf {
+        self.path_(type_, phase).with_extension("sql")
+    }
 }

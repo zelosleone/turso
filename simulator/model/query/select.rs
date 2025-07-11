@@ -31,9 +31,9 @@ pub enum ResultColumn {
 impl Display for ResultColumn {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ResultColumn::Expr(expr) => write!(f, "({})", expr),
+            ResultColumn::Expr(expr) => write!(f, "({expr})"),
             ResultColumn::Star => write!(f, "*"),
-            ResultColumn::Column(name) => write!(f, "{}", name),
+            ResultColumn::Column(name) => write!(f, "{name}"),
         }
     }
 }
@@ -94,7 +94,7 @@ impl Select {
         let mut tables = HashSet::new();
         tables.insert(self.body.select.from.table.clone());
 
-        tables.extend(self.body.select.from.dependencies().into_iter());
+        tables.extend(self.body.select.from.dependencies());
 
         for compound in &self.body.compounds {
             tables.extend(compound.select.from.dependencies().into_iter());
@@ -282,8 +282,11 @@ impl Shadow for FromClause {
                         .cloned()
                         .collect::<Vec<_>>();
                     // take a cartesian product of the rows
-                    let all_row_pairs =
-                        join_table.rows.clone().into_iter().cartesian_product(join_rows.iter());
+                    let all_row_pairs = join_table
+                        .rows
+                        .clone()
+                        .into_iter()
+                        .cartesian_product(join_rows.iter());
 
                     for (row1, row2) in all_row_pairs {
                         let row = row1.iter().chain(row2.iter()).cloned().collect::<Vec<_>>();
@@ -441,9 +444,6 @@ impl Display for Select {
 
 #[cfg(test)]
 mod select_tests {
-    use super::*;
-    use crate::model::table::SimValue;
-    use crate::SimulatorEnv;
 
     #[test]
     fn test_select_display() {}

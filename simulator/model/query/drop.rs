@@ -2,7 +2,10 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{generation::Shadow, model::table::{SimValue, Table}};
+use crate::{
+    generation::Shadow,
+    model::table::{SimValue, Table},
+};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Drop {

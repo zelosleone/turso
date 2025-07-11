@@ -5,7 +5,8 @@ use turso_core::{Connection, LimboError, Result, StepResult};
 
 use crate::generation::{
     pick_index,
-    plan::{Interaction, InteractionPlan, InteractionPlanState, ResultSet}, Shadow as _,
+    plan::{Interaction, InteractionPlan, InteractionPlanState, ResultSet},
+    Shadow as _,
 };
 
 use super::env::{SimConnection, SimulatorEnv};
@@ -65,14 +66,15 @@ pub(crate) fn execute_plans(
     let now = std::time::Instant::now();
     env.clear_poison();
     let mut env = env.lock().unwrap();
-    
+
     env.tables.clear();
-    
+
     for _tick in 0..env.opts.ticks {
+        tracing::trace!("Executing tick {}", _tick);
         // Pick the connection to interact with
         let connection_index = pick_index(env.connections.len(), &mut env.rng);
         let state = &mut states[connection_index];
-        
+
         history.history.push(Execution::new(
             connection_index,
             state.interaction_pointer,
@@ -127,7 +129,6 @@ fn execute_plan(
         tracing::debug!("connection {} already connected", connection_index);
         match execute_interaction(env, connection_index, interaction, &mut state.stack) {
             Ok(next_execution) => {
-                let _ = interaction.shadow(&mut env.tables);
                 tracing::debug!("connection {} processed", connection_index);
                 // Move to the next interaction or property
                 match next_execution {
@@ -240,7 +241,7 @@ pub(crate) fn execute_interaction(
             limbo_integrity_check(&conn)?;
         }
     }
-
+    let _ = interaction.shadow(&mut env.tables);
     Ok(ExecutionContinuation::NextInteraction)
 }
 
@@ -278,8 +279,7 @@ fn limbo_integrity_check(conn: &Arc<Connection>) -> Result<()> {
     let message = result.join("\n");
     if message != "ok" {
         return Err(LimboError::InternalError(format!(
-            "Integrity Check Failed: {}",
-            message
+            "Integrity Check Failed: {message}"
         )));
     }
     Ok(())

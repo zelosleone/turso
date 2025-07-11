@@ -1,6 +1,5 @@
 use std::fmt::Display;
 
-use regex_syntax::ast::print;
 use serde::{Deserialize, Serialize};
 use turso_sqlite3_parser::{ast, to_sql_string::ToSqlString};
 
@@ -14,11 +13,15 @@ pub struct Predicate(pub ast::Expr);
 
 impl Predicate {
     pub(crate) fn true_() -> Self {
-        Self(ast::Expr::Literal(ast::Literal::Keyword("TRUE".to_string())))
+        Self(ast::Expr::Literal(ast::Literal::Keyword(
+            "TRUE".to_string(),
+        )))
     }
 
     pub(crate) fn false_() -> Self {
-        Self(ast::Expr::Literal(ast::Literal::Keyword("FALSE".to_string())))
+        Self(ast::Expr::Literal(ast::Literal::Keyword(
+            "FALSE".to_string(),
+        )))
     }
     pub(crate) fn null() -> Self {
         Self(ast::Expr::Literal(ast::Literal::Null))
@@ -28,7 +31,7 @@ impl Predicate {
         let expr = ast::Expr::Unary(ast::UnaryOperator::Not, Box::new(predicate.0));
         Self(expr)
     }
-    
+
     pub(crate) fn and(predicates: Vec<Predicate>) -> Self {
         if predicates.is_empty() {
             Self::true_()
@@ -71,7 +74,7 @@ impl Predicate {
 
     pub(crate) fn test(&self, row: &[SimValue], table: &Table) -> bool {
         let value = expr_to_value(&self.0, row, table);
-        value.map_or(false, |value| value.as_bool())
+        value.is_some_and(|value| value.as_bool())
     }
 }
 

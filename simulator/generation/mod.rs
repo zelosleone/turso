@@ -158,4 +158,3 @@ pub(crate) fn gen_random_text<T: Rng>(rng: &mut T) -> String {
         name.replace("-", "_")
     }
 }
-

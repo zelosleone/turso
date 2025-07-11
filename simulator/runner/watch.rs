@@ -1,10 +1,12 @@
-use std::{path::PathBuf, sync::{Arc, Mutex}};
+use std::sync::{Arc, Mutex};
 
 use crate::{
     generation::{
         pick_index,
         plan::{Interaction, InteractionPlanState},
-    }, integrity_check, runner::execution::ExecutionContinuation
+    },
+    integrity_check,
+    runner::execution::ExecutionContinuation,
 };
 
 use super::{
@@ -33,7 +35,7 @@ pub(crate) fn run_simulation(
     tracing::info!("Simulation completed");
 
     if result.error.is_none() {
-        let ic = integrity_check(&PathBuf::from(env.db_path.as_str()));
+        let ic = integrity_check(&env.get_db_path());
         if let Err(err) = ic {
             tracing::error!("integrity check failed: {}", err);
             result.error = Some(turso_core::LimboError::InternalError(err.to_string()));
@@ -41,7 +43,7 @@ pub(crate) fn run_simulation(
             tracing::info!("integrity check passed");
         }
     }
-    
+
     result
 }
 

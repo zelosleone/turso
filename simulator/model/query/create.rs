@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     generation::Shadow,
     model::table::{SimValue, Table},
-    SimulatorEnv,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,8 +25,6 @@ impl Shadow for Create {
                 self.table.name
             ))
         }
-
-        
     }
 }
 

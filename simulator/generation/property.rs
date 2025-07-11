@@ -143,8 +143,8 @@ pub(crate) enum Property {
     /// implementation in the database. It relies on the fact that `SELECT * FROM <t
     /// > WHERE <predicate> UNION ALL SELECT * FROM <t> WHERE <predicate>`
     /// should return the same number of rows as `SELECT <predicate> FROM <t> WHERE <predicate>`.
-    /// The property is succesfull when the UNION ALL of 2 select queries returns the same number of rows
-    /// as the sum of the two select queries.
+    /// > The property is succesfull when the UNION ALL of 2 select queries returns the same number of rows
+    /// > as the sum of the two select queries.
     UNIONAllPreservesCardinality {
         select: Select,
         where_clause: Predicate,
@@ -329,7 +329,7 @@ impl Property {
                 queries,
             } => {
                 let assumption = Interaction::Assumption(Assertion {
-                    message: format!("table {} exists", table),
+                    message: format!("table {table} exists"),
                     func: Box::new({
                         let table = table.clone();
                         move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
@@ -349,7 +349,7 @@ impl Property {
                 )));
 
                 let assertion = Interaction::Assertion(Assertion {
-                    message: format!("`{}` should return no values for table `{}`", select, table,),
+                    message: format!("`{select}` should return no values for table `{table}`",),
                     func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
                         let rows = stack.last().unwrap();
                         match rows {
@@ -374,7 +374,7 @@ impl Property {
                 select,
             } => {
                 let assumption = Interaction::Assumption(Assertion {
-                    message: format!("table {} exists", table),
+                    message: format!("table {table} exists"),
                     func: Box::new({
                         let table = table.clone();
                         move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
@@ -386,10 +386,7 @@ impl Property {
                 let table_name = table.clone();
 
                 let assertion = Interaction::Assertion(Assertion {
-                    message: format!(
-                        "select query should result in an error for table '{}'",
-                        table
-                    ),
+                    message: format!("select query should result in an error for table '{table}'"),
                     func: Box::new(move |stack: &Vec<ResultSet>, _: &SimulatorEnv| {
                         let last = stack.last().unwrap();
                         match last {
@@ -419,7 +416,7 @@ impl Property {
             }
             Property::SelectSelectOptimizer { table, predicate } => {
                 let assumption = Interaction::Assumption(Assertion {
-                    message: format!("table {} exists", table),
+                    message: format!("table {table} exists"),
                     func: Box::new({
                         let table = table.clone();
                         move |_: &Vec<ResultSet>, env: &SimulatorEnv| {
@@ -617,7 +614,10 @@ impl Property {
 
                 vec![assumption, select, select_tlp, assertion]
             }
-            Property::UNIONAllPreservesCardinality { select, where_clause } => {
+            Property::UNIONAllPreservesCardinality {
+                select,
+                where_clause,
+            } => {
                 let s1 = select.clone();
                 let mut s2 = select.clone();
                 s2.body.select.where_clause = where_clause.clone();
@@ -669,19 +669,18 @@ fn assert_all_table_values(tables: &[String]) -> impl Iterator<Item = Interactio
 
         let assertion = Interaction::Assertion(Assertion {
             message: format!(
-                "table {} should contain all of its values after the wal reopened",
-                table
+                "table {table} should contain all of its values after the wal reopened"
             ),
             func: Box::new({
                 let table = table.clone();
                 move |stack: &Vec<ResultSet>, env: &SimulatorEnv| {
                     let table = env.tables.iter().find(|t| t.name == table).ok_or_else(|| {
-                        LimboError::InternalError(format!("table {} should exist", table))
+                        LimboError::InternalError(format!("table {table} should exist"))
                     })?;
                     let last = stack.last().unwrap();
                     match last {
                         Ok(vals) => Ok(*vals == table.rows),
-                        Err(err) => Err(LimboError::InternalError(format!("{}", err))),
+                        Err(err) => Err(LimboError::InternalError(format!("{err}"))),
                     }
                 }
             }),
@@ -765,7 +764,7 @@ fn property_insert_values_select<R: rand::Rng>(
     let mut queries = Vec::new();
     // - [x] There will be no errors in the middle interactions. (this constraint is impossible to check, so this is just best effort)
     // - [x] The inserted row will not be deleted.
-    // - [ ] The inserted row will not be updated. (todo: add this constraint once UPDATE is implemented)
+    // - [x] The inserted row will not be updated.
     // - [ ] The table `t` will not be renamed, dropped, or altered. (todo: add this constraint once ALTER or DROP is implemented)
     for _ in 0..rng.gen_range(0..3) {
         let query = Query::arbitrary_from(rng, (env, remaining));

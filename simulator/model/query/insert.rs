@@ -2,7 +2,10 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{generation::Shadow, model::table::{SimValue, Table}};
+use crate::{
+    generation::Shadow,
+    model::table::{SimValue, Table},
+};
 
 use super::select::Select;
 
@@ -62,7 +65,7 @@ impl Display for Insert {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Insert::Values { table, values } => {
-                write!(f, "INSERT INTO {} VALUES ", table)?;
+                write!(f, "INSERT INTO {table} VALUES ")?;
                 for (i, row) in values.iter().enumerate() {
                     if i != 0 {
                         write!(f, ", ")?;
@@ -72,15 +75,15 @@ impl Display for Insert {
                         if j != 0 {
                             write!(f, ", ")?;
                         }
-                        write!(f, "{}", value)?;
+                        write!(f, "{value}")?;
                     }
                     write!(f, ")")?;
                 }
                 Ok(())
             }
             Insert::Select { table, select } => {
-                write!(f, "INSERT INTO {} ", table)?;
-                write!(f, "{}", select)
+                write!(f, "INSERT INTO {table} ")?;
+                write!(f, "{select}")
             }
         }
     }

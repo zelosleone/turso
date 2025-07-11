@@ -65,8 +65,14 @@ impl Predicate {
             // If the table name is empty, we cannot create a qualified expression
             // so we use the column name directly
             let mut splitted = column.name.split('.');
-            table_name = splitted.next().expect("Column name should have a table prefix for a joined table").to_string();
-            column.name = splitted.next().expect("Column name should have a column suffix for a joined table").to_string();
+            table_name = splitted
+                .next()
+                .expect("Column name should have a table prefix for a joined table")
+                .to_string();
+            column.name = splitted
+                .next()
+                .expect("Column name should have a column suffix for a joined table")
+                .to_string();
         }
 
         let expr = backtrack(
@@ -167,8 +173,14 @@ impl Predicate {
             // If the table name is empty, we cannot create a qualified expression
             // so we use the column name directly
             let mut splitted = column.name.split('.');
-            table_name = splitted.next().expect("Column name should have a table prefix for a joined table").to_string();
-            column.name = splitted.next().expect("Column name should have a column suffix for a joined table").to_string();
+            table_name = splitted
+                .next()
+                .expect("Column name should have a table prefix for a joined table")
+                .to_string();
+            column.name = splitted
+                .next()
+                .expect("Column name should have a column suffix for a joined table")
+                .to_string();
         }
 
         let expr = one_of(
@@ -245,8 +257,14 @@ impl SimplePredicate {
             // If the table name is empty, we cannot create a qualified expression
             // so we use the column name directly
             let mut splitted = column.name.split('.');
-            table_name = splitted.next().expect("Column name should have a table prefix for a joined table").to_string();
-            column.name = splitted.next().expect("Column name should have a column suffix for a joined table").to_string();
+            table_name = splitted
+                .next()
+                .expect("Column name should have a table prefix for a joined table")
+                .to_string();
+            column.name = splitted
+                .next()
+                .expect("Column name should have a column suffix for a joined table")
+                .to_string();
         }
 
         let expr = one_of(
@@ -308,8 +326,14 @@ impl SimplePredicate {
             // If the table name is empty, we cannot create a qualified expression
             // so we use the column name directly
             let mut splitted = column.name.split('.');
-            table_name = splitted.next().expect("Column name should have a table prefix for a joined table").to_string();
-            column.name = splitted.next().expect("Column name should have a column suffix for a joined table").to_string();
+            table_name = splitted
+                .next()
+                .expect("Column name should have a table prefix for a joined table")
+                .to_string();
+            column.name = splitted
+                .next()
+                .expect("Column name should have a column suffix for a joined table")
+                .to_string();
         }
 
         let expr = one_of(
@@ -378,7 +402,7 @@ impl CompoundPredicate {
             table.name,
             row
         );
-        
+
         let predicate = if rng.gen_bool(0.7) {
             // An AND for true requires each of its children to be true
             // An AND for false requires at least one of its children to be false
@@ -500,11 +524,8 @@ mod tests {
             let predicate = Predicate::true_binary(&mut rng, &table, row);
             let value = expr_to_value(&predicate.0, row, &table);
             assert!(
-                value.as_ref().map_or(false, |value| value.as_bool()),
-                "Predicate: {:#?}\nValue: {:#?}\nSeed: {}",
-                predicate,
-                value,
-                seed
+                value.as_ref().is_some_and(|value| value.as_bool()),
+                "Predicate: {predicate:#?}\nValue: {value:#?}\nSeed: {seed}"
             )
         }
     }
@@ -529,11 +550,8 @@ mod tests {
             let predicate = Predicate::false_binary(&mut rng, &table, row);
             let value = expr_to_value(&predicate.0, row, &table);
             assert!(
-                !value.as_ref().map_or(false, |value| value.as_bool()),
-                "Predicate: {:#?}\nValue: {:#?}\nSeed: {}",
-                predicate,
-                value,
-                seed
+                !value.as_ref().is_some_and(|value| value.as_bool()),
+                "Predicate: {predicate:#?}\nValue: {value:#?}\nSeed: {seed}"
             )
         }
     }
@@ -562,7 +580,7 @@ mod tests {
                 .map(|row| predicate.0.test(row, &table))
                 .reduce(|accum, curr| accum || curr)
                 .unwrap_or(false);
-            assert!(result, "Predicate: {:#?}\nSeed: {}", predicate, seed)
+            assert!(result, "Predicate: {predicate:#?}\nSeed: {seed}")
         }
     }
 
@@ -589,7 +607,7 @@ mod tests {
                 .iter()
                 .map(|row| predicate.0.test(row, &table))
                 .any(|res| !res);
-            assert!(result, "Predicate: {:#?}\nSeed: {}", predicate, seed)
+            assert!(result, "Predicate: {predicate:#?}\nSeed: {seed}")
         }
     }
 }
