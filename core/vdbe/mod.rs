@@ -27,7 +27,7 @@ pub mod sorter;
 use crate::{
     error::LimboError,
     function::{AggFunc, FuncCtx},
-    storage::sqlite3_ondisk::SmallVec,
+    storage::{pager, sqlite3_ondisk::SmallVec},
     translate::plan::TableReferences,
     types::{IOResult, RawSlice, TextRef},
     vdbe::execute::{OpIdxInsertState, OpInsertState, OpNewRowidState, OpSeekState},
@@ -510,10 +510,7 @@ impl Program {
                 if self.change_cnt_on {
                     self.connection.set_changes(self.n_change.get());
                 }
-                if matches!(
-                    status,
-                    crate::storage::pager::PagerCacheflushResult::Rollback
-                ) {
+                if matches!(status, pager::PagerCommitResult::Rollback) {
                     pager.rollback(schema_did_change, connection)?;
                 }
                 connection.transaction_state.replace(TransactionState::None);
