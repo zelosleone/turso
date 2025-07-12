@@ -263,7 +263,7 @@ fn query_pragma(
                 Some(ast::Expr::Name(name)) => {
                     let mode_name = normalize_ident(&name.0);
                     CheckpointMode::from_str(&mode_name).map_err(|e| {
-                        LimboError::ParseError(format!("Unknown Checkpoint Mode: {}", e))
+                        LimboError::ParseError(format!("Unknown Checkpoint Mode: {e}"))
                     })?
                 }
                 _ => CheckpointMode::Passive,
@@ -458,9 +458,7 @@ fn update_cache_size(
 
     pager
         .change_page_cache_size(final_cache_size)
-        .map_err(|e| {
-            LimboError::InternalError(format!("Failed to update page cache size: {}", e))
-        })?;
+        .map_err(|e| LimboError::InternalError(format!("Failed to update page cache size: {e}")))?;
 
     Ok(())
 }

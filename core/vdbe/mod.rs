@@ -329,9 +329,9 @@ impl ProgramState {
         let cursors = self.cursors.borrow_mut();
         std::cell::RefMut::map(cursors, |c| {
             c.get_mut(cursor_id)
-                .unwrap_or_else(|| panic!("cursor id {} out of bounds", cursor_id))
+                .unwrap_or_else(|| panic!("cursor id {cursor_id} out of bounds"))
                 .as_mut()
-                .unwrap_or_else(|| panic!("cursor id {} is None", cursor_id))
+                .unwrap_or_else(|| panic!("cursor id {cursor_id} is None"))
         })
     }
 }
@@ -344,7 +344,7 @@ impl Register {
                 assert!(!r.is_invalidated());
                 r.as_blob_value()
             }
-            _ => panic!("register holds unexpected value: {:?}", self),
+            _ => panic!("register holds unexpected value: {self:?}"),
         }
     }
 }

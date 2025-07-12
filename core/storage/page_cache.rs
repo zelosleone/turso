@@ -102,8 +102,7 @@ impl DumbLruPageCache {
             if let Some(existing_page_ref) = self.get(&key) {
                 assert!(
                     Arc::ptr_eq(&value, &existing_page_ref),
-                    "Attempted to insert different page with same key: {:?}",
-                    key
+                    "Attempted to insert different page with same key: {key:?}"
                 );
                 return Err(CacheError::KeyExists);
             }
@@ -418,15 +417,13 @@ impl DumbLruPageCache {
 
             if forward_count > map_len + 5 {
                 panic!(
-                    "Infinite loop suspected in forward integrity check. Size {}, count {}",
-                    map_len, forward_count
+                    "Infinite loop suspected in forward integrity check. Size {map_len}, count {forward_count}"
                 );
             }
         }
         assert_eq!(
             forward_count, map_len,
-            "Forward count mismatch (counted {}, map has {})",
-            forward_count, map_len
+            "Forward count mismatch (counted {forward_count}, map has {map_len})"
         );
         assert_eq!(
             tail_ptr, last_ptr,
@@ -457,15 +454,13 @@ impl DumbLruPageCache {
             }
             if backward_count > map_len + 5 {
                 panic!(
-                    "Infinite loop suspected in backward integrity check. Size {}, count {}",
-                    map_len, backward_count
+                    "Infinite loop suspected in backward integrity check. Size {map_len}, count {backward_count}"
                 );
             }
         }
         assert_eq!(
             backward_count, map_len,
-            "Backward count mismatch (counted {}, map has {})",
-            backward_count, map_len
+            "Backward count mismatch (counted {backward_count}, map has {map_len})"
         );
         assert_eq!(
             head_ptr, last_ptr,
@@ -1018,7 +1013,7 @@ mod tests {
                         Err(CacheError::Full | CacheError::ActiveRefs) => {} // Ignore
                         Err(err) => {
                             // Any other error should fail the test
-                            panic!("Cache insertion failed: {:?}", err);
+                            panic!("Cache insertion failed: {err:?}");
                         }
                         Ok(_) => {
                             lru.push(key, page);
@@ -1051,7 +1046,7 @@ mod tests {
             }
             cache.verify_list_integrity();
             for (key, page) in &lru {
-                println!("getting page {:?}", key);
+                println!("getting page {key:?}");
                 cache.peek(key, false).unwrap();
                 assert_eq!(page.get().id, key.pgno);
             }
@@ -1214,11 +1209,10 @@ mod tests {
         let final_memory = memory_stats::memory_stats().unwrap().physical_mem;
 
         let growth = final_memory.saturating_sub(initial_memory);
-        println!("Growth: {}", growth);
+        println!("Growth: {growth}");
         assert!(
             growth < 10_000_000,
-            "Memory grew by {} bytes over 10 cycles",
-            growth
+            "Memory grew by {growth} bytes over 10 cycles"
         );
     }
 }
