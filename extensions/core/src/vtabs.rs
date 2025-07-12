@@ -412,7 +412,7 @@ impl Conn {
         };
         let arg_count = args.len() as i32;
         let args = args.as_ptr();
-        let last_insert_rowid = 0;
+        let last_insert_rowid: i64 = 0;
         if let ResultCode::OK = unsafe {
             (self._execute)(
                 self as *const _ as *mut Conn,
