@@ -7,7 +7,6 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.SQLException;
-
 import tech.turso.TursoErrorCode;
 import tech.turso.annotations.NativeInvocation;
 import tech.turso.annotations.VisibleForTesting;
@@ -38,7 +37,7 @@ public final class TursoDB implements AutoCloseable {
    * Enum representing different architectures and their corresponding library paths and file
    * extensions.
    */
-  enum Architecture {
+  private enum Architecture {
     MACOS_ARM64("libs/macos_arm64/lib_turso_java.dylib", ".dylib"),
     MACOS_X86("libs/macos_x86/lib_turso_java.dylib", ".dylib"),
     LINUX_X86("libs/linux_x86/lib_turso_java.so", ".so"),
