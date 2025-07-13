@@ -7,6 +7,7 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.sql.SQLException;
+
 import tech.turso.TursoErrorCode;
 import tech.turso.annotations.NativeInvocation;
 import tech.turso.annotations.VisibleForTesting;
@@ -24,14 +25,12 @@ public final class TursoDB implements AutoCloseable {
 
   private final String url;
   private final String filePath;
-  private static boolean isLoaded;
 
   static {
     if ("The Android Project".equals(System.getProperty("java.vm.vendor"))) {
       // TODO
     } else {
       // continue with non Android execution path
-      isLoaded = false;
     }
   }
 
@@ -101,16 +100,16 @@ public final class TursoDB implements AutoCloseable {
    *     JAR file.
    */
   public static void load() {
-    if (isLoaded) {
-      return;
-    }
+    new SingletonHolder();
+  }
 
-    if (loadFromSystemPath() || loadFromJar()) {
-      isLoaded = true;
-      return;
+  // "lazy initialization holder class idiom" (Effective Java #83)
+  private static class SingletonHolder {
+    static {
+      if (!loadFromSystemPath() && !loadFromJar()) {
+        throw new InternalError("Unable to load necessary native library");
+      }
     }
-
-    throw new InternalError("Unable to load necessary native library");
   }
 
   /**
