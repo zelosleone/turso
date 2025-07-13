@@ -1100,7 +1100,6 @@ impl TryFrom<&[u8]> for JoinType {
 /// `JOIN` constraint
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-
 pub enum JoinConstraint {
     /// `ON`
     On(Expr),

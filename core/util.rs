@@ -42,10 +42,10 @@ pub const PRIMARY_KEY_AUTOMATIC_INDEX_NAME_PREFIX: &str = "sqlite_autoindex_";
 /// Unparsed index that comes from a sql query, i.e not an automatic index
 ///
 /// CREATE INDEX idx ON table_name(sql)
-struct UnparsedFromSqlIndex {
-    table_name: String,
-    root_page: usize,
-    sql: String,
+pub struct UnparsedFromSqlIndex {
+    pub table_name: String,
+    pub root_page: usize,
+    pub sql: String,
 }
 
 pub fn parse_schema_rows(
@@ -188,7 +188,7 @@ pub fn check_ident_equivalency(ident1: &str, ident2: &str) -> bool {
     strip_quotes(ident1).eq_ignore_ascii_case(strip_quotes(ident2))
 }
 
-fn module_name_from_sql(sql: &str) -> Result<&str> {
+pub fn module_name_from_sql(sql: &str) -> Result<&str> {
     if let Some(start) = sql.find("USING") {
         let start = start + 6;
         // stop at the first space, semicolon, or parenthesis
@@ -206,7 +206,7 @@ fn module_name_from_sql(sql: &str) -> Result<&str> {
 
 // CREATE VIRTUAL TABLE table_name USING module_name(arg1, arg2, ...);
 // CREATE VIRTUAL TABLE table_name USING module_name;
-fn module_args_from_sql(sql: &str) -> Result<Vec<turso_ext::Value>> {
+pub fn module_args_from_sql(sql: &str) -> Result<Vec<turso_ext::Value>> {
     if !sql.contains('(') {
         return Ok(vec![]);
     }
@@ -666,8 +666,7 @@ impl OpenMode {
             "memory" => Ok(OpenMode::Memory),
             "rwc" => Ok(OpenMode::ReadWriteCreate),
             _ => Err(LimboError::InvalidArgument(format!(
-                "Invalid mode: '{}'. Expected one of 'ro', 'rw', 'memory', 'rwc'",
-                s
+                "Invalid mode: '{s}'. Expected one of 'ro', 'rw', 'memory', 'rwc'"
             ))),
         }
     }
@@ -728,8 +727,7 @@ impl<'a> OpenOptions<'a> {
             // sqlite allows only `localhost` or empty authority.
             if !(authority.is_empty() || authority == "localhost") {
                 return Err(LimboError::InvalidArgument(format!(
-                    "Invalid authority '{}'. Only '' or 'localhost' allowed.",
-                    authority
+                    "Invalid authority '{authority}'. Only '' or 'localhost' allowed."
                 )));
             }
             opts.authority = if authority.is_empty() {
@@ -1049,8 +1047,7 @@ pub fn parse_string(expr: &Expr) -> Result<String> {
             Ok(s[1..s.len() - 1].to_string())
         }
         _ => Err(LimboError::InvalidArgument(format!(
-            "string parameter expected, got {:?} instead",
-            expr
+            "string parameter expected, got {expr:?} instead"
         ))),
     }
 }

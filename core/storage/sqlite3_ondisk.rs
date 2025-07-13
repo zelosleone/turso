@@ -95,6 +95,11 @@ pub const DATABASE_HEADER_PAGE_ID: usize = 1;
 /// The minimum size of a cell in bytes.
 pub const MINIMUM_CELL_SIZE: usize = 4;
 
+pub const CELL_PTR_SIZE_BYTES: usize = 2;
+pub const INTERIOR_PAGE_HEADER_SIZE_BYTES: usize = 12;
+pub const LEAF_PAGE_HEADER_SIZE_BYTES: usize = 8;
+pub const LEFT_CHILD_PTR_SIZE_BYTES: usize = 4;
+
 /// The database header.
 /// The first 100 bytes of the database file comprise the database file header.
 /// The database file header is divided into fields as shown by the table below.
@@ -351,7 +356,7 @@ impl TryFrom<u8> for PageType {
             5 => Ok(Self::TableInterior),
             10 => Ok(Self::IndexLeaf),
             13 => Ok(Self::TableLeaf),
-            _ => Err(LimboError::Corrupt(format!("Invalid page type: {}", value))),
+            _ => Err(LimboError::Corrupt(format!("Invalid page type: {value}"))),
         }
     }
 }
@@ -382,7 +387,6 @@ impl Clone for PageContent {
     }
 }
 
-const CELL_POINTER_SIZE_BYTES: usize = 2;
 impl PageContent {
     pub fn new(offset: usize, buffer: Arc<RefCell<Buffer>>) -> Self {
         Self {
@@ -397,10 +401,7 @@ impl PageContent {
     }
 
     pub fn maybe_page_type(&self) -> Option<PageType> {
-        match self.read_u8(0).try_into() {
-            Ok(v) => Some(v),
-            Err(_) => None, // this could be an overflow page
-        }
+        self.read_u8(0).try_into().ok() // this could be an overflow page
     }
 
     #[allow(clippy::mut_from_ref)]
@@ -475,8 +476,7 @@ impl PageContent {
     /// The size of the cell pointer array in bytes.
     /// 2 bytes per cell pointer
     pub fn cell_pointer_array_size(&self) -> usize {
-        const CELL_POINTER_SIZE_BYTES: usize = 2;
-        self.cell_count() * CELL_POINTER_SIZE_BYTES
+        self.cell_count() * CELL_PTR_SIZE_BYTES
     }
 
     /// The start of the unallocated region.
@@ -504,10 +504,8 @@ impl PageContent {
     /// 8 bytes for leaf pages, 12 bytes for interior pages (due to storing rightmost child pointer)
     pub fn header_size(&self) -> usize {
         match self.page_type() {
-            PageType::IndexInterior => 12,
-            PageType::TableInterior => 12,
-            PageType::IndexLeaf => 8,
-            PageType::TableLeaf => 8,
+            PageType::IndexInterior | PageType::TableInterior => INTERIOR_PAGE_HEADER_SIZE_BYTES,
+            PageType::IndexLeaf | PageType::TableLeaf => LEAF_PAGE_HEADER_SIZE_BYTES,
         }
     }
 
@@ -544,12 +542,10 @@ impl PageContent {
         let ncells = self.cell_count();
         assert!(
             idx < ncells,
-            "cell_get: idx out of bounds: idx={}, ncells={}",
-            idx,
-            ncells
+            "cell_get: idx out of bounds: idx={idx}, ncells={ncells}"
         );
         let cell_pointer_array_start = self.header_size();
-        let cell_pointer = cell_pointer_array_start + (idx * CELL_POINTER_SIZE_BYTES);
+        let cell_pointer = cell_pointer_array_start + (idx * CELL_PTR_SIZE_BYTES);
         let cell_pointer = self.read_u16(cell_pointer) as usize;
 
         // SAFETY: this buffer is valid as long as the page is alive. We could store the page in the cell and do some lifetime magic
@@ -564,7 +560,7 @@ impl PageContent {
         debug_assert!(self.page_type() == PageType::TableInterior);
         let buf = self.as_ptr();
         let cell_pointer_array_start = self.header_size();
-        let cell_pointer = cell_pointer_array_start + (idx * CELL_POINTER_SIZE_BYTES);
+        let cell_pointer = cell_pointer_array_start + (idx * CELL_PTR_SIZE_BYTES);
         let cell_pointer = self.read_u16(cell_pointer) as usize;
         const LEFT_CHILD_PAGE_SIZE_BYTES: usize = 4;
         let (rowid, _) = read_varint(&buf[cell_pointer + LEFT_CHILD_PAGE_SIZE_BYTES..])?;
@@ -580,7 +576,7 @@ impl PageContent {
         );
         let buf = self.as_ptr();
         let cell_pointer_array_start = self.header_size();
-        let cell_pointer = cell_pointer_array_start + (idx * CELL_POINTER_SIZE_BYTES);
+        let cell_pointer = cell_pointer_array_start + (idx * CELL_PTR_SIZE_BYTES);
         let cell_pointer = self.read_u16(cell_pointer) as usize;
         u32::from_be_bytes([
             buf[cell_pointer],
@@ -596,7 +592,7 @@ impl PageContent {
         debug_assert!(self.page_type() == PageType::TableLeaf);
         let buf = self.as_ptr();
         let cell_pointer_array_start = self.header_size();
-        let cell_pointer = cell_pointer_array_start + (idx * CELL_POINTER_SIZE_BYTES);
+        let cell_pointer = cell_pointer_array_start + (idx * CELL_PTR_SIZE_BYTES);
         let cell_pointer = self.read_u16(cell_pointer) as usize;
         let mut pos = cell_pointer;
         let (_, nr) = read_varint(&buf[pos..])?;
@@ -622,7 +618,7 @@ impl PageContent {
         let ncells = self.cell_count();
         let (cell_pointer_array_start, _) = self.cell_pointer_array_offset_and_size();
         assert!(idx < ncells, "cell_get: idx out of bounds");
-        let cell_pointer = cell_pointer_array_start + (idx * CELL_POINTER_SIZE_BYTES);
+        let cell_pointer = cell_pointer_array_start + (idx * CELL_PTR_SIZE_BYTES);
         let cell_pointer = self.read_u16_no_offset(cell_pointer) as usize;
         let start = cell_pointer;
         let payload_overflow_threshold_max =
@@ -707,7 +703,7 @@ impl PageContent {
         let mut pc = self.first_freeblock() as usize;
         let mut block_num = 0;
         println!("---- Free List Blocks ----");
-        println!("first freeblock pointer: {}", pc);
+        println!("first freeblock pointer: {pc}");
         println!("cell content area: {}", self.cell_content_area());
         println!("fragmented bytes: {}", self.num_frag_free_bytes());
 
@@ -715,10 +711,7 @@ impl PageContent {
             let next = self.read_u16_no_offset(pc);
             let size = self.read_u16_no_offset(pc + 2);
 
-            println!(
-                "block {}: position={}, size={}, next={}",
-                block_num, pc, size, next
-            );
+            println!("block {block_num}: position={pc}, size={size}, next={next}");
             pc = next as usize;
             block_num += 1;
         }
@@ -1378,7 +1371,7 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
         if !(MIN_PAGE_SIZE..=MAX_PAGE_SIZE).contains(&page_size_u32)
             || page_size_u32.count_ones() != 1
         {
-            panic!("Invalid page size in WAL header: {}", page_size_u32);
+            panic!("Invalid page size in WAL header: {page_size_u32}");
         }
         let page_size = page_size_u32 as usize;
 

@@ -1129,8 +1129,7 @@ pub fn op_vupdate(
         Err(e) => {
             // virtual table update failed
             return Err(LimboError::ExtensionError(format!(
-                "Virtual table update failed: {}",
-                e
+                "Virtual table update failed: {e}"
             )));
         }
     }
@@ -1572,20 +1571,17 @@ pub fn halt(
         0 => {}
         SQLITE_CONSTRAINT_PRIMARYKEY => {
             return Err(LimboError::Constraint(format!(
-                "UNIQUE constraint failed: {} (19)",
-                description
+                "UNIQUE constraint failed: {description} (19)"
             )));
         }
         SQLITE_CONSTRAINT_NOTNULL => {
             return Err(LimboError::Constraint(format!(
-                "NOT NULL constraint failed: {} (19)",
-                description
+                "NOT NULL constraint failed: {description} (19)"
             )));
         }
         _ => {
             return Err(LimboError::Constraint(format!(
-                "undocumented halt error code {}",
-                description
+                "undocumented halt error code {description}"
             )));
         }
     }
@@ -1620,20 +1616,17 @@ pub fn op_halt(
         0 => {}
         SQLITE_CONSTRAINT_PRIMARYKEY => {
             return Err(LimboError::Constraint(format!(
-                "UNIQUE constraint failed: {} (19)",
-                description
+                "UNIQUE constraint failed: {description} (19)"
             )));
         }
         SQLITE_CONSTRAINT_NOTNULL => {
             return Err(LimboError::Constraint(format!(
-                "NOTNULL constraint failed: {} (19)",
-                description
+                "NOTNULL constraint failed: {description} (19)"
             )));
         }
         _ => {
             return Err(LimboError::Constraint(format!(
-                "undocumented halt error code {}",
-                description
+                "undocumented halt error code {description}"
             )));
         }
     }
@@ -1855,7 +1848,7 @@ pub fn op_return(
     if let Value::Integer(pc) = state.registers[*return_reg].get_owned_value() {
         let pc: u32 = (*pc)
             .try_into()
-            .unwrap_or_else(|_| panic!("Return register is negative: {}", pc));
+            .unwrap_or_else(|_| panic!("Return register is negative: {pc}"));
         state.pc = pc;
     } else {
         if !*can_fallthrough {
@@ -2178,8 +2171,7 @@ pub fn op_seek(
     };
     assert!(
         target_pc.is_offset(),
-        "target_pc should be an offset, is: {:?}",
-        target_pc
+        "target_pc should be an offset, is: {target_pc:?}"
     );
     let eq_only = match insn {
         Insn::SeekGE { eq_only, .. } | Insn::SeekLE { eq_only, .. } => *eq_only,
@@ -2567,28 +2559,8 @@ pub fn op_agg_step(
             AggFunc::Count | AggFunc::Count0 => {
                 Register::Aggregate(AggContext::Count(Value::Integer(0)))
             }
-            AggFunc::Max => {
-                let col = state.registers[*col].get_owned_value();
-                match col {
-                    Value::Integer(_) => Register::Aggregate(AggContext::Max(None)),
-                    Value::Float(_) => Register::Aggregate(AggContext::Max(None)),
-                    Value::Text(_) => Register::Aggregate(AggContext::Max(None)),
-                    _ => {
-                        unreachable!();
-                    }
-                }
-            }
-            AggFunc::Min => {
-                let col = state.registers[*col].get_owned_value();
-                match col {
-                    Value::Integer(_) => Register::Aggregate(AggContext::Min(None)),
-                    Value::Float(_) => Register::Aggregate(AggContext::Min(None)),
-                    Value::Text(_) => Register::Aggregate(AggContext::Min(None)),
-                    _ => {
-                        unreachable!();
-                    }
-                }
-            }
+            AggFunc::Max => Register::Aggregate(AggContext::Max(None)),
+            AggFunc::Min => Register::Aggregate(AggContext::Min(None)),
             AggFunc::GroupConcat | AggFunc::StringAgg => {
                 Register::Aggregate(AggContext::GroupConcat(Value::build_text("")))
             }
@@ -2682,28 +2654,9 @@ pub fn op_agg_step(
                 unreachable!();
             };
 
-            match (acc.as_mut(), col.get_owned_value()) {
-                (None, value) => {
-                    *acc = Some(value.clone());
-                }
-                (Some(Value::Integer(ref mut current_max)), Value::Integer(value)) => {
-                    if *value > *current_max {
-                        *current_max = *value;
-                    }
-                }
-                (Some(Value::Float(ref mut current_max)), Value::Float(value)) => {
-                    if *value > *current_max {
-                        *current_max = *value;
-                    }
-                }
-                (Some(Value::Text(ref mut current_max)), Value::Text(value)) => {
-                    if value.value > current_max.value {
-                        *current_max = value.clone();
-                    }
-                }
-                _ => {
-                    eprintln!("Unexpected types in max aggregation");
-                }
+            let new_value = col.get_owned_value();
+            if *new_value != Value::Null && acc.as_ref().is_none_or(|acc| new_value > acc) {
+                *acc = Some(new_value.clone());
             }
         }
         AggFunc::Min => {
@@ -2718,28 +2671,10 @@ pub fn op_agg_step(
                 unreachable!();
             };
 
-            match (acc.as_mut(), col.get_owned_value()) {
-                (None, value) => {
-                    *acc.borrow_mut() = Some(value.clone());
-                }
-                (Some(Value::Integer(ref mut current_min)), Value::Integer(value)) => {
-                    if *value < *current_min {
-                        *current_min = *value;
-                    }
-                }
-                (Some(Value::Float(ref mut current_min)), Value::Float(value)) => {
-                    if *value < *current_min {
-                        *current_min = *value;
-                    }
-                }
-                (Some(Value::Text(ref mut current_min)), Value::Text(text)) => {
-                    if text.value < current_min.value {
-                        *current_min = text.clone();
-                    }
-                }
-                _ => {
-                    eprintln!("Unexpected types in min aggregation");
-                }
+            let new_value = col.get_owned_value();
+
+            if *new_value != Value::Null && acc.as_ref().is_none_or(|acc| new_value < acc) {
+                *acc = Some(new_value.clone());
             }
         }
         AggFunc::GroupConcat | AggFunc::StringAgg => {
@@ -2961,7 +2896,7 @@ pub fn op_agg_final(
             }
         }
         other => {
-            panic!("Unexpected value {:?} in AggFinal", other);
+            panic!("Unexpected value {other:?} in AggFinal");
         }
     };
     state.pc += 1;
@@ -3506,12 +3441,9 @@ pub fn op_function(
 
                 let result = match (pattern, match_expression) {
                     (Value::Text(pattern), Value::Text(match_expression)) if arg_count == 3 => {
-                        let escape = match construct_like_escape_arg(
+                        let escape = construct_like_escape_arg(
                             state.registers[*start_reg + 2].get_owned_value(),
-                        ) {
-                            Ok(x) => x,
-                            Err(e) => return Err(e),
-                        };
+                        )?;
 
                         Value::Integer(exec_like_with_escape(
                             pattern.as_str(),
@@ -3720,8 +3652,7 @@ pub fn op_function(
                         }
                         Err(e) => {
                             return Err(LimboError::ParseError(format!(
-                                "Error encountered while parsing datetime value: {}",
-                                e
+                                "Error encountered while parsing datetime value: {e}"
                             )));
                         }
                     }
@@ -4206,7 +4137,7 @@ pub fn op_end_coroutine(
         state.ended_coroutine.set(*yield_reg);
         let pc: u32 = (*pc)
             .try_into()
-            .unwrap_or_else(|_| panic!("EndCoroutine: pc overflow: {}", pc));
+            .unwrap_or_else(|_| panic!("EndCoroutine: pc overflow: {pc}"));
         state.pc = pc - 1; // yield jump is always next to yield. Here we subtract 1 to go back to yield instruction
     } else {
         unreachable!();
@@ -4234,7 +4165,7 @@ pub fn op_yield(
         } else {
             let pc: u32 = (*pc)
                 .try_into()
-                .unwrap_or_else(|_| panic!("Yield: pc overflow: {}", pc));
+                .unwrap_or_else(|_| panic!("Yield: pc overflow: {pc}"));
             // swap the program counter with the value in the yield register
             // this is the mechanism that allows jumping back and forth between the coroutine and the caller
             (state.pc, state.registers[*yield_reg]) =
@@ -4425,8 +4356,7 @@ pub fn op_idx_delete(
                     // Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
                     if *raise_error_if_no_matching_entry {
                         return Err(LimboError::Corrupt(format!(
-                            "IdxDelete: no matching index entry found for record {:?}",
-                            record
+                            "IdxDelete: no matching index entry found for record {record:?}"
                         )));
                     }
                     state.pc += 1;
@@ -4502,8 +4432,7 @@ pub fn op_idx_insert(
         Register::Record(ref r) => r,
         o => {
             return Err(LimboError::InternalError(format!(
-                "expected record, got {:?}",
-                o
+                "expected record, got {o:?}"
             )));
         }
     };
@@ -5064,10 +4993,7 @@ pub fn op_parse_schema(
     conn.auto_commit.set(false);
 
     if let Some(where_clause) = where_clause {
-        let stmt = conn.prepare(format!(
-            "SELECT * FROM sqlite_schema WHERE {}",
-            where_clause
-        ))?;
+        let stmt = conn.prepare(format!("SELECT * FROM sqlite_schema WHERE {where_clause}"))?;
 
         let mut new_schema = conn.schema.borrow().clone();
 
@@ -6515,7 +6441,7 @@ fn exec_concat_strings(registers: &[Register]) -> Value {
         match reg.get_owned_value() {
             Value::Null => continue,
             Value::Blob(_) => todo!("TODO concat blob"),
-            v => result.push_str(&format!("{}", v)),
+            v => result.push_str(&format!("{v}")),
         }
     }
     Value::build_text(result)
@@ -6528,7 +6454,7 @@ fn exec_concat_ws(registers: &[Register]) -> Value {
 
     let separator = match &registers[0].get_owned_value() {
         Value::Null | Value::Blob(_) => return Value::Null,
-        v => format!("{}", v),
+        v => format!("{v}"),
     };
 
     let mut result = String::new();
@@ -6538,7 +6464,7 @@ fn exec_concat_ws(registers: &[Register]) -> Value {
         }
         match reg.get_owned_value() {
             v if matches!(v, Value::Text(_) | Value::Integer(_) | Value::Float(_)) => {
-                result.push_str(&format!("{}", v))
+                result.push_str(&format!("{v}"))
             }
             _ => continue,
         }
@@ -6705,7 +6631,7 @@ fn execute_sqlite_version(version_integer: i64) -> String {
     let minor = (version_integer % 1_000_000) / 1_000;
     let release = version_integer % 1_000;
 
-    format!("{}.{}.{}", major, minor, release)
+    format!("{major}.{minor}.{release}")
 }
 
 pub fn extract_int_value(value: &Value) -> i64 {
@@ -7172,9 +7098,7 @@ mod tests {
             assert_eq!(
                 lhs.exec_add(rhs),
                 outputs[i],
-                "Wrong ADD for lhs: {}, rhs: {}",
-                lhs,
-                rhs
+                "Wrong ADD for lhs: {lhs}, rhs: {rhs}"
             );
         }
     }
@@ -7230,9 +7154,7 @@ mod tests {
             assert_eq!(
                 lhs.exec_subtract(rhs),
                 outputs[i],
-                "Wrong subtract for lhs: {}, rhs: {}",
-                lhs,
-                rhs
+                "Wrong subtract for lhs: {lhs}, rhs: {rhs}"
             );
         }
     }
@@ -7288,9 +7210,7 @@ mod tests {
             assert_eq!(
                 lhs.exec_multiply(rhs),
                 outputs[i],
-                "Wrong multiply for lhs: {}, rhs: {}",
-                lhs,
-                rhs
+                "Wrong multiply for lhs: {lhs}, rhs: {rhs}"
             );
         }
     }
@@ -7334,9 +7254,7 @@ mod tests {
             assert_eq!(
                 lhs.exec_divide(rhs),
                 outputs[i],
-                "Wrong divide for lhs: {}, rhs: {}",
-                lhs,
-                rhs
+                "Wrong divide for lhs: {lhs}, rhs: {rhs}"
             );
         }
     }
@@ -7402,9 +7320,7 @@ mod tests {
             assert_eq!(
                 lhs.exec_remainder(rhs),
                 outputs[i],
-                "Wrong remainder for lhs: {}, rhs: {}",
-                lhs,
-                rhs
+                "Wrong remainder for lhs: {lhs}, rhs: {rhs}"
             );
         }
     }
@@ -7441,9 +7357,7 @@ mod tests {
             assert_eq!(
                 lhs.exec_and(rhs),
                 outputs[i],
-                "Wrong AND for lhs: {}, rhs: {}",
-                lhs,
-                rhs
+                "Wrong AND for lhs: {lhs}, rhs: {rhs}"
             );
         }
     }
@@ -7482,9 +7396,7 @@ mod tests {
             assert_eq!(
                 lhs.exec_or(rhs),
                 outputs[i],
-                "Wrong OR for lhs: {}, rhs: {}",
-                lhs,
-                rhs
+                "Wrong OR for lhs: {lhs}, rhs: {rhs}"
             );
         }
     }

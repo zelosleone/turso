@@ -267,7 +267,9 @@ fn limbo_integrity_check(conn: &Arc<Connection>) -> Result<()> {
             StepResult::Done => {
                 break;
             }
-            StepResult::Busy => {}
+            StepResult::Busy => {
+                return Err(LimboError::Busy);
+            }
         }
     }
 
