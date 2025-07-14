@@ -28,25 +28,22 @@ impl Predicate {
     }
 
     pub(crate) fn not(predicate: Predicate) -> Self {
-        let expr = ast::Expr::Parenthesized(vec![ast::Expr::Unary(
-            ast::UnaryOperator::Not,
-            Box::new(predicate.0),
-        )]);
-        Self(expr)
+        let expr = ast::Expr::Unary(ast::UnaryOperator::Not, Box::new(predicate.0));
+        Self(expr).parens()
     }
 
     pub(crate) fn and(predicates: Vec<Predicate>) -> Self {
         if predicates.is_empty() {
             Self::true_()
         } else if predicates.len() == 1 {
-            predicates.into_iter().next().unwrap()
+            predicates.into_iter().next().unwrap().parens()
         } else {
-            let expr = ast::Expr::Parenthesized(vec![ast::Expr::Binary(
+            let expr = ast::Expr::Binary(
                 Box::new(predicates[0].0.clone()),
                 ast::Operator::And,
                 Box::new(Self::and(predicates[1..].to_vec()).0),
-            )]);
-            Self(expr)
+            );
+            Self(expr).parens()
         }
     }
 
@@ -54,24 +51,29 @@ impl Predicate {
         if predicates.is_empty() {
             Self::false_()
         } else if predicates.len() == 1 {
-            predicates.into_iter().next().unwrap()
+            predicates.into_iter().next().unwrap().parens()
         } else {
             let expr = ast::Expr::Binary(
                 Box::new(predicates[0].0.clone()),
                 ast::Operator::Or,
                 Box::new(Self::or(predicates[1..].to_vec()).0),
             );
-            Self(expr)
+            Self(expr).parens()
         }
     }
 
     pub(crate) fn eq(lhs: Predicate, rhs: Predicate) -> Self {
         let expr = ast::Expr::Binary(Box::new(lhs.0), ast::Operator::Equals, Box::new(rhs.0));
-        Self(expr)
+        Self(expr).parens()
     }
 
     pub(crate) fn is(lhs: Predicate, rhs: Predicate) -> Self {
         let expr = ast::Expr::Binary(Box::new(lhs.0), ast::Operator::Is, Box::new(rhs.0));
+        Self(expr).parens()
+    }
+
+    pub(crate) fn parens(self) -> Self {
+        let expr = ast::Expr::Parenthesized(vec![self.0]);
         Self(expr)
     }
 
@@ -121,6 +123,10 @@ pub fn expr_to_value(expr: &ast::Expr, row: &[SimValue], table: &Table) -> Optio
         ast::Expr::Unary(op, expr) => {
             let value = expr_to_value(expr, row, table)?;
             Some(value.unary_exec(*op))
+        }
+        ast::Expr::Parenthesized(exprs) => {
+            assert_eq!(exprs.len(), 1);
+            expr_to_value(&exprs[0], row, table)
         }
         _ => unreachable!("{:?}", expr),
     }
