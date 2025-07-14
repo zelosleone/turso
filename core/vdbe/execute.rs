@@ -2392,11 +2392,22 @@ pub fn op_deferred_seek(
     Ok(InsnFunctionStepResult::Step)
 }
 
+/// Separate enum for seek key to avoid lifetime issues
+/// with using [SeekKey] - OpSeekState always owns the key,
+/// unless it's [OpSeekKey::IndexKeyFromRegister] in which case the record
+/// is owned by the program state's registers and we store the register number.
+#[derive(Debug)]
+pub enum OpSeekKey {
+    TableRowId(i64),
+    IndexKeyOwned(ImmutableRecord),
+    IndexKeyFromRegister(usize),
+}
+
 pub enum OpSeekState {
     /// Initial state
     Start,
     /// Position cursor with seek operation with (rowid, op) search parameters
-    Seek { rowid: i64, op: SeekOp },
+    Seek { key: OpSeekKey, op: SeekOp },
     /// Advance cursor (with [BTreeCursor::next]/[BTreeCursor::prev] methods) which was
     /// positioned after [OpSeekState::Seek] state if [BTreeCursor::seek] returned [SeekResult::TryAdvance]
     Advance { op: SeekOp },
@@ -2411,56 +2422,52 @@ pub fn op_seek(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let result = op_seek_internal(program, state, insn, pager, mv_store);
-    if let Err(_) | Ok(InsnFunctionStepResult::Step) = &result {
-        state.op_seek_state = OpSeekState::Start;
-    }
-    result
-}
-
-pub fn op_seek_internal(
-    program: &Program,
-    state: &mut ProgramState,
-    insn: &Insn,
-    pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
-) -> Result<InsnFunctionStepResult> {
-    let (Insn::SeekGE {
-        cursor_id,
-        start_reg,
-        num_regs,
-        target_pc,
-        is_index,
-        ..
-    }
-    | Insn::SeekGT {
-        cursor_id,
-        start_reg,
-        num_regs,
-        target_pc,
-        is_index,
-    }
-    | Insn::SeekLE {
-        cursor_id,
-        start_reg,
-        num_regs,
-        target_pc,
-        is_index,
-        ..
-    }
-    | Insn::SeekLT {
-        cursor_id,
-        start_reg,
-        num_regs,
-        target_pc,
-        is_index,
-    }) = insn
-    else {
-        unreachable!("unexpected Insn {:?}", insn)
+    let (cursor_id, is_index, record_source, target_pc) = match insn {
+        Insn::SeekGE {
+            cursor_id,
+            is_index,
+            start_reg,
+            num_regs,
+            target_pc,
+            ..
+        }
+        | Insn::SeekLE {
+            cursor_id,
+            is_index,
+            start_reg,
+            num_regs,
+            target_pc,
+            ..
+        }
+        | Insn::SeekGT {
+            cursor_id,
+            is_index,
+            start_reg,
+            num_regs,
+            target_pc,
+            ..
+        }
+        | Insn::SeekLT {
+            cursor_id,
+            is_index,
+            start_reg,
+            num_regs,
+            target_pc,
+            ..
+        } => (
+            cursor_id,
+            *is_index,
+            RecordSource::Unpacked {
+                start_reg: *start_reg,
+                num_regs: *num_regs,
+            },
+            target_pc,
+        ),
+        _ => unreachable!("unexpected Insn {:?}", insn),
     };
     assert!(
         target_pc.is_offset(),
-        "target_pc should be an offset, is: {target_pc:?}"
+        "op_seek: target_pc should be an offset, is: {target_pc:?}"
     );
     let eq_only = match insn {
         Insn::SeekGE { eq_only, .. } | Insn::SeekLE { eq_only, .. } => *eq_only,
@@ -2473,169 +2480,280 @@ pub fn op_seek_internal(
         Insn::SeekLT { .. } => SeekOp::LT,
         _ => unreachable!("unexpected Insn {:?}", insn),
     };
-    if *is_index {
-        let seek_result = {
-            let mut cursor = state.get_cursor(*cursor_id);
-            let cursor = cursor.as_btree_mut();
-            let record_from_regs = make_record(&state.registers, start_reg, num_regs);
-            return_if_io!(cursor.seek(SeekKey::IndexKey(&record_from_regs), op))
-        };
-        if !matches!(seek_result, SeekResult::Found) {
-            state.pc = target_pc.as_offset_int();
-        } else {
+    match seek_internal(
+        program,
+        state,
+        pager,
+        mv_store,
+        record_source,
+        *cursor_id,
+        is_index,
+        op,
+    ) {
+        Ok(SeekInternalResult::Found) => {
             state.pc += 1;
+            Ok(InsnFunctionStepResult::Step)
         }
-        return Ok(InsnFunctionStepResult::Step);
+        Ok(SeekInternalResult::NotFound) => {
+            state.pc = target_pc.as_offset_int();
+            Ok(InsnFunctionStepResult::Step)
+        }
+        Ok(SeekInternalResult::IO) => Ok(InsnFunctionStepResult::IO),
+        Err(e) => Err(e),
     }
-    loop {
-        match &state.op_seek_state {
-            OpSeekState::Start => {
-                let original_value = state.registers[*start_reg].get_owned_value().clone();
-                let mut temp_value = original_value.clone();
+}
 
-                let conversion_successful = if matches!(temp_value, Value::Text(_)) {
-                    let mut temp_reg = Register::Value(temp_value);
-                    let converted = apply_numeric_affinity(&mut temp_reg, false);
-                    temp_value = temp_reg.get_owned_value().clone();
-                    converted
-                } else {
-                    true // Non-text values don't need conversion
-                };
-                let int_key = extract_int_value(&temp_value);
-                let lost_precision =
-                    !conversion_successful || !matches!(temp_value, Value::Integer(_));
-                let actual_op = if lost_precision {
-                    match &temp_value {
-                        Value::Float(f) => {
-                            let int_key_as_float = int_key as f64;
-                            let c = if int_key_as_float > *f {
-                                1
-                            } else if int_key_as_float < *f {
-                                -1
-                            } else {
-                                0
-                            };
+#[derive(Debug, PartialEq)]
+pub enum SeekInternalResult {
+    Found,
+    NotFound,
+    IO,
+}
+pub enum RecordSource {
+    Unpacked { start_reg: usize, num_regs: usize },
+    Packed { record_reg: usize },
+}
 
-                            match c.cmp(&0) {
-                                std::cmp::Ordering::Less => match op {
-                                    SeekOp::LT => SeekOp::LE { eq_only: false }, // (x < 5.1) -> (x <= 5)
-                                    SeekOp::GE { .. } => SeekOp::GT, // (x >= 5.1) -> (x > 5)
-                                    other => other,
-                                },
-                                std::cmp::Ordering::Greater => match op {
-                                    SeekOp::GT => SeekOp::GE { eq_only: false }, // (x > 4.9) -> (x >= 5)
-                                    SeekOp::LE { .. } => SeekOp::LT, // (x <= 4.9) -> (x < 5)
-                                    other => other,
-                                },
-                                std::cmp::Ordering::Equal => op,
+/// Internal function used by many VDBE instructions that need to perform a seek operation.
+///
+/// Explanation for some of the arguments:
+/// - `record_source`: whether the seek key record is already a record (packed) or it will be constructed from registers (unpacked)
+/// - `cursor_id`: the cursor id
+/// - `is_index`: true if the cursor is an index, false if it is a table
+/// - `op`: the [SeekOp] to perform
+#[allow(clippy::too_many_arguments)]
+pub fn seek_internal(
+    program: &Program,
+    state: &mut ProgramState,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Rc<MvStore>>,
+    record_source: RecordSource,
+    cursor_id: usize,
+    is_index: bool,
+    op: SeekOp,
+) -> Result<SeekInternalResult> {
+    /// wrapper so we can use the ? operator and handle errors correctly in this outer function
+    fn inner(
+        program: &Program,
+        state: &mut ProgramState,
+        pager: &Rc<Pager>,
+        mv_store: Option<&Rc<MvStore>>,
+        record_source: RecordSource,
+        cursor_id: usize,
+        is_index: bool,
+        op: SeekOp,
+    ) -> Result<SeekInternalResult> {
+        loop {
+            match &state.seek_state {
+                OpSeekState::Start => {
+                    if is_index {
+                        // FIXME: text-to-numeric conversion should also happen here when applicable (when index column is numeric)
+                        // See below for the table-btree implementation of this
+                        match record_source {
+                            RecordSource::Unpacked {
+                                start_reg,
+                                num_regs,
+                            } => {
+                                let record_from_regs =
+                                    make_record(&state.registers, &start_reg, &num_regs);
+                                state.seek_state = OpSeekState::Seek {
+                                    key: OpSeekKey::IndexKeyOwned(record_from_regs),
+                                    op,
+                                };
                             }
-                        }
-                        Value::Text(_) | Value::Blob(_) => {
-                            match op {
-                                SeekOp::GT | SeekOp::GE { .. } => {
-                                    // No integers are > or >= non-numeric text, jump to target (empty result)
-                                    state.pc = target_pc.as_offset_int();
-                                    return Ok(InsnFunctionStepResult::Step);
-                                }
-                                SeekOp::LT | SeekOp::LE { .. } => {
-                                    // All integers are < or <= non-numeric text
-                                    // Move to last position and then use the normal seek logic
-                                    state.op_seek_state = OpSeekState::MoveLast;
-                                    continue;
-                                }
+                            RecordSource::Packed { record_reg } => {
+                                state.seek_state = OpSeekState::Seek {
+                                    key: OpSeekKey::IndexKeyFromRegister(record_reg),
+                                    op,
+                                };
                             }
-                        }
-                        _ => op,
-                    }
-                } else {
-                    op
-                };
-                let rowid = if matches!(original_value, Value::Null) {
-                    match actual_op {
-                        SeekOp::GE { .. } | SeekOp::GT => {
-                            state.pc = target_pc.as_offset_int();
-                            return Ok(InsnFunctionStepResult::Step);
-                        }
-                        SeekOp::LE { .. } | SeekOp::LT => {
-                            // No integers are < NULL, so jump to target
-                            state.pc = target_pc.as_offset_int();
-                            return Ok(InsnFunctionStepResult::Step);
-                        }
-                    }
-                } else {
-                    int_key
-                };
-                state.op_seek_state = OpSeekState::Seek {
-                    rowid,
-                    op: actual_op,
-                };
-                continue;
-            }
-            OpSeekState::Seek { rowid, op } => {
-                let seek_result = {
-                    let mut cursor = state.get_cursor(*cursor_id);
-                    let cursor = cursor.as_btree_mut();
-                    return_if_io!(cursor.seek(SeekKey::TableRowId(*rowid), *op))
-                };
-                let found = match seek_result {
-                    SeekResult::Found => true,
-                    SeekResult::NotFound => false,
-                    SeekResult::TryAdvance => {
-                        state.op_seek_state = OpSeekState::Advance { op: *op };
+                        };
                         continue;
                     }
-                };
-                if !found {
-                    state.pc = target_pc.as_offset_int()
-                } else {
-                    state.pc += 1
+                    let RecordSource::Unpacked {
+                        start_reg,
+                        num_regs,
+                    } = record_source
+                    else {
+                        unreachable!("op_seek: record_source should be Unpacked for table-btree");
+                    };
+                    assert_eq!(num_regs, 1, "op_seek: num_regs should be 1 for table-btree");
+                    let original_value = state.registers[start_reg].get_owned_value().clone();
+                    let mut temp_value = original_value.clone();
+
+                    let conversion_successful = if matches!(temp_value, Value::Text(_)) {
+                        let mut temp_reg = Register::Value(temp_value);
+                        let converted = apply_numeric_affinity(&mut temp_reg, false);
+                        temp_value = temp_reg.get_owned_value().clone();
+                        converted
+                    } else {
+                        true // Non-text values don't need conversion
+                    };
+                    let int_key = extract_int_value(&temp_value);
+                    let lost_precision =
+                        !conversion_successful || !matches!(temp_value, Value::Integer(_));
+                    let actual_op = if lost_precision {
+                        match &temp_value {
+                            Value::Float(f) => {
+                                let int_key_as_float = int_key as f64;
+                                let c = if int_key_as_float > *f {
+                                    1
+                                } else if int_key_as_float < *f {
+                                    -1
+                                } else {
+                                    0
+                                };
+
+                                match c.cmp(&0) {
+                                    std::cmp::Ordering::Less => match op {
+                                        SeekOp::LT => SeekOp::LE { eq_only: false }, // (x < 5.1) -> (x <= 5)
+                                        SeekOp::GE { .. } => SeekOp::GT, // (x >= 5.1) -> (x > 5)
+                                        other => other,
+                                    },
+                                    std::cmp::Ordering::Greater => match op {
+                                        SeekOp::GT => SeekOp::GE { eq_only: false }, // (x > 4.9) -> (x >= 5)
+                                        SeekOp::LE { .. } => SeekOp::LT, // (x <= 4.9) -> (x < 5)
+                                        other => other,
+                                    },
+                                    std::cmp::Ordering::Equal => op,
+                                }
+                            }
+                            Value::Text(_) | Value::Blob(_) => {
+                                match op {
+                                    SeekOp::GT | SeekOp::GE { .. } => {
+                                        // No integers are > or >= non-numeric text
+                                        return Ok(SeekInternalResult::NotFound);
+                                    }
+                                    SeekOp::LT | SeekOp::LE { .. } => {
+                                        // All integers are < or <= non-numeric text
+                                        // Move to last position and then use the normal seek logic
+                                        state.seek_state = OpSeekState::MoveLast;
+                                        continue;
+                                    }
+                                }
+                            }
+                            _ => op,
+                        }
+                    } else {
+                        op
+                    };
+                    let rowid = if matches!(original_value, Value::Null) {
+                        match actual_op {
+                            SeekOp::GE { .. } | SeekOp::GT => {
+                                return Ok(SeekInternalResult::NotFound);
+                            }
+                            SeekOp::LE { .. } | SeekOp::LT => {
+                                // No integers are < NULL
+                                return Ok(SeekInternalResult::NotFound);
+                            }
+                        }
+                    } else {
+                        int_key
+                    };
+                    state.seek_state = OpSeekState::Seek {
+                        key: OpSeekKey::TableRowId(rowid),
+                        op: actual_op,
+                    };
+                    continue;
                 }
-                return Ok(InsnFunctionStepResult::Step);
-            }
-            OpSeekState::Advance { op } => {
-                let found = {
-                    let mut cursor = state.get_cursor(*cursor_id);
+                OpSeekState::Seek { key, op } => {
+                    let seek_result = {
+                        let mut cursor = state.get_cursor(cursor_id);
+                        let cursor = cursor.as_btree_mut();
+                        let seek_key = match key {
+                        OpSeekKey::TableRowId(rowid) => SeekKey::TableRowId(*rowid),
+                        OpSeekKey::IndexKeyOwned(record) => SeekKey::IndexKey(record),
+                        OpSeekKey::IndexKeyFromRegister(record_reg) => match &state.registers[*record_reg] {
+                            Register::Record(ref record) => SeekKey::IndexKey(record),
+                            _ => unreachable!("op_seek: record_reg should be a Record register when OpSeekKey::IndexKeyFromRegister is used"),
+                        }
+                    };
+                        match cursor.seek(seek_key, *op)? {
+                            CursorResult::Ok(seek_result) => seek_result,
+                            CursorResult::IO => return Ok(SeekInternalResult::IO),
+                        }
+                    };
+                    let found = match seek_result {
+                        SeekResult::Found => true,
+                        SeekResult::NotFound => false,
+                        SeekResult::TryAdvance => {
+                            state.seek_state = OpSeekState::Advance { op: *op };
+                            continue;
+                        }
+                    };
+                    return Ok(if found {
+                        SeekInternalResult::Found
+                    } else {
+                        SeekInternalResult::NotFound
+                    });
+                }
+                OpSeekState::Advance { op } => {
+                    let found = {
+                        let mut cursor = state.get_cursor(cursor_id);
+                        let cursor = cursor.as_btree_mut();
+                        // Seek operation has anchor number which equals to the closed boundary of the range
+                        // (e.g. for >= x - anchor is x, for > x - anchor is x + 1)
+                        //
+                        // Before Advance state, cursor was positioned to the leaf page which should hold the anchor.
+                        // Sometimes this leaf page can have no matching rows, and in this case
+                        // we need to move cursor in the direction of Seek to find record which matches the seek filter
+                        //
+                        // Consider following scenario: Seek [> 666]
+                        // interior page dividers:       I1: [ .. 667 .. ]
+                        //                                       /   \
+                        //             leaf pages:    P1[661,665]   P2[anything here is GT 666]
+                        // After the initial Seek, cursor will be positioned after the end of leaf page P1 [661, 665]
+                        // because this is potential position for insertion of value 666.
+                        // But as P1 has no row matching Seek criteria - we need to move it to the right
+                        // (and as we at the page boundary, we will move cursor to the next neighbor leaf, which guaranteed to have
+                        // row keys greater than divider, which is greater or equal than anchor)
+
+                        // this same logic applies for indexes, but the next/prev record is expected to be found in the parent page's
+                        // divider cell.
+                        let result = match op {
+                            SeekOp::GT { .. } | SeekOp::GE { .. } => cursor.next()?,
+                            SeekOp::LT { .. } | SeekOp::LE { .. } => cursor.prev()?,
+                        };
+                        match result {
+                            CursorResult::Ok(found) => found,
+                            CursorResult::IO => return Ok(SeekInternalResult::IO),
+                        }
+                    };
+                    return Ok(if found {
+                        SeekInternalResult::Found
+                    } else {
+                        SeekInternalResult::NotFound
+                    });
+                }
+                OpSeekState::MoveLast => {
+                    let mut cursor = state.get_cursor(cursor_id);
                     let cursor = cursor.as_btree_mut();
-                    // Seek operation has anchor number which equals to the closed boundary of the range
-                    // (e.g. for >= x - anchor is x, for > x - anchor is x + 1)
-                    //
-                    // Before Advance state, cursor was positioned to the leaf page which should hold the anchor.
-                    // Sometimes this leaf page can have no matching rows, and in this case
-                    // we need to move cursor in the direction of Seek to find record which matches the seek filter
-                    //
-                    // Consider following scenario: Seek [> 666]
-                    // interior page dividers:       I1: [ .. 667 .. ]
-                    //                                       /   \
-                    //             leaf pages:    P1[661,665]   P2[anything here is GT 666]
-                    // After the initial Seek, cursor will be positioned after the end of leaf page P1 [661, 665]
-                    // because this is potential position for insertion of value 666.
-                    // But as P1 has no row matching Seek criteria - we need to move it to the right
-                    // (and as we at the page boundary, we will move cursor to the next neighbor leaf, which guaranteed to have
-                    // row keys greater than divider, which is greater or equal than anchor)
-                    match op {
-                        SeekOp::GT | SeekOp::GE { eq_only: false } => return_if_io!(cursor.next()),
-                        SeekOp::LT | SeekOp::LE { eq_only: false } => return_if_io!(cursor.prev()),
-                        _ => unreachable!("eq_only: true state must be unreachable"),
+                    match cursor.last()? {
+                        CursorResult::Ok(()) => {}
+                        CursorResult::IO => return Ok(SeekInternalResult::IO),
                     }
-                };
-                if !found {
-                    state.pc = target_pc.as_offset_int()
-                } else {
-                    state.pc += 1
+                    // the MoveLast variant is only used for SeekOp::LT and SeekOp::LE when the seek condition is always true,
+                    // so we have always found what we were looking for.
+                    return Ok(SeekInternalResult::Found);
                 }
-                return Ok(InsnFunctionStepResult::Step);
-            }
-            OpSeekState::MoveLast => {
-                {
-                    let mut cursor = state.get_cursor(*cursor_id);
-                    let cursor = cursor.as_btree_mut();
-                    return_if_io!(cursor.last());
-                }
-                state.pc += 1;
-                return Ok(InsnFunctionStepResult::Step);
             }
         }
     }
+
+    let result = inner(
+        program,
+        state,
+        pager,
+        mv_store,
+        record_source,
+        cursor_id,
+        is_index,
+        op,
+    );
+    if !matches!(result, Ok(SeekInternalResult::IO)) {
+        state.seek_state = OpSeekState::Start;
+    }
+    result
 }
 
 /// Returns the tie-breaker ordering for SQLite index comparison opcodes.
@@ -4837,7 +4955,7 @@ pub fn op_delete(
 
 #[derive(Debug)]
 pub enum OpIdxDeleteState {
-    Seeking(ImmutableRecord), // First seek row to delete
+    Seeking,
     Verifying,
     Deleting,
 }
@@ -4857,6 +4975,7 @@ pub fn op_idx_delete(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
+
     loop {
         tracing::debug!(
             "op_idx_delete(cursor_id={}, start_reg={}, num_regs={}, rootpage={}, state={:?})",
@@ -4867,26 +4986,31 @@ pub fn op_idx_delete(
             state.op_idx_delete_state
         );
         match &state.op_idx_delete_state {
-            Some(OpIdxDeleteState::Seeking(record)) => {
-                let found = {
-                    let mut cursor = state.get_cursor(*cursor_id);
-                    let cursor = cursor.as_btree_mut();
-                    let seek_result = return_if_io!(
-                        cursor.seek(SeekKey::IndexKey(record), SeekOp::GE { eq_only: true })
-                    );
-                    tracing::debug!(
-                        "op_idx_delete: found={:?}, rootpage={}, key={:?}",
-                        seek_result,
-                        cursor.root_page(),
-                        record
-                    );
-                    matches!(seek_result, SeekResult::Found)
+            Some(OpIdxDeleteState::Seeking) => {
+                let found = match seek_internal(
+                    program,
+                    state,
+                    pager,
+                    mv_store,
+                    RecordSource::Unpacked {
+                        start_reg: *start_reg,
+                        num_regs: *num_regs,
+                    },
+                    *cursor_id,
+                    true,
+                    SeekOp::GE { eq_only: true },
+                ) {
+                    Ok(SeekInternalResult::Found) => true,
+                    Ok(SeekInternalResult::NotFound) => false,
+                    Ok(SeekInternalResult::IO) => return Ok(InsnFunctionStepResult::IO),
+                    Err(e) => return Err(e),
                 };
 
                 if !found {
                     // If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching index entry is found
                     // Also, do not raise this (self-correcting and non-critical) error if in writable_schema mode.
                     if *raise_error_if_no_matching_entry {
+                        let record = make_record(&state.registers, start_reg, num_regs);
                         return Err(LimboError::Corrupt(format!(
                             "IdxDelete: no matching index entry found for record {record:?}"
                         )));
@@ -4925,8 +5049,7 @@ pub fn op_idx_delete(
                 return Ok(InsnFunctionStepResult::Step);
             }
             None => {
-                let record = make_record(&state.registers, start_reg, num_regs);
-                state.op_idx_delete_state = Some(OpIdxDeleteState::Seeking(record));
+                state.op_idx_delete_state = Some(OpIdxDeleteState::Seeking);
             }
         }
     }
@@ -4981,17 +5104,27 @@ pub fn op_idx_insert(
                 };
                 return Ok(InsnFunctionStepResult::Step);
             }
-            {
-                let mut cursor = state.get_cursor(cursor_id);
-                let cursor = cursor.as_btree_mut();
 
-                return_if_io!(cursor.seek(
-                    SeekKey::IndexKey(record_to_insert),
-                    SeekOp::GE { eq_only: true }
-                ));
+            match seek_internal(
+                program,
+                state,
+                pager,
+                mv_store,
+                RecordSource::Packed { record_reg },
+                cursor_id,
+                true,
+                SeekOp::GE { eq_only: true },
+            )? {
+                SeekInternalResult::Found => {
+                    state.op_idx_insert_state = OpIdxInsertState::UniqueConstraintCheck;
+                    Ok(InsnFunctionStepResult::Step)
+                }
+                SeekInternalResult::NotFound => {
+                    state.op_idx_insert_state = OpIdxInsertState::Insert { moved_before: true };
+                    Ok(InsnFunctionStepResult::Step)
+                }
+                SeekInternalResult::IO => Ok(InsnFunctionStepResult::IO),
             }
-            state.op_idx_insert_state = OpIdxInsertState::UniqueConstraintCheck;
-            Ok(InsnFunctionStepResult::Step)
         }
         OpIdxInsertState::UniqueConstraintCheck => {
             let ignore_conflict = 'i: {
@@ -5239,6 +5372,10 @@ pub fn op_soft_null(
     Ok(InsnFunctionStepResult::Step)
 }
 
+/// If a matching record is not found in the btree ("no conflict"), jump to the target PC.
+/// Otherwise, continue execution.
+/// FIXME: create a state machine for op_no_conflict so that it doesn't do the nulls checking
+/// multiple times in the case of yielding on IO.
 pub fn op_no_conflict(
     program: &Program,
     state: &mut ProgramState,
@@ -5258,39 +5395,67 @@ pub fn op_no_conflict(
     let mut cursor_ref = state.get_cursor(*cursor_id);
     let cursor = cursor_ref.as_btree_mut();
 
-    let record = if *num_regs == 0 {
-        match &state.registers[*record_reg] {
-            Register::Record(r) => r,
-            _ => {
-                return Err(LimboError::InternalError(
-                    "NoConflict: exepected a record in the register".into(),
-                ));
-            }
+    let record_source = if *num_regs == 0 {
+        RecordSource::Packed {
+            record_reg: *record_reg,
         }
     } else {
-        &make_record(&state.registers, record_reg, num_regs)
+        RecordSource::Unpacked {
+            start_reg: *record_reg,
+            num_regs: *num_regs,
+        }
     };
+
     // If there is at least one NULL in the index record, there cannot be a conflict so we can immediately jump.
-    let contains_nulls = record
-        .get_values()
-        .iter()
-        .any(|val| matches!(val, RefValue::Null));
+    let contains_nulls = match &record_source {
+        RecordSource::Packed { record_reg } => {
+            let Register::Record(record) = &state.registers[*record_reg] else {
+                return Err(LimboError::InternalError(
+                    "NoConflict: expected a record in the register".into(),
+                ));
+            };
+            record
+                .get_values()
+                .iter()
+                .any(|val| matches!(val, RefValue::Null))
+        }
+        RecordSource::Unpacked {
+            start_reg,
+            num_regs,
+        } => (0..*num_regs).any(|i| {
+            matches!(
+                &state.registers[start_reg + i],
+                Register::Value(Value::Null)
+            )
+        }),
+    };
 
     if contains_nulls {
         drop(cursor_ref);
         state.pc = target_pc.as_offset_int();
         return Ok(InsnFunctionStepResult::Step);
     }
-
-    let seek_result =
-        return_if_io!(cursor.seek(SeekKey::IndexKey(record), SeekOp::GE { eq_only: true }));
     drop(cursor_ref);
-    if !matches!(seek_result, SeekResult::Found) {
-        state.pc = target_pc.as_offset_int();
-    } else {
-        state.pc += 1;
+    match seek_internal(
+        program,
+        state,
+        pager,
+        mv_store,
+        record_source,
+        *cursor_id,
+        true,
+        SeekOp::GE { eq_only: true },
+    )? {
+        SeekInternalResult::Found => {
+            state.pc += 1;
+            Ok(InsnFunctionStepResult::Step)
+        }
+        SeekInternalResult::NotFound => {
+            state.pc = target_pc.as_offset_int();
+            Ok(InsnFunctionStepResult::Step)
+        }
+        SeekInternalResult::IO => Ok(InsnFunctionStepResult::IO),
     }
-    Ok(InsnFunctionStepResult::Step)
 }
 
 pub fn op_not_exists(
@@ -6099,25 +6264,30 @@ pub fn op_found(
 
     let not = matches!(insn, Insn::NotFound { .. });
 
-    let seek_result = {
-        let mut cursor = state.get_cursor(*cursor_id);
-        let cursor = cursor.as_btree_mut();
-
-        if *num_regs == 0 {
-            let record = match &state.registers[*record_reg] {
-                Register::Record(r) => r,
-                _ => {
-                    return Err(LimboError::InternalError(
-                        "NotFound: exepected a record in the register".into(),
-                    ));
-                }
-            };
-
-            return_if_io!(cursor.seek(SeekKey::IndexKey(record), SeekOp::GE { eq_only: true }))
-        } else {
-            let record = make_record(&state.registers, record_reg, num_regs);
-            return_if_io!(cursor.seek(SeekKey::IndexKey(&record), SeekOp::GE { eq_only: true }))
+    let record_source = if *num_regs == 0 {
+        RecordSource::Packed {
+            record_reg: *record_reg,
         }
+    } else {
+        RecordSource::Unpacked {
+            start_reg: *record_reg,
+            num_regs: *num_regs,
+        }
+    };
+    let seek_result = match seek_internal(
+        program,
+        state,
+        pager,
+        mv_store,
+        record_source,
+        *cursor_id,
+        true,
+        SeekOp::GE { eq_only: true },
+    ) {
+        Ok(SeekInternalResult::Found) => SeekResult::Found,
+        Ok(SeekInternalResult::NotFound) => SeekResult::NotFound,
+        Ok(SeekInternalResult::IO) => return Ok(InsnFunctionStepResult::IO),
+        Err(e) => return Err(e),
     };
 
     let found = matches!(seek_result, SeekResult::Found);
