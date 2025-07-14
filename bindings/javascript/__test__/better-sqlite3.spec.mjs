@@ -45,7 +45,7 @@ foobarTest.both("Property .readonly of database if not set", async (t) => {
   t.is(db.readonly, false);
 });
 
-foobarTest.onlySqlitePasses("Property .open of database", async (t) => {
+foobarTest.both("Property .open of database", async (t) => {
   const db = t.context.db;
   t.is(db.open, true);
 });

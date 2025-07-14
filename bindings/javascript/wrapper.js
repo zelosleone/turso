@@ -63,6 +63,11 @@ class Database {
           return opts.readonly;
         },
       },
+      open: {
+        get() {
+          return this.db.open;
+        }
+      }
     });
   }
 
