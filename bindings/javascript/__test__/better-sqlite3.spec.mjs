@@ -96,18 +96,7 @@ inMemoryTest.both("Statment.iterate() should correctly return an iterable object
   }
 });
 
-inMemoryTest.both("Empty prepared statement should throw", async (t) => {
-  const db = t.context.db;
-  t.throws(
-    () => {
-      db.prepare("");
-    },
-    { any: true }
-  );
-});
-
-inMemoryTest.onlySqlitePasses("Empty prepared statement should throw the correct error", async (t) => {
-  // the previous test can be removed once this one passes in Turso
+inMemoryTest.both("Empty prepared statement should throw the correct error", async (t) => {
   const db = t.context.db;
   t.throws(
     () => {

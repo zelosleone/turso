@@ -77,6 +77,10 @@ class Database {
    * @param {string} sql - The SQL statement string to prepare.
    */
   prepare(sql) {
+    if (!sql) {
+      throw new RangeError('The supplied SQL string contains no statements');
+    }
+
     try {
       return new Statement(this.db.prepare(sql), this);
     } catch (err) {
