@@ -66,9 +66,7 @@ inMemoryTest.both("Statement.get() returns undefined when no data", async (t) =>
   t.is(result, undefined);
 });
 
-inMemoryTest.onlySqlitePasses("Statement.run() returns correct result object", async (t) => {
-  // run() isn't 100% compatible with better-sqlite3
-  // it should return a result object, not a row object
+inMemoryTest.both("Statement.run() returns correct result object", async (t) => {
   const db = t.context.db;
   db.prepare("CREATE TABLE users (name TEXT)").run();
   const rows = db.prepare("INSERT INTO users (name) VALUES (?)").run("Alice");

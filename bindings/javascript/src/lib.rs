@@ -31,6 +31,12 @@ pub struct PragmaOptions {
     pub simple: bool,
 }
 
+#[napi(object)]
+pub struct RunResult {
+    pub changes: i64,
+    pub last_insert_rowid: i64,
+}
+
 #[napi(custom_finalize)]
 #[derive(Clone)]
 pub struct Database {
@@ -135,7 +141,7 @@ impl Database {
                     }
                 }
             }
-            _ => stmt.run(env, None),
+            _ => stmt.run_internal(env, None),
         }
     }
 
@@ -319,12 +325,36 @@ impl Statement {
         }
     }
 
-    // TODO: Return Info object (https://github.com/WiseLibs/better-sqlite3/blob/master/docs/api.md#runbindparameters---object)
     #[napi]
-    pub fn run(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<JsUnknown> {
+    pub fn run(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<RunResult> {
+        self.run_and_build_info_object(|| self.run_internal(env, args))
+    }
+
+    fn run_internal(&self, env: Env, args: Option<Vec<JsUnknown>>) -> napi::Result<JsUnknown> {
         let stmt = self.check_and_bind(env, args)?;
 
         self.internal_all(env, stmt)
+    }
+
+    fn run_and_build_info_object<T, E>(
+        &self,
+        query_fn: impl FnOnce() -> Result<T, E>,
+    ) -> Result<RunResult, E> {
+        let total_changes_before = self.database.conn.total_changes();
+
+        query_fn()?;
+
+        let last_insert_rowid = self.database.conn.last_insert_rowid();
+        let changes = if self.database.conn.total_changes() == total_changes_before {
+            0
+        } else {
+            self.database.conn.changes()
+        };
+
+        Ok(RunResult {
+            changes,
+            last_insert_rowid,
+        })
     }
 
     #[napi]
