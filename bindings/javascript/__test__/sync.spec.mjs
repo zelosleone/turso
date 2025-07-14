@@ -58,7 +58,7 @@ dualTest.both("Statement.run() [positional]", async (t) => {
   t.is(stmt2.get().email, "carol@example.net");
 });
 
-dualTest.onlySqlitePasses("Statement.run() [named]", async (t) => {
+dualTest.both("Statement.run() [named]", async (t) => {
   const db = t.context.db;
 
   const stmt = db.prepare("INSERT INTO users(name, email) VALUES (@name, @email);");

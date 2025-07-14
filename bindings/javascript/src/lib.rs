@@ -1,7 +1,7 @@
 #![deny(clippy::all)]
 
 use std::cell::{RefCell, RefMut};
-use std::num::NonZeroUsize;
+use std::num::{NonZero, NonZeroUsize};
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -486,7 +486,7 @@ impl Statement {
     }
 
     /// Check if the Statement is already binded by the `bind()` method
-    /// and bind values do variables. The expected type for args is `Option<Vec<JsUnknown>>`
+    /// and bind values to variables.
     fn check_and_bind(
         &self,
         env: Env,
@@ -507,14 +507,45 @@ impl Statement {
                 return Err(napi::Error::from_status(napi::Status::PendingException));
             }
 
-            for (i, elem) in args.into_iter().enumerate() {
-                let value = from_js_value(elem)?;
-                stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
+            if args.len() == 1 && matches!(args[0].get_type()?, napi::ValueType::Object) {
+                bind_named_parameters(&mut stmt, args)?;
+            } else {
+                bind_parameters(&mut stmt, args)?;
             }
         }
 
         Ok(stmt)
     }
+}
+
+fn bind_parameters(
+    stmt: &mut RefMut<'_, turso_core::Statement>,
+    args: Vec<JsUnknown>,
+) -> Result<(), napi::Error> {
+    for (i, elem) in args.into_iter().enumerate() {
+        let value = from_js_value(elem)?;
+        stmt.bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
+    }
+    Ok(())
+}
+
+fn bind_named_parameters(
+    stmt: &mut RefMut<'_, turso_core::Statement>,
+    args: Vec<JsUnknown>,
+) -> Result<(), napi::Error> {
+    let obj: napi::JsObject = args.into_iter().next().unwrap().coerce_to_object()?;
+    for idx in 1..stmt.parameters_count() {
+        let non_zero_idx = NonZero::new(idx).unwrap();
+
+        let param = stmt.parameters().name(non_zero_idx);
+        let Some(name) = param else {
+            return Err(napi::Error::from_status(napi::Status::GenericFailure));
+        };
+
+        let value = obj.get_named_property::<napi::JsUnknown>(&name)?;
+        stmt.bind_at(non_zero_idx, from_js_value(value)?);
+    }
+    Ok(())
 }
 
 #[napi(iterator)]
