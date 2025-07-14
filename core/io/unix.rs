@@ -347,7 +347,7 @@ impl File for UnixFile<'_> {
             Ok(n) => {
                 trace!("pread n: {}", n);
                 // Read succeeded immediately
-                c.complete(0);
+                c.complete(n as i32);
                 Ok(c)
             }
             Err(Errno::AGAIN) => {
