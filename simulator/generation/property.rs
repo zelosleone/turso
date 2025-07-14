@@ -615,7 +615,7 @@ impl Property {
             Property::FaultyQuery { query, tables } => {
                 let checks = assert_all_table_values(tables);
                 let query_clone = query.clone();
-                let assumption = Assertion {
+                let assert = Assertion {
                     // A fault may not occur as we first signal we want a fault injected,
                     // then when IO is called the fault triggers. It may happen that a fault is injected
                     // but no IO happens right after it
@@ -640,7 +640,7 @@ impl Property {
                 };
                 let first = [
                     Interaction::FaultyQuery(query.clone()),
-                    Interaction::Assumption(assumption),
+                    Interaction::Assertion(assert),
                 ]
                 .into_iter();
                 Vec::from_iter(first.chain(checks))
