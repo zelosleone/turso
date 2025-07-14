@@ -159,7 +159,7 @@ macro_rules! impl_header_field_accessor {
 }
 
 // impl_header_field_accessor!(magic, [u8; 16], HEADER_OFFSET_MAGIC);
-impl_header_field_accessor!(page_size_, u16, HEADER_OFFSET_PAGE_SIZE);
+impl_header_field_accessor!(page_size_u16, u16, HEADER_OFFSET_PAGE_SIZE);
 impl_header_field_accessor!(write_version, u8, HEADER_OFFSET_WRITE_VERSION);
 impl_header_field_accessor!(read_version, u8, HEADER_OFFSET_READ_VERSION);
 impl_header_field_accessor!(reserved_space, u8, HEADER_OFFSET_RESERVED_SPACE);
@@ -196,7 +196,7 @@ impl_header_field_accessor!(version_valid_for, u32, HEADER_OFFSET_VERSION_VALID_
 impl_header_field_accessor!(version_number, u32, HEADER_OFFSET_VERSION_NUMBER);
 
 pub fn get_page_size(pager: &Pager) -> Result<u32> {
-    let size = get_page_size_(pager)?;
+    let size = get_page_size_u16(pager)?;
     if size == 1 {
         return Ok(MAX_PAGE_SIZE);
     }
@@ -210,5 +210,18 @@ pub fn set_page_size(pager: &Pager, value: u32) -> Result<()> {
     } else {
         value as u16
     };
-    set_page_size_(pager, page_size)
+    set_page_size_u16(pager, page_size)
+}
+
+#[allow(dead_code)]
+pub fn get_page_size_async(pager: &Pager) -> Result<CursorResult<u32>> {
+    match get_page_size_u16_async(pager)? {
+        CursorResult::Ok(size) => {
+            if size == 1 {
+                return Ok(CursorResult::Ok(MAX_PAGE_SIZE));
+            }
+            Ok(CursorResult::Ok(size as u32))
+        }
+        CursorResult::IO => Ok(CursorResult::IO),
+    }
 }

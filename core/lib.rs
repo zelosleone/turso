@@ -274,10 +274,7 @@ impl Database {
         if let Some(shared_wal) = self.maybe_shared_wal.read().clone() {
             let size = match page_size {
                 None => unsafe { (*shared_wal.get()).page_size() as usize },
-                Some(size) => {
-                    unsafe { (*shared_wal.get()).set_page_size(size as u32) };
-                    size
-                }
+                Some(size) => size,
             };
             let buffer_pool = Arc::new(BufferPool::new(Some(size)));
 
@@ -847,6 +844,7 @@ impl Connection {
             return Ok(());
         }
 
+        *self._db.maybe_shared_wal.write() = None;
         let pager = self._db.init_pager(Some(size as usize))?;
         self.pager.replace(Rc::new(pager));
         self.pager.borrow().set_initial_page_size(size);

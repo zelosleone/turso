@@ -189,8 +189,10 @@ do_execsql_test_on_specific_db ":memory:" pragma-page-size-set-initialized-db {
 
 # pragma page_size=xxx changes the page size of an uninitialized database and persists the change.
 set test_pragma_page_size_db "testing/testing_pragma_page_size.db"
+catch {file delete -force $test_pragma_page_size_db}
+catch {file delete -force "${test_pragma_page_size_db}-wal"}
 # set user_version to trigger database initialization.
-do_execsql_test_on_specific_db $test_pragma_page_size_db pragma-page-size-set-initialized-db-1 {
+do_execsql_test_on_specific_db $test_pragma_page_size_db pragma-page-size-set-uninitialized-db-1 {
   PRAGMA page_size=1024;
   PRAGMA user_version=1;
   PRAGMA page_size
