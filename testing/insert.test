@@ -386,3 +386,10 @@ do_execsql_test_on_specific_db {:memory:} not-null-rowid-alias {
     select * from t;
 } {1|2}
 
+do_execsql_test_on_specific_db {:memory:} rowid-overflow-random-generation {
+    CREATE TABLE q(x INTEGER PRIMARY KEY, y);
+    INSERT INTO q VALUES (9223372036854775807, 1);
+    INSERT INTO q(y) VALUES (2);
+    INSERT INTO q(y) VALUES (3);
+    SELECT COUNT(*) FROM q;
+} {3}
