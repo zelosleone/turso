@@ -365,7 +365,7 @@ impl Shadow for SelectInner {
                 .all(|col| matches!(col, ResultColumn::Expr(_))));
 
             // If `WHERE` is false, just return an empty table
-            if !self.where_clause.test(&vec![], &Table::anonymous(vec![])) {
+            if !self.where_clause.test(&[], &Table::anonymous(vec![])) {
                 return Ok(JoinTable {
                     tables: Vec::new(),
                     rows: Vec::new(),
@@ -377,7 +377,7 @@ impl Shadow for SelectInner {
             for col in &self.columns {
                 match col {
                     ResultColumn::Expr(expr) => {
-                        let value = expr.eval(&vec![], &Table::anonymous(vec![]));
+                        let value = expr.eval(&[], &Table::anonymous(vec![]));
                         if let Some(value) = value {
                             row.push(value);
                         } else {

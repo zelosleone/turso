@@ -43,7 +43,8 @@ where
     T: ArbitrarySizedFrom<A>,
 {
     fn arbitrary_sized_from<R: rand::Rng>(rng: &mut R, t: A, size: usize) -> Self {
-        rng.gen_bool(0.5).then_some(T::arbitrary_sized_from(rng, t, size))
+        rng.gen_bool(0.5)
+            .then_some(T::arbitrary_sized_from(rng, t, size))
     }
 }
 
