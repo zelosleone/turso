@@ -463,9 +463,6 @@ pub enum CursorSeekState {
         /// 1. We have not seen an EQ during the traversal
         /// 2. We are looking for an exact match ([SeekOp::GE] or [SeekOp::LE] with eq_only: true)
         eq_seen: Cell<bool>,
-        /// Indicates when we have not not found a value in leaf and now will look in the next/prev record.
-        /// This value is only used for indexbtree
-        moving_up_to_parent: Cell<bool>,
     },
 }
 
@@ -1291,15 +1288,7 @@ impl BTreeCursor {
                 self.tablebtree_seek(rowid, op)
             }
             SeekKey::IndexKey(index_key) => {
-                match self.indexbtree_seek(index_key, op) {
-                    Ok(CursorResult::Ok(found)) => Ok(CursorResult::Ok(if found {
-                        SeekResult::Found
-                    } else {
-                        SeekResult::NotFound
-                    })),
-                    Ok(CursorResult::IO) => Ok(CursorResult::IO),
-                    Err(err) => Err(err),
-                }
+                self.indexbtree_seek(index_key, op)
             }
         });
         self.valid_state = CursorValidState::Valid;
@@ -1725,7 +1714,6 @@ impl BTreeCursor {
                 min_cell_idx,
                 max_cell_idx,
                 nearest_matching_cell,
-                moving_up_to_parent: Cell::new(false),
                 eq_seen: Cell::new(false), // not relevant for table btrees
             };
         }
@@ -1828,7 +1816,7 @@ impl BTreeCursor {
         &mut self,
         key: &ImmutableRecord,
         seek_op: SeekOp,
-    ) -> Result<CursorResult<bool>> {
+    ) -> Result<CursorResult<SeekResult>> {
         let key_values = key.get_values();
         let index_info_default = IndexKeyInfo::default();
         let index_info = *self.index_key_info.as_ref().unwrap_or(&index_info_default);
@@ -1861,15 +1849,7 @@ impl BTreeCursor {
             let contents = page.get().contents.as_ref().unwrap();
             let cell_count = contents.cell_count();
             if cell_count == 0 {
-                self.stack.set_cell_index(0);
-                match seek_op.iteration_direction() {
-                    IterationDirection::Forwards => {
-                        return self.next();
-                    }
-                    IterationDirection::Backwards => {
-                        return self.prev();
-                    }
-                }
+                return Ok(CursorResult::Ok(SeekResult::NotFound));
             }
 
             let min = Cell::new(0);
@@ -1883,7 +1863,6 @@ impl BTreeCursor {
                 min_cell_idx: min,
                 max_cell_idx: max,
                 nearest_matching_cell,
-                moving_up_to_parent: Cell::new(false),
                 eq_seen: Cell::new(eq_seen),
             };
         }
@@ -1893,7 +1872,6 @@ impl BTreeCursor {
             max_cell_idx,
             nearest_matching_cell,
             eq_seen,
-            moving_up_to_parent,
         } = &self.seek_state
         else {
             unreachable!(
@@ -1901,47 +1879,6 @@ impl BTreeCursor {
                 self.seek_state
             );
         };
-
-        if moving_up_to_parent.get() {
-            let page = self.stack.top();
-            return_if_locked_maybe_load!(self.pager, page);
-            let page = page.get();
-            let contents = page.get().contents.as_ref().unwrap();
-            let cur_cell_idx = self.stack.current_cell_index() as usize;
-            let cell = contents.cell_get(cur_cell_idx, self.usable_space())?;
-            let BTreeCell::IndexInteriorCell(IndexInteriorCell {
-                payload,
-                first_overflow_page,
-                payload_size,
-                ..
-            }) = &cell
-            else {
-                unreachable!("unexpected cell type: {:?}", cell);
-            };
-
-            if let Some(next_page) = first_overflow_page {
-                return_if_io!(self.process_overflow_read(payload, *next_page, *payload_size))
-            } else {
-                self.get_immutable_record_or_create()
-                    .as_mut()
-                    .unwrap()
-                    .invalidate();
-                self.get_immutable_record_or_create()
-                    .as_mut()
-                    .unwrap()
-                    .start_serialization(payload);
-
-                self.record_cursor.borrow_mut().invalidate();
-            };
-            let (_, found) = self.compare_with_current_record(
-                key_values.as_slice(),
-                seek_op,
-                &record_comparer,
-                &index_info,
-            );
-            moving_up_to_parent.set(false);
-            return Ok(CursorResult::Ok(found));
-        }
 
         let page = self.stack.top();
         return_if_locked_maybe_load!(self.pager, page);
@@ -1957,56 +1894,20 @@ impl BTreeCursor {
             if min > max {
                 if let Some(nearest_matching_cell) = nearest_matching_cell.get() {
                     self.stack.set_cell_index(nearest_matching_cell as i32);
-                    return Ok(CursorResult::Ok(true));
+                    return Ok(CursorResult::Ok(SeekResult::Found));
                 } else {
-                    // We have now iterated over all cells in the leaf page and found no match.
-                    // Unlike tables, indexes store payloads in interior cells as well. self.move_to() always moves to a leaf page, so there are cases where we need to
-                    // move back up to the parent interior cell and get the next record from there to perform a correct seek.
-                    // an example of how this can occur:
-                    //
-                    // we do an index seek for key K with cmp = SeekOp::GT, meaning we want to seek to the first key that is greater than K.
-                    // in self.move_to(), we encounter an interior cell with key K' = K+2, and move the left child page, which is a leaf page.
-                    // the reason we move to the left child page is that we know that in an index, all keys in the left child page are less than K' i.e. less than K+2,
-                    // meaning that the left subtree may contain a key greater than K, e.g. K+1. however, it is possible that it doesn't, in which case the correct
-                    // next key is K+2, which is in the parent interior cell.
-                    //
-                    // In the seek() method, once we have landed in the leaf page and find that there is no cell with a key greater than K,
-                    // if we were to return Ok(CursorResult::Ok((None, None))), self.record would be None, which is incorrect, because we already know
-                    // that there is a record with a key greater than K (K' = K+2) in the parent interior cell. Hence, we need to move back up the tree
-                    // and get the next matching record from there.
-                    //
-                    // However we only do this if either of the following is true:
-                    // - We have seen an EQ match up in the tree in an interior node
-                    // - Or, we are not looking for an exact match.
+                    // Similar logic as in tablebtree_seek(), but for indexes.
+                    // The difference is that since index keys are not necessarily unique, we need to TryAdvance
+                    // even when eq_only=true and we have seen an EQ match up in the tree in an interior node.
                     if seek_op.eq_only() && !eq_seen.get() {
-                        return Ok(CursorResult::Ok(false));
+                        return Ok(CursorResult::Ok(SeekResult::NotFound));
                     }
-                    match iter_dir {
-                        IterationDirection::Forwards => {
-                            if !moving_up_to_parent.get() {
-                                moving_up_to_parent.set(true);
-                                self.stack.set_cell_index(cell_count as i32);
-                            }
-                            let next_res = return_if_io!(self.next());
-                            if !next_res {
-                                return Ok(CursorResult::Ok(false));
-                            }
-                            // FIXME: optimize this in case record can be read directly
-                            return Ok(CursorResult::IO);
-                        }
-                        IterationDirection::Backwards => {
-                            if !moving_up_to_parent.get() {
-                                moving_up_to_parent.set(true);
-                                self.stack.set_cell_index(-1);
-                            }
-                            let prev_res = return_if_io!(self.prev());
-                            if !prev_res {
-                                return Ok(CursorResult::Ok(false));
-                            }
-                            // FIXME: optimize this in case record can be read directly
-                            return Ok(CursorResult::IO);
-                        }
-                    }
+                    // set cursor to the position where which would hold the op-boundary if it were present
+                    self.stack.set_cell_index(match &seek_op {
+                        SeekOp::GT | SeekOp::GE { .. } => cell_count as i32,
+                        SeekOp::LT | SeekOp::LE { .. } => 0,
+                    });
+                    return Ok(CursorResult::Ok(SeekResult::TryAdvance));
                 };
             }
 
@@ -7164,10 +7065,11 @@ mod tests {
                     pager.deref(),
                 )
                 .unwrap();
-                assert!(
-                    matches!(exists, SeekResult::Found),
-                    "key {key:?} is not found"
-                );
+                let mut found = matches!(exists, SeekResult::Found);
+                if matches!(exists, SeekResult::TryAdvance) {
+                    found = run_until_done(|| cursor.next(), pager.deref()).unwrap();
+                }
+                assert!(found, "key {key:?} is not found");
             }
             // Check that key count is right
             cursor.move_to_root().unwrap();

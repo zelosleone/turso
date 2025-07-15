@@ -258,7 +258,7 @@ pub struct ProgramState {
     op_new_rowid_state: OpNewRowidState,
     op_idx_insert_state: OpIdxInsertState,
     op_insert_state: OpInsertState,
-    op_seek_state: OpSeekState,
+    seek_state: OpSeekState,
 }
 
 impl ProgramState {
@@ -288,7 +288,7 @@ impl ProgramState {
             op_new_rowid_state: OpNewRowidState::Start,
             op_idx_insert_state: OpIdxInsertState::SeekIfUnique,
             op_insert_state: OpInsertState::Insert,
-            op_seek_state: OpSeekState::Start,
+            seek_state: OpSeekState::Start,
         }
     }
 
