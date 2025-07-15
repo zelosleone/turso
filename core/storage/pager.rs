@@ -4,10 +4,10 @@ use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
 use crate::storage::header_accessor;
 use crate::storage::sqlite3_ondisk::{self, DatabaseHeader, PageContent, PageType};
-use crate::storage::wal::{CheckpointResult, Wal, WalFsyncStatus};
+use crate::storage::wal::{CheckpointResult, Wal};
 use crate::types::IOResult;
+use crate::{return_if_io, Completion};
 use crate::{Buffer, Connection, LimboError, Result};
-use crate::{CheckpointStatus, Completion};
 use parking_lot::RwLock;
 use std::cell::{Cell, OnceCell, RefCell, UnsafeCell};
 use std::collections::HashSet;
@@ -231,14 +231,6 @@ pub struct Pager {
 
 #[derive(Debug, Copy, Clone)]
 /// The status of the current cache flush.
-/// A Done state means that the WAL was committed to disk and fsynced,
-/// plus potentially checkpointed to the DB (and the DB then fsynced).
-pub enum PagerCacheflushStatus {
-    Done(PagerCacheflushResult),
-    IO,
-}
-
-#[derive(Debug, Copy, Clone)]
 pub enum PagerCacheflushResult {
     /// The WAL was written to disk and fsynced.
     WalWritten,
@@ -655,17 +647,17 @@ impl Pager {
         schema_did_change: bool,
         connection: &Connection,
         wal_checkpoint_disabled: bool,
-    ) -> Result<PagerCacheflushStatus> {
+    ) -> Result<IOResult<PagerCacheflushResult>> {
         tracing::trace!("end_tx(rollback={})", rollback);
         if rollback {
             self.wal.borrow().end_write_tx()?;
             self.wal.borrow().end_read_tx()?;
-            return Ok(PagerCacheflushStatus::Done(PagerCacheflushResult::Rollback));
+            return Ok(IOResult::Done(PagerCacheflushResult::Rollback));
         }
         let cacheflush_status = self.cacheflush(wal_checkpoint_disabled)?;
         match cacheflush_status {
-            PagerCacheflushStatus::IO => Ok(PagerCacheflushStatus::IO),
-            PagerCacheflushStatus::Done(_) => {
+            IOResult::IO => Ok(IOResult::IO),
+            IOResult::Done(_) => {
                 let maybe_schema_pair = if schema_did_change {
                     let schema = connection.schema.borrow().clone();
                     // Lock first before writing to the database schema in case someone tries to read the schema before it's updated
@@ -777,7 +769,10 @@ impl Pager {
     /// If the WAL size is over the checkpoint threshold, it will checkpoint the WAL to
     /// the database file and then fsync the database file.
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn cacheflush(&self, wal_checkpoint_disabled: bool) -> Result<PagerCacheflushStatus> {
+    pub fn cacheflush(
+        &self,
+        wal_checkpoint_disabled: bool,
+    ) -> Result<IOResult<PagerCacheflushResult>> {
         let mut checkpoint_result = CheckpointResult::default();
         let res = loop {
             let state = self.flush_info.borrow().state;
@@ -807,20 +802,18 @@ impl Pager {
                     }
                     self.dirty_pages.borrow_mut().clear();
                     self.flush_info.borrow_mut().state = FlushState::WaitAppendFrames;
-                    return Ok(PagerCacheflushStatus::IO);
+                    return Ok(IOResult::IO);
                 }
                 FlushState::WaitAppendFrames => {
                     let in_flight = *self.flush_info.borrow().in_flight_writes.borrow();
                     if in_flight == 0 {
                         self.flush_info.borrow_mut().state = FlushState::SyncWal;
                     } else {
-                        return Ok(PagerCacheflushStatus::IO);
+                        return Ok(IOResult::IO);
                     }
                 }
                 FlushState::SyncWal => {
-                    if WalFsyncStatus::IO == self.wal.borrow_mut().sync()? {
-                        return Ok(PagerCacheflushStatus::IO);
-                    }
+                    return_if_io!(self.wal.borrow_mut().sync());
 
                     if wal_checkpoint_disabled || !self.wal.borrow().should_checkpoint() {
                         self.flush_info.borrow_mut().state = FlushState::Start;
@@ -830,11 +823,11 @@ impl Pager {
                 }
                 FlushState::Checkpoint => {
                     match self.checkpoint()? {
-                        CheckpointStatus::Done(res) => {
+                        IOResult::Done(res) => {
                             checkpoint_result = res;
                             self.flush_info.borrow_mut().state = FlushState::SyncDbFile;
                         }
-                        CheckpointStatus::IO => return Ok(PagerCacheflushStatus::IO),
+                        IOResult::IO => return Ok(IOResult::IO),
                     };
                 }
                 FlushState::SyncDbFile => {
@@ -843,7 +836,7 @@ impl Pager {
                 }
                 FlushState::WaitSyncDbFile => {
                     if *self.syncing.borrow() {
-                        return Ok(PagerCacheflushStatus::IO);
+                        return Ok(IOResult::IO);
                     } else {
                         self.flush_info.borrow_mut().state = FlushState::Start;
                         break PagerCacheflushResult::Checkpointed(checkpoint_result);
@@ -853,7 +846,7 @@ impl Pager {
         };
         // We should only signal that we finished appenind frames after wal sync to avoid inconsistencies when sync fails
         self.wal.borrow_mut().finish_append_frames_commit()?;
-        Ok(PagerCacheflushStatus::Done(res))
+        Ok(IOResult::Done(res))
     }
 
     #[instrument(skip_all, level = Level::INFO)]
@@ -873,7 +866,7 @@ impl Pager {
     }
 
     #[instrument(skip_all, level = Level::INFO, target = "pager_checkpoint",)]
-    pub fn checkpoint(&self) -> Result<CheckpointStatus> {
+    pub fn checkpoint(&self) -> Result<IOResult<CheckpointResult>> {
         let mut checkpoint_result = CheckpointResult::default();
         loop {
             let state = *self.checkpoint_state.borrow();
@@ -886,8 +879,8 @@ impl Pager {
                         in_flight,
                         CheckpointMode::Passive,
                     )? {
-                        CheckpointStatus::IO => return Ok(CheckpointStatus::IO),
-                        CheckpointStatus::Done(res) => {
+                        IOResult::IO => return Ok(IOResult::IO),
+                        IOResult::Done(res) => {
                             checkpoint_result = res;
                             self.checkpoint_state.replace(CheckpointState::SyncDbFile);
                         }
@@ -900,7 +893,7 @@ impl Pager {
                 }
                 CheckpointState::WaitSyncDbFile => {
                     if *self.syncing.borrow() {
-                        return Ok(CheckpointStatus::IO);
+                        return Ok(IOResult::IO);
                     } else {
                         self.checkpoint_state
                             .replace(CheckpointState::CheckpointDone);
@@ -908,10 +901,10 @@ impl Pager {
                 }
                 CheckpointState::CheckpointDone => {
                     return if *self.checkpoint_inflight.borrow() > 0 {
-                        Ok(CheckpointStatus::IO)
+                        Ok(IOResult::IO)
                     } else {
                         self.checkpoint_state.replace(CheckpointState::Checkpoint);
-                        Ok(CheckpointStatus::Done(checkpoint_result))
+                        Ok(IOResult::Done(checkpoint_result))
                     };
                 }
             }
@@ -935,7 +928,7 @@ impl Pager {
         {
             let mut wal = self.wal.borrow_mut();
             // fsync the wal syncronously before beginning checkpoint
-            while let Ok(WalFsyncStatus::IO) = wal.sync() {
+            while let Ok(IOResult::IO) = wal.sync() {
                 if attempts >= 10 {
                     return Err(LimboError::InternalError(
                         "Failed to fsync WAL before final checkpoint, fd likely closed".into(),
@@ -964,10 +957,10 @@ impl Pager {
                 Rc::new(RefCell::new(0)),
                 CheckpointMode::Passive,
             ) {
-                Ok(CheckpointStatus::IO) => {
+                Ok(IOResult::IO) => {
                     self.io.run_once()?;
                 }
-                Ok(CheckpointStatus::Done(res)) => {
+                Ok(IOResult::Done(res)) => {
                     checkpoint_result = res;
                     break;
                 }
@@ -1556,7 +1549,7 @@ mod ptrmap_tests {
             match pager.btree_create(&CreateBTreeFlags::new_table()) {
                 Ok(IOResult::Done(_root_page_id)) => (),
                 Ok(IOResult::IO) => {
-                    panic!("test_pager_setup: btree_create returned CursorResult::IO unexpectedly");
+                    panic!("test_pager_setup: btree_create returned IOResult::IO unexpectedly");
                 }
                 Err(e) => {
                     panic!("test_pager_setup: btree_create failed: {e:?}");

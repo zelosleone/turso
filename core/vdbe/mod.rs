@@ -31,7 +31,7 @@ use crate::{
     translate::plan::TableReferences,
     types::{IOResult, RawSlice, TextRef},
     vdbe::execute::{OpIdxInsertState, OpInsertState, OpNewRowidState, OpSeekState},
-    PagerCacheflushStatus, RefValue,
+    RefValue,
 };
 
 use crate::{
@@ -506,7 +506,7 @@ impl Program {
             connection.wal_checkpoint_disabled.get(),
         )?;
         match cacheflush_status {
-            PagerCacheflushStatus::Done(status) => {
+            IOResult::Done(status) => {
                 if self.change_cnt_on {
                     self.connection.set_changes(self.n_change.get());
                 }
@@ -519,7 +519,7 @@ impl Program {
                 connection.transaction_state.replace(TransactionState::None);
                 *commit_state = CommitState::Ready;
             }
-            PagerCacheflushStatus::IO => {
+            IOResult::IO => {
                 tracing::trace!("Cacheflush IO");
                 *commit_state = CommitState::Committing;
                 return Ok(StepResult::IO);

@@ -2666,8 +2666,8 @@ pub fn seek_internal(
                         }
                     };
                         match cursor.seek(seek_key, *op)? {
-                            CursorResult::Ok(seek_result) => seek_result,
-                            CursorResult::IO => return Ok(SeekInternalResult::IO),
+                            IOResult::Done(seek_result) => seek_result,
+                            IOResult::IO => return Ok(SeekInternalResult::IO),
                         }
                     };
                     let found = match seek_result {
@@ -2712,8 +2712,8 @@ pub fn seek_internal(
                             SeekOp::LT { .. } | SeekOp::LE { .. } => cursor.prev()?,
                         };
                         match result {
-                            CursorResult::Ok(found) => found,
-                            CursorResult::IO => return Ok(SeekInternalResult::IO),
+                            IOResult::Done(found) => found,
+                            IOResult::IO => return Ok(SeekInternalResult::IO),
                         }
                     };
                     return Ok(if found {
@@ -2726,8 +2726,8 @@ pub fn seek_internal(
                     let mut cursor = state.get_cursor(cursor_id);
                     let cursor = cursor.as_btree_mut();
                     match cursor.last()? {
-                        CursorResult::Ok(()) => {}
-                        CursorResult::IO => return Ok(SeekInternalResult::IO),
+                        IOResult::Done(()) => {}
+                        IOResult::IO => return Ok(SeekInternalResult::IO),
                     }
                     // the MoveLast variant is only used for SeekOp::LT and SeekOp::LE when the seek condition is always true,
                     // so we have always found what we were looking for.

@@ -116,10 +116,10 @@ impl TempDatabase {
 pub(crate) fn do_flush(conn: &Arc<Connection>, tmp_db: &TempDatabase) -> anyhow::Result<()> {
     loop {
         match conn.cacheflush()? {
-            PagerCacheflushStatus::Done(_) => {
+            IOResult::Done(_) => {
                 break;
             }
-            PagerCacheflushStatus::IO => {
+            IOResult::IO => {
                 tmp_db.io.run_once()?;
             }
         }

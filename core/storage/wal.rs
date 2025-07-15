@@ -23,6 +23,7 @@ use crate::storage::sqlite3_ondisk::{
     begin_read_wal_frame, begin_write_wal_frame, finish_read_page, WAL_FRAME_HEADER_SIZE,
     WAL_HEADER_SIZE,
 };
+use crate::types::IOResult;
 use crate::{turso_assert, Buffer, LimboError, Result};
 use crate::{Completion, Page};
 
@@ -244,8 +245,8 @@ pub trait Wal {
         pager: &Pager,
         write_counter: Rc<RefCell<usize>>,
         mode: CheckpointMode,
-    ) -> Result<CheckpointStatus>;
-    fn sync(&mut self) -> Result<WalFsyncStatus>;
+    ) -> Result<IOResult<CheckpointResult>>;
+    fn sync(&mut self) -> Result<IOResult<()>>;
     fn get_max_frame_in_wal(&self) -> u64;
     fn get_max_frame(&self) -> u64;
     fn get_min_frame(&self) -> u64;
@@ -316,14 +317,12 @@ impl Wal for DummyWAL {
         _pager: &Pager,
         _write_counter: Rc<RefCell<usize>>,
         _mode: crate::CheckpointMode,
-    ) -> Result<crate::CheckpointStatus> {
-        Ok(crate::CheckpointStatus::Done(
-            crate::CheckpointResult::default(),
-        ))
+    ) -> Result<IOResult<CheckpointResult>> {
+        Ok(IOResult::Done(CheckpointResult::default()))
     }
 
-    fn sync(&mut self) -> Result<crate::storage::wal::WalFsyncStatus> {
-        Ok(crate::storage::wal::WalFsyncStatus::Done)
+    fn sync(&mut self) -> Result<IOResult<()>> {
+        Ok(IOResult::Done(()))
     }
 
     fn get_max_frame_in_wal(&self) -> u64 {
@@ -364,18 +363,6 @@ pub enum CheckpointState {
     WritePage,
     WaitWritePage,
     Done,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum WalFsyncStatus {
-    Done,
-    IO,
-}
-
-#[derive(Debug, Copy, Clone)]
-pub enum CheckpointStatus {
-    Done(CheckpointResult),
-    IO,
 }
 
 // Checkpointing is a state machine that has multiple steps. Since there are multiple steps we save
@@ -726,7 +713,7 @@ impl Wal for WalFile {
         pager: &Pager,
         write_counter: Rc<RefCell<usize>>,
         mode: CheckpointMode,
-    ) -> Result<CheckpointStatus> {
+    ) -> Result<IOResult<CheckpointResult>> {
         assert!(
             matches!(mode, CheckpointMode::Passive),
             "only passive mode supported for now"
@@ -812,7 +799,7 @@ impl Wal for WalFile {
                 }
                 CheckpointState::WaitReadFrame => {
                     if self.ongoing_checkpoint.page.is_locked() {
-                        return Ok(CheckpointStatus::IO);
+                        return Ok(IOResult::IO);
                     } else {
                         self.ongoing_checkpoint.state = CheckpointState::WritePage;
                     }
@@ -828,7 +815,7 @@ impl Wal for WalFile {
                 }
                 CheckpointState::WaitWritePage => {
                     if *write_counter.borrow() > 0 {
-                        return Ok(CheckpointStatus::IO);
+                        return Ok(IOResult::IO);
                     }
                     // If page was in cache clear it.
                     if let Some(page) = pager.cache_get(self.ongoing_checkpoint.page.get().id) {
@@ -847,7 +834,7 @@ impl Wal for WalFile {
                 }
                 CheckpointState::Done => {
                     if *write_counter.borrow() > 0 {
-                        return Ok(CheckpointStatus::IO);
+                        return Ok(IOResult::IO);
                     }
                     let shared = self.get_shared();
                     shared.checkpoint_lock.unlock();
@@ -883,14 +870,14 @@ impl Wal for WalFile {
                             .store(self.ongoing_checkpoint.max_frame, Ordering::SeqCst);
                     }
                     self.ongoing_checkpoint.state = CheckpointState::Start;
-                    return Ok(CheckpointStatus::Done(checkpoint_result));
+                    return Ok(IOResult::Done(checkpoint_result));
                 }
             }
         }
     }
 
     #[instrument(err, skip_all, level = Level::INFO)]
-    fn sync(&mut self) -> Result<WalFsyncStatus> {
+    fn sync(&mut self) -> Result<IOResult<()>> {
         match self.sync_state.get() {
             SyncState::NotSyncing => {
                 tracing::debug!("wal_sync");
@@ -905,15 +892,15 @@ impl Wal for WalFile {
                 let shared = self.get_shared();
                 shared.file.sync(completion)?;
                 self.sync_state.set(SyncState::Syncing);
-                Ok(WalFsyncStatus::IO)
+                Ok(IOResult::IO)
             }
             SyncState::Syncing => {
                 if self.syncing.get() {
                     tracing::debug!("wal_sync is already syncing");
-                    Ok(WalFsyncStatus::IO)
+                    Ok(IOResult::IO)
                 } else {
                     self.sync_state.set(SyncState::NotSyncing);
-                    Ok(WalFsyncStatus::Done)
+                    Ok(IOResult::Done(()))
                 }
             }
         }
