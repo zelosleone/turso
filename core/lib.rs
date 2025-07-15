@@ -110,7 +110,7 @@ pub(crate) type MvCursor = mvcc::cursor::ScanCursor<mvcc::LocalClock>;
 
 pub struct Database {
     mv_store: Option<Rc<MvStore>>,
-    schema: RefCell<Arc<Schema>>,
+    schema: Mutex<Arc<Schema>>,
     db_file: Arc<dyn DatabaseStorage>,
     path: String,
     io: Arc<dyn IO>,
@@ -201,7 +201,7 @@ impl Database {
         let db = Arc::new(Database {
             mv_store,
             path: path.to_string(),
-            schema: RefCell::new(Arc::new(Schema::new(enable_indexes))),
+            schema: Mutex::new(Arc::new(Schema::new(enable_indexes))),
             _shared_page_cache: shared_page_cache.clone(),
             maybe_shared_wal: RwLock::new(maybe_shared_wal),
             db_file,
@@ -216,7 +216,7 @@ impl Database {
             // parse schema
             let conn = db.connect()?;
 
-            let mut schema_ref = db.schema.borrow_mut();
+            let mut schema_ref = db.schema.lock().map_err(|_| LimboError::SchemaLocked)?;
             let schema = Arc::make_mut(&mut *schema_ref);
             schema.schema_version = get_schema_version(&conn)?;
 
@@ -244,7 +244,12 @@ impl Database {
         let conn = Arc::new(Connection {
             _db: self.clone(),
             pager: RefCell::new(Rc::new(pager)),
-            schema: RefCell::new(self.schema.borrow().clone()),
+            schema: RefCell::new(
+                self.schema
+                    .lock()
+                    .map_err(|_| LimboError::SchemaLocked)?
+                    .clone(),
+            ),
             auto_commit: Cell::new(true),
             mv_transactions: RefCell::new(Vec::new()),
             transaction_state: Cell::new(TransactionState::None),
@@ -532,7 +537,7 @@ impl Connection {
         let input = str::from_utf8(&sql.as_bytes()[..byte_offset_end])
             .unwrap()
             .trim();
-        self.maybe_update_schema();
+        self.maybe_update_schema()?;
         let pager = self.pager.borrow().clone();
         match cmd {
             Cmd::Stmt(stmt) => {
@@ -638,7 +643,7 @@ impl Connection {
             let input = str::from_utf8(&sql.as_bytes()[..byte_offset_end])
                 .unwrap()
                 .trim();
-            self.maybe_update_schema();
+            self.maybe_update_schema()?;
             match cmd {
                 Cmd::Explain(stmt) => {
                     let program = translate::translate(
@@ -724,14 +729,20 @@ impl Connection {
         self.readonly.replace(readonly);
     }
 
-    pub fn maybe_update_schema(&self) {
+    pub fn maybe_update_schema(&self) -> Result<()> {
         let current_schema_version = self.schema.borrow().schema_version;
+        let schema = self
+            ._db
+            .schema
+            .lock()
+            .map_err(|_| LimboError::SchemaLocked)?;
         if matches!(self.transaction_state.get(), TransactionState::None)
-            && current_schema_version < self._db.schema.borrow().schema_version
+            && current_schema_version < schema.schema_version
         {
-            let new_schema = self._db.schema.borrow().clone();
-            self.schema.replace(new_schema);
+            self.schema.replace(schema.clone());
         }
+
+        Ok(())
     }
 
     pub fn wal_frame_count(&self) -> Result<u64> {

@@ -720,7 +720,11 @@ impl Pager {
 
                 if schema_did_change {
                     let schema = connection.schema.borrow().clone();
-                    *connection._db.schema.borrow_mut() = schema;
+                    *connection
+                        ._db
+                        .schema
+                        .lock()
+                        .map_err(|_| LimboError::SchemaLocked)? = schema;
                 }
                 Ok(commit_status)
             }
@@ -1308,9 +1312,14 @@ impl Pager {
         cache.unset_dirty_all_pages();
         cache.clear().expect("failed to clear page cache");
         if schema_did_change {
-            connection
-                .schema
-                .replace(connection._db.schema.borrow().clone());
+            connection.schema.replace(
+                connection
+                    ._db
+                    .schema
+                    .lock()
+                    .map_err(|_| LimboError::SchemaLocked)?
+                    .clone(),
+            );
         }
         self.wal.borrow_mut().rollback()?;
 
