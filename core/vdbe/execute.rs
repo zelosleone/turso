@@ -5841,8 +5841,8 @@ pub fn op_page_count(
         // TODO: implement temp databases
         todo!("temp databases not implemented yet");
     }
-    let count = header_accessor::get_database_size(pager)?.into();
-    state.registers[*dest] = Register::Value(Value::Integer(count));
+    let count = header_accessor::get_database_size(pager).unwrap_or(0);
+    state.registers[*dest] = Register::Value(Value::Integer(count as i64));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -5902,11 +5902,11 @@ pub fn op_read_cookie(
         todo!("temp databases not implemented yet");
     }
     let cookie_value = match cookie {
-        Cookie::ApplicationId => header_accessor::get_application_id(pager)?.into(),
-        Cookie::UserVersion => header_accessor::get_user_version(pager)?.into(),
-        Cookie::SchemaVersion => header_accessor::get_schema_cookie(pager)?.into(),
+        Cookie::ApplicationId => header_accessor::get_application_id(pager).unwrap_or(0) as i64,
+        Cookie::UserVersion => header_accessor::get_user_version(pager).unwrap_or(0) as i64,
+        Cookie::SchemaVersion => header_accessor::get_schema_cookie(pager).unwrap_or(0) as i64,
         Cookie::LargestRootPageNumber => {
-            header_accessor::get_vacuum_mode_largest_root_page(pager)?.into()
+            header_accessor::get_vacuum_mode_largest_root_page(pager).unwrap_or(0) as i64
         }
         cookie => todo!("{cookie:?} is not yet implement for ReadCookie"),
     };
