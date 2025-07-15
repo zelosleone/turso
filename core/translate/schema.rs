@@ -213,7 +213,7 @@ pub fn emit_schema_entry(
         program.emit_insn(Insn::Copy {
             src_reg: root_page_reg,
             dst_reg: rootpage_reg,
-            amount: 1,
+            extra_amount: 1,
         });
     }
 

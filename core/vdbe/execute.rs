@@ -5643,12 +5643,12 @@ pub fn op_copy(
     let Insn::Copy {
         src_reg,
         dst_reg,
-        amount,
+        extra_amount,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    for i in 0..=*amount {
+    for i in 0..=*extra_amount {
         state.registers[*dst_reg + i] = state.registers[*src_reg + i].clone();
     }
     state.pc += 1;

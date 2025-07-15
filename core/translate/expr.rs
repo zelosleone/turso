@@ -458,7 +458,7 @@ pub fn translate_expr(
         program.emit_insn(Insn::Copy {
             src_reg: reg,
             dst_reg: target_register,
-            amount: 0,
+            extra_amount: 0,
         });
         if let Some(span) = constant_span {
             program.constant_span_end(span);
@@ -1039,7 +1039,7 @@ pub fn translate_expr(
                             program.emit_insn(Insn::Copy {
                                 src_reg: temp_register,
                                 dst_reg: target_register,
-                                amount: 1,
+                                extra_amount: 1,
                             });
                             Ok(target_register)
                         }
@@ -1083,7 +1083,7 @@ pub fn translate_expr(
                             program.emit_insn(Insn::Copy {
                                 src_reg: temp_reg,
                                 dst_reg: target_register,
-                                amount: 0,
+                                extra_amount: 0,
                             });
 
                             Ok(target_register)
@@ -1569,7 +1569,7 @@ pub fn translate_expr(
                             program.emit_insn(Insn::Copy {
                                 src_reg: output_register,
                                 dst_reg: target_register,
-                                amount: 0,
+                                extra_amount: 0,
                             });
                             Ok(target_register)
                         }
@@ -1591,7 +1591,7 @@ pub fn translate_expr(
                             program.emit_insn(Insn::Copy {
                                 src_reg: output_register,
                                 dst_reg: target_register,
-                                amount: 0,
+                                extra_amount: 0,
                             });
                             Ok(target_register)
                         }
@@ -1746,7 +1746,7 @@ pub fn translate_expr(
                             program.emit_insn(Insn::Copy {
                                 src_reg: start_reg,
                                 dst_reg: target_register,
-                                amount: 0,
+                                extra_amount: 0,
                             });
                             Ok(target_register)
                         }
@@ -1980,7 +1980,7 @@ pub fn translate_expr(
                             .expect("Subquery result_columns_start_reg must be set")
                             + *column,
                         dst_reg: target_register,
-                        amount: 0,
+                        extra_amount: 0,
                     });
                     Ok(target_register)
                 }

@@ -824,7 +824,7 @@ fn emit_update_insns(
         program.emit_insn(Insn::Copy {
             src_reg: beg,
             dst_reg: beg + 1,
-            amount: 0,
+            extra_amount: 0,
         })
     }
 
@@ -941,14 +941,14 @@ fn emit_update_insns(
             program.emit_insn(Insn::Copy {
                 src_reg: idx_cols_start_reg + col.pos_in_table,
                 dst_reg: idx_start_reg + i,
-                amount: 0,
+                extra_amount: 0,
             });
         }
         // last register is the rowid
         program.emit_insn(Insn::Copy {
             src_reg: rowid_reg,
             dst_reg: idx_start_reg + num_cols,
-            amount: 0,
+            extra_amount: 0,
         });
 
         // this record will be inserted into the index later
@@ -1247,7 +1247,7 @@ pub fn emit_cdc_patch_record(
         program.emit_insn(Insn::Copy {
             src_reg: rowid_reg,
             dst_reg: columns_reg + rowid_alias_position,
-            amount: 0,
+            extra_amount: 0,
         });
         program.emit_insn(Insn::MakeRecord {
             start_reg: columns_reg,
@@ -1274,7 +1274,7 @@ pub fn emit_cdc_full_record(
             program.emit_insn(Insn::Copy {
                 src_reg: rowid_reg,
                 dst_reg: columns_reg + 1 + i,
-                amount: 0,
+                extra_amount: 0,
             });
         } else {
             program.emit_column(table_cursor_id, i, columns_reg + 1 + i);
@@ -1337,14 +1337,14 @@ pub fn emit_cdc_insns(
     program.emit_insn(Insn::Copy {
         src_reg: rowid_reg,
         dst_reg: turso_cdc_registers + 4,
-        amount: 0,
+        extra_amount: 0,
     });
 
     if let Some(before_record_reg) = before_record_reg {
         program.emit_insn(Insn::Copy {
             src_reg: before_record_reg,
             dst_reg: turso_cdc_registers + 5,
-            amount: 0,
+            extra_amount: 0,
         });
     } else {
         program.emit_null(turso_cdc_registers + 5, None);
@@ -1355,7 +1355,7 @@ pub fn emit_cdc_insns(
         program.emit_insn(Insn::Copy {
             src_reg: after_record_reg,
             dst_reg: turso_cdc_registers + 6,
-            amount: 0,
+            extra_amount: 0,
         });
     } else {
         program.emit_null(turso_cdc_registers + 6, None);
