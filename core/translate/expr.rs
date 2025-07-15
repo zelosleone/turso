@@ -1024,10 +1024,15 @@ pub fn translate_expr(
                         ScalarFunc::ConcatWs => {
                             let args = expect_arguments_min!(args, 2, srf);
 
-                            let temp_register = program.alloc_register();
-                            for arg in args.iter() {
-                                let reg = program.alloc_register();
-                                translate_expr(program, referenced_tables, arg, reg, resolver)?;
+                            let temp_register = program.alloc_registers(args.len() + 1);
+                            for (i, arg) in args.iter().enumerate() {
+                                translate_expr(
+                                    program,
+                                    referenced_tables,
+                                    arg,
+                                    temp_register + i + 1,
+                                    resolver,
+                                )?;
                             }
                             program.emit_insn(Insn::Function {
                                 constant_mask: 0,
@@ -1039,7 +1044,7 @@ pub fn translate_expr(
                             program.emit_insn(Insn::Copy {
                                 src_reg: temp_register,
                                 dst_reg: target_register,
-                                extra_amount: 1,
+                                extra_amount: 0,
                             });
                             Ok(target_register)
                         }
