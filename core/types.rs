@@ -892,27 +892,7 @@ impl ImmutableRecord {
             size_values += value_size;
         }
 
-        let mut header_size = size_header;
-        const MIN_HEADER_SIZE: usize = 126;
-        if header_size <= MIN_HEADER_SIZE {
-            // common case
-            // This case means the header size can be contained by a single byte, therefore
-            // header_size == size of serial types + 1 byte from the header size
-            // Since header_size is a varint, and a varint the first bit is used to represent we have more bytes to read,
-            // header size here will be 126 == (2^7 - 1)
-            header_size += 1;
-        } else {
-            // Rare case of a really large header
-            let mut temp_buf = [0u8; 9];
-            let n_varint = write_varint(&mut temp_buf, header_size as u64); // or however you get varint length
-            header_size += n_varint;
-
-            // Check if adding the varint bytes changes the varint length
-            let new_n_varint = write_varint(&mut temp_buf, header_size as u64);
-            if n_varint < new_n_varint {
-                header_size += 1;
-            }
-        }
+        let header_size = Record::calc_header_size(size_header);
 
         // 1. write header size
         let mut buf = Vec::new();
@@ -2180,6 +2160,37 @@ impl Record {
         Self { values }
     }
 
+    /// Calculates the total size needed for a SQLite record header.
+    ///
+    /// The record header consists of:
+    /// 1. A varint encoding the total header size (self-referentially, e.g. a 100 byte header literally has the number '100' in the header suffix)
+    /// 2. A sequence of varints encoding the serial types
+    ///
+    /// For small headers (<=126 bytes), we only need 1 byte to encode the header size, because 127 fits in 7 bits (varint uses 7 bits for the value and 1 continuation bit)
+    /// For larger headers, we need to account for the variable length of the header size varint.
+    pub fn calc_header_size(sizeof_serial_types: usize) -> usize {
+        if sizeof_serial_types < i8::MAX as usize {
+            return sizeof_serial_types + 1;
+        }
+
+        let mut header_size = sizeof_serial_types;
+        // For larger headers, calculate how many bytes we need for the header size varint
+        let mut temp_buf = [0u8; 9];
+        let mut prev_header_size;
+
+        loop {
+            prev_header_size = header_size;
+            let varint_len = write_varint(&mut temp_buf, header_size as u64);
+            header_size = sizeof_serial_types + varint_len;
+
+            if header_size == prev_header_size {
+                break;
+            }
+        }
+
+        header_size
+    }
+
     pub fn serialize(&self, buf: &mut Vec<u8>) {
         let initial_i = buf.len();
 
@@ -2219,16 +2230,7 @@ impl Record {
         }
 
         let mut header_bytes_buf: Vec<u8> = Vec::new();
-        if header_size <= 126 {
-            // common case
-            header_size += 1;
-        } else {
-            todo!("calculate big header size extra bytes");
-            // get header varint len
-            // header_size += n;
-            // if( nVarint<sqlite3VarintLen(nHdr) ) nHdr++;
-        }
-        assert!(header_size <= 126);
+        header_size = Record::calc_header_size(header_size);
         header_bytes_buf.extend(std::iter::repeat_n(0, 9));
         let n = write_varint(header_bytes_buf.as_mut_slice(), header_size as u64);
         header_bytes_buf.truncate(n);
@@ -2520,6 +2522,64 @@ mod tests {
             gold_result, generic_result,
             "Test '{}' failed with generic: Full Comparison: {:?}, Generic: {:?}",
             test_name, gold_result, generic_result
+        );
+    }
+
+    #[test]
+    fn test_calc_header_size() {
+        // Test 1-byte header size (0 to 127)
+        const MIN_SERIALTYPES_SIZE_FOR_1_BYTE_HEADER: usize = 0;
+        assert_eq!(
+            Record::calc_header_size(MIN_SERIALTYPES_SIZE_FOR_1_BYTE_HEADER),
+            MIN_SERIALTYPES_SIZE_FOR_1_BYTE_HEADER + 1
+        );
+        const BITS_7_MAX: usize = (1 << 7) - 1; // varints use 7 bits for the value and 1 continuation bit
+        const MAX_SERIALTYPES_SIZE_FOR_1_BYTE_HEADER: usize = BITS_7_MAX - 1;
+        assert_eq!(
+            Record::calc_header_size(MAX_SERIALTYPES_SIZE_FOR_1_BYTE_HEADER),
+            MAX_SERIALTYPES_SIZE_FOR_1_BYTE_HEADER + 1
+        );
+
+        // Test 2-byte header size (128 to 16383)
+        const MIN_SERIALTYPES_SIZE_FOR_2_BYTE_HEADER: usize =
+            MAX_SERIALTYPES_SIZE_FOR_1_BYTE_HEADER + 1;
+        assert_eq!(
+            Record::calc_header_size(MIN_SERIALTYPES_SIZE_FOR_2_BYTE_HEADER),
+            MIN_SERIALTYPES_SIZE_FOR_2_BYTE_HEADER + 2
+        );
+        const BITS_14_MAX: usize = (1 << 14) - 1;
+        const MAX_SERIALTYPES_SIZE_FOR_2_BYTE_HEADER: usize = BITS_14_MAX - 2;
+        assert_eq!(
+            Record::calc_header_size(MAX_SERIALTYPES_SIZE_FOR_2_BYTE_HEADER),
+            MAX_SERIALTYPES_SIZE_FOR_2_BYTE_HEADER + 2
+        );
+
+        // Test 3-byte header size (16384 to 2097151)
+        const MIN_SERIALTYPES_SIZE_FOR_3_BYTE_HEADER: usize =
+            MAX_SERIALTYPES_SIZE_FOR_2_BYTE_HEADER + 1;
+        assert_eq!(
+            Record::calc_header_size(MIN_SERIALTYPES_SIZE_FOR_3_BYTE_HEADER),
+            MIN_SERIALTYPES_SIZE_FOR_3_BYTE_HEADER + 3
+        );
+        const BITS_21_MAX: usize = (1 << 21) - 1;
+        const MAX_SERIALTYPES_SIZE_FOR_3_BYTE_HEADER: usize = BITS_21_MAX - 3;
+        assert_eq!(
+            Record::calc_header_size(MAX_SERIALTYPES_SIZE_FOR_3_BYTE_HEADER),
+            MAX_SERIALTYPES_SIZE_FOR_3_BYTE_HEADER + 3
+        );
+
+        // Test 4-byte header size (2097152 to 268435455)
+        const MIN_SERIALTYPES_SIZE_FOR_4_BYTE_HEADER: usize =
+            MAX_SERIALTYPES_SIZE_FOR_3_BYTE_HEADER + 1;
+        assert_eq!(
+            Record::calc_header_size(MIN_SERIALTYPES_SIZE_FOR_4_BYTE_HEADER),
+            MIN_SERIALTYPES_SIZE_FOR_4_BYTE_HEADER + 4
+        );
+        const BITS_28_MAX: usize = (1 << 28) - 1;
+        const MAX_SERIALTYPES_SIZE_FOR_4_BYTE_HEADER: usize = BITS_28_MAX - 4;
+        assert_eq!(
+            Record::calc_header_size(MAX_SERIALTYPES_SIZE_FOR_4_BYTE_HEADER),
+            MAX_SERIALTYPES_SIZE_FOR_4_BYTE_HEADER + 4
         );
     }
 
