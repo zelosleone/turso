@@ -27,14 +27,11 @@ pub mod sorter;
 use crate::{
     error::LimboError,
     function::{AggFunc, FuncCtx},
-    storage::{pager::PagerCacheflushStatus, sqlite3_ondisk::SmallVec},
+    storage::sqlite3_ondisk::SmallVec,
     translate::plan::TableReferences,
-    types::{RawSlice, TextRef},
-    vdbe::execute::OpIdxInsertState,
-    vdbe::execute::OpInsertState,
-    vdbe::execute::OpNewRowidState,
-    vdbe::execute::OpSeekState,
-    RefValue,
+    types::{IOResult, RawSlice, TextRef},
+    vdbe::execute::{OpIdxInsertState, OpInsertState, OpNewRowidState, OpSeekState},
+    PagerCacheflushStatus, RefValue,
 };
 
 use crate::{
@@ -159,13 +156,13 @@ pub enum StepResult {
 }
 
 /// If there is I/O, the instruction is restarted.
-/// Evaluate a Result<CursorResult<T>>, if IO return Ok(StepResult::IO).
+/// Evaluate a Result<IOResult<T>>, if IO return Ok(StepResult::IO).
 #[macro_export]
-macro_rules! return_if_io {
+macro_rules! return_step_if_io {
     ($expr:expr) => {
         match $expr? {
-            CursorResult::Ok(v) => v,
-            CursorResult::IO => return Ok(StepResult::IO),
+            IOResult::Ok(v) => v,
+            IOResult::IO => return Ok(StepResult::IO),
         }
     };
 }

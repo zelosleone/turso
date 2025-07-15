@@ -5,9 +5,9 @@ use crate::storage::database::DatabaseStorage;
 use crate::storage::header_accessor;
 use crate::storage::sqlite3_ondisk::{self, DatabaseHeader, PageContent, PageType};
 use crate::storage::wal::{CheckpointResult, Wal, WalFsyncStatus};
-use crate::types::CursorResult;
-use crate::Completion;
+use crate::types::IOResult;
 use crate::{Buffer, Connection, LimboError, Result};
+use crate::{CheckpointStatus, Completion};
 use parking_lot::RwLock;
 use std::cell::{Cell, OnceCell, RefCell, UnsafeCell};
 use std::collections::HashSet;
@@ -19,7 +19,7 @@ use tracing::{instrument, trace, Level};
 use super::btree::{btree_init_page, BTreePage};
 use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCacheKey};
 use super::sqlite3_ondisk::{begin_write_btree_page, DATABASE_HEADER_SIZE};
-use super::wal::{CheckpointMode, CheckpointStatus};
+use super::wal::CheckpointMode;
 
 #[cfg(not(feature = "omit_autovacuum"))]
 use {crate::io::Buffer as IoBuffer, ptrmap::*};
@@ -312,17 +312,17 @@ impl Pager {
     /// `target_page_num` (1-indexed) is the page whose entry is sought.
     /// Returns `Ok(None)` if the page is not supposed to have a ptrmap entry (e.g. header, or a ptrmap page itself).
     #[cfg(not(feature = "omit_autovacuum"))]
-    pub fn ptrmap_get(&self, target_page_num: u32) -> Result<CursorResult<Option<PtrmapEntry>>> {
+    pub fn ptrmap_get(&self, target_page_num: u32) -> Result<IOResult<Option<PtrmapEntry>>> {
         tracing::trace!("ptrmap_get(page_idx = {})", target_page_num);
         let configured_page_size = match header_accessor::get_page_size_async(self)? {
-            CursorResult::Ok(size) => size as usize,
-            CursorResult::IO => return Ok(CursorResult::IO),
+            IOResult::Done(size) => size as usize,
+            IOResult::IO => return Ok(IOResult::IO),
         };
 
         if target_page_num < FIRST_PTRMAP_PAGE_NO
             || is_ptrmap_page(target_page_num, configured_page_size)
         {
-            return Ok(CursorResult::Ok(None));
+            return Ok(IOResult::Done(None));
         }
 
         let ptrmap_pg_no = get_ptrmap_page_no_for_db_page(target_page_num, configured_page_size);
@@ -336,10 +336,10 @@ impl Pager {
 
         let ptrmap_page = self.read_page(ptrmap_pg_no as usize)?;
         if ptrmap_page.is_locked() {
-            return Ok(CursorResult::IO);
+            return Ok(IOResult::IO);
         }
         if !ptrmap_page.is_loaded() {
-            return Ok(CursorResult::IO);
+            return Ok(IOResult::IO);
         }
         let ptrmap_page_inner = ptrmap_page.get();
 
@@ -376,7 +376,7 @@ impl Pager {
         let entry_slice = &ptrmap_page_data_slice
             [offset_in_ptrmap_page..offset_in_ptrmap_page + PTRMAP_ENTRY_SIZE];
         match PtrmapEntry::deserialize(entry_slice) {
-            Some(entry) => Ok(CursorResult::Ok(Some(entry))),
+            Some(entry) => Ok(IOResult::Done(Some(entry))),
             None => Err(LimboError::Corrupt(format!(
                 "Failed to deserialize ptrmap entry for page {target_page_num} from ptrmap page {ptrmap_pg_no}"
             ))),
@@ -392,7 +392,7 @@ impl Pager {
         db_page_no_to_update: u32,
         entry_type: PtrmapType,
         parent_page_no: u32,
-    ) -> Result<CursorResult<()>> {
+    ) -> Result<IOResult<()>> {
         tracing::trace!(
             "ptrmap_put(page_idx = {}, entry_type = {:?}, parent_page_no = {})",
             db_page_no_to_update,
@@ -401,8 +401,8 @@ impl Pager {
         );
 
         let page_size = match header_accessor::get_page_size_async(self)? {
-            CursorResult::Ok(size) => size as usize,
-            CursorResult::IO => return Ok(CursorResult::IO),
+            IOResult::Done(size) => size as usize,
+            IOResult::IO => return Ok(IOResult::IO),
         };
 
         if db_page_no_to_update < FIRST_PTRMAP_PAGE_NO
@@ -427,10 +427,10 @@ impl Pager {
 
         let ptrmap_page = self.read_page(ptrmap_pg_no as usize)?;
         if ptrmap_page.is_locked() {
-            return Ok(CursorResult::IO);
+            return Ok(IOResult::IO);
         }
         if !ptrmap_page.is_loaded() {
-            return Ok(CursorResult::IO);
+            return Ok(IOResult::IO);
         }
         let ptrmap_page_inner = ptrmap_page.get();
 
@@ -467,13 +467,13 @@ impl Pager {
 
         ptrmap_page.set_dirty();
         self.add_dirty(ptrmap_pg_no as usize);
-        Ok(CursorResult::Ok(()))
+        Ok(IOResult::Done(()))
     }
 
     /// This method is used to allocate a new root page for a btree, both for tables and indexes
     /// FIXME: handle no room in page cache
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn btree_create(&self, flags: &CreateBTreeFlags) -> Result<CursorResult<u32>> {
+    pub fn btree_create(&self, flags: &CreateBTreeFlags) -> Result<IOResult<u32>> {
         let page_type = match flags {
             _ if flags.is_table() => PageType::TableLeaf,
             _ if flags.is_index() => PageType::IndexLeaf,
@@ -483,7 +483,7 @@ impl Pager {
         {
             let page = self.do_allocate_page(page_type, 0, BtreePageAllocMode::Any)?;
             let page_id = page.get().get().id;
-            Ok(CursorResult::Ok(page_id as u32))
+            Ok(IOResult::Done(page_id as u32))
         }
 
         //  If autovacuum is enabled, we need to allocate a new page number that is greater than the largest root page number
@@ -494,21 +494,21 @@ impl Pager {
                 AutoVacuumMode::None => {
                     let page = self.do_allocate_page(page_type, 0, BtreePageAllocMode::Any)?;
                     let page_id = page.get().get().id;
-                    Ok(CursorResult::Ok(page_id as u32))
+                    Ok(IOResult::Done(page_id as u32))
                 }
                 AutoVacuumMode::Full => {
                     let mut root_page_num =
                         match header_accessor::get_vacuum_mode_largest_root_page_async(self)? {
-                            CursorResult::Ok(value) => value,
-                            CursorResult::IO => return Ok(CursorResult::IO),
+                            IOResult::Done(value) => value,
+                            IOResult::IO => return Ok(IOResult::IO),
                         };
                     assert!(root_page_num > 0); //  Largest root page number cannot be 0 because that is set to 1 when creating the database with autovacuum enabled
                     root_page_num += 1;
                     assert!(root_page_num >= FIRST_PTRMAP_PAGE_NO); //  can never be less than 2 because we have already incremented
 
                     let page_size = match header_accessor::get_page_size_async(self)? {
-                        CursorResult::Ok(size) => size as usize,
-                        CursorResult::IO => return Ok(CursorResult::IO),
+                        IOResult::Done(size) => size as usize,
+                        IOResult::IO => return Ok(IOResult::IO),
                     };
 
                     while is_ptrmap_page(root_page_num, page_size) {
@@ -531,8 +531,8 @@ impl Pager {
 
                     //  For now map allocated_page_id since we are not swapping it with root_page_num
                     match self.ptrmap_put(allocated_page_id, PtrmapType::RootPage, 0)? {
-                        CursorResult::Ok(_) => Ok(CursorResult::Ok(allocated_page_id)),
-                        CursorResult::IO => Ok(CursorResult::IO),
+                        IOResult::Done(_) => Ok(IOResult::Done(allocated_page_id)),
+                        IOResult::IO => Ok(IOResult::IO),
                     }
                 }
                 AutoVacuumMode::Incremental => {
@@ -604,17 +604,17 @@ impl Pager {
 
     #[inline(always)]
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn begin_read_tx(&self) -> Result<CursorResult<LimboResult>> {
+    pub fn begin_read_tx(&self) -> Result<IOResult<LimboResult>> {
         // We allocate the first page lazily in the first transaction
         match self.maybe_allocate_page1()? {
-            CursorResult::Ok(_) => {}
-            CursorResult::IO => return Ok(CursorResult::IO),
+            IOResult::Done(_) => {}
+            IOResult::IO => return Ok(IOResult::IO),
         }
-        Ok(CursorResult::Ok(self.wal.borrow_mut().begin_read_tx()?))
+        Ok(IOResult::Done(self.wal.borrow_mut().begin_read_tx()?))
     }
 
     #[instrument(skip_all, level = Level::INFO)]
-    fn maybe_allocate_page1(&self) -> Result<CursorResult<()>> {
+    fn maybe_allocate_page1(&self) -> Result<IOResult<()>> {
         if self.db_state.load(Ordering::SeqCst) < DB_STATE_INITIALIZED {
             if let Ok(_lock) = self.init_lock.try_lock() {
                 match (
@@ -623,29 +623,29 @@ impl Pager {
                 ) {
                     // In case of being empty or (allocating and this connection is performing allocation) then allocate the first page
                     (0, false) | (1, true) => match self.allocate_page1()? {
-                        CursorResult::Ok(_) => Ok(CursorResult::Ok(())),
-                        CursorResult::IO => Ok(CursorResult::IO),
+                        IOResult::Done(_) => Ok(IOResult::Done(())),
+                        IOResult::IO => Ok(IOResult::IO),
                     },
-                    _ => Ok(CursorResult::IO),
+                    _ => Ok(IOResult::IO),
                 }
             } else {
-                Ok(CursorResult::IO)
+                Ok(IOResult::IO)
             }
         } else {
-            Ok(CursorResult::Ok(()))
+            Ok(IOResult::Done(()))
         }
     }
 
     #[inline(always)]
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn begin_write_tx(&self) -> Result<CursorResult<LimboResult>> {
+    pub fn begin_write_tx(&self) -> Result<IOResult<LimboResult>> {
         // TODO(Diego): The only possibly allocate page1 here is because OpenEphemeral needs a write transaction
         // we should have a unique API to begin transactions, something like sqlite3BtreeBeginTrans
         match self.maybe_allocate_page1()? {
-            CursorResult::Ok(_) => {}
-            CursorResult::IO => return Ok(CursorResult::IO),
+            IOResult::Done(_) => {}
+            IOResult::IO => return Ok(IOResult::IO),
         }
-        Ok(CursorResult::Ok(self.wal.borrow_mut().begin_write_tx()?))
+        Ok(IOResult::Done(self.wal.borrow_mut().begin_write_tx()?))
     }
 
     #[instrument(skip_all, level = Level::INFO)]
@@ -1056,7 +1056,7 @@ impl Pager {
     }
 
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn allocate_page1(&self) -> Result<CursorResult<PageRef>> {
+    pub fn allocate_page1(&self) -> Result<IOResult<PageRef>> {
         let state = self.allocate_page1_state.borrow().clone();
         match state {
             AllocatePage1State::Start => {
@@ -1093,7 +1093,7 @@ impl Pager {
                         write_counter,
                         page: page1,
                     });
-                Ok(CursorResult::IO)
+                Ok(IOResult::IO)
             }
             AllocatePage1State::Writing {
                 write_counter,
@@ -1101,7 +1101,7 @@ impl Pager {
             } => {
                 tracing::trace!("allocate_page1(Writing)");
                 if *write_counter.borrow() > 0 {
-                    return Ok(CursorResult::IO);
+                    return Ok(IOResult::IO);
                 }
                 tracing::trace!("allocate_page1(Writing done)");
                 let page1_ref = page.get();
@@ -1112,7 +1112,7 @@ impl Pager {
                 })?;
                 self.db_state.store(DB_STATE_INITIALIZED, Ordering::SeqCst);
                 self.allocate_page1_state.replace(AllocatePage1State::Done);
-                Ok(CursorResult::Ok(page1_ref.clone()))
+                Ok(IOResult::Done(page1_ref.clone()))
             }
             AllocatePage1State::Done => unreachable!("cannot try to allocate page 1 again"),
         }
@@ -1500,15 +1500,15 @@ mod ptrmap_tests {
     use crate::storage::wal::{WalFile, WalFileShared};
 
     pub fn run_until_done<T>(
-        mut action: impl FnMut() -> Result<CursorResult<T>>,
+        mut action: impl FnMut() -> Result<IOResult<T>>,
         pager: &Pager,
     ) -> Result<T> {
         loop {
             match action()? {
-                CursorResult::Ok(res) => {
+                IOResult::Done(res) => {
                     return Ok(res);
                 }
-                CursorResult::IO => pager.io.run_once().unwrap(),
+                IOResult::IO => pager.io.run_once().unwrap(),
             }
         }
     }
@@ -1554,8 +1554,8 @@ mod ptrmap_tests {
         //  Allocate all the pages as btree root pages
         for _ in 0..initial_db_pages {
             match pager.btree_create(&CreateBTreeFlags::new_table()) {
-                Ok(CursorResult::Ok(_root_page_id)) => (),
-                Ok(CursorResult::IO) => {
+                Ok(IOResult::Done(_root_page_id)) => (),
+                Ok(IOResult::IO) => {
                     panic!("test_pager_setup: btree_create returned CursorResult::IO unexpectedly");
                 }
                 Err(e) => {
@@ -1591,8 +1591,8 @@ mod ptrmap_tests {
 
         //  Read the entry from the ptrmap page and verify it
         let entry = pager.ptrmap_get(db_page_to_update).unwrap();
-        assert!(matches!(entry, CursorResult::Ok(Some(_))));
-        let CursorResult::Ok(Some(entry)) = entry else {
+        assert!(matches!(entry, IOResult::Done(Some(_))));
+        let IOResult::Done(Some(entry)) = entry else {
             panic!("entry is not Some");
         };
         assert_eq!(entry.entry_type, PtrmapType::RootPage);

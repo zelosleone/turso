@@ -21,8 +21,8 @@ use crate::{
 };
 
 use crate::{
-    return_corrupt,
-    types::{compare_immutable, CursorResult, ImmutableRecord, RefValue, SeekKey, SeekOp, Value},
+    return_corrupt, return_if_io,
+    types::{compare_immutable, IOResult, ImmutableRecord, RefValue, SeekKey, SeekOp, Value},
     LimboError, Result,
 };
 
@@ -111,21 +111,11 @@ pub const MAX_SIBLING_PAGES_TO_BALANCE: usize = 3;
 /// We only need maximum 5 pages to balance 3 pages, because we can guarantee that cells from 3 pages will fit in 5 pages.
 pub const MAX_NEW_SIBLING_PAGES_AFTER_BALANCE: usize = 5;
 
-/// Evaluate a Result<CursorResult<T>>, if IO return IO.
-macro_rules! return_if_io {
-    ($expr:expr) => {
-        match $expr? {
-            CursorResult::Ok(v) => v,
-            CursorResult::IO => return Ok(CursorResult::IO),
-        }
-    };
-}
-
 /// Check if the page is unlocked, if not return IO.
 macro_rules! return_if_locked {
     ($expr:expr) => {{
         if $expr.is_locked() {
-            return Ok(CursorResult::IO);
+            return Ok(IOResult::IO);
         }
     }};
 }
@@ -143,12 +133,12 @@ macro_rules! debug_validate_cells {
 macro_rules! return_if_locked_maybe_load {
     ($pager:expr, $btree_page:expr) => {{
         if $btree_page.get().is_locked() {
-            return Ok(CursorResult::IO);
+            return Ok(IOResult::IO);
         }
         if !$btree_page.get().is_loaded() {
             let page = $pager.read_page($btree_page.get().get().id)?;
             $btree_page.page.replace(page);
-            return Ok(CursorResult::IO);
+            return Ok(IOResult::IO);
         }
     }};
 }
@@ -641,22 +631,22 @@ impl BTreeCursor {
     /// Check if the table is empty.
     /// This is done by checking if the root page has no cells.
     #[instrument(skip_all, level = Level::INFO)]
-    fn is_empty_table(&self) -> Result<CursorResult<bool>> {
+    fn is_empty_table(&self) -> Result<IOResult<bool>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             let mv_cursor = mv_cursor.borrow();
-            return Ok(CursorResult::Ok(mv_cursor.is_empty()));
+            return Ok(IOResult::Done(mv_cursor.is_empty()));
         }
         let page = self.pager.read_page(self.root_page)?;
         return_if_locked!(page);
 
         let cell_count = page.get().contents.as_ref().unwrap().cell_count();
-        Ok(CursorResult::Ok(cell_count == 0))
+        Ok(IOResult::Done(cell_count == 0))
     }
 
     /// Move the cursor to the previous record and return it.
     /// Used in backwards iteration.
     #[instrument(skip(self), level = Level::INFO, name = "prev")]
-    fn get_prev_record(&mut self) -> Result<CursorResult<bool>> {
+    fn get_prev_record(&mut self) -> Result<IOResult<bool>> {
         loop {
             let page = self.stack.top();
 
@@ -686,7 +676,7 @@ impl BTreeCursor {
                 let page_type = contents.page_type();
                 if should_visit_internal_node {
                     self.going_upwards = false;
-                    return Ok(CursorResult::Ok(true));
+                    return Ok(IOResult::Done(true));
                 } else if matches!(
                     page_type,
                     PageType::IndexLeaf | PageType::TableLeaf | PageType::TableInterior
@@ -707,7 +697,7 @@ impl BTreeCursor {
                     } else {
                         // moved to begin of btree
                         // dbg!(false);
-                        return Ok(CursorResult::Ok(false));
+                        return Ok(IOResult::Done(false));
                     }
                 }
                 // continue to next loop to get record from the new page
@@ -726,7 +716,7 @@ impl BTreeCursor {
                     continue;
                 }
                 BTreeCell::TableLeafCell(TableLeafCell { .. }) => {
-                    return Ok(CursorResult::Ok(true));
+                    return Ok(IOResult::Done(true));
                 }
                 BTreeCell::IndexInteriorCell(IndexInteriorCell {
                     left_child_page, ..
@@ -749,10 +739,10 @@ impl BTreeCursor {
                     // On the first pass we must take the record from the interior cell (since unlike table btrees, index interior cells have payloads)
                     // We then mark going_upwards=false so that we go back down the tree on the next invocation.
                     self.going_upwards = false;
-                    return Ok(CursorResult::Ok(true));
+                    return Ok(IOResult::Done(true));
                 }
                 BTreeCell::IndexLeafCell(IndexLeafCell { .. }) => {
-                    return Ok(CursorResult::Ok(true));
+                    return Ok(IOResult::Done(true));
                 }
             }
         }
@@ -766,7 +756,7 @@ impl BTreeCursor {
         payload: &'static [u8],
         start_next_page: u32,
         payload_size: u64,
-    ) -> Result<CursorResult<()>> {
+    ) -> Result<IOResult<()>> {
         if self.read_overflow_state.borrow().is_none() {
             let page = self.read_page(start_next_page as usize)?;
             *self.read_overflow_state.borrow_mut() = Some(ReadPayloadOverflow {
@@ -775,7 +765,7 @@ impl BTreeCursor {
                 remaining_to_read: payload_size as usize - payload.len(),
                 page,
             });
-            return Ok(CursorResult::IO);
+            return Ok(IOResult::IO);
         }
         let mut read_overflow_state = self.read_overflow_state.borrow_mut();
         let ReadPayloadOverflow {
@@ -786,7 +776,7 @@ impl BTreeCursor {
         } = read_overflow_state.as_mut().unwrap();
 
         if page_btree.get().is_locked() {
-            return Ok(CursorResult::IO);
+            return Ok(IOResult::IO);
         }
         tracing::debug!(next_page, remaining_to_read, "reading overflow page");
         let page = page_btree.get();
@@ -807,7 +797,7 @@ impl BTreeCursor {
             })?;
             *page_btree = new_page;
             *next_page = next;
-            return Ok(CursorResult::IO);
+            return Ok(IOResult::IO);
         }
         turso_assert!(
             *remaining_to_read == 0 && next == 0,
@@ -826,7 +816,7 @@ impl BTreeCursor {
         self.record_cursor.borrow_mut().invalidate();
 
         let _ = read_overflow_state.take();
-        Ok(CursorResult::Ok(()))
+        Ok(IOResult::Done(()))
     }
 
     /// Calculates how much of a cell's payload should be stored locally vs in overflow pages
@@ -888,7 +878,7 @@ impl BTreeCursor {
         buffer: &mut Vec<u8>,
         mut amount: u32,
         is_write: bool,
-    ) -> Result<CursorResult<()>> {
+    ) -> Result<IOResult<()>> {
         if let CursorState::ReadWritePayload(PayloadOverflowWithOffset::SkipOverflowPages {
             ..
         })
@@ -980,9 +970,9 @@ impl BTreeCursor {
                     is_write,
                 });
 
-            return Ok(CursorResult::IO);
+            return Ok(IOResult::IO);
         }
-        Ok(CursorResult::Ok(()))
+        Ok(IOResult::Done(()))
     }
 
     #[instrument(skip_all, level = Level::INFO)]
@@ -990,7 +980,7 @@ impl BTreeCursor {
         &mut self,
         buffer: &mut Vec<u8>,
         usable_space: usize,
-    ) -> Result<CursorResult<()>> {
+    ) -> Result<IOResult<()>> {
         loop {
             let mut state = std::mem::replace(&mut self.state, CursorState::None);
 
@@ -1044,7 +1034,7 @@ impl BTreeCursor {
                         },
                     );
 
-                    return Ok(CursorResult::IO);
+                    return Ok(IOResult::IO);
                 }
 
                 CursorState::ReadWritePayload(PayloadOverflowWithOffset::ProcessPage {
@@ -1066,7 +1056,7 @@ impl BTreeCursor {
                                 is_write: *is_write,
                             });
 
-                        return Ok(CursorResult::IO);
+                        return Ok(IOResult::IO);
                     }
 
                     let page = page_btree.get();
@@ -1102,7 +1092,7 @@ impl BTreeCursor {
 
                     if *remaining_to_read == 0 {
                         self.state = CursorState::None;
-                        return Ok(CursorResult::Ok(()));
+                        return Ok(IOResult::Done(()));
                     }
                     let next = contents.read_u32_no_offset(0);
                     if next == 0 {
@@ -1117,7 +1107,7 @@ impl BTreeCursor {
                     *page_btree = self.read_page(next as usize)?;
 
                     // Return IO to allow other operations
-                    return Ok(CursorResult::IO);
+                    return Ok(IOResult::IO);
                 }
                 _ => {
                     return Err(LimboError::InternalError(
@@ -1163,16 +1153,16 @@ impl BTreeCursor {
     /// Move the cursor to the next record and return it.
     /// Used in forwards iteration, which is the default.
     #[instrument(skip(self), level = Level::INFO, name = "next")]
-    fn get_next_record(&mut self) -> Result<CursorResult<bool>> {
+    fn get_next_record(&mut self) -> Result<IOResult<bool>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             let mut mv_cursor = mv_cursor.borrow_mut();
             let rowid = mv_cursor.current_row_id();
             match rowid {
                 Some(_rowid) => {
                     mv_cursor.forward();
-                    return Ok(CursorResult::Ok(true));
+                    return Ok(IOResult::Done(true));
                 }
-                None => return Ok(CursorResult::Ok(false)),
+                None => return Ok(IOResult::Done(false)),
             }
         }
         loop {
@@ -1203,7 +1193,7 @@ impl BTreeCursor {
                     "skipping advance",
                 );
                 self.going_upwards = false;
-                return Ok(CursorResult::Ok(true));
+                return Ok(IOResult::Done(true));
             }
             // Important to advance only after loading the page in order to not advance > 1 times
             self.stack.advance();
@@ -1227,7 +1217,7 @@ impl BTreeCursor {
                             self.stack.pop();
                             continue;
                         } else {
-                            return Ok(CursorResult::Ok(false));
+                            return Ok(IOResult::Done(false));
                         }
                     }
                 }
@@ -1242,7 +1232,7 @@ impl BTreeCursor {
                     self.stack.pop();
                     continue;
                 } else {
-                    return Ok(CursorResult::Ok(false));
+                    return Ok(IOResult::Done(false));
                 }
             }
             turso_assert!(cell_idx < contents.cell_count(), "cell index out of bounds");
@@ -1257,14 +1247,14 @@ impl BTreeCursor {
                     continue;
                 }
                 BTreeCell::TableLeafCell(TableLeafCell { .. }) => {
-                    return Ok(CursorResult::Ok(true));
+                    return Ok(IOResult::Done(true));
                 }
                 BTreeCell::IndexInteriorCell(IndexInteriorCell {
                     left_child_page, ..
                 }) => {
                     if self.going_upwards {
                         self.going_upwards = false;
-                        return Ok(CursorResult::Ok(true));
+                        return Ok(IOResult::Done(true));
                     } else {
                         let mem_page = self.read_page(*left_child_page as usize)?;
                         self.stack.push(mem_page);
@@ -1272,7 +1262,7 @@ impl BTreeCursor {
                     }
                 }
                 BTreeCell::IndexLeafCell(IndexLeafCell { .. }) => {
-                    return Ok(CursorResult::Ok(true));
+                    return Ok(IOResult::Done(true));
                 }
             }
         }
@@ -1282,7 +1272,7 @@ impl BTreeCursor {
     /// This may be used to seek to a specific record in a point query (e.g. SELECT * FROM table WHERE col = 10)
     /// or e.g. find the first record greater than the seek key in a range query (e.g. SELECT * FROM table WHERE col > 10).
     /// We don't include the rowid in the comparison and that's why the last value from the record is not included.
-    fn do_seek(&mut self, key: SeekKey<'_>, op: SeekOp) -> Result<CursorResult<SeekResult>> {
+    fn do_seek(&mut self, key: SeekKey<'_>, op: SeekOp) -> Result<IOResult<SeekResult>> {
         let ret = return_if_io!(match key {
             SeekKey::TableRowId(rowid) => {
                 self.tablebtree_seek(rowid, op)
@@ -1292,7 +1282,7 @@ impl BTreeCursor {
             }
         });
         self.valid_state = CursorValidState::Valid;
-        Ok(CursorResult::Ok(ret))
+        Ok(IOResult::Done(ret))
     }
 
     /// Move the cursor to the root page of the btree.
@@ -1309,7 +1299,7 @@ impl BTreeCursor {
 
     /// Move the cursor to the rightmost record in the btree.
     #[instrument(skip(self), level = Level::INFO)]
-    fn move_to_rightmost(&mut self) -> Result<CursorResult<bool>> {
+    fn move_to_rightmost(&mut self) -> Result<IOResult<bool>> {
         self.move_to_root()?;
 
         loop {
@@ -1322,9 +1312,9 @@ impl BTreeCursor {
             if contents.is_leaf() {
                 if contents.cell_count() > 0 {
                     self.stack.set_cell_index(contents.cell_count() as i32 - 1);
-                    return Ok(CursorResult::Ok(true));
+                    return Ok(IOResult::Done(true));
                 }
-                return Ok(CursorResult::Ok(false));
+                return Ok(IOResult::Done(false));
             }
 
             match contents.rightmost_pointer() {
@@ -1344,7 +1334,7 @@ impl BTreeCursor {
 
     /// Specialized version of move_to() for table btrees.
     #[instrument(skip(self), level = Level::INFO)]
-    fn tablebtree_move_to(&mut self, rowid: i64, seek_op: SeekOp) -> Result<CursorResult<()>> {
+    fn tablebtree_move_to(&mut self, rowid: i64, seek_op: SeekOp) -> Result<IOResult<()>> {
         'outer: loop {
             let page = self.stack.top();
             return_if_locked_maybe_load!(self.pager, page);
@@ -1354,7 +1344,7 @@ impl BTreeCursor {
                 self.seek_state = CursorSeekState::FoundLeaf {
                     eq_seen: Cell::new(false),
                 };
-                return Ok(CursorResult::Ok(()));
+                return Ok(IOResult::Done(()));
             }
 
             let cell_count = contents.cell_count();
@@ -1466,7 +1456,7 @@ impl BTreeCursor {
         &mut self,
         index_key: &ImmutableRecord,
         cmp: SeekOp,
-    ) -> Result<CursorResult<()>> {
+    ) -> Result<IOResult<()>> {
         let iter_dir = cmp.iteration_direction();
 
         let key_values = index_key.get_values();
@@ -1489,7 +1479,7 @@ impl BTreeCursor {
                 self.seek_state = CursorSeekState::FoundLeaf {
                     eq_seen: Cell::new(eq_seen),
                 };
-                return Ok(CursorResult::Ok(()));
+                return Ok(IOResult::Done(()));
             }
 
             if matches!(
@@ -1674,7 +1664,7 @@ impl BTreeCursor {
     /// Specialized version of do_seek() for table btrees that uses binary search instead
     /// of iterating cells in order.
     #[instrument(skip_all, level = Level::INFO)]
-    fn tablebtree_seek(&mut self, rowid: i64, seek_op: SeekOp) -> Result<CursorResult<SeekResult>> {
+    fn tablebtree_seek(&mut self, rowid: i64, seek_op: SeekOp) -> Result<IOResult<SeekResult>> {
         turso_assert!(
             self.mv_cursor.is_none(),
             "attempting to seek with MV cursor"
@@ -1701,7 +1691,7 @@ impl BTreeCursor {
             let cell_count = contents.cell_count();
             if cell_count == 0 {
                 self.stack.set_cell_index(0);
-                return Ok(CursorResult::Ok(SeekResult::NotFound));
+                return Ok(IOResult::Done(SeekResult::NotFound));
             }
             let min_cell_idx = Cell::new(0);
             let max_cell_idx = Cell::new(cell_count as isize - 1);
@@ -1739,13 +1729,13 @@ impl BTreeCursor {
             if min > max {
                 if let Some(nearest_matching_cell) = nearest_matching_cell.get() {
                     self.stack.set_cell_index(nearest_matching_cell as i32);
-                    return Ok(CursorResult::Ok(SeekResult::Found));
+                    return Ok(IOResult::Done(SeekResult::Found));
                 } else {
                     // if !eq_only - matching entry can exist in neighbour leaf page
                     // this can happen if key in the interiour page was deleted - but divider kept untouched
                     // in such case BTree can navigate to the leaf which no longer has matching key for seek_op
                     // in this case, caller must advance cursor if necessary
-                    return Ok(CursorResult::Ok(if seek_op.eq_only() {
+                    return Ok(IOResult::Done(if seek_op.eq_only() {
                         SeekResult::NotFound
                     } else {
                         let contents = page.get().contents.as_ref().unwrap();
@@ -1781,7 +1771,7 @@ impl BTreeCursor {
             // rowids are unique, so we can return the rowid immediately
             if found && seek_op.eq_only() {
                 self.stack.set_cell_index(cur_cell_idx as i32);
-                return Ok(CursorResult::Ok(SeekResult::Found));
+                return Ok(IOResult::Done(SeekResult::Found));
             }
 
             if found {
@@ -1816,7 +1806,7 @@ impl BTreeCursor {
         &mut self,
         key: &ImmutableRecord,
         seek_op: SeekOp,
-    ) -> Result<CursorResult<SeekResult>> {
+    ) -> Result<IOResult<SeekResult>> {
         let key_values = key.get_values();
         let index_info_default = IndexKeyInfo::default();
         let index_info = *self.index_key_info.as_ref().unwrap_or(&index_info_default);
@@ -1849,7 +1839,7 @@ impl BTreeCursor {
             let contents = page.get().contents.as_ref().unwrap();
             let cell_count = contents.cell_count();
             if cell_count == 0 {
-                return Ok(CursorResult::Ok(SeekResult::NotFound));
+                return Ok(IOResult::Done(SeekResult::NotFound));
             }
 
             let min = Cell::new(0);
@@ -1894,20 +1884,20 @@ impl BTreeCursor {
             if min > max {
                 if let Some(nearest_matching_cell) = nearest_matching_cell.get() {
                     self.stack.set_cell_index(nearest_matching_cell as i32);
-                    return Ok(CursorResult::Ok(SeekResult::Found));
+                    return Ok(IOResult::Done(SeekResult::Found));
                 } else {
                     // Similar logic as in tablebtree_seek(), but for indexes.
                     // The difference is that since index keys are not necessarily unique, we need to TryAdvance
                     // even when eq_only=true and we have seen an EQ match up in the tree in an interior node.
                     if seek_op.eq_only() && !eq_seen.get() {
-                        return Ok(CursorResult::Ok(SeekResult::NotFound));
+                        return Ok(IOResult::Done(SeekResult::NotFound));
                     }
                     // set cursor to the position where which would hold the op-boundary if it were present
                     self.stack.set_cell_index(match &seek_op {
                         SeekOp::GT | SeekOp::GE { .. } => cell_count as i32,
                         SeekOp::LT | SeekOp::LE { .. } => 0,
                     });
-                    return Ok(CursorResult::Ok(SeekResult::TryAdvance));
+                    return Ok(IOResult::Done(SeekResult::TryAdvance));
                 };
             }
 
@@ -2010,7 +2000,7 @@ impl BTreeCursor {
         payload: &'static [u8],
         next_page: Option<u32>,
         payload_size: u64,
-    ) -> Result<CursorResult<()>> {
+    ) -> Result<IOResult<()>> {
         if let Some(next_page) = next_page {
             self.process_overflow_read(payload, next_page, payload_size)
         } else {
@@ -2024,12 +2014,12 @@ impl BTreeCursor {
                 .start_serialization(payload);
 
             self.record_cursor.borrow_mut().invalidate();
-            Ok(CursorResult::Ok(()))
+            Ok(IOResult::Done(()))
         }
     }
 
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn move_to(&mut self, key: SeekKey<'_>, cmp: SeekOp) -> Result<CursorResult<()>> {
+    pub fn move_to(&mut self, key: SeekKey<'_>, cmp: SeekOp) -> Result<IOResult<()>> {
         turso_assert!(
             self.mv_cursor.is_none(),
             "attempting to move with MV cursor"
@@ -2076,13 +2066,13 @@ impl BTreeCursor {
             SeekKey::IndexKey(index_key) => self.indexbtree_move_to(index_key, cmp),
         };
         return_if_io!(ret);
-        Ok(CursorResult::Ok(()))
+        Ok(IOResult::Done(()))
     }
 
     /// Insert a record into the btree.
     /// If the insert operation overflows the page, it will be split and the btree will be balanced.
     #[instrument(skip_all, level = Level::INFO)]
-    fn insert_into_page(&mut self, bkey: &BTreeKey) -> Result<CursorResult<()>> {
+    fn insert_into_page(&mut self, bkey: &BTreeKey) -> Result<IOResult<()>> {
         let record = bkey
             .get_record()
             .expect("expected record present on insert");
@@ -2240,7 +2230,7 @@ impl BTreeCursor {
                     return_if_io!(self.balance());
                 }
                 WriteState::Finish => {
-                    break Ok(CursorResult::Ok(()));
+                    break Ok(IOResult::Done(()));
                 }
             };
         };
@@ -2262,7 +2252,7 @@ impl BTreeCursor {
     /// It will try to split the page in half by keys not by content.
     /// Sqlite tries to have a page at least 40% full.
     #[instrument(skip(self), level = Level::INFO)]
-    fn balance(&mut self) -> Result<CursorResult<()>> {
+    fn balance(&mut self) -> Result<IOResult<()>> {
         turso_assert!(
             matches!(self.state, CursorState::Write(_)),
             "Cursor must be in balancing state"
@@ -2300,7 +2290,7 @@ impl BTreeCursor {
                         {
                             let write_info = self.state.mut_write_info().unwrap();
                             write_info.state = WriteState::Finish;
-                            return Ok(CursorResult::Ok(()));
+                            return Ok(IOResult::Done(()));
                         }
                     }
 
@@ -2316,7 +2306,7 @@ impl BTreeCursor {
                 WriteState::BalanceNonRootPickSiblings | WriteState::BalanceNonRootDoBalancing => {
                     return_if_io!(self.balance_non_root());
                 }
-                WriteState::Finish => return Ok(CursorResult::Ok(())),
+                WriteState::Finish => return Ok(IOResult::Done(())),
                 _ => panic!("unexpected state on balance {state:?}"),
             }
         }
@@ -2324,7 +2314,7 @@ impl BTreeCursor {
 
     /// Balance a non root page by trying to balance cells between a maximum of 3 siblings that should be neighboring the page that overflowed/underflowed.
     #[instrument(skip_all, level = Level::INFO)]
-    fn balance_non_root(&mut self) -> Result<CursorResult<()>> {
+    fn balance_non_root(&mut self) -> Result<IOResult<()>> {
         turso_assert!(
             matches!(self.state, CursorState::Write(_)),
             "Cursor must be in balancing state"
@@ -2489,7 +2479,7 @@ impl BTreeCursor {
                         sibling_count,
                         first_divider_cell: first_cell_divider,
                     }));
-                (WriteState::BalanceNonRootDoBalancing, Ok(CursorResult::IO))
+                (WriteState::BalanceNonRootDoBalancing, Ok(IOResult::IO))
             }
             WriteState::BalanceNonRootDoBalancing => {
                 // Ensure all involved pages are in memory.
@@ -3308,7 +3298,7 @@ impl BTreeCursor {
                     self.pager
                         .free_page(Some(page.get().clone()), page.get().get().id)?;
                 }
-                (WriteState::BalanceStart, Ok(CursorResult::Ok(())))
+                (WriteState::BalanceStart, Ok(IOResult::Done(())))
             }
             WriteState::Finish => todo!(),
         };
@@ -3851,7 +3841,7 @@ impl BTreeCursor {
 
     /// Find the index of the cell in the page that contains the given rowid.
     #[instrument( skip_all, level = Level::INFO)]
-    fn find_cell(&mut self, page: &PageContent, key: &BTreeKey) -> Result<CursorResult<usize>> {
+    fn find_cell(&mut self, page: &PageContent, key: &BTreeKey) -> Result<IOResult<usize>> {
         let cell_count = page.cell_count();
         let mut low = 0;
         let mut high = if cell_count > 0 { cell_count - 1 } else { 0 };
@@ -3922,11 +3912,11 @@ impl BTreeCursor {
         self.find_cell_state.reset();
         assert!(result_index <= cell_count);
 
-        Ok(CursorResult::Ok(result_index))
+        Ok(IOResult::Done(result_index))
     }
 
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn seek_end(&mut self) -> Result<CursorResult<()>> {
+    pub fn seek_end(&mut self) -> Result<IOResult<()>> {
         assert!(self.mv_cursor.is_none()); // unsure about this -_-
         self.move_to_root()?;
         loop {
@@ -3940,7 +3930,7 @@ impl BTreeCursor {
             if contents.is_leaf() {
                 // set cursor just past the last cell to append
                 self.stack.set_cell_index(contents.cell_count() as i32);
-                return Ok(CursorResult::Ok(()));
+                return Ok(IOResult::Done(()));
             }
 
             match contents.rightmost_pointer() {
@@ -3955,16 +3945,16 @@ impl BTreeCursor {
     }
 
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn seek_to_last(&mut self) -> Result<CursorResult<()>> {
+    pub fn seek_to_last(&mut self) -> Result<IOResult<()>> {
         let has_record = return_if_io!(self.move_to_rightmost());
         self.invalidate_record();
         self.has_record.replace(has_record);
         if !has_record {
             let is_empty = return_if_io!(self.is_empty_table());
             assert!(is_empty);
-            return Ok(CursorResult::Ok(()));
+            return Ok(IOResult::Done(()));
         }
-        Ok(CursorResult::Ok(()))
+        Ok(IOResult::Done(()))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -3976,7 +3966,7 @@ impl BTreeCursor {
     }
 
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn rewind(&mut self) -> Result<CursorResult<()>> {
+    pub fn rewind(&mut self) -> Result<IOResult<()>> {
         if self.mv_cursor.is_some() {
             let cursor_has_record = return_if_io!(self.get_next_record());
             self.invalidate_record();
@@ -3988,25 +3978,25 @@ impl BTreeCursor {
             self.invalidate_record();
             self.has_record.replace(cursor_has_record);
         }
-        Ok(CursorResult::Ok(()))
+        Ok(IOResult::Done(()))
     }
 
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn last(&mut self) -> Result<CursorResult<()>> {
+    pub fn last(&mut self) -> Result<IOResult<()>> {
         assert!(self.mv_cursor.is_none());
         let cursor_has_record = return_if_io!(self.move_to_rightmost());
         self.has_record.replace(cursor_has_record);
         self.invalidate_record();
-        Ok(CursorResult::Ok(()))
+        Ok(IOResult::Done(()))
     }
 
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn next(&mut self) -> Result<CursorResult<bool>> {
+    pub fn next(&mut self) -> Result<IOResult<bool>> {
         return_if_io!(self.restore_context());
         let cursor_has_record = return_if_io!(self.get_next_record());
         self.has_record.replace(cursor_has_record);
         self.invalidate_record();
-        Ok(CursorResult::Ok(cursor_has_record))
+        Ok(IOResult::Done(cursor_has_record))
     }
 
     fn invalidate_record(&mut self) {
@@ -4018,20 +4008,20 @@ impl BTreeCursor {
     }
 
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn prev(&mut self) -> Result<CursorResult<bool>> {
+    pub fn prev(&mut self) -> Result<IOResult<bool>> {
         assert!(self.mv_cursor.is_none());
         return_if_io!(self.restore_context());
         let cursor_has_record = return_if_io!(self.get_prev_record());
         self.has_record.replace(cursor_has_record);
         self.invalidate_record();
-        Ok(CursorResult::Ok(cursor_has_record))
+        Ok(IOResult::Done(cursor_has_record))
     }
 
     #[instrument(skip(self), level = Level::INFO)]
-    pub fn rowid(&mut self) -> Result<CursorResult<Option<i64>>> {
+    pub fn rowid(&mut self) -> Result<IOResult<Option<i64>>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             let mv_cursor = mv_cursor.borrow();
-            return Ok(CursorResult::Ok(
+            return Ok(IOResult::Done(
                 mv_cursor.current_row_id().map(|rowid| rowid.row_id),
             ));
         }
@@ -4052,17 +4042,17 @@ impl BTreeCursor {
                         page_type
                     );
                 };
-                Ok(CursorResult::Ok(Some(rowid)))
+                Ok(IOResult::Done(Some(rowid)))
             } else {
-                Ok(CursorResult::Ok(self.get_index_rowid_from_record()))
+                Ok(IOResult::Done(self.get_index_rowid_from_record()))
             }
         } else {
-            Ok(CursorResult::Ok(None))
+            Ok(IOResult::Done(None))
         }
     }
 
     #[instrument(skip(self), level = Level::INFO)]
-    pub fn seek(&mut self, key: SeekKey<'_>, op: SeekOp) -> Result<CursorResult<SeekResult>> {
+    pub fn seek(&mut self, key: SeekKey<'_>, op: SeekOp) -> Result<IOResult<SeekResult>> {
         assert!(self.mv_cursor.is_none());
         // Empty trace to capture the span information
         tracing::trace!("");
@@ -4077,16 +4067,16 @@ impl BTreeCursor {
         self.valid_state = CursorValidState::Valid;
         self.has_record
             .replace(matches!(seek_result, SeekResult::Found));
-        Ok(CursorResult::Ok(seek_result))
+        Ok(IOResult::Done(seek_result))
     }
 
     /// Return a reference to the record the cursor is currently pointing to.
     /// If record was not parsed yet, then we have to parse it and in case of I/O we yield control
     /// back.
     #[instrument(skip(self), level = Level::INFO)]
-    pub fn record(&self) -> Result<CursorResult<Option<Ref<ImmutableRecord>>>> {
+    pub fn record(&self) -> Result<IOResult<Option<Ref<ImmutableRecord>>>> {
         if !self.has_record.get() {
-            return Ok(CursorResult::Ok(None));
+            return Ok(IOResult::Done(None));
         }
         let invalidated = self
             .reusable_immutable_record
@@ -4098,7 +4088,7 @@ impl BTreeCursor {
             let record_ref =
                 Ref::filter_map(self.reusable_immutable_record.borrow(), |opt| opt.as_ref())
                     .unwrap();
-            return Ok(CursorResult::Ok(Some(record_ref)));
+            return Ok(IOResult::Done(Some(record_ref)));
         }
         if *self.parse_record_state.borrow() == ParseRecordState::Init {
             *self.parse_record_state.borrow_mut() = ParseRecordState::Parsing {
@@ -4148,7 +4138,7 @@ impl BTreeCursor {
         *self.parse_record_state.borrow_mut() = ParseRecordState::Init;
         let record_ref =
             Ref::filter_map(self.reusable_immutable_record.borrow(), |opt| opt.as_ref()).unwrap();
-        Ok(CursorResult::Ok(Some(record_ref)))
+        Ok(IOResult::Done(Some(record_ref)))
     }
 
     #[instrument(skip(self), level = Level::INFO)]
@@ -4156,7 +4146,7 @@ impl BTreeCursor {
         &mut self,
         key: &BTreeKey,
         mut moved_before: bool, /* Indicate whether it's necessary to traverse to find the leaf page */
-    ) -> Result<CursorResult<()>> {
+    ) -> Result<IOResult<()>> {
         tracing::debug!(valid_state = ?self.valid_state, cursor_state = ?self.state, is_write_in_progress = self.is_write_in_progress());
         match &self.mv_cursor {
             Some(mv_cursor) => match key.maybe_rowid() {
@@ -4207,7 +4197,7 @@ impl BTreeCursor {
                 }
             }
         };
-        Ok(CursorResult::Ok(()))
+        Ok(IOResult::Done(()))
     }
 
     /// Delete state machine flow:
@@ -4222,7 +4212,7 @@ impl BTreeCursor {
     /// 8. SeekAfterBalancing -> adjust the cursor to a node that is closer to the deleted value. go to Finish
     /// 9. Finish -> Delete operation is done. Return CursorResult(Ok())
     #[instrument(skip(self), level = Level::INFO)]
-    pub fn delete(&mut self) -> Result<CursorResult<()>> {
+    pub fn delete(&mut self) -> Result<IOResult<()>> {
         assert!(self.mv_cursor.is_none());
 
         if let CursorState::None = &self.state {
@@ -4250,11 +4240,11 @@ impl BTreeCursor {
                     ) {
                         if return_if_io!(self.rowid()).is_none() {
                             self.state = CursorState::None;
-                            return Ok(CursorResult::Ok(()));
+                            return Ok(IOResult::Done(()));
                         }
                     } else if self.reusable_immutable_record.borrow().is_none() {
                         self.state = CursorState::None;
-                        return Ok(CursorResult::Ok(()));
+                        return Ok(IOResult::Done(()));
                     }
 
                     let delete_info = self.state.mut_delete_info().unwrap();
@@ -4494,7 +4484,7 @@ impl BTreeCursor {
                         // was taken in InteriorNodeReplacement. We must also check if the parent needs balancing!!!
                         self.stack.retreat();
                         self.state = CursorState::None;
-                        return Ok(CursorResult::Ok(()));
+                        return Ok(IOResult::Done(()));
                     }
                     // Only reaches this function call if state = DeleteState::WaitForBalancingToComplete
                     // self.save_context();
@@ -4510,7 +4500,7 @@ impl BTreeCursor {
                     match self.balance()? {
                         // TODO(Krishna): Add second balance in the case where deletion causes cursor to end up
                         // a level deeper.
-                        CursorResult::Ok(()) => {
+                        IOResult::Done(()) => {
                             let write_info = match &self.state {
                                 CursorState::Write(wi) => wi.clone(),
                                 _ => unreachable!("Balance operation changed cursor state"),
@@ -4523,7 +4513,7 @@ impl BTreeCursor {
                             });
                         }
 
-                        CursorResult::IO => {
+                        IOResult::IO => {
                             // Move to seek state
                             // Save balance progress and return IO
                             let write_info = match &self.state {
@@ -4535,7 +4525,7 @@ impl BTreeCursor {
                                 state: DeleteState::WaitForBalancingToComplete { target_key },
                                 balance_write_info: Some(write_info),
                             });
-                            return Ok(CursorResult::IO);
+                            return Ok(IOResult::IO);
                         }
                     }
                 }
@@ -4552,7 +4542,7 @@ impl BTreeCursor {
                     return_if_io!(self.seek(key, SeekOp::LT));
 
                     self.state = CursorState::None;
-                    return Ok(CursorResult::Ok(()));
+                    return Ok(IOResult::Done(()));
                 }
             }
         }
@@ -4572,7 +4562,7 @@ impl BTreeCursor {
     }
 
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn exists(&mut self, key: &Value) -> Result<CursorResult<bool>> {
+    pub fn exists(&mut self, key: &Value) -> Result<IOResult<bool>> {
         assert!(self.mv_cursor.is_none());
         let int_key = match key {
             Value::Integer(i) => i,
@@ -4583,14 +4573,14 @@ impl BTreeCursor {
         let has_record = matches!(seek_result, SeekResult::Found);
         self.has_record.set(has_record);
         self.invalidate_record();
-        Ok(CursorResult::Ok(has_record))
+        Ok(IOResult::Done(has_record))
     }
 
     /// Clear the overflow pages linked to a specific page provided by the leaf cell
     /// Uses a state machine to keep track of it's operations so that traversal can be
     /// resumed from last point after IO interruption
     #[instrument(skip_all, level = Level::INFO)]
-    fn clear_overflow_pages(&mut self, cell: &BTreeCell) -> Result<CursorResult<()>> {
+    fn clear_overflow_pages(&mut self, cell: &BTreeCell) -> Result<IOResult<()>> {
         loop {
             let state = self.overflow_state.take().unwrap_or(OverflowState::Start);
 
@@ -4602,7 +4592,7 @@ impl BTreeCursor {
                         BTreeCell::IndexInteriorCell(interior_cell) => {
                             interior_cell.first_overflow_page
                         }
-                        BTreeCell::TableInteriorCell(_) => return Ok(CursorResult::Ok(())), // No overflow pages
+                        BTreeCell::TableInteriorCell(_) => return Ok(IOResult::Done(())), // No overflow pages
                     };
 
                     if let Some(page) = first_overflow_page {
@@ -4637,7 +4627,7 @@ impl BTreeCursor {
                 }
                 OverflowState::Done => {
                     self.overflow_state = None;
-                    return Ok(CursorResult::Ok(()));
+                    return Ok(IOResult::Done(()));
                 }
             };
         }
@@ -4659,7 +4649,7 @@ impl BTreeCursor {
     ///
     /// The destruction order would be: [4',4,5,2,6,7,3,1]
     #[instrument(skip(self), level = Level::INFO)]
-    pub fn btree_destroy(&mut self) -> Result<CursorResult<Option<usize>>> {
+    pub fn btree_destroy(&mut self) -> Result<IOResult<Option<usize>>> {
         if let CursorState::None = &self.state {
             self.move_to_root()?;
             self.state = CursorState::Destroy(DestroyInfo {
@@ -4786,7 +4776,7 @@ impl BTreeCursor {
                 }
                 DestroyState::ClearOverflowPages { cell } => {
                     match self.clear_overflow_pages(&cell)? {
-                        CursorResult::Ok(_) => match cell {
+                        IOResult::Done(_) => match cell {
                             //  For an index interior cell, clear the left child page now that overflow pages have been cleared
                             BTreeCell::IndexInteriorCell(index_int_cell) => {
                                 let child_page =
@@ -4807,7 +4797,7 @@ impl BTreeCursor {
                             }
                             _ => panic!("unexpected cell type"),
                         },
-                        CursorResult::IO => return Ok(CursorResult::IO),
+                        IOResult::IO => return Ok(IOResult::IO),
                     }
                 }
                 DestroyState::FreePage => {
@@ -4827,7 +4817,7 @@ impl BTreeCursor {
                         self.state = CursorState::None;
                         //  TODO: For now, no-op the result return None always. This will change once [AUTO_VACUUM](https://www.sqlite.org/lang_vacuum.html) is introduced
                         //  At that point, the last root page(call this x) will be moved into the position of the root page of this table and the value returned will be x
-                        return Ok(CursorResult::Ok(None));
+                        return Ok(IOResult::Done(None));
                     }
                 }
             }
@@ -4843,7 +4833,7 @@ impl BTreeCursor {
         page_ref: BTreePage,
         cell_idx: usize,
         record: &ImmutableRecord,
-    ) -> Result<CursorResult<()>> {
+    ) -> Result<IOResult<()>> {
         // build the new payload
         let page_type = page_ref.get().get().contents.as_ref().unwrap().page_type();
         let serial_types_len = self.record_cursor.borrow_mut().len(record);
@@ -4868,7 +4858,7 @@ impl BTreeCursor {
         // if it all fits in local space and old_local_size is enough, do an in-place overwrite
         if new_payload.len() == old_local_size {
             self.overwrite_content(page_ref.clone(), old_offset, &new_payload)?;
-            Ok(CursorResult::Ok(()))
+            Ok(IOResult::Done(()))
         } else {
             // doesn't fit, drop it and insert a new one
             drop_cell(
@@ -4882,7 +4872,7 @@ impl BTreeCursor {
                 cell_idx,
                 self.usable_space() as u16,
             )?;
-            Ok(CursorResult::Ok(()))
+            Ok(IOResult::Done(()))
         }
     }
 
@@ -4891,13 +4881,13 @@ impl BTreeCursor {
         page_ref: BTreePage,
         dest_offset: usize,
         new_payload: &[u8],
-    ) -> Result<CursorResult<()>> {
+    ) -> Result<IOResult<()>> {
         return_if_locked!(page_ref.get());
         let page_ref = page_ref.get();
         let buf = page_ref.get().contents.as_mut().unwrap().as_ptr();
         buf[dest_offset..dest_offset + new_payload.len()].copy_from_slice(new_payload);
 
-        Ok(CursorResult::Ok(()))
+        Ok(IOResult::Done(()))
     }
 
     fn get_immutable_record_or_create(&self) -> std::cell::RefMut<'_, Option<ImmutableRecord>> {
@@ -4920,7 +4910,7 @@ impl BTreeCursor {
     ///
     /// Only supposed to be used in the context of a simple Count Select Statement
     #[instrument(skip(self), level = Level::INFO)]
-    pub fn count(&mut self) -> Result<CursorResult<usize>> {
+    pub fn count(&mut self) -> Result<IOResult<usize>> {
         if self.count == 0 {
             self.move_to_root()?;
         }
@@ -4957,7 +4947,7 @@ impl BTreeCursor {
                         // All pages of the b-tree have been visited. Return successfully
                         self.move_to_root()?;
 
-                        return Ok(CursorResult::Ok(self.count));
+                        return Ok(IOResult::Done(self.count));
                     }
 
                     // Move to parent
@@ -5017,9 +5007,9 @@ impl BTreeCursor {
 
     /// If context is defined, restore it and set it None on success
     #[instrument(skip_all, level = Level::INFO)]
-    fn restore_context(&mut self) -> Result<CursorResult<()>> {
+    fn restore_context(&mut self) -> Result<IOResult<()>> {
         if self.context.is_none() || !matches!(self.valid_state, CursorValidState::RequireSeek) {
-            return Ok(CursorResult::Ok(()));
+            return Ok(IOResult::Done(()));
         }
         let ctx = self.context.take().unwrap();
         let seek_key = match ctx {
@@ -5028,13 +5018,13 @@ impl BTreeCursor {
         };
         let res = self.seek(seek_key, SeekOp::GE { eq_only: true })?;
         match res {
-            CursorResult::Ok(_) => {
+            IOResult::Done(_) => {
                 self.valid_state = CursorValidState::Valid;
-                Ok(CursorResult::Ok(()))
+                Ok(IOResult::Done(()))
             }
-            CursorResult::IO => {
+            IOResult::IO => {
                 self.context = Some(ctx);
-                Ok(CursorResult::IO)
+                Ok(IOResult::IO)
             }
         }
     }
@@ -5157,14 +5147,14 @@ pub fn integrity_check(
     state: &mut IntegrityCheckState,
     errors: &mut Vec<IntegrityCheckError>,
     pager: &Rc<Pager>,
-) -> Result<CursorResult<()>> {
+) -> Result<IOResult<()>> {
     let Some(IntegrityCheckPageEntry {
         page_idx,
         level,
         max_intkey,
     }) = state.page_stack.last().cloned()
     else {
-        return Ok(CursorResult::Ok(()));
+        return Ok(IOResult::Done(()));
     };
     let page = btree_read_page(pager, page_idx)?;
     return_if_locked_maybe_load!(pager, page);
@@ -5310,7 +5300,7 @@ pub fn integrity_check(
         contents.num_frag_free_bytes() as usize,
     );
 
-    Ok(CursorResult::Ok(()))
+    Ok(IOResult::Done(()))
 }
 
 pub fn btree_read_page(pager: &Rc<Pager>, page_idx: usize) -> Result<BTreePage> {
@@ -6822,7 +6812,7 @@ mod tests {
                 assert!(
                     matches!(
                         cursor.seek(seek_key, SeekOp::GE { eq_only: true }).unwrap(),
-                        CursorResult::Ok(SeekResult::Found)
+                        IOResult::Done(SeekResult::Found)
                     ),
                     "key {key} is not found"
                 );
@@ -6911,8 +6901,8 @@ mod tests {
                 .unwrap();
                 loop {
                     match pager.end_tx(false, false, &conn, false).unwrap() {
-                        crate::PagerCacheflushStatus::Done(_) => break,
-                        crate::PagerCacheflushStatus::IO => {
+                        IOResult::Done(_) => break,
+                        IOResult::IO => {
                             pager.io.run_once().unwrap();
                         }
                     }
@@ -6990,8 +6980,8 @@ mod tests {
             let index_root_page_result =
                 pager.btree_create(&CreateBTreeFlags::new_index()).unwrap();
             let index_root_page = match index_root_page_result {
-                crate::types::CursorResult::Ok(id) => id as usize,
-                crate::types::CursorResult::IO => {
+                crate::types::IOResult::Done(id) => id as usize,
+                crate::types::IOResult::IO => {
                     panic!("btree_create returned IO in test, unexpected")
                 }
             };
@@ -7038,8 +7028,8 @@ mod tests {
                 cursor.move_to_root().unwrap();
                 loop {
                     match pager.end_tx(false, false, &conn, false).unwrap() {
-                        crate::PagerCacheflushStatus::Done(_) => break,
-                        crate::PagerCacheflushStatus::IO => {
+                        IOResult::Done(_) => break,
+                        IOResult::IO => {
                             pager.io.run_once().unwrap();
                         }
                     }
@@ -7341,7 +7331,7 @@ mod tests {
         // Clear overflow pages
         let clear_result = cursor.clear_overflow_pages(&leaf_cell)?;
         match clear_result {
-            CursorResult::Ok(_) => {
+            IOResult::Done(_) => {
                 // Verify proper number of pages were added to freelist
                 assert_eq!(
                     header_accessor::get_freelist_pages(&pager)?,
@@ -7369,7 +7359,7 @@ mod tests {
                     }
                 }
             }
-            CursorResult::IO => {
+            IOResult::IO => {
                 cursor.pager.io.run_once()?;
             }
         }
@@ -7399,7 +7389,7 @@ mod tests {
         // Try to clear non-existent overflow pages
         let clear_result = cursor.clear_overflow_pages(&leaf_cell)?;
         match clear_result {
-            CursorResult::Ok(_) => {
+            IOResult::Done(_) => {
                 // Verify freelist was not modified
                 assert_eq!(
                     header_accessor::get_freelist_pages(&pager)?,
@@ -7414,7 +7404,7 @@ mod tests {
                     "No trunk page should be created when no overflow pages exist"
                 );
             }
-            CursorResult::IO => {
+            IOResult::IO => {
                 cursor.pager.io.run_once()?;
             }
         }
@@ -8445,15 +8435,15 @@ mod tests {
     }
 
     fn run_until_done<T>(
-        mut action: impl FnMut() -> Result<CursorResult<T>>,
+        mut action: impl FnMut() -> Result<IOResult<T>>,
         pager: &Pager,
     ) -> Result<T> {
         loop {
             match action()? {
-                CursorResult::Ok(res) => {
+                IOResult::Done(res) => {
                     return Ok(res);
                 }
-                CursorResult::IO => pager.io.run_once().unwrap(),
+                IOResult::IO => pager.io.run_once().unwrap(),
             }
         }
     }
