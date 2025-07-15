@@ -2547,7 +2547,7 @@ mod tests {
 
     #[test]
     fn test_calc_header_size() {
-        // Test 1-byte header size (0 to 127)
+        // Test 1-byte header size (serial type sizes 0 to 126)
         const MIN_SERIALTYPES_SIZE_FOR_1_BYTE_HEADER: usize = 0;
         assert_eq!(
             Record::calc_header_size(MIN_SERIALTYPES_SIZE_FOR_1_BYTE_HEADER),
@@ -2560,7 +2560,7 @@ mod tests {
             MAX_SERIALTYPES_SIZE_FOR_1_BYTE_HEADER + 1
         );
 
-        // Test 2-byte header size (128 to 16383)
+        // Test 2-byte header size (serial type sizes 127 to 16381)
         const MIN_SERIALTYPES_SIZE_FOR_2_BYTE_HEADER: usize =
             MAX_SERIALTYPES_SIZE_FOR_1_BYTE_HEADER + 1;
         assert_eq!(
@@ -2574,7 +2574,7 @@ mod tests {
             MAX_SERIALTYPES_SIZE_FOR_2_BYTE_HEADER + 2
         );
 
-        // Test 3-byte header size (16384 to 2097151)
+        // Test 3-byte header size (serial type sizes 16382 to 2097148)
         const MIN_SERIALTYPES_SIZE_FOR_3_BYTE_HEADER: usize =
             MAX_SERIALTYPES_SIZE_FOR_2_BYTE_HEADER + 1;
         assert_eq!(
@@ -2588,7 +2588,7 @@ mod tests {
             MAX_SERIALTYPES_SIZE_FOR_3_BYTE_HEADER + 3
         );
 
-        // Test 4-byte header size (2097152 to 268435455)
+        // Test 4-byte header size (serial type sizes 2097149 to 268435451)
         const MIN_SERIALTYPES_SIZE_FOR_4_BYTE_HEADER: usize =
             MAX_SERIALTYPES_SIZE_FOR_3_BYTE_HEADER + 1;
         assert_eq!(
