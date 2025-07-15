@@ -36,7 +36,7 @@ dualTest.onlySqlitePasses("Statement.prepare() error", async (t) => {
   });
 });
 
-dualTest.onlySqlitePasses("Statement.run() returning rows", async (t) => {
+dualTest.both("Statement.run() returning rows", async (t) => {
   const db = t.context.db;
 
   const stmt = db.prepare("SELECT 1");
@@ -44,7 +44,7 @@ dualTest.onlySqlitePasses("Statement.run() returning rows", async (t) => {
   t.is(info.changes, 0);
 });
 
-dualTest.onlySqlitePasses("Statement.run() [positional]", async (t) => {
+dualTest.both("Statement.run() [positional]", async (t) => {
   const db = t.context.db;
 
   const stmt = db.prepare("INSERT INTO users(name, email) VALUES (?, ?)");
@@ -58,7 +58,7 @@ dualTest.onlySqlitePasses("Statement.run() [positional]", async (t) => {
   t.is(stmt2.get().email, "carol@example.net");
 });
 
-dualTest.onlySqlitePasses("Statement.run() [named]", async (t) => {
+dualTest.both("Statement.run() [named]", async (t) => {
   const db = t.context.db;
 
   const stmt = db.prepare("INSERT INTO users(name, email) VALUES (@name, @email);");

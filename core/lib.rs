@@ -807,6 +807,10 @@ impl Connection {
         self.total_changes.set(prev_total_changes + nchange);
     }
 
+    pub fn changes(&self) -> i64 {
+        self.last_change.get()
+    }
+
     pub fn total_changes(&self) -> i64 {
         self.total_changes.get()
     }
