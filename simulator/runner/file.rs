@@ -177,11 +177,8 @@ impl File for SimulatorFile {
     fn sync(&self, mut c: turso_core::Completion) -> Result<Arc<turso_core::Completion>> {
         self.nr_sync_calls.set(self.nr_sync_calls.get() + 1);
         if self.fault.get() {
-            tracing::debug!("sync fault");
-            self.nr_sync_faults.set(self.nr_sync_faults.get() + 1);
-            return Err(turso_core::LimboError::InternalError(
-                FAULT_ERROR_MSG.into(),
-            ));
+            tracing::debug!("ignoring sync fault because it causes false positives with current simulator design");
+            self.fault.set(false);
         }
         if let Some(latency) = self.generate_latency_duration() {
             let CompletionType::Sync(sync_completion) = &mut c.completion_type else {
