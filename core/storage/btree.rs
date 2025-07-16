@@ -205,6 +205,10 @@ enum DeleteState {
     SeekAfterBalancing {
         target_key: DeleteSavepoint,
     },
+    /// If the seek performed in [DeleteState::SeekAfterBalancing] returned a [SeekResult::TryAdvance] we need to call next()/prev() to get to the right location.
+    /// We need to have this separate state for re-entrancy as calling next()/prev() might yield on IO.
+    /// FIXME: refactor DeleteState not to have SeekAfterBalancing and instead use save_context() and restore_context()
+    TryAdvance,
 }
 
 #[derive(Clone)]
@@ -4587,8 +4591,25 @@ impl BTreeCursor {
                     };
                     // We want to end up pointing at the row to the left of the position of the row we deleted, so
                     // that after we call next() in the loop,the next row we delete will again be the same position as this one.
-                    return_if_io!(self.seek(key, SeekOp::LT));
+                    let seek_result = return_if_io!(self.seek(key, SeekOp::LT));
 
+                    if let SeekResult::TryAdvance = seek_result {
+                        let CursorState::Delete(delete_info) = &self.state else {
+                            unreachable!("expected delete state");
+                        };
+                        self.state = CursorState::Delete(DeleteInfo {
+                            state: DeleteState::TryAdvance,
+                            balance_write_info: delete_info.balance_write_info.clone(),
+                        });
+                        continue;
+                    }
+
+                    self.state = CursorState::None;
+                    return Ok(IOResult::Done(()));
+                }
+                DeleteState::TryAdvance => {
+                    // we use LT always for post-delete seeks, which uses backwards iteration, so we always call prev() here.
+                    return_if_io!(self.prev());
                     self.state = CursorState::None;
                     return Ok(IOResult::Done(()));
                 }
