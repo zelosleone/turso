@@ -77,18 +77,18 @@ use std::{
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
 use storage::page_cache::DumbLruPageCache;
-pub use storage::pager::PagerCacheflushStatus;
-use storage::pager::{DB_STATE_INITIALIZED, DB_STATE_UNINITIALIZED};
+use storage::pager::{PagerCacheflushResult, DB_STATE_INITIALIZED, DB_STATE_UNINITIALIZED};
 pub use storage::{
     buffer_pool::BufferPool,
     database::DatabaseStorage,
     pager::PageRef,
     pager::{Page, Pager},
-    wal::{CheckpointMode, CheckpointResult, CheckpointStatus, Wal, WalFile, WalFileShared},
+    wal::{CheckpointMode, CheckpointResult, Wal, WalFile, WalFileShared},
 };
 use tracing::{instrument, Level};
 use translate::select::prepare_select_plan;
 use turso_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
+use types::IOResult;
 pub use types::RefValue;
 pub use types::Value;
 use util::parse_schema_rows;
@@ -755,7 +755,7 @@ impl Connection {
     /// This will write the dirty pages to the WAL and then fsync the WAL.
     /// If the WAL size is over the checkpoint threshold, it will checkpoint the WAL to
     /// the database file and then fsync the database file.
-    pub fn cacheflush(&self) -> Result<PagerCacheflushStatus> {
+    pub fn cacheflush(&self) -> Result<IOResult<PagerCacheflushResult>> {
         if self.closed.get() {
             return Err(LimboError::InternalError("Connection closed".to_string()));
         }

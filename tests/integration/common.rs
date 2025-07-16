@@ -6,7 +6,8 @@ use tempfile::TempDir;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::EnvFilter;
-use turso_core::{Connection, Database, PagerCacheflushStatus, IO};
+use turso_core::types::IOResult;
+use turso_core::{Connection, Database, IO};
 
 #[allow(dead_code)]
 pub struct TempDatabase {
@@ -115,10 +116,10 @@ impl TempDatabase {
 pub(crate) fn do_flush(conn: &Arc<Connection>, tmp_db: &TempDatabase) -> anyhow::Result<()> {
     loop {
         match conn.cacheflush()? {
-            PagerCacheflushStatus::Done(_) => {
+            IOResult::Done(_) => {
                 break;
             }
-            PagerCacheflushStatus::IO => {
+            IOResult::IO => {
                 tmp_db.io.run_once()?;
             }
         }

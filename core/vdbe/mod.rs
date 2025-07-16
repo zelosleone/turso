@@ -27,13 +27,10 @@ pub mod sorter;
 use crate::{
     error::LimboError,
     function::{AggFunc, FuncCtx},
-    storage::{pager::PagerCacheflushStatus, sqlite3_ondisk::SmallVec},
+    storage::sqlite3_ondisk::SmallVec,
     translate::plan::TableReferences,
-    types::{RawSlice, TextRef},
-    vdbe::execute::OpIdxInsertState,
-    vdbe::execute::OpInsertState,
-    vdbe::execute::OpNewRowidState,
-    vdbe::execute::OpSeekState,
+    types::{IOResult, RawSlice, TextRef},
+    vdbe::execute::{OpIdxInsertState, OpInsertState, OpNewRowidState, OpSeekState},
     RefValue,
 };
 
@@ -159,13 +156,13 @@ pub enum StepResult {
 }
 
 /// If there is I/O, the instruction is restarted.
-/// Evaluate a Result<CursorResult<T>>, if IO return Ok(StepResult::IO).
+/// Evaluate a Result<IOResult<T>>, if IO return Ok(StepResult::IO).
 #[macro_export]
-macro_rules! return_if_io {
+macro_rules! return_step_if_io {
     ($expr:expr) => {
         match $expr? {
-            CursorResult::Ok(v) => v,
-            CursorResult::IO => return Ok(StepResult::IO),
+            IOResult::Ok(v) => v,
+            IOResult::IO => return Ok(StepResult::IO),
         }
     };
 }
@@ -509,7 +506,7 @@ impl Program {
             connection.wal_checkpoint_disabled.get(),
         )?;
         match cacheflush_status {
-            PagerCacheflushStatus::Done(status) => {
+            IOResult::Done(status) => {
                 if self.change_cnt_on {
                     self.connection.set_changes(self.n_change.get());
                 }
@@ -522,7 +519,7 @@ impl Program {
                 connection.transaction_state.replace(TransactionState::None);
                 *commit_state = CommitState::Ready;
             }
-            PagerCacheflushStatus::IO => {
+            IOResult::IO => {
                 tracing::trace!("Cacheflush IO");
                 *commit_state = CommitState::Committing;
                 return Ok(StepResult::IO);

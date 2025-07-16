@@ -42,9 +42,7 @@ use crate::{
 
 use crate::{
     storage::wal::CheckpointResult,
-    types::{
-        AggContext, Cursor, CursorResult, ExternalAggState, SeekKey, SeekOp, Value, ValueType,
-    },
+    types::{AggContext, Cursor, ExternalAggState, IOResult, SeekKey, SeekOp, Value, ValueType},
     util::{
         cast_real_to_integer, cast_text_to_integer, cast_text_to_numeric, cast_text_to_real,
         checked_cast_text_to_numeric, parse_schema_rows, RoundToPrecision,
@@ -95,8 +93,8 @@ use crate::{
 macro_rules! return_if_io {
     ($expr:expr) => {
         match $expr? {
-            CursorResult::Ok(v) => v,
-            CursorResult::IO => return Ok(InsnFunctionStepResult::IO),
+            IOResult::Done(v) => v,
+            IOResult::IO => return Ok(InsnFunctionStepResult::IO),
         }
     };
 }
@@ -1293,7 +1291,7 @@ pub fn op_last(
 /// - **Single-byte case**: Values 0-127 (0x00-0x7F) are returned immediately
 /// - **Two-byte case**: Values 128-16383 (0x80-0x3FFF) are handled inline
 /// - **Multi-byte case**: Larger values fall back to the full `read_varint()` implementation
-///   
+///
 /// This function is similar to `sqlite3GetVarint32`
 #[inline(always)]
 fn read_varint_fast(buf: &[u8]) -> Result<(u64, usize)> {
@@ -1396,10 +1394,10 @@ pub fn op_column(
                 let mut index_cursor = state.get_cursor(index_cursor_id);
                 let index_cursor = index_cursor.as_btree_mut();
                 match index_cursor.rowid()? {
-                    CursorResult::IO => {
+                    IOResult::IO => {
                         break 'd Some((index_cursor_id, table_cursor_id));
                     }
-                    CursorResult::Ok(rowid) => rowid,
+                    IOResult::Done(rowid) => rowid,
                 }
             };
             let mut table_cursor = state.get_cursor(table_cursor_id);
@@ -1408,8 +1406,8 @@ pub fn op_column(
                 SeekKey::TableRowId(rowid.unwrap()),
                 SeekOp::GE { eq_only: true },
             )? {
-                CursorResult::Ok(_) => None,
-                CursorResult::IO => Some((index_cursor_id, table_cursor_id)),
+                IOResult::Done(_) => None,
+                IOResult::IO => Some((index_cursor_id, table_cursor_id)),
             }
         };
         if let Some(deferred_seek) = deferred_seek {
@@ -2245,10 +2243,10 @@ pub fn op_row_id(
                 let mut index_cursor = state.get_cursor(index_cursor_id);
                 let index_cursor = index_cursor.as_btree_mut();
                 let record = match index_cursor.record()? {
-                    CursorResult::IO => {
+                    IOResult::IO => {
                         break 'd Some((index_cursor_id, table_cursor_id));
                     }
-                    CursorResult::Ok(record) => record,
+                    IOResult::Done(record) => record,
                 };
                 let record = record.as_ref().unwrap();
                 let mut record_cursor_ref = index_cursor.record_cursor.borrow_mut();
@@ -2262,8 +2260,8 @@ pub fn op_row_id(
             let mut table_cursor = state.get_cursor(table_cursor_id);
             let table_cursor = table_cursor.as_btree_mut();
             match table_cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true })? {
-                CursorResult::Ok(_) => None,
-                CursorResult::IO => Some((index_cursor_id, table_cursor_id)),
+                IOResult::Done(_) => None,
+                IOResult::IO => Some((index_cursor_id, table_cursor_id)),
             }
         };
         if let Some(deferred_seek) = deferred_seek {
@@ -2668,8 +2666,8 @@ pub fn seek_internal(
                         }
                     };
                         match cursor.seek(seek_key, *op)? {
-                            CursorResult::Ok(seek_result) => seek_result,
-                            CursorResult::IO => return Ok(SeekInternalResult::IO),
+                            IOResult::Done(seek_result) => seek_result,
+                            IOResult::IO => return Ok(SeekInternalResult::IO),
                         }
                     };
                     let found = match seek_result {
@@ -2714,8 +2712,8 @@ pub fn seek_internal(
                             SeekOp::LT { .. } | SeekOp::LE { .. } => cursor.prev()?,
                         };
                         match result {
-                            CursorResult::Ok(found) => found,
-                            CursorResult::IO => return Ok(SeekInternalResult::IO),
+                            IOResult::Done(found) => found,
+                            IOResult::IO => return Ok(SeekInternalResult::IO),
                         }
                     };
                     return Ok(if found {
@@ -2728,8 +2726,8 @@ pub fn seek_internal(
                     let mut cursor = state.get_cursor(cursor_id);
                     let cursor = cursor.as_btree_mut();
                     match cursor.last()? {
-                        CursorResult::Ok(()) => {}
-                        CursorResult::IO => return Ok(SeekInternalResult::IO),
+                        IOResult::Done(()) => {}
+                        IOResult::IO => return Ok(SeekInternalResult::IO),
                     }
                     // the MoveLast variant is only used for SeekOp::LT and SeekOp::LE when the seek condition is always true,
                     // so we have always found what we were looking for.
@@ -2770,7 +2768,7 @@ pub fn seek_internal(
 ///   - `IdxLE`: "less than or equal" - equality should be treated as "less"
 ///   - `IdxGT`: "greater than" - equality should be treated as "less" (so condition fails)
 ///
-/// - **`IdxGE` and `IdxLT`**: Return `Ordering::Equal` (equivalent to `default_rc = 0`)  
+/// - **`IdxGE` and `IdxLT`**: Return `Ordering::Equal` (equivalent to `default_rc = 0`)
 ///   - When keys are equal, these operations should treat it as true equality
 ///   - `IdxGE`: "greater than or equal" - equality should be treated as "equal"
 ///   - `IdxLT`: "less than" - equality should be treated as "equal" (so condition fails)
@@ -5700,7 +5698,7 @@ pub fn op_destroy(
     // TODO not sure if should be BTreeCursor::new_table or BTreeCursor::new_index here or neither and just pass an emtpy vec
     let mut cursor = BTreeCursor::new(None, pager.clone(), *root, Vec::new(), 0);
     let former_root_page_result = cursor.btree_destroy()?;
-    if let CursorResult::Ok(former_root_page) = former_root_page_result {
+    if let IOResult::Done(former_root_page) = former_root_page_result {
         state.registers[*former_root_reg] =
             Register::Value(Value::Integer(former_root_page.unwrap_or(0) as i64));
     }
