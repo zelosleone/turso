@@ -1087,7 +1087,7 @@ impl Pager {
     // Providing a page is optional, if provided it will be used to avoid reading the page from disk.
     // This is implemented in accordance with sqlite freepage2() function.
     #[instrument(skip_all, level = Level::INFO)]
-    pub fn free_page(&self, page: Option<PageRef>, page_id: usize) -> Result<CursorResult<()>> {
+    pub fn free_page(&self, page: Option<PageRef>, page_id: usize) -> Result<IOResult<()>> {
         tracing::trace!("free_page(page_id={})", page_id);
         const TRUNK_PAGE_HEADER_SIZE: usize = 8;
         const LEAF_ENTRY_SIZE: usize = 4;
@@ -1138,7 +1138,7 @@ impl Pager {
                     }
                     let trunk_page = trunk_page.as_ref().unwrap();
                     if trunk_page.is_locked() || !trunk_page.is_loaded() {
-                        return Ok(CursorResult::IO);
+                        return Ok(IOResult::IO);
                     }
 
                     let trunk_page_contents = trunk_page.get().contents.as_ref().unwrap();
@@ -1167,7 +1167,7 @@ impl Pager {
                 }
                 FreePageState::NewTrunk { page } => {
                     if page.is_locked() || !page.is_loaded() {
-                        return Ok(CursorResult::IO);
+                        return Ok(IOResult::IO);
                     }
                     // If we get here, need to make this page a new trunk
                     page.set_dirty();
@@ -1189,7 +1189,7 @@ impl Pager {
             }
         }
         *state = FreePageState::Start;
-        Ok(CursorResult::Ok(()))
+        Ok(IOResult::Done(()))
     }
 
     #[instrument(skip_all, level = Level::INFO)]

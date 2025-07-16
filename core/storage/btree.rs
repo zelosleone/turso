@@ -3334,7 +3334,7 @@ impl BTreeCursor {
                         curr_page: sibling_count_new,
                         sibling_count_new,
                     },
-                    Ok(CursorResult::Ok(())),
+                    Ok(IOResult::Done(())),
                 )
             }
             WriteState::BalanceFreePages {
@@ -3358,7 +3358,7 @@ impl BTreeCursor {
                             curr_page: curr_page + 1,
                             sibling_count_new,
                         },
-                        Ok(CursorResult::Ok(())),
+                        Ok(IOResult::Done(())),
                     )
                 }
             }
