@@ -1300,7 +1300,7 @@ pub fn emit_cdc_insns(
     after_record_reg: Option<usize>,
     table_name: &str,
 ) -> Result<()> {
-    // (operation_id INTEGER PRIMARY KEY AUTOINCREMENT, operation_time INTEGER, operation_type INTEGER, table_name TEXT, id, before BLOB, after BLOB)
+    // (change_id INTEGER PRIMARY KEY AUTOINCREMENT, change_time INTEGER, change_type INTEGER, table_name TEXT, id, before BLOB, after BLOB)
     let turso_cdc_registers = program.alloc_registers(7);
     program.emit_insn(Insn::Null {
         dest: turso_cdc_registers,
@@ -1323,12 +1323,12 @@ pub fn emit_cdc_insns(
         func: unixepoch_fn_ctx,
     });
 
-    let operation_type = match operation_mode {
+    let change_type = match operation_mode {
         OperationMode::INSERT => 1,
         OperationMode::UPDATE | OperationMode::SELECT => 0,
         OperationMode::DELETE => -1,
     };
-    program.emit_int(operation_type, turso_cdc_registers + 2);
+    program.emit_int(change_type, turso_cdc_registers + 2);
     program.mark_last_insn_constant();
 
     program.emit_string8(table_name.to_string(), turso_cdc_registers + 3);

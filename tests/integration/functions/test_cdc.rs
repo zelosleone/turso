@@ -599,7 +599,7 @@ fn test_cdc_ignore_changes_in_cdc_table() {
         ]
     );
     conn1
-        .execute("DELETE FROM custom_cdc WHERE operation_id < 2")
+        .execute("DELETE FROM custom_cdc WHERE change_id < 2")
         .unwrap();
     let rows =
         replace_column_with_null(limbo_exec_rows(&db, &conn1, "SELECT * FROM custom_cdc"), 1);
@@ -768,10 +768,10 @@ fn test_cdc_independent_connections_different_cdc_not_ignore() {
     conn2.execute("INSERT INTO t VALUES (3, 30)").unwrap();
     conn2.execute("INSERT INTO t VALUES (4, 40)").unwrap();
     conn1
-        .execute("DELETE FROM custom_cdc2 WHERE operation_id < 2")
+        .execute("DELETE FROM custom_cdc2 WHERE change_id < 2")
         .unwrap();
     conn2
-        .execute("DELETE FROM custom_cdc1 WHERE operation_id < 2")
+        .execute("DELETE FROM custom_cdc1 WHERE change_id < 2")
         .unwrap();
     let rows = limbo_exec_rows(&db, &conn1, "SELECT * FROM t");
     assert_eq!(
