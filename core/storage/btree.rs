@@ -190,6 +190,7 @@ enum DeleteState {
         post_balancing_seek_key: Option<DeleteSavepoint>,
     },
     InteriorNodeReplacement {
+        page: PageRef,
         cell_idx: usize,
         original_child_pointer: Option<u32>,
         post_balancing_seek_key: Option<DeleteSavepoint>,
@@ -4342,6 +4343,7 @@ impl BTreeCursor {
                     let delete_info = self.state.mut_delete_info().unwrap();
                     if !contents.is_leaf() {
                         delete_info.state = DeleteState::InteriorNodeReplacement {
+                            page: page.clone(),
                             cell_idx,
                             original_child_pointer,
                             post_balancing_seek_key,
@@ -4359,6 +4361,7 @@ impl BTreeCursor {
                 }
 
                 DeleteState::InteriorNodeReplacement {
+                    page,
                     cell_idx,
                     original_child_pointer,
                     post_balancing_seek_key,
@@ -4371,7 +4374,6 @@ impl BTreeCursor {
                     // Step 1: Move cursor to the largest key in the left subtree.
                     // The largest key is always in a leaf, and so this traversal may involvegoing multiple pages downwards,
                     // so we store the page we are currently on.
-                    let parent_page = self.stack.top();
                     return_if_io!(self.prev());
                     let (cell_payload, leaf_cell_idx) = {
                         let leaf_page_ref = self.stack.top();
@@ -4414,16 +4416,15 @@ impl BTreeCursor {
 
                     let leaf_page = self.stack.top();
 
-                    parent_page.get().set_dirty();
-                    self.pager.add_dirty(parent_page.get().get().id);
+                    page.set_dirty();
+                    self.pager.add_dirty(page.get().id);
                     leaf_page.get().set_dirty();
                     self.pager.add_dirty(leaf_page.get().get().id);
 
                     // Step 2: Replace the cell in the parent (interior) page.
                     {
-                        let parent_page_ref = parent_page.get();
-                        let parent_contents = parent_page_ref.get_contents();
-                        let parent_page_id = parent_page_ref.get().id;
+                        let parent_contents = page.get_contents();
+                        let parent_page_id = page.get().id;
                         let left_child_page = u32::from_be_bytes(
                             cell_payload[..4].try_into().expect("invalid cell payload"),
                         );
