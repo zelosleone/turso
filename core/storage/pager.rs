@@ -805,10 +805,6 @@ impl Pager {
                     )?;
                     page.clear_dirty();
                 }
-                {
-                    let mut cache = self.page_cache.write();
-                    cache.clear().unwrap();
-                }
                 self.dirty_pages.borrow_mut().clear();
                 self.flush_info.borrow_mut().state = CacheFlushState::WaitAppendFrames;
                 return Ok(IOResult::IO);
