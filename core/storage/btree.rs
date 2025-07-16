@@ -1557,6 +1557,13 @@ impl BTreeCursor {
                         unreachable!("unexpected cell type: {:?}", matching_cell);
                     };
 
+                    turso_assert!(
+                        page.get().id != *left_child_page as usize,
+                        "corrupt: current page and left child page of cell {} are both {}",
+                        leftmost_matching_cell,
+                        page.get().id
+                    );
+
                     let mem_page = self.read_page(*left_child_page as usize)?;
                     self.stack.push(mem_page);
                     self.seek_state = CursorSeekState::MovingBetweenPages {
@@ -5442,6 +5449,21 @@ impl PageStack {
             current = self.current_page.get(),
             new_page_id = page.get().get().id,
         );
+        'validate: {
+            let current = self.current_page.get();
+            if current == -1 {
+                break 'validate;
+            }
+            let stack = self.stack.borrow();
+            let current_top = stack[current as usize].as_ref();
+            if let Some(current_top) = current_top {
+                turso_assert!(
+                    current_top.get().get().id != page.get().get().id,
+                    "about to push page {} twice",
+                    page.get().get().id
+                );
+            }
+        }
         self.increment_current();
         let current = self.current_page.get();
         assert!(
