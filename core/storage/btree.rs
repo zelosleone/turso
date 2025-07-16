@@ -4369,6 +4369,9 @@ impl BTreeCursor {
                     // 3. Delete that key from the child page.
 
                     // Step 1: Move cursor to the largest key in the left subtree.
+                    // The largest key is always in a leaf, and so this traversal may involvegoing multiple pages downwards,
+                    // so we store the page we are currently on.
+                    let parent_page = self.stack.top();
                     return_if_io!(self.prev());
                     let (cell_payload, leaf_cell_idx) = {
                         let leaf_page_ref = self.stack.top();
@@ -4409,7 +4412,6 @@ impl BTreeCursor {
                         (cell_payload, leaf_cell_idx)
                     };
 
-                    let parent_page = self.stack.parent_page().unwrap();
                     let leaf_page = self.stack.top();
 
                     parent_page.get().set_dirty();
@@ -4420,7 +4422,17 @@ impl BTreeCursor {
                     // Step 2: Replace the cell in the parent (interior) page.
                     {
                         let parent_page_ref = parent_page.get();
-                        let parent_contents = parent_page_ref.get().contents.as_mut().unwrap();
+                        let parent_contents = parent_page_ref.get_contents();
+                        let parent_page_id = parent_page_ref.get().id;
+                        let left_child_page = u32::from_be_bytes(
+                            cell_payload[..4].try_into().expect("invalid cell payload"),
+                        );
+                        turso_assert!(
+                            left_child_page as usize != parent_page_id,
+                            "corrupt: current page and left child page of cell {} are both {}",
+                            left_child_page,
+                            parent_page_id
+                        );
 
                         // First, drop the old cell that is being replaced.
                         drop_cell(parent_contents, cell_idx, self.usable_space() as u16)?;
@@ -4436,7 +4448,7 @@ impl BTreeCursor {
                     // Step 3: Delete the predecessor cell from the leaf page.
                     {
                         let leaf_page_ref = leaf_page.get();
-                        let leaf_contents = leaf_page_ref.get().contents.as_mut().unwrap();
+                        let leaf_contents = leaf_page_ref.get_contents();
                         drop_cell(leaf_contents, leaf_cell_idx, self.usable_space() as u16)?;
                     }
 
@@ -5538,18 +5550,6 @@ impl PageStack {
 
     fn clear(&self) {
         self.current_page.set(-1);
-    }
-    pub fn parent_page(&self) -> Option<BTreePage> {
-        if self.current_page.get() > 0 {
-            Some(
-                self.stack.borrow()[self.current() - 1]
-                    .as_ref()
-                    .unwrap()
-                    .clone(),
-            )
-        } else {
-            None
-        }
     }
 }
 
