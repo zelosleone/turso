@@ -149,6 +149,7 @@ pub fn prepare_update_plan(
         .enumerate()
         .filter_map(|(i, col)| col.name.as_ref().map(|name| (name.to_lowercase(), i)))
         .collect();
+
     let mut set_clauses = Vec::with_capacity(body.sets.len());
     for set in &mut body.sets {
         let ident = normalize_ident(set.col_names[0].0.as_str());
@@ -331,7 +332,7 @@ pub fn prepare_update_plan(
 
     Ok(Plan::Update(UpdatePlan {
         table_references,
-        set_clauses: set_clauses,
+        set_clauses,
         where_clause,
         returning: Some(result_columns),
         order_by,
