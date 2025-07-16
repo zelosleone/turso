@@ -177,6 +177,7 @@ impl File for SimulatorFile {
     fn sync(&self, mut c: turso_core::Completion) -> Result<Arc<turso_core::Completion>> {
         self.nr_sync_calls.set(self.nr_sync_calls.get() + 1);
         if self.fault.get() {
+            // TODO: Enable this when https://github.com/tursodatabase/turso/issues/2091 is fixed.
             tracing::debug!("ignoring sync fault because it causes false positives with current simulator design");
             self.fault.set(false);
         }
