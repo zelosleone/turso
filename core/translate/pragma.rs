@@ -478,7 +478,7 @@ pub const TURSO_CDC_DEFAULT_TABLE_NAME: &str = "turso_cdc";
 fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
     vec![
         ast::ColumnDefinition {
-            col_name: ast::Name("operation_id".to_string()),
+            col_name: ast::Name("change_id".to_string()),
             col_type: Some(ast::Type {
                 name: "INTEGER".to_string(),
                 size: None,
@@ -493,7 +493,7 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
             }],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name("operation_time".to_string()),
+            col_name: ast::Name("change_time".to_string()),
             col_type: Some(ast::Type {
                 name: "INTEGER".to_string(),
                 size: None,
@@ -501,7 +501,7 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
             constraints: vec![],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name("operation_type".to_string()),
+            col_name: ast::Name("change_type".to_string()),
             col_type: Some(ast::Type {
                 name: "INTEGER".to_string(),
                 size: None,
