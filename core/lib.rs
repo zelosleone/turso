@@ -216,18 +216,20 @@ impl Database {
             // parse schema
             let conn = db.connect()?;
 
-            let mut schema_ref = db.schema.lock().map_err(|_| LimboError::SchemaLocked)?;
-            let schema = Arc::make_mut(&mut *schema_ref);
-            schema.schema_version = get_schema_version(&conn)?;
-
             let syms = conn.syms.borrow();
             let pager = conn.pager.borrow().clone();
 
-            if let Err(LimboError::ExtensionError(e)) = schema.make_from_btree(None, pager, &syms) {
-                // this means that a vtab exists and we no longer have the module loaded. we print
-                // a warning to the user to load the module
-                eprintln!("Warning: {e}");
-            }
+            db.with_schema_mut(|schema| {
+                schema.schema_version = get_schema_version(&conn)?;
+                if let Err(LimboError::ExtensionError(e)) =
+                    schema.make_from_btree(None, pager, &syms)
+                {
+                    // this means that a vtab exists and we no longer have the module loaded. we print
+                    // a warning to the user to load the module
+                    eprintln!("Warning: {e}");
+                }
+                Ok(())
+            })?;
         }
         Ok(db)
     }
@@ -388,6 +390,13 @@ impl Database {
                 Ok((io, db))
             }
         }
+    }
+
+    #[inline]
+    pub fn with_schema_mut<T>(&self, f: impl FnOnce(&mut Schema) -> Result<T>) -> Result<T> {
+        let mut schema_ref = self.schema.lock().map_err(|_| LimboError::SchemaLocked)?;
+        let schema = Arc::make_mut(&mut *schema_ref);
+        f(schema)
     }
 }
 
@@ -891,17 +900,15 @@ impl Connection {
             return Err(LimboError::InternalError("Connection closed".to_string()));
         }
         let rows = self.query("SELECT * FROM sqlite_schema")?;
-        let mut schema_ref = self.schema.borrow_mut();
-        let schema = Arc::make_mut(&mut *schema_ref);
-        {
-            let syms = self.syms.borrow();
+        let syms = self.syms.borrow();
+        self.with_schema_mut(|schema| {
             if let Err(LimboError::ExtensionError(e)) = parse_schema_rows(rows, schema, &syms, None)
             {
                 // this means that a vtab exists and we no longer have the module loaded. we print
                 // a warning to the user to load the module
                 eprintln!("Warning: {e}");
             }
-        }
+        });
         Ok(())
     }
 
@@ -992,6 +999,13 @@ impl Connection {
         }
 
         Ok(results)
+    }
+
+    #[inline]
+    pub fn with_schema_mut<T>(&self, f: impl FnOnce(&mut Schema) -> T) -> T {
+        let mut schema_ref = self.schema.borrow_mut();
+        let schema = Arc::make_mut(&mut *schema_ref);
+        f(schema)
     }
 }
 

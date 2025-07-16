@@ -151,8 +151,7 @@ impl Connection {
             .insert(name.to_string(), vmodule.into());
         if kind == VTabKind::TableValuedFunction {
             if let Ok(vtab) = VirtualTable::function(name, &self.syms.borrow()) {
-                let mut schema_ref = self.schema.borrow_mut();
-                Arc::make_mut(&mut *schema_ref).add_virtual_table(vtab);
+                self.with_schema_mut(|schema| schema.add_virtual_table(vtab));
             } else {
                 return ResultCode::Error;
             }
