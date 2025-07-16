@@ -129,15 +129,27 @@ pub trait ToTokens {
         s: &mut S,
         context: &C,
     ) -> Result<(), S::Error>;
+
     /// Send token(s) to the specified stream
     fn to_tokens<S: TokenStream + ?Sized>(&self, s: &mut S) -> Result<(), S::Error> {
         self.to_tokens_with_context(s, &BlankContext)
     }
+
     /// Format AST node
     fn to_fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut s = FmtTokenStream { f, spaced: true };
-        self.to_tokens(&mut s)
+        self.to_fmt_with_context(f, &BlankContext)
     }
+
+    /// Format AST node with context
+    fn to_fmt_with_context<C: ToSqlContext>(
+        &self,
+        f: &mut Formatter<'_>,
+        context: &C,
+    ) -> fmt::Result {
+        let mut s = FmtTokenStream { f, spaced: true };
+        self.to_tokens_with_context(&mut s, context)
+    }
+
     /// Format AST node to string
     fn format(&self) -> Result<String, fmt::Error> {
         self.format_with_context(&BlankContext)
@@ -146,7 +158,6 @@ pub trait ToTokens {
     /// Format AST node to string with context
     fn format_with_context<C: ToSqlContext>(&self, context: &C) -> Result<String, fmt::Error> {
         let mut s = String::new();
-
         let mut w = WriteTokenStream {
             write: &mut s,
             spaced: true,
