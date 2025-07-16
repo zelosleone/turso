@@ -4161,15 +4161,13 @@ pub fn op_function(
             }
             ScalarFunc::UnixEpoch => {
                 if *start_reg == 0 {
-                    let unixepoch: String = exec_unixepoch(&Value::build_text("now"))?;
-                    state.registers[*dest] = Register::Value(Value::build_text(unixepoch));
+                    let result = exec_unixepoch(&Value::build_text("now"))?;
+                    state.registers[*dest] = Register::Value(result);
                 } else {
                     let datetime_value = &state.registers[*start_reg];
                     let unixepoch = exec_unixepoch(datetime_value.get_owned_value());
                     match unixepoch {
-                        Ok(time) => {
-                            state.registers[*dest] = Register::Value(Value::build_text(time))
-                        }
+                        Ok(time) => state.registers[*dest] = Register::Value(time),
                         Err(e) => {
                             return Err(LimboError::ParseError(format!(
                                 "Error encountered while parsing datetime value: {e}"
