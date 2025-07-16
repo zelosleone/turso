@@ -1028,10 +1028,7 @@ impl ImmutableRecord {
                     return None;
                 }
 
-                match cursor.deserialize_column(self, idx) {
-                    Ok(value) => Some(value),
-                    Err(_) => None,
-                }
+                cursor.deserialize_column(self, idx).ok()
             }
             Err(_) => None,
         }
@@ -2536,8 +2533,7 @@ mod tests {
 
         assert_eq!(
             gold_result, optimized_result,
-            "Test '{}' failed: Full Comparison: {:?}, Optimized: {:?}, Strategy: {:?}",
-            test_name, gold_result, optimized_result, comparer
+            "Test '{test_name}' failed: Full Comparison: {gold_result:?}, Optimized: {optimized_result:?}, Strategy: {comparer:?}"
         );
 
         let generic_result = compare_records_generic(
@@ -2551,8 +2547,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             gold_result, generic_result,
-            "Test '{}' failed with generic: Full Comparison: {:?}, Generic: {:?}",
-            test_name, gold_result, generic_result
+            "Test '{test_name}' failed with generic: Full Comparison: {gold_result:?}, Generic: {generic_result:?}"
         );
     }
 
@@ -3074,7 +3069,7 @@ mod tests {
         for i in 0..values.len() {
             let full = cursor1.get_value(&record, i).expect("full failed");
             let incr = cursor2.get_value(&record, i).expect("incr failed");
-            assert_eq!(full, incr, "Mismatch at column {}", i);
+            assert_eq!(full, incr, "Mismatch at column {i}");
         }
 
         assert_eq!(
