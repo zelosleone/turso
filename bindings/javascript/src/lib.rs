@@ -450,11 +450,10 @@ impl Statement {
 
     #[napi]
     pub fn pluck(&mut self, pluck: Option<bool>) {
-        if let Some(false) = pluck {
-            self.presentation_mode = PresentationMode::None;
-        }
-
-        self.presentation_mode = PresentationMode::Pluck;
+        self.presentation_mode = match pluck {
+            Some(false) => PresentationMode::None,
+            _ => PresentationMode::Pluck,
+        };
     }
 
     #[napi]
@@ -464,11 +463,10 @@ impl Statement {
 
     #[napi]
     pub fn raw(&mut self, raw: Option<bool>) {
-        if let Some(false) = raw {
-            self.presentation_mode = PresentationMode::None;
-        }
-
-        self.presentation_mode = PresentationMode::Raw;
+        self.presentation_mode = match raw {
+            Some(false) => PresentationMode::None,
+            _ => PresentationMode::Raw,
+        };
     }
 
     #[napi]
