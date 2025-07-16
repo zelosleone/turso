@@ -379,7 +379,7 @@ pub fn translate_insert(
             program.emit_insn(Insn::Copy {
                 src_reg: reg,
                 dst_reg: rowid_reg,
-                amount: 0, // TODO: rename 'amount' to something else; amount==0 means 1
+                extra_amount: 0, // TODO: rename 'amount' to something else; amount==0 means 1
             });
             // for the row record, the rowid alias column is always set to NULL
             program.emit_insn(Insn::SoftNull { reg });
@@ -464,14 +464,14 @@ pub fn translate_insert(
             program.emit_insn(Insn::Copy {
                 src_reg: column_registers_start + col.0,
                 dst_reg: idx_start_reg + i,
-                amount: 0,
+                extra_amount: 0,
             });
         }
         // last register is the rowid
         program.emit_insn(Insn::Copy {
             src_reg: rowid_reg,
             dst_reg: idx_start_reg + num_cols,
-            amount: 0,
+            extra_amount: 0,
         });
 
         let index = schema
@@ -811,7 +811,7 @@ fn populate_columns_multiple_rows(
                 program.emit_insn(Insn::Copy {
                     src_reg: yield_reg + value_index_seen,
                     dst_reg: column_registers_start + value_index + other_values_seen,
-                    amount: 0,
+                    extra_amount: 0,
                 });
             }
 

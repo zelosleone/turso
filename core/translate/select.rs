@@ -741,7 +741,7 @@ pub fn emit_simple_count(
     program.emit_insn(Insn::Copy {
         src_reg: target_reg,
         dst_reg: output_reg,
-        amount: 0,
+        extra_amount: 0,
     });
     program.emit_result_row(output_reg, 1);
     Ok(())
