@@ -3042,6 +3042,10 @@ impl BTreeCursor {
                         .get_contents()
                         .write_u32(offset::BTREE_RIGHTMOST_PTR, right_pointer);
                 }
+                turso_assert!(
+                    parent_contents.overflow_cells.is_empty(),
+                    "parent page overflow cells should be empty before divider cell reinsertion"
+                );
                 // TODO: pointer map update (vacuum support)
                 // Update divider cells in parent
                 for (sibling_page_idx, page) in pages_to_balance_new
@@ -3400,7 +3404,7 @@ impl BTreeCursor {
         parent_contents: &mut PageContent,
         pages_to_balance_new: [Option<BTreePage>; MAX_NEW_SIBLING_PAGES_AFTER_BALANCE],
         page_type: PageType,
-        leaf_data: bool,
+        is_table_leaf: bool,
         mut cells_debug: Vec<Vec<u8>>,
         sibling_count_new: usize,
         right_page_id: u32,
@@ -3649,7 +3653,7 @@ impl BTreeCursor {
                     }
                 }
                 if was_overflow {
-                    if !leaf_data {
+                    if !is_table_leaf {
                         // remember to increase cell if this cell was moved to parent
                         current_index_cell += 1;
                     }
@@ -3669,7 +3673,7 @@ impl BTreeCursor {
                     );
                     valid = false;
                 }
-                if leaf_data {
+                if is_table_leaf {
                     // If we are in a table leaf page, we just need to check that this cell that should be a divider cell is in the parent
                     // This means we already check cell in leaf pages but not on parent so we don't advance current_index_cell
                     let last_sibling_idx = balance_info.sibling_count - 1;
@@ -3728,7 +3732,7 @@ impl BTreeCursor {
                         }
                     }
                     if was_overflow {
-                        if !leaf_data {
+                        if !is_table_leaf {
                             // remember to increase cell if this cell was moved to parent
                             current_index_cell += 1;
                         }
@@ -3781,7 +3785,10 @@ impl BTreeCursor {
                 }
             }
         }
-        assert!(valid, "corrupted database, cells were to balanced properly");
+        assert!(
+            valid,
+            "corrupted database, cells were not balanced properly"
+        );
     }
 
     /// Balance the root page.
@@ -5995,7 +6002,7 @@ fn page_insert_array(
         page.page_type()
     );
     for i in first..first + count {
-        insert_into_cell(
+        insert_into_cell_during_balance(
             page,
             cell_array.cell_payloads[i],
             start_insert,
@@ -6196,11 +6203,12 @@ fn debug_validate_cells_core(page: &PageContent, usable_space: u16) {
 /// insert_into_cell() is called from insert_into_page(),
 /// and the overflow cell count is used to determine if the page overflows,
 /// i.e. whether we need to balance the btree after the insert.
-fn insert_into_cell(
+fn _insert_into_cell(
     page: &mut PageContent,
     payload: &[u8],
     cell_idx: usize,
     usable_space: u16,
+    allow_regular_insert_despite_overflow: bool, // see [insert_into_cell_during_balance()]
 ) -> Result<()> {
     assert!(
         cell_idx <= page.cell_count() + page.overflow_cells.len(),
@@ -6208,8 +6216,14 @@ fn insert_into_cell(
         cell_idx,
         page.cell_count()
     );
-    let free = compute_free_space(page, usable_space);
-    let enough_space = payload.len() + CELL_PTR_SIZE_BYTES <= free as usize;
+    let already_has_overflow = !page.overflow_cells.is_empty();
+    let enough_space = if already_has_overflow && !allow_regular_insert_despite_overflow {
+        false
+    } else {
+        // otherwise, we need to check if we have enough space
+        let free = compute_free_space(page, usable_space);
+        payload.len() + CELL_PTR_SIZE_BYTES <= free as usize
+    };
     if !enough_space {
         // add to overflow cell
         page.overflow_cells.push(OverflowCell {
@@ -6218,6 +6232,10 @@ fn insert_into_cell(
         });
         return Ok(());
     }
+    assert!(
+        cell_idx <= page.cell_count(),
+        "cell_idx > page.cell_count() without overflow cells"
+    );
 
     let new_cell_data_pointer = allocate_cell_space(page, payload.len() as u16, usable_space)?;
     tracing::debug!(
@@ -6253,6 +6271,34 @@ fn insert_into_cell(
     page.write_u16(offset::BTREE_CELL_COUNT, new_n_cells);
     debug_validate_cells!(page, usable_space);
     Ok(())
+}
+
+fn insert_into_cell(
+    page: &mut PageContent,
+    payload: &[u8],
+    cell_idx: usize,
+    usable_space: u16,
+) -> Result<()> {
+    _insert_into_cell(page, payload, cell_idx, usable_space, false)
+}
+
+/// Normally in [insert_into_cell()], if a page already has overflow cells, all
+/// new insertions are also added to the overflow cells vector.
+/// SQLite doesn't use regular [insert_into_cell()] during balancing,
+/// so we have a specialized function for use during balancing that allows regular cell insertion
+/// despite the presence of existing overflow cells (overflow cells are one of the reasons we are balancing in the first place).
+/// During balancing cells are first repositioned with [edit_page()]
+/// and then inserted via [page_insert_array()] which calls [insert_into_cell_during_balance()],
+/// and finally the existing overflow cells are cleared.
+/// If we would not allow the cell insert to proceed normally despite overflow cells being present,
+/// the new insertions would also be added as overflow cells which defeats the point of balancing.
+fn insert_into_cell_during_balance(
+    page: &mut PageContent,
+    payload: &[u8],
+    cell_idx: usize,
+    usable_space: u16,
+) -> Result<()> {
+    _insert_into_cell(page, payload, cell_idx, usable_space, true)
 }
 
 /// The amount of free space is the sum of:
