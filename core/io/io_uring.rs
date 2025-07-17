@@ -58,6 +58,7 @@ impl UringIO {
     pub fn new() -> Result<Self> {
         let ring = match io_uring::IoUring::builder()
             .setup_single_issuer()
+            .setup_coop_taskrun()
             .setup_sqpoll(SQPOLL_IDLE)
             .build(ENTRIES)
         {
