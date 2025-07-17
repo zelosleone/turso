@@ -907,31 +907,11 @@ pub fn op_open_read(
                 .replace(Cursor::new_btree(cursor));
         }
         CursorType::BTreeIndex(index) => {
-            let conn = program.connection.clone();
-            let schema = conn.schema.borrow();
-            let table = schema
-                .get_table(&index.table_name)
-                .and_then(|table| table.btree());
-            let collations = table.map_or(Vec::new(), |table| {
-                index
-                    .columns
-                    .iter()
-                    .map(|c| {
-                        table
-                            .columns
-                            .get(c.pos_in_table)
-                            .unwrap()
-                            .collation
-                            .unwrap_or_default()
-                    })
-                    .collect()
-            });
             let cursor = BTreeCursor::new_index(
                 mv_cursor,
                 pager.clone(),
                 *root_page,
                 index.as_ref(),
-                collations,
                 num_columns,
             );
             cursors
@@ -2824,10 +2804,9 @@ pub fn op_idx_ge(
                 registers_to_ref_values(&state.registers[*start_reg..*start_reg + *num_regs]);
             let tie_breaker = get_tie_breaker_from_idx_comp_op(insn);
             let ord = compare_records_generic(
-                &idx_record,                     // The serialized record from the index
-                &values,                         // The record built from registers
-                &cursor.index_key_info.unwrap(), // Sort order flags
-                cursor.collations(),             // Collation sequences
+                &idx_record,                         // The serialized record from the index
+                &values,                             // The record built from registers
+                cursor.index_info.as_ref().unwrap(), // Sort order flags
                 0,
                 tie_breaker,
             )?;
@@ -2896,8 +2875,7 @@ pub fn op_idx_le(
             let ord = compare_records_generic(
                 &idx_record,
                 &values,
-                &cursor.index_key_info.unwrap(),
-                cursor.collations(),
+                cursor.index_info.as_ref().unwrap(),
                 0,
                 tie_breaker,
             )?;
@@ -2948,8 +2926,7 @@ pub fn op_idx_gt(
             let ord = compare_records_generic(
                 &idx_record,
                 &values,
-                &cursor.index_key_info.unwrap(),
-                cursor.collations(),
+                cursor.index_info.as_ref().unwrap(),
                 0,
                 tie_breaker,
             )?;
@@ -3001,8 +2978,7 @@ pub fn op_idx_lt(
             let ord = compare_records_generic(
                 &idx_record,
                 &values,
-                &cursor.index_key_info.unwrap(),
-                cursor.collations(),
+                cursor.index_info.as_ref().unwrap(),
                 0,
                 tie_breaker,
             )?;
@@ -5152,8 +5128,7 @@ pub fn op_idx_insert(
                 let conflict = compare_immutable(
                     existing_key.as_slice(),
                     inserted_key_vals,
-                    cursor.key_sort_order(),
-                    &cursor.collations,
+                    &cursor.index_info.as_ref().unwrap().key_info,
                 ) == std::cmp::Ordering::Equal;
                 if conflict {
                     if flags.has(IdxInsertFlags::NO_OP_DUPLICATE) {
@@ -5586,27 +5561,11 @@ pub fn op_open_write(
             .and_then(|table| table.btree());
 
         let num_columns = index.columns.len();
-        let collations = table.map_or(Vec::new(), |table| {
-            index
-                .columns
-                .iter()
-                .map(|c| {
-                    table
-                        .columns
-                        .get(c.pos_in_table)
-                        .unwrap()
-                        .collation
-                        .unwrap_or_default()
-                })
-                .collect()
-        });
-
         let cursor = BTreeCursor::new_index(
             mv_cursor,
             pager.clone(),
             root_page as usize,
             index.as_ref(),
-            collations,
             num_columns,
         );
         cursors
@@ -5695,7 +5654,7 @@ pub fn op_destroy(
         todo!("temp databases not implemented yet.");
     }
     // TODO not sure if should be BTreeCursor::new_table or BTreeCursor::new_index here or neither and just pass an emtpy vec
-    let mut cursor = BTreeCursor::new(None, pager.clone(), *root, Vec::new(), 0);
+    let mut cursor = BTreeCursor::new(None, pager.clone(), *root, 0);
     let former_root_page_result = cursor.btree_destroy()?;
     if let IOResult::Done(former_root_page) = former_root_page_result {
         state.registers[*former_root_reg] =
@@ -6151,11 +6110,6 @@ pub fn op_open_ephemeral(
                     pager.clone(),
                     root_page as usize,
                     index,
-                    index
-                        .columns
-                        .iter()
-                        .map(|c| c.collation.unwrap_or_default())
-                        .collect(),
                     num_columns,
                 )
             } else {

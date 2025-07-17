@@ -11,11 +11,11 @@ use crate::{
             LEAF_PAGE_HEADER_SIZE_BYTES, LEFT_CHILD_PTR_SIZE_BYTES,
         },
     },
-    translate::{collate::CollationSeq, plan::IterationDirection},
+    translate::plan::IterationDirection,
     turso_assert,
     types::{
-        find_compare, get_tie_breaker_from_seek_op, IndexKeyInfo, IndexKeySortOrder,
-        ParseRecordState, RecordCompare, RecordCursor, SeekResult,
+        find_compare, get_tie_breaker_from_seek_op, IndexInfo, ParseRecordState, RecordCompare,
+        RecordCursor, SeekResult,
     },
     MvCursor,
 };
@@ -507,17 +507,14 @@ pub struct BTreeCursor {
     reusable_immutable_record: RefCell<Option<ImmutableRecord>>,
     /// Reusable immutable record, used to allow better allocation strategy.
     parse_record_state: RefCell<ParseRecordState>,
-    pub index_key_info: Option<IndexKeyInfo>,
+    /// Information about the index key structure (sort order, collation, etc)
+    pub index_info: Option<IndexInfo>,
     /// Maintain count of the number of records in the btree. Used for the `Count` opcode
     count: usize,
     /// Stores the cursor context before rebalancing so that a seek can be done later
     context: Option<CursorContext>,
     /// Store whether the Cursor is in a valid state. Meaning if it is pointing to a valid cell index or not
     pub valid_state: CursorValidState,
-    /// Colations for Index Btree constraint checks
-    /// Contains the Collation Seq for the whole Index
-    /// This Vec should be empty for Table Btree
-    pub collations: Vec<CollationSeq>,
     seek_state: CursorSeekState,
     /// Separate state to read a record with overflow pages. This separation from `state` is necessary as
     /// we can be in a function that relies on `state`, but also needs to process overflow pages
@@ -568,7 +565,6 @@ impl BTreeCursor {
         mv_cursor: Option<Rc<RefCell<MvCursor>>>,
         pager: Rc<Pager>,
         root_page: usize,
-        collations: Vec<CollationSeq>,
         num_columns: usize,
     ) -> Self {
         Self {
@@ -586,11 +582,10 @@ impl BTreeCursor {
                 stack: RefCell::new([const { None }; BTCURSOR_MAX_DEPTH + 1]),
             },
             reusable_immutable_record: RefCell::new(None),
-            index_key_info: None,
+            index_info: None,
             count: 0,
             context: None,
             valid_state: CursorValidState::Valid,
-            collations,
             seek_state: CursorSeekState::Start,
             read_overflow_state: RefCell::new(None),
             find_cell_state: FindCellState(None),
@@ -605,7 +600,7 @@ impl BTreeCursor {
         root_page: usize,
         num_columns: usize,
     ) -> Self {
-        Self::new(mv_cursor, pager, root_page, Vec::new(), num_columns)
+        Self::new(mv_cursor, pager, root_page, num_columns)
     }
 
     pub fn new_index(
@@ -613,23 +608,15 @@ impl BTreeCursor {
         pager: Rc<Pager>,
         root_page: usize,
         index: &Index,
-        collations: Vec<CollationSeq>,
         num_columns: usize,
     ) -> Self {
-        let mut cursor = Self::new(mv_cursor, pager, root_page, collations, num_columns);
-        cursor.index_key_info = Some(IndexKeyInfo::new_from_index(index));
+        let mut cursor = Self::new(mv_cursor, pager, root_page, num_columns);
+        cursor.index_info = Some(IndexInfo::new_from_index(index));
         cursor
     }
 
-    pub fn key_sort_order(&self) -> IndexKeySortOrder {
-        match &self.index_key_info {
-            Some(index_key_info) => index_key_info.sort_order,
-            None => IndexKeySortOrder::default(),
-        }
-    }
-
     pub fn has_rowid(&self) -> bool {
-        match &self.index_key_info {
+        match &self.index_info {
             Some(index_key_info) => index_key_info.has_rowid,
             None => true, // currently we don't support WITHOUT ROWID tables
         }
@@ -1493,9 +1480,13 @@ impl BTreeCursor {
         let iter_dir = cmp.iteration_direction();
 
         let key_values = index_key.get_values();
-        let index_info_default = IndexKeyInfo::default();
-        let index_info = *self.index_key_info.as_ref().unwrap_or(&index_info_default);
-        let record_comparer = find_compare(&key_values, &index_info, &self.collations);
+        let record_comparer = {
+            let index_info = self
+                .index_info
+                .as_ref()
+                .expect("indexbtree_move_to without index_info");
+            find_compare(&key_values, index_info)
+        };
         tracing::debug!("Using record comparison strategy: {:?}", record_comparer);
         let tie_breaker = get_tie_breaker_from_seek_op(cmp);
 
@@ -1639,8 +1630,9 @@ impl BTreeCursor {
                         .compare(
                             record,
                             &key_values,
-                            &index_info,
-                            &self.collations,
+                            self.index_info
+                                .as_ref()
+                                .expect("indexbtree_move_to without index_info"),
                             0,
                             tie_breaker,
                         )
@@ -1848,9 +1840,13 @@ impl BTreeCursor {
         seek_op: SeekOp,
     ) -> Result<IOResult<SeekResult>> {
         let key_values = key.get_values();
-        let index_info_default = IndexKeyInfo::default();
-        let index_info = *self.index_key_info.as_ref().unwrap_or(&index_info_default);
-        let record_comparer = find_compare(&key_values, &index_info, &self.collations);
+        let record_comparer = {
+            let index_info = self
+                .index_info
+                .as_ref()
+                .expect("indexbtree_seek without index_info");
+            find_compare(&key_values, index_info)
+        };
 
         tracing::debug!(
             "Using record comparison strategy for seek: {:?}",
@@ -1972,7 +1968,9 @@ impl BTreeCursor {
                 key_values.as_slice(),
                 seek_op,
                 &record_comparer,
-                &index_info,
+                self.index_info
+                    .as_ref()
+                    .expect("indexbtree_seek without index_info"),
             );
             if found {
                 nearest_matching_cell.set(Some(cur_cell_idx as usize));
@@ -2006,21 +2004,14 @@ impl BTreeCursor {
         key_values: &[RefValue],
         seek_op: SeekOp,
         record_comparer: &RecordCompare,
-        index_info: &IndexKeyInfo,
+        index_info: &IndexInfo,
     ) -> (Ordering, bool) {
         let record = self.get_immutable_record();
         let record = record.as_ref().unwrap();
 
         let tie_breaker = get_tie_breaker_from_seek_op(seek_op);
         let cmp = record_comparer
-            .compare(
-                record,
-                key_values,
-                index_info,
-                &self.collations,
-                0,
-                tie_breaker,
-            )
+            .compare(record, key_values, index_info, 0, tie_breaker)
             .unwrap();
 
         let found = match seek_op {
@@ -2189,8 +2180,7 @@ impl BTreeCursor {
                                         .as_ref()
                                         .unwrap()
                                         .get_values().as_slice(),
-                                        self.key_sort_order(),
-                                        &self.collations,
+                                        &self.index_info.as_ref().unwrap().key_info,
                                 );
                                 if cmp == Ordering::Equal {
                                     tracing::debug!("IndexLeafCell: found exact match with cell_idx={cell_idx}, overwriting");
@@ -3925,8 +3915,11 @@ impl BTreeCursor {
                     compare_immutable(
                         key_values.as_slice(),
                         record_same_number_cols,
-                        self.key_sort_order(),
-                        &self.collations,
+                        self.index_info
+                            .as_ref()
+                            .expect("indexbtree_find_cell without index_info")
+                            .key_info
+                            .as_slice(),
                     )
                 }
             };
@@ -5096,10 +5089,6 @@ impl BTreeCursor {
                 Ok(IOResult::IO)
             }
         }
-    }
-
-    pub fn collations(&self) -> &[CollationSeq] {
-        &self.collations
     }
 
     pub fn read_page(&self, page_idx: usize) -> Result<BTreePage> {
@@ -6527,10 +6516,12 @@ mod tests {
     };
     use sorted_vec::SortedVec;
     use test_log::test;
+    use turso_sqlite3_parser::ast::SortOrder;
 
     use super::*;
     use crate::{
         io::{Buffer, Completion, CompletionType, MemoryIO, OpenFlags, IO},
+        schema::IndexColumn,
         storage::{database::DatabaseFile, page_cache::DumbLruPageCache},
         types::Text,
         vdbe::Register,
@@ -7097,7 +7088,6 @@ mod tests {
 
     fn btree_index_insert_fuzz_run(attempts: usize, inserts: usize) {
         use crate::storage::pager::CreateBTreeFlags;
-        let num_columns = 5;
 
         let (mut rng, seed) = if std::env::var("SEED").is_ok() {
             let seed = std::env::var("SEED").unwrap();
@@ -7119,8 +7109,31 @@ mod tests {
                     panic!("btree_create returned IO in test, unexpected")
                 }
             };
-            let mut cursor =
-                BTreeCursor::new_table(None, pager.clone(), index_root_page, num_columns);
+            let index_def = Index {
+                name: "testindex".to_string(),
+                columns: (0..10)
+                    .map(|i| IndexColumn {
+                        name: format!("test{}", i),
+                        order: SortOrder::Asc,
+                        collation: None,
+                        pos_in_table: i,
+                        default: None,
+                    })
+                    .collect(),
+                table_name: "test".to_string(),
+                root_page: index_root_page,
+                unique: false,
+                ephemeral: false,
+                has_rowid: false,
+            };
+            let num_columns = index_def.columns.len();
+            let mut cursor = BTreeCursor::new_index(
+                None,
+                pager.clone(),
+                index_root_page,
+                &index_def,
+                num_columns,
+            );
             let mut keys = SortedVec::new();
             tracing::info!("seed: {seed}");
             for i in 0..inserts {
@@ -7129,7 +7142,7 @@ mod tests {
                 let key = {
                     let result;
                     loop {
-                        let cols = (0..10)
+                        let cols = (0..num_columns)
                             .map(|_| (rng.next_u64() % (1 << 30)) as i64)
                             .collect::<Vec<_>>();
                         if seen.contains(&cols) {
@@ -8410,7 +8423,7 @@ mod tests {
     pub fn test_read_write_payload_with_offset() {
         let (pager, root_page, _, _) = empty_btree();
         let num_columns = 5;
-        let mut cursor = BTreeCursor::new(None, pager.clone(), root_page, vec![], num_columns);
+        let mut cursor = BTreeCursor::new(None, pager.clone(), root_page, num_columns);
         let offset = 2; // blobs data starts at offset 2
         let initial_text = "hello world";
         let initial_blob = initial_text.as_bytes().to_vec();
@@ -8487,7 +8500,7 @@ mod tests {
     pub fn test_read_write_payload_with_overflow_page() {
         let (pager, root_page, _, _) = empty_btree();
         let num_columns = 5;
-        let mut cursor = BTreeCursor::new(None, pager.clone(), root_page, vec![], num_columns);
+        let mut cursor = BTreeCursor::new(None, pager.clone(), root_page, num_columns);
         let mut large_blob = vec![b'A'; 40960 - 11]; // insert large blob. 40960 = 10 page long.
         let hello_world = b"hello world";
         large_blob.extend_from_slice(hello_world);
