@@ -357,7 +357,6 @@ impl SortedChunk {
 
         let drop_fn = Rc::new(|_buffer: BufferData| {});
         let read_buffer = Buffer::allocate(read_buffer_size, drop_fn);
-        #[allow(clippy::arc_with_non_send_sync)]
         let read_buffer_ref = Arc::new(RefCell::new(read_buffer));
 
         let chunk_io_state_copy = self.io_state.clone();
@@ -410,7 +409,6 @@ impl SortedChunk {
             buf_pos += payload.len();
         }
 
-        #[allow(clippy::arc_with_non_send_sync)]
         let buffer_ref = Arc::new(RefCell::new(buffer));
 
         let buffer_ref_copy = buffer_ref.clone();

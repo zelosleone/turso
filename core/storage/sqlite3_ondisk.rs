@@ -1076,7 +1076,7 @@ pub fn read_record_size(payload: &[u8]) -> Result<usize> {
     offset += bytes_read;
     record_size += header_size;
 
-    while offset < header_size && offset < payload.len() {
+    while offset < header_size {
         let (serial_type, bytes_read) = read_varint(&payload[offset..])?;
         offset += bytes_read;
 
