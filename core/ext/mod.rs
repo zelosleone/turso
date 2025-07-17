@@ -151,7 +151,7 @@ impl Connection {
             .insert(name.to_string(), vmodule.into());
         if kind == VTabKind::TableValuedFunction {
             if let Ok(vtab) = VirtualTable::function(name, &self.syms.borrow()) {
-                self.schema.borrow_mut().add_virtual_table(vtab);
+                self.with_schema_mut(|schema| schema.add_virtual_table(vtab));
             } else {
                 return ResultCode::Error;
             }
