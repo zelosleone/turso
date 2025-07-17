@@ -4115,6 +4115,28 @@ impl BTreeCursor {
     /// back.
     #[instrument(skip(self), level = Level::INFO)]
     pub fn record(&self) -> Result<IOResult<Option<Ref<ImmutableRecord>>>> {
+        if self.mv_cursor.is_some() {
+            let mv_cursor = self.mv_cursor.as_ref().unwrap().borrow();
+            if let Some(row) = mv_cursor.current_row().unwrap() {
+                // Follow the same pattern as the non-MVCC path
+                self.get_immutable_record_or_create()
+                    .as_mut()
+                    .unwrap()
+                    .invalidate();
+                self.get_immutable_record_or_create()
+                    .as_mut()
+                    .unwrap()
+                    .start_serialization(&row.data);
+                self.record_cursor.borrow_mut().invalidate();
+
+                let record_ref =
+                    Ref::filter_map(self.reusable_immutable_record.borrow(), |opt| opt.as_ref())
+                        .unwrap();
+                return Ok(IOResult::Done(Some(record_ref)));
+            } else {
+                return Ok(IOResult::Done(None));
+            }
+        }
         if !self.has_record.get() {
             return Ok(IOResult::Done(None));
         }
