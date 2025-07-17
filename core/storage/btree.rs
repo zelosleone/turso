@@ -4065,10 +4065,14 @@ impl BTreeCursor {
     #[instrument(skip(self), level = Level::INFO)]
     pub fn rowid(&mut self) -> Result<IOResult<Option<i64>>> {
         if let Some(mv_cursor) = &self.mv_cursor {
-            let mv_cursor = mv_cursor.borrow();
-            return Ok(IOResult::Done(
-                mv_cursor.current_row_id().map(|rowid| rowid.row_id),
-            ));
+            if self.has_record.get() {
+                let mv_cursor = mv_cursor.borrow();
+                return Ok(IOResult::Done(
+                    mv_cursor.current_row_id().map(|rowid| rowid.row_id),
+                ));
+            } else {
+                return Ok(IOResult::Done(None));
+            }
         }
         if self.has_record.get() {
             let page = self.stack.top();
