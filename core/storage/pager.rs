@@ -1164,6 +1164,7 @@ impl Pager {
 
                         break;
                     }
+                    *state = FreePageState::NewTrunk { page: page.clone() };
                 }
                 FreePageState::NewTrunk { page } => {
                     if page.is_locked() || !page.is_loaded() {
