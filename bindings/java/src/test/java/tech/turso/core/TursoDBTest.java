@@ -12,7 +12,6 @@ public class TursoDBTest {
 
   @Test
   void db_should_open_and_close_normally() throws Exception {
-    TursoDB.load();
     String dbPath = TestUtils.createTempFile();
     TursoDB db = TursoDB.create("jdbc:turso" + dbPath, dbPath);
 
@@ -23,7 +22,6 @@ public class TursoDBTest {
 
   @Test
   void throwJavaException_should_throw_appropriate_java_exception() throws Exception {
-    TursoDB.load();
     String dbPath = TestUtils.createTempFile();
     TursoDB db = TursoDB.create("jdbc:turso:" + dbPath, dbPath);
 

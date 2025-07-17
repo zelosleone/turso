@@ -33,8 +33,6 @@ public final class TursoDBFactory {
       throw new IllegalArgumentException("filePath should not be empty");
     }
 
-    TursoDB.load();
-
     try {
       return databaseHolder.computeIfAbsent(
           url, (Sneaky<String, TursoDB, SQLException>) u -> TursoDB.create(u, filePath));

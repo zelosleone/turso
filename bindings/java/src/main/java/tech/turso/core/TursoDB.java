@@ -98,7 +98,7 @@ public final class TursoDB implements AutoCloseable {
    * @throws InternalError if the native library cannot be loaded from either the system path or the
    *     JAR file.
    */
-  public static void load() {
+  private static void load() {
     new SingletonHolder();
   }
 
@@ -188,6 +188,7 @@ public final class TursoDB implements AutoCloseable {
   private TursoDB(String url, String filePath) throws SQLException {
     this.url = url;
     this.filePath = filePath;
+    load();
     open(0);
   }
 
