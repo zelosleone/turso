@@ -57,6 +57,7 @@ struct InnerUringIO {
 impl UringIO {
     pub fn new() -> Result<Self> {
         let ring = match io_uring::IoUring::builder()
+            .setup_single_issuer()
             .setup_sqpoll(SQPOLL_IDLE)
             .build(ENTRIES)
         {
