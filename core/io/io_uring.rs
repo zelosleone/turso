@@ -16,7 +16,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, trace};
 
-const ENTRIES: u32 = 128;
+const ENTRIES: u32 = 512;
 const SQPOLL_IDLE: u32 = 1000;
 
 #[derive(Debug, Error)]
