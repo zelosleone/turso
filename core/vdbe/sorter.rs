@@ -57,18 +57,21 @@ impl Sorter {
         min_chunk_read_buffer_size_bytes: usize,
         io: Arc<dyn IO>,
     ) -> Self {
+        assert_eq!(order.len(), collations.len());
         Self {
             records: Vec::new(),
             current: None,
             key_len: order.len(),
-            index_key_info: order
-                .iter()
-                .zip(collations)
-                .map(|(order, collation)| KeyInfo {
-                    sort_order: *order,
-                    collation,
-                })
-                .collect(),
+            index_key_info: Rc::new(
+                order
+                    .iter()
+                    .zip(collations)
+                    .map(|(order, collation)| KeyInfo {
+                        sort_order: *order,
+                        collation,
+                    })
+                    .collect(),
+            ),
             chunks: Vec::new(),
             chunk_heap: BinaryHeap::new(),
             max_buffer_size: max_buffer_size_bytes,
@@ -201,8 +204,7 @@ impl Sorter {
                 Reverse(SortableImmutableRecord::new(
                     record,
                     self.key_len,
-                    self.order,
-                    self.collations.clone(),
+                    self.index_key_info.clone(),
                 )),
                 chunk_idx,
             ));
@@ -434,11 +436,7 @@ struct SortableImmutableRecord {
 }
 
 impl SortableImmutableRecord {
-    fn new(
-        record: ImmutableRecord,
-        key_len: usize,
-        index_key_info: Rc<Vec<KeyInfo>>,
-    ) -> Self {
+    fn new(record: ImmutableRecord, key_len: usize, index_key_info: Rc<Vec<KeyInfo>>) -> Self {
         Self {
             record,
             key_len,
@@ -464,7 +462,7 @@ impl Ord for SortableImmutableRecord {
             &other_values[..]
         };
 
-        compare_immutable(a_key, b_key, self.index_key_info)
+        compare_immutable(a_key, b_key, self.index_key_info.as_ref())
     }
 }
 
@@ -495,13 +493,20 @@ enum SortedChunkIOState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::translate::collate::CollationSeq;
     use crate::types::{ImmutableRecord, RefValue, Value};
     use crate::PlatformIO;
 
     #[test]
     fn test_external_sort() {
         let io = Arc::new(PlatformIO::new().unwrap());
-        let mut sorter = Sorter::new(&[SortOrder::Asc], vec![], 64, 13, io.clone());
+        let mut sorter = Sorter::new(
+            &[SortOrder::Asc],
+            vec![CollationSeq::Binary],
+            64,
+            13,
+            io.clone(),
+        );
         for i in (0..1024).rev() {
             sorter
                 .insert(&ImmutableRecord::from_values(&[Value::Integer(i)], 1))
