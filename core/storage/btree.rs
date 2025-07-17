@@ -1192,10 +1192,10 @@ impl BTreeCursor {
     fn get_next_record(&mut self) -> Result<IOResult<bool>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             let mut mv_cursor = mv_cursor.borrow_mut();
+            mv_cursor.forward();
             let rowid = mv_cursor.current_row_id();
             match rowid {
                 Some(_rowid) => {
-                    mv_cursor.forward();
                     return Ok(IOResult::Done(true));
                 }
                 None => return Ok(IOResult::Done(false)),
@@ -4008,7 +4008,11 @@ impl BTreeCursor {
 
     #[instrument(skip_all, level = Level::INFO)]
     pub fn rewind(&mut self) -> Result<IOResult<()>> {
-        if self.mv_cursor.is_some() {
+        if let Some(mv_cursor) = &self.mv_cursor {
+            {
+                let mut mv_cursor = mv_cursor.borrow_mut();
+                mv_cursor.rewind();
+            }
             let cursor_has_record = return_if_io!(self.get_next_record());
             self.invalidate_record();
             self.has_record.replace(cursor_has_record);
