@@ -2,25 +2,31 @@ use turso_sqlite3_parser::ast::SortOrder;
 
 use crate::{
     translate::collate::CollationSeq,
-    types::{compare_immutable, ImmutableRecord, IndexKeySortOrder},
+    types::{compare_immutable, ImmutableRecord, KeyInfo},
 };
 
 pub struct Sorter {
     records: Vec<ImmutableRecord>,
     current: Option<ImmutableRecord>,
-    order: IndexKeySortOrder,
     key_len: usize,
-    collations: Vec<CollationSeq>,
+    index_key_info: Vec<KeyInfo>,
 }
 
 impl Sorter {
     pub fn new(order: &[SortOrder], collations: Vec<CollationSeq>) -> Self {
+        assert_eq!(order.len(), collations.len());
         Self {
             records: Vec::new(),
             current: None,
             key_len: order.len(),
-            order: IndexKeySortOrder::from_list(order),
-            collations,
+            index_key_info: order
+                .iter()
+                .zip(collations)
+                .map(|(order, collation)| KeyInfo {
+                    sort_order: *order,
+                    collation,
+                })
+                .collect(),
         }
     }
     pub fn is_empty(&self) -> bool {
@@ -49,7 +55,7 @@ impl Sorter {
                 &b_values[..]
             };
 
-            compare_immutable(a_key, b_key, self.order, &self.collations)
+            compare_immutable(a_key, b_key, &self.index_key_info)
         });
         self.records.reverse();
         self.next()
