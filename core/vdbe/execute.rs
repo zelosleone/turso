@@ -3415,7 +3415,7 @@ pub fn op_sorter_open(
     };
     let cache_size = program.connection.get_cache_size();
     // Set the buffer size threshold to be roughly the same as the limit configured for the page-cache.
-    let page_size = header_accessor::get_page_size(&pager)
+    let page_size = header_accessor::get_page_size(pager)
         .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE) as usize;
     let max_buffer_size_bytes = if cache_size < 0 {
         (cache_size.abs() * 1024) as usize
