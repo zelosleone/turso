@@ -303,6 +303,7 @@ impl Database {
                     .map_err(|_| LimboError::SchemaLocked)?
                     .clone(),
             ),
+            database_schemas: RefCell::new(std::collections::HashMap::new()),
             auto_commit: Cell::new(true),
             mv_transactions: RefCell::new(Vec::new()),
             transaction_state: Cell::new(TransactionState::None),
@@ -316,6 +317,7 @@ impl Database {
             wal_checkpoint_disabled: Cell::new(false),
             capture_data_changes: RefCell::new(CaptureDataChangesMode::Off),
             closed: Cell::new(false),
+            attached_databases: RefCell::new(DatabaseIndexer::new()),
         });
         let builtin_syms = self.builtin_syms.borrow();
         // add built-in extensions symbols to the connection to prevent having to load each time
@@ -579,10 +581,120 @@ impl CaptureDataChangesMode {
     }
 }
 
+// Optimized for fast get() operations and supports unlimited attached databases.
+struct DatabaseIndexer {
+    name_to_index: HashMap<String, usize>,
+    allocated: Vec<u64>,
+    index_to_data: HashMap<usize, (Arc<Database>, Rc<Pager>)>,
+}
+
+#[allow(unused)]
+impl DatabaseIndexer {
+    fn new() -> Self {
+        Self {
+            name_to_index: HashMap::new(),
+            index_to_data: HashMap::new(),
+            allocated: vec![3], // 0 | 1, as those are reserved for main and temp
+        }
+    }
+
+    fn get_database_by_index(&self, index: usize) -> Option<Arc<Database>> {
+        self.index_to_data
+            .get(&index)
+            .map(|(db, _pager)| db.clone())
+    }
+
+    fn get_database_by_name(&self, s: &str) -> Option<(usize, Arc<Database>)> {
+        match self.name_to_index.get(s) {
+            None => None,
+            Some(idx) => self
+                .index_to_data
+                .get(idx)
+                .map(|(db, _pager)| (*idx, db.clone())),
+        }
+    }
+
+    fn get_pager_by_index(&self, idx: &usize) -> Rc<Pager> {
+        let (_db, pager) = self
+            .index_to_data
+            .get(idx)
+            .expect("If we are looking up a database by index, it must exist.");
+        pager.clone()
+    }
+
+    fn add(&mut self, s: &str) -> usize {
+        assert_eq!(self.name_to_index.get(s), None);
+
+        let index = self.allocate_index();
+        self.name_to_index.insert(s.to_string(), index);
+        index
+    }
+
+    fn insert(&mut self, s: &str, data: (Arc<Database>, Rc<Pager>)) -> usize {
+        let idx = self.add(s);
+        self.index_to_data.insert(idx, data);
+        idx
+    }
+
+    fn remove(&mut self, s: &str) -> Option<usize> {
+        if let Some(index) = self.name_to_index.remove(s) {
+            // Should be impossible to remove main or temp.
+            assert!(index >= 2);
+            self.deallocate_index(index);
+            self.index_to_data.remove(&index);
+            Some(index)
+        } else {
+            None
+        }
+    }
+
+    #[inline(always)]
+    fn deallocate_index(&mut self, index: usize) {
+        let word_idx = index / 64;
+        let bit_idx = index % 64;
+
+        if word_idx < self.allocated.len() {
+            self.allocated[word_idx] &= !(1u64 << bit_idx);
+        }
+    }
+
+    fn allocate_index(&mut self) -> usize {
+        for word_idx in 0..self.allocated.len() {
+            let word = self.allocated[word_idx];
+
+            if word != u64::MAX {
+                let free_bit = Self::find_first_zero_bit(word);
+                let index = word_idx * 64 + free_bit;
+
+                self.allocated[word_idx] |= 1u64 << free_bit;
+
+                return index;
+            }
+        }
+
+        // Need to expand bitmap
+        let word_idx = self.allocated.len();
+        self.allocated.push(1u64); // Mark first bit as allocated
+        word_idx * 64
+    }
+
+    #[inline(always)]
+    fn find_first_zero_bit(word: u64) -> usize {
+        // Invert to find first zero as first one
+        let inverted = !word;
+
+        // Use trailing zeros count (compiles to single instruction on most CPUs)
+        inverted.trailing_zeros() as usize
+    }
+}
+
 pub struct Connection {
     _db: Arc<Database>,
     pager: RefCell<Rc<Pager>>,
     schema: RefCell<Arc<Schema>>,
+    /// Per-database schema cache (database_index -> schema)
+    /// Loaded lazily to avoid copying all schemas on connection open
+    database_schemas: RefCell<std::collections::HashMap<usize, Arc<Schema>>>,
     /// Whether to automatically commit transaction
     auto_commit: Cell<bool>,
     mv_transactions: RefCell<Vec<crate::mvcc::database::TxID>>,
@@ -599,6 +711,8 @@ pub struct Connection {
     wal_checkpoint_disabled: Cell<bool>,
     capture_data_changes: RefCell<CaptureDataChangesMode>,
     closed: Cell<bool>,
+    /// Attached databases
+    attached_databases: RefCell<DatabaseIndexer>,
 }
 
 impl Connection {
@@ -727,6 +841,7 @@ impl Connection {
                             &[],
                             &mut table_ref_counter,
                             translate::plan::QueryDestination::ResultRows,
+                            &self.clone(),
                         )?;
                         optimize_plan(&mut plan, self.schema.borrow().deref())?;
                         let _ = std::io::stdout().write_all(plan.to_string().as_bytes());
@@ -834,6 +949,21 @@ impl Connection {
         }
         let conn = db.connect()?;
         Ok((io, conn))
+    }
+
+    #[cfg(feature = "fs")]
+    fn from_uri_attached(uri: &str, use_indexes: bool, use_mvcc: bool) -> Result<Arc<Database>> {
+        let mut opts = OpenOptions::parse(uri)?;
+        // FIXME: for now, only support read only attach
+        opts.mode = OpenMode::ReadOnly;
+        let flags = opts.get_flags()?;
+        let (_io, db) =
+            Database::open_new(&opts.path, opts.vfs.as_ref(), flags, use_indexes, use_mvcc)?;
+        if let Some(modeof) = opts.modeof {
+            let perms = std::fs::metadata(modeof)?;
+            std::fs::set_permissions(&opts.path, perms.permissions())?;
+        }
+        Ok(db)
     }
 
     pub fn maybe_update_schema(&self) -> Result<()> {
@@ -998,10 +1128,16 @@ impl Connection {
 
     /// Check if a specific attached database is read only or not, by its index
     pub fn is_readonly(&self, index: usize) -> bool {
-        // Only internal callers for now. Nobody should be passing
-        // anything else here
-        assert_eq!(index, 0);
-        self._db.is_readonly()
+        if index == 0 {
+            self._db.is_readonly()
+        } else {
+            let db = self
+                .attached_databases
+                .borrow()
+                .get_database_by_index(index);
+            db.expect("Should never have called this without being sure the database exists")
+                .is_readonly()
+        }
     }
 
     /// Reset the page size for the current connection.
@@ -1170,6 +1306,212 @@ impl Connection {
 
     pub fn is_db_initialized(&self) -> bool {
         self._db.db_state.is_initialized()
+    }
+
+    fn get_pager_from_database_index(&self, index: &usize) -> Rc<Pager> {
+        if *index < 2 {
+            self.pager.borrow().clone()
+        } else {
+            self.attached_databases.borrow().get_pager_by_index(index)
+        }
+    }
+
+    #[cfg(feature = "fs")]
+    fn is_attached(&self, alias: &str) -> bool {
+        self.attached_databases
+            .borrow()
+            .name_to_index
+            .contains_key(alias)
+    }
+
+    /// Attach a database file with the given alias name
+    #[cfg(not(feature = "fs"))]
+    pub(crate) fn attach_database(&self, _path: &str, _alias: &str) -> Result<()> {
+        return Err(LimboError::InvalidArgument(format!(
+            "attach not available in this build (no-fs)"
+        )));
+    }
+
+    /// Attach a database file with the given alias name
+    #[cfg(feature = "fs")]
+    pub(crate) fn attach_database(&self, path: &str, alias: &str) -> Result<()> {
+        if self.closed.get() {
+            return Err(LimboError::InternalError("Connection closed".to_string()));
+        }
+
+        if self.is_attached(alias) {
+            return Err(LimboError::InvalidArgument(format!(
+                "database {alias} is already in use"
+            )));
+        }
+
+        // Check for reserved database names
+        if alias.eq_ignore_ascii_case("main") || alias.eq_ignore_ascii_case("temp") {
+            return Err(LimboError::InvalidArgument(format!(
+                "reserved name {alias} is already in use"
+            )));
+        }
+
+        let use_indexes = self
+            ._db
+            .schema
+            .lock()
+            .map_err(|_| LimboError::SchemaLocked)?
+            .indexes_enabled();
+        let use_mvcc = self._db.mv_store.is_some();
+
+        let db = Self::from_uri_attached(path, use_indexes, use_mvcc)?;
+        let pager = Rc::new(db.init_pager(None)?);
+
+        self.attached_databases
+            .borrow_mut()
+            .insert(alias, (db, pager));
+
+        Ok(())
+    }
+
+    // Detach a database by alias name
+    fn detach_database(&self, alias: &str) -> Result<()> {
+        if self.closed.get() {
+            return Err(LimboError::InternalError("Connection closed".to_string()));
+        }
+
+        if alias == "main" || alias == "temp" {
+            return Err(LimboError::InvalidArgument(format!(
+                "cannot detach database: {alias}"
+            )));
+        }
+
+        // Remove from attached databases
+        let mut attached_dbs = self.attached_databases.borrow_mut();
+        if attached_dbs.remove(alias).is_none() {
+            return Err(LimboError::InvalidArgument(format!(
+                "no such database: {alias}"
+            )));
+        }
+
+        Ok(())
+    }
+
+    // Get an attached database by alias name
+    fn get_attached_database(&self, alias: &str) -> Option<(usize, Arc<Database>)> {
+        self.attached_databases.borrow().get_database_by_name(alias)
+    }
+
+    /// List all attached database aliases
+    pub fn list_attached_databases(&self) -> Vec<String> {
+        self.attached_databases
+            .borrow()
+            .name_to_index
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    /// Resolve database ID from a qualified name
+    pub(crate) fn resolve_database_id(&self, qualified_name: &ast::QualifiedName) -> Result<usize> {
+        use crate::util::normalize_ident;
+
+        // Check if this is a qualified name (database.table) or unqualified
+        if let Some(db_name) = &qualified_name.db_name {
+            let db_name_normalized = normalize_ident(&db_name.0);
+
+            if db_name_normalized.eq_ignore_ascii_case("main") {
+                Ok(0)
+            } else if db_name_normalized.eq_ignore_ascii_case("temp") {
+                Ok(1)
+            } else {
+                // Look up attached database
+                if let Some((idx, _attached_db)) = self.get_attached_database(&db_name_normalized) {
+                    Ok(idx)
+                } else {
+                    Err(LimboError::InvalidArgument(format!(
+                        "no such database: {db_name_normalized}"
+                    )))
+                }
+            }
+        } else {
+            // Unqualified table name - use main database
+            Ok(0)
+        }
+    }
+
+    /// Access schema for a database using a closure pattern to avoid cloning
+    pub(crate) fn with_schema<T>(&self, database_id: usize, f: impl FnOnce(&Schema) -> T) -> T {
+        if database_id == 0 {
+            // Main database - use connection's schema which should be kept in sync
+            let schema = self.schema.borrow();
+            f(&schema)
+        } else if database_id == 1 {
+            // Temp database - uses same schema as main for now, but this will change later.
+            let schema = self.schema.borrow();
+            f(&schema)
+        } else {
+            // Attached database - check cache first, then load from database
+            let mut schemas = self.database_schemas.borrow_mut();
+
+            if let Some(cached_schema) = schemas.get(&database_id) {
+                return f(cached_schema);
+            }
+
+            // Schema not cached, load it lazily from the attached database
+            let attached_dbs = self.attached_databases.borrow();
+            let (db, _pager) = attached_dbs
+                .index_to_data
+                .get(&database_id)
+                .expect("Database ID should be valid after resolve_database_id");
+
+            let schema = db
+                .schema
+                .lock()
+                .expect("Schema lock should not fail")
+                .clone();
+
+            // Cache the schema for future use
+            schemas.insert(database_id, schema.clone());
+
+            f(&schema)
+        }
+    }
+
+    // Get the canonical path for a database given its Database object
+    fn get_canonical_path_for_database(db: &Database) -> String {
+        if db.path == ":memory:" {
+            // For in-memory databases, SQLite shows empty string
+            String::new()
+        } else {
+            // For file databases, try to show the full absolute path if that doesn't fail
+            match std::fs::canonicalize(&db.path) {
+                Ok(abs_path) => abs_path.to_string_lossy().to_string(),
+                Err(_) => db.path.to_string(),
+            }
+        }
+    }
+
+    /// List all databases (main + attached) with their sequence numbers, names, and file paths
+    /// Returns a vector of tuples: (seq_number, name, file_path)
+    pub fn list_all_databases(&self) -> Vec<(usize, String, String)> {
+        let mut databases = Vec::new();
+
+        // Add main database (always seq=0, name="main")
+        let main_path = Self::get_canonical_path_for_database(&self._db);
+        databases.push((0, "main".to_string(), main_path));
+
+        // Add attached databases
+        let attached_dbs = self.attached_databases.borrow();
+        for (alias, &seq_number) in attached_dbs.name_to_index.iter() {
+            let file_path = if let Some((db, _pager)) = attached_dbs.index_to_data.get(&seq_number)
+            {
+                Self::get_canonical_path_for_database(db)
+            } else {
+                String::new()
+            };
+            databases.push((seq_number, alias.clone(), file_path));
+        }
+
+        // Sort by sequence number to ensure consistent ordering
+        databases.sort_by_key(|&(seq, _, _)| seq);
+        databases
     }
 }
 

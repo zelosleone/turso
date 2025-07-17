@@ -284,17 +284,21 @@ fn query_pragma(
             let base_reg = register;
             program.alloc_registers(2);
 
-            // For now, we only show the main database (seq=0)
-            // seq (sequence number)
-            program.emit_int(0, base_reg);
+            // Get all databases (main + attached) and emit a row for each
+            let all_databases = connection.list_all_databases();
+            for (seq_number, name, file_path) in all_databases {
+                // seq (sequence number)
+                program.emit_int(seq_number as i64, base_reg);
 
-            // name
-            program.emit_string8("main".into(), base_reg + 1);
+                // name (alias)
+                program.emit_string8(name, base_reg + 1);
 
-            let file_path = connection.get_database_canonical_path();
-            program.emit_string8(file_path, base_reg + 2);
+                // file path
+                program.emit_string8(file_path, base_reg + 2);
 
-            program.emit_result_row(base_reg, 3);
+                program.emit_result_row(base_reg, 3);
+            }
+
             let pragma = pragma_for(&pragma);
             for col_name in pragma.columns.iter() {
                 program.add_pragma_result_column(col_name.to_string());

@@ -382,6 +382,10 @@ pub struct Program {
 }
 
 impl Program {
+    fn get_pager_from_database_index(&self, idx: &usize) -> Rc<Pager> {
+        self.connection.get_pager_from_database_index(idx)
+    }
+
     #[instrument(skip_all, level = Level::DEBUG)]
     pub fn step(
         &self,

@@ -873,7 +873,7 @@ pub fn op_open_read(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
-    pager: &Rc<Pager>,
+    _pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::OpenRead {
@@ -884,6 +884,9 @@ pub fn op_open_read(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
+
+    let pager = program.get_pager_from_database_index(db);
+
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
     let mv_cursor = match state.mv_tx_id {
         Some(tx_id) => {
@@ -1916,16 +1919,18 @@ pub fn op_transaction(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
-    pager: &Rc<Pager>,
+    _pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Transaction { db: 0, write } = insn else {
+    let Insn::Transaction { db, write } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
     let conn = program.connection.clone();
     if *write && conn._db.open_flags.contains(OpenFlags::ReadOnly) {
         return Err(LimboError::ReadOnly);
     }
+
+    let pager = program.get_pager_from_database_index(db);
 
     if let Some(mv_store) = &mv_store {
         if state.mv_tx_id.is_none() {
@@ -4412,6 +4417,46 @@ pub fn op_function(
                     )?);
                 }
             }
+            ScalarFunc::Attach => {
+                assert_eq!(arg_count, 3);
+                let filename = state.registers[*start_reg].get_owned_value();
+                let dbname = state.registers[*start_reg + 1].get_owned_value();
+                let _key = state.registers[*start_reg + 2].get_owned_value(); // Not used in read-only implementation
+
+                let Value::Text(filename_str) = filename else {
+                    return Err(LimboError::InvalidArgument(
+                        "attach: filename argument must be text".to_string(),
+                    ));
+                };
+
+                let Value::Text(dbname_str) = dbname else {
+                    return Err(LimboError::InvalidArgument(
+                        "attach: database name argument must be text".to_string(),
+                    ));
+                };
+
+                program
+                    .connection
+                    .attach_database(filename_str.as_str(), dbname_str.as_str())?;
+
+                state.registers[*dest] = Register::Value(Value::Null);
+            }
+            ScalarFunc::Detach => {
+                assert_eq!(arg_count, 1);
+                let dbname = state.registers[*start_reg].get_owned_value();
+
+                let Value::Text(dbname_str) = dbname else {
+                    return Err(LimboError::InvalidArgument(
+                        "detach: database name argument must be text".to_string(),
+                    ));
+                };
+
+                // Call the detach_database method on the connection
+                program.connection.detach_database(dbname_str.as_str())?;
+
+                // Set result to NULL (detach doesn't return a value)
+                state.registers[*dest] = Register::Value(Value::Null);
+            }
         },
         crate::function::Func::Vector(vector_func) => match vector_func {
             VectorFunc::Vector => {
@@ -5623,7 +5668,7 @@ pub fn op_open_write(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
-    pager: &Rc<Pager>,
+    _pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::OpenWrite {
@@ -5637,6 +5682,8 @@ pub fn op_open_write(
     if program.connection.is_readonly(*db) {
         return Err(LimboError::ReadOnly);
     }
+    let pager = program.get_pager_from_database_index(db);
+
     let root_page = match root_page {
         RegisterOrLiteral::Literal(lit) => *lit as u64,
         RegisterOrLiteral::Register(reg) => match &state.registers[*reg].get_owned_value() {
@@ -5733,6 +5780,9 @@ pub fn op_create_btree(
     let Insn::CreateBtree { db, root, flags } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
+
+    assert_eq!(*db, 0);
+
     if program.connection.is_readonly(*db) {
         return Err(LimboError::ReadOnly);
     }

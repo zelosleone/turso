@@ -944,6 +944,119 @@ impl Limbo {
         Ok(guard)
     }
 
+    fn print_schema_entry(&mut self, db_display_name: &str, row: &turso_core::Row) -> bool {
+        if let Ok(Value::Text(schema)) = row.get::<&Value>(0) {
+            let modified_schema = if db_display_name == "main" {
+                schema.as_str().to_string()
+            } else {
+                // We need to modify the SQL to include the database prefix in table names
+                // This is a simple approach - for CREATE TABLE statements, insert db name after "TABLE "
+                // For CREATE INDEX statements, insert db name after "ON "
+                let schema_str = schema.as_str();
+                if schema_str.to_uppercase().contains("CREATE TABLE ") {
+                    // Find "CREATE TABLE " and insert database name after it
+                    if let Some(pos) = schema_str.to_uppercase().find("CREATE TABLE ") {
+                        let before = &schema_str[..pos + "CREATE TABLE ".len()];
+                        let after = &schema_str[pos + "CREATE TABLE ".len()..];
+                        format!("{before}{db_display_name}.{after}")
+                    } else {
+                        schema_str.to_string()
+                    }
+                } else if schema_str.to_uppercase().contains(" ON ") {
+                    // For indexes, find " ON " and insert database name after it
+                    if let Some(pos) = schema_str.to_uppercase().find(" ON ") {
+                        let before = &schema_str[..pos + " ON ".len()];
+                        let after = &schema_str[pos + " ON ".len()..];
+                        format!("{before}{db_display_name}.{after}")
+                    } else {
+                        schema_str.to_string()
+                    }
+                } else {
+                    schema_str.to_string()
+                }
+            };
+            let _ = self.write_fmt(format_args!("{modified_schema};"));
+            true
+        } else {
+            false
+        }
+    }
+
+    fn query_one_table_schema(
+        &mut self,
+        db_prefix: &str,
+        db_display_name: &str,
+        table_name: &str,
+    ) -> anyhow::Result<bool> {
+        let sql = format!(
+            "SELECT sql FROM {db_prefix}.sqlite_schema WHERE type IN ('table', 'index') AND tbl_name = '{table_name}' AND name NOT LIKE 'sqlite_%'"
+        );
+
+        let mut found = false;
+        match self.conn.query(&sql) {
+            Ok(Some(ref mut rows)) => loop {
+                match rows.step()? {
+                    StepResult::Row => {
+                        let row = rows.row().unwrap();
+                        found |= self.print_schema_entry(db_display_name, row);
+                    }
+                    StepResult::IO => {
+                        rows.run_once()?;
+                    }
+                    StepResult::Interrupt => break,
+                    StepResult::Done => break,
+                    StepResult::Busy => {
+                        let _ = self.writeln("database is busy");
+                        break;
+                    }
+                }
+            },
+            Ok(None) => {}
+            Err(_) => {} // Table not found in this database
+        }
+        Ok(found)
+    }
+
+    fn query_all_tables_schema(
+        &mut self,
+        db_prefix: &str,
+        db_display_name: &str,
+    ) -> anyhow::Result<()> {
+        let sql = format!(
+            "SELECT sql FROM {db_prefix}.sqlite_schema WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%'"
+        );
+
+        match self.conn.query(&sql) {
+            Ok(Some(ref mut rows)) => loop {
+                match rows.step()? {
+                    StepResult::Row => {
+                        let row = rows.row().unwrap();
+                        self.print_schema_entry(db_display_name, row);
+                    }
+                    StepResult::IO => {
+                        rows.run_once()?;
+                    }
+                    StepResult::Interrupt => break,
+                    StepResult::Done => break,
+                    StepResult::Busy => {
+                        let _ = self.writeln("database is busy");
+                        break;
+                    }
+                }
+            },
+            Ok(None) => {}
+            Err(err) => {
+                // If we can't access this database's schema, just skip it
+                if !err.to_string().contains("no such table") {
+                    eprintln!(
+                        "Warning: Could not query schema for database '{db_display_name}': {err}"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn display_schema(&mut self, table: Option<&str>) -> anyhow::Result<()> {
         if !self.conn.is_db_initialized() {
             if let Some(table_name) = table {
@@ -954,55 +1067,51 @@ impl Limbo {
             return Ok(());
         }
 
-        let sql = match table {
-        Some(table_name) => format!(
-            "SELECT sql FROM sqlite_schema WHERE type IN ('table', 'index') AND tbl_name = '{table_name}' AND name NOT LIKE 'sqlite_%'"
-        ),
-        None => String::from(
-            "SELECT sql FROM sqlite_schema WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%'"
-        ),
-    };
+        match table {
+            Some(table_spec) => {
+                // Parse table name to handle database prefixes (e.g., "db.table")
+                let clean_table_spec = table_spec.trim_end_matches(';');
 
-        match self.conn.query(&sql) {
-            Ok(Some(ref mut rows)) => {
-                let mut found = false;
-                loop {
-                    match rows.step()? {
-                        StepResult::Row => {
-                            let row = rows.row().unwrap();
-                            if let Ok(Value::Text(schema)) = row.get::<&Value>(0) {
-                                let _ = self.write_fmt(format_args!("{};", schema.as_str()));
-                                found = true;
-                            }
-                        }
-                        StepResult::IO => {
-                            rows.run_once()?;
-                        }
-                        StepResult::Interrupt => break,
-                        StepResult::Done => break,
-                        StepResult::Busy => {
-                            let _ = self.writeln("database is busy");
-                            break;
-                        }
-                    }
-                }
-                if !found {
-                    if let Some(table_name) = table {
-                        let _ = self
-                            .write_fmt(format_args!("-- Error: Table '{table_name}' not found."));
+                let (target_db, table_name) =
+                    if let Some((db, tbl)) = clean_table_spec.split_once('.') {
+                        (db, tbl)
                     } else {
-                        let _ = self.writeln("-- No tables or indexes found in the database.");
+                        ("main", clean_table_spec)
+                    };
+
+                // Query only the specific table in the specific database
+                let found = if target_db == "main" {
+                    self.query_one_table_schema("main", "main", table_name)?
+                } else {
+                    // Check if the database is attached
+                    let attached_databases = self.conn.list_attached_databases();
+                    if attached_databases.contains(&target_db.to_string()) {
+                        self.query_one_table_schema(target_db, target_db, table_name)?
+                    } else {
+                        false
                     }
+                };
+
+                if !found {
+                    let table_display = if target_db == "main" {
+                        table_name.to_string()
+                    } else {
+                        format!("{target_db}.{table_name}")
+                    };
+                    let _ = self
+                        .write_fmt(format_args!("-- Error: Table '{table_display}' not found."));
                 }
             }
-            Ok(None) => {
-                let _ = self.writeln("No results returned from the query.");
-            }
-            Err(err) => {
-                if err.to_string().contains("no such table: sqlite_schema") {
-                    return Err(anyhow::anyhow!("Unable to access database schema. The database may be using an older SQLite version or may not be properly initialized."));
-                } else {
-                    return Err(anyhow::anyhow!("Error querying schema: {}", err));
+            None => {
+                // Show schema for all tables in all databases
+                let attached_databases = self.conn.list_attached_databases();
+
+                // Query main database first
+                self.query_all_tables_schema("main", "main")?;
+
+                // Query all attached databases
+                for db_name in attached_databases {
+                    self.query_all_tables_schema(&db_name, &db_name)?;
                 }
             }
         }

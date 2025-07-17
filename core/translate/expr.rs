@@ -1808,6 +1808,18 @@ pub fn translate_expr(
                             });
                             Ok(target_register)
                         }
+                        ScalarFunc::Attach => {
+                            // ATTACH is handled by the attach.rs module, not here
+                            crate::bail_parse_error!(
+                                "ATTACH should be handled at statement level, not as expression"
+                            );
+                        }
+                        ScalarFunc::Detach => {
+                            // DETACH is handled by the attach.rs module, not here
+                            crate::bail_parse_error!(
+                                "DETACH should be handled at statement level, not as expression"
+                            );
+                        }
                     }
                 }
                 Func::Math(math_func) => match math_func.arity() {
