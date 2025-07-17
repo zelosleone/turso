@@ -185,9 +185,10 @@ public final class TursoDB implements AutoCloseable {
   }
 
   // TODO: receive config as argument
-  private TursoDB(String url, String filePath) {
+  private TursoDB(String url, String filePath) throws SQLException {
     this.url = url;
     this.filePath = filePath;
+    open(0);
   }
 
   // TODO: add support for JNI
@@ -201,16 +202,11 @@ public final class TursoDB implements AutoCloseable {
     return this.isOpen;
   }
 
-  public void open(int openFlags) throws SQLException {
+  private void open(int openFlags) throws SQLException {
     open0(filePath, openFlags);
   }
 
   private void open0(String filePath, int openFlags) throws SQLException {
-    if (isOpen) {
-      throw TursoExceptionUtils.buildTursoException(
-          TursoErrorCode.TURSO_ETC.code, "Already opened");
-    }
-
     byte[] filePathBytes = stringToUtf8ByteArray(filePath);
     if (filePathBytes == null) {
       throw TursoExceptionUtils.buildTursoException(

@@ -37,13 +37,7 @@ public final class TursoDBFactory {
 
     try {
       return databaseHolder.computeIfAbsent(
-          url,
-          (Sneaky<String, TursoDB, SQLException>)
-              u -> {
-                TursoDB tursoDB = TursoDB.create(u, filePath);
-                tursoDB.open(0);
-                return tursoDB;
-              });
+          url, (Sneaky<String, TursoDB, SQLException>) u -> TursoDB.create(u, filePath));
     } catch (Exception e) {
       throw new SQLException("Error opening connection", e);
     }
