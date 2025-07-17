@@ -5882,15 +5882,16 @@ pub fn op_set_cookie(
             header_accessor::set_incremental_vacuum_enabled(pager, *value as u32)?;
         }
         Cookie::SchemaVersion => {
-            // we update transaction state to indicate that the schema has changed
-            match program.connection.transaction_state.get() {
-                TransactionState::Write { schema_did_change } => {
-                    program.connection.transaction_state.set(TransactionState::Write { schema_did_change: true });
-                },
-                TransactionState::Read => unreachable!("invalid transaction state for SetCookie: TransactionState::Read, should be write"),
-                TransactionState::None => unreachable!("invalid transaction state for SetCookie: TransactionState::None, should be write"),
+            if mv_store.is_none() {
+                // we update transaction state to indicate that the schema has changed
+                match program.connection.transaction_state.get() {
+                    TransactionState::Write { schema_did_change } => {
+                        program.connection.transaction_state.set(TransactionState::Write { schema_did_change: true });
+                    },
+                    TransactionState::Read => unreachable!("invalid transaction state for SetCookie: TransactionState::Read, should be write"),
+                    TransactionState::None => unreachable!("invalid transaction state for SetCookie: TransactionState::None, should be write"),
+                }
             }
-
             program
                 .connection
                 .with_schema_mut(|schema| schema.schema_version = *value as u32);
