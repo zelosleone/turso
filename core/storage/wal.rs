@@ -1038,6 +1038,7 @@ impl Wal for WalFile {
             }
             self.last_checksum = shared.last_checksum;
         }
+        self.reset_internal_states();
         Ok(())
     }
 
@@ -1127,6 +1128,12 @@ impl WalFile {
                 }
             }
         }
+    }
+
+    fn reset_internal_states(&self) {
+        self.sync_state.set(SyncState::NotSyncing);
+        self.syncing.set(false);
+        self.ongoing_checkpoint.state = CheckpointState::Start;
     }
 }
 
