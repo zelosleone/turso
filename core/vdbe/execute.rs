@@ -5223,6 +5223,13 @@ pub fn op_new_rowid(
         unreachable!("unexpected Insn {:?}", insn)
     };
 
+    if let Some(mv_store) = mv_store {
+        let rowid = mv_store.get_next_rowid();
+        state.registers[*rowid_reg] = Register::Value(Value::Integer(rowid));
+        state.pc += 1;
+        return Ok(InsnFunctionStepResult::Step);
+    }
+
     const MAX_ROWID: i64 = i64::MAX;
     const MAX_ATTEMPTS: u32 = 100;
 
