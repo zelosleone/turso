@@ -5,7 +5,9 @@ use tracing::{debug, trace};
 
 use super::pager::PageRef;
 
-const DEFAULT_PAGE_CACHE_SIZE_IN_PAGES: usize = 2000;
+/// FIXME: https://github.com/tursodatabase/turso/issues/1661
+const DEFAULT_PAGE_CACHE_SIZE_IN_PAGES_MAKE_ME_SMALLER_ONCE_WAL_SPILL_IS_IMPLEMENTED: usize =
+    100000;
 
 #[derive(Debug, Eq, Hash, PartialEq, Clone)]
 pub struct PageCacheKey {
@@ -505,7 +507,9 @@ impl DumbLruPageCache {
 
 impl Default for DumbLruPageCache {
     fn default() -> Self {
-        DumbLruPageCache::new(DEFAULT_PAGE_CACHE_SIZE_IN_PAGES)
+        DumbLruPageCache::new(
+            DEFAULT_PAGE_CACHE_SIZE_IN_PAGES_MAKE_ME_SMALLER_ONCE_WAL_SPILL_IS_IMPLEMENTED,
+        )
     }
 }
 
