@@ -33,6 +33,7 @@
 //! ```
 
 pub mod params;
+pub mod transaction;
 pub mod value;
 
 pub use value::Value;
