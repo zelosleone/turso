@@ -3986,6 +3986,7 @@ impl BTreeCursor {
 
     #[instrument(skip_all, level = Level::INFO)]
     pub fn seek_to_last(&mut self) -> Result<IOResult<()>> {
+        assert!(self.mv_cursor.is_none());
         let has_record = return_if_io!(self.move_to_rightmost());
         self.invalidate_record();
         self.has_record.replace(has_record);
