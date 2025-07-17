@@ -1549,7 +1549,12 @@ impl Pager {
         self.checkpoint_inflight.replace(0);
         self.syncing.replace(false);
         self.flush_info.replace(FlushInfo {
-            state: FlushState::Start,
+            state: CacheFlushState::Start,
+            in_flight_writes: Rc::new(RefCell::new(0)),
+            dirty_pages: Vec::new(),
+        });
+        self.commit_info.replace(CommitInfo {
+            state: CommitState::Start,
             in_flight_writes: Rc::new(RefCell::new(0)),
             dirty_pages: Vec::new(),
         });
