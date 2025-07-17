@@ -97,11 +97,6 @@ impl InnerUringIO {
         ))
     }
     fn unregister_file(&mut self, id: u32) -> Result<()> {
-        if self.free_files.len() >= ENTRIES as usize {
-            return Err(LimboError::UringIOError(
-                "unable to unregister file, too many free slots".to_string(),
-            ));
-        }
         self.ring
             .ring
             .submitter()
@@ -176,7 +171,7 @@ impl IO for UringIO {
                 Err(error) => debug!("Error {error:?} returned when setting O_DIRECT flag to read file. The performance of the system may be affected"),
             }
         }
-        let id = self.inner.borrow_mut().register_file(file.as_raw_fd())?;
+        let id = self.inner.borrow_mut().register_file(file.as_raw_fd()).ok();
         let uring_file = Arc::new(UringFile {
             io: self.inner.clone(),
             file,
@@ -248,11 +243,26 @@ impl Clock for UringIO {
 pub struct UringFile {
     io: Rc<RefCell<InnerUringIO>>,
     file: std::fs::File,
-    id: u32,
+    id: Option<u32>,
 }
 
 unsafe impl Send for UringFile {}
 unsafe impl Sync for UringFile {}
+
+macro_rules! with_fd {
+    ($file:expr, |$fd:ident| $body:expr) => {
+        match $file.id {
+            Some(id) => {
+                let $fd = io_uring::types::Fixed(id);
+                $body
+            }
+            None => {
+                let $fd = io_uring::types::Fd($file.file.as_raw_fd());
+                $body
+            }
+        }
+    };
+}
 
 impl File for UringFile {
     fn lock_file(&self, exclusive: bool) -> Result<()> {
@@ -300,10 +310,12 @@ impl File for UringFile {
             let mut buf = r.buf_mut();
             let len = buf.len();
             let buf = buf.as_mut_ptr();
-            io_uring::opcode::Read::new(io_uring::types::Fixed(self.id), buf, len as u32)
-                .offset(pos as u64)
-                .build()
-                .user_data(io.ring.get_key())
+            with_fd!(self, |fd| {
+                io_uring::opcode::Read::new(fd, buf, len as u32)
+                    .offset(pos as u64)
+                    .build()
+                    .user_data(io.ring.get_key())
+            })
         };
         let c = Arc::new(c);
         io.ring.submit_entry(&read_e, c.clone());
@@ -320,14 +332,12 @@ impl File for UringFile {
         let write = {
             let buf = buffer.borrow();
             trace!("pwrite(pos = {}, length = {})", pos, buf.len());
-            io_uring::opcode::Write::new(
-                io_uring::types::Fixed(self.id),
-                buf.as_ptr(),
-                buf.len() as u32,
-            )
-            .offset(pos as u64)
-            .build()
-            .user_data(io.ring.get_key())
+            with_fd!(self, |fd| {
+                io_uring::opcode::Write::new(fd, buf.as_ptr(), buf.len() as u32)
+                    .offset(pos as u64)
+                    .build()
+                    .user_data(io.ring.get_key())
+            })
         };
         let c = Arc::new(c);
         let c_uring = c.clone();
@@ -347,9 +357,11 @@ impl File for UringFile {
     fn sync(&self, c: Completion) -> Result<Arc<Completion>> {
         let mut io = self.io.borrow_mut();
         trace!("sync()");
-        let sync = io_uring::opcode::Fsync::new(io_uring::types::Fixed(self.id))
-            .build()
-            .user_data(io.ring.get_key());
+        let sync = with_fd!(self, |fd| {
+            io_uring::opcode::Fsync::new(fd)
+                .build()
+                .user_data(io.ring.get_key())
+        });
         let c = Arc::new(c);
         io.ring.submit_entry(&sync, c.clone());
         Ok(c)
@@ -363,13 +375,15 @@ impl File for UringFile {
 impl Drop for UringFile {
     fn drop(&mut self) {
         self.unlock_file().expect("Failed to unlock file");
-        self.io
-            .borrow_mut()
-            .unregister_file(self.id)
-            .inspect_err(|e| {
-                debug!("Failed to unregister file: {e}");
-            })
-            .ok();
+        if let Some(id) = self.id {
+            self.io
+                .borrow_mut()
+                .unregister_file(id)
+                .inspect_err(|e| {
+                    debug!("Failed to unregister file: {e}");
+                })
+                .ok();
+        }
     }
 }
 
