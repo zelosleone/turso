@@ -1473,14 +1473,12 @@ pub fn op_column(
                         n if n >= 13 && n % 2 == 1 => (n - 13) / 2,
                         10 | 11 => {
                             return Err(LimboError::Corrupt(format!(
-                                "Reserved serial type: {}",
-                                serial_type
+                                "Reserved serial type: {serial_type}"
                             )))
                         }
                         _ => {
                             return Err(LimboError::Corrupt(format!(
-                                "Invalid serial type: {}",
-                                serial_type
+                                "Invalid serial type: {serial_type}"
                             )))
                         }
                     } as usize;
@@ -1538,8 +1536,7 @@ pub fn op_column(
                             Value::Integer(read_integer_fast(data_slice, expected_len))
                         } else {
                             return Err(LimboError::Corrupt(format!(
-                                "Insufficient data for integer type {}: expected {}, got {}",
-                                serial_type, expected_len, data_len
+                                "Insufficient data for integer type {serial_type}: expected {expected_len}, got {data_len}"
                             )));
                         }
                     }
@@ -2689,8 +2686,8 @@ pub fn seek_internal(
                         // this same logic applies for indexes, but the next/prev record is expected to be found in the parent page's
                         // divider cell.
                         let result = match op {
-                            SeekOp::GT { .. } | SeekOp::GE { .. } => cursor.next()?,
-                            SeekOp::LT { .. } | SeekOp::LE { .. } => cursor.prev()?,
+                            SeekOp::GT | SeekOp::GE { .. } => cursor.next()?,
+                            SeekOp::LT | SeekOp::LE { .. } => cursor.prev()?,
                         };
                         match result {
                             IOResult::Done(found) => found,
@@ -4231,8 +4228,7 @@ pub fn op_function(
                             Some(table) => table,
                             None => {
                                 return Err(LimboError::InvalidArgument(format!(
-                                    "table_columns_json_array: table {} doesn't exists",
-                                    table
+                                    "table_columns_json_array: table {table} doesn't exists"
                                 )))
                             }
                         }

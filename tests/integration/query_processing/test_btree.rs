@@ -487,8 +487,7 @@ fn test_btree() {
                 };
                 assert_eq!(
                     limbo_sum, sqlite_sum,
-                    "query={}, limbo={:?}, sqlite={:?}",
-                    query, limbo_sum, sqlite_sum
+                    "query={query}, limbo={limbo_sum:?}, sqlite={sqlite_sum:?}"
                 );
             }
         }
