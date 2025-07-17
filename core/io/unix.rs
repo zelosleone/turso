@@ -219,7 +219,7 @@ impl IO for UnixIO {
         Ok(unix_file)
     }
 
-    #[instrument(err, skip_all, level = Level::INFO)]
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn run_once(&self) -> Result<()> {
         if self.callbacks.is_empty() {
             return Ok(());
@@ -334,7 +334,7 @@ impl File for UnixFile<'_> {
         Ok(())
     }
 
-    #[instrument(err, skip_all, level = Level::INFO)]
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn pread(&self, pos: usize, c: Arc<Completion>) -> Result<Arc<Completion>> {
         let file = self.file.borrow();
         let result = {
@@ -367,7 +367,7 @@ impl File for UnixFile<'_> {
         }
     }
 
-    #[instrument(err, skip_all, level = Level::INFO)]
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn pwrite(
         &self,
         pos: usize,
@@ -402,7 +402,7 @@ impl File for UnixFile<'_> {
         }
     }
 
-    #[instrument(err, skip_all, level = Level::INFO)]
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn sync(&self, c: Arc<Completion>) -> Result<Arc<Completion>> {
         let file = self.file.borrow();
         let result = fs::fsync(file.as_fd());
@@ -416,7 +416,7 @@ impl File for UnixFile<'_> {
         }
     }
 
-    #[instrument(err, skip_all, level = Level::INFO)]
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn size(&self) -> Result<u64> {
         let file = self.file.borrow();
         Ok(file.metadata()?.len())
