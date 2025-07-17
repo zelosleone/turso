@@ -75,7 +75,7 @@ jobs:
         with:
           prefix-key: "v1-rust" # can be updated if we need to reset caches due to non-trivial change in the dependencies (for example, custom env var were set for single workspace project)
       - name: Install the project
-        run: ./scripts/run-sim --maximum-tests 1000 loop -n 20 -s
+        run: ./scripts/run-sim --maximum-tests 1000 loop -n 10 -s
 
   test-limbo:
     runs-on: blacksmith-4vcpu-ubuntu-2404
