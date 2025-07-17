@@ -3523,7 +3523,7 @@ pub fn op_sorter_sort(
         let cursor = cursor.as_sorter_mut();
         let is_empty = cursor.is_empty();
         if !is_empty {
-            if let CursorResult::IO = cursor.sort()? {
+            if let IOResult::IO = cursor.sort()? {
                 return Ok(InsnFunctionStepResult::IO);
             }
         }
@@ -3555,7 +3555,7 @@ pub fn op_sorter_next(
     let has_more = {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_sorter_mut();
-        if let CursorResult::IO = cursor.next()? {
+        if let IOResult::IO = cursor.next()? {
             return Ok(InsnFunctionStepResult::IO);
         }
         cursor.has_more()

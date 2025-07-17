@@ -15,7 +15,8 @@ use crate::{
     },
     storage::sqlite3_ondisk::read_record_size,
     translate::collate::CollationSeq,
-    types::{compare_immutable, ImmutableRecord, KeyInfo},
+    types::{compare_immutable, IOResult, ImmutableRecord, KeyInfo},
+    Result,
 };
 
 pub struct Sorter {
@@ -89,31 +90,31 @@ impl Sorter {
     }
 
     // We do the sorting here since this is what is called by the SorterSort instruction
-    pub fn sort(&mut self) -> Result<CursorResult<()>> {
+    pub fn sort(&mut self) -> Result<IOResult<()>> {
         if self.chunks.is_empty() {
             self.records.sort();
             self.records.reverse();
         } else {
             self.flush()?;
-            if let CursorResult::IO = self.init_chunk_heap()? {
-                return Ok(CursorResult::IO);
+            if let IOResult::IO = self.init_chunk_heap()? {
+                return Ok(IOResult::IO);
             }
         }
         self.next()
     }
 
-    pub fn next(&mut self) -> Result<CursorResult<()>> {
+    pub fn next(&mut self) -> Result<IOResult<()>> {
         if self.chunks.is_empty() {
             // Serve from the in-memory buffer.
             self.current = self.records.pop().map(|r| r.record);
         } else {
             // Serve from sorted chunk files.
             match self.next_from_chunk_heap()? {
-                CursorResult::IO => return Ok(CursorResult::IO),
-                CursorResult::Ok(record) => self.current = record,
+                IOResult::IO => return Ok(IOResult::IO),
+                IOResult::Done(record) => self.current = record,
             }
         }
-        Ok(CursorResult::Ok(()))
+        Ok(IOResult::Done(()))
     }
 
     pub fn record(&self) -> Option<&ImmutableRecord> {
@@ -135,7 +136,7 @@ impl Sorter {
         Ok(())
     }
 
-    fn init_chunk_heap(&mut self) -> Result<CursorResult<()>> {
+    fn init_chunk_heap(&mut self) -> Result<IOResult<()>> {
         let mut all_read_complete = true;
         // Make sure all chunks read at least one record into their buffer.
         for chunk in self.chunks.iter_mut() {
@@ -155,16 +156,16 @@ impl Sorter {
             }
         }
         if !all_read_complete {
-            return Ok(CursorResult::IO);
+            return Ok(IOResult::IO);
         }
         self.chunk_heap.reserve(self.chunks.len());
         for chunk_idx in 0..self.chunks.len() {
             self.push_to_chunk_heap(chunk_idx)?;
         }
-        Ok(CursorResult::Ok(()))
+        Ok(IOResult::Done(()))
     }
 
-    fn next_from_chunk_heap(&mut self) -> Result<CursorResult<Option<ImmutableRecord>>> {
+    fn next_from_chunk_heap(&mut self) -> Result<IOResult<Option<ImmutableRecord>>> {
         let mut all_read_complete = true;
         for chunk_idx in self.wait_for_read_complete.iter() {
             let chunk_io_state = self.chunks[*chunk_idx].io_state.get();
@@ -179,15 +180,15 @@ impl Sorter {
             }
         }
         if !all_read_complete {
-            return Ok(CursorResult::IO);
+            return Ok(IOResult::IO);
         }
         self.wait_for_read_complete.clear();
 
         if let Some((next_record, next_chunk_idx)) = self.chunk_heap.pop() {
             self.push_to_chunk_heap(next_chunk_idx)?;
-            Ok(CursorResult::Ok(Some(next_record.0.record)))
+            Ok(IOResult::Done(Some(next_record.0.record)))
         } else {
-            Ok(CursorResult::Ok(None))
+            Ok(IOResult::Done(None))
         }
     }
 
@@ -512,7 +513,7 @@ mod tests {
         }
 
         loop {
-            if let CursorResult::IO = sorter.sort().expect("Failed to sort the records") {
+            if let IOResult::IO = sorter.sort().expect("Failed to sort the records") {
                 io.run_once().expect("Failed to run the IO");
                 continue;
             }
@@ -527,7 +528,7 @@ mod tests {
             let record = sorter.record().unwrap();
             assert_eq!(record.get_values()[0], RefValue::Integer(i));
             loop {
-                if let CursorResult::IO = sorter.next().expect("Failed to get the next record") {
+                if let IOResult::IO = sorter.next().expect("Failed to get the next record") {
                     io.run_once().expect("Failed to run the IO");
                     continue;
                 }
