@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 
-from pydantic import BaseModel
-
 from cli_tests import console
 from cli_tests.test_turso_cli import TestTursoShell
+from pydantic import BaseModel
 
 
 # This tests verify that experimental MVCC feature works as expected. The test
