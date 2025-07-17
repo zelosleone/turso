@@ -7191,7 +7191,7 @@ mod tests {
                 name: "testindex".to_string(),
                 columns: (0..10)
                     .map(|i| IndexColumn {
-                        name: format!("test{}", i),
+                        name: format!("test{i}"),
                         order: SortOrder::Asc,
                         collation: None,
                         pos_in_table: i,
