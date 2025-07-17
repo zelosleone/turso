@@ -424,6 +424,8 @@ pub enum CursorValidState {
     Valid,
     /// Cursor may be pointing to a non-existent location/cell. This can happen after balancing operations
     RequireSeek,
+    /// Cursor requires an advance after a seek
+    RequireAdvance(IterationDirection),
 }
 
 #[derive(Debug)]
@@ -4149,7 +4151,10 @@ impl BTreeCursor {
     pub fn insert(
         &mut self,
         key: &BTreeKey,
-        mut moved_before: bool, /* Indicate whether it's necessary to traverse to find the leaf page */
+        // Indicate whether it's necessary to traverse to find the leaf page
+        // FIXME: refactor this out into a state machine, these ad-hoc state
+        // variables are very hard to reason about
+        mut moved_before: bool,
     ) -> Result<IOResult<()>> {
         tracing::debug!(valid_state = ?self.valid_state, cursor_state = ?self.state, is_write_in_progress = self.is_write_in_progress());
         match &self.mv_cursor {
@@ -4163,12 +4168,32 @@ impl BTreeCursor {
                 None => todo!("Support mvcc inserts with index btrees"),
             },
             None => {
-                if self.valid_state != CursorValidState::Valid && !self.is_write_in_progress() {
-                    // A balance happened so we need to move.
-                    moved_before = false;
-                }
+                match (&self.valid_state, self.is_write_in_progress()) {
+                    (CursorValidState::Valid, _) => {
+                        // consider the current position valid unless the caller explicitly asks us to seek.
+                    }
+                    (CursorValidState::RequireSeek, false) => {
+                        // we must seek.
+                        moved_before = false;
+                    }
+                    (CursorValidState::RequireSeek, true) => {
+                        // illegal to seek during a write no matter what CursorValidState or caller says -- we might e.g. move to the wrong page during balancing
+                        moved_before = true;
+                    }
+                    (CursorValidState::RequireAdvance(direction), _) => {
+                        // FIXME: this is a hack to support the case where we need to advance the cursor after a seek.
+                        // We should have a proper state machine for this.
+                        return_if_io!(match direction {
+                            IterationDirection::Forwards => self.next(),
+                            IterationDirection::Backwards => self.prev(),
+                        });
+                        self.valid_state = CursorValidState::Valid;
+                        self.seek_state = CursorSeekState::Start;
+                        moved_before = true;
+                    }
+                };
                 if !moved_before {
-                    match key {
+                    let seek_result = match key {
                         BTreeKey::IndexKey(_) => {
                             return_if_io!(self.seek(
                                 SeekKey::IndexKey(key.get_record().unwrap()),
@@ -4182,6 +4207,11 @@ impl BTreeCursor {
                             ))
                         }
                     };
+                    if SeekResult::TryAdvance == seek_result {
+                        self.valid_state =
+                            CursorValidState::RequireAdvance(IterationDirection::Forwards);
+                        return_if_io!(self.next());
+                    }
                     self.context.take(); // we know where we wanted to move so if there was any saved context, discard it.
                     self.valid_state = CursorValidState::Valid;
                     self.seek_state = CursorSeekState::Start;

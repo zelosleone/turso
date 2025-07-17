@@ -2235,7 +2235,7 @@ macro_rules! return_if_io {
     };
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum SeekResult {
     /// Record matching the [SeekOp] found in the B-tree and cursor was positioned to point onto that record
     Found,
