@@ -243,7 +243,7 @@ impl Sorter {
             self.current_buffer_size,
             chunk_buffer_size,
         );
-        chunk.write(&mut self.records, self.current_buffer_size)?;
+        chunk.write(&mut self.records)?;
         self.chunks.push(chunk);
 
         self.current_buffer_size = 0;
@@ -393,16 +393,12 @@ impl SortedChunk {
         Ok(())
     }
 
-    fn write(
-        &mut self,
-        records: &mut Vec<SortableImmutableRecord>,
-        total_size: usize,
-    ) -> Result<()> {
+    fn write(&mut self, records: &mut Vec<SortableImmutableRecord>) -> Result<()> {
         assert!(self.io_state.get() == SortedChunkIOState::None);
         self.io_state.set(SortedChunkIOState::WaitingForWrite);
 
         let drop_fn = Rc::new(|_buffer: BufferData| {});
-        let mut buffer = Buffer::allocate(total_size, drop_fn);
+        let mut buffer = Buffer::allocate(self.chunk_size, drop_fn);
 
         let mut buf_pos = 0;
         let buf = buffer.as_mut_slice();
