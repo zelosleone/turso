@@ -288,7 +288,7 @@ impl Connection {
 
 #[cfg(test)]
 mod test {
-    use crate::{Builder, Connection, Result};
+    use crate::{Builder, Connection, Error, Result};
 
     use super::DropBehavior;
 
@@ -300,21 +300,114 @@ mod test {
     }
 
     #[tokio::test]
+    #[should_panic(expected = "Transaction dropped without finish()")]
+    async fn test_drop_panic() {
+        let mut conn = checked_memory_handle().await.unwrap();
+        {
+            let tx = conn.transaction().await.unwrap();
+            tx.execute("INSERT INTO foo VALUES(?)", &[1]).await.unwrap();
+        }
+    }
+
+    #[tokio::test]
     async fn test_drop() -> Result<()> {
         let mut conn = checked_memory_handle().await?;
         {
             let tx = conn.transaction().await?;
             tx.execute("INSERT INTO foo VALUES(?)", &[1]).await?;
+            tx.finish().await?;
             // default: rollback
         }
         {
             let mut tx = conn.transaction().await?;
             tx.execute("INSERT INTO foo VALUES(?)", &[2]).await?;
-            tx.set_drop_behavior(DropBehavior::Commit)
+            tx.set_drop_behavior(DropBehavior::Commit);
+            tx.finish().await?;
         }
         {
             let tx = conn.transaction().await?;
             let mut result = tx.query("SELECT SUM(x) FROM foo", ()).await?;
+            assert_eq!(
+                2,
+                *result
+                    .next()
+                    .await?
+                    .unwrap()
+                    .get_value(0)?
+                    .as_integer()
+                    .unwrap()
+            );
+            tx.finish().await?;
+        }
+        Ok(())
+    }
+
+    fn assert_nested_tx_error(e: Error) {
+        if let Error::SqlExecutionFailure(e) = &e {
+            assert!(e.contains("transaction"));
+        } else {
+            panic!("Unexpected error type: {e:?}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unchecked_nesting() -> Result<()> {
+        let conn = checked_memory_handle().await?;
+
+        {
+            let tx = conn.unchecked_transaction().await?;
+            let e = tx.unchecked_transaction().await.unwrap_err();
+            assert_nested_tx_error(e);
+            tx.finish().await?;
+            // default: rollback
+        }
+        {
+            let tx = conn.unchecked_transaction().await?;
+            tx.execute("INSERT INTO foo VALUES(?)", &[1]).await?;
+            // Ensure this doesn't interfere with ongoing transaction
+            let e = tx.unchecked_transaction().await.unwrap_err();
+            assert_nested_tx_error(e);
+
+            tx.execute("INSERT INTO foo VALUES(?)", &[1]).await?;
+            tx.commit().await?;
+        }
+
+        let mut result = conn.query("SELECT SUM(x) FROM foo", ()).await?;
+        assert_eq!(
+            2,
+            *result
+                .next()
+                .await?
+                .unwrap()
+                .get_value(0)?
+                .as_integer()
+                .unwrap()
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_explicit_rollback_commit() -> Result<()> {
+        let mut conn = checked_memory_handle().await?;
+        {
+            let tx = conn.transaction().await?;
+            tx.execute("INSERT INTO foo VALUES(?)", &[1]).await?;
+            tx.rollback().await?;
+
+            // This is a current Turso's limitation.
+            // Since we don't have support for savepoints yet,
+            // a rollback ends with a transaction so we need to immediately open a new one.
+            let tx = conn.transaction().await?;
+            tx.execute("INSERT INTO foo VALUES(?)", &[2]).await?;
+            tx.commit().await?;
+        }
+        {
+            let tx = conn.transaction().await?;
+            tx.execute("INSERT INTO foo VALUES(?)", &[4]).await?;
+            tx.commit().await?;
+        }
+        {
+            let mut result = conn.query("SELECT SUM(x) FROM foo", ()).await?;
             assert_eq!(
                 2,
                 *result
