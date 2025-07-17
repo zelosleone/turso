@@ -4,7 +4,6 @@ from cli_tests import console
 from cli_tests.test_turso_cli import TestTursoShell
 from pydantic import BaseModel
 
-
 # This tests verify that experimental MVCC feature works as expected. The test
 # suite will go away once the feature becomes more stable because we will just
 # run the TCL tests, for example, with MVCC enabled.
