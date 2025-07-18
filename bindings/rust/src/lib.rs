@@ -221,6 +221,15 @@ impl Connection {
         conn.cacheflush()?;
         Ok(())
     }
+
+    pub fn is_autocommit(&self) -> Result<bool> {
+        let conn = self
+            .inner
+            .lock()
+            .map_err(|e| Error::MutexError(e.to_string()))?;
+
+        Ok(conn.get_auto_commit())
+    }
 }
 
 impl Debug for Connection {

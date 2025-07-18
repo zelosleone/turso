@@ -18,7 +18,7 @@ pub enum TransactionBehavior {
     Exclusive,
 }
 
-/// Options for how a Transaction or Savepoint should behave when it is dropped.
+/// Options for how a Transaction should behave when it is dropped.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum DropBehavior {
@@ -47,7 +47,7 @@ pub enum DropBehavior {
 /// ## Example
 ///
 /// ```rust,no_run
-/// # use rusqlite::{Connection, Result};
+/// # use turso::{Connection, Result};
 /// # fn do_queries_part_1(_conn: &Connection) -> Result<()> { Ok(()) }
 /// # fn do_queries_part_2(_conn: &Connection) -> Result<()> { Ok(()) }
 /// fn perform_queries(conn: &mut Connection) -> Result<()> {
@@ -63,6 +63,7 @@ pub enum DropBehavior {
 pub struct Transaction<'conn> {
     conn: &'conn Connection,
     drop_behavior: DropBehavior,
+    must_finish: bool,
 }
 
 impl Transaction<'_> {
@@ -98,6 +99,7 @@ impl Transaction<'_> {
         conn.execute(query, ()).await.map(move |_| Transaction {
             conn,
             drop_behavior: DropBehavior::Rollback,
+            must_finish: true,
         })
     }
 
@@ -118,14 +120,26 @@ impl Transaction<'_> {
 
     /// A convenience method which consumes and commits a transaction.
     #[inline]
-    pub async fn commit(&self) -> Result<()> {
+    pub async fn commit(mut self) -> Result<()> {
+        self._commit().await
+    }
+
+    #[inline]
+    async fn _commit(&mut self) -> Result<()> {
+        self.must_finish = false;
         self.conn.execute("COMMIT", ()).await?;
         Ok(())
     }
 
     /// A convenience method which consumes and rolls back a transaction.
     #[inline]
-    pub async fn rollback(&mut self) -> Result<()> {
+    pub async fn rollback(mut self) -> Result<()> {
+        self._rollback().await
+    }
+
+    #[inline]
+    async fn _rollback(&mut self) -> Result<()> {
+        self.must_finish = false;
         self.conn.execute("ROLLBACK", ()).await?;
         Ok(())
     }
@@ -136,22 +150,25 @@ impl Transaction<'_> {
     /// Functionally equivalent to the `Drop` implementation, but allows
     /// callers to see any errors that occur.
     #[inline]
-    pub async fn finish(&mut self) -> Result<()> {
-        println!("Finishing...");
+    #[must_use]
+    pub async fn finish(mut self) -> Result<()> {
+        self._finish().await
+    }
+
+    #[inline]
+    async fn _finish(&mut self) -> Result<()> {
+        if self.conn.is_autocommit()? {
+            return Ok(());
+        }
         match self.drop_behavior() {
             DropBehavior::Commit => {
-                println!("Committing transaction");
-                if let Err(_) = self.commit().await {
-                    self.rollback().await?;
-                    self.commit().await
+                if let Err(_) = self._commit().await {
+                    self._rollback().await
                 } else {
                     Ok(())
                 }
             }
-            DropBehavior::Rollback => {
-                println!("Rollbacking transaction");
-                self.rollback().await
-            }
+            DropBehavior::Rollback => self._rollback().await,
             DropBehavior::Ignore => Ok(()),
             DropBehavior::Panic => panic!("Transaction dropped unexpectedly."),
         }
@@ -167,11 +184,12 @@ impl Deref for Transaction<'_> {
     }
 }
 
-#[expect(unused_must_use)]
 impl Drop for Transaction<'_> {
     #[inline]
     fn drop(&mut self) {
-        self.finish();
+        if self.must_finish {
+            panic!("Transaction dropped without finish()")
+        }
     }
 }
 
@@ -186,7 +204,7 @@ impl Connection {
     /// ## Example
     ///
     /// ```rust,no_run
-    /// # use rusqlite::{Connection, Result};
+    /// # use turso::{Connection, Result};
     /// # fn do_queries_part_1(_conn: &Connection) -> Result<()> { Ok(()) }
     /// # fn do_queries_part_2(_conn: &Connection) -> Result<()> { Ok(()) }
     /// fn perform_queries(conn: &mut Connection) -> Result<()> {
@@ -201,7 +219,7 @@ impl Connection {
     ///
     /// # Failure
     ///
-    /// Will return `Err` if the underlying SQLite call fails.
+    /// Will return `Err` if the call fails.
     #[inline]
     pub async fn transaction(&mut self) -> Result<Transaction<'_>> {
         Transaction::new(self, self.transaction_behavior).await
@@ -213,7 +231,7 @@ impl Connection {
     ///
     /// # Failure
     ///
-    /// Will return `Err` if the underlying SQLite call fails.
+    /// Will return `Err` if the call fails.
     #[inline]
     pub async fn transaction_with_behavior(
         &mut self,
@@ -235,7 +253,7 @@ impl Connection {
     /// ## Example
     ///
     /// ```rust,no_run
-    /// # use rusqlite::{Connection, Result};
+    /// # use turso::{Connection, Result};
     /// # use std::rc::Rc;
     /// # fn do_queries_part_1(_conn: &Connection) -> Result<()> { Ok(()) }
     /// # fn do_queries_part_2(_conn: &Connection) -> Result<()> { Ok(()) }
@@ -267,7 +285,7 @@ impl Connection {
     /// ## Example
     ///
     /// ```rust,no_run
-    /// # use rusqlite::{Connection, Result, TransactionBehavior};
+    /// # use turso::{Connection, Result, TransactionBehavior};
     /// # fn do_queries_part_1(_conn: &Connection) -> Result<()> { Ok(()) }
     /// # fn do_queries_part_2(_conn: &Connection) -> Result<()> { Ok(()) }
     /// fn perform_queries(conn: &mut Connection) -> Result<()> {
@@ -409,7 +427,7 @@ mod test {
         {
             let mut result = conn.query("SELECT SUM(x) FROM foo", ()).await?;
             assert_eq!(
-                2,
+                6,
                 *result
                     .next()
                     .await?
