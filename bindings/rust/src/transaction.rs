@@ -50,13 +50,13 @@ pub enum DropBehavior {
 /// # use turso::{Connection, Result};
 /// # fn do_queries_part_1(_conn: &Connection) -> Result<()> { Ok(()) }
 /// # fn do_queries_part_2(_conn: &Connection) -> Result<()> { Ok(()) }
-/// fn perform_queries(conn: &mut Connection) -> Result<()> {
-///     let tx = conn.transaction()?;
+/// async fn perform_queries(conn: &mut Connection) -> Result<()> {
+///     let tx = conn.transaction().await?;
 ///
 ///     do_queries_part_1(&tx)?; // tx causes rollback if this fails
 ///     do_queries_part_2(&tx)?; // tx causes rollback if this fails
 ///
-///     tx.commit()
+///     tx.commit().await
 /// }
 /// ```
 #[derive(Debug)]
@@ -150,7 +150,6 @@ impl Transaction<'_> {
     /// Functionally equivalent to the `Drop` implementation, but allows
     /// callers to see any errors that occur.
     #[inline]
-    #[must_use]
     pub async fn finish(mut self) -> Result<()> {
         self._finish().await
     }
@@ -162,7 +161,7 @@ impl Transaction<'_> {
         }
         match self.drop_behavior() {
             DropBehavior::Commit => {
-                if let Err(_) = self._commit().await {
+                if (self._commit().await).is_err() {
                     self._rollback().await
                 } else {
                     Ok(())
@@ -207,13 +206,13 @@ impl Connection {
     /// # use turso::{Connection, Result};
     /// # fn do_queries_part_1(_conn: &Connection) -> Result<()> { Ok(()) }
     /// # fn do_queries_part_2(_conn: &Connection) -> Result<()> { Ok(()) }
-    /// fn perform_queries(conn: &mut Connection) -> Result<()> {
-    ///     let tx = conn.transaction()?;
+    /// async fn perform_queries(conn: &mut Connection) -> Result<()> {
+    ///     let tx = conn.transaction().await?;
     ///
     ///     do_queries_part_1(&tx)?; // tx causes rollback if this fails
     ///     do_queries_part_2(&tx)?; // tx causes rollback if this fails
     ///
-    ///     tx.commit()
+    ///     tx.commit().await
     /// }
     /// ```
     ///
@@ -257,13 +256,13 @@ impl Connection {
     /// # use std::rc::Rc;
     /// # fn do_queries_part_1(_conn: &Connection) -> Result<()> { Ok(()) }
     /// # fn do_queries_part_2(_conn: &Connection) -> Result<()> { Ok(()) }
-    /// fn perform_queries(conn: Rc<Connection>) -> Result<()> {
-    ///     let tx = conn.unchecked_transaction()?;
+    /// async fn perform_queries(conn: Rc<Connection>) -> Result<()> {
+    ///     let tx = conn.unchecked_transaction().await?;
     ///
     ///     do_queries_part_1(&tx)?; // tx causes rollback if this fails
     ///     do_queries_part_2(&tx)?; // tx causes rollback if this fails
     ///
-    ///     tx.commit()
+    ///     tx.commit().await
     /// }
     /// ```
     ///
@@ -285,18 +284,19 @@ impl Connection {
     /// ## Example
     ///
     /// ```rust,no_run
-    /// # use turso::{Connection, Result, TransactionBehavior};
+    /// # use turso::{Connection, Result};
+    /// # use turso::transaction::TransactionBehavior;
     /// # fn do_queries_part_1(_conn: &Connection) -> Result<()> { Ok(()) }
     /// # fn do_queries_part_2(_conn: &Connection) -> Result<()> { Ok(()) }
-    /// fn perform_queries(conn: &mut Connection) -> Result<()> {
+    /// async fn perform_queries(conn: &mut Connection) -> Result<()> {
     ///     conn.set_transaction_behavior(TransactionBehavior::Immediate);
     ///
-    ///     let tx = conn.transaction()?;
+    ///     let tx = conn.transaction().await?;
     ///
     ///     do_queries_part_1(&tx)?; // tx causes rollback if this fails
     ///     do_queries_part_2(&tx)?; // tx causes rollback if this fails
     ///
-    ///     tx.commit()
+    ///     tx.commit().await
     /// }
     /// ```
     pub fn set_transaction_behavior(&mut self, behavior: TransactionBehavior) {

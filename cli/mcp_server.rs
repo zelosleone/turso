@@ -463,7 +463,7 @@ impl TursoMcpServer {
                 if columns.is_empty() {
                     format!("Table '{table_name}' not found")
                 } else {
-                    format!("Table '{}' columns:\n{}", table_name, columns.join("\n"))
+                    format!("Table '{table_name}' columns:\n{}", columns.join("\n"))
                 }
             }
             Ok(None) => format!("Table '{table_name}' not found"),
