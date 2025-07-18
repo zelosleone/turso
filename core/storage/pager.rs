@@ -6,6 +6,7 @@ use crate::storage::header_accessor;
 use crate::storage::sqlite3_ondisk::{self, DatabaseHeader, PageContent, PageType};
 use crate::storage::wal::{CheckpointResult, Wal};
 use crate::types::IOResult;
+use crate::util::IOExt as _;
 use crate::{return_if_io, Completion};
 use crate::{turso_assert, Buffer, Connection, LimboError, Result};
 use parking_lot::RwLock;
@@ -1059,23 +1060,14 @@ impl Pager {
                 num_checkpointed_frames: 0,
             });
         }
-        let checkpoint_result: CheckpointResult;
-        loop {
-            match self.wal.borrow_mut().checkpoint(
-                self,
-                Rc::new(RefCell::new(0)),
-                CheckpointMode::Passive,
-            ) {
-                Ok(IOResult::IO) => {
-                    self.io.run_once()?;
-                }
-                Ok(IOResult::Done(res)) => {
-                    checkpoint_result = res;
-                    break;
-                }
-                Err(err) => panic!("error while clearing cache {err}"),
-            }
-        }
+
+        let checkpoint_result = self.io.block(|| {
+            self.wal
+                .borrow_mut()
+                .checkpoint(self, Rc::new(RefCell::new(0)), CheckpointMode::Passive)
+                .map_err(|err| panic!("error while clearing cache {err}"))
+        })?;
+
         // TODO: only clear cache of things that are really invalidated
         self.page_cache
             .write()

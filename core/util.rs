@@ -1,4 +1,6 @@
 use crate::translate::expr::WalkControl;
+use crate::types::IOResult;
+use crate::IO;
 use crate::{
     schema::{self, Column, Schema, Type},
     translate::{collate::CollationSeq, expr::walk_expr, plan::JoinOrderMember},
@@ -10,6 +12,21 @@ use tracing::{instrument, Level};
 use turso_sqlite3_parser::ast::{
     self, CreateTableBody, Expr, FunctionTail, Literal, UnaryOperator,
 };
+
+pub trait IOExt {
+    fn block<T>(&self, f: impl FnMut() -> Result<IOResult<T>>) -> Result<T>;
+}
+
+impl<I: ?Sized + IO> IOExt for I {
+    fn block<T>(&self, mut f: impl FnMut() -> Result<IOResult<T>>) -> Result<T> {
+        Ok(loop {
+            match f()? {
+                IOResult::Done(v) => break v,
+                IOResult::IO => self.run_once()?,
+            }
+        })
+    }
+}
 
 pub trait RoundToPrecision {
     fn round_to_precision(self, precision: i32) -> f64;
