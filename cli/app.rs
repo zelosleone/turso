@@ -678,6 +678,9 @@ impl Limbo {
                         let _ = self.write_fmt(format_args!("/****** ERROR: {e} ******/"));
                     }
                 }
+                Command::DbConfig(_args) => {
+                    let _ = self.writeln("dbconfig currently ignored");
+                }
                 Command::ListVfs => {
                     let _ = self.writeln("Available VFS modules:");
                     self.conn.list_vfs().iter().for_each(|v| {
