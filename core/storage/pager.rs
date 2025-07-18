@@ -677,7 +677,7 @@ impl Pager {
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
-    fn maybe_allocate_page1(&self) -> Result<IOResult<()>> {
+    pub fn maybe_allocate_page1(&self) -> Result<IOResult<()>> {
         if self.db_state.load(Ordering::SeqCst) < DB_STATE_INITIALIZED {
             if let Ok(_lock) = self.init_lock.try_lock() {
                 match (

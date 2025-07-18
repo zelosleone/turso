@@ -1921,6 +1921,8 @@ pub fn op_transaction(
 
     if let Some(mv_store) = &mv_store {
         if state.mv_tx_id.is_none() {
+            // We allocate the first page lazily in the first transaction.
+            return_if_io!(pager.maybe_allocate_page1());
             let tx_id = mv_store.begin_tx();
             conn.mv_transactions.borrow_mut().push(tx_id);
             state.mv_tx_id = Some(tx_id);
@@ -5208,6 +5210,13 @@ pub fn op_new_rowid(
         unreachable!("unexpected Insn {:?}", insn)
     };
 
+    if let Some(mv_store) = mv_store {
+        let rowid = mv_store.get_next_rowid();
+        state.registers[*rowid_reg] = Register::Value(Value::Integer(rowid));
+        state.pc += 1;
+        return Ok(InsnFunctionStepResult::Step);
+    }
+
     const MAX_ROWID: i64 = i64::MAX;
     const MAX_ATTEMPTS: u32 = 100;
 
@@ -5851,15 +5860,16 @@ pub fn op_set_cookie(
             header_accessor::set_incremental_vacuum_enabled(pager, *value as u32)?;
         }
         Cookie::SchemaVersion => {
-            // we update transaction state to indicate that the schema has changed
-            match program.connection.transaction_state.get() {
-                TransactionState::Write { schema_did_change } => {
-                    program.connection.transaction_state.set(TransactionState::Write { schema_did_change: true });
-                },
-                TransactionState::Read => unreachable!("invalid transaction state for SetCookie: TransactionState::Read, should be write"),
-                TransactionState::None => unreachable!("invalid transaction state for SetCookie: TransactionState::None, should be write"),
+            if mv_store.is_none() {
+                // we update transaction state to indicate that the schema has changed
+                match program.connection.transaction_state.get() {
+                    TransactionState::Write { schema_did_change } => {
+                        program.connection.transaction_state.set(TransactionState::Write { schema_did_change: true });
+                    },
+                    TransactionState::Read => unreachable!("invalid transaction state for SetCookie: TransactionState::Read, should be write"),
+                    TransactionState::None => unreachable!("invalid transaction state for SetCookie: TransactionState::None, should be write"),
+                }
             }
-
             program
                 .connection
                 .with_schema_mut(|schema| schema.schema_version = *value as u32);

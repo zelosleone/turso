@@ -1183,10 +1183,10 @@ impl BTreeCursor {
     fn get_next_record(&mut self) -> Result<IOResult<bool>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             let mut mv_cursor = mv_cursor.borrow_mut();
+            mv_cursor.forward();
             let rowid = mv_cursor.current_row_id();
             match rowid {
                 Some(_rowid) => {
-                    mv_cursor.forward();
                     return Ok(IOResult::Done(true));
                 }
                 None => return Ok(IOResult::Done(false)),
@@ -4018,6 +4018,7 @@ impl BTreeCursor {
 
     #[instrument(skip_all, level = Level::DEBUG)]
     pub fn seek_to_last(&mut self) -> Result<IOResult<()>> {
+        assert!(self.mv_cursor.is_none());
         let has_record = return_if_io!(self.move_to_rightmost());
         self.invalidate_record();
         self.has_record.replace(has_record);
@@ -4039,7 +4040,11 @@ impl BTreeCursor {
 
     #[instrument(skip_all, level = Level::DEBUG)]
     pub fn rewind(&mut self) -> Result<IOResult<()>> {
-        if self.mv_cursor.is_some() {
+        if let Some(mv_cursor) = &self.mv_cursor {
+            {
+                let mut mv_cursor = mv_cursor.borrow_mut();
+                mv_cursor.rewind();
+            }
             let cursor_has_record = return_if_io!(self.get_next_record());
             self.invalidate_record();
             self.has_record.replace(cursor_has_record);
@@ -4092,10 +4097,14 @@ impl BTreeCursor {
     #[instrument(skip(self), level = Level::DEBUG)]
     pub fn rowid(&mut self) -> Result<IOResult<Option<i64>>> {
         if let Some(mv_cursor) = &self.mv_cursor {
-            let mv_cursor = mv_cursor.borrow();
-            return Ok(IOResult::Done(
-                mv_cursor.current_row_id().map(|rowid| rowid.row_id),
-            ));
+            if self.has_record.get() {
+                let mv_cursor = mv_cursor.borrow();
+                return Ok(IOResult::Done(
+                    mv_cursor.current_row_id().map(|rowid| rowid.row_id),
+                ));
+            } else {
+                return Ok(IOResult::Done(None));
+            }
         }
         if self.has_record.get() {
             let page = self.stack.top();
@@ -4162,6 +4171,24 @@ impl BTreeCursor {
                     .unwrap();
             return Ok(IOResult::Done(Some(record_ref)));
         }
+        if self.mv_cursor.is_some() {
+            let mv_cursor = self.mv_cursor.as_ref().unwrap().borrow();
+            let row = mv_cursor.current_row().unwrap().unwrap();
+            self.get_immutable_record_or_create()
+                .as_mut()
+                .unwrap()
+                .invalidate();
+            self.get_immutable_record_or_create()
+                .as_mut()
+                .unwrap()
+                .start_serialization(&row.data);
+            self.record_cursor.borrow_mut().invalidate();
+            let record_ref =
+                Ref::filter_map(self.reusable_immutable_record.borrow(), |opt| opt.as_ref())
+                    .unwrap();
+            return Ok(IOResult::Done(Some(record_ref)));
+        }
+
         if *self.parse_record_state.borrow() == ParseRecordState::Init {
             *self.parse_record_state.borrow_mut() = ParseRecordState::Parsing {
                 payload: Vec::new(),
