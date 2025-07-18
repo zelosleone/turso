@@ -149,7 +149,7 @@ impl Sorter {
                     // Write complete, we can now read from the chunk.
                     chunk.read()?;
                 }
-                SortedChunkIOState::WaitingForWrite => {
+                SortedChunkIOState::WaitingForWrite | SortedChunkIOState::WaitingForRead => {
                     all_read_complete = false;
                 }
                 SortedChunkIOState::ReadEOF | SortedChunkIOState::ReadComplete => {}
