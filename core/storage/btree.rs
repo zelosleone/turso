@@ -191,14 +191,23 @@ enum DeleteState {
     },
     InteriorNodeReplacement {
         page: PageRef,
+        /// the btree level of the page where the cell replacement happened.
+        /// if the replacement causes the page to overflow/underflow, we need to remember it and balance it
+        /// after the deletion process is otherwise complete.
+        btree_depth: usize,
         cell_idx: usize,
         original_child_pointer: Option<u32>,
         post_balancing_seek_key: Option<DeleteSavepoint>,
     },
     CheckNeedsBalancing {
+        /// same as `InteriorNodeReplacement::btree_depth`
+        btree_depth: usize,
         post_balancing_seek_key: Option<DeleteSavepoint>,
     },
     WaitForBalancingToComplete {
+        /// If provided, will also balance an ancestor page at depth `balance_ancestor_at_depth`.
+        /// If not provided, balancing will stop as soon as a level is encountered where no balancing is required.
+        balance_ancestor_at_depth: Option<usize>,
         target_key: DeleteSavepoint,
     },
     SeekAfterBalancing {
@@ -2251,7 +2260,7 @@ impl BTreeCursor {
                 | WriteState::BalanceFreePages { .. }
                 | WriteState::BalanceNonRootPickSiblings
                 | WriteState::BalanceNonRootDoBalancing => {
-                    return_if_io!(self.balance());
+                    return_if_io!(self.balance(None));
                 }
                 WriteState::Finish => {
                     break Ok(IOResult::Done(()));
@@ -2275,8 +2284,12 @@ impl BTreeCursor {
     /// This is a naive algorithm that doesn't try to distribute cells evenly by content.
     /// It will try to split the page in half by keys not by content.
     /// Sqlite tries to have a page at least 40% full.
+    ///
+    /// `balance_ancestor_at_depth` specifies whether to balance an ancestor page at a specific depth.
+    /// If `None`, balancing stops when a level is encountered that doesn't need balancing.
+    /// If `Some(depth)`, the page on the stack at depth `depth` will be rebalanced after balancing the current page.
     #[instrument(skip(self), level = Level::DEBUG)]
-    fn balance(&mut self) -> Result<IOResult<()>> {
+    fn balance(&mut self, balance_ancestor_at_depth: Option<usize>) -> Result<IOResult<()>> {
         turso_assert!(
             matches!(self.state, CursorState::Write(_)),
             "Cursor must be in balancing state"
@@ -2295,6 +2308,8 @@ impl BTreeCursor {
                         "BalanceInfo should be empty on start"
                     );
                     let current_page = self.stack.top();
+                    let next_balance_depth =
+                        balance_ancestor_at_depth.unwrap_or(self.stack.current());
                     {
                         // check if we don't need to balance
                         // don't continue if:
@@ -2308,10 +2323,19 @@ impl BTreeCursor {
                         let page = current_page.get().contents.as_mut().unwrap();
                         let usable_space = self.usable_space();
                         let free_space = compute_free_space(page, usable_space as u16);
-                        if page.overflow_cells.is_empty()
+                        let this_level_is_already_balanced = page.overflow_cells.is_empty()
                             && (!self.stack.has_parent()
-                                || free_space as usize * 3 <= usable_space * 2)
-                        {
+                                || free_space as usize * 3 <= usable_space * 2);
+                        if this_level_is_already_balanced {
+                            if self.stack.current() > next_balance_depth {
+                                while self.stack.current() > next_balance_depth {
+                                    // Even though this level is already balanced, we know there's an upper level that needs balancing.
+                                    // So we pop the stack and continue.
+                                    self.stack.pop();
+                                }
+                                continue;
+                            }
+                            // Otherwise, we're done.
                             let write_info = self.state.mut_write_info().unwrap();
                             write_info.state = WriteState::Finish;
                             return Ok(IOResult::Done(()));
@@ -4372,6 +4396,7 @@ impl BTreeCursor {
                     if !contents.is_leaf() {
                         delete_info.state = DeleteState::InteriorNodeReplacement {
                             page: page.clone(),
+                            btree_depth: self.stack.current(),
                             cell_idx,
                             original_child_pointer,
                             post_balancing_seek_key,
@@ -4381,6 +4406,7 @@ impl BTreeCursor {
 
                         let delete_info = self.state.mut_delete_info().unwrap();
                         delete_info.state = DeleteState::CheckNeedsBalancing {
+                            btree_depth: self.stack.current(),
                             post_balancing_seek_key,
                         };
                     }
@@ -4388,6 +4414,7 @@ impl BTreeCursor {
 
                 DeleteState::InteriorNodeReplacement {
                     page,
+                    btree_depth,
                     cell_idx,
                     original_child_pointer,
                     post_balancing_seek_key,
@@ -4481,21 +4508,49 @@ impl BTreeCursor {
 
                     let delete_info = self.state.mut_delete_info().unwrap();
                     delete_info.state = DeleteState::CheckNeedsBalancing {
+                        btree_depth,
                         post_balancing_seek_key,
                     };
                 }
 
                 DeleteState::CheckNeedsBalancing {
+                    btree_depth,
                     post_balancing_seek_key,
                 } => {
                     let page = self.stack.top();
                     return_if_locked_maybe_load!(self.pager, page);
+                    // Check if either the leaf page we took the replacement cell from underflows, or if the interior page we inserted it into overflows OR underflows.
+                    // If the latter is true, we must always balance that level regardless of whether the leaf page (or any ancestor pages in between) need balancing.
 
-                    let page = page.get();
-                    let contents = page.get().contents.as_ref().unwrap();
-                    let free_space = compute_free_space(contents, self.usable_space() as u16);
-                    let needs_balancing = self.stack.has_parent()
-                        && free_space as usize * 3 > self.usable_space() * 2;
+                    let leaf_underflows = {
+                        let leaf_page = page.get();
+                        let leaf_contents = leaf_page.get_contents();
+                        let free_space =
+                            compute_free_space(leaf_contents, self.usable_space() as u16);
+                        free_space as usize * 3 > self.usable_space() * 2
+                    };
+
+                    let interior_overflows_or_underflows = {
+                        // Invariant: ancestor pages on the stack are pinned to the page cache,
+                        // so we don't need return_if_locked_maybe_load! any ancestor,
+                        // and we already loaded the current page above.
+                        let interior_page = self
+                            .stack
+                            .get_page_at_level(btree_depth)
+                            .expect("ancestor page should be on the stack");
+                        let interior_page = interior_page.get();
+                        let interior_contents = interior_page.get_contents();
+                        let overflows = !interior_contents.overflow_cells.is_empty();
+                        if overflows {
+                            true
+                        } else {
+                            let free_space =
+                                compute_free_space(interior_contents, self.usable_space() as u16);
+                            free_space as usize * 3 > self.usable_space() * 2
+                        }
+                    };
+
+                    let needs_balancing = leaf_underflows || interior_overflows_or_underflows;
 
                     if needs_balancing {
                         let delete_info = self.state.mut_delete_info().unwrap();
@@ -4504,30 +4559,42 @@ impl BTreeCursor {
                             write_info.state = WriteState::BalanceStart;
                             delete_info.balance_write_info = Some(write_info);
                         }
+                        let balance_only_ancestor =
+                            !leaf_underflows && interior_overflows_or_underflows;
+                        if balance_only_ancestor {
+                            // Only need to balance the ancestor page; move there immediately.
+                            while self.stack.current() > btree_depth {
+                                self.stack.pop();
+                            }
+                        }
+                        let balance_both = leaf_underflows && interior_overflows_or_underflows;
                         delete_info.state = DeleteState::WaitForBalancingToComplete {
+                            balance_ancestor_at_depth: if balance_both {
+                                Some(btree_depth)
+                            } else {
+                                None
+                            },
                             target_key: post_balancing_seek_key.unwrap(),
                         }
                     } else {
-                        // FIXME: if we deleted something from an interior page, this is now the leaf page from where a replacement cell
-                        // was taken in InteriorNodeReplacement. We must also check if the parent needs balancing!!!
+                        // No balancing needed, we're done
                         self.stack.retreat();
                         self.state = CursorState::None;
                         return Ok(IOResult::Done(()));
                     }
-                    // Only reaches this function call if state = DeleteState::WaitForBalancingToComplete
-                    // self.save_context();
                 }
 
-                DeleteState::WaitForBalancingToComplete { target_key } => {
+                DeleteState::WaitForBalancingToComplete {
+                    target_key,
+                    balance_ancestor_at_depth,
+                } => {
                     let delete_info = self.state.mut_delete_info().unwrap();
 
                     // Switch the CursorState to Write state for balancing
                     let write_info = delete_info.balance_write_info.take().unwrap();
                     self.state = CursorState::Write(write_info);
 
-                    match self.balance()? {
-                        // TODO(Krishna): Add second balance in the case where deletion causes cursor to end up
-                        // a level deeper.
+                    match self.balance(balance_ancestor_at_depth)? {
                         IOResult::Done(()) => {
                             let write_info = match &self.state {
                                 CursorState::Write(wi) => wi.clone(),
@@ -4550,7 +4617,10 @@ impl BTreeCursor {
                             };
 
                             self.state = CursorState::Delete(DeleteInfo {
-                                state: DeleteState::WaitForBalancingToComplete { target_key },
+                                state: DeleteState::WaitForBalancingToComplete {
+                                    target_key,
+                                    balance_ancestor_at_depth,
+                                },
                                 balance_write_info: Some(write_info),
                             });
                             return Ok(IOResult::IO);
@@ -5653,6 +5723,16 @@ impl PageStack {
 
     fn has_parent(&self) -> bool {
         self.current_page.get() > 0
+    }
+
+    /// Get a page at a specific level in the stack (0 = root, 1 = first child, etc.)
+    fn get_page_at_level(&self, level: usize) -> Option<BTreePage> {
+        let stack = self.stack.borrow();
+        if level < stack.len() {
+            stack[level].clone()
+        } else {
+            None
+        }
     }
 
     fn unpin_all_if_pinned(&self) {
