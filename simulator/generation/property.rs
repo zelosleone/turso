@@ -688,6 +688,7 @@ impl Property {
                             columns: select.body.select.columns.clone(),
                             from: select.body.select.from.clone(),
                             where_clause: p_true,
+                            order_by: None,
                         }),
                         compounds: vec![
                             CompoundSelect {
@@ -697,6 +698,7 @@ impl Property {
                                     columns: select.body.select.columns.clone(),
                                     from: select.body.select.from.clone(),
                                     where_clause: p_false,
+                                    order_by: None,
                                 }),
                             },
                             CompoundSelect {
@@ -706,6 +708,7 @@ impl Property {
                                     columns: select.body.select.columns.clone(),
                                     from: select.body.select.from.clone(),
                                     where_clause: p_null,
+                                    order_by: None,
                                 }),
                             },
                         ],
