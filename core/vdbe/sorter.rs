@@ -492,11 +492,31 @@ enum SortedChunkIOState {
 mod tests {
     use super::*;
     use crate::translate::collate::CollationSeq;
-    use crate::types::{ImmutableRecord, RefValue, Value};
+    use crate::types::{ImmutableRecord, RefValue, Value, ValueType};
     use crate::PlatformIO;
+    use rand_chacha::{
+        rand_core::{RngCore, SeedableRng},
+        ChaCha8Rng,
+    };
+
+    fn get_seed() -> u64 {
+        std::env::var("SEED").map_or(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis(),
+            |v| {
+                v.parse()
+                    .expect("Failed to parse SEED environment variable as u64")
+            },
+        ) as u64
+    }
 
     #[test]
-    fn test_external_sort() {
+    fn fuzz_external_sort() {
+        let seed = get_seed();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+
         let io = Arc::new(PlatformIO::new().unwrap());
         let mut sorter = Sorter::new(
             &[SortOrder::Asc],
@@ -505,35 +525,87 @@ mod tests {
             13,
             io.clone(),
         );
-        for i in (0..1024).rev() {
-            sorter
-                .insert(&ImmutableRecord::from_values(&[Value::Integer(i)], 1))
-                .expect("Failed to insert the record");
-        }
 
-        loop {
-            if let IOResult::IO = sorter.sort().expect("Failed to sort the records") {
-                io.run_once().expect("Failed to run the IO");
-                continue;
+        let attempts = 8;
+        for _ in 0..attempts {
+            let num_records = 1000 + rng.next_u64() % 2000;
+            let num_records = num_records as i64;
+
+            let num_values = 1 + rng.next_u64() % 4;
+            let value_types = generate_value_types(&mut rng, num_values as usize);
+
+            for i in (0..num_records).rev() {
+                let mut values = vec![Value::Integer(i)];
+                values.append(&mut generate_values(&mut rng, &value_types));
+                sorter
+                    .insert(&ImmutableRecord::from_values(&values, values.len()))
+                    .expect("Failed to insert the record");
             }
-            break;
-        }
 
-        assert!(!sorter.is_empty());
-        assert_eq!(sorter.chunks.len(), 63);
-
-        for i in 0..1024 {
-            assert!(sorter.has_more());
-            let record = sorter.record().unwrap();
-            assert_eq!(record.get_values()[0], RefValue::Integer(i));
             loop {
-                if let IOResult::IO = sorter.next().expect("Failed to get the next record") {
+                if let IOResult::IO = sorter.sort().expect("Failed to sort the records") {
                     io.run_once().expect("Failed to run the IO");
                     continue;
                 }
                 break;
             }
+
+            assert!(!sorter.is_empty());
+            assert!(!sorter.chunks.is_empty());
+
+            for i in 0..num_records {
+                assert!(sorter.has_more());
+                let record = sorter.record().unwrap();
+                assert_eq!(record.get_values()[0], RefValue::Integer(i));
+                loop {
+                    if let IOResult::IO = sorter.next().expect("Failed to get the next record") {
+                        io.run_once().expect("Failed to run the IO");
+                        continue;
+                    }
+                    break;
+                }
+            }
+            assert!(!sorter.has_more());
         }
-        assert!(!sorter.has_more());
+    }
+
+    fn generate_value_types<R: RngCore>(rng: &mut R, num_values: usize) -> Vec<ValueType> {
+        let mut value_types = Vec::with_capacity(num_values);
+
+        for _ in 0..num_values {
+            let value_type: ValueType = match rng.next_u64() % 4 {
+                0 => ValueType::Integer,
+                1 => ValueType::Float,
+                2 => ValueType::Blob,
+                3 => ValueType::Null,
+                _ => unreachable!(),
+            };
+            value_types.push(value_type);
+        }
+
+        value_types
+    }
+
+    fn generate_values<R: RngCore>(rng: &mut R, value_types: &[ValueType]) -> Vec<Value> {
+        let mut values = Vec::with_capacity(value_types.len());
+        for value_type in value_types {
+            let value = match value_type {
+                ValueType::Integer => Value::Integer(rng.next_u64() as i64),
+                ValueType::Float => {
+                    let numerator = rng.next_u64() as f64;
+                    let denominator = rng.next_u64() as f64;
+                    Value::Float(numerator / denominator)
+                }
+                ValueType::Blob => {
+                    let mut blob = Vec::with_capacity((rng.next_u64() % 2047 + 1) as usize);
+                    rng.fill_bytes(&mut blob);
+                    Value::Blob(blob)
+                }
+                ValueType::Null => Value::Null,
+                _ => unreachable!(),
+            };
+            values.push(value);
+        }
+        values
     }
 }
