@@ -680,6 +680,8 @@ impl BTreeCursor {
             if self.stack.current_cell_index() == i32::MAX && !self.going_upwards {
                 let rightmost_pointer = contents.rightmost_pointer();
                 if let Some(rightmost_pointer) = rightmost_pointer {
+                    let past_rightmost_pointer = cell_count as i32 + 1;
+                    self.stack.set_cell_index(past_rightmost_pointer);
                     self.stack
                         .push_backwards(self.read_page(rightmost_pointer as usize)?);
                     continue;
@@ -4472,7 +4474,7 @@ impl BTreeCursor {
                     // Step 1: Move cursor to the largest key in the left subtree.
                     // The largest key is always in a leaf, and so this traversal may involvegoing multiple pages downwards,
                     // so we store the page we are currently on.
-                    return_if_io!(self.prev());
+                    return_if_io!(self.get_prev_record()); // avoid calling prev() because it internally calls restore_context() which may cause unintended behavior.
                     let (cell_payload, leaf_cell_idx) = {
                         let leaf_page_ref = self.stack.top();
                         let leaf_page = leaf_page_ref.get();
