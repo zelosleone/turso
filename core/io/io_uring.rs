@@ -1,8 +1,7 @@
 #![allow(clippy::arc_with_non_send_sync)]
 
-use super::{common, Completion, File, OpenFlags, WriteCompletion, IO};
+use super::{common, Completion, File, OpenFlags, IO};
 use crate::io::clock::{Clock, Instant};
-use crate::io::CompletionType;
 use crate::{LimboError, MemoryIO, Result};
 use rustix::fs::{self, FlockOperation, OFlags};
 use std::cell::RefCell;
