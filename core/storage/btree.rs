@@ -5054,7 +5054,19 @@ impl BTreeCursor {
     /// If context is defined, restore it and set it None on success
     #[instrument(skip_all, level = Level::DEBUG)]
     fn restore_context(&mut self) -> Result<IOResult<()>> {
-        if self.context.is_none() || !matches!(self.valid_state, CursorValidState::RequireSeek) {
+        if self.context.is_none() || matches!(self.valid_state, CursorValidState::Valid) {
+            return Ok(IOResult::Done(()));
+        }
+        if let CursorValidState::RequireAdvance(direction) = self.valid_state {
+            let has_record = return_if_io!(match direction {
+                // Avoid calling next()/prev() directly because they immediately call restore_context()
+                IterationDirection::Forwards => self.get_next_record(),
+                IterationDirection::Backwards => self.get_prev_record(),
+            });
+            self.has_record.set(has_record);
+            self.invalidate_record();
+            self.context = None;
+            self.valid_state = CursorValidState::Valid;
             return Ok(IOResult::Done(()));
         }
         let ctx = self.context.take().unwrap();
@@ -5064,7 +5076,13 @@ impl BTreeCursor {
         };
         let res = self.seek(seek_key, SeekOp::GE { eq_only: true })?;
         match res {
-            IOResult::Done(_) => {
+            IOResult::Done(res) => {
+                if let SeekResult::TryAdvance = res {
+                    self.valid_state =
+                        CursorValidState::RequireAdvance(IterationDirection::Forwards);
+                    self.context = Some(ctx);
+                    return Ok(IOResult::IO);
+                }
                 self.valid_state = CursorValidState::Valid;
                 Ok(IOResult::Done(()))
             }
