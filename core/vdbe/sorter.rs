@@ -534,12 +534,14 @@ mod tests {
             let num_values = 1 + rng.next_u64() % 4;
             let value_types = generate_value_types(&mut rng, num_values as usize);
 
+            let mut initial_records = Vec::with_capacity(num_records as usize);
             for i in (0..num_records).rev() {
                 let mut values = vec![Value::Integer(i)];
                 values.append(&mut generate_values(&mut rng, &value_types));
-                sorter
-                    .insert(&ImmutableRecord::from_values(&values, values.len()))
-                    .expect("Failed to insert the record");
+                let record = ImmutableRecord::from_values(&values, values.len());
+
+                sorter.insert(&record).expect("Failed to insert the record");
+                initial_records.push(record);
             }
 
             loop {
@@ -557,6 +559,9 @@ mod tests {
                 assert!(sorter.has_more());
                 let record = sorter.record().unwrap();
                 assert_eq!(record.get_values()[0], RefValue::Integer(i));
+                // Check that the record remained unchanged after sorting.
+                assert_eq!(record, &initial_records[(num_records - i - 1) as usize]);
+
                 loop {
                     if let IOResult::IO = sorter.next().expect("Failed to get the next record") {
                         io.run_once().expect("Failed to run the IO");
