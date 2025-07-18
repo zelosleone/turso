@@ -883,12 +883,10 @@ impl Wal for WalFile {
                 tracing::debug!("wal_sync");
                 let syncing = self.syncing.clone();
                 self.syncing.set(true);
-                let completion = Completion::new(CompletionType::Sync(SyncCompletion {
-                    complete: Box::new(move |_| {
-                        tracing::debug!("wal_sync finish");
-                        syncing.set(false);
-                    }),
-                }));
+                let completion = Completion::new_sync(move |_| {
+                    tracing::debug!("wal_sync finish");
+                    syncing.set(false);
+                });
                 let shared = self.get_shared();
                 shared.file.sync(completion)?;
                 self.sync_state.set(SyncState::Syncing);

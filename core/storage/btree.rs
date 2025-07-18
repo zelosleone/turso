@@ -7434,8 +7434,7 @@ mod tests {
                 header_accessor::get_page_size(&pager)? as usize,
                 drop_fn,
             )));
-            let write_complete = Box::new(|_| {});
-            let c = Completion::new(CompletionType::Write(WriteCompletion::new(write_complete)));
+            let c = Completion::new_write(|_| {});
             #[allow(clippy::arc_with_non_send_sync)]
             pager
                 .db_file
