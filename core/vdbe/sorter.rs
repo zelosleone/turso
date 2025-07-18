@@ -521,8 +521,8 @@ mod tests {
         let mut sorter = Sorter::new(
             &[SortOrder::Asc],
             vec![CollationSeq::Binary],
+            256,
             64,
-            13,
             io.clone(),
         );
 
