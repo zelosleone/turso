@@ -6598,12 +6598,12 @@ mod tests {
 
     use super::*;
     use crate::{
-        io::{Buffer, Completion, CompletionType, MemoryIO, OpenFlags, IO},
+        io::{Buffer, MemoryIO, OpenFlags, IO},
         schema::IndexColumn,
         storage::{database::DatabaseFile, page_cache::DumbLruPageCache},
         types::Text,
         vdbe::Register,
-        BufferPool, Connection, StepResult, WalFile, WalFileShared, WriteCompletion,
+        BufferPool, Completion, Connection, StepResult, WalFile, WalFileShared,
     };
     use std::{
         cell::RefCell,
@@ -7512,8 +7512,7 @@ mod tests {
                 header_accessor::get_page_size(&pager)? as usize,
                 drop_fn,
             )));
-            let write_complete = Box::new(|_| {});
-            let c = Completion::new(CompletionType::Write(WriteCompletion::new(write_complete)));
+            let c = Completion::new_write(|_| {});
             #[allow(clippy::arc_with_non_send_sync)]
             pager
                 .db_file

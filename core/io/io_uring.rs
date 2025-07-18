@@ -341,13 +341,11 @@ impl File for UringFile {
         let c_uring = c.clone();
         io.ring.submit_entry(
             &write,
-            Arc::new(Completion::new(CompletionType::Write(
-                WriteCompletion::new(Box::new(move |result| {
-                    c_uring.complete(result);
-                    // NOTE: Explicitly reference buffer to ensure it lives until here
-                    let _ = buffer.borrow();
-                })),
-            ))),
+            Arc::new(Completion::new_write(move |result| {
+                c_uring.complete(result);
+                // NOTE: Explicitly reference buffer to ensure it lives until here
+                let _ = buffer.borrow();
+            })),
         );
         Ok(c)
     }
