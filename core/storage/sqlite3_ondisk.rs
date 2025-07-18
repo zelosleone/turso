@@ -1063,6 +1063,30 @@ impl<T: Default + Copy, const N: usize> Iterator for SmallVecIter<'_, T, N> {
     }
 }
 
+pub fn read_record_size(payload: &[u8]) -> Result<usize> {
+    let mut offset = 0;
+    let mut record_size = 0;
+
+    let (header_size, bytes_read) = read_varint(payload)?;
+    let header_size = header_size as usize;
+    if header_size > payload.len() {
+        crate::bail_corrupt_error!("Incomplete record header");
+    }
+
+    offset += bytes_read;
+    record_size += header_size;
+
+    while offset < header_size {
+        let (serial_type, bytes_read) = read_varint(&payload[offset..])?;
+        offset += bytes_read;
+
+        let serial_type_obj = SerialType::try_from(serial_type)?;
+        record_size += serial_type_obj.size();
+    }
+
+    Ok(record_size)
+}
+
 /// Reads a value that might reference the buffer it is reading from. Be sure to store RefValue with the buffer
 /// always.
 #[inline(always)]
