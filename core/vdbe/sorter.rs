@@ -414,10 +414,9 @@ impl SortedChunk {
 
         let mut buf_pos = 0;
         let buf = buffer.as_mut_slice();
-        for (idx, record) in records.drain(..).enumerate() {
+        for (record, size_len) in records.drain(..).zip(record_size_lengths) {
             let payload = record.record.get_payload();
             // Write the record size varint.
-            let size_len = record_size_lengths[idx];
             write_varint(&mut buf[buf_pos..buf_pos + size_len], payload.len() as u64);
             buf_pos += size_len;
             // Write the record payload.
