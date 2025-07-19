@@ -6570,6 +6570,7 @@ mod tests {
         schema::IndexColumn,
         storage::{database::DatabaseFile, page_cache::DumbLruPageCache},
         types::Text,
+        util::IOExt as _,
         vdbe::Register,
         BufferPool, Completion, Connection, StepResult, WalFile, WalFileShared,
     };
@@ -8640,18 +8641,8 @@ mod tests {
         );
     }
 
-    fn run_until_done<T>(
-        mut action: impl FnMut() -> Result<IOResult<T>>,
-        pager: &Pager,
-    ) -> Result<T> {
-        loop {
-            match action()? {
-                IOResult::Done(res) => {
-                    return Ok(res);
-                }
-                IOResult::IO => pager.io.run_once().unwrap(),
-            }
-        }
+    fn run_until_done<T>(action: impl FnMut() -> Result<IOResult<T>>, pager: &Pager) -> Result<T> {
+        pager.io.block(action)
     }
 
     #[test]

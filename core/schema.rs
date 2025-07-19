@@ -2,8 +2,7 @@ use crate::result::LimboResult;
 use crate::storage::btree::BTreeCursor;
 use crate::translate::collate::CollationSeq;
 use crate::translate::plan::SelectPlan;
-use crate::types::IOResult;
-use crate::util::{module_args_from_sql, module_name_from_sql, UnparsedFromSqlIndex};
+use crate::util::{module_args_from_sql, module_name_from_sql, IOExt, UnparsedFromSqlIndex};
 use crate::{util::normalize_ident, Result};
 use crate::{LimboError, MvCursor, Pager, RefValue, SymbolTable, VirtualTable};
 use core::fmt;
@@ -157,29 +156,14 @@ impl Schema {
         let mut automatic_indices: HashMap<String, Vec<(String, usize)>> =
             HashMap::with_capacity(10);
 
-        loop {
-            match pager.begin_read_tx()? {
-                IOResult::Done(v) => {
-                    if matches!(v, LimboResult::Busy) {
-                        return Err(LimboError::Busy);
-                    }
-                    break;
-                }
-                IOResult::IO => pager.io.run_once()?,
-            }
+        if matches!(pager.io.block(|| pager.begin_read_tx())?, LimboResult::Busy) {
+            return Err(LimboError::Busy);
         }
 
-        while let IOResult::IO = cursor.rewind()? {
-            pager.io.run_once()?
-        }
+        pager.io.block(|| cursor.rewind())?;
 
         loop {
-            let Some(row) = (loop {
-                match cursor.record()? {
-                    IOResult::Done(v) => break v,
-                    IOResult::IO => pager.io.run_once()?,
-                }
-            }) else {
+            let Some(row) = pager.io.block(|| cursor.record())? else {
                 break;
             };
 
@@ -287,9 +271,7 @@ impl Schema {
             drop(record_cursor);
             drop(row);
 
-            while let IOResult::IO = cursor.next()? {
-                pager.io.run_once()?;
-            }
+            pager.io.block(|| cursor.next())?;
         }
 
         pager.end_read_tx()?;
