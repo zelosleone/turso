@@ -133,8 +133,10 @@ fn update_pragma(
             Ok((program, TransactionMode::Write))
         }
         PragmaName::SchemaVersion => {
-            // TODO: Implement updating schema_version
-            todo!("updating schema_version not yet implemented")
+            // SQLite allowing this to be set is an incredibly stupid idea in my view.
+            // In "defensive mode", this is a silent nop. So let's emulate that always.
+            program.emit_insn(Insn::Noop {});
+            Ok((program, TransactionMode::None))
         }
         PragmaName::TableInfo => {
             // because we need control over the write parameter for the transaction,
