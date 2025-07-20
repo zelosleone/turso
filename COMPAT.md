@@ -148,7 +148,7 @@ Turso aims to be fully compatible with SQLite, with opt-in features not supporte
 | PRAGMA module_list               | No         |                                              |
 | PRAGMA optimize                  | No         |                                              |
 | PRAGMA page_count                | Yes        |                                              |
-| PRAGMA page_size                 | No         |                                              |
+| PRAGMA page_size                 | Yes        |                                              |
 | PRAGMA parser_trace              | No         |                                              |
 | PRAGMA pragma_list               | Yes        |                                              |
 | PRAGMA query_only                | No         |                                              |
@@ -525,7 +525,7 @@ Modifiers:
 | ResultRow      | Yes    |         |
 | Return         | Yes    |         |
 | Rewind         | Yes    |         |
-| RowData        | No     |         |
+| RowData        | Yes     |         |
 | RowId          | Yes    |         |
 | RowKey         | No     |         |
 | RowSetAdd      | No     |         |
