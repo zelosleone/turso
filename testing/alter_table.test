@@ -95,6 +95,18 @@ do_execsql_test_on_specific_db {:memory:} alter-table-drop-column {
   "3"
 }
 
+do_execsql_test_on_specific_db {:memory:} alter-table-drop-column-special-name {
+    CREATE TABLE t(a, b, [c c]);
+    INSERT INTO t VALUES (1, 2, 3);
+    ALTER TABLE t DROP COLUMN b;
+
+    SELECT "c c" FROM t;
+    SELECT sql FROM sqlite_schema;
+} {
+    3
+    "CREATE TABLE t (a, [c c])"
+}
+
 do_execsql_test_in_memory_any_error fail-alter-table-drop-unique-column {
     CREATE TABLE t(a, b UNIQUE);
     ALTER TABLE t DROP b;
