@@ -207,12 +207,14 @@ pub fn init_loop(
                         program.emit_insn(Insn::OpenRead {
                             cursor_id,
                             root_page,
+                            db: 0,
                         });
                     }
                     if let Some(index_cursor_id) = index_cursor_id {
                         program.emit_insn(Insn::OpenRead {
                             cursor_id: index_cursor_id,
                             root_page: index.as_ref().unwrap().root_page,
+                            db: 0,
                         });
                     }
                 }
@@ -283,6 +285,7 @@ pub fn init_loop(
                             program.emit_insn(Insn::OpenRead {
                                 cursor_id: table_cursor_id,
                                 root_page: table.table.get_root_page(),
+                                db: 0,
                             });
                         }
                     }
@@ -341,6 +344,7 @@ pub fn init_loop(
                                     cursor_id: index_cursor_id
                                         .expect("index cursor is always opened in Seek with index"),
                                     root_page: index.root_page,
+                                    db: 0,
                                 });
                             }
                             OperationMode::UPDATE | OperationMode::DELETE => {

@@ -876,6 +876,7 @@ pub fn op_open_read(
     let Insn::OpenRead {
         cursor_id,
         root_page,
+        db,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -1912,7 +1913,7 @@ pub fn op_transaction(
     pager: &Rc<Pager>,
     mv_store: Option<&Rc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::Transaction { write } = insn else {
+    let Insn::Transaction { db: 0, write } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
     let conn = program.connection.clone();

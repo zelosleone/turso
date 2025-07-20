@@ -330,6 +330,7 @@ pub enum Insn {
     OpenRead {
         cursor_id: CursorID,
         root_page: PageIdx,
+        db: usize,
     },
 
     /// Open a cursor for a virtual table.
@@ -459,7 +460,8 @@ pub enum Insn {
 
     /// Start a transaction.
     Transaction {
-        write: bool,
+        db: usize,   // p1
+        write: bool, // p2
     },
 
     /// Set database auto-commit mode and potentially rollback.

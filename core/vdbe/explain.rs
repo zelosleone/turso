@@ -357,11 +357,12 @@ pub fn insn_to_str(
             Insn::OpenRead {
                 cursor_id,
                 root_page,
+                db,
             } => (
                 "OpenRead",
                 *cursor_id as i32,
                 *root_page as i32,
-                0,
+                *db as i32,
                 Value::build_text(""),
                 0,
                 {
@@ -377,10 +378,11 @@ pub fn insn_to_str(
                                 }
                             });
                     format!(
-                        "{}={}, root={}",
+                        "{}={}, root={}, iDb={}",
                         cursor_type,
                         get_table_or_index_name(*cursor_id),
-                        root_page
+                        root_page,
+                        db
                     )
                 },
             ),
@@ -645,14 +647,14 @@ pub fn insn_to_str(
                 0,
                 "".to_string(),
             ),
-            Insn::Transaction { write } => (
+            Insn::Transaction { db, write } => (
                 "Transaction",
-                0,
+                *db as i32,
                 *write as i32,
                 0,
                 Value::build_text(""),
                 0,
-                format!("write={write}"),
+                format!("iDb={db} write={write}"),
             ),
             Insn::Goto { target_pc } => (
                 "Goto",

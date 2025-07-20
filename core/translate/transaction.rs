@@ -22,7 +22,7 @@ pub fn translate_tx_begin(
             });
         }
         TransactionType::Immediate | TransactionType::Exclusive => {
-            program.emit_insn(Insn::Transaction { write: true });
+            program.emit_insn(Insn::Transaction { db: 0, write: true });
             // TODO: Emit transaction instruction on temporary tables when we support them.
             program.emit_insn(Insn::AutoCommit {
                 auto_commit: false,
