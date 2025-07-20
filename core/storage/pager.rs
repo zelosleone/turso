@@ -863,7 +863,6 @@ impl Pager {
                 let in_flight = *self.flush_info.borrow().in_flight_writes.borrow();
                 if in_flight == 0 {
                     self.flush_info.borrow_mut().state = CacheFlushState::Start;
-                    self.wal.borrow_mut().finish_append_frames_commit()?;
                     return Ok(IOResult::Done(()));
                 } else {
                     return Ok(IOResult::IO);

@@ -925,19 +925,22 @@ impl Wal for WalFile {
             let shared = self.get_shared();
             let max_frame = shared.max_frame.load(Ordering::SeqCst);
             tracing::debug!(to_max_frame = max_frame);
-            let mut frame_cache = shared.frame_cache.lock();
-            for (_, frames) in frame_cache.iter_mut() {
-                let mut last_valid_frame = frames.len();
-                for frame in frames.iter().rev() {
-                    if *frame <= max_frame {
-                        break;
+            {
+                let mut frame_cache = shared.frame_cache.lock();
+                for (_, frames) in frame_cache.iter_mut() {
+                    let mut last_valid_frame = frames.len();
+                    for frame in frames.iter().rev() {
+                        if *frame <= max_frame {
+                            break;
+                        }
+                        last_valid_frame -= 1;
                     }
-                    last_valid_frame -= 1;
+                    frames.truncate(last_valid_frame);
                 }
-                frames.truncate(last_valid_frame);
+                let mut pages_in_frames = shared.pages_in_frames.lock();
+                pages_in_frames.truncate(self.start_pages_in_frames);
             }
-            let mut pages_in_frames = shared.pages_in_frames.lock();
-            pages_in_frames.truncate(self.start_pages_in_frames);
+            self.last_checksum = shared.last_checksum;
         }
         Ok(())
     }
