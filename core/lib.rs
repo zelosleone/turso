@@ -893,6 +893,23 @@ impl Connection {
         self.page_size.get()
     }
 
+    pub fn get_database_canonical_path(&self) -> String {
+        if self._db.path == ":memory:" {
+            // For in-memory databases, SQLite shows empty string
+            String::new()
+        } else {
+            // For file databases, try show the full absolute path if that doesn't fail
+            match std::fs::canonicalize(&self._db.path) {
+                Ok(abs_path) => abs_path.to_string_lossy().to_string(),
+                Err(_) => self._db.path.to_string(),
+            }
+        }
+    }
+
+    pub fn is_readonly(&self) -> bool {
+        self._db.open_flags.contains(OpenFlags::ReadOnly)
+    }
+
     /// Reset the page size for the current connection.
     ///
     /// Specifying a new page size does not change the page size immediately.

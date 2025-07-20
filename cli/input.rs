@@ -200,39 +200,43 @@ pub const AFTER_HELP_MSG: &str = r#"Usage Examples:
 4. To list all tables:
    .tables
 
-5. To list all available SQL opcodes:
+5. To list all databases:
+   .databases
+
+6. To list all available SQL opcodes:
    .opcodes
 
-6. To change the current output mode to 'pretty':
+7. To change the current output mode to 'pretty':
    .mode pretty
 
-7. Send output to STDOUT if no file is specified:
+8. Send output to STDOUT if no file is specified:
    .output
 
-8. To change the current working directory to '/tmp':
+9. To change the current working directory to '/tmp':
    .cd /tmp
 
-9. Show the current values of settings:
+10. Show the current values of settings:
    .show
 
-10. To import csv file 'sample.csv' into 'csv_table' table:
+11. To import csv file 'sample.csv' into 'csv_table' table:
    .import --csv sample.csv csv_table
 
-11. To display the database contents as SQL:
+12. To display the database contents as SQL:
    .dump
 
-12. To load an extension library:
+13. To load an extension library:
    .load /target/debug/liblimbo_regexp
 
-13. To list all available VFS:
+14. To list all available VFS:
    .listvfs
-14. To show names of indexes:
+
+15. To show names of indexes:
    .indexes ?TABLE?
 
-15. To turn on column headers in list mode:
+16. To turn on column headers in list mode:
    .headers on
 
-16. To turn off column headers in list mode:
+17. To turn off column headers in list mode:
    .headers off
 
 Note:

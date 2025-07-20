@@ -250,6 +250,7 @@ fn update_pragma(
             connection.set_capture_data_changes(opts);
             Ok((program, TransactionMode::Write))
         }
+        PragmaName::DatabaseList => unreachable!("database_list cannot be set"),
     }
 }
 
@@ -277,6 +278,27 @@ fn query_pragma(
             program.emit_int(connection.get_cache_size() as i64, register);
             program.emit_result_row(register, 1);
             program.add_pragma_result_column(pragma.to_string());
+            Ok((program, TransactionMode::None))
+        }
+        PragmaName::DatabaseList => {
+            let base_reg = register;
+            program.alloc_registers(2);
+
+            // For now, we only show the main database (seq=0)
+            // seq (sequence number)
+            program.emit_int(0, base_reg);
+
+            // name
+            program.emit_string8("main".into(), base_reg + 1);
+
+            let file_path = connection.get_database_canonical_path();
+            program.emit_string8(file_path, base_reg + 2);
+
+            program.emit_result_row(base_reg, 3);
+            let pragma = pragma_for(&pragma);
+            for col_name in pragma.columns.iter() {
+                program.add_pragma_result_column(col_name.to_string());
+            }
             Ok((program, TransactionMode::None))
         }
         PragmaName::JournalMode => {
