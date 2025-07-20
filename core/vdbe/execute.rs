@@ -3046,12 +3046,12 @@ pub fn op_agg_step(
             AggFunc::Avg => {
                 Register::Aggregate(AggContext::Avg(Value::Float(0.0), Value::Integer(0)))
             }
-            AggFunc::Sum => Register::Aggregate(AggContext::Sum(Value::Null)),
+            AggFunc::Sum => Register::Aggregate(AggContext::Sum(Value::Null, false)),
             AggFunc::Total => {
                 // The result of total() is always a floating point value.
                 // No overflow error is ever raised if any prior input was a floating point value.
                 // Total() never throws an integer overflow.
-                Register::Aggregate(AggContext::Sum(Value::Float(0.0)))
+                Register::Aggregate(AggContext::Sum(Value::Float(0.0), false))
             }
             AggFunc::Count | AggFunc::Count0 => {
                 Register::Aggregate(AggContext::Count(Value::Integer(0)))
@@ -3109,12 +3109,27 @@ pub fn op_agg_step(
                     state.registers[*acc_reg], *acc_reg
                 );
             };
-            let AggContext::Sum(acc) = agg.borrow_mut() else {
+            let AggContext::Sum(acc, has_non_numeric) = agg.borrow_mut() else {
                 unreachable!();
             };
             match col {
                 Register::Value(owned_value) => {
-                    *acc += owned_value;
+                    match &owned_value {
+                        Value::Integer(_) | Value::Float(_) => {
+                            // Convert to float if we have mixed numeric types
+                            if let (Value::Integer(i), Value::Float(_)) =
+                                (acc.clone(), &owned_value)
+                            {
+                                *acc = Value::Float(i as f64);
+                                *has_non_numeric = true;
+                            }
+                            *acc += owned_value;
+                        }
+                        _ => {
+                            // Skip and mark non-numeric values (NULL, text, blob)
+                            *has_non_numeric = true;
+                        }
+                    }
                 }
                 _ => unreachable!(),
             }
@@ -3297,11 +3312,17 @@ pub fn op_agg_final(
                 state.registers[*register] = Register::Value(acc.clone());
             }
             AggFunc::Sum | AggFunc::Total => {
-                let AggContext::Sum(acc) = agg.borrow_mut() else {
+                let AggContext::Sum(acc, has_non_numeric) = agg.borrow_mut() else {
                     unreachable!();
                 };
                 let value = match acc {
-                    Value::Integer(i) => Value::Integer(*i),
+                    Value::Integer(i) => {
+                        if *has_non_numeric {
+                            Value::Float(*i as f64)
+                        } else {
+                            Value::Integer(*i)
+                        }
+                    }
                     Value::Float(f) => Value::Float(*f),
                     _ => Value::Float(0.0),
                 };
