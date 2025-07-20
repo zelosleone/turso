@@ -1136,4 +1136,6 @@ pub enum Cookie {
     UserVersion = 6,
     /// The auto-vacuum mode setting.
     IncrementalVacuum = 7,
+    /// The application ID as set by the application_id pragma.
+    ApplicationId = 8,
 }

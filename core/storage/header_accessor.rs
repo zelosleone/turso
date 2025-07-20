@@ -190,7 +190,7 @@ impl_header_field_accessor!(
     u32,
     HEADER_OFFSET_INCREMENTAL_VACUUM_ENABLED
 );
-impl_header_field_accessor!(application_id, u32, HEADER_OFFSET_APPLICATION_ID);
+impl_header_field_accessor!(application_id, i32, HEADER_OFFSET_APPLICATION_ID);
 //impl_header_field_accessor!(reserved_for_expansion, [u8; 20], HEADER_OFFSET_RESERVED_FOR_EXPANSION);
 impl_header_field_accessor!(version_valid_for, u32, HEADER_OFFSET_VERSION_VALID_FOR);
 impl_header_field_accessor!(version_number, u32, HEADER_OFFSET_VERSION_NUMBER);

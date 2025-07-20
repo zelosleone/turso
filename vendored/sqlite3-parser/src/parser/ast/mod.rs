@@ -1743,6 +1743,8 @@ pub type PragmaValue = Expr; // TODO
 #[strum(serialize_all = "snake_case")]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum PragmaName {
+    /// Returns the application ID of the database file.
+    ApplicationId,
     /// set the autovacuum mode
     AutoVacuum,
     /// `cache_size` pragma
