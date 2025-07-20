@@ -33,7 +33,7 @@
 Turso Database is a _work-in-progress_, in-process OLTP database engine library written in Rust that has:
 
 * **SQLite compatibility** [[doc](COMPAT.md)] for SQL dialect, file formats, and the C API
-* **Language bindings** for JavaScript/WebAssembly, Rust, Go, Python, and [Java](bindings/java)
+* **Language bindings** for [JavaScript](bindings/javascript), [WebAssembly](bindings/wasm), [Rust](bindings/rust), [Go](bindings/go), [Python](bindings/python), and [Java](bindings/java)
 * **Asynchronous I/O** support on Linux with `io_uring`
 * **OS support** for Linux, macOS, and Windows
 
@@ -217,8 +217,8 @@ Unless you explicitly state otherwise, any contribution intentionally submitted
 for inclusion in Turso Database by you, shall be licensed as MIT, without any additional
 terms or conditions.
 
-[contribution guide]: https://github.com/tursodatabase/turso/blob/main/CONTRIBUTING.md
-[MIT license]: https://github.com/tursodatabase/turso/blob/main/LICENSE.md
+[contribution guide]: CONTRIBUTING.md
+[MIT license]: LICENSE.md
 
 ## Partners
 
