@@ -236,6 +236,23 @@ the [README.md under bindings/java](bindings/java/README.md).
 
 We'd love to have you contribute to Turso Database! Please check out the [contribution guide] to get started.
 
+## Found a data corruption bug? Get up to $1,000.00
+
+SQLite is loved because it is the most reliable database in the world. The next evolution of SQLite has
+to match or surpass this level of reliability. Turso is built with [Deterministic Simulation Testing](simulator/)
+from the ground up, and is also tested by [Antithesis](https://antithesis.com).
+
+Even during Alpha, if you find a bug that leads to a data corruption and demonstrate
+how our simulator failed to catch it, you can get up to $1,000.00. As the project matures we will
+increase the size of the prize, and the scope of the bugs.
+
+More details [here](https://turso.algora.io).
+
+You can see an example of an awarded case on [#2049](https://github.com/tursodatabase/turso/issues/2049).
+
+Turso core staff are not eligible.
+
+
 ## FAQ
 
 ### Is Turso Database ready for production use?
