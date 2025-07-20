@@ -82,6 +82,22 @@ fn update_pragma(
     mut program: ProgramBuilder,
 ) -> crate::Result<(ProgramBuilder, TransactionMode)> {
     match pragma {
+        PragmaName::ApplicationId => {
+            let data = parse_signed_number(&value)?;
+            let app_id_value = match data {
+                Value::Integer(i) => i as i32,
+                Value::Float(f) => f as i32,
+                _ => unreachable!(),
+            };
+
+            program.emit_insn(Insn::SetCookie {
+                db: 0,
+                cookie: Cookie::ApplicationId,
+                value: app_id_value,
+                p5: 1,
+            });
+            Ok((program, TransactionMode::Write))
+        }
         PragmaName::CacheSize => {
             let cache_size = match parse_signed_number(&value)? {
                 Value::Integer(size) => size,
@@ -245,6 +261,16 @@ fn query_pragma(
 ) -> crate::Result<(ProgramBuilder, TransactionMode)> {
     let register = program.alloc_register();
     match pragma {
+        PragmaName::ApplicationId => {
+            program.emit_insn(Insn::ReadCookie {
+                db: 0,
+                dest: register,
+                cookie: Cookie::ApplicationId,
+            });
+            program.add_pragma_result_column(pragma.to_string());
+            program.emit_result_row(register, 1);
+            Ok((program, TransactionMode::Read))
+        }
         PragmaName::CacheSize => {
             program.emit_int(connection.get_cache_size() as i64, register);
             program.emit_result_row(register, 1);

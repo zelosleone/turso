@@ -5843,6 +5843,7 @@ pub fn op_read_cookie(
         todo!("temp databases not implemented yet");
     }
     let cookie_value = match cookie {
+        Cookie::ApplicationId => header_accessor::get_application_id(pager)?.into(),
         Cookie::UserVersion => header_accessor::get_user_version(pager)?.into(),
         Cookie::SchemaVersion => header_accessor::get_schema_cookie(pager)?.into(),
         Cookie::LargestRootPageNumber => {
@@ -5875,6 +5876,9 @@ pub fn op_set_cookie(
         todo!("temp databases not implemented yet");
     }
     match cookie {
+        Cookie::ApplicationId => {
+            header_accessor::set_application_id(pager, *value)?;
+        }
         Cookie::UserVersion => {
             header_accessor::set_user_version(pager, *value)?;
         }

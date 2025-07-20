@@ -35,6 +35,10 @@ pub fn pragma_for(pragma: &PragmaName) -> Pragma {
     use PragmaName::*;
 
     match pragma {
+        ApplicationId => Pragma::new(
+            PragmaFlags::NoColumns1 | PragmaFlags::Result0,
+            &["application_id"],
+        ),
         CacheSize => Pragma::new(
             PragmaFlags::NeedSchema
                 | PragmaFlags::Result0

@@ -137,6 +137,35 @@ do_execsql_test_on_specific_db ":memory:" pragma-user-version-float-value {
   PRAGMA user_version;
 } {10}
 
+do_execsql_test_on_specific_db ":memory:" pragma-application-id-default {
+  PRAGMA application_id
+} {0}
+
+do_execsql_test_on_specific_db ":memory:" pragma-application-id-update {
+  PRAGMA application_id = 12345;
+  PRAGMA application_id;
+} {12345}
+
+do_execsql_test_on_specific_db ":memory:" pragma-application-id-float-value {
+  PRAGMA application_id = 10.9;
+  PRAGMA application_id;
+} {10}
+
+do_execsql_test_on_specific_db ":memory:" pragma-application-id-large-value {
+  PRAGMA application_id = 2147483647;
+  PRAGMA application_id;
+} {2147483647}
+
+do_execsql_test_on_specific_db ":memory:" pragma-application-id-negative-value {
+  PRAGMA application_id = -23;
+  PRAGMA application_id;
+} {-23}
+
+do_execsql_test_on_specific_db ":memory:" pragma-application-id-zero {
+  PRAGMA application_id = 0;
+  PRAGMA application_id;
+} {0}
+
 do_execsql_test pragma-legacy-file-format {
   PRAGMA legacy_file_format
 } {}
