@@ -768,8 +768,11 @@ impl ProgramBuilder {
             self.preassign_label_to_next_insn(self.init_label);
 
             match txn_mode {
-                TransactionMode::Read => self.emit_insn(Insn::Transaction { write: false }),
-                TransactionMode::Write => self.emit_insn(Insn::Transaction { write: true }),
+                TransactionMode::Read => self.emit_insn(Insn::Transaction {
+                    db: 0,
+                    write: false,
+                }),
+                TransactionMode::Write => self.emit_insn(Insn::Transaction { db: 0, write: true }),
                 TransactionMode::None => {}
             }
 
