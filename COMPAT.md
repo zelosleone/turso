@@ -156,7 +156,7 @@ Turso aims to be fully compatible with SQLite, with opt-in features not supporte
 | PRAGMA read_uncommitted          | No         |                                              |
 | PRAGMA recursive_triggers        | No         |                                              |
 | PRAGMA reverse_unordered_selects | No         |                                              |
-| PRAGMA schema_version            | No         |                                              |
+| PRAGMA schema_version            | Yes        | For writes, emulate defensive mode (always noop)|
 | PRAGMA secure_delete             | No         |                                              |
 | PRAGMA short_column_names        | Not Needed | deprecated in SQLite                         |
 | PRAGMA shrink_memory             | No         |                                              |
