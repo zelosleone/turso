@@ -420,8 +420,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
-    /// FIXME: This test fails.
     /// Test that a transaction cannot read committed changes that were committed after the transaction started (no: READ COMMITTED)
     fn test_tx_isolation_no_read_committed() -> anyhow::Result<()> {
         let path = TempDir::new()
@@ -438,6 +436,8 @@ mod tests {
 
         // Begin transaction on first connection
         let _ = limbo_exec_rows(&db, &conn1, "BEGIN");
+        let ret = limbo_exec_rows(&db, &conn1, "SELECT x FROM t");
+        assert!(ret.is_empty(), "Expected 0 rows but got {ret:?}");
 
         // Commit a value from the second connection
         let conn2 = db.connect_limbo();
