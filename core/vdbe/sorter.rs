@@ -15,7 +15,7 @@ use crate::{
     },
     storage::sqlite3_ondisk::{read_varint, varint_len, write_varint},
     translate::collate::CollationSeq,
-    types::{compare_immutable, IOResult, ImmutableRecord, KeyInfo},
+    types::{compare_immutable, IOResult, ImmutableRecord, KeyInfo, RecordCursor, RefValue},
     Result,
 };
 
@@ -133,7 +133,7 @@ impl Sorter {
             record.clone(),
             self.key_len,
             self.index_key_info.clone(),
-        ));
+        )?);
         self.current_buffer_size += payload_size;
         self.max_payload_size_in_buffer = self.max_payload_size_in_buffer.max(payload_size);
         Ok(())
@@ -205,7 +205,7 @@ impl Sorter {
                     record,
                     self.key_len,
                     self.index_key_info.clone(),
-                )),
+                )?),
                 chunk_idx,
             ));
             if let SortedChunkIOState::WaitingForRead = chunk.io_state.get() {
@@ -444,38 +444,37 @@ impl SortedChunk {
 
 struct SortableImmutableRecord {
     record: ImmutableRecord,
-    key_len: usize,
+    key_values: Vec<RefValue>,
     index_key_info: Rc<Vec<KeyInfo>>,
 }
 
 impl SortableImmutableRecord {
-    fn new(record: ImmutableRecord, key_len: usize, index_key_info: Rc<Vec<KeyInfo>>) -> Self {
-        Self {
-            record,
-            key_len,
-            index_key_info,
+    fn new(
+        record: ImmutableRecord,
+        key_len: usize,
+        index_key_info: Rc<Vec<KeyInfo>>,
+    ) -> Result<Self> {
+        let mut key_values = Vec::with_capacity(key_len);
+        let mut cursor = RecordCursor::with_capacity(key_len);
+        cursor.ensure_parsed_upto(&record, key_len - 1)?;
+        for i in 0..cursor.serial_types.len() {
+            key_values.push(cursor.deserialize_column(&record, i)?);
         }
+        Ok(Self {
+            record,
+            key_values,
+            index_key_info,
+        })
     }
 }
 
 impl Ord for SortableImmutableRecord {
     fn cmp(&self, other: &Self) -> Ordering {
-        let this_values = self.record.get_values();
-        let other_values = other.record.get_values();
-
-        let a_key = if this_values.len() >= self.key_len {
-            &this_values[..self.key_len]
-        } else {
-            &this_values[..]
-        };
-
-        let b_key = if other_values.len() >= self.key_len {
-            &other_values[..self.key_len]
-        } else {
-            &other_values[..]
-        };
-
-        compare_immutable(a_key, b_key, self.index_key_info.as_ref())
+        compare_immutable(
+            &self.key_values,
+            &other.key_values,
+            self.index_key_info.as_ref(),
+        )
     }
 }
 
