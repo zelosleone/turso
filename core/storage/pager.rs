@@ -9,12 +9,12 @@ use crate::types::IOResult;
 use crate::util::IOExt as _;
 use crate::{return_if_io, Completion};
 use crate::{turso_assert, Buffer, Connection, LimboError, Result};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::cell::{Cell, OnceCell, RefCell, UnsafeCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tracing::{instrument, trace, Level};
 
 use super::btree::{btree_init_page, BTreePage};
@@ -680,7 +680,7 @@ impl Pager {
     #[instrument(skip_all, level = Level::DEBUG)]
     pub fn maybe_allocate_page1(&self) -> Result<IOResult<()>> {
         if self.db_state.load(Ordering::SeqCst) < DB_STATE_INITIALIZED {
-            if let Ok(_lock) = self.init_lock.try_lock() {
+            if let Some(_lock) = self.init_lock.try_lock() {
                 match (
                     self.db_state.load(Ordering::SeqCst),
                     self.allocating_page1(),
@@ -738,8 +738,8 @@ impl Pager {
                     *connection
                         ._db
                         .schema
-                        .lock()
-                        .map_err(|_| LimboError::SchemaLocked)? = schema;
+                        .try_lock()
+                        .ok_or(LimboError::SchemaLocked)? = schema;
                 }
                 Ok(commit_status)
             }
@@ -1360,8 +1360,8 @@ impl Pager {
                 connection
                     ._db
                     .schema
-                    .lock()
-                    .map_err(|_| LimboError::SchemaLocked)?
+                    .try_lock()
+                    .ok_or(LimboError::SchemaLocked)?
                     .clone(),
             );
         }

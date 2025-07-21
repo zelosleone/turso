@@ -59,10 +59,9 @@ pub use io::{
     Buffer, Completion, CompletionType, File, MemoryIO, OpenFlags, PlatformIO, SyscallIO,
     WriteCompletion, IO,
 };
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use schema::Schema;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
@@ -121,6 +120,7 @@ pub struct Database {
     db_state: Arc<AtomicUsize>,
     init_lock: Arc<Mutex<()>>,
     open_flags: OpenFlags,
+    builtin_syms: RefCell<SymbolTable>,
 }
 
 unsafe impl Send for Database {}
@@ -149,7 +149,7 @@ impl fmt::Debug for Database {
         };
         debug_struct.field("mv_store", &mv_store_status);
 
-        let init_lock_status = if self.init_lock.try_lock().is_ok() {
+        let init_lock_status = if self.init_lock.try_lock().is_some() {
             "unlocked"
         } else {
             "locked"
@@ -245,7 +245,7 @@ impl Database {
         };
 
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
-
+        let syms = SymbolTable::new();
         let db = Arc::new(Database {
             mv_store,
             path: path.to_string(),
@@ -253,11 +253,14 @@ impl Database {
             _shared_page_cache: shared_page_cache.clone(),
             maybe_shared_wal: RwLock::new(maybe_shared_wal),
             db_file,
+            builtin_syms: syms.into(),
             io: io.clone(),
             open_flags: flags,
             db_state: Arc::new(AtomicUsize::new(db_state)),
             init_lock: Arc::new(Mutex::new(())),
         });
+        db.register_global_builtin_extensions()
+            .expect("unable to register global extensions");
 
         // Check: https://github.com/tursodatabase/turso/pull/1761#discussion_r2154013123
         if db_state == DB_STATE_INITIALIZED {
@@ -294,12 +297,7 @@ impl Database {
         let conn = Arc::new(Connection {
             _db: self.clone(),
             pager: RefCell::new(Rc::new(pager)),
-            schema: RefCell::new(
-                self.schema
-                    .lock()
-                    .map_err(|_| LimboError::SchemaLocked)?
-                    .clone(),
-            ),
+            schema: RefCell::new(self.schema.lock().clone()),
             auto_commit: Cell::new(true),
             mv_transactions: RefCell::new(Vec::new()),
             transaction_state: Cell::new(TransactionState::None),
@@ -315,10 +313,9 @@ impl Database {
             capture_data_changes: RefCell::new(CaptureDataChangesMode::Off),
             closed: Cell::new(false),
         });
-
-        if let Err(e) = conn.register_builtins() {
-            return Err(LimboError::ExtensionError(e));
-        }
+        let builtin_syms = self.builtin_syms.borrow();
+        // add built-in extensions symbols to the connection to prevent having to load each time
+        conn.syms.borrow_mut().extend(&builtin_syms);
         Ok(conn)
     }
 
@@ -443,7 +440,7 @@ impl Database {
 
     #[inline]
     pub fn with_schema_mut<T>(&self, f: impl FnOnce(&mut Schema) -> Result<T>) -> Result<T> {
-        let mut schema_ref = self.schema.lock().map_err(|_| LimboError::SchemaLocked)?;
+        let mut schema_ref = self.schema.try_lock().ok_or(LimboError::SchemaLocked)?;
         let schema = Arc::make_mut(&mut *schema_ref);
         f(schema)
     }
@@ -789,11 +786,7 @@ impl Connection {
 
     pub fn maybe_update_schema(&self) -> Result<()> {
         let current_schema_version = self.schema.borrow().schema_version;
-        let schema = self
-            ._db
-            .schema
-            .lock()
-            .map_err(|_| LimboError::SchemaLocked)?;
+        let schema = self._db.schema.try_lock().ok_or(LimboError::SchemaLocked)?;
         if matches!(self.transaction_state.get(), TransactionState::None)
             && current_schema_version < schema.schema_version
         {
@@ -1221,6 +1214,18 @@ impl SymbolTable {
         _arg_count: usize,
     ) -> Option<Rc<function::ExternalFunc>> {
         self.functions.get(name).cloned()
+    }
+
+    pub fn extend(&mut self, other: &SymbolTable) {
+        for (name, func) in &other.functions {
+            self.functions.insert(name.clone(), func.clone());
+        }
+        for (name, vtab) in &other.vtabs {
+            self.vtabs.insert(name.clone(), vtab.clone());
+        }
+        for (name, module) in &other.vtab_modules {
+            self.vtab_modules.insert(name.clone(), module.clone());
+        }
     }
 }
 

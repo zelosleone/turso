@@ -31,7 +31,6 @@ use crate::{
 };
 use std::ops::DerefMut;
 use std::sync::atomic::AtomicUsize;
-use std::sync::Mutex;
 use std::{borrow::BorrowMut, rc::Rc, sync::Arc};
 
 use crate::{pseudo::PseudoCursor, result::LimboResult};
@@ -62,7 +61,7 @@ use super::{
     CommitState,
 };
 use fallible_iterator::FallibleIterator;
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use rand::{thread_rng, Rng};
 use turso_sqlite3_parser::ast;
 use turso_sqlite3_parser::ast::fmt::ToTokens;
