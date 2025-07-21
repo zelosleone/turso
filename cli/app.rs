@@ -624,6 +624,11 @@ impl Limbo {
                         let _ = self.writeln(e.to_string());
                     }
                 }
+                Command::Databases => {
+                    if let Err(e) = self.display_databases() {
+                        let _ = self.writeln(e.to_string());
+                    }
+                }
                 Command::Opcodes(args) => {
                     if let Some(opcode) = args.opcode {
                         for op in &OPCODE_DESCRIPTIONS {
@@ -1094,6 +1099,75 @@ impl Limbo {
                 } else {
                     return Err(anyhow::anyhow!("Error querying schema: {}", err));
                 }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn display_databases(&mut self) -> anyhow::Result<()> {
+        let sql = "PRAGMA database_list";
+
+        match self.conn.query(sql) {
+            Ok(Some(ref mut rows)) => {
+                loop {
+                    match rows.step()? {
+                        StepResult::Row => {
+                            let row = rows.row().unwrap();
+                            if let (
+                                Ok(Value::Integer(_seq)),
+                                Ok(Value::Text(name)),
+                                Ok(file_value),
+                            ) = (
+                                row.get::<&Value>(0),
+                                row.get::<&Value>(1),
+                                row.get::<&Value>(2),
+                            ) {
+                                let file = match file_value {
+                                    Value::Text(path) => path.as_str(),
+                                    Value::Null => "",
+                                    _ => "",
+                                };
+
+                                // Format like SQLite: "main: /path/to/file r/w"
+                                let file_display = if file.is_empty() {
+                                    "\"\"".to_string()
+                                } else {
+                                    file.to_string()
+                                };
+
+                                // Detect readonly mode from connection
+                                let mode = if self.conn.is_readonly() {
+                                    "r/o"
+                                } else {
+                                    "r/w"
+                                };
+
+                                let _ = self.writeln(format!(
+                                    "{}: {} {}",
+                                    name.as_str(),
+                                    file_display,
+                                    mode
+                                ));
+                            }
+                        }
+                        StepResult::IO => {
+                            rows.run_once()?;
+                        }
+                        StepResult::Interrupt => break,
+                        StepResult::Done => break,
+                        StepResult::Busy => {
+                            let _ = self.writeln("database is busy");
+                            break;
+                        }
+                    }
+                }
+            }
+            Ok(None) => {
+                let _ = self.writeln("No results returned from the query.");
+            }
+            Err(err) => {
+                return Err(anyhow::anyhow!("Error querying database list: {}", err));
             }
         }
 

@@ -1749,6 +1749,8 @@ pub enum PragmaName {
     AutoVacuum,
     /// `cache_size` pragma
     CacheSize,
+    /// List databases
+    DatabaseList,
     /// Run integrity check on the database file
     IntegrityCheck,
     /// `journal_mode` pragma

@@ -62,6 +62,8 @@ pub enum Command {
     Echo(EchoArgs),
     /// Display tables
     Tables(TablesArgs),
+    /// Display attached databases
+    Databases,
     /// Import data from FILE into TABLE
     #[command(name = "import", display_name = ".import")]
     Import(ImportArgs),
