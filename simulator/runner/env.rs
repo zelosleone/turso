@@ -246,7 +246,7 @@ impl SimulatorEnv {
             disable_reopen_database: cli_opts.disable_reopen_database,
             latency_probability: cli_opts.latency_probability,
             experimental_mvcc: cli_opts.experimental_mvcc,
-            experimental_indexes: cli_opts.experimental_indexes,
+            experimental_indexes: !cli_opts.disable_experimental_indexes,
             min_tick: cli_opts.min_tick,
             max_tick: cli_opts.max_tick,
         };

@@ -127,8 +127,8 @@ pub struct SimulatorCLI {
     pub max_tick: u64,
     #[clap(long, help = "Enable experimental MVCC feature")]
     pub experimental_mvcc: bool,
-    #[clap(long, help = "Enable experimental indexing feature")]
-    pub experimental_indexes: bool,
+    #[clap(long, help = "Disable experimental indexing feature")]
+    pub disable_experimental_indexes: bool,
 }
 
 #[derive(Parser, Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord)]
