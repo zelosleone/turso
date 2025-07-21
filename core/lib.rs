@@ -149,7 +149,7 @@ impl fmt::Debug for Database {
         };
         debug_struct.field("mv_store", &mv_store_status);
 
-        let init_lock_status = if self.init_lock.lock().is_ok() {
+        let init_lock_status = if self.init_lock.try_lock().is_ok() {
             "unlocked"
         } else {
             "locked"
