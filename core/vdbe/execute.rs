@@ -1967,10 +1967,17 @@ pub fn op_transaction(
         }
 
         if updated && matches!(new_transaction_state, TransactionState::Write { .. }) {
-            if let LimboResult::Busy = return_if_io!(pager.begin_write_tx()) {
-                pager.end_read_tx()?;
-                tracing::trace!("begin_write_tx busy");
-                return Ok(InsnFunctionStepResult::Busy);
+            match pager.begin_write_tx()? {
+                IOResult::Done(r) => {
+                    if let LimboResult::Busy = r {
+                        pager.end_read_tx()?;
+                        return Ok(InsnFunctionStepResult::Busy);
+                    }
+                }
+                IOResult::IO => {
+                    pager.end_read_tx()?;
+                    return Ok(InsnFunctionStepResult::IO);
+                }
             }
         }
         if updated {
