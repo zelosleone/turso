@@ -137,7 +137,6 @@ impl fmt::Debug for Database {
             DbState::Uninitialized => "uninitialized".to_string(),
             DbState::Initializing => "initializing".to_string(),
             DbState::Initialized => "initialized".to_string(),
-            x => format!("invalid ({x:?})"),
         };
         debug_struct.field("db_state", &db_state_value);
 

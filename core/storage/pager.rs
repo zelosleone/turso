@@ -246,18 +246,21 @@ pub enum AutoVacuumMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct DbState(usize);
+#[repr(usize)]
+pub enum DbState {
+    Uninitialized = Self::UNINITIALIZED,
+    Initializing = Self::INITIALIZING,
+    Initialized = Self::INITIALIZED,
+}
 
 impl DbState {
-    #![allow(non_upper_case_globals)]
-    pub const Uninitialized: Self = Self(0);
-    pub const Initializing: Self = Self(1);
-    pub const Initialized: Self = Self(2);
+    pub(self) const UNINITIALIZED: usize = 0;
+    pub(self) const INITIALIZING: usize = 1;
+    pub(self) const INITIALIZED: usize = 2;
 
     #[inline]
     pub fn is_initialized(&self) -> bool {
-        matches!(*self, DbState::Initialized)
+        matches!(self, DbState::Initialized)
     }
 }
 
@@ -268,18 +271,23 @@ pub struct AtomicDbState(AtomicUsize);
 impl AtomicDbState {
     #[inline]
     pub const fn new(state: DbState) -> Self {
-        Self(AtomicUsize::new(state.0))
+        Self(AtomicUsize::new(state as usize))
     }
 
     #[inline]
     pub fn set(&self, state: DbState) {
-        self.0.store(state.0, Ordering::SeqCst);
+        self.0.store(state as usize, Ordering::SeqCst);
     }
 
     #[inline]
     pub fn get(&self) -> DbState {
         let v = self.0.load(Ordering::SeqCst);
-        DbState(v)
+        match v {
+            DbState::UNINITIALIZED => DbState::Uninitialized,
+            DbState::INITIALIZING => DbState::Initializing,
+            DbState::INITIALIZED => DbState::Initialized,
+            _ => unreachable!(),
+        }
     }
 
     #[inline]
