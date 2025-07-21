@@ -64,7 +64,14 @@ if create_composite:
             idx = get_random() % len(available_cols)
             selected_cols.append(available_cols.pop(idx))
 
-    col_names = [f"col_{col}" for col in sorted(selected_cols)]
+    # Randomly decide sort order for each column (25% chance of DESC)
+    col_specs = []
+    for col in sorted(selected_cols):
+        if get_random() % 4 == 0:  # 25% chance
+            col_specs.append(f"col_{col} DESC")
+        else:
+            col_specs.append(f"col_{col}")
+
     cols_suffix = "_".join(str(c) for c in sorted(selected_cols))
     random_suffix = "".join(random_choice(string.ascii_lowercase) for _ in range(4))
     index_name = f"idx_tbl{selected_tbl}_{cols_suffix}_{random_suffix}"
@@ -72,14 +79,14 @@ if create_composite:
     # Check if this combination already has an index
     if index_name not in existing_index_names:
         try:
-            create_stmt = f"CREATE INDEX {index_name} ON tbl_{selected_tbl} ({', '.join(col_names)})"
+            create_stmt = f"CREATE INDEX {index_name} ON tbl_{selected_tbl} ({', '.join(col_specs)})"
             print(f"Creating composite index: {create_stmt}")
             cur.execute(create_stmt)
 
             # Store index information in init_state.db
             cur_init.execute(f"""
                 INSERT INTO indexes (idx_name, tbl_name, idx_type, cols)
-                VALUES ('{index_name}', 'tbl_{selected_tbl}', 'composite', '{", ".join(col_names)}')
+                VALUES ('{index_name}', 'tbl_{selected_tbl}', 'composite', '{", ".join(col_specs)}')
             """)
             con_init.commit()
             print(f"Successfully created composite index: {index_name}")
@@ -98,6 +105,11 @@ else:
     selected_col = available_cols[get_random() % len(available_cols)]
     col_name = f"col_{selected_col}"
 
+    # Randomly decide sort order (25% chance of DESC)
+    col_spec = col_name
+    if get_random() % 4 == 0:  # 25% chance
+        col_spec = f"{col_name} DESC"
+
     # Determine index type based on column data type
     col_type = tbl_schema[col_name]["data_type"]
     index_suffix = "".join(random_choice(string.ascii_lowercase)
@@ -106,11 +118,11 @@ else:
     if col_type == "TEXT" and tbl_schema[col_name].get("unique", False):
         # Create unique index for unique text columns
         index_name = f"idx_tbl{selected_tbl}_col{selected_col}_unique_{index_suffix}"
-        create_stmt = f"CREATE UNIQUE INDEX {index_name} ON tbl_{selected_tbl} ({col_name})"
+        create_stmt = f"CREATE UNIQUE INDEX {index_name} ON tbl_{selected_tbl} ({col_spec})"
     else:
         # Create regular index
         index_name = f"idx_tbl{selected_tbl}_col{selected_col}_{index_suffix}"
-        create_stmt = f"CREATE INDEX {index_name} ON tbl_{selected_tbl} ({col_name})"
+        create_stmt = f"CREATE INDEX {index_name} ON tbl_{selected_tbl} ({col_spec})"
 
     if index_name not in existing_index_names:
         try:
@@ -121,7 +133,7 @@ else:
             idx_type = "unique" if "UNIQUE" in create_stmt else "single"
             cur_init.execute(f"""
                 INSERT INTO indexes (idx_name, tbl_name, idx_type, cols)
-                VALUES ('{index_name}', 'tbl_{selected_tbl}', '{idx_type}', '{col_name}')
+                VALUES ('{index_name}', 'tbl_{selected_tbl}', '{idx_type}', '{col_spec}')
             """)
             con_init.commit()
             print(f"Successfully created {idx_type} index: {index_name}")
