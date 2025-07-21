@@ -765,11 +765,11 @@ fn test_read_wal_dumb_no_frames() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn run_query(tmp_db: &TempDatabase, conn: &Arc<Connection>, query: &str) -> anyhow::Result<()> {
+pub fn run_query(tmp_db: &TempDatabase, conn: &Arc<Connection>, query: &str) -> anyhow::Result<()> {
     run_query_core(tmp_db, conn, query, None::<fn(&Row)>)
 }
 
-fn run_query_on_row(
+pub fn run_query_on_row(
     tmp_db: &TempDatabase,
     conn: &Arc<Connection>,
     query: &str,
@@ -778,7 +778,7 @@ fn run_query_on_row(
     run_query_core(tmp_db, conn, query, Some(on_row))
 }
 
-fn run_query_core(
+pub fn run_query_core(
     _tmp_db: &TempDatabase,
     conn: &Arc<Connection>,
     query: &str,

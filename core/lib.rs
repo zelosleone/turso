@@ -324,7 +324,8 @@ impl Database {
 
     fn init_pager(&self, page_size: Option<usize>) -> Result<Pager> {
         // Open existing WAL file if present
-        if let Some(shared_wal) = self.maybe_shared_wal.read().clone() {
+        let mut maybe_shared_wal = self.maybe_shared_wal.write();
+        if let Some(shared_wal) = maybe_shared_wal.clone() {
             let size = match page_size {
                 None => unsafe { (*shared_wal.get()).page_size() as usize },
                 Some(size) => size,
@@ -379,7 +380,7 @@ impl Database {
         let real_shared_wal = WalFileShared::new_shared(size, &self.io, file)?;
         // Modify Database::maybe_shared_wal to point to the new WAL file so that other connections
         // can open the existing WAL.
-        *self.maybe_shared_wal.write() = Some(real_shared_wal.clone());
+        *maybe_shared_wal = Some(real_shared_wal.clone());
         let wal = Rc::new(RefCell::new(WalFile::new(
             self.io.clone(),
             real_shared_wal,
