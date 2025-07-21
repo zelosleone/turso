@@ -5,7 +5,6 @@ import string
 
 import turso
 from antithesis.random import get_random, random_choice
-from utils import generate_random_value
 
 # Get initial state
 try:
@@ -16,15 +15,17 @@ except Exception as e:
 
 cur_init = con_init.cursor()
 
-# Get table count
-tbl_len = cur_init.execute("SELECT count FROM tables").fetchone()[0]
-if tbl_len == 0:
+# Get all existing tables from schemas
+existing_schemas = cur_init.execute(
+    "SELECT tbl, schema FROM schemas").fetchall()
+if not existing_schemas:
     print("No tables available for index creation")
     exit(0)
 
 # Select a random table
-selected_tbl = get_random() % tbl_len
-tbl_schema = json.loads(cur_init.execute(f"SELECT schema FROM schemas WHERE tbl = {selected_tbl}").fetchone()[0])
+selected_idx = get_random() % len(existing_schemas)
+selected_tbl, schema_json = existing_schemas[selected_idx]
+tbl_schema = json.loads(schema_json)
 
 # Connect to the main database
 try:
@@ -37,21 +38,24 @@ cur = con.cursor()
 
 # Check existing indexes on this table
 existing_indexes = cur.execute(f"""
-    SELECT name FROM sqlite_master 
+    SELECT name FROM sqlite_master
     WHERE type = 'index' AND tbl_name = 'tbl_{selected_tbl}'
     AND sql IS NOT NULL
 """).fetchall()
 existing_index_names = {idx[0] for idx in existing_indexes}
 
-print(f"Selected table: tbl_{selected_tbl} with {tbl_schema['colCount']} columns")
+print(
+    f"Selected table: tbl_{selected_tbl} with {tbl_schema['colCount']} columns")
 print(f"Existing indexes: {len(existing_indexes)}")
 
 # Decide whether to create a single-column or composite index
-create_composite = tbl_schema["colCount"] > 2 and get_random() % 3 == 0  # 33% chance for composite
+create_composite = tbl_schema["colCount"] > 2 and get_random(
+) % 3 == 0  # 33% chance for composite
 
 if create_composite:
     # Create composite index
-    num_cols = 2 + (get_random() % min(2, tbl_schema["colCount"] - 1))  # 2-3 columns
+    num_cols = 2 + (get_random() %
+                    min(2, tbl_schema["colCount"] - 1))  # 2-3 columns
     selected_cols = []
     available_cols = list(range(tbl_schema["colCount"]))
 
@@ -74,7 +78,7 @@ if create_composite:
 
             # Store index information in init_state.db
             cur_init.execute(f"""
-                INSERT INTO indexes (idx_name, tbl_name, idx_type, cols) 
+                INSERT INTO indexes (idx_name, tbl_name, idx_type, cols)
                 VALUES ('{index_name}', 'tbl_{selected_tbl}', 'composite', '{", ".join(col_names)}')
             """)
             con_init.commit()
@@ -96,7 +100,8 @@ else:
 
     # Determine index type based on column data type
     col_type = tbl_schema[col_name]["data_type"]
-    index_suffix = "".join(random_choice(string.ascii_lowercase) for _ in range(4))
+    index_suffix = "".join(random_choice(string.ascii_lowercase)
+                           for _ in range(4))
 
     if col_type == "TEXT" and tbl_schema[col_name].get("unique", False):
         # Create unique index for unique text columns
@@ -115,7 +120,7 @@ else:
             # Store index information in init_state.db
             idx_type = "unique" if "UNIQUE" in create_stmt else "single"
             cur_init.execute(f"""
-                INSERT INTO indexes (idx_name, tbl_name, idx_type, cols) 
+                INSERT INTO indexes (idx_name, tbl_name, idx_type, cols)
                 VALUES ('{index_name}', 'tbl_{selected_tbl}', '{idx_type}', '{col_name}')
             """)
             con_init.commit()

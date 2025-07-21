@@ -32,7 +32,6 @@ except Exception as e:
 
 cur_init = con_init.cursor()
 cur_init.execute("CREATE TABLE schemas (schema TEXT, tbl INT)")
-cur_init.execute("CREATE TABLE tables (count INT)")
 cur_init.execute("CREATE TABLE indexes (idx_name TEXT, tbl_name TEXT, idx_type TEXT, cols TEXT)")
 
 try:
@@ -44,8 +43,6 @@ except Exception as e:
 cur = con.cursor()
 
 tbl_count = max(1, get_random() % 10)
-
-cur_init.execute(f"INSERT INTO tables (count) VALUES ({tbl_count})")
 
 schemas = []
 for i in range(tbl_count):

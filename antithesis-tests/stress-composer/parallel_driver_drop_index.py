@@ -1,6 +1,5 @@
 #!/usr/bin/env -S python3 -u
 
-import json
 
 import turso
 from antithesis.random import get_random
@@ -25,8 +24,8 @@ cur = con.cursor()
 
 # Get all user-created indexes (excluding automatic indexes)
 existing_indexes = cur.execute("""
-    SELECT name, tbl_name FROM sqlite_master 
-    WHERE type = 'index' 
+    SELECT name, tbl_name FROM sqlite_master
+    WHERE type = 'index'
     AND sql IS NOT NULL
     AND name NOT LIKE 'sqlite_%'
 """).fetchall()
@@ -47,14 +46,14 @@ try:
     drop_stmt = f"DROP INDEX {index_name}"
     print(f"Dropping index: {drop_stmt}")
     cur.execute(drop_stmt)
-    
+
     # Remove index information from init_state.db
     cur_init.execute(f"""
-        DELETE FROM indexes 
+        DELETE FROM indexes
         WHERE idx_name = '{index_name}'
     """)
     con_init.commit()
-    
+
     print(f"Successfully dropped index: {index_name}")
 except turso.OperationalError as e:
     print(f"Failed to drop index: {e}")
