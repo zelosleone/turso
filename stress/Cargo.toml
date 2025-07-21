@@ -15,7 +15,7 @@ name = "turso_stress"
 path = "main.rs"
 
 [features]
-default = []
+default = ["experimental_indexes"]
 antithesis = ["turso/antithesis"]
 experimental_indexes = ["turso/experimental_indexes"]
 
