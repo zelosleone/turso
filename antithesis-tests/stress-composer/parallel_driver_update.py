@@ -15,9 +15,16 @@ except Exception as e:
 
 cur_init = con_init.cursor()
 
-tbl_len = cur_init.execute("SELECT count FROM tables").fetchone()[0]
-selected_tbl = get_random() % tbl_len
-tbl_schema = json.loads(cur_init.execute(f"SELECT schema FROM schemas WHERE tbl = {selected_tbl}").fetchone()[0])
+# Get all existing tables from schemas
+existing_schemas = cur_init.execute("SELECT tbl, schema FROM schemas").fetchall()
+if not existing_schemas:
+    print("No tables found in schemas")
+    exit(0)
+
+# Select a random table
+selected_idx = get_random() % len(existing_schemas)
+selected_tbl, schema_json = existing_schemas[selected_idx]
+tbl_schema = json.loads(schema_json)
 
 # get primary key column
 pk = tbl_schema["pk"]
@@ -25,7 +32,7 @@ pk = tbl_schema["pk"]
 cols = [f"col_{col}" for col in range(tbl_schema["colCount"]) if col != pk]
 # print(cols)
 try:
-    con = turso.connect("stress_composer.db")
+    con = turso.connect("stress_composer.db", experimental_indexes=True)
 except Exception as e:
     print(f"Failed to open stress_composer.db. Exiting... {e}")
     exit(0)

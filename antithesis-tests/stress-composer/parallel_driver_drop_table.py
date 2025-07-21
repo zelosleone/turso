@@ -1,9 +1,7 @@
 #!/usr/bin/env -S python3 -u
 
-import json
 
 import turso
-from antithesis.assertions import always
 from antithesis.random import get_random
 
 # Get initial state
@@ -16,26 +14,31 @@ except Exception as e:
 cur_init = con_init.cursor()
 
 # Get all existing tables from schemas
-existing_schemas = cur_init.execute("SELECT tbl, schema FROM schemas").fetchall()
+existing_schemas = cur_init.execute("SELECT tbl FROM schemas").fetchall()
 if not existing_schemas:
     print("No tables found in schemas")
     exit(0)
 
 # Select a random table
 selected_idx = get_random() % len(existing_schemas)
-selected_tbl, schema_json = existing_schemas[selected_idx]
-tbl_schema = json.loads(schema_json)
-cols = ", ".join([f"col_{col}" for col in range(tbl_schema["colCount"])])
+selected_tbl = existing_schemas[selected_idx][0]
 
 try:
     con = turso.connect("stress_composer.db", experimental_indexes=True)
 except Exception as e:
     print(f"Failed to open stress_composer.db. Exiting... {e}")
     exit(0)
+
 cur = con.cursor()
 
-print("Running integrity check...")
+cur.execute(f"DROP TABLE tbl_{selected_tbl}")
 
-result = cur.execute("PRAGMA integrity_check")
-row = result.fetchone()
-always(row == ("ok",), f"Integrity check failed: {row}", {})
+con.commit()
+
+con.close()
+
+cur_init.execute("DELETE FROM schemas WHERE tbl = ?", (selected_tbl,))
+
+con_init.commit()
+
+con_init.close()
