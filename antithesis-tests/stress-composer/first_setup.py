@@ -35,7 +35,7 @@ cur_init.execute("CREATE TABLE schemas (schema TEXT, tbl INT)")
 cur_init.execute("CREATE TABLE tables (count INT)")
 
 try:
-    con = turso.connect("stress_composer.db")
+    con = turso.connect("stress_composer.db", experimental_indexes=True)
 except Exception as e:
     print(f"Error connecting to database: {e}")
     exit(0)
