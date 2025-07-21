@@ -1032,62 +1032,62 @@ pub unsafe extern "C" fn sqlite3_libversion_number() -> ffi::c_int {
 }
 
 fn sqlite3_errstr_impl(rc: i32) -> *const ffi::c_char {
-    const ERROR_MESSAGES: [&str; 29] = [
-        "not an error",                         // SQLITE_OK
-        "SQL logic error",                      // SQLITE_ERROR
-        "",                                     // SQLITE_INTERNAL
-        "access permission denied",             // SQLITE_PERM
-        "query aborted",                        // SQLITE_ABORT
-        "database is locked",                   // SQLITE_BUSY
-        "database table is locked",             // SQLITE_LOCKED
-        "out of memory",                        // SQLITE_NOMEM
-        "attempt to write a readonly database", // SQLITE_READONLY
-        "interrupted",                          // SQLITE_INTERRUPT
-        "disk I/O error",                       // SQLITE_IOERR
-        "database disk image is malformed",     // SQLITE_CORRUPT
-        "unknown operation",                    // SQLITE_NOTFOUND
-        "database or disk is full",             // SQLITE_FULL
-        "unable to open database file",         // SQLITE_CANTOPEN
-        "locking protocol",                     // SQLITE_PROTOCOL
-        "",                                     // SQLITE_EMPTY
-        "database schema has changed",          // SQLITE_SCHEMA
-        "string or blob too big",               // SQLITE_TOOBIG
-        "constraint failed",                    // SQLITE_CONSTRAINT
-        "datatype mismatch",                    // SQLITE_MISMATCH
-        "bad parameter or other API misuse",    // SQLITE_MISUSE
+    static ERROR_MESSAGES: [&[u8]; 29] = [
+        b"not an error\0",                         // SQLITE_OK
+        b"SQL logic error\0",                      // SQLITE_ERROR
+        b"\0",                                     // SQLITE_INTERNAL
+        b"access permission denied\0",             // SQLITE_PERM
+        b"query aborted\0",                        // SQLITE_ABORT
+        b"database is locked\0",                   // SQLITE_BUSY
+        b"database table is locked\0",             // SQLITE_LOCKED
+        b"out of memory\0",                        // SQLITE_NOMEM
+        b"attempt to write a readonly database\0", // SQLITE_READONLY
+        b"interrupted\0",                          // SQLITE_INTERRUPT
+        b"disk I/O error\0",                       // SQLITE_IOERR
+        b"database disk image is malformed\0",     // SQLITE_CORRUPT
+        b"unknown operation\0",                    // SQLITE_NOTFOUND
+        b"database or disk is full\0",             // SQLITE_FULL
+        b"unable to open database file\0",         // SQLITE_CANTOPEN
+        b"locking protocol\0",                     // SQLITE_PROTOCOL
+        b"\0",                                     // SQLITE_EMPTY
+        b"database schema has changed\0",          // SQLITE_SCHEMA
+        b"string or blob too big\0",               // SQLITE_TOOBIG
+        b"constraint failed\0",                    // SQLITE_CONSTRAINT
+        b"datatype mismatch\0",                    // SQLITE_MISMATCH
+        b"bad parameter or other API misuse\0",    // SQLITE_MISUSE
         #[cfg(feature = "lfs")]
-        "",      // SQLITE_NOLFS
+        b"\0",      // SQLITE_NOLFS
         #[cfg(not(feature = "lfs"))]
-        "large file support is disabled", // SQLITE_NOLFS
-        "authorization denied",                 // SQLITE_AUTH
-        "",                                     // SQLITE_FORMAT
-        "column index out of range",            // SQLITE_RANGE
-        "file is not a database",               // SQLITE_NOTADB
-        "notification message",                 // SQLITE_NOTICE
-        "warning message",                      // SQLITE_WARNING
+        b"large file support is disabled\0", // SQLITE_NOLFS
+        b"authorization denied\0",                 // SQLITE_AUTH
+        b"\0",                                     // SQLITE_FORMAT
+        b"column index out of range\0",            // SQLITE_RANGE
+        b"file is not a database\0",               // SQLITE_NOTADB
+        b"notification message\0",                 // SQLITE_NOTICE
+        b"warning message\0",                      // SQLITE_WARNING
     ];
 
-    const UNKNOWN_ERROR: &str = "unknown error";
-    const ABORT_ROLLBACK: &str = "abort due to ROLLBACK";
-    const ANOTHER_ROW_AVAILABLE: &str = "another row available";
-    const NO_MORE_ROWS_AVAILABLE: &str = "no more rows available";
+    static UNKNOWN_ERROR: &[u8] = b"unknown error\0";
+    static ABORT_ROLLBACK: &[u8] = b"abort due to ROLLBACK\0";
+    static ANOTHER_ROW_AVAILABLE: &[u8] = b"another row available\0";
+    static NO_MORE_ROWS_AVAILABLE: &[u8] = b"no more rows available\0";
 
-    match rc {
-        SQLITE_ABORT_ROLLBACK => ABORT_ROLLBACK.as_ptr() as *const ffi::c_char,
-        SQLITE_ROW => ANOTHER_ROW_AVAILABLE.as_ptr() as *const ffi::c_char,
-        SQLITE_DONE => NO_MORE_ROWS_AVAILABLE.as_ptr() as *const ffi::c_char,
+    let msg = match rc {
+        SQLITE_ABORT_ROLLBACK => ABORT_ROLLBACK,
+        SQLITE_ROW => ANOTHER_ROW_AVAILABLE,
+        SQLITE_DONE => NO_MORE_ROWS_AVAILABLE,
         _ => {
             let rc = rc & 0xff;
-            if rc >= 0
-                && rc < ERROR_MESSAGES.len() as i32
-                && !ERROR_MESSAGES[rc as usize].is_empty()
-            {
-                ERROR_MESSAGES[rc as usize].as_ptr() as *const ffi::c_char
+            let idx = rc & 0xff;
+            if (idx as usize) < ERROR_MESSAGES.len() && !ERROR_MESSAGES[rc as usize].is_empty() {
+                ERROR_MESSAGES[rc as usize]
             } else {
-                UNKNOWN_ERROR.as_ptr() as *const ffi::c_char
+                UNKNOWN_ERROR
             }
         }
-    }
+    };
+
+    msg.as_ptr() as *const ffi::c_char
 }
 
 #[no_mangle]
