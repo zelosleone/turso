@@ -15,7 +15,8 @@ use crate::{
     },
     storage::sqlite3_ondisk::{read_varint, varint_len, write_varint},
     translate::collate::CollationSeq,
-    types::{compare_immutable, IOResult, ImmutableRecord, KeyInfo, RecordCursor, RefValue},
+    turso_assert,
+    types::{IOResult, ImmutableRecord, KeyInfo, RecordCursor, RefValue},
     Result,
 };
 
@@ -444,7 +445,8 @@ impl SortedChunk {
 
 struct SortableImmutableRecord {
     record: ImmutableRecord,
-    key_values: Vec<RefValue>,
+    cursor: RecordCursor,
+    key_values: RefCell<Vec<RefValue>>,
     index_key_info: Rc<Vec<KeyInfo>>,
 }
 
@@ -454,15 +456,16 @@ impl SortableImmutableRecord {
         key_len: usize,
         index_key_info: Rc<Vec<KeyInfo>>,
     ) -> Result<Self> {
-        let mut key_values = Vec::with_capacity(key_len);
         let mut cursor = RecordCursor::with_capacity(key_len);
         cursor.ensure_parsed_upto(&record, key_len - 1)?;
-        for i in 0..cursor.serial_types.len() {
-            key_values.push(cursor.deserialize_column(&record, i)?);
-        }
+        turso_assert!(
+            index_key_info.len() >= cursor.serial_types.len(),
+            "index_key_info.len() < cursor.serial_types.len()"
+        );
         Ok(Self {
             record,
-            key_values,
+            cursor,
+            key_values: RefCell::new(Vec::with_capacity(key_len)),
             index_key_info,
         })
     }
@@ -470,11 +473,50 @@ impl SortableImmutableRecord {
 
 impl Ord for SortableImmutableRecord {
     fn cmp(&self, other: &Self) -> Ordering {
-        compare_immutable(
-            &self.key_values,
-            &other.key_values,
-            self.index_key_info.as_ref(),
-        )
+        assert_eq!(
+            self.cursor.serial_types.len(),
+            other.cursor.serial_types.len()
+        );
+        let mut this_key_values = self.key_values.borrow_mut();
+        let mut other_key_values = other.key_values.borrow_mut();
+
+        for i in 0..self.cursor.serial_types.len() {
+            // Lazily deserialize the key values if they haven't been deserialized yet.
+            if i >= this_key_values.len() {
+                this_key_values.push(
+                    self.cursor
+                        .deserialize_column(&self.record, i)
+                        .expect("Failed to deserialize the key value"),
+                );
+            }
+            if i >= other_key_values.len() {
+                other_key_values.push(
+                    other
+                        .cursor
+                        .deserialize_column(&other.record, i)
+                        .expect("Failed to deserialize the key value"),
+                );
+            }
+
+            let this_key_value = &this_key_values[i];
+            let other_key_value = &other_key_values[i];
+            let column_order = self.index_key_info[i].sort_order;
+            let collation = self.index_key_info[i].collation;
+
+            let cmp = match (this_key_value, other_key_value) {
+                (RefValue::Text(left), RefValue::Text(right)) => {
+                    collation.compare_strings(left.as_str(), right.as_str())
+                }
+                _ => this_key_value.partial_cmp(other_key_value).unwrap(),
+            };
+            if !cmp.is_eq() {
+                return match column_order {
+                    SortOrder::Asc => cmp,
+                    SortOrder::Desc => cmp.reverse(),
+                };
+            }
+        }
+        std::cmp::Ordering::Equal
     }
 }
 
