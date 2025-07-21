@@ -8,11 +8,10 @@ use crate::{function::ExternalFunc, Connection, Database, LimboError, IO};
 use crate::{vtab::VirtualTable, SymbolTable};
 #[cfg(feature = "fs")]
 pub use dynamic::{add_builtin_vfs_extensions, add_vfs_module, list_vfs_modules, VfsMod};
-use parking_lot::Mutex;
 use std::{
     ffi::{c_char, c_void, CStr, CString},
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 use turso_ext::{
     ExtensionApi, InitAggFunction, ResultCode, ScalarFunction, VTabKind, VTabModuleImpl,
@@ -61,7 +60,9 @@ unsafe extern "C" fn handle_schema_insert_database(
     table: *mut c_void,
 ) -> ResultCode {
     let mutex = &*(schema_data as *mut Mutex<Arc<Schema>>);
-    let mut guard = mutex.lock();
+    let Ok(mut guard) = mutex.lock() else {
+        return ResultCode::Error;
+    };
     let schema = Arc::make_mut(&mut *guard);
 
     let c_str = CStr::from_ptr(table_name);

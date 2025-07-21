@@ -59,7 +59,7 @@ pub use io::{
     Buffer, Completion, CompletionType, File, MemoryIO, OpenFlags, PlatformIO, SyscallIO,
     WriteCompletion, IO,
 };
-use parking_lot::{Mutex, RwLock};
+use parking_lot::RwLock;
 use schema::Schema;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
@@ -71,7 +71,7 @@ use std::{
     num::NonZero,
     ops::Deref,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
@@ -149,7 +149,7 @@ impl fmt::Debug for Database {
         };
         debug_struct.field("mv_store", &mv_store_status);
 
-        let init_lock_status = if self.init_lock.try_lock().is_some() {
+        let init_lock_status = if self.init_lock.lock().is_ok() {
             "unlocked"
         } else {
             "locked"
@@ -297,7 +297,12 @@ impl Database {
         let conn = Arc::new(Connection {
             _db: self.clone(),
             pager: RefCell::new(Rc::new(pager)),
-            schema: RefCell::new(self.schema.lock().clone()),
+            schema: RefCell::new(
+                self.schema
+                    .lock()
+                    .map_err(|_| LimboError::SchemaLocked)?
+                    .clone(),
+            ),
             auto_commit: Cell::new(true),
             mv_transactions: RefCell::new(Vec::new()),
             transaction_state: Cell::new(TransactionState::None),
@@ -440,7 +445,7 @@ impl Database {
 
     #[inline]
     pub fn with_schema_mut<T>(&self, f: impl FnOnce(&mut Schema) -> Result<T>) -> Result<T> {
-        let mut schema_ref = self.schema.try_lock().ok_or(LimboError::SchemaLocked)?;
+        let mut schema_ref = self.schema.lock().map_err(|_| LimboError::SchemaLocked)?;
         let schema = Arc::make_mut(&mut *schema_ref);
         f(schema)
     }
@@ -786,7 +791,11 @@ impl Connection {
 
     pub fn maybe_update_schema(&self) -> Result<()> {
         let current_schema_version = self.schema.borrow().schema_version;
-        let schema = self._db.schema.try_lock().ok_or(LimboError::SchemaLocked)?;
+        let schema = self
+            ._db
+            .schema
+            .lock()
+            .map_err(|_| LimboError::SchemaLocked)?;
         if matches!(self.transaction_state.get(), TransactionState::None)
             && current_schema_version < schema.schema_version
         {
