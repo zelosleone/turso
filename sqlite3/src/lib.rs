@@ -219,15 +219,21 @@ pub unsafe extern "C" fn sqlite3_prepare_v2(
         return SQLITE_MISUSE;
     }
     let db: &mut sqlite3 = &mut *raw_db;
-    let db = db.inner.lock().unwrap();
+    let mut db = db.inner.lock().unwrap();
     let sql = CStr::from_ptr(sql);
     let sql = match sql.to_str() {
         Ok(s) => s,
-        Err(_) => return SQLITE_MISUSE,
+        Err(_) => {
+            db.err_code = SQLITE_MISUSE;
+            return SQLITE_MISUSE;
+        }
     };
     let stmt = match db.conn.prepare(sql) {
         Ok(stmt) => stmt,
-        Err(_) => return SQLITE_ERROR,
+        Err(_) => {
+            db.err_code = SQLITE_ERROR;
+            return SQLITE_ERROR;
+        }
     };
     *out_stmt = Box::leak(Box::new(sqlite3_stmt::new(raw_db, stmt)));
     SQLITE_OK
