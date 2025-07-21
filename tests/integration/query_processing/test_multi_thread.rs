@@ -126,7 +126,7 @@ fn test_reader_writer() -> anyhow::Result<()> {
         let current_written_rows = Arc::new(AtomicUsize::new(0));
         {
             let tmp_db = tmp_db.clone();
-            let mut current_written_rows = current_written_rows.clone();
+            let current_written_rows = current_written_rows.clone();
             threads.push(std::thread::spawn(move || {
                 let conn = tmp_db.connect_limbo();
                 for i in 0..number_of_writers {
@@ -164,10 +164,7 @@ fn test_reader_writer() -> anyhow::Result<()> {
                                     let i = i as i64;
                                     assert!(
                                         rows.contains(&i),
-                                        "row {} not found in {:?}. current_written_rows: {}",
-                                        i,
-                                        rows,
-                                        current_written_rows
+                                        "row {i} not found in {rows:?}. current_written_rows: {current_written_rows}",
                                     );
                                 }
                                 break;
