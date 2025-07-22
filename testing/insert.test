@@ -1,4 +1,4 @@
-#!/usr/bin/env tclsh
+,#!/usr/bin/env tclsh
 set testdir [file dirname $argv0]
 source $testdir/tester.tcl
 
@@ -161,6 +161,13 @@ do_execsql_test_on_specific_db {:memory:} strict-update-expression {
     UPDATE test11 SET price = price - (price * discount);
     SELECT id, price FROM test11;
 } {1|90.0}
+
+do_execsql_test_on_specific_db {:memory:} duplicate-set {
+    CREATE TABLE t(x, y);
+    INSERT INTO t VALUES(1, 'A');
+    UPDATE t SET y = 'B', y = 'C', y = 'D' WHERE x = 1;
+    SELECT x, y FROM t;
+} {1|D}
 
 do_execsql_test_on_specific_db {:memory:} named-insert-1 {
     CREATE TABLE test (id INTEGER PRIMARY KEY AUTOINCREMENT, col_a TEXT, col_b TEXT, col_c TEXT, col_d TEXT);
