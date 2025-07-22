@@ -24,55 +24,7 @@ pub use vtab_xconnect::{close, execute, prepare_stmt};
 #[repr(C)]
 pub struct ExtensionCtx {
     syms: *mut SymbolTable,
-    schema_data: *mut c_void,
-    schema_handler: SchemaHandler,
-}
-
-type SchemaHandler = unsafe extern "C" fn(
-    schema_data: *mut c_void,
-    table_name: *const c_char,
-    table: *mut c_void,
-) -> ResultCode;
-
-/// Handler for our Connection that has direct Arc<Schema> access
-/// to register a table from an extension.
-unsafe extern "C" fn handle_schema_insert_connection(
-    schema_data: *mut c_void,
-    table_name: *const c_char,
-    table: *mut c_void,
-) -> ResultCode {
-    let schema = &mut *(schema_data as *mut Schema);
-    let c_str = CStr::from_ptr(table_name);
-    let name = match c_str.to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => return ResultCode::InvalidArgs,
-    };
-    let table = Box::from_raw(table as *mut Arc<Table>);
-    schema.tables.insert(name, *table);
-    ResultCode::OK
-}
-
-/// Handler for Database with Mutex<Arc<Schema>> access to
-/// register a table from an extension.
-unsafe extern "C" fn handle_schema_insert_database(
-    schema_data: *mut c_void,
-    table_name: *const c_char,
-    table: *mut c_void,
-) -> ResultCode {
-    let mutex = &*(schema_data as *mut Mutex<Arc<Schema>>);
-    let Ok(mut guard) = mutex.lock() else {
-        return ResultCode::Error;
-    };
-    let schema = Arc::make_mut(&mut *guard);
-
-    let c_str = CStr::from_ptr(table_name);
-    let name = match c_str.to_str() {
-        Ok(s) => s.to_string(),
-        Err(_) => return ResultCode::InvalidArgs,
-    };
-    let table = Box::from_raw(table as *mut Arc<Table>);
-    schema.tables.insert(name, *table);
-    ResultCode::OK
+    schema: *mut c_void,
 }
 
 pub(crate) unsafe extern "C" fn register_vtab_module(
@@ -105,21 +57,13 @@ pub(crate) unsafe extern "C" fn register_vtab_module(
         if kind == VTabKind::TableValuedFunction {
             if let Ok(vtab) = VirtualTable::function(&name_str, syms) {
                 // Use the schema handler to insert the table
-                let table = Box::into_raw(Box::new(Arc::new(Table::Virtual(vtab))));
-                let c_name = match CString::new(name_str) {
-                    Ok(s) => s,
-                    Err(_) => return ResultCode::Error,
+                let table = Arc::new(Table::Virtual(vtab));
+                let mutex = &*(ext_ctx.schema as *mut Mutex<Arc<Schema>>);
+                let Ok(guard) = mutex.lock() else {
+                    return ResultCode::Error;
                 };
-
-                let result = (ext_ctx.schema_handler)(
-                    ext_ctx.schema_data,
-                    c_name.as_ptr(),
-                    table as *mut c_void,
-                );
-                if result != ResultCode::OK {
-                    let _ = Box::from_raw(table);
-                    return result;
-                }
+                let schema_ptr = Arc::as_ptr(&*guard) as *mut Schema;
+                (*schema_ptr).tables.insert(name_str, table);
             } else {
                 return ResultCode::Error;
             }
@@ -222,8 +166,7 @@ impl Database {
         let schema_mutex_ptr = &self.schema as *const Mutex<Arc<Schema>> as *mut Mutex<Arc<Schema>>;
         let ctx = Box::into_raw(Box::new(ExtensionCtx {
             syms,
-            schema_data: schema_mutex_ptr as *mut c_void,
-            schema_handler: handle_schema_insert_database,
+            schema: schema_mutex_ptr as *mut c_void,
         }));
         let mut ext_api = ExtensionApi {
             ctx: ctx as *mut c_void,
@@ -255,19 +198,30 @@ impl Database {
 }
 
 impl Connection {
-    /// # Safety:
-    /// Only to be used when registering a staticly linked extension manually.
+    /// Build the connection's extension api context for manually registering an extension.
     /// you probably want to use `Connection::load_extension(path)`.
-    /// Do not call if you have multiple connection open.
-    pub fn _build_turso_ext(&self) -> ExtensionApi {
-        let schema_ptr = self.schema.as_ptr();
-        let schema_direct = unsafe { Arc::as_ptr(&*schema_ptr) as *mut Schema };
+    ///
+    /// # Safety
+    /// Only to be used when registering a staticly linked extension manually.
+    /// You should only ever call this method on your applications startup,
+    /// The caller is responsible for calling `_free_extension_ctx` after registering the
+    /// extension.
+    ///
+    /// usage:
+    /// ```ignore
+    /// let ext_api = conn._build_turso_ext();
+    /// unsafe {
+    ///     my_extension::register_extension(&mut ext_api);
+    ///     conn._free_extension_ctx(ext_api);
+    /// }
+    ///```
+    pub unsafe fn _build_turso_ext(&self) -> ExtensionApi {
+        let schema_mutex_ptr =
+            &self._db.schema as *const Mutex<Arc<Schema>> as *mut Mutex<Arc<Schema>>;
         let ctx = ExtensionCtx {
             syms: self.syms.as_ptr(),
-            schema_data: schema_direct as *mut c_void,
-            schema_handler: handle_schema_insert_connection,
+            schema: schema_mutex_ptr as *mut c_void,
         };
-
         let ctx = Box::into_raw(Box::new(ctx)) as *mut c_void;
         ExtensionApi {
             ctx,
@@ -283,9 +237,9 @@ impl Connection {
         }
     }
 
-    /// # Safety:
+    /// Free the connection's extension libary context after registering an extension manually.
+    /// # Safety
     /// Only to be used if you have previously called Connection::build_turso_ext
-    /// before registering an extension manually.
     pub unsafe fn _free_extension_ctx(&self, api: ExtensionApi) {
         if api.ctx.is_null() {
             return;
