@@ -61,7 +61,6 @@ pub use io::{
 };
 use parking_lot::RwLock;
 use schema::Schema;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
@@ -76,7 +75,7 @@ use std::{
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
 use storage::page_cache::DumbLruPageCache;
-use storage::pager::{DB_STATE_INITIALIZED, DB_STATE_INITIALIZING, DB_STATE_UNINITIALIZED};
+use storage::pager::{AtomicDbState, DbState};
 pub use storage::{
     buffer_pool::BufferPool,
     database::DatabaseStorage,
@@ -117,7 +116,7 @@ pub struct Database {
     // create DB connections.
     _shared_page_cache: Arc<RwLock<DumbLruPageCache>>,
     maybe_shared_wal: RwLock<Option<Arc<UnsafeCell<WalFileShared>>>>,
-    db_state: Arc<AtomicUsize>,
+    db_state: Arc<AtomicDbState>,
     init_lock: Arc<Mutex<()>>,
     open_flags: OpenFlags,
     builtin_syms: RefCell<SymbolTable>,
@@ -134,11 +133,10 @@ impl fmt::Debug for Database {
             .field("open_flags", &self.open_flags);
 
         // Database state information
-        let db_state_value = match self.db_state.load(std::sync::atomic::Ordering::Relaxed) {
-            DB_STATE_UNINITIALIZED => "uninitialized".to_string(),
-            DB_STATE_INITIALIZING => "initializing".to_string(),
-            DB_STATE_INITIALIZED => "initialized".to_string(),
-            x => format!("invalid ({x})"),
+        let db_state_value = match self.db_state.get() {
+            DbState::Uninitialized => "uninitialized".to_string(),
+            DbState::Initializing => "initializing".to_string(),
+            DbState::Initialized => "initialized".to_string(),
         };
         debug_struct.field("db_state", &db_state_value);
 
@@ -239,9 +237,9 @@ impl Database {
 
         let db_size = db_file.size()?;
         let db_state = if db_size == 0 {
-            DB_STATE_UNINITIALIZED
+            DbState::Uninitialized
         } else {
-            DB_STATE_INITIALIZED
+            DbState::Initialized
         };
 
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
@@ -256,14 +254,14 @@ impl Database {
             builtin_syms: syms.into(),
             io: io.clone(),
             open_flags: flags,
-            db_state: Arc::new(AtomicUsize::new(db_state)),
+            db_state: Arc::new(AtomicDbState::new(db_state)),
             init_lock: Arc::new(Mutex::new(())),
         });
         db.register_global_builtin_extensions()
             .expect("unable to register global extensions");
 
         // Check: https://github.com/tursodatabase/turso/pull/1761#discussion_r2154013123
-        if db_state == DB_STATE_INITIALIZED {
+        if db_state.is_initialized() {
             // parse schema
             let conn = db.connect()?;
 
@@ -918,7 +916,7 @@ impl Connection {
         }
 
         self.page_size.set(size);
-        if self._db.db_state.load(Ordering::SeqCst) != DB_STATE_UNINITIALIZED {
+        if self._db.db_state.get() != DbState::Uninitialized {
             return Ok(());
         }
 

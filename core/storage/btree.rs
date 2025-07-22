@@ -6648,7 +6648,11 @@ mod tests {
     use crate::{
         io::{Buffer, MemoryIO, OpenFlags, IO},
         schema::IndexColumn,
-        storage::{database::DatabaseFile, page_cache::DumbLruPageCache},
+        storage::{
+            database::DatabaseFile,
+            page_cache::DumbLruPageCache,
+            pager::{AtomicDbState, DbState},
+        },
         types::Text,
         util::IOExt as _,
         vdbe::Register,
@@ -6660,7 +6664,7 @@ mod tests {
         mem::transmute,
         ops::Deref,
         rc::Rc,
-        sync::{atomic::AtomicUsize, Arc, Mutex},
+        sync::{Arc, Mutex},
     };
 
     use tempfile::TempDir;
@@ -7531,7 +7535,7 @@ mod tests {
                 io,
                 Arc::new(parking_lot::RwLock::new(DumbLruPageCache::new(10))),
                 buffer_pool,
-                Arc::new(AtomicUsize::new(0)),
+                Arc::new(AtomicDbState::new(DbState::Uninitialized)),
                 Arc::new(Mutex::new(())),
             )
             .unwrap(),
