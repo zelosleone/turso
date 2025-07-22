@@ -430,7 +430,7 @@ impl BTreeTable {
     }
 
     pub fn to_sql(&self) -> String {
-        let mut sql = format!("CREATE TABLE {} (", self.name);
+        let mut sql = format!("CREATE TABLE {}(", self.name);
         for (i, column) in self.columns.iter().enumerate() {
             if i > 0 {
                 sql.push_str(", ");
