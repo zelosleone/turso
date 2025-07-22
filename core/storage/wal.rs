@@ -20,8 +20,8 @@ use crate::fast_lock::SpinLock;
 use crate::io::{File, IO};
 use crate::result::LimboResult;
 use crate::storage::sqlite3_ondisk::{
-    begin_read_wal_frame, begin_write_wal_frame, finish_read_page, WAL_FRAME_HEADER_SIZE,
-    WAL_HEADER_SIZE,
+    begin_read_wal_frame, begin_read_wal_frame_raw, begin_write_wal_frame, finish_read_page,
+    WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
 };
 use crate::types::IOResult;
 use crate::{turso_assert, Buffer, LimboError, Result};
@@ -214,14 +214,8 @@ pub trait Wal {
     /// Read a frame from the WAL.
     fn read_frame(&self, frame_id: u64, page: PageRef, buffer_pool: Arc<BufferPool>) -> Result<()>;
 
-    /// Read a frame from the WAL.
-    fn read_frame_raw(
-        &self,
-        frame_id: u64,
-        buffer_pool: Arc<BufferPool>,
-        frame: *mut u8,
-        frame_len: u32,
-    ) -> Result<Arc<Completion>>;
+    /// Read a raw frame (header included) from the WAL.
+    fn read_frame_raw(&self, frame_id: u64, frame: &mut [u8]) -> Result<Arc<Completion>>;
 
     /// Write a frame to the WAL.
     /// db_size is the database size in pages after the transaction finishes.
@@ -289,13 +283,7 @@ impl Wal for DummyWAL {
         Ok(())
     }
 
-    fn read_frame_raw(
-        &self,
-        _frame_id: u64,
-        _buffer_pool: Arc<BufferPool>,
-        _frame: *mut u8,
-        _frame_len: u32,
-    ) -> Result<Arc<Completion>> {
+    fn read_frame_raw(&self, _frame_id: u64, _frame: &mut [u8]) -> Result<Arc<Completion>> {
         todo!();
     }
 
@@ -633,15 +621,10 @@ impl Wal for WalFile {
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
-    fn read_frame_raw(
-        &self,
-        frame_id: u64,
-        buffer_pool: Arc<BufferPool>,
-        frame: *mut u8,
-        frame_len: u32,
-    ) -> Result<Arc<Completion>> {
+    fn read_frame_raw(&self, frame_id: u64, frame: &mut [u8]) -> Result<Arc<Completion>> {
         tracing::debug!("read_frame({})", frame_id);
         let offset = self.frame_offset(frame_id);
+        let (frame_ptr, frame_len) = (frame.as_mut_ptr(), frame.len());
         let complete = Box::new(move |buf: Arc<RefCell<Buffer>>, bytes_read: i32| {
             let buf = buf.borrow();
             let buf_len = buf.len();
@@ -651,15 +634,11 @@ impl Wal for WalFile {
             );
             let buf_ptr = buf.as_ptr();
             unsafe {
-                std::ptr::copy_nonoverlapping(buf_ptr, frame, frame_len as usize);
+                std::ptr::copy_nonoverlapping(buf_ptr, frame_ptr, frame_len);
             }
         });
-        let c = begin_read_wal_frame(
-            &self.get_shared().file,
-            offset + WAL_FRAME_HEADER_SIZE,
-            buffer_pool,
-            complete,
-        )?;
+        let c =
+            begin_read_wal_frame_raw(&self.get_shared().file, offset, self.page_size(), complete)?;
         Ok(c)
     }
 

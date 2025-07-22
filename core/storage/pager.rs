@@ -959,19 +959,9 @@ impl Pager {
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
-    pub fn wal_get_frame(
-        &self,
-        frame_no: u32,
-        p_frame: *mut u8,
-        frame_len: u32,
-    ) -> Result<Arc<Completion>> {
+    pub fn wal_get_frame(&self, frame_no: u32, frame: &mut [u8]) -> Result<Arc<Completion>> {
         let wal = self.wal.borrow();
-        wal.read_frame_raw(
-            frame_no.into(),
-            self.buffer_pool.clone(),
-            p_frame,
-            frame_len,
-        )
+        wal.read_frame_raw(frame_no.into(), frame)
     }
 
     #[instrument(skip_all, level = Level::DEBUG, name = "pager_checkpoint",)]
