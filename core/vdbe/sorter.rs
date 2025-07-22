@@ -481,7 +481,7 @@ impl Ord for SortableImmutableRecord {
         let mut other_key_values = other.key_values.borrow_mut();
 
         for i in 0..self.cursor.serial_types.len() {
-            // Lazily deserialize the key values if they haven't been deserialized yet.
+            // Lazily deserialize the key values if they haven't been deserialized already.
             if i >= this_key_values.len() {
                 this_key_values.push(
                     self.cursor
