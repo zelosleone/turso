@@ -35,7 +35,7 @@ impl Connection {
     ) -> crate::Result<()> {
         use turso_ext::ExtensionApiRef;
 
-        let api = Box::new(self.build_turso_ext());
+        let api = Box::new(unsafe { self._build_turso_ext() });
         let lib =
             unsafe { Library::new(path).map_err(|e| LimboError::ExtensionError(e.to_string()))? };
         let entry: Symbol<ExtensionEntryPoint> = unsafe {

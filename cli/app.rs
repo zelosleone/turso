@@ -137,11 +137,14 @@ impl Limbo {
             let conn = db.connect()?;
             (io, conn)
         };
-        let mut ext_api = conn.build_turso_ext();
-        if unsafe { !limbo_completion::register_extension_static(&mut ext_api).is_ok() } {
-            return Err(anyhow!(
-                "Failed to register completion extension".to_string()
-            ));
+        unsafe {
+            let mut ext_api = conn._build_turso_ext();
+            if !limbo_completion::register_extension_static(&mut ext_api).is_ok() {
+                return Err(anyhow!(
+                    "Failed to register completion extension".to_string()
+                ));
+            }
+            conn._free_extension_ctx(ext_api);
         }
         let interrupt_count = Arc::new(AtomicUsize::new(0));
         {

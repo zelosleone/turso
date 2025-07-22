@@ -62,7 +62,6 @@ pub use io::{
 use parking_lot::RwLock;
 use schema::Schema;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
 use std::{
     borrow::Cow,
     cell::{Cell, RefCell, UnsafeCell},
@@ -72,7 +71,7 @@ use std::{
     num::NonZero,
     ops::Deref,
     rc::Rc,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
@@ -121,6 +120,7 @@ pub struct Database {
     db_state: Arc<AtomicUsize>,
     init_lock: Arc<Mutex<()>>,
     open_flags: OpenFlags,
+    builtin_syms: RefCell<SymbolTable>,
 }
 
 unsafe impl Send for Database {}
@@ -245,7 +245,7 @@ impl Database {
         };
 
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
-
+        let syms = SymbolTable::new();
         let db = Arc::new(Database {
             mv_store,
             path: path.to_string(),
@@ -253,11 +253,14 @@ impl Database {
             _shared_page_cache: shared_page_cache.clone(),
             maybe_shared_wal: RwLock::new(maybe_shared_wal),
             db_file,
+            builtin_syms: syms.into(),
             io: io.clone(),
             open_flags: flags,
             db_state: Arc::new(AtomicUsize::new(db_state)),
             init_lock: Arc::new(Mutex::new(())),
         });
+        db.register_global_builtin_extensions()
+            .expect("unable to register global extensions");
 
         // Check: https://github.com/tursodatabase/turso/pull/1761#discussion_r2154013123
         if db_state == DB_STATE_INITIALIZED {
@@ -315,10 +318,9 @@ impl Database {
             capture_data_changes: RefCell::new(CaptureDataChangesMode::Off),
             closed: Cell::new(false),
         });
-
-        if let Err(e) = conn.register_builtins() {
-            return Err(LimboError::ExtensionError(e));
-        }
+        let builtin_syms = self.builtin_syms.borrow();
+        // add built-in extensions symbols to the connection to prevent having to load each time
+        conn.syms.borrow_mut().extend(&builtin_syms);
         Ok(conn)
     }
 
@@ -1221,6 +1223,18 @@ impl SymbolTable {
         _arg_count: usize,
     ) -> Option<Rc<function::ExternalFunc>> {
         self.functions.get(name).cloned()
+    }
+
+    pub fn extend(&mut self, other: &SymbolTable) {
+        for (name, func) in &other.functions {
+            self.functions.insert(name.clone(), func.clone());
+        }
+        for (name, vtab) in &other.vtabs {
+            self.vtabs.insert(name.clone(), vtab.clone());
+        }
+        for (name, module) in &other.vtab_modules {
+            self.vtab_modules.insert(name.clone(), module.clone());
+        }
     }
 }
 
