@@ -1428,6 +1428,96 @@ mod tests {
     }
 
     #[test]
+    // Simple fuzz test for SUM with mixed numeric/non-numeric values (issue #2133)
+    pub fn sum_agg_fuzz() {
+        let _ = env_logger::try_init();
+
+        let (mut rng, seed) = rng_from_time();
+        log::info!("seed: {seed}");
+
+        for _ in 0..100 {
+            let db = TempDatabase::new_empty(false);
+            let limbo_conn = db.connect_limbo();
+            let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
+
+            limbo_exec_rows(&db, &limbo_conn, "CREATE TABLE t(x)");
+            sqlite_exec_rows(&sqlite_conn, "CREATE TABLE t(x)");
+
+            // Insert 3-4 mixed values: integers, text, NULL
+            let mut values = Vec::new();
+            for _ in 0..rng.random_range(3..=4) {
+                let value = match rng.random_range(0..3) {
+                    0 => rng.random_range(-100..100).to_string(), // Integer
+                    1 => format!(
+                        "'{}'",
+                        (0..3)
+                            .map(|_| rng.random_range(b'a'..=b'z') as char)
+                            .collect::<String>()
+                    ), // Text
+                    2 => "NULL".to_string(),                      // NULL
+                    _ => unreachable!(),
+                };
+                values.push(format!("({value})"));
+            }
+
+            let insert = format!("INSERT INTO t VALUES {}", values.join(","));
+            limbo_exec_rows(&db, &limbo_conn, &insert);
+            sqlite_exec_rows(&sqlite_conn, &insert);
+
+            let query = "SELECT sum(x) FROM t";
+            let limbo = limbo_exec_rows(&db, &limbo_conn, query);
+            let sqlite = sqlite_exec_rows(&sqlite_conn, query);
+
+            assert_eq!(limbo, sqlite, "seed: {seed}, values: {values:?}");
+        }
+    }
+
+    #[test]
+    // Simple fuzz test for TOTAL with mixed numeric/non-numeric values
+    pub fn total_agg_fuzz() {
+        let _ = env_logger::try_init();
+
+        let (mut rng, seed) = rng_from_time();
+        log::info!("seed: {seed}");
+
+        for _ in 0..100 {
+            let db = TempDatabase::new_empty(false);
+            let limbo_conn = db.connect_limbo();
+            let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
+
+            limbo_exec_rows(&db, &limbo_conn, "CREATE TABLE t(x)");
+            sqlite_exec_rows(&sqlite_conn, "CREATE TABLE t(x)");
+
+            // Insert 3-4 mixed values: integers, text, NULL
+            let mut values = Vec::new();
+            for _ in 0..rng.random_range(3..=4) {
+                let value = match rng.random_range(0..3) {
+                    0 => rng.random_range(-100..100).to_string(), // Integer
+                    1 => format!(
+                        "'{}'",
+                        (0..3)
+                            .map(|_| rng.random_range(b'a'..=b'z') as char)
+                            .collect::<String>()
+                    ), // Text
+                    2 => "NULL".to_string(),                      // NULL
+                    _ => unreachable!(),
+                };
+                values.push(format!("({value})"));
+            }
+
+            let insert = format!("INSERT INTO t VALUES {}", values.join(","));
+            limbo_exec_rows(&db, &limbo_conn, &insert);
+            sqlite_exec_rows(&sqlite_conn, &insert);
+
+            let query = "SELECT total(x) FROM t";
+            let limbo = limbo_exec_rows(&db, &limbo_conn, query);
+            let sqlite = sqlite_exec_rows(&sqlite_conn, query);
+
+            assert_eq!(limbo, sqlite, "seed: {seed}, values: {values:?}");
+        }
+    }
+
+    #[test]
     pub fn table_logical_expression_fuzz_run() {
         let _ = env_logger::try_init();
         let g = GrammarGenerator::new();
