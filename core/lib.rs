@@ -809,15 +809,8 @@ impl Connection {
         self.pager.borrow().wal_frame_count()
     }
 
-    pub fn wal_get_frame(
-        &self,
-        frame_no: u32,
-        p_frame: *mut u8,
-        frame_len: u32,
-    ) -> Result<Arc<Completion>> {
-        self.pager
-            .borrow()
-            .wal_get_frame(frame_no, p_frame, frame_len)
+    pub fn wal_get_frame(&self, frame_no: u32, frame: &mut [u8]) -> Result<Arc<Completion>> {
+        self.pager.borrow().wal_get_frame(frame_no, frame)
     }
 
     /// Flush dirty pages to disk.

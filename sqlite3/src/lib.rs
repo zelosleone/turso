@@ -1185,7 +1185,8 @@ pub unsafe extern "C" fn libsql_wal_get_frame(
     }
     let db: &mut sqlite3 = &mut *db;
     let db = db.inner.lock().unwrap();
-    match db.conn.wal_get_frame(frame_no, p_frame, frame_len) {
+    let frame = std::slice::from_raw_parts_mut(p_frame, frame_len as usize);
+    match db.conn.wal_get_frame(frame_no, frame) {
         Ok(c) => match db.io.wait_for_completion(c) {
             Ok(_) => SQLITE_OK,
             Err(_) => SQLITE_ERROR,

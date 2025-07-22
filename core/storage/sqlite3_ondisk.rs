@@ -1509,6 +1509,24 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
     Ok(wal_file_shared_ret)
 }
 
+pub fn begin_read_wal_frame_raw(
+    io: &Arc<dyn File>,
+    offset: usize,
+    page_size: u32,
+    complete: Box<dyn Fn(Arc<RefCell<Buffer>>, i32)>,
+) -> Result<Arc<Completion>> {
+    tracing::trace!("begin_read_wal_frame_raw(offset={})", offset);
+    let drop_fn = Rc::new(|_buf| {});
+    let buf = Arc::new(RefCell::new(Buffer::allocate(
+        page_size as usize + WAL_FRAME_HEADER_SIZE,
+        drop_fn,
+    )));
+    #[allow(clippy::arc_with_non_send_sync)]
+    let c = Completion::new_read(buf, complete);
+    let c = io.pread(offset, c.into())?;
+    Ok(c)
+}
+
 pub fn begin_read_wal_frame(
     io: &Arc<dyn File>,
     offset: usize,
