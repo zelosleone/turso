@@ -12,6 +12,7 @@ use crate::{turso_assert, Buffer, Connection, LimboError, Result};
 use parking_lot::RwLock;
 use std::cell::{Cell, OnceCell, RefCell, UnsafeCell};
 use std::collections::HashSet;
+use std::hash;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -261,7 +262,7 @@ pub struct Pager {
     pub buffer_pool: Arc<BufferPool>,
     /// I/O interface for input/output operations.
     pub io: Arc<dyn crate::io::IO>,
-    dirty_pages: Rc<RefCell<HashSet<usize>>>,
+    dirty_pages: Rc<RefCell<HashSet<usize, hash::BuildHasherDefault<hash::DefaultHasher>>>>,
 
     commit_info: RefCell<CommitInfo>,
     flush_info: RefCell<FlushInfo>,
@@ -337,7 +338,9 @@ impl Pager {
             wal,
             page_cache,
             io,
-            dirty_pages: Rc::new(RefCell::new(HashSet::new())),
+            dirty_pages: Rc::new(RefCell::new(HashSet::with_hasher(
+                hash::BuildHasherDefault::new(),
+            ))),
             commit_info: RefCell::new(CommitInfo {
                 state: CommitState::Start,
                 in_flight_writes: Rc::new(RefCell::new(0)),
