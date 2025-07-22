@@ -831,8 +831,13 @@ impl Connection {
 
     pub fn wal_insert_end(&self) -> Result<()> {
         let pager = self.pager.borrow();
-        pager.wal.borrow().end_write_tx();
-        pager.wal.borrow().end_read_tx();
+        let mut wal = pager.wal.borrow_mut();
+        // remove all non-commited changes in case if WAL session left some suffix without commit frame
+        wal.rollback()
+            .expect("wal must be able to rollback any non-commited changes");
+
+        wal.end_write_tx();
+        wal.end_read_tx();
         Ok(())
     }
 
