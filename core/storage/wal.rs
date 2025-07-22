@@ -569,6 +569,15 @@ impl Wal for WalFile {
         if busy {
             return Ok(LimboResult::Busy);
         }
+        // If the max frame is not the same as the one in the shared state, it means another
+        // transaction wrote to the WAL after we started our read transaction. This means our
+        // snapshot is not consistent with the one in the shared state and we need to start another
+        // one.
+        let shared = self.get_shared();
+        if self.max_frame != shared.max_frame.load(Ordering::SeqCst) {
+            shared.write_lock.unlock();
+            return Ok(LimboResult::Busy);
+        }
         Ok(LimboResult::Ok)
     }
 
