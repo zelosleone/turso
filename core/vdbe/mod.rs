@@ -418,7 +418,22 @@ impl Program {
                         _ => {
                             let state = self.connection.transaction_state.get();
                             if let TransactionState::Write { schema_did_change } = state {
-                                pager.rollback(schema_did_change, &self.connection)?;
+                                if let Err(e) = pager.rollback(schema_did_change, &self.connection)
+                                {
+                                    tracing::error!("rollback failed: {e}");
+                                }
+                                if let Err(e) =
+                                    pager.end_tx(false, schema_did_change, &self.connection, false)
+                                {
+                                    tracing::error!("end_tx failed: {e}");
+                                }
+                                self.connection
+                                    .transaction_state
+                                    .replace(TransactionState::None);
+                            } else {
+                                if let Err(e) = pager.end_read_tx() {
+                                    tracing::error!("end_read_tx failed: {e}");
+                                }
                                 self.connection
                                     .transaction_state
                                     .replace(TransactionState::None);
