@@ -28,20 +28,30 @@
 
 ---
 
-## Features and Roadmap
+## Features
 
 Turso Database is a _work-in-progress_, in-process OLTP database engine library written in Rust that has:
 
-* **SQLite compatibility** [[doc](COMPAT.md)] for SQL dialect, file formats, and the C API
-* **Language bindings** for [JavaScript](bindings/javascript), [WebAssembly](bindings/wasm), [Rust](bindings/rust), [Go](bindings/go), [Python](bindings/python), and [Java](bindings/java)
+* **SQLite compatibility** for SQL dialect, file formats, and the C API [see [document](COMPAT.md) for details]
+* **Change data capture (CDC)** for real-time tracking of database changes.
+* **Language support** for
+  * [Go](bindings/go)
+  * [JavaScript](bindings/javascript)
+  * [Java](bindings/java)
+  * [Python](bindings/python)
+  * [Rust](bindings/rust)
+  * [WebAssembly](bindings/wasm)
 * **Asynchronous I/O** support on Linux with `io_uring`
 * **OS support** for Linux, macOS, and Windows
 
-In the future, we will be also working on:
+### Roadmap
 
-* **`BEGIN CONCURRENT`** for improved write throughput.
-* **Indexing for vector search**.
-* **Improved schema management** including better `ALTER` support and strict column types by default.
+The following features are on our current roadmap:
+
+* **`BEGIN CONCURRENT`** for improved write throughput using multi-version concurrency control (MVCC).
+* **Better schema management**, including extended `ALTER` support, faster schema changes, and strict column types by default.
+* **Incremental computation** using DBSP to implement query subscriptions, incremental view maintenance, and triggers.
+* **Vector indexing** for fast approximate vector search, similar to [libSQL vector search](https://turso.tech/vector).
 
 ## Getting Started
 
