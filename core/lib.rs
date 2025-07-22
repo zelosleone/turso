@@ -809,10 +809,14 @@ impl Connection {
         self.pager.borrow().wal_get_frame(frame_no, frame)
     }
 
+    /// Insert `frame` (header included) at the position `frame_no` in the WAL
+    /// If WAL already has frame at that position - turso-db will compare content of the page and either report conflict or return OK
+    /// If attempt to write frame at the position `frame_no` will create gap in the WAL - method will return error
     pub fn wal_insert_frame(&self, frame_no: u32, frame: &[u8]) -> Result<()> {
         self.pager.borrow().wal_insert_frame(frame_no, frame)
     }
 
+    /// Start WAL session by initiating read+write transaction for this connection
     pub fn wal_insert_begin(&self) -> Result<()> {
         let pager = self.pager.borrow();
         match pager.io.block(|| pager.begin_read_tx())? {
@@ -829,6 +833,8 @@ impl Connection {
         Ok(())
     }
 
+    /// Finish WAL session by ending read+write transaction taken in the [Self::wal_insert_begin] method
+    /// All frames written after last commit frame (db_size > 0) within the session will be rolled back
     pub fn wal_insert_end(&self) -> Result<()> {
         let pager = self.pager.borrow();
         let mut wal = pager.wal.borrow_mut();

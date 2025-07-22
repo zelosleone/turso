@@ -3,7 +3,7 @@
 
 use std::ffi::{self, CStr, CString};
 use tracing::trace;
-use turso_core::Value;
+use turso_core::{LimboError, Value};
 
 use std::sync::{Arc, Mutex};
 
@@ -1218,6 +1218,7 @@ pub unsafe extern "C" fn libsql_wal_insert_frame(
     frame_no: u32,
     p_frame: *const u8,
     frame_len: u32,
+    p_conflict: *mut i32,
 ) -> ffi::c_int {
     if db.is_null() {
         return SQLITE_MISUSE;
@@ -1227,6 +1228,12 @@ pub unsafe extern "C" fn libsql_wal_insert_frame(
     let frame = std::slice::from_raw_parts(p_frame, frame_len as usize);
     match db.conn.wal_insert_frame(frame_no, frame) {
         Ok(()) => SQLITE_OK,
+        Err(LimboError::Conflict(..)) => {
+            if !p_conflict.is_null() {
+                *p_conflict = 1;
+            }
+            SQLITE_ERROR
+        }
         Err(_) => SQLITE_ERROR,
     }
 }
