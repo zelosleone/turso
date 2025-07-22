@@ -706,8 +706,7 @@ impl Wal for WalFile {
             self.io.wait_for_completion(c)?;
             return if conflict.get() {
                 Err(LimboError::InvalidArgument(format!(
-                    "frame content differs from the WAL: frame_id={}",
-                    frame_id
+                    "frame content differs from the WAL: frame_id={frame_id}"
                 )))
             } else {
                 Ok(())

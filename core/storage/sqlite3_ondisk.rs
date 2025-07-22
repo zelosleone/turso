@@ -1576,7 +1576,7 @@ pub fn prepare_wal_frame(
     let drop_fn = Rc::new(|_buf| {});
     let mut buffer = Buffer::allocate(page_size as usize + WAL_FRAME_HEADER_SIZE, drop_fn);
     let frame = buffer.as_mut_slice();
-    frame[WAL_FRAME_HEADER_SIZE..].copy_from_slice(&page);
+    frame[WAL_FRAME_HEADER_SIZE..].copy_from_slice(page);
 
     frame[0..4].copy_from_slice(&page_number.to_be_bytes());
     frame[4..8].copy_from_slice(&db_size.to_be_bytes());
