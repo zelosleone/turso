@@ -23,6 +23,24 @@ export class Statement {
   }
 
   /**
+   * Executes the prepared statement.
+   * 
+   * @param args - Optional array of parameter values for the SQL statement
+   * @returns Promise resolving to the result of the statement
+   * 
+   * @example
+   * ```typescript
+   * const stmt = client.prepare("INSERT INTO users (name, email) VALUES (?, ?)");
+   * const result = await stmt.run(['John Doe', 'john.doe@example.com']);
+   * console.log(`Inserted user with ID ${result.lastInsertRowid}`);
+   * ```
+   */
+  async run(args: any[] = []): Promise<any> {
+    const result = await this.session.execute(this.sql, args);
+    return { changes: result.rowsAffected, lastInsertRowid: result.lastInsertRowid };
+  }
+
+  /**
    * Execute the statement and return the first row.
    * 
    * @param args - Optional array of parameter values for the SQL statement
