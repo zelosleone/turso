@@ -1195,6 +1195,42 @@ pub unsafe extern "C" fn libsql_wal_get_frame(
     }
 }
 
+/// Insert a frame into the WAL file
+///
+/// The `libsql_wal_insert_frame` function insert frame at position frame_no
+/// with content specified into memory pointed by `p_frame` of size `frame_len`.
+///
+/// # Returns
+///
+/// - `SQLITE_OK` if the frame is successfully inserted.
+/// - `SQLITE_MISUSE` if the `db` is `NULL`.
+/// - `SQLITE_ERROR` if an error occurs while inserting the frame.
+///
+/// # Safety
+///
+/// - The `db` must be a valid pointer to a `sqlite3` database connection.
+/// - The `frame_no` must be a valid frame index.
+/// - The `p_frame` must be a valid pointer to a `u8` that stores the frame data.
+/// - The `frame_len` must be the size of the frame.
+#[no_mangle]
+pub unsafe extern "C" fn libsql_wal_insert_frame(
+    db: *mut sqlite3,
+    frame_no: u32,
+    p_frame: *const u8,
+    frame_len: u32,
+) -> ffi::c_int {
+    if db.is_null() {
+        return SQLITE_MISUSE;
+    }
+    let db: &mut sqlite3 = &mut *db;
+    let db = db.inner.lock().unwrap();
+    let frame = std::slice::from_raw_parts(p_frame, frame_len as usize);
+    match db.conn.wal_insert_frame(frame_no, frame) {
+        Ok(()) => SQLITE_OK,
+        Err(_) => SQLITE_ERROR,
+    }
+}
+
 /// Disable WAL checkpointing.
 ///
 /// Note: This function disables WAL checkpointing entirely for the connection. This is different from

@@ -20,8 +20,8 @@ use crate::fast_lock::SpinLock;
 use crate::io::{File, IO};
 use crate::result::LimboResult;
 use crate::storage::sqlite3_ondisk::{
-    begin_read_wal_frame, begin_read_wal_frame_raw, begin_write_wal_frame, finish_read_page,
-    WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
+    begin_read_wal_frame, begin_read_wal_frame_raw, finish_read_page, parse_wal_frame_header,
+    prepare_wal_frame, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
 };
 use crate::types::IOResult;
 use crate::{turso_assert, Buffer, LimboError, Result};
@@ -217,6 +217,15 @@ pub trait Wal {
     /// Read a raw frame (header included) from the WAL.
     fn read_frame_raw(&self, frame_id: u64, frame: &mut [u8]) -> Result<Arc<Completion>>;
 
+    /// Write a raw frame (header included) from the WAL.
+    /// Note, that turso-db will use page_no and size_after fields from the header, but will overwrite checksum with proper value
+    fn write_frame_raw(
+        &mut self,
+        buffer_pool: Arc<BufferPool>,
+        frame_id: u64,
+        frame: &[u8],
+    ) -> Result<()>;
+
     /// Write a frame to the WAL.
     /// db_size is the database size in pages after the transaction finishes.
     /// db_size > 0    -> last frame written in transaction
@@ -280,6 +289,15 @@ impl Wal for DummyWAL {
     }
 
     fn read_frame_raw(&self, _frame_id: u64, _frame: &mut [u8]) -> Result<Arc<Completion>> {
+        todo!();
+    }
+
+    fn write_frame_raw(
+        &mut self,
+        _buffer_pool: Arc<BufferPool>,
+        _frame_id: u64,
+        _frame: &[u8],
+    ) -> Result<()> {
         todo!();
     }
 
@@ -636,6 +654,91 @@ impl Wal for WalFile {
         Ok(c)
     }
 
+    #[instrument(skip_all, level = Level::DEBUG)]
+    fn write_frame_raw(
+        &mut self,
+        buffer_pool: Arc<BufferPool>,
+        frame_id: u64,
+        frame: &[u8],
+    ) -> Result<()> {
+        tracing::debug!("write_raw_frame({})", frame_id);
+        let expected_frame_len = WAL_FRAME_HEADER_SIZE + self.page_size() as usize;
+        if frame.len() != expected_frame_len {
+            return Err(LimboError::InvalidArgument(format!(
+                "unexpected frame size: got={}, expected={}",
+                frame.len(),
+                expected_frame_len
+            )));
+        }
+        if frame_id > self.max_frame + 1 {
+            // attempt to write frame out of sequential order - error out
+            return Err(LimboError::InvalidArgument(format!(
+                "frame_id is beyond next frame in the WAL: frame_id={}, max_frame={}",
+                frame_id, self.max_frame
+            )));
+        }
+        if frame_id <= self.max_frame {
+            // just validate if page content from the frame matches frame in the WAL
+            let offset = self.frame_offset(frame_id);
+            let conflict = Arc::new(Cell::new(false));
+            let (frame_ptr, frame_len) = (frame.as_ptr(), frame.len());
+            let complete = Box::new({
+                let conflict = conflict.clone();
+                move |buf: Arc<RefCell<Buffer>>, bytes_read: i32| {
+                    let buf = buf.borrow();
+                    let buf_len = buf.len();
+                    turso_assert!(
+                        bytes_read == buf_len as i32,
+                        "read({bytes_read}) != expected({buf_len})"
+                    );
+                    let frame = unsafe { std::slice::from_raw_parts(frame_ptr, frame_len) };
+                    if buf.as_slice() != &frame[WAL_FRAME_HEADER_SIZE..] {
+                        conflict.set(true);
+                    }
+                }
+            });
+            let c = begin_read_wal_frame(
+                &self.get_shared().file,
+                offset + WAL_FRAME_HEADER_SIZE,
+                buffer_pool,
+                complete,
+            )?;
+            self.io.wait_for_completion(c)?;
+            return if conflict.get() {
+                Err(LimboError::InvalidArgument(format!(
+                    "frame content differs from the WAL: frame_id={}",
+                    frame_id
+                )))
+            } else {
+                Ok(())
+            };
+        }
+
+        // perform actual write
+        let offset = self.frame_offset(frame_id);
+        let shared = self.get_shared();
+        let header = shared.wal_header.clone();
+        let header = header.lock();
+        let checksums = self.last_checksum;
+        let frame_header = parse_wal_frame_header(frame);
+        let (checksums, frame_bytes) = prepare_wal_frame(
+            &header,
+            checksums,
+            header.page_size,
+            frame_header.page_number,
+            frame_header.db_size,
+            &frame[WAL_FRAME_HEADER_SIZE..],
+        );
+        let c = Arc::new(Completion::new_write(|_| {}));
+        let c = shared.file.pwrite(offset, frame_bytes, c)?;
+        self.io.wait_for_completion(c)?;
+        self.complete_append_frame(frame_header.page_number as u64, frame_id, checksums);
+        if frame_header.db_size > 0 {
+            self.finish_append_frames_commit()?;
+        }
+        Ok(())
+    }
+
     /// Write a frame to the WAL.
     #[instrument(skip_all, level = Level::DEBUG)]
     fn append_frame(
@@ -645,8 +748,7 @@ impl Wal for WalFile {
         write_counter: Rc<RefCell<usize>>,
     ) -> Result<()> {
         let page_id = page.get().id;
-        let max_frame = self.max_frame;
-        let frame_id = if max_frame == 0 { 1 } else { max_frame + 1 };
+        let frame_id = self.max_frame + 1;
         let offset = self.frame_offset(frame_id);
         tracing::debug!(frame_id, offset, page_id);
         let checksums = {
@@ -654,31 +756,40 @@ impl Wal for WalFile {
             let header = shared.wal_header.clone();
             let header = header.lock();
             let checksums = self.last_checksum;
-            begin_write_wal_frame(
-                &shared.file,
-                offset,
-                &page,
-                header.page_size as u16,
-                db_size,
-                write_counter,
+            let page_content = page.get_contents();
+            let page_buf = page_content.as_ptr();
+            let (frame_checksums, frame_bytes) = prepare_wal_frame(
                 &header,
                 checksums,
-            )?
-        };
-        self.last_checksum = checksums;
-        self.max_frame = frame_id;
-        let shared = self.get_shared();
-        {
-            let mut frame_cache = shared.frame_cache.lock();
-            let frames = frame_cache.get_mut(&(page_id as u64));
-            match frames {
-                Some(frames) => frames.push(frame_id),
-                None => {
-                    frame_cache.insert(page_id as u64, vec![frame_id]);
-                    shared.pages_in_frames.lock().push(page_id as u64);
+                header.page_size,
+                page_id as u32,
+                db_size,
+                page_buf,
+            );
+
+            *write_counter.borrow_mut() += 1;
+            let c = Completion::new_write({
+                let frame_bytes = frame_bytes.clone();
+                let write_counter = write_counter.clone();
+                move |bytes_written| {
+                    let frame_len = frame_bytes.borrow().len();
+                    turso_assert!(
+                        bytes_written == frame_len as i32,
+                        "wrote({bytes_written}) != expected({frame_len})"
+                    );
+
+                    page.clear_dirty();
+                    *write_counter.borrow_mut() -= 1;
                 }
+            });
+            let result = shared.file.pwrite(offset, frame_bytes.clone(), c.into());
+            if let Err(err) = result {
+                *write_counter.borrow_mut() -= 1;
+                return Err(err);
             }
-        }
+            frame_checksums
+        };
+        self.complete_append_frame(page_id as u64, frame_id, checksums);
         Ok(())
     }
 
@@ -996,6 +1107,23 @@ impl WalFile {
     #[allow(clippy::mut_from_ref)]
     fn get_shared(&self) -> &mut WalFileShared {
         unsafe { self.shared.get().as_mut().unwrap() }
+    }
+
+    fn complete_append_frame(&mut self, page_id: u64, frame_id: u64, checksums: (u32, u32)) {
+        self.last_checksum = checksums;
+        self.max_frame = frame_id;
+        let shared = self.get_shared();
+        {
+            let mut frame_cache = shared.frame_cache.lock();
+            let frames = frame_cache.get_mut(&page_id);
+            match frames {
+                Some(frames) => frames.push(frame_id),
+                None => {
+                    frame_cache.insert(page_id, vec![frame_id]);
+                    shared.pages_in_frames.lock().push(page_id);
+                }
+            }
+        }
     }
 }
 

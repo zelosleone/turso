@@ -303,7 +303,7 @@ pub struct Pager {
     /// Source of the database pages.
     pub db_file: Arc<dyn DatabaseStorage>,
     /// The write-ahead log (WAL) for the database.
-    wal: Rc<RefCell<dyn Wal>>,
+    pub(crate) wal: Rc<RefCell<dyn Wal>>,
     /// A page cache for the database.
     page_cache: Arc<RwLock<DumbLruPageCache>>,
     /// Buffer pool for temporary data storage.
@@ -1009,6 +1009,12 @@ impl Pager {
     pub fn wal_get_frame(&self, frame_no: u32, frame: &mut [u8]) -> Result<Arc<Completion>> {
         let wal = self.wal.borrow();
         wal.read_frame_raw(frame_no.into(), frame)
+    }
+
+    #[instrument(skip_all, level = Level::DEBUG)]
+    pub fn wal_insert_frame(&self, frame_no: u32, frame: &[u8]) -> Result<()> {
+        let mut wal = self.wal.borrow_mut();
+        wal.write_frame_raw(self.buffer_pool.clone(), frame_no as u64, frame)
     }
 
     #[instrument(skip_all, level = Level::DEBUG, name = "pager_checkpoint",)]

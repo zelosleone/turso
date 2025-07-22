@@ -46,7 +46,7 @@ use crate::storage::{header_accessor, wal::DummyWAL};
 use crate::translate::optimizer::optimize_plan;
 use crate::translate::pragma::TURSO_CDC_DEFAULT_TABLE_NAME;
 #[cfg(feature = "fs")]
-use crate::util::{OpenMode, OpenOptions};
+use crate::util::{IOExt, OpenMode, OpenOptions};
 use crate::vtab::VirtualTable;
 use core::str;
 pub use error::LimboError;
@@ -807,6 +807,33 @@ impl Connection {
 
     pub fn wal_get_frame(&self, frame_no: u32, frame: &mut [u8]) -> Result<Arc<Completion>> {
         self.pager.borrow().wal_get_frame(frame_no, frame)
+    }
+
+    pub fn wal_insert_frame(&self, frame_no: u32, frame: &[u8]) -> Result<()> {
+        self.pager.borrow().wal_insert_frame(frame_no, frame)
+    }
+
+    pub fn wal_insert_begin(&self) -> Result<()> {
+        let pager = self.pager.borrow();
+        match pager.io.block(|| pager.begin_read_tx())? {
+            result::LimboResult::Busy => return Err(LimboError::Busy),
+            result::LimboResult::Ok => {}
+        }
+        match pager.io.block(|| pager.begin_write_tx())? {
+            result::LimboResult::Busy => {
+                pager.end_read_tx().expect("read txn must be closed");
+                return Err(LimboError::Busy);
+            }
+            result::LimboResult::Ok => {}
+        }
+        Ok(())
+    }
+
+    pub fn wal_insert_end(&self) -> Result<()> {
+        let pager = self.pager.borrow();
+        pager.wal.borrow().end_write_tx();
+        pager.wal.borrow().end_read_tx();
+        Ok(())
     }
 
     /// Flush dirty pages to disk.

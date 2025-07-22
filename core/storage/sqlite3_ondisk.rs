@@ -226,23 +226,23 @@ pub struct WalHeader {
 #[derive(Debug, Default, Copy, Clone)]
 pub struct WalFrameHeader {
     /// Page number
-    page_number: u32,
+    pub(crate) page_number: u32,
 
     /// For commit records, the size of the database file in pages after the commit.
     /// For all other records, zero.
-    db_size: u32,
+    pub(crate) db_size: u32,
 
     /// Salt-1 copied from the WAL header
-    salt_1: u32,
+    pub(crate) salt_1: u32,
 
     /// Salt-2 copied from the WAL header
-    salt_2: u32,
+    pub(crate) salt_2: u32,
 
     /// Checksum-1: Cumulative checksum up through and including this page
-    checksum_1: u32,
+    pub(crate) checksum_1: u32,
 
     /// Checksum-2: Second half of the cumulative checksum
-    checksum_2: u32,
+    pub(crate) checksum_2: u32,
 }
 
 impl Default for DatabaseHeader {
@@ -1546,104 +1546,56 @@ pub fn begin_read_wal_frame(
     Ok(c)
 }
 
-#[instrument(err,skip(io, page, write_counter, wal_header, checksums), level = Level::DEBUG)]
-#[allow(clippy::too_many_arguments)]
-pub fn begin_write_wal_frame(
-    io: &Arc<dyn File>,
-    offset: usize,
-    page: &PageRef,
-    page_size: u16,
-    db_size: u32,
-    write_counter: Rc<RefCell<usize>>,
-    wal_header: &WalHeader,
-    checksums: (u32, u32),
-) -> Result<(u32, u32)> {
-    let page_finish = page.clone();
-    let page_id = page.get().id;
-    tracing::trace!(page_id);
-
-    let mut header = WalFrameHeader {
-        page_number: page_id as u32,
+pub fn parse_wal_frame_header(frame: &[u8]) -> WalFrameHeader {
+    let page_number = u32::from_be_bytes(frame[0..4].try_into().unwrap());
+    let db_size = u32::from_be_bytes(frame[4..8].try_into().unwrap());
+    let salt_1 = u32::from_be_bytes(frame[8..12].try_into().unwrap());
+    let salt_2 = u32::from_be_bytes(frame[12..16].try_into().unwrap());
+    let checksum_1 = u32::from_be_bytes(frame[16..20].try_into().unwrap());
+    let checksum_2 = u32::from_be_bytes(frame[20..24].try_into().unwrap());
+    WalFrameHeader {
+        page_number,
         db_size,
-        salt_1: wal_header.salt_1,
-        salt_2: wal_header.salt_2,
-        checksum_1: 0,
-        checksum_2: 0,
-    };
-    let (buffer, checksums) = {
-        let page = page.get();
-        let contents = page.contents.as_ref().unwrap();
-        let drop_fn = Rc::new(|_buf| {});
-
-        let mut buffer = Buffer::allocate(
-            contents.buffer.borrow().len() + WAL_FRAME_HEADER_SIZE,
-            drop_fn,
-        );
-        let buf = buffer.as_mut_slice();
-        buf[0..4].copy_from_slice(&header.page_number.to_be_bytes());
-        buf[4..8].copy_from_slice(&header.db_size.to_be_bytes());
-        buf[8..12].copy_from_slice(&header.salt_1.to_be_bytes());
-        buf[12..16].copy_from_slice(&header.salt_2.to_be_bytes());
-
-        let contents_buf = contents.as_ptr();
-        let content_len = contents_buf.len();
-        buf[WAL_FRAME_HEADER_SIZE..WAL_FRAME_HEADER_SIZE + content_len]
-            .copy_from_slice(contents_buf);
-        if content_len < page_size as usize {
-            buf[WAL_FRAME_HEADER_SIZE + content_len..WAL_FRAME_HEADER_SIZE + page_size as usize]
-                .fill(0);
-        }
-
-        let expects_be = wal_header.magic & 1;
-        let use_native_endian = cfg!(target_endian = "big") as u32 == expects_be;
-        let header_checksum = checksum_wal(&buf[0..8], wal_header, checksums, use_native_endian);
-        let final_checksum = checksum_wal(
-            &buf[WAL_FRAME_HEADER_SIZE..WAL_FRAME_HEADER_SIZE + page_size as usize],
-            wal_header,
-            header_checksum,
-            use_native_endian,
-        );
-        header.checksum_1 = final_checksum.0;
-        header.checksum_2 = final_checksum.1;
-        tracing::trace!(
-            "begin_write_wal_frame(checksum=({}, {}))",
-            header.checksum_1,
-            header.checksum_2
-        );
-
-        buf[16..20].copy_from_slice(&header.checksum_1.to_be_bytes());
-        buf[20..24].copy_from_slice(&header.checksum_2.to_be_bytes());
-
-        #[allow(clippy::arc_with_non_send_sync)]
-        (Arc::new(RefCell::new(buffer)), final_checksum)
-    };
-
-    let clone_counter = write_counter.clone();
-    *write_counter.borrow_mut() += 1;
-    let write_complete = {
-        let buf_copy = buffer.clone();
-        Box::new(move |bytes_written: i32| {
-            let buf_copy = buf_copy.clone();
-            let buf_len = buf_copy.borrow().len();
-            *clone_counter.borrow_mut() -= 1;
-
-            page_finish.clear_dirty();
-            turso_assert!(
-                bytes_written == buf_len as i32,
-                "wrote({bytes_written}) != expected({buf_len})"
-            );
-        })
-    };
-    #[allow(clippy::arc_with_non_send_sync)]
-    let c = Completion::new_write(write_complete);
-    let res = io.pwrite(offset, buffer.clone(), c.into());
-    if res.is_err() {
-        // If we do not reduce the counter here on error, we incur an infinite loop when cacheflushing
-        *write_counter.borrow_mut() -= 1;
+        salt_1,
+        salt_2,
+        checksum_1,
+        checksum_2,
     }
-    res?;
-    tracing::trace!("Frame written and synced");
-    Ok(checksums)
+}
+
+pub fn prepare_wal_frame(
+    wal_header: &WalHeader,
+    prev_checksums: (u32, u32),
+    page_size: u32,
+    page_number: u32,
+    db_size: u32,
+    page: &[u8],
+) -> ((u32, u32), Arc<RefCell<Buffer>>) {
+    tracing::trace!(page_number);
+
+    let drop_fn = Rc::new(|_buf| {});
+    let mut buffer = Buffer::allocate(page_size as usize + WAL_FRAME_HEADER_SIZE, drop_fn);
+    let frame = buffer.as_mut_slice();
+    frame[WAL_FRAME_HEADER_SIZE..].copy_from_slice(&page);
+
+    frame[0..4].copy_from_slice(&page_number.to_be_bytes());
+    frame[4..8].copy_from_slice(&db_size.to_be_bytes());
+    frame[8..12].copy_from_slice(&wal_header.salt_1.to_be_bytes());
+    frame[12..16].copy_from_slice(&wal_header.salt_2.to_be_bytes());
+
+    let expects_be = wal_header.magic & 1;
+    let use_native_endian = cfg!(target_endian = "big") as u32 == expects_be;
+    let header_checksum = checksum_wal(&frame[0..8], wal_header, prev_checksums, use_native_endian);
+    let final_checksum = checksum_wal(
+        &frame[WAL_FRAME_HEADER_SIZE..WAL_FRAME_HEADER_SIZE + page_size as usize],
+        wal_header,
+        header_checksum,
+        use_native_endian,
+    );
+    frame[16..20].copy_from_slice(&final_checksum.0.to_be_bytes());
+    frame[20..24].copy_from_slice(&final_checksum.1.to_be_bytes());
+
+    (final_checksum, Arc::new(RefCell::new(buffer)))
 }
 
 pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<()> {
