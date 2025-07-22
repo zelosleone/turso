@@ -31,7 +31,7 @@ impl VTabModule for GenerateSeriesVTabModule {
     const VTAB_KIND: VTabKind = VTabKind::TableValuedFunction;
 
     fn create(_args: &[Value]) -> Result<(String, Self::Table), ResultCode> {
-        let schema = "CREATE TABLE generate_series(
+        let schema = "CREATE TABLE generate_series (
             value INTEGER,
             start INTEGER HIDDEN,
             stop INTEGER HIDDEN,

@@ -8,7 +8,7 @@ use crate::common::{maybe_setup_tracing, TempDatabase};
 fn test_schema_change() {
     let tmp_db = TempDatabase::new_empty(false);
     let conn1 = tmp_db.connect_limbo();
-    conn1.execute("CREATE TABLE t(x, y, z)").unwrap();
+    conn1.execute("CREATE TABLE t (x, y, z)").unwrap();
     conn1
         .execute("INSERT INTO t VALUES (1, 2, 3), (10, 20, 30)")
         .unwrap();
@@ -39,7 +39,7 @@ fn test_create_multiple_connections() -> anyhow::Result<()> {
         let tmp_db = Arc::new(TempDatabase::new_empty(false));
         {
             let conn = tmp_db.connect_limbo();
-            conn.execute("CREATE TABLE t(x)").unwrap();
+            conn.execute("CREATE TABLE t (x)").unwrap();
         }
 
         let mut threads = Vec::new();
@@ -118,7 +118,7 @@ fn test_reader_writer() -> anyhow::Result<()> {
         let tmp_db = Arc::new(TempDatabase::new_empty(false));
         {
             let conn = tmp_db.connect_limbo();
-            conn.execute("CREATE TABLE t(x)").unwrap();
+            conn.execute("CREATE TABLE t (x)").unwrap();
         }
 
         let mut threads = Vec::new();

@@ -20,7 +20,7 @@ fn test_cdc_simple_id() {
     let conn = db.connect_limbo();
     conn.execute("PRAGMA unstable_capture_data_changes_conn('id')")
         .unwrap();
-    conn.execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y)")
+    conn.execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y)")
         .unwrap();
     conn.execute("INSERT INTO t VALUES (10, 10), (5, 1)")
         .unwrap();
@@ -80,7 +80,7 @@ fn test_cdc_simple_before() {
     let conn = db.connect_limbo();
     conn.execute("PRAGMA unstable_capture_data_changes_conn('before')")
         .unwrap();
-    conn.execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y)")
+    conn.execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y)")
         .unwrap();
     conn.execute("INSERT INTO t VALUES (1, 2), (3, 4)").unwrap();
     conn.execute("UPDATE t SET y = 3 WHERE x = 1").unwrap();
@@ -146,7 +146,7 @@ fn test_cdc_simple_after() {
     let conn = db.connect_limbo();
     conn.execute("PRAGMA unstable_capture_data_changes_conn('after')")
         .unwrap();
-    conn.execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y)")
+    conn.execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y)")
         .unwrap();
     conn.execute("INSERT INTO t VALUES (1, 2), (3, 4)").unwrap();
     conn.execute("UPDATE t SET y = 3 WHERE x = 1").unwrap();
@@ -212,7 +212,7 @@ fn test_cdc_simple_full() {
     let conn = db.connect_limbo();
     conn.execute("PRAGMA unstable_capture_data_changes_conn('full')")
         .unwrap();
-    conn.execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y)")
+    conn.execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y)")
         .unwrap();
     conn.execute("INSERT INTO t VALUES (1, 2), (3, 4)").unwrap();
     conn.execute("UPDATE t SET y = 3 WHERE x = 1").unwrap();
@@ -278,7 +278,7 @@ fn test_cdc_crud() {
     let conn = db.connect_limbo();
     conn.execute("PRAGMA unstable_capture_data_changes_conn('id')")
         .unwrap();
-    conn.execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y)")
+    conn.execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y)")
         .unwrap();
     conn.execute("INSERT INTO t VALUES (20, 20), (10, 10), (5, 1)")
         .unwrap();
@@ -390,7 +390,7 @@ fn test_cdc_failed_op() {
     let conn = db.connect_limbo();
     conn.execute("PRAGMA unstable_capture_data_changes_conn('id')")
         .unwrap();
-    conn.execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y UNIQUE)")
+    conn.execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y UNIQUE)")
         .unwrap();
     conn.execute("INSERT INTO t VALUES (1, 10), (2, 20)")
         .unwrap();
@@ -459,7 +459,7 @@ fn test_cdc_uncaptured_connection() {
     let db = TempDatabase::new_empty(true);
     let conn1 = db.connect_limbo();
     conn1
-        .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y UNIQUE)")
+        .execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y UNIQUE)")
         .unwrap();
     conn1.execute("INSERT INTO t VALUES (1, 10)").unwrap();
     conn1
@@ -536,7 +536,7 @@ fn test_cdc_custom_table() {
     let db = TempDatabase::new_empty(true);
     let conn1 = db.connect_limbo();
     conn1
-        .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y UNIQUE)")
+        .execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y UNIQUE)")
         .unwrap();
     conn1
         .execute("PRAGMA unstable_capture_data_changes_conn('id,custom_cdc')")
@@ -583,7 +583,7 @@ fn test_cdc_ignore_changes_in_cdc_table() {
     let db = TempDatabase::new_empty(true);
     let conn1 = db.connect_limbo();
     conn1
-        .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y UNIQUE)")
+        .execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y UNIQUE)")
         .unwrap();
     conn1
         .execute("PRAGMA unstable_capture_data_changes_conn('id,custom_cdc')")
@@ -622,10 +622,10 @@ fn test_cdc_transaction() {
     let db = TempDatabase::new_empty(true);
     let conn1 = db.connect_limbo();
     conn1
-        .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y UNIQUE)")
+        .execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y UNIQUE)")
         .unwrap();
     conn1
-        .execute("CREATE TABLE q(x INTEGER PRIMARY KEY, y UNIQUE)")
+        .execute("CREATE TABLE q (x INTEGER PRIMARY KEY, y UNIQUE)")
         .unwrap();
     conn1
         .execute("PRAGMA unstable_capture_data_changes_conn('id,custom_cdc')")
@@ -707,7 +707,7 @@ fn test_cdc_independent_connections() {
         .execute("PRAGMA unstable_capture_data_changes_conn('id,custom_cdc2')")
         .unwrap();
     conn1
-        .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y UNIQUE)")
+        .execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y UNIQUE)")
         .unwrap();
     conn1.execute("INSERT INTO t VALUES (1, 10)").unwrap();
     conn2.execute("INSERT INTO t VALUES (2, 20)").unwrap();
@@ -761,7 +761,7 @@ fn test_cdc_independent_connections_different_cdc_not_ignore() {
         .execute("PRAGMA unstable_capture_data_changes_conn('id,custom_cdc2')")
         .unwrap();
     conn1
-        .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y UNIQUE)")
+        .execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y UNIQUE)")
         .unwrap();
     conn1.execute("INSERT INTO t VALUES (1, 10)").unwrap();
     conn1.execute("INSERT INTO t VALUES (2, 20)").unwrap();
@@ -839,7 +839,7 @@ fn test_cdc_independent_connections_different_cdc_not_ignore() {
 fn test_cdc_table_columns() {
     let db = TempDatabase::new_empty(true);
     let conn = db.connect_limbo();
-    conn.execute("CREATE TABLE t(a INTEGER PRIMARY KEY, b, c UNIQUE)")
+    conn.execute("CREATE TABLE t (a INTEGER PRIMARY KEY, b, c UNIQUE)")
         .unwrap();
     let rows = limbo_exec_rows(&db, &conn, "SELECT table_columns_json_array('t')");
     assert_eq!(

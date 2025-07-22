@@ -238,7 +238,7 @@ pub fn derive_agg_func(input: TokenStream) -> TokenStream {
 ///
 ///   /// Declare your virtual table and its schema
 ///  fn create(args: &[Value]) -> Result<(String, Self::Table), ResultCode> {
-///     let schema = "CREATE TABLE csv_data(
+///     let schema = "CREATE TABLE csv_data (
 ///             name TEXT,
 ///             age TEXT,
 ///             city TEXT

@@ -51,7 +51,7 @@ do_test alter-1.1 {
     set ::temp {}
   }
   execsql [subst -nocommands {
-    CREATE TABLE t1(a,b);
+    CREATE TABLE t1 (a,b);
     INSERT INTO t1 VALUES(1,2);
     CREATE TABLE [t1'x1](c UNIQUE, b PRIMARY KEY);
     INSERT INTO [t1'x1] VALUES(3,4);
@@ -229,7 +229,7 @@ ifcapable attach {
   } {}
   do_test alter-1.8.2 {
     execsql {
-      CREATE TABLE t4(a PRIMARY KEY, b, c);
+      CREATE TABLE t4 (a PRIMARY KEY, b, c);
       CREATE TABLE aux.t4(a PRIMARY KEY, b, c);
       CREATE INDEX i4 ON t4(b);
       CREATE INDEX aux.i4 ON t4(b);
@@ -298,7 +298,7 @@ do_test alter-2.1 {
 } {1 {no such table: none}}
 do_test alter-2.2 {
   execsql {
-    CREATE TABLE t3(p,q,r);
+    CREATE TABLE t3 (p,q,r);
   }
   catchsql {
     ALTER TABLE [<t2>] RENAME TO t3;
@@ -348,7 +348,7 @@ db func trigfunc trigfunc
 
 do_test alter-3.1.0 {
   execsql {
-    CREATE TABLE t6(a, b, c);
+    CREATE TABLE t6 (a, b, c);
     -- Different case for the table name in the trigger.
     CREATE TRIGGER trig1 AFTER INSERT ON T6 BEGIN
       SELECT trigfunc('trig1', new.a, new.b, new.c);
@@ -449,12 +449,12 @@ ifcapable attach {
 }
 do_test alter-3.2.6 {
   catchsql {
-    CREATE TABLE t10(a, ON, c);
+    CREATE TABLE t10 (a, ON, c);
   }
 } {1 {near "ON": syntax error}}
 do_test alter-3.2.7 {
   catchsql {
-    CREATE TABLE t10(a, 'ON', c);
+    CREATE TABLE t10 (a, 'ON', c);
   }
 } {0 {}}
 do_test alter-3.2.8 {
@@ -477,7 +477,7 @@ do_test alter-3.2.10 {
 
 do_test alter-3.3.1 {
   execsql [subst {
-    CREATE TABLE tbl1(a, b, c);
+    CREATE TABLE tbl1 (a, b, c);
     CREATE $::temp TRIGGER trig1 AFTER INSERT ON tbl1 BEGIN
       SELECT trigfunc('trig1', new.a, new.b, new.c);
     END;
@@ -536,7 +536,7 @@ ifcapable autoinc {
 
 do_test alter-4.1 {
   execsql {
-    CREATE TABLE tbl1(a INTEGER PRIMARY KEY AUTOINCREMENT);
+    CREATE TABLE tbl1 (a INTEGER PRIMARY KEY AUTOINCREMENT);
     INSERT INTO tbl1 VALUES(10);
   }
 } {}
@@ -566,7 +566,7 @@ do_test alter-4.4 {
 # opening a database.
 do_test alter-5.1 {
   execsql {
-    CREATE TABLE tbl1(a, b, c);
+    CREATE TABLE tbl1 (a, b, c);
     INSERT INTO tbl1 VALUES('x', 'y', 'z');
   }
 } {}
@@ -653,7 +653,7 @@ do_test alter-6.7 {
 #
 do_realnum_test alter-7.1 {
   execsql {
-    CREATE TABLE t1(a TEXT COLLATE BINARY);
+    CREATE TABLE t1 (a TEXT COLLATE BINARY);
     ALTER TABLE t1 ADD COLUMN b INTEGER COLLATE NOCASE;
     INSERT INTO t1 VALUES(1,'-2');
     INSERT INTO t1 VALUES(5.4e-08,'5.4e-08');
@@ -666,7 +666,7 @@ do_realnum_test alter-7.1 {
 #
 do_test alter-8.1 {
   execsql {
-    CREATE TABLE t2(a INTEGER);
+    CREATE TABLE t2 (a INTEGER);
     INSERT INTO t2 VALUES(1);
     INSERT INTO t2 VALUES(1);
     INSERT INTO t2 VALUES(2);
@@ -711,7 +711,7 @@ do_catchsql_test alter-9.3 {
 # in the names.
 #
 do_test alter-10.1 {
-  execsql "CREATE TABLE xyz(x UNIQUE)"
+  execsql "CREATE TABLE xyz (x UNIQUE)"
   execsql "ALTER TABLE xyz RENAME TO xyz\u1234abc"
   execsql {SELECT name FROM sqlite_master WHERE name GLOB 'xyz*'}
 } [list xyz\u1234abc]
@@ -727,7 +727,7 @@ do_test alter-10.4 {
 } [list sqlite_autoindex_xyzabc_1]
 
 do_test alter-11.1 {
-  sqlite3_exec db {CREATE TABLE t11(%c6%c6)}
+  sqlite3_exec db {CREATE TABLE t11 (%c6%c6)}
   execsql {
     ALTER TABLE t11 ADD COLUMN abc;
   }
@@ -743,7 +743,7 @@ if {!$isutf16} {
   } {0 {xyz abc 1 2}}
 }
 do_test alter-11.3 {
-  sqlite3_exec db {CREATE TABLE t11b("%81%82%83" text)}
+  sqlite3_exec db {CREATE TABLE t11b ("%81%82%83" text)}
   execsql {
     ALTER TABLE t11b ADD COLUMN abc;
   }
@@ -764,7 +764,7 @@ if {!$isutf16} {
   } {0 {xyz abc 3 4}}
 }
 do_test alter-11.7 {
-  sqlite3_exec db {CREATE TABLE t11c(%81%82%83 text)}
+  sqlite3_exec db {CREATE TABLE t11c (%81%82%83 text)}
   execsql {
     ALTER TABLE t11c ADD COLUMN abc;
   }
@@ -787,7 +787,7 @@ if {!$isutf16} {
 
 do_test alter-12.1 {
   execsql {
-    CREATE TABLE t12(a, b, c);
+    CREATE TABLE t12 (a, b, c);
     CREATE VIEW v1 AS SELECT * FROM t12;
   }
 } {}
@@ -839,7 +839,7 @@ do_test alter-13.3 {
 # Ticket #3651
 do_test alter-14.1 {
   catchsql {
-    CREATE TABLE t3651(a UNIQUE);
+    CREATE TABLE t3651 (a UNIQUE);
     INSERT INTO t3651 VALUES(5);
     ALTER TABLE t3651 ADD COLUMN b UNIQUE;
   }
@@ -873,7 +873,7 @@ foreach {tn tbl} $system_table_list {
 # Verify that ALTER TABLE works on tables with the WITHOUT rowid option.
 #
 do_execsql_test alter-16.1 {
-  CREATE TABLE t16a(a TEXT, b REAL, c INT, PRIMARY KEY(a,b)) WITHOUT rowid;
+  CREATE TABLE t16a (a TEXT, b REAL, c INT, PRIMARY KEY(a,b)) WITHOUT rowid;
   INSERT INTO t16a VALUES('abc',1.25,99);
   ALTER TABLE t16a ADD COLUMN d TEXT DEFAULT 'xyzzy';
   INSERT INTO t16a VALUES('cba',5.5,98,'fizzle');
@@ -890,7 +890,7 @@ ifcapable rtree {
   db close
   sqlite3 db :memory:
   do_execsql_test alter-17.100 {
-    CREATE TABLE t1(a INTEGER PRIMARY KEY, b);
+    CREATE TABLE t1 (a INTEGER PRIMARY KEY, b);
     CREATE VIRTUAL TABLE t2 USING rtree(id,x0,x1);
     INSERT INTO t1 VALUES(1,'apple'),(2,'fig'),(3,'pear');
     INSERT INTO t2 VALUES(1,1.0,2.0),(2,2.0,3.0),(3,1.5,3.5);
@@ -906,8 +906,8 @@ ifcapable rtree {
 # 2021-03-08 dbsqlfuzz 3f0a7245b69cd08617d7d7781ebaedb0fe765a93
 reset_db
 do_catchsql_test alter-18.1 {
-  CREATE TABLE t1(a,b,c);
-  CREATE TABLE log(a INTEGER PRIMARY KEY,b,c);
+  CREATE TABLE t1 (a,b,c);
+  CREATE TABLE log (a INTEGER PRIMARY KEY,b,c);
   CREATE TRIGGER tr1 AFTER INSERT ON t1 BEGIN
     INSERT INTO logx(a,b,c) VALUES(new.a,new.b,new.c)
     ON CONFLICT(a) DO UPDATE SET c=excluded.c, b=new.b;
@@ -918,8 +918,8 @@ do_catchsql_test alter-18.1 {
 # 2021-10-13 dbsqlfuzz e89174cbfad2d904f06b5e24df0a22510b6a1c1e
 reset_db
 do_execsql_test alter-19.1 {
-  CREATE TABLE t1(x);
-  CREATE TABLE t2(c);
+  CREATE TABLE t1 (x);
+  CREATE TABLE t2 (c);
   CREATE TRIGGER r1 AFTER INSERT ON t2 BEGIN
     UPDATE t2 SET (c)=(
        EXISTS(SELECT 1 WHERE (WITH cte1(a) AS (SELECT 1 FROM t1 WHERE (SELECT 1 WHERE (WITH cte2(b) AS (VALUES(1))SELECT b FROM cte2)))SELECT a FROM cte1))
@@ -940,7 +940,7 @@ do_execsql_test alter-19.3 {
 #
 reset_db
 do_execsql_test alter-20.1 {
-  CREATE TABLE t1(a INT) STRICT;
+  CREATE TABLE t1 (a INT) STRICT;
   INSERT INTO t1(a) VALUES(45);
 } {}
 do_catchsql_test alter-20.2 {
@@ -960,8 +960,8 @@ do_catchsql_test alter-20.3 {
 #
 reset_db
 do_execsql_test alter-21.1 {
-  CREATE TABLE t1(a,b,c,d);
-  CREATE TABLE t2(a,b,c,d,x);
+  CREATE TABLE t1 (a,b,c,d);
+  CREATE TABLE t2 (a,b,c,d,x);
   CREATE TRIGGER r1 AFTER INSERT ON t2 BEGIN
     SELECT unknown_function(a ORDER BY (SELECT group_concat(DISTINCT a ORDER BY a) FROM t1)) FROM t1;
   END;

@@ -242,9 +242,9 @@ do_execsql_test select-invalid-numeric-text {
 } {0}
 
 do_execsql_test_on_specific_db {:memory:} select-union-all-1 {
-  CREATE TABLE t1(x INTEGER);
-  CREATE TABLE t2(x INTEGER); 
-  CREATE TABLE t3(x INTEGER);
+  CREATE TABLE t1 (x INTEGER);
+  CREATE TABLE t2 (x INTEGER); 
+  CREATE TABLE t3 (x INTEGER);
   
   INSERT INTO t1 VALUES(1),(2),(3);
   INSERT INTO t2 VALUES(4),(5),(6);
@@ -266,9 +266,9 @@ do_execsql_test_on_specific_db {:memory:} select-union-all-1 {
 9}
 
 do_execsql_test_on_specific_db {:memory:} select-union-all-with-filters {
-  CREATE TABLE t4(x INTEGER);
-  CREATE TABLE t5(x INTEGER);
-  CREATE TABLE t6(x INTEGER);
+  CREATE TABLE t4 (x INTEGER);
+  CREATE TABLE t5 (x INTEGER);
+  CREATE TABLE t6 (x INTEGER);
   
   INSERT INTO t4 VALUES(1),(2),(3),(4);
   INSERT INTO t5 VALUES(5),(6),(7),(8);
@@ -299,8 +299,8 @@ do_execsql_test_error select-star-subquery {
 
 if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-sqlite3-index-experimental" || $::env(SQLITE_EXEC) eq "sqlite3")} {
     do_execsql_test_on_specific_db {:memory:} select-union-1 {
-    CREATE TABLE t(x TEXT, y TEXT);
-    CREATE TABLE u(x TEXT, y TEXT);
+    CREATE TABLE t (x TEXT, y TEXT);
+    CREATE TABLE u (x TEXT, y TEXT);
     INSERT INTO t VALUES('x','x'),('y','y');
     INSERT INTO u VALUES('x','x'),('y','y');
 
@@ -309,9 +309,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     y|y}
 
     do_execsql_test_on_specific_db {:memory:} select-union-all-union {
-    CREATE TABLE t(x TEXT, y TEXT);
-    CREATE TABLE u(x TEXT, y TEXT);
-    CREATE TABLE v(x TEXT, y TEXT);
+    CREATE TABLE t (x TEXT, y TEXT);
+    CREATE TABLE u (x TEXT, y TEXT);
+    CREATE TABLE v (x TEXT, y TEXT);
     INSERT INTO t VALUES('x','x'),('y','y');
     INSERT INTO u VALUES('x','x'),('y','y');
     INSERT INTO v VALUES('x','x'),('y','y');
@@ -323,9 +323,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     y|y}
 
     do_execsql_test_on_specific_db {:memory:} select-union-all-union-2 {
-    CREATE TABLE t(x TEXT, y TEXT);
-    CREATE TABLE u(x TEXT, y TEXT);
-    CREATE TABLE v(x TEXT, y TEXT);
+    CREATE TABLE t (x TEXT, y TEXT);
+    CREATE TABLE u (x TEXT, y TEXT);
+    CREATE TABLE v (x TEXT, y TEXT);
     INSERT INTO t VALUES('x','x'),('y','y');
     INSERT INTO u VALUES('x','x'),('y','y');
     INSERT INTO v VALUES('x','x'),('y','y');
@@ -335,9 +335,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     y|y}
 
     do_execsql_test_on_specific_db {:memory:} select-union-3 {
-    CREATE TABLE t(x TEXT, y TEXT);
-    CREATE TABLE u(x TEXT, y TEXT);
-    CREATE TABLE v(x TEXT, y TEXT);
+    CREATE TABLE t (x TEXT, y TEXT);
+    CREATE TABLE u (x TEXT, y TEXT);
+    CREATE TABLE v (x TEXT, y TEXT);
     INSERT INTO t VALUES('x','x'),('y','y');
     INSERT INTO u VALUES('x','x'),('y','y');
     INSERT INTO v VALUES('x','x'),('y','y');
@@ -347,9 +347,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     y|y}
 
     do_execsql_test_on_specific_db {:memory:} select-union-4 {
-    CREATE TABLE t(x TEXT, y TEXT);
-    CREATE TABLE u(x TEXT, y TEXT);
-    CREATE TABLE v(x TEXT, y TEXT);
+    CREATE TABLE t (x TEXT, y TEXT);
+    CREATE TABLE u (x TEXT, y TEXT);
+    CREATE TABLE v (x TEXT, y TEXT);
     INSERT INTO t VALUES('x','x'),('y','y');
     INSERT INTO u VALUES('x','x'),('y','y');
     INSERT INTO v VALUES('x','x'),('y','y');
@@ -359,9 +359,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     y|y}
 
     do_execsql_test_on_specific_db {:memory:} select-union-all-union-3 {
-    CREATE TABLE t(x TEXT, y TEXT);
-    CREATE TABLE u(x TEXT, y TEXT);
-    CREATE TABLE v(x TEXT, y TEXT);
+    CREATE TABLE t (x TEXT, y TEXT);
+    CREATE TABLE u (x TEXT, y TEXT);
+    CREATE TABLE v (x TEXT, y TEXT);
     INSERT INTO t VALUES('x','x'),('y','y');
     INSERT INTO u VALUES('x','x'),('y','y');
     INSERT INTO v VALUES('x','x'),('y','y');
@@ -373,8 +373,8 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     y|y}
 
     do_execsql_test_on_specific_db {:memory:} select-intersect-1 {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('z','y');
 
@@ -382,9 +382,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     } {x|x}
 
     do_execsql_test_on_specific_db {:memory:} select-intersect-2 {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
-      CREATE TABLE v(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
+      CREATE TABLE v (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('y','y');
       INSERT INTO v VALUES('a','x'),('y','y');
@@ -393,9 +393,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     } {y|y}
 
     do_execsql_test_on_specific_db {:memory:} select-intersect-union {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
-      CREATE TABLE v(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
+      CREATE TABLE v (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('z','y');
       INSERT INTO v VALUES('x','x'),('z','z');
@@ -405,9 +405,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     z|z}
 
     do_execsql_test_on_specific_db {:memory:} select-union-intersect {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
-      CREATE TABLE v(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
+      CREATE TABLE v (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('z','y');
       INSERT INTO v VALUES('x','x'),('z','z');
@@ -416,9 +416,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     } {x|x}
 
     do_execsql_test_on_specific_db {:memory:} select-union-all-intersect {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
-      CREATE TABLE v(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
+      CREATE TABLE v (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('z','y');
       INSERT INTO v VALUES('x','x'),('z','z');
@@ -427,9 +427,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     } {x|x}
 
     do_execsql_test_on_specific_db {:memory:} select-intersect-union-all {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
-      CREATE TABLE v(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
+      CREATE TABLE v (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('z','y');
       INSERT INTO v VALUES('x','x'),('z','z');
@@ -440,8 +440,8 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     z|z}
 
     do_execsql_test_on_specific_db {:memory:} select-intersect-with-limit {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y'), ('z','z');
       INSERT INTO u VALUES('x','x'),('y','y'), ('z','z');
 
@@ -450,9 +450,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     y|y}
 
     do_execsql_test_on_specific_db {:memory:} select-intersect-union-with-limit {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
-      CREATE TABLE v(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
+      CREATE TABLE v (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y'), ('z','z');
       INSERT INTO u VALUES('d','d'),('e','e'), ('z','z');
       INSERT INTO v VALUES('a','a'),('b','b');
@@ -463,8 +463,8 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     z|z}
 
     do_execsql_test_on_specific_db {:memory:} select-except-1 {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('z','y');
 
@@ -472,8 +472,8 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     } {y|y}
 
     do_execsql_test_on_specific_db {:memory:} select-except-2 {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('y','y');
 
@@ -481,9 +481,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     } {}
 
     do_execsql_test_on_specific_db {:memory:} select-except-3 {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
-      CREATE TABLE v(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
+      CREATE TABLE v (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('a','y');
       INSERT INTO v VALUES('a','x'),('b','y');
@@ -492,8 +492,8 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     } {y|y}
 
     do_execsql_test_on_specific_db {:memory:} select-except-limit {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
       INSERT INTO t VALUES('a', 'a'),('x','x'),('y','y'),('z','z');
       INSERT INTO u VALUES('x','x'),('z','y');
 
@@ -502,9 +502,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     y|y}
 
     do_execsql_test_on_specific_db {:memory:} select-except-union-all {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
-      CREATE TABLE v(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
+      CREATE TABLE v (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('z','y');
       INSERT INTO v VALUES('x','x'),('y','y');
@@ -515,9 +515,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     y|y}
 
     do_execsql_test_on_specific_db {:memory:} select-union-all-except {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
-      CREATE TABLE v(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
+      CREATE TABLE v (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('z','y');
       INSERT INTO v VALUES('x','x'),('y','y');
@@ -526,9 +526,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     } {z|y}
 
     do_execsql_test_on_specific_db {:memory:} select-except-union {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
-      CREATE TABLE v(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
+      CREATE TABLE v (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('z','y');
       INSERT INTO v VALUES('x','x'),('z','z');
@@ -539,9 +539,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     z|z}
 
     do_execsql_test_on_specific_db {:memory:} select-union-except {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
-      CREATE TABLE v(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
+      CREATE TABLE v (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('z','y');
       INSERT INTO v VALUES('x','x'),('z','z');
@@ -551,9 +551,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     z|y}
 
     do_execsql_test_on_specific_db {:memory:} select-except-intersect {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
-      CREATE TABLE v(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
+      CREATE TABLE v (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('z','y');
       INSERT INTO v VALUES('y','y'),('z','z');
@@ -562,9 +562,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     } {y|y}
 
     do_execsql_test_on_specific_db {:memory:} select-intersect-except {
-      CREATE TABLE t(x TEXT, y TEXT);
-      CREATE TABLE u(x TEXT, y TEXT);
-      CREATE TABLE v(x TEXT, y TEXT);
+      CREATE TABLE t (x TEXT, y TEXT);
+      CREATE TABLE u (x TEXT, y TEXT);
+      CREATE TABLE v (x TEXT, y TEXT);
       INSERT INTO t VALUES('x','x'),('y','y');
       INSERT INTO u VALUES('x','x'),('z','y');
       INSERT INTO v VALUES('x','x'),('z','z');
@@ -574,7 +574,7 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
 }
 
 do_execsql_test_on_specific_db {:memory:} select-no-match-in-leaf-page {
-    CREATE TABLE t(a INTEGER PRIMARY KEY, b);
+    CREATE TABLE t (a INTEGER PRIMARY KEY, b);
     insert into t values (1, randomblob(1024));
     insert into t values (2, randomblob(1024));
     insert into t values (3, randomblob(1024));

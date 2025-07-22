@@ -120,7 +120,7 @@ impl PragmaVirtualTable {
         let mut max_arg_count = 0;
         let mut has_pragma_arg = false;
 
-        let mut sql = String::from("CREATE TABLE x(");
+        let mut sql = String::from("CREATE TABLE x (");
         let col_defs = pragma
             .columns
             .iter()

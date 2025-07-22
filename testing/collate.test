@@ -42,11 +42,11 @@ do_execsql_test collate_left_precedence_2 {
 } {1}
 
 do_execsql_test_in_memory_any_error collate_unique_constraint {
-    CREATE TABLE t(a TEXT COLLATE NOCASE PRIMARY KEY);
+    CREATE TABLE t (a TEXT COLLATE NOCASE PRIMARY KEY);
     INSERT INTO t VALUES ('lol'), ('LOL'), ('lOl');
 }
 
 do_execsql_test_in_memory_any_error collate_unique_constraint {
-    CREATE TABLE t(a TEXT COLLATE NOCASE PRIMARY KEY);
+    CREATE TABLE t (a TEXT COLLATE NOCASE PRIMARY KEY);
     INSERT INTO t VALUES ('lol'), ('LOL'), ('lOl');
 }

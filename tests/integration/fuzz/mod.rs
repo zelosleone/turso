@@ -61,7 +61,7 @@ mod tests {
 
     #[test]
     pub fn rowid_seek_fuzz() {
-        let db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x INTEGER PRIMARY KEY)", false); // INTEGER PRIMARY KEY is a rowid alias, so an index is not created
+        let db = TempDatabase::new_with_rusqlite("CREATE TABLE t (x INTEGER PRIMARY KEY)", false); // INTEGER PRIMARY KEY is a rowid alias, so an index is not created
         let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
 
         let (mut rng, _seed) = rng_from_time_or_env();
@@ -190,7 +190,7 @@ mod tests {
 
     #[test]
     pub fn index_scan_fuzz() {
-        let db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x PRIMARY KEY)", true);
+        let db = TempDatabase::new_with_rusqlite("CREATE TABLE t (x PRIMARY KEY)", true);
         let sqlite_conn = rusqlite::Connection::open(db.path.clone()).unwrap();
 
         let insert = format!(
@@ -245,14 +245,14 @@ mod tests {
             rng_from_time()
         };
         let table_defs: [&str; 8] = [
-            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y, z))",
-            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y, z))",
-            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y desc, z))",
-            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y, z desc))",
-            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y desc, z))",
-            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y, z desc))",
-            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x, y desc, z desc))",
-            "CREATE TABLE t(x, y, z, nonindexed_col, PRIMARY KEY (x desc, y desc, z desc))",
+            "CREATE TABLE t (x, y, z, nonindexed_col, PRIMARY KEY (x, y, z))",
+            "CREATE TABLE t (x, y, z, nonindexed_col, PRIMARY KEY (x desc, y, z))",
+            "CREATE TABLE t (x, y, z, nonindexed_col, PRIMARY KEY (x, y desc, z))",
+            "CREATE TABLE t (x, y, z, nonindexed_col, PRIMARY KEY (x, y, z desc))",
+            "CREATE TABLE t (x, y, z, nonindexed_col, PRIMARY KEY (x desc, y desc, z))",
+            "CREATE TABLE t (x, y, z, nonindexed_col, PRIMARY KEY (x desc, y, z desc))",
+            "CREATE TABLE t (x, y, z, nonindexed_col, PRIMARY KEY (x, y desc, z desc))",
+            "CREATE TABLE t (x, y, z, nonindexed_col, PRIMARY KEY (x desc, y desc, z desc))",
         ];
         // Create all different 3-column primary key permutations
         let dbs = [
@@ -1344,12 +1344,12 @@ mod tests {
 
         for queries in [
             [
-                "CREATE TABLE t(x)",
+                "CREATE TABLE t (x)",
                 "INSERT INTO t VALUES (10)",
                 "SELECT * FROM t WHERE  x = 1 AND 1 OR 0",
             ],
             [
-                "CREATE TABLE t(x)",
+                "CREATE TABLE t (x)",
                 "INSERT INTO t VALUES (-3258184727)",
                 "SELECT * FROM t",
             ],
@@ -1382,7 +1382,7 @@ mod tests {
         for _ in 0..1000 {
             // Create table with random datatype
             let datatype = datatypes[rng.random_range(0..datatypes.len())];
-            let create_table = format!("CREATE TABLE t(x {datatype})");
+            let create_table = format!("CREATE TABLE t (x {datatype})");
 
             let db = TempDatabase::new_empty(false);
             let limbo_conn = db.connect_limbo();

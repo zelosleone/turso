@@ -4,7 +4,7 @@ use crate::common::TempDatabase;
 
 #[test]
 fn test_txn_error_doesnt_rollback_txn() -> Result<()> {
-    let tmp_db = TempDatabase::new_with_rusqlite("create table t(x);", false);
+    let tmp_db = TempDatabase::new_with_rusqlite("create table t (x);", false);
     let conn = tmp_db.connect_limbo();
 
     conn.execute("begin")?;

@@ -56,13 +56,13 @@ do_execsql_test select-min {
 } {1}
 
 do_execsql_test_on_specific_db {:memory:} min-null-regression-test {
-  CREATE TABLE t(a);
+  CREATE TABLE t (a);
   INSERT INTO t VALUES ('abc'), (NULL);
   SELECT min(a) FROM t;
 } {abc}
 
 do_execsql_test_on_specific_db {:memory:} max-null-regression-test {
-  CREATE TABLE t(a);
+  CREATE TABLE t (a);
   INSERT INTO t VALUES ('abc'), (NULL);
   SELECT max(a) FROM t;
 } {abc}

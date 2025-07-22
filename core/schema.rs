@@ -407,7 +407,7 @@ impl BTreeTable {
 
     /// Returns the column position and column for a given column name.
     /// Returns None if the column name is not found.
-    /// E.g. if table is CREATE TABLE t(a, b, c)
+    /// E.g. if table is CREATE TABLE t (a, b, c)
     /// then get_column("b") returns (1, &Column { .. })
     pub fn get_column(&self, name: &str) -> Option<(usize, &Column)> {
         let name = normalize_ident(name);
@@ -429,8 +429,13 @@ impl BTreeTable {
         }
     }
 
+    /// Reconstruct the SQL for the table.
+    /// FIXME: this makes us incompatible with SQLite since sqlite stores the user-provided SQL as is in
+    /// `sqlite_schema.sql`
+    /// For example, if a user creates a table like: `CREATE TABLE t              (x)`, we store it as
+    /// `CREATE TABLE t (x)`, whereas sqlite stores it with the original extra whitespace.
     pub fn to_sql(&self) -> String {
-        let mut sql = format!("CREATE TABLE {}(", self.name);
+        let mut sql = format!("CREATE TABLE {} (", self.name);
         for (i, column) in self.columns.iter().enumerate() {
             if i > 0 {
                 sql.push_str(", ");
@@ -1153,7 +1158,7 @@ pub struct IndexColumn {
     pub order: SortOrder,
     /// the position of the column in the source table.
     /// for example:
-    /// CREATE TABLE t(a,b,c)
+    /// CREATE TABLE t (a,b,c)
     /// CREATE INDEX idx ON t(b)
     /// b.pos_in_table == 1
     pub pos_in_table: usize,
@@ -1389,7 +1394,7 @@ impl Index {
     /// Given a column position in the table, return the position in the index.
     /// Returns None if the column is not found in the index.
     /// For example, given:
-    /// CREATE TABLE t(a, b, c)
+    /// CREATE TABLE t (a, b, c)
     /// CREATE INDEX idx ON t(b)
     /// then column_table_pos_to_index_pos(1) returns Some(0)
     pub fn column_table_pos_to_index_pos(&self, table_pos: usize) -> Option<usize> {

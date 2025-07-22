@@ -18,32 +18,32 @@ do_execsql_test_on_specific_db {:memory:} must-be-int-insert {
 4}
 
 do_execsql_test_on_specific_db {:memory:} strict-basic-creation {
-    CREATE TABLE test1(id INTEGER, name TEXT, price REAL) STRICT;
+    CREATE TABLE test1 (id INTEGER, name TEXT, price REAL) STRICT;
     INSERT INTO test1 VALUES(1, 'item1', 10.5);
     SELECT * FROM test1;
 } {1|item1|10.5}
 
 do_execsql_test_in_memory_any_error  strict-require-datatype {
-    CREATE TABLE test2(id INTEGER, name) STRICT;
+    CREATE TABLE test2 (id INTEGER, name) STRICT;
 }
 
 do_execsql_test_in_memory_any_error strict-valid-datatypes {
-    CREATE TABLE test2(id INTEGER, value DATETIME) STRICT;
+    CREATE TABLE test2 (id INTEGER, value DATETIME) STRICT;
 }
 
 do_execsql_test_in_memory_any_error strict-type-enforcement {
-    CREATE TABLE test3(id INTEGER, name TEXT, price REAL) STRICT;
+    CREATE TABLE test3 (id INTEGER, name TEXT, price REAL) STRICT;
     INSERT INTO test3 VALUES(1, 'item1', 'not-a-number');
 }
 
 do_execsql_test_on_specific_db {:memory:} strict-type-coercion {
-    CREATE TABLE test4(id INTEGER, name TEXT, price REAL) STRICT;
+    CREATE TABLE test4 (id INTEGER, name TEXT, price REAL) STRICT;
     INSERT INTO test4 VALUES(1, 'item1', '10.5');
     SELECT typeof(price), price FROM test4;
 } {real|10.5}
 
 do_execsql_test_on_specific_db {:memory:} strict-any-flexibility {
-    CREATE TABLE test5(id INTEGER, data ANY) STRICT;
+    CREATE TABLE test5 (id INTEGER, data ANY) STRICT;
     INSERT INTO test5 VALUES(1, 100);
     INSERT INTO test5 VALUES(2, 'text');
     INSERT INTO test5 VALUES(3, 3.14);
@@ -53,25 +53,25 @@ do_execsql_test_on_specific_db {:memory:} strict-any-flexibility {
 3|real}
 
 do_execsql_test_on_specific_db {:memory:} strict-any-preservation {
-    CREATE TABLE test6(id INTEGER, code ANY) STRICT;
+    CREATE TABLE test6 (id INTEGER, code ANY) STRICT;
     INSERT INTO test6 VALUES(1, '000123');
     SELECT typeof(code), code FROM test6;
 } {text|000123}
 
 do_execsql_test_in_memory_any_error strict-int-vs-integer-pk {
-    CREATE TABLE test8(id INT PRIMARY KEY, name TEXT) STRICT
+    CREATE TABLE test8 (id INT PRIMARY KEY, name TEXT) STRICT
     INSERT INTO test8 VALUES(NULL, 'test');
 }
 
 do_execsql_test_on_specific_db {:memory:} strict-integer-pk-behavior {
-    CREATE TABLE test9(id INTEGER PRIMARY KEY, name TEXT) STRICT;
+    CREATE TABLE test9 (id INTEGER PRIMARY KEY, name TEXT) STRICT;
     INSERT INTO test9 VALUES(NULL, 'test');
     SELECT id, name FROM test9;
 } {1|test}
 
 
 do_execsql_test_on_specific_db {:memory:} strict-mixed-inserts {
-    CREATE TABLE test11(
+    CREATE TABLE test11 (
         id INTEGER PRIMARY KEY,
         name TEXT,
         price REAL,
@@ -87,27 +87,27 @@ do_execsql_test_on_specific_db {:memory:} strict-mixed-inserts {
 2|item2|20.75|10|integer}
 
 do_execsql_test_on_specific_db {:memory:} strict-update-basic {
-    CREATE TABLE test1(id INTEGER, name TEXT, price REAL) STRICT;
+    CREATE TABLE test1 (id INTEGER, name TEXT, price REAL) STRICT;
     INSERT INTO test1 VALUES(1, 'item1', 10.5);
     UPDATE test1 SET price = 15.75 WHERE id = 1;
     SELECT * FROM test1;
 } {1|item1|15.75}
 
 do_execsql_test_in_memory_any_error  strict-update-type-enforcement {
-    CREATE TABLE test2(id INTEGER, name TEXT, price REAL) STRICT;
+    CREATE TABLE test2 (id INTEGER, name TEXT, price REAL) STRICT;
     INSERT INTO test2 VALUES(1, 'item1', 10.5);
     UPDATE test2 SET price = 'not-a-number' WHERE id = 1;
 }
 
 do_execsql_test_on_specific_db {:memory:} strict-update-type-coercion {
-    CREATE TABLE test3(id INTEGER, name TEXT, price REAL) STRICT;
+    CREATE TABLE test3 (id INTEGER, name TEXT, price REAL) STRICT;
     INSERT INTO test3 VALUES(1, 'item1', 10.5);
     UPDATE test3 SET price = '15.75' WHERE id = 1;
     SELECT id, typeof(price), price FROM test3;
 } {1|real|15.75}
 
 do_execsql_test_on_specific_db {:memory:} strict-update-any-flexibility {
-    CREATE TABLE test4(id INTEGER, data ANY) STRICT;
+    CREATE TABLE test4 (id INTEGER, data ANY) STRICT;
     INSERT INTO test4 VALUES(1, 100);
     UPDATE test4 SET data = 'text' WHERE id = 1;
     INSERT INTO test4 VALUES(2, 'original');
@@ -117,35 +117,35 @@ do_execsql_test_on_specific_db {:memory:} strict-update-any-flexibility {
 2|real|3.14}
 
 do_execsql_test_on_specific_db {:memory:} strict-update-any-preservation {
-    CREATE TABLE test5(id INTEGER, code ANY) STRICT;
+    CREATE TABLE test5 (id INTEGER, code ANY) STRICT;
     INSERT INTO test5 VALUES(1, 'text');
     UPDATE test5 SET code = '000123' WHERE id = 1;
     SELECT typeof(code), code FROM test5;
 } {text|000123}
 
 do_execsql_test_in_memory_any_error strict-update-not-null-constraint {
-    CREATE TABLE test7(id INTEGER, name TEXT NOT NULL) STRICT;
+    CREATE TABLE test7 (id INTEGER, name TEXT NOT NULL) STRICT;
     INSERT INTO test7 VALUES(1, 'name');
     UPDATE test7 SET name = NULL WHERE id = 1;
 }
 
 # Uncomment following test case when unique constraint is added
 do_execsql_test_in_memory_any_error strict-update-pk-constraint {
-    CREATE TABLE test8(id INTEGER PRIMARY KEY, name TEXT) STRICT;
+    CREATE TABLE test8 (id INTEGER PRIMARY KEY, name TEXT) STRICT;
     INSERT INTO test8 VALUES(1, 'name1');
     INSERT INTO test8 VALUES(2, 'name2');
     UPDATE test8 SET id = 2 WHERE id = 1;
 }
 
 do_execsql_test_on_specific_db {:memory:} strict-update-multiple-columns {
-    CREATE TABLE test9(id INTEGER, name TEXT, price REAL, quantity INT) STRICT;
+    CREATE TABLE test9 (id INTEGER, name TEXT, price REAL, quantity INT) STRICT;
     INSERT INTO test9 VALUES(1, 'item1', 10.5, 5);
     UPDATE test9 SET name = 'updated', price = 20.75, quantity = 10 WHERE id = 1;
     SELECT * FROM test9;
 } {1|updated|20.75|10}
 
 do_execsql_test_on_specific_db {:memory:} strict-update-where-clause {
-    CREATE TABLE test10(id INTEGER, category TEXT, price REAL) STRICT;
+    CREATE TABLE test10 (id INTEGER, category TEXT, price REAL) STRICT;
     INSERT INTO test10 VALUES(1, 'A', 10);
     INSERT INTO test10 VALUES(2, 'A', 20);
     INSERT INTO test10 VALUES(3, 'B', 30);
@@ -156,14 +156,14 @@ do_execsql_test_on_specific_db {:memory:} strict-update-where-clause {
 3|30.0}
 
 do_execsql_test_on_specific_db {:memory:} strict-update-expression {
-    CREATE TABLE test11(id INTEGER, name TEXT, price REAL, discount REAL) STRICT;
+    CREATE TABLE test11 (id INTEGER, name TEXT, price REAL, discount REAL) STRICT;
     INSERT INTO test11 VALUES(1, 'item1', 100, 0.1);
     UPDATE test11 SET price = price - (price * discount);
     SELECT id, price FROM test11;
 } {1|90.0}
 
 do_execsql_test_on_specific_db {:memory:} duplicate-set {
-    CREATE TABLE t(x, y);
+    CREATE TABLE t (x, y);
     INSERT INTO t VALUES(1, 'A');
     UPDATE t SET y = 'B', y = 'C', y = 'D' WHERE x = 1;
     SELECT x, y FROM t;
@@ -234,8 +234,8 @@ do_execsql_test_in_memory_any_error not_null_insert_multiple_values {
 }
 
 do_execsql_test_on_specific_db {:memory:} insert_from_select_1 {
-    CREATE TABLE t(a);
-    CREATE TABLE t2(b, c);
+    CREATE TABLE t (a);
+    CREATE TABLE t2 (b, c);
     INSERT INTO t2 values (1, 2), (10, 20);
     INSERT INTO t SELECT b FROM t2;
     SELECT * FROM t;
@@ -249,8 +249,8 @@ do_execsql_test_on_specific_db {:memory:} insert_from_select_1 {
 20}
 
 do_execsql_test_on_specific_db {:memory:} insert_from_select_where {
-    CREATE TABLE t(a);
-    CREATE TABLE t2(b, c);
+    CREATE TABLE t (a);
+    CREATE TABLE t2 (b, c);
     INSERT INTO t2 values (1, 2), (10, 20);
     INSERT INTO t SELECT b FROM t2 WHERE b < 10;
     SELECT * FROM t;
@@ -261,9 +261,9 @@ do_execsql_test_on_specific_db {:memory:} insert_from_select_where {
 20}
 
 do_execsql_test_on_specific_db {:memory:} insert_from_select_union_all {
-    CREATE TABLE t1(x INTEGER);
-    CREATE TABLE t2(x INTEGER); 
-    CREATE TABLE t3(x INTEGER);
+    CREATE TABLE t1 (x INTEGER);
+    CREATE TABLE t2 (x INTEGER); 
+    CREATE TABLE t3 (x INTEGER);
     
     INSERT INTO t1 VALUES(1),(2),(3);
     INSERT INTO t2 VALUES(4),(5),(6);
@@ -282,9 +282,9 @@ do_execsql_test_on_specific_db {:memory:} insert_from_select_union_all {
 9}
 
 do_execsql_test_on_specific_db {:memory:} insert_from_select_union_all_where {
-    CREATE TABLE t1(x INTEGER);
-    CREATE TABLE t2(x INTEGER); 
-    CREATE TABLE t3(x INTEGER);
+    CREATE TABLE t1 (x INTEGER);
+    CREATE TABLE t2 (x INTEGER); 
+    CREATE TABLE t3 (x INTEGER);
     
     INSERT INTO t1 VALUES(1),(2),(3);
     INSERT INTO t2 VALUES(4),(5),(6);
@@ -300,7 +300,7 @@ do_execsql_test_on_specific_db {:memory:} insert_from_select_union_all_where {
 8}
 
 do_execsql_test_on_specific_db {:memory:} insert_from_select_same_table {
-    CREATE TABLE t(a INTEGER PRIMARY KEY, b);
+    CREATE TABLE t (a INTEGER PRIMARY KEY, b);
     
     INSERT INTO t(b) VALUES (1),(2),(3);
     SELECT * FROM t;
@@ -317,7 +317,7 @@ do_execsql_test_on_specific_db {:memory:} insert_from_select_same_table {
 6|3}
 
 do_execsql_test_on_specific_db {:memory:} insert_from_select_same_table_2 {
-    CREATE TABLE t(a INTEGER PRIMARY KEY, b, c);
+    CREATE TABLE t (a INTEGER PRIMARY KEY, b, c);
     
     INSERT INTO t(b, c) VALUES (1, 100),(2, 200),(3, 300);
     SELECT * FROM t;
@@ -335,8 +335,8 @@ do_execsql_test_on_specific_db {:memory:} insert_from_select_same_table_2 {
 
 if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-sqlite3-index-experimental" || $::env(SQLITE_EXEC) eq "sqlite3")} {
     do_execsql_test_on_specific_db {:memory:} insert_from_select_union {
-        CREATE TABLE t(a, b); 
-        CREATE TABLE t2(b, c);
+        CREATE TABLE t (a, b); 
+        CREATE TABLE t2 (b, c);
 
         INSERT INTO t2 VALUES (1, 100), (2, 200);
         INSERT INTO t SELECT * FROM t UNION SELECT * FROM t2;
@@ -345,9 +345,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     2|200}
 
     do_execsql_test_on_specific_db {:memory:} insert_from_select_intersect {
-        CREATE TABLE t(a, b);
-        CREATE TABLE t1(a, b);
-        CREATE TABLE t2(a, b);
+        CREATE TABLE t (a, b);
+        CREATE TABLE t1 (a, b);
+        CREATE TABLE t2 (a, b);
 
         INSERT INTO t1 VALUES (1, 100), (2, 200);
         INSERT INTO t2 VALUES (2, 200), (3, 300);
@@ -356,10 +356,10 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     } {2|200}
 
     do_execsql_test_on_specific_db {:memory:} insert_from_select_intersect-2 {
-        CREATE TABLE t(a, b);
-        CREATE TABLE t1(a, b);
-        CREATE TABLE t2(a, b);
-        CREATE TABLE t3(a, b);
+        CREATE TABLE t (a, b);
+        CREATE TABLE t1 (a, b);
+        CREATE TABLE t2 (a, b);
+        CREATE TABLE t3 (a, b);
 
         INSERT INTO t1 VALUES (1, 100), (2, 200);
         INSERT INTO t2 VALUES (2, 200), (3, 300);
@@ -369,9 +369,9 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     } {2|200}
 
     do_execsql_test_on_specific_db {:memory:} insert_from_select_except {
-        CREATE TABLE t(a, b);
-        CREATE TABLE t1(a, b);
-        CREATE TABLE t2(a, b);
+        CREATE TABLE t (a, b);
+        CREATE TABLE t1 (a, b);
+        CREATE TABLE t2 (a, b);
 
         INSERT INTO t1 VALUES (1, 100), (2, 200);
         INSERT INTO t2 VALUES (2, 200), (3, 300);
@@ -381,20 +381,20 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
 }
 
 do_execsql_test_on_specific_db {:memory:} negative-primary-integer-key {
-    CREATE TABLE t(a INTEGER PRIMARY KEY);
+    CREATE TABLE t (a INTEGER PRIMARY KEY);
     insert into t values (-2),(13);
     select * from t order by a asc;
 } {-2
 13}
 
 do_execsql_test_on_specific_db {:memory:} not-null-rowid-alias {
-    CREATE TABLE t(a INTEGER PRIMARY KEY NOT NULL, b);
+    CREATE TABLE t (a INTEGER PRIMARY KEY NOT NULL, b);
     insert into t values (1, 2);
     select * from t;
 } {1|2}
 
 do_execsql_test_on_specific_db {:memory:} rowid-overflow-random-generation {
-    CREATE TABLE q(x INTEGER PRIMARY KEY, y);
+    CREATE TABLE q (x INTEGER PRIMARY KEY, y);
     INSERT INTO q VALUES (9223372036854775807, 1);
     INSERT INTO q(y) VALUES (2);
     INSERT INTO q(y) VALUES (3);
@@ -404,7 +404,7 @@ do_execsql_test_on_specific_db {:memory:} rowid-overflow-random-generation {
 # regression test for incorrect processing of record header in the case of large text columns
 if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-sqlite3-index-experimental" || $::env(SQLITE_EXEC) eq "sqlite3")} {
     do_execsql_test_on_specific_db {:memory:} large-text-index-seek {
-        CREATE TABLE t(x TEXT, y);
+        CREATE TABLE t (x TEXT, y);
         CREATE INDEX t_idx ON t(x);
         INSERT INTO t VALUES (replace(hex(zeroblob(1000)), '00', 'a') || 'a', 1);
         INSERT INTO t VALUES (replace(hex(zeroblob(1000)), '00', 'a') || 'b', 2);
@@ -468,7 +468,7 @@ do_execsql_test_skip_lines_on_specific_db 1 {:memory:} double-quote-inner-quotes
 
 # regression test for incorrect order of column in insert
 do_execsql_test_on_specific_db {:memory:} insert-tricky-column-order-values {
-    create table t(x, y, z);
+    create table t (x, y, z);
     insert into t(z, x) values (1, 2), (3, 4);
     insert into t(y, z) values (5, 6), (7, 8);
     select * from t;
@@ -478,8 +478,8 @@ do_execsql_test_on_specific_db {:memory:} insert-tricky-column-order-values {
 |7|8}
 
 do_execsql_test_on_specific_db {:memory:} insert-tricky-column-order-table {
-    create table t(x, y, z);
-    create table q(x, y, z);
+    create table t (x, y, z);
+    create table q (x, y, z);
     insert into q values (1, 2, 3), (4, 5, 6);
     insert into t(z, x) select y, x from q;
     insert into t(y, z) select z, y from q;

@@ -334,7 +334,7 @@ impl VTabModule for TableStatsVtabModule {
     const NAME: &'static str = "tablestats";
 
     fn create(_args: &[Value]) -> Result<(String, Self::Table), ResultCode> {
-        let schema = "CREATE TABLE x(name TEXT, rows INT);".to_string();
+        let schema = "CREATE TABLE x (name TEXT, rows INT);".to_string();
         Ok((schema, StatsTable {}))
     }
 }
