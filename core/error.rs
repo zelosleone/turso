@@ -60,7 +60,7 @@ pub enum LimboError {
     #[error("Database is busy")]
     Busy,
     #[error("Conflict: {0}")]
-    Conflict(String)
+    Conflict(String),
 }
 
 #[macro_export]
