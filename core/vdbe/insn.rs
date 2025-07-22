@@ -793,7 +793,7 @@ pub enum Insn {
     OpenWrite {
         cursor_id: CursorID,
         root_page: RegisterOrLiteral<PageIdx>,
-        name: String,
+        db: usize,
     },
 
     Copy {

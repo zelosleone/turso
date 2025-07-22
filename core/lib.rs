@@ -313,7 +313,6 @@ impl Database {
             _shared_cache: false,
             cache_size: Cell::new(default_cache_size),
             page_size: Cell::new(page_size),
-            readonly: Cell::new(false),
             wal_checkpoint_disabled: Cell::new(false),
             capture_data_changes: RefCell::new(CaptureDataChangesMode::Off),
             closed: Cell::new(false),
@@ -322,6 +321,10 @@ impl Database {
         // add built-in extensions symbols to the connection to prevent having to load each time
         conn.syms.borrow_mut().extend(&builtin_syms);
         Ok(conn)
+    }
+
+    pub fn is_readonly(&self) -> bool {
+        self.open_flags.contains(OpenFlags::ReadOnly)
     }
 
     fn init_pager(&self, page_size: Option<usize>) -> Result<Pager> {
@@ -569,7 +572,6 @@ pub struct Connection {
     /// page size used for an uninitialized database or the next vacuum command.
     /// it's not always equal to the current page size of the database
     page_size: Cell<u32>,
-    readonly: Cell<bool>,
     wal_checkpoint_disabled: Cell<bool>,
     capture_data_changes: RefCell<CaptureDataChangesMode>,
     closed: Cell<bool>,
@@ -781,12 +783,7 @@ impl Connection {
             std::fs::set_permissions(&opts.path, perms.permissions())?;
         }
         let conn = db.connect()?;
-        conn.set_readonly(opts.immutable);
         Ok((io, conn))
-    }
-
-    pub fn set_readonly(&self, readonly: bool) {
-        self.readonly.replace(readonly);
     }
 
     pub fn maybe_update_schema(&self) -> Result<()> {
@@ -902,8 +899,12 @@ impl Connection {
         }
     }
 
-    pub fn is_readonly(&self) -> bool {
-        self._db.open_flags.contains(OpenFlags::ReadOnly)
+    /// Check if a specific attached database is read only or not, by its index
+    pub fn is_readonly(&self, index: usize) -> bool {
+        // Only internal callers for now. Nobody should be passing
+        // anything else here
+        assert_eq!(index, 0);
+        self._db.is_readonly()
     }
 
     /// Reset the page size for the current connection.
