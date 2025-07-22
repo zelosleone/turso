@@ -203,10 +203,10 @@ pub trait Wal {
     fn begin_write_tx(&mut self) -> Result<LimboResult>;
 
     /// End a read transaction.
-    fn end_read_tx(&self) -> Result<LimboResult>;
+    fn end_read_tx(&self);
 
     /// End a write transaction.
-    fn end_write_tx(&self) -> Result<LimboResult>;
+    fn end_write_tx(&self);
 
     /// Find the latest frame containing a page.
     fn find_frame(&self, page_id: u64) -> Result<Option<u64>>;
@@ -258,17 +258,13 @@ impl Wal for DummyWAL {
         Ok(LimboResult::Ok)
     }
 
-    fn end_read_tx(&self) -> Result<LimboResult> {
-        Ok(LimboResult::Ok)
-    }
+    fn end_read_tx(&self) {}
 
     fn begin_write_tx(&mut self) -> Result<LimboResult> {
         Ok(LimboResult::Ok)
     }
 
-    fn end_write_tx(&self) -> Result<LimboResult> {
-        Ok(LimboResult::Ok)
-    }
+    fn end_write_tx(&self) {}
 
     fn find_frame(&self, _page_id: u64) -> Result<Option<u64>> {
         Ok(None)
@@ -542,11 +538,10 @@ impl Wal for WalFile {
     /// End a read transaction.
     #[inline(always)]
     #[instrument(skip_all, level = Level::DEBUG)]
-    fn end_read_tx(&self) -> Result<LimboResult> {
+    fn end_read_tx(&self) {
         tracing::debug!("end_read_tx(lock={})", self.max_frame_read_lock_index);
         let read_lock = &mut self.get_shared().read_locks[self.max_frame_read_lock_index];
         read_lock.unlock();
-        Ok(LimboResult::Ok)
     }
 
     /// Begin a write transaction
@@ -571,10 +566,9 @@ impl Wal for WalFile {
 
     /// End a write transaction
     #[instrument(skip_all, level = Level::DEBUG)]
-    fn end_write_tx(&self) -> Result<LimboResult> {
+    fn end_write_tx(&self) {
         tracing::debug!("end_write_txn");
         self.get_shared().write_lock.unlock();
-        Ok(LimboResult::Ok)
     }
 
     /// Find the latest frame containing a page.

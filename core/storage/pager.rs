@@ -772,16 +772,16 @@ impl Pager {
     ) -> Result<IOResult<PagerCommitResult>> {
         tracing::trace!("end_tx(rollback={})", rollback);
         if rollback {
-            self.wal.borrow().end_write_tx()?;
-            self.wal.borrow().end_read_tx()?;
+            self.wal.borrow().end_write_tx();
+            self.wal.borrow().end_read_tx();
             return Ok(IOResult::Done(PagerCommitResult::Rollback));
         }
         let commit_status = self.commit_dirty_pages(wal_checkpoint_disabled)?;
         match commit_status {
             IOResult::IO => Ok(IOResult::IO),
             IOResult::Done(_) => {
-                self.wal.borrow().end_write_tx()?;
-                self.wal.borrow().end_read_tx()?;
+                self.wal.borrow().end_write_tx();
+                self.wal.borrow().end_read_tx();
 
                 if schema_did_change {
                     let schema = connection.schema.borrow().clone();
@@ -798,7 +798,7 @@ impl Pager {
 
     #[instrument(skip_all, level = Level::DEBUG)]
     pub fn end_read_tx(&self) -> Result<()> {
-        self.wal.borrow().end_read_tx()?;
+        self.wal.borrow().end_read_tx();
         Ok(())
     }
 
