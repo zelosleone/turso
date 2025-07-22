@@ -3,6 +3,7 @@
 set testdir [file dirname $argv0]
 
 source $testdir/cmdlineshell.test
+source $testdir/alter_table.test
 source $testdir/agg-functions.test
 source $testdir/coalesce.test
 source $testdir/delete.test
