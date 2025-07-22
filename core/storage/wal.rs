@@ -217,7 +217,6 @@ pub trait Wal {
     /// Read a raw frame (header included) from the WAL.
     fn read_frame_raw(&self, frame_id: u64, frame: &mut [u8]) -> Result<Arc<Completion>>;
 
-
     /// Write a frame to the WAL.
     /// db_size is the database size in pages after the transaction finishes.
     /// db_size > 0    -> last frame written in transaction
