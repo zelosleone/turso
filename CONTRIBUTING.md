@@ -20,6 +20,7 @@ If you are new to Rust, the following books are recommended reading:
 Examples of contributing
 
 * [How to contribute a SQL function implementation](docs/contributing/contributing_functions.md)
+* [Rickrolling Turso DB](https://avi.im/blag/2025/rickrolling-turso)
 
 To build and run `tursodb` CLI: 
 
