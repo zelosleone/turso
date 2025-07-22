@@ -236,7 +236,7 @@ the [README.md under bindings/java](bindings/java/README.md).
 
 We'd love to have you contribute to Turso Database! Please check out the [contribution guide] to get started.
 
-## Found a data corruption bug? Get up to $1,000.00
+### Found a data corruption bug? Get up to $1,000.00
 
 SQLite is loved because it is the most reliable database in the world. The next evolution of SQLite has
 to match or surpass this level of reliability. Turso is built with [Deterministic Simulation Testing](simulator/)
