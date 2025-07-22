@@ -296,7 +296,7 @@ mod tests {
                 false,
             );
             let conn = db.connect_limbo();
-            let ret = limbo_exec_rows(&db, &conn, "CREATE table t(a)");
+            let ret = limbo_exec_rows(&db, &conn, "CREATE table t (a)");
             assert!(ret.is_empty(), "{ret:?}");
             limbo_exec_rows(&db, &conn, "INSERT INTO t values (1)");
             conn.close().unwrap()
@@ -325,7 +325,7 @@ mod tests {
         let db = TempDatabase::new_empty(true);
         let conn = db.connect_limbo();
 
-        let _ = limbo_exec_rows(&db, &conn, "CREATE TABLE t(x INTEGER UNIQUE)");
+        let _ = limbo_exec_rows(&db, &conn, "CREATE TABLE t (x INTEGER UNIQUE)");
 
         // Insert 100 random integers between -1000 and 1000
         let mut expected = Vec::new();
@@ -366,7 +366,7 @@ mod tests {
         let db = TempDatabase::new_with_existent(&path, true);
         let conn = db.connect_limbo();
 
-        let _ = limbo_exec_rows(&db, &conn, "CREATE TABLE t(x BLOB UNIQUE)");
+        let _ = limbo_exec_rows(&db, &conn, "CREATE TABLE t (x BLOB UNIQUE)");
 
         // Insert 11 unique 1MB blobs
         for i in 0..11 {
@@ -399,7 +399,7 @@ mod tests {
         let conn1 = db.connect_limbo();
 
         // Create test table
-        let _ = limbo_exec_rows(&db, &conn1, "CREATE TABLE t(x INTEGER)");
+        let _ = limbo_exec_rows(&db, &conn1, "CREATE TABLE t (x INTEGER)");
 
         // Begin transaction on first connection and insert a value
         let _ = limbo_exec_rows(&db, &conn1, "BEGIN");
@@ -432,7 +432,7 @@ mod tests {
         let conn1 = db.connect_limbo();
 
         // Create test table
-        let _ = limbo_exec_rows(&db, &conn1, "CREATE TABLE t(x INTEGER)");
+        let _ = limbo_exec_rows(&db, &conn1, "CREATE TABLE t (x INTEGER)");
 
         // Begin transaction on first connection
         let _ = limbo_exec_rows(&db, &conn1, "BEGIN");
@@ -468,7 +468,7 @@ mod tests {
         let conn = db.connect_limbo();
 
         // Create test table
-        let _ = limbo_exec_rows(&db, &conn, "CREATE TABLE t(x INTEGER)");
+        let _ = limbo_exec_rows(&db, &conn, "CREATE TABLE t (x INTEGER)");
 
         // Begin transaction on first connection and insert a value
         let _ = limbo_exec_rows(&db, &conn, "BEGIN");
@@ -510,7 +510,7 @@ mod tests {
         let conn = db.connect_limbo();
 
         // Create test table
-        let _ = limbo_exec_rows(&db, &conn, "CREATE TABLE t(x INTEGER)");
+        let _ = limbo_exec_rows(&db, &conn, "CREATE TABLE t (x INTEGER)");
 
         // Begin transaction and insert a value
         let _ = limbo_exec_rows(&db, &conn, "BEGIN");

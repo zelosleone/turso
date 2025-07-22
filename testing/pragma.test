@@ -110,7 +110,7 @@ do_execsql_test pragma-vtab-table-info-invalid-table {
 #} {0}
 
 do_execsql_test_on_specific_db ":memory:" pragma-page-count-table {
-  CREATE TABLE foo(bar);
+  CREATE TABLE foo (bar);
   PRAGMA page_count
 } {2}
 
@@ -214,14 +214,14 @@ do_execsql_test_on_specific_db ":memory:" pragma-function-argument-with-space {
 } {0|c0||0||0}
 
 # If the argument passed to the first function call were simply concatenated with the underlying PRAGMA statement,
-# we would end up with: PRAGMA table_info='sqlite_schema';CREATE TABLE foo(c0);SELECT 'bar'. Depending on how many
+# we would end up with: PRAGMA table_info='sqlite_schema';CREATE TABLE foo (c0);SELECT 'bar'. Depending on how many
 # statements are executed at once, at least one of the following would run:
 # - PRAGMA table_info='sqlite_schema';
-# - CREATE TABLE foo(c0);
+# - CREATE TABLE foo (c0);
 # - SELECT 'bar';
 # No output means that none of them were executed.
 do_execsql_test pragma-function-sql-injection {
-  SELECT * FROM pragma_table_info('sqlite_schema'';CREATE TABLE foo(c0);SELECT ''bar');
+  SELECT * FROM pragma_table_info('sqlite_schema'';CREATE TABLE foo (c0);SELECT ''bar');
   SELECT * FROM pragma_table_info('foo');
 } {}
 

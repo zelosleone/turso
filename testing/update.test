@@ -184,7 +184,7 @@ do_execsql_test_on_specific_db {:memory:} update-true-expr {
 
 # https://github.com/tursodatabase/turso/issues/1625
 do_execsql_test_on_specific_db {:memory:} update_cache_full_regression_test_#1625 {
-    CREATE TABLE t(x);
+    CREATE TABLE t (x);
     INSERT INTO t VALUES (randomblob(4096));
     UPDATE t SET x = randomblob(4096) WHERE rowid = 1;
     SELECT count(*) FROM t;
@@ -192,7 +192,7 @@ do_execsql_test_on_specific_db {:memory:} update_cache_full_regression_test_#162
 
 if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-sqlite3-index-experimental" || $::env(SQLITE_EXEC) eq "sqlite3")} {
     do_execsql_test_on_specific_db {:memory:} update_index_regression_test {
-        CREATE TABLE t(x, y);
+        CREATE TABLE t (x, y);
         CREATE INDEX tx ON t (x);
         CREATE UNIQUE INDEX tyu ON t (y);
         INSERT INTO t VALUES (1, 1);
@@ -207,7 +207,7 @@ if {[info exists ::env(SQLITE_EXEC)] && ($::env(SQLITE_EXEC) eq "scripts/limbo-s
     2}
 
     do_execsql_test_on_specific_db {:memory:} update_rowid_alias_index_regression_test {
-        CREATE TABLE t(a INTEGER PRIMARY KEY, b);
+        CREATE TABLE t (a INTEGER PRIMARY KEY, b);
         CREATE INDEX idx_b ON t (b);
         INSERT INTO t VALUES (1, 'foo');
         SELECT a FROM t WHERE b = 'foo';
@@ -253,19 +253,19 @@ do_execsql_test_in_memory_any_error update_primary_key_constraint_error_3 {
 }
 
 do_execsql_test_in_memory_any_error update_primary_key_constraint_error_4 {
-    CREATE TABLE t(a PRIMARY KEY INTEGER, b UNIQUE);
+    CREATE TABLE t (a PRIMARY KEY INTEGER, b UNIQUE);
     INSERT INTO t(b) VALUES (100), (200), (300);
     UPDATE t SET a = 1;
 }
 
 do_execsql_test_in_memory_any_error update_primary_key_unique_constraint_error {
-    CREATE TABLE t(a PRIMARY KEY INTEGER, b UNIQUE);
+    CREATE TABLE t (a PRIMARY KEY INTEGER, b UNIQUE);
     INSERT INTO t(b) VALUES (100), (200), (300);
     UPDATE t SET b = 2;
 }
 
 do_execsql_test_on_specific_db {:memory:} update-single-rowid {
-    CREATE TABLE t(x INTEGER PRIMARY KEY);
+    CREATE TABLE t (x INTEGER PRIMARY KEY);
     INSERT INTO t VALUES (1);
     UPDATE t SET x = 2 WHERE x = 1;
     SELECT * FROM t;

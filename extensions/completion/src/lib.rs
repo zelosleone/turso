@@ -71,7 +71,7 @@ impl VTabModule for CompletionVTabModule {
     const VTAB_KIND: turso_ext::VTabKind = turso_ext::VTabKind::TableValuedFunction;
 
     fn create(_args: &[Value]) -> Result<(String, Self::Table), ResultCode> {
-        let schema = "CREATE TABLE completion(
+        let schema = "CREATE TABLE completion (
             candidate TEXT,
             prefix TEXT HIDDEN,
             wholeline TEXT HIDDEN,

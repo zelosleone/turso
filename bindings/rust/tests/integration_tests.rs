@@ -122,7 +122,7 @@ async fn test_rows_returned() {
     let conn = db.connect().unwrap();
 
     //--- CRUD Operations ---//
-    conn.execute("CREATE TABLE t(id INTEGER PRIMARY KEY, val TEXT)", ())
+    conn.execute("CREATE TABLE t (id INTEGER PRIMARY KEY, val TEXT)", ())
         .await
         .unwrap();
     let changed = conn

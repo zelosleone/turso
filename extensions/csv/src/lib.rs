@@ -209,7 +209,7 @@ impl VTabModule for CsvVTabModule {
         }
 
         if schema.is_none() {
-            let mut sql = String::from("CREATE TABLE x(");
+            let mut sql = String::from("CREATE TABLE x (");
             for (i, col) in columns.iter().enumerate() {
                 sql.push('"');
                 sql.push_str(col);
@@ -541,7 +541,7 @@ mod tests {
         let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert!(rows.is_empty());
-        assert_eq!(schema, "CREATE TABLE x(\"c0\" TEXT)");
+        assert_eq!(schema, "CREATE TABLE x (\"c0\" TEXT)");
     }
 
     #[test]
@@ -550,7 +550,7 @@ mod tests {
         let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert!(rows.is_empty());
-        assert_eq!(schema, "CREATE TABLE x(\"c0\" TEXT)");
+        assert_eq!(schema, "CREATE TABLE x (\"c0\" TEXT)");
     }
 
     #[test]
@@ -564,7 +564,7 @@ mod tests {
         let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert!(rows.is_empty());
-        assert_eq!(schema, "CREATE TABLE x(\"(NULL)\" TEXT)");
+        assert_eq!(schema, "CREATE TABLE x (\"(NULL)\" TEXT)");
     }
 
     #[test]
@@ -573,7 +573,7 @@ mod tests {
         let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
         assert!(rows.is_empty());
-        assert_eq!(schema, "CREATE TABLE x(\"(NULL)\" TEXT)");
+        assert_eq!(schema, "CREATE TABLE x (\"(NULL)\" TEXT)");
     }
 
     #[test]
@@ -609,7 +609,7 @@ mod tests {
         let table = new_table(vec![
             &format!("filename={}", file.path().to_string_lossy()),
             "header=false",
-            "schema=CREATE TABLE x(id INT, name TEXT)",
+            "schema=CREATE TABLE x (id INT, name TEXT)",
         ]);
         let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
@@ -637,8 +637,8 @@ mod tests {
     #[test]
     fn test_more_than_one_schema_argument() {
         let result = try_new_table(vec![
-            "schema=CREATE TABLE x(id INT, name TEXT)",
-            "schema=CREATE TABLE x(key INT, value TEXT)",
+            "schema=CREATE TABLE x (id INT, name TEXT)",
+            "schema=CREATE TABLE x (key INT, value TEXT)",
         ]);
         assert!(matches!(result, Err(ResultCode::InvalidArgs)));
     }
@@ -731,9 +731,9 @@ mod tests {
     fn test_unparsable_argument() {
         let unparsable_arguments = [
             "header",
-            "schema='CREATE TABLE x(id INT, name TEXT)",
-            "schema=\"CREATE TABLE x(id INT, name TEXT)",
-            "schema=\"CREATE TABLE x(id INT, name TEXT)'",
+            "schema='CREATE TABLE x (id INT, name TEXT)",
+            "schema=\"CREATE TABLE x (id INT, name TEXT)",
+            "schema=\"CREATE TABLE x (id INT, name TEXT)'",
         ];
 
         for &val in &unparsable_arguments {
@@ -825,7 +825,7 @@ mod tests {
             &format!("filename={}", file.path().to_string_lossy()),
             "header=false",
             "columns=1",
-            "schema='CREATE TABLE x(id INT, name TEXT)'",
+            "schema='CREATE TABLE x (id INT, name TEXT)'",
         ]);
         let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
@@ -839,7 +839,7 @@ mod tests {
             &format!("filename={}", file.path().to_string_lossy()),
             "header=false",
             "columns=5",
-            "schema='CREATE TABLE x(id INT, name TEXT)'",
+            "schema='CREATE TABLE x (id INT, name TEXT)'",
         ]);
         let cursor = table.open(None).unwrap();
         let rows = read_rows(cursor, 2);
@@ -871,7 +871,7 @@ mod tests {
         );
         assert_eq!(
             schema,
-            "CREATE TABLE x(\"id\" TEXT, \"first\"\"name\" TEXT)"
+            "CREATE TABLE x (\"id\" TEXT, \"first\"\"name\" TEXT)"
         );
     }
 }

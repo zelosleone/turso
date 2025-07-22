@@ -457,7 +457,7 @@ fn test_delete_with_index() -> anyhow::Result<()> {
 
     maybe_setup_tracing();
 
-    let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x UNIQUE)", true);
+    let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE t (x UNIQUE)", true);
     let conn = tmp_db.connect_limbo();
 
     run_query(&tmp_db, &conn, "INSERT INTO t VALUES (1), (2)")?;
@@ -507,7 +507,7 @@ fn test_update_regression() -> anyhow::Result<()> {
 #[test]
 fn test_multiple_statements() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
-    let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x)", false);
+    let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE t (x)", false);
     let conn = tmp_db.connect_limbo();
 
     conn.execute("INSERT INTO t values(1); insert into t values(2);")?;
@@ -601,7 +601,7 @@ fn test_write_concurrent_connections() -> anyhow::Result<()> {
 
     maybe_setup_tracing();
 
-    let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE t(x)", false);
+    let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE t (x)", false);
     let num_connections = 4;
     let num_inserts_per_connection = 100;
     let mut connections = vec![];
@@ -652,12 +652,12 @@ fn test_wal_bad_frame() -> anyhow::Result<()> {
     maybe_setup_tracing();
     let _ = env_logger::try_init();
     let db_path = {
-        let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE t1(x)", false);
+        let tmp_db = TempDatabase::new_with_rusqlite("CREATE TABLE t1 (x)", false);
         let db_path = tmp_db.path.clone();
         let conn = tmp_db.connect_limbo();
         conn.execute("BEGIN")?;
-        conn.execute("CREATE TABLE t2(x)")?;
-        conn.execute("CREATE TABLE t3(x)")?;
+        conn.execute("CREATE TABLE t2 (x)")?;
+        conn.execute("CREATE TABLE t3 (x)")?;
         conn.execute("INSERT INTO t2(x) VALUES (1)")?;
         conn.execute("INSERT INTO t3(x) VALUES (1)")?;
         conn.execute("COMMIT")?;
@@ -752,7 +752,7 @@ fn test_read_wal_dumb_no_frames() -> anyhow::Result<()> {
     {
         let tmp_db = TempDatabase::new_with_existent(&db_path, false);
         let conn = tmp_db.connect_limbo();
-        conn.execute("CREATE TABLE t0(x)")?;
+        conn.execute("CREATE TABLE t0 (x)")?;
         conn.close()?;
     }
     {
