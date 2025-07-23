@@ -7497,6 +7497,253 @@ mod tests {
         }
     }
 
+    fn btree_index_insert_delete_fuzz_run(
+        attempts: usize,
+        operations: usize,
+        size: impl Fn(&mut ChaCha8Rng) -> usize,
+        insert_chance: f64,
+    ) {
+        use crate::storage::pager::CreateBTreeFlags;
+
+        let (mut rng, seed) = if std::env::var("SEED").is_ok() {
+            let seed = std::env::var("SEED").unwrap();
+            let seed = seed.parse::<u64>().unwrap();
+            let rng = ChaCha8Rng::seed_from_u64(seed);
+            (rng, seed)
+        } else {
+            rng_from_time_or_env()
+        };
+        let mut seen = HashSet::new();
+        tracing::info!("super seed: {}", seed);
+
+        for _ in 0..attempts {
+            let (pager, _, _db, conn) = empty_btree();
+            let index_root_page_result =
+                pager.btree_create(&CreateBTreeFlags::new_index()).unwrap();
+            let index_root_page = match index_root_page_result {
+                crate::types::IOResult::Done(id) => id as usize,
+                crate::types::IOResult::IO => {
+                    panic!("btree_create returned IO in test, unexpected")
+                }
+            };
+            let index_def = Index {
+                name: "testindex".to_string(),
+                columns: vec![IndexColumn {
+                    name: "testcol".to_string(),
+                    order: SortOrder::Asc,
+                    collation: None,
+                    pos_in_table: 0,
+                    default: None,
+                }],
+                table_name: "test".to_string(),
+                root_page: index_root_page,
+                unique: false,
+                ephemeral: false,
+                has_rowid: false,
+            };
+            let mut cursor =
+                BTreeCursor::new_index(None, pager.clone(), index_root_page, &index_def, 1);
+
+            // Track expected keys that should be present in the tree
+            let mut expected_keys = Vec::new();
+
+            tracing::info!("seed: {seed}");
+            for i in 0..operations {
+                let print_progress = i % 100 == 0;
+                pager.begin_read_tx().unwrap();
+                pager.begin_write_tx().unwrap();
+
+                // Decide whether to insert or delete (80% chance of insert)
+                let is_insert = rng.next_u64() % 100 < (insert_chance * 100.0) as u64;
+
+                if is_insert {
+                    // Generate a unique key for insertion
+                    let key = {
+                        let result;
+                        loop {
+                            let sizeof_blob = size(&mut rng);
+                            let blob = (0..sizeof_blob)
+                                .map(|_| (rng.next_u64() % 256) as u8)
+                                .collect::<Vec<_>>();
+                            if seen.contains(&blob) {
+                                continue;
+                            } else {
+                                seen.insert(blob.clone());
+                            }
+                            result = blob;
+                            break;
+                        }
+                        result
+                    };
+
+                    if print_progress {
+                        tracing::info!("insert {}/{}, seed: {seed}", i + 1, operations);
+                    }
+                    expected_keys.push(key.clone());
+
+                    let regs = vec![Register::Value(Value::Blob(key))];
+                    let value = ImmutableRecord::from_registers(&regs, regs.len());
+
+                    let seek_result = run_until_done(
+                        || {
+                            let record = ImmutableRecord::from_registers(&regs, regs.len());
+                            let key = SeekKey::IndexKey(&record);
+                            cursor.seek(key, SeekOp::GE { eq_only: true })
+                        },
+                        pager.deref(),
+                    )
+                    .unwrap();
+                    if let SeekResult::TryAdvance = seek_result {
+                        run_until_done(|| cursor.next(), pager.deref()).unwrap();
+                    }
+                    run_until_done(
+                        || {
+                            cursor.insert(
+                                &BTreeKey::new_index_key(&value),
+                                cursor.is_write_in_progress(),
+                            )
+                        },
+                        pager.deref(),
+                    )
+                    .unwrap();
+                } else {
+                    // Delete a random existing key
+                    if !expected_keys.is_empty() {
+                        let delete_idx = rng.next_u64() as usize % expected_keys.len();
+                        let key_to_delete = expected_keys[delete_idx].clone();
+
+                        if print_progress {
+                            tracing::info!("delete {}/{}, seed: {seed}", i + 1, operations);
+                        }
+
+                        let regs = vec![Register::Value(Value::Blob(key_to_delete.clone()))];
+                        let record = ImmutableRecord::from_registers(&regs, regs.len());
+
+                        // Seek to the key to delete
+                        let seek_result = run_until_done(
+                            || {
+                                cursor
+                                    .seek(SeekKey::IndexKey(&record), SeekOp::GE { eq_only: true })
+                            },
+                            pager.deref(),
+                        )
+                        .unwrap();
+                        let mut found = matches!(seek_result, SeekResult::Found);
+                        if matches!(seek_result, SeekResult::TryAdvance) {
+                            found = run_until_done(|| cursor.next(), pager.deref()).unwrap();
+                        }
+                        assert!(found, "expected key {key_to_delete:?} is not found");
+
+                        // Delete the key
+                        run_until_done(|| cursor.delete(), pager.deref()).unwrap();
+
+                        // Remove from expected keys
+                        expected_keys.remove(delete_idx);
+                    }
+                }
+
+                cursor.move_to_root().unwrap();
+                loop {
+                    match pager.end_tx(false, false, &conn, false).unwrap() {
+                        IOResult::Done(_) => break,
+                        IOResult::IO => {
+                            pager.io.run_once().unwrap();
+                        }
+                    }
+                }
+            }
+
+            // Final validation
+            let mut sorted_keys = expected_keys.clone();
+            sorted_keys.sort();
+            validate_expected_keys(&pager, &mut cursor, &sorted_keys, seed);
+
+            pager.end_read_tx().unwrap();
+        }
+    }
+
+    fn validate_expected_keys(
+        pager: &Rc<Pager>,
+        cursor: &mut BTreeCursor,
+        expected_keys: &[Vec<u8>],
+        seed: u64,
+    ) {
+        // Check that all expected keys can be found by seeking
+        pager.begin_read_tx().unwrap();
+        cursor.move_to_root().unwrap();
+        for (i, key) in expected_keys.iter().enumerate() {
+            tracing::info!(
+                "validating key {}/{}, seed: {seed}",
+                i + 1,
+                expected_keys.len()
+            );
+            let exists = run_until_done(
+                || {
+                    let regs = vec![Register::Value(Value::Blob(key.clone()))];
+                    cursor.seek(
+                        SeekKey::IndexKey(&ImmutableRecord::from_registers(&regs, regs.len())),
+                        SeekOp::GE { eq_only: true },
+                    )
+                },
+                pager.deref(),
+            )
+            .unwrap();
+            let mut found = matches!(exists, SeekResult::Found);
+            if matches!(exists, SeekResult::TryAdvance) {
+                found = run_until_done(|| cursor.next(), pager.deref()).unwrap();
+            }
+            assert!(found, "expected key {key:?} is not found");
+        }
+
+        // Check key count
+        cursor.move_to_root().unwrap();
+        run_until_done(|| cursor.rewind(), pager.deref()).unwrap();
+        if !cursor.has_record.get() {
+            panic!("no keys in tree");
+        }
+        let mut count = 1;
+        loop {
+            run_until_done(|| cursor.next(), pager.deref()).unwrap();
+            if !cursor.has_record.get() {
+                break;
+            }
+            count += 1;
+        }
+        assert_eq!(
+            count,
+            expected_keys.len(),
+            "key count is not right, got {}, expected {}, seed: {seed}",
+            count,
+            expected_keys.len()
+        );
+
+        // Check that all keys can be found in-order, by iterating the btree
+        cursor.move_to_root().unwrap();
+        for (i, key) in expected_keys.iter().enumerate() {
+            run_until_done(|| cursor.next(), pager.deref()).unwrap();
+            tracing::info!(
+                "iterating key {}/{}, cursor stack cur idx: {:?}, cursor stack depth: {:?}, seed: {seed}",
+                i + 1,
+                expected_keys.len(),
+                cursor.stack.current_cell_index(),
+                cursor.stack.current()
+            );
+            let record = run_until_done(|| cursor.record(), pager).unwrap();
+            let record = record.as_ref().unwrap();
+            let cur = record.get_values().clone();
+            let cur = cur.first().unwrap();
+            let RefValue::Blob(ref cur) = cur else {
+                panic!("expected blob, got {cur:?}");
+            };
+            assert_eq!(
+                cur.to_slice(),
+                key,
+                "key {key:?} is not found, seed: {seed}"
+            );
+        }
+        pager.end_read_tx().unwrap();
+    }
+
     #[test]
     pub fn test_drop_odd() {
         let db = get_database();
@@ -7556,6 +7803,20 @@ mod tests {
     }
 
     #[test]
+    pub fn btree_index_insert_delete_fuzz_run_test() {
+        btree_index_insert_delete_fuzz_run(
+            2,
+            2000,
+            |rng| {
+                let min: u32 = 4;
+                let size = min + rng.next_u32() % (1024 - min);
+                size as usize
+            },
+            0.65,
+        );
+    }
+
+    #[test]
     pub fn btree_insert_fuzz_run_random() {
         btree_insert_fuzz_run(128, 16, |rng| (rng.next_u32() % 4096) as usize);
     }
@@ -7588,6 +7849,21 @@ mod tests {
     #[ignore]
     pub fn fuzz_long_btree_index_insert_fuzz_run_equal_size() {
         btree_index_insert_fuzz_run(2, 10_000);
+    }
+
+    #[test]
+    #[ignore]
+    pub fn fuzz_long_btree_index_insert_delete_fuzz_run() {
+        btree_index_insert_delete_fuzz_run(
+            2,
+            10000,
+            |rng| {
+                let min: u32 = 4;
+                let size = min + rng.next_u32() % (1024 - min);
+                size as usize
+            },
+            0.65,
+        );
     }
 
     #[test]
