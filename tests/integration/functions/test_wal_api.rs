@@ -162,7 +162,7 @@ fn test_wal_frame_api_no_schema_changes_fuzz() {
 
         let seed = rng.next_u64();
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
-        println!("SEED: {}", seed);
+        println!("SEED: {seed}");
 
         let (mut size, mut synced_frame) = (0, conn2.wal_frame_count().unwrap());
         let mut commit_frames = vec![conn1.wal_frame_count().unwrap()];
@@ -170,8 +170,7 @@ fn test_wal_frame_api_no_schema_changes_fuzz() {
             if rng.next_u32() % 10 != 0 {
                 let key = rng.next_u32();
                 let length = rng.next_u32() % (4 * 4096);
-                let query = format!("INSERT INTO t VALUES ({}, randomblob({}))", key, length);
-                // println!("{}", query);
+                let query = format!("INSERT INTO t VALUES ({key}, randomblob({length}))");
                 conn1.execute(&query).unwrap();
                 commit_frames.push(conn1.wal_frame_count().unwrap());
             } else {
@@ -179,7 +178,6 @@ fn test_wal_frame_api_no_schema_changes_fuzz() {
                 let next_frame =
                     synced_frame + (rng.next_u32() as u64 % (last_frame - synced_frame + 1));
                 let mut frame = [0u8; 24 + 4096];
-                // println!("sync WAL frames: [{}..{}]", synced_frame + 1, next_frame);
                 conn2.wal_insert_begin().unwrap();
                 for frame_no in (synced_frame + 1)..=next_frame {
                     let c = conn1.wal_get_frame(frame_no as u32, &mut frame).unwrap();
