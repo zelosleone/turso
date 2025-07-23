@@ -1,3 +1,4 @@
+use parking_lot::Mutex;
 use tracing::{instrument, Level};
 
 use crate::{
@@ -232,14 +233,16 @@ pub enum OverwriteCellState {
     AllocatePayload,
     /// Fill the cell payload with the new payload.
     FillPayload {
-        new_payload: Option<Vec<u8>>, // option so it can be .take()'d out of the state
+        /// Dumb double-indirection via Arc because we clone [WriteState] for some reason and we use unsafe in [FillCellPayloadState::AllocateOverflowPages]
+        /// so the underlying Vec must not be cloned in upper layers.
+        new_payload: Arc<Mutex<Vec<u8>>>,
         rowid: Option<i64>,
         fill_cell_payload_state: FillCellPayloadState,
     },
     /// Clear the old cell's overflow pages and add them to the freelist.
     /// Overwrite the cell with the new payload.
     ClearOverflowPagesAndOverwrite {
-        new_payload: Vec<u8>,
+        new_payload: Arc<Mutex<Vec<u8>>>,
         old_offset: usize,
         old_local_size: usize,
     },
@@ -5198,7 +5201,7 @@ impl BTreeCursor {
                     let new_payload = Vec::with_capacity(serial_types_len);
                     let rowid = return_if_io!(self.rowid());
                     *state = OverwriteCellState::FillPayload {
-                        new_payload: Some(new_payload),
+                        new_payload: Arc::new(Mutex::new(new_payload)),
                         rowid,
                         fill_cell_payload_state: FillCellPayloadState::Start,
                     };
@@ -5211,16 +5214,20 @@ impl BTreeCursor {
                 } => {
                     let page = page_ref.get();
                     let page_contents = page.get().contents.as_ref().unwrap();
-                    return_if_io!(fill_cell_payload(
-                        page_contents,
-                        *rowid,
-                        new_payload.as_mut().expect("new_payload should be Some"),
-                        cell_idx,
-                        record,
-                        self.usable_space(),
-                        self.pager.clone(),
-                        fill_cell_payload_state,
-                    ));
+                    {
+                        let mut new_payload_mut = new_payload.lock();
+                        let new_payload_mut = &mut *new_payload_mut;
+                        return_if_io!(fill_cell_payload(
+                            page_contents,
+                            *rowid,
+                            new_payload_mut,
+                            cell_idx,
+                            record,
+                            self.usable_space(),
+                            self.pager.clone(),
+                            fill_cell_payload_state,
+                        ));
+                    }
                     // figure out old cell offset & size
                     let (old_offset, old_local_size) = {
                         let page_ref = page_ref.get();
@@ -5229,7 +5236,7 @@ impl BTreeCursor {
                     };
 
                     *state = OverwriteCellState::ClearOverflowPagesAndOverwrite {
-                        new_payload: new_payload.take().expect("new_payload should be Some"),
+                        new_payload: new_payload.clone(),
                         old_offset,
                         old_local_size,
                     };
@@ -5244,6 +5251,9 @@ impl BTreeCursor {
                     let page_contents = page.get().contents.as_ref().unwrap();
                     let cell = page_contents.cell_get(cell_idx, self.usable_space())?;
                     return_if_io!(self.clear_overflow_pages(&cell));
+
+                    let mut new_payload = new_payload.lock();
+                    let new_payload = &mut *new_payload;
                     // if it all fits in local space and old_local_size is enough, do an in-place overwrite
                     if new_payload.len() == *old_local_size {
                         self.overwrite_content(page_ref.clone(), *old_offset, new_payload)?;
@@ -6754,7 +6764,9 @@ fn allocate_cell_space(page_ref: &PageContent, amount: u16, usable_space: u16) -
 pub enum FillCellPayloadState {
     Start,
     AllocateOverflowPages {
-        record_buf: Vec<u8>,
+        /// Arc because we clone [WriteState] for some reason and we use unsafe pointer dereferences in [FillCellPayloadState::AllocateOverflowPages]
+        /// so the underlying bytes must not be cloned in upper layers.
+        record_buf: Arc<[u8]>,
         space_left: usize,
         to_copy_buffer_ptr: *const u8,
         to_copy_buffer_len: usize,
@@ -6782,7 +6794,7 @@ fn fill_cell_payload(
         match state {
             FillCellPayloadState::Start => {
                 // TODO: make record raw from start, having to serialize is not good
-                let record_buf = record.get_payload().to_vec();
+                let record_buf: Arc<[u8]> = Arc::from(record.get_payload());
 
                 let page_type = page_contents.page_type();
                 // fill in header
@@ -6810,7 +6822,7 @@ fn fill_cell_payload(
                 );
                 if record_buf.len() <= payload_overflow_threshold_max {
                     // enough allowed space to fit inside a btree page
-                    cell_payload.extend_from_slice(record_buf.as_slice());
+                    cell_payload.extend_from_slice(record_buf.as_ref());
                     return Ok(IOResult::Done(()));
                 }
 
@@ -6826,7 +6838,7 @@ fn fill_cell_payload(
 
                 // cell_size must be equal to first value of space_left as this will be the bytes copied to non-overflow page.
                 let cell_size = space_left + cell_payload.len() + 4; // 4 is the number of bytes of pointer to first overflow page
-                let to_copy_buffer = record_buf.as_slice();
+                let to_copy_buffer = record_buf.as_ref();
 
                 let prev_size = cell_payload.len();
                 cell_payload.resize(prev_size + space_left + 4, 0);
@@ -6838,6 +6850,8 @@ fn fill_cell_payload(
                     cell_payload.len()
                 );
 
+                // SAFETY: this pointer is valid because it points to a buffer in an Arc<Mutex<Vec<u8>>> that lives at least as long as this function,
+                // and the Vec will not be mutated in FillCellPayloadState::AllocateOverflowPages, which we will move to next.
                 let pointer = unsafe { cell_payload.as_mut_ptr().add(prev_size) };
                 let pointer_to_next =
                     unsafe { cell_payload.as_mut_ptr().add(prev_size + space_left) };
@@ -6870,12 +6884,14 @@ fn fill_cell_payload(
                     let pointer = *pointer;
                     let space_left = *space_left;
 
-                    // SAFETY: we know to_copy_buffer_ptr is valid because it refers to record_buf which lives at least as long as this function.
+                    // SAFETY: we know to_copy_buffer_ptr is valid because it refers to record_buf which lives at least as long as this function,
+                    // and the underlying bytes are not mutated in FillCellPayloadState::AllocateOverflowPages.
                     let to_copy_buffer = unsafe {
                         std::slice::from_raw_parts(to_copy_buffer_ptr, to_copy_buffer_len)
                     };
                     to_copy = space_left.min(to_copy_buffer_len);
-                    // SAFETY: we know 'pointer' is valid because it refers to cell_payload which lives at least as long as this function.
+                    // SAFETY: we know 'pointer' is valid because it refers to cell_payload which lives at least as long as this function,
+                    // and the underlying bytes are not mutated in FillCellPayloadState::AllocateOverflowPages.
                     unsafe { std::ptr::copy(to_copy_buffer_ptr, pointer, to_copy) };
 
                     let left = to_copy_buffer.len() - to_copy;
@@ -6896,7 +6912,8 @@ fn fill_cell_payload(
                     let buf = contents.as_ptr();
                     let as_bytes = id.to_be_bytes();
                     // update pointer to new overflow page
-                    // SAFETY: we know 'pointer_to_next' is valid because it refers to an offset in cell_payload which is less than space_left + 4.
+                    // SAFETY: we know 'pointer_to_next' is valid because it refers to an offset in cell_payload which is less than space_left + 4,
+                    // and the underlying bytes are not mutated in FillCellPayloadState::AllocateOverflowPages.
                     unsafe { std::ptr::copy(as_bytes.as_ptr(), *pointer_to_next, 4) };
 
                     *pointer = unsafe { buf.as_mut_ptr().add(4) };
@@ -6906,7 +6923,7 @@ fn fill_cell_payload(
 
                 *to_copy_buffer_len -= to_copy;
                 // SAFETY: we know 'to_copy_buffer_ptr' is valid because it refers to record_buf which lives at least as long as this function,
-                // and that the offset is less than its length.
+                // and that the offset is less than its length, and the underlying bytes are not mutated in FillCellPayloadState::AllocateOverflowPages.
                 *to_copy_buffer_ptr = unsafe { to_copy_buffer_ptr.add(to_copy) };
             }
         }
