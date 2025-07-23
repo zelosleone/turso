@@ -805,11 +805,8 @@ impl Connection {
             return Err(LimboError::InternalError("Connection closed".to_string()));
         }
         let res = self._db.io.run_once();
-        if res.is_err() {
-            let state = self.transaction_state.get();
-            if let TransactionState::Write { schema_did_change } = state {
-                self.pager.borrow().rollback(schema_did_change, self)?
-            }
+        if let Err(ref e) = res {
+            vdbe::handle_program_error(&self.pager.borrow(), self, e)?;
         }
         res
     }

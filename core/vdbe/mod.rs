@@ -413,35 +413,8 @@ impl Program {
                 Ok(InsnFunctionStepResult::Interrupt) => return Ok(StepResult::Interrupt),
                 Ok(InsnFunctionStepResult::Busy) => return Ok(StepResult::Busy),
                 Err(err) => {
-                    match err {
-                        LimboError::TxError(_) => {}
-                        _ => {
-                            let state = self.connection.transaction_state.get();
-                            if let TransactionState::Write { schema_did_change } = state {
-                                if let Err(e) = pager.rollback(schema_did_change, &self.connection)
-                                {
-                                    tracing::error!("rollback failed: {e}");
-                                }
-                                if let Err(e) =
-                                    pager.end_tx(false, schema_did_change, &self.connection, false)
-                                {
-                                    tracing::error!("end_tx failed: {e}");
-                                }
-                                self.connection
-                                    .transaction_state
-                                    .replace(TransactionState::None);
-                            } else {
-                                if let Err(e) = pager.end_read_tx() {
-                                    tracing::error!("end_read_tx failed: {e}");
-                                }
-                                self.connection
-                                    .transaction_state
-                                    .replace(TransactionState::None);
-                            }
-                        }
-                    }
-                    let err = Err(err);
-                    return err;
+                    handle_program_error(&pager, &self.connection, &err)?;
+                    return Err(err);
                 }
             }
         }
@@ -768,4 +741,32 @@ impl Row {
     pub fn len(&self) -> usize {
         self.count
     }
+}
+
+/// Handle a program error by rolling back the transaction
+pub fn handle_program_error(
+    pager: &Rc<Pager>,
+    connection: &Connection,
+    err: &LimboError,
+) -> Result<()> {
+    match err {
+        LimboError::TxError(_) => {}
+        _ => {
+            let state = connection.transaction_state.get();
+            if let TransactionState::Write { schema_did_change } = state {
+                if let Err(e) = pager.rollback(schema_did_change, connection) {
+                    tracing::error!("rollback failed: {e}");
+                }
+                if let Err(e) = pager.end_tx(false, schema_did_change, connection, false) {
+                    tracing::error!("end_tx failed: {e}");
+                }
+            } else {
+                if let Err(e) = pager.end_read_tx() {
+                    tracing::error!("end_read_tx failed: {e}");
+                }
+            }
+            connection.transaction_state.replace(TransactionState::None);
+        }
+    }
+    Ok(())
 }

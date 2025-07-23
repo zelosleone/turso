@@ -953,36 +953,36 @@ impl Pager {
                 current_page_to_append_idx,
             } => {
                 let in_flight = self.flush_info.borrow().in_flight_writes.clone();
-                if *in_flight.borrow() == 0 {
-                    // Clear dirty now
-                    let page_id = self.flush_info.borrow().dirty_pages[current_page_to_append_idx];
-                    let page = {
-                        let mut cache = self.page_cache.write();
-                        let page_key = PageCacheKey::new(page_id);
-                        let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
-                        let page_type = page.get().contents.as_ref().unwrap().maybe_page_type();
-                        trace!(
-                            "commit_dirty_pages(page={}, page_type={:?}",
-                            page_id,
-                            page_type
-                        );
-                        page
-                    };
-                    page.clear_dirty();
-                    // Continue with next page
-                    let is_last_page = current_page_to_append_idx
-                        == self.flush_info.borrow().dirty_pages.len() - 1;
-                    if is_last_page {
-                        self.dirty_pages.borrow_mut().clear();
-                        self.flush_info.borrow_mut().state = CacheFlushState::Start;
-                        Ok(IOResult::Done(()))
-                    } else {
-                        self.flush_info.borrow_mut().state = CacheFlushState::AppendFrame {
-                            current_page_to_append_idx: current_page_to_append_idx + 1,
-                        };
-                        Ok(IOResult::IO)
-                    }
+                if *in_flight.borrow() > 0 {
+                    return Ok(IOResult::IO);
+                }
+
+                // Clear dirty now
+                let page_id = self.flush_info.borrow().dirty_pages[current_page_to_append_idx];
+                let page = {
+                    let mut cache = self.page_cache.write();
+                    let page_key = PageCacheKey::new(page_id);
+                    let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
+                    let page_type = page.get().contents.as_ref().unwrap().maybe_page_type();
+                    trace!(
+                        "commit_dirty_pages(page={}, page_type={:?}",
+                        page_id,
+                        page_type
+                    );
+                    page
+                };
+                page.clear_dirty();
+                // Continue with next page
+                let is_last_page =
+                    current_page_to_append_idx == self.flush_info.borrow().dirty_pages.len() - 1;
+                if is_last_page {
+                    self.dirty_pages.borrow_mut().clear();
+                    self.flush_info.borrow_mut().state = CacheFlushState::Start;
+                    Ok(IOResult::Done(()))
                 } else {
+                    self.flush_info.borrow_mut().state = CacheFlushState::AppendFrame {
+                        current_page_to_append_idx: current_page_to_append_idx + 1,
+                    };
                     Ok(IOResult::IO)
                 }
             }
@@ -1064,46 +1064,44 @@ impl Pager {
                     current_page_to_append_idx,
                 } => {
                     let in_flight = self.commit_info.borrow().in_flight_writes.clone();
-                    if *in_flight.borrow() == 0 {
-                        // First clear dirty
-                        let page_id =
-                            self.commit_info.borrow().dirty_pages[current_page_to_append_idx];
-                        let page = {
-                            let mut cache = self.page_cache.write();
-                            let page_key = PageCacheKey::new(page_id);
-                            let page = cache.get(&page_key).unwrap_or_else(|| {
+                    if *in_flight.borrow() > 0 {
+                        return Ok(IOResult::IO);
+                    }
+                    // First clear dirty
+                    let page_id = self.commit_info.borrow().dirty_pages[current_page_to_append_idx];
+                    let page = {
+                        let mut cache = self.page_cache.write();
+                        let page_key = PageCacheKey::new(page_id);
+                        let page = cache.get(&page_key).unwrap_or_else(|| {
                             panic!(
                                 "we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it. page={page_id}"
                             )
                         });
-                            let page_type = page.get().contents.as_ref().unwrap().maybe_page_type();
-                            trace!(
-                                "commit_dirty_pages(page={}, page_type={:?}",
-                                page_id,
-                                page_type
-                            );
-                            page
-                        };
-                        page.clear_dirty();
+                        let page_type = page.get().contents.as_ref().unwrap().maybe_page_type();
+                        trace!(
+                            "commit_dirty_pages(page={}, page_type={:?}",
+                            page_id,
+                            page_type
+                        );
+                        page
+                    };
+                    page.clear_dirty();
 
-                        // Now advance to next page if there are more
-                        let is_last_frame = current_page_to_append_idx
-                            == self.commit_info.borrow().dirty_pages.len() - 1;
-                        if is_last_frame {
-                            // Let's clear the page cache now
-                            {
-                                let mut cache = self.page_cache.write();
-                                cache.clear().unwrap();
-                            }
-                            self.dirty_pages.borrow_mut().clear();
-                            self.commit_info.borrow_mut().state = CommitState::SyncWal;
-                        } else {
-                            self.commit_info.borrow_mut().state = CommitState::AppendFrame {
-                                current_page_to_append_idx: current_page_to_append_idx + 1,
-                            }
+                    // Now advance to next page if there are more
+                    let is_last_frame = current_page_to_append_idx
+                        == self.commit_info.borrow().dirty_pages.len() - 1;
+                    if is_last_frame {
+                        // Let's clear the page cache now
+                        {
+                            let mut cache = self.page_cache.write();
+                            cache.clear().unwrap();
                         }
+                        self.dirty_pages.borrow_mut().clear();
+                        self.commit_info.borrow_mut().state = CommitState::SyncWal;
                     } else {
-                        return Ok(IOResult::IO);
+                        self.commit_info.borrow_mut().state = CommitState::AppendFrame {
+                            current_page_to_append_idx: current_page_to_append_idx + 1,
+                        }
                     }
                 }
                 CommitState::SyncWal => {
