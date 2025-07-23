@@ -556,7 +556,7 @@ pub fn translate_insert(
             Some(emit_cdc_patch_record(
                 &mut program,
                 &table,
-                column_registers_start,
+                column_registers_start + 1,
                 record_register,
                 column_registers_start,
             ))
@@ -794,7 +794,7 @@ fn populate_columns_multiple_rows(
         if let Some(value_index) = mapping.value_index {
             let write_directly_to_rowid_reg = mapping.column.is_rowid_alias;
             let write_reg = if write_directly_to_rowid_reg {
-                if last_rowid_explicit_value.map_or(false, |x| x > value_index) {
+                if last_rowid_explicit_value.is_some_and(|x| x > value_index) {
                     continue;
                 }
                 last_rowid_explicit_value = Some(value_index);
@@ -864,7 +864,7 @@ fn populate_column_registers(
             // directly into the rowid register and writes a NULL into the rowid alias column.
             let write_directly_to_rowid_reg = mapping.column.is_rowid_alias;
             let write_reg = if write_directly_to_rowid_reg {
-                if last_rowid_explicit_value.map_or(false, |x| x > value_index) {
+                if last_rowid_explicit_value.is_some_and(|x| x > value_index) {
                     continue;
                 }
                 last_rowid_explicit_value = Some(value_index);
