@@ -97,7 +97,7 @@ pub fn translate_create_index(
     program.emit_insn(Insn::OpenWrite {
         cursor_id: sqlite_schema_cursor_id,
         root_page: RegisterOrLiteral::Literal(sqlite_table.root_page),
-        name: sqlite_table.name.clone(),
+        db: 0,
     });
     let sql = create_idx_stmt_to_sql(&tbl_name, &idx_name, unique_if_not_exists, &columns);
     emit_schema_entry(
@@ -178,7 +178,7 @@ pub fn translate_create_index(
     program.emit_insn(Insn::OpenWrite {
         cursor_id: btree_cursor_id,
         root_page: RegisterOrLiteral::Register(root_page_reg),
-        name: idx_name.clone(),
+        db: 0,
     });
 
     let sorted_loop_start = program.allocate_label();
@@ -367,7 +367,7 @@ pub fn translate_drop_index(
     program.emit_insn(Insn::OpenWrite {
         cursor_id: sqlite_schema_cursor_id,
         root_page: RegisterOrLiteral::Literal(sqlite_table.root_page),
-        name: sqlite_table.name.clone(),
+        db: 0,
     });
 
     let loop_start_label = program.allocate_label();

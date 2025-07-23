@@ -1215,7 +1215,7 @@ pub fn insn_to_str(
             Insn::OpenWrite {
                 cursor_id,
                 root_page,
-                name,
+                db,
                 ..
             } => (
                 "OpenWrite",
@@ -1224,10 +1224,10 @@ pub fn insn_to_str(
                     RegisterOrLiteral::Literal(i) => *i as _,
                     RegisterOrLiteral::Register(i) => *i as _,
                 },
-                0,
+                *db as i32,
                 Value::build_text(""),
                 0,
-                format!("root={root_page}; {name}"),
+                format!("root={root_page}; iDb={db}"),
             ),
             Insn::Copy {
                 src_reg,

@@ -1118,7 +1118,7 @@ impl Limbo {
                         StepResult::Row => {
                             let row = rows.row().unwrap();
                             if let (
-                                Ok(Value::Integer(_seq)),
+                                Ok(Value::Integer(seq)),
                                 Ok(Value::Text(name)),
                                 Ok(file_value),
                             ) = (
@@ -1140,7 +1140,7 @@ impl Limbo {
                                 };
 
                                 // Detect readonly mode from connection
-                                let mode = if self.conn.is_readonly() {
+                                let mode = if self.conn.is_readonly(*seq as usize) {
                                     "r/o"
                                 } else {
                                     "r/w"

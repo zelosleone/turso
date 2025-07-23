@@ -137,7 +137,7 @@ pub fn init_loop(
             program.emit_insn(Insn::OpenWrite {
                 cursor_id: cdc_cursor_id,
                 root_page: cdc_btree.root_page.into(),
-                name: cdc_btree.name.clone(),
+                db: 0,
             });
             t_ctx.cdc_cursor_id = Some(cdc_cursor_id);
         }
@@ -224,13 +224,13 @@ pub fn init_loop(
                         cursor_id: table_cursor_id
                             .expect("table cursor is always opened in OperationMode::DELETE"),
                         root_page: root_page.into(),
-                        name: btree.name.clone(),
+                        db: 0,
                     });
                     if let Some(index_cursor_id) = index_cursor_id {
                         program.emit_insn(Insn::OpenWrite {
                             cursor_id: index_cursor_id,
                             root_page: index.as_ref().unwrap().root_page.into(),
-                            name: index.as_ref().unwrap().name.clone(),
+                            db: 0,
                         });
                     }
                     // For delete, we need to open all the other indexes too for writing
@@ -250,7 +250,7 @@ pub fn init_loop(
                             program.emit_insn(Insn::OpenWrite {
                                 cursor_id,
                                 root_page: index.root_page.into(),
-                                name: index.name.clone(),
+                                db: 0,
                             });
                         }
                     }
@@ -261,13 +261,13 @@ pub fn init_loop(
                         cursor_id: table_cursor_id
                             .expect("table cursor is always opened in OperationMode::UPDATE"),
                         root_page: root_page.into(),
-                        name: btree.name.clone(),
+                        db: 0,
                     });
                     if let Some(index_cursor_id) = index_cursor_id {
                         program.emit_insn(Insn::OpenWrite {
                             cursor_id: index_cursor_id,
                             root_page: index.as_ref().unwrap().root_page.into(),
-                            name: index.as_ref().unwrap().name.clone(),
+                            db: 0,
                         });
                     }
                 }
@@ -297,7 +297,7 @@ pub fn init_loop(
                         program.emit_insn(Insn::OpenWrite {
                             cursor_id: table_cursor_id,
                             root_page: table.table.get_root_page().into(),
-                            name: table.table.get_name().to_string(),
+                            db: 0,
                         });
 
                         // For DELETE, we need to open all the indexes for writing
@@ -321,7 +321,7 @@ pub fn init_loop(
                                     program.emit_insn(Insn::OpenWrite {
                                         cursor_id,
                                         root_page: index.root_page.into(),
-                                        name: index.name.clone(),
+                                        db: 0,
                                     });
                                 }
                             }
@@ -352,7 +352,7 @@ pub fn init_loop(
                                     cursor_id: index_cursor_id
                                         .expect("index cursor is always opened in Seek with index"),
                                     root_page: index.root_page.into(),
-                                    name: index.name.clone(),
+                                    db: 0,
                                 });
                             }
                             _ => {

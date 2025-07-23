@@ -5566,12 +5566,12 @@ pub fn op_open_write(
     let Insn::OpenWrite {
         cursor_id,
         root_page,
-        ..
+        db,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    if program.connection.readonly.get() {
+    if program.connection.is_readonly(*db) {
         return Err(LimboError::ReadOnly);
     }
     let root_page = match root_page {
@@ -5670,7 +5670,7 @@ pub fn op_create_btree(
     let Insn::CreateBtree { db, root, flags } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    if program.connection.readonly.get() {
+    if program.connection.is_readonly(*db) {
         return Err(LimboError::ReadOnly);
     }
     if *db > 0 {

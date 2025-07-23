@@ -110,7 +110,7 @@ pub fn translate_create_table(
     program.emit_insn(Insn::OpenWrite {
         cursor_id: sqlite_schema_cursor_id,
         root_page: 1usize.into(),
-        name: tbl_name.name.0.clone(),
+        db: 0,
     });
 
     // Add the table entry to sqlite_schema
@@ -585,7 +585,7 @@ pub fn translate_create_virtual_table(
     program.emit_insn(Insn::OpenWrite {
         cursor_id: sqlite_schema_cursor_id,
         root_page: 1usize.into(),
-        name: table_name.clone(),
+        db: 0,
     });
 
     let sql = create_vtable_body_to_str(&vtab, vtab_module.clone());
@@ -662,7 +662,7 @@ pub fn translate_drop_table(
     program.emit_insn(Insn::OpenWrite {
         cursor_id: sqlite_schema_cursor_id_0,
         root_page: 1usize.into(),
-        name: SQLITE_TABLEID.to_string(),
+        db: 0,
     });
 
     //  1. Remove all entries from the schema table related to the table we are dropping, except for triggers
@@ -863,7 +863,7 @@ pub fn translate_drop_table(
         program.emit_insn(Insn::OpenWrite {
             cursor_id: sqlite_schema_cursor_id_1,
             root_page: 1usize.into(),
-            name: SQLITE_TABLEID.to_string(),
+            db: 0,
         });
 
         //  Loop to copy over row id's from the ephemeral table and then re-insert into the schema table with the correct root page

@@ -107,7 +107,7 @@ pub fn translate_alter_table(
                 program.emit_insn(Insn::OpenWrite {
                     cursor_id,
                     root_page: RegisterOrLiteral::Literal(root_page),
-                    name: table_name.clone(),
+                    db: 0,
                 });
 
                 program.cursor_loop(cursor_id, |program, rowid| {
@@ -241,7 +241,7 @@ pub fn translate_alter_table(
             program.emit_insn(Insn::OpenWrite {
                 cursor_id,
                 root_page: RegisterOrLiteral::Literal(sqlite_schema.root_page),
-                name: sqlite_schema.name.clone(),
+                db: 0,
             });
 
             program.cursor_loop(cursor_id, |program, rowid| {
@@ -328,7 +328,7 @@ pub fn translate_alter_table(
             program.emit_insn(Insn::OpenWrite {
                 cursor_id,
                 root_page: RegisterOrLiteral::Literal(sqlite_schema.root_page),
-                name: sqlite_schema.name.clone(),
+                db: 0,
             });
 
             program.cursor_loop(cursor_id, |program, rowid| {
