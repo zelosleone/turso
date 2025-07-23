@@ -580,8 +580,7 @@ impl Pager {
                 [offset_in_ptrmap_page..offset_in_ptrmap_page + PTRMAP_ENTRY_SIZE],
         )?;
 
-        ptrmap_page.set_dirty();
-        self.add_dirty(ptrmap_pg_no as usize);
+        self.add_dirty(ptrmap_pg_no as usize, &ptrmap_page);
         Ok(IOResult::Done(()))
     }
 
@@ -874,10 +873,11 @@ impl Pager {
         Ok(page_cache.resize(capacity))
     }
 
-    pub fn add_dirty(&self, page_id: usize) {
+    pub fn add_dirty(&self, page_id: usize, page: &Page) {
         // TODO: check duplicates?
         let mut dirty_pages = RefCell::borrow_mut(&self.dirty_pages);
         dirty_pages.insert(page_id);
+        page.set_dirty();
     }
 
     pub fn wal_frame_count(&self) -> Result<u64> {
@@ -1197,8 +1197,7 @@ impl Pager {
                         (self.usable_space() / LEAF_ENTRY_SIZE) - RESERVED_SLOTS;
 
                     if number_of_leaf_pages < max_free_list_entries as u32 {
-                        trunk_page.set_dirty();
-                        self.add_dirty(trunk_page_id as usize);
+                        self.add_dirty(trunk_page_id as usize, &trunk_page);
 
                         trunk_page_contents
                             .write_u32(TRUNK_PAGE_LEAF_COUNT_OFFSET, number_of_leaf_pages + 1);
@@ -1218,8 +1217,7 @@ impl Pager {
                         return Ok(IOResult::IO);
                     }
                     // If we get here, need to make this page a new trunk
-                    page.set_dirty();
-                    self.add_dirty(page_id);
+                    self.add_dirty(page_id, &page);
 
                     let trunk_page_id = header_accessor::get_freelist_trunk_page(self)?;
 
@@ -1333,8 +1331,7 @@ impl Pager {
                 && is_ptrmap_page(new_db_size, header_accessor::get_page_size(self)? as usize)
             {
                 let page = allocate_page(new_db_size as usize, &self.buffer_pool, 0);
-                page.set_dirty();
-                self.add_dirty(page.get().id);
+                self.add_dirty(page.get().id, &page);
 
                 let page_key = PageCacheKey::new(page.get().id);
                 let mut cache = self.page_cache.write();
@@ -1358,8 +1355,7 @@ impl Pager {
         let page = allocate_page(new_db_size as usize, &self.buffer_pool, 0);
         {
             // setup page and add to cache
-            page.set_dirty();
-            self.add_dirty(page.get().id);
+            self.add_dirty(page.get().id, &page);
 
             let page_key = PageCacheKey::new(page.get().id);
             let mut cache = self.page_cache.write();

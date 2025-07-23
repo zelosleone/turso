@@ -59,8 +59,7 @@ fn get_header_page_for_write(pager: &Pager) -> Result<IOResult<PageRef>> {
     if page.is_locked() {
         return Ok(IOResult::IO);
     }
-    page.set_dirty();
-    pager.add_dirty(DATABASE_HEADER_PAGE_ID);
+    pager.add_dirty(DATABASE_HEADER_PAGE_ID, &page);
     Ok(IOResult::Done(page))
 }
 
@@ -143,8 +142,7 @@ macro_rules! impl_header_field_accessor {
                 let mut buf = page_content.buffer.borrow_mut();
                 let buf_slice = buf.as_mut_slice();
                 buf_slice[$offset..$offset + std::mem::size_of::<$type>()].copy_from_slice(&value.to_be_bytes());
-                page.set_dirty();
-                pager.add_dirty(1);
+                pager.add_dirty(1, &page);
                 Ok(IOResult::Done(()))
             }
 
