@@ -1,3 +1,4 @@
+#![allow(unused)]
 use crate::translate::expr::WalkControl;
 use crate::types::IOResult;
 use crate::IO;

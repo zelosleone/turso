@@ -4,8 +4,10 @@ mod vtab_xconnect;
 use crate::schema::{Schema, Table};
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 use crate::UringIO;
-use crate::{function::ExternalFunc, Connection, Database, LimboError, IO};
+use crate::{function::ExternalFunc, Connection, Database};
 use crate::{vtab::VirtualTable, SymbolTable};
+#[cfg(feature = "fs")]
+use crate::{LimboError, IO};
 #[cfg(feature = "fs")]
 pub use dynamic::{add_builtin_vfs_extensions, add_vfs_module, list_vfs_modules, VfsMod};
 use std::{
@@ -168,6 +170,7 @@ impl Database {
             syms,
             schema: schema_mutex_ptr as *mut c_void,
         }));
+        #[allow(unused)]
         let mut ext_api = ExtensionApi {
             ctx: ctx as *mut c_void,
             register_scalar_function,

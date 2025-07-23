@@ -90,8 +90,10 @@ use crate::{
 
 use super::{make_record, Program, ProgramState, Register};
 use crate::{
-    bail_constraint_error, must_be_btree_cursor, resolve_ext_path, MvStore, Pager, Result,
+    bail_constraint_error, must_be_btree_cursor, MvStore, Pager, Result,
 };
+#[cfg(feature = "fs")]
+use crate::resolve_ext_path;
 
 macro_rules! return_if_io {
     ($expr:expr) => {
