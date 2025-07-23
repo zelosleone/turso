@@ -1197,7 +1197,7 @@ impl Pager {
                         (self.usable_space() / LEAF_ENTRY_SIZE) - RESERVED_SLOTS;
 
                     if number_of_leaf_pages < max_free_list_entries as u32 {
-                        self.add_dirty(trunk_page_id as usize, &trunk_page);
+                        self.add_dirty(trunk_page_id as usize, trunk_page);
 
                         trunk_page_contents
                             .write_u32(TRUNK_PAGE_LEAF_COUNT_OFFSET, number_of_leaf_pages + 1);
@@ -1217,7 +1217,7 @@ impl Pager {
                         return Ok(IOResult::IO);
                     }
                     // If we get here, need to make this page a new trunk
-                    self.add_dirty(page_id, &page);
+                    self.add_dirty(page_id, page);
 
                     let trunk_page_id = header_accessor::get_freelist_trunk_page(self)?;
 
