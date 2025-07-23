@@ -298,7 +298,8 @@ pub fn translate_insert(
     // allocate a register for each column in the table. if not provided by user, they will simply be set as null.
     // allocate an extra register for rowid regardless of whether user provided a rowid alias column.
     let num_cols = btree_table.columns.len();
-    let column_registers_start = program.alloc_registers(num_cols + 1);
+    let rowid_and_columns_start_register = program.alloc_registers(num_cols + 1);
+    let columns_start_register = rowid_and_columns_start_register + 1;
 
     let record_register = program.alloc_register();
 
@@ -314,7 +315,7 @@ pub fn translate_insert(
         populate_columns_multiple_rows(
             &mut program,
             &column_mappings,
-            column_registers_start,
+            rowid_and_columns_start_register,
             yield_reg_opt.unwrap() + 1,
             &resolver,
             &temp_table_ctx,
@@ -331,7 +332,7 @@ pub fn translate_insert(
             &mut program,
             &values.unwrap(),
             &column_mappings,
-            column_registers_start,
+            rowid_and_columns_start_register,
             &resolver,
         )?;
     }
@@ -360,7 +361,7 @@ pub fn translate_insert(
     };
     if has_user_provided_rowid {
         program.emit_insn(Insn::NotNull {
-            reg: column_registers_start,
+            reg: rowid_and_columns_start_register,
             target_pc: check_rowid_is_integer_label.unwrap(),
         });
     }
@@ -368,7 +369,7 @@ pub fn translate_insert(
     // Create new rowid if a) not provided by user or b) provided by user but is NULL
     program.emit_insn(Insn::NewRowid {
         cursor: cursor_id,
-        rowid_reg: column_registers_start,
+        rowid_reg: rowid_and_columns_start_register,
         prev_largest_reg: 0,
     });
 
@@ -376,7 +377,7 @@ pub fn translate_insert(
         program.resolve_label(must_be_int_label, program.offset());
         // If the user provided a rowid, it must be an integer.
         program.emit_insn(Insn::MustBeInt {
-            reg: column_registers_start,
+            reg: rowid_and_columns_start_register,
         });
     }
 
@@ -386,7 +387,7 @@ pub fn translate_insert(
         let make_record_label = program.allocate_label();
         program.emit_insn(Insn::NotExists {
             cursor: cursor_id,
-            rowid_reg: column_registers_start,
+            rowid_reg: rowid_and_columns_start_register,
             target_pc: make_record_label,
         });
         let rowid_column = column_mappings
@@ -410,7 +411,7 @@ pub fn translate_insert(
     match table.btree() {
         Some(t) if t.is_strict => {
             program.emit_insn(Insn::TypeCheck {
-                start_reg: column_registers_start,
+                start_reg: columns_start_register,
                 count: num_cols,
                 check_generated: true,
                 table_reference: Rc::clone(&t),
@@ -437,14 +438,14 @@ pub fn translate_insert(
             // copy from the table's column register over to the index's scratch register
 
             program.emit_insn(Insn::Copy {
-                src_reg: column_registers_start + col.0,
+                src_reg: rowid_and_columns_start_register + col.0,
                 dst_reg: idx_start_reg + i,
                 extra_amount: 0,
             });
         }
         // last register is the rowid
         program.emit_insn(Insn::Copy {
-            src_reg: column_registers_start,
+            src_reg: rowid_and_columns_start_register,
             dst_reg: idx_start_reg + num_cols,
             extra_amount: 0,
         });
@@ -520,7 +521,7 @@ pub fn translate_insert(
         if col.column.is_rowid_alias {
             continue;
         }
-        let target_reg = i + column_registers_start;
+        let target_reg = i + rowid_and_columns_start_register;
         program.emit_insn(Insn::HaltIfNull {
             target_reg,
             err_code: SQLITE_CONSTRAINT_NOTNULL,
@@ -536,14 +537,14 @@ pub fn translate_insert(
     }
     // Create and insert the record
     program.emit_insn(Insn::MakeRecord {
-        start_reg: column_registers_start + 1,
+        start_reg: columns_start_register,
         count: num_cols,
         dest_reg: record_register,
         index_name: None,
     });
     program.emit_insn(Insn::Insert {
         cursor: cursor_id,
-        key_reg: column_registers_start,
+        key_reg: rowid_and_columns_start_register,
         record_reg: record_register,
         flag: InsertFlags::new(),
         table_name: table_name.to_string(),
@@ -556,9 +557,9 @@ pub fn translate_insert(
             Some(emit_cdc_patch_record(
                 &mut program,
                 &table,
-                column_registers_start + 1,
+                columns_start_register,
                 record_register,
-                column_registers_start,
+                rowid_and_columns_start_register,
             ))
         } else {
             None
@@ -568,7 +569,7 @@ pub fn translate_insert(
             &resolver,
             OperationMode::INSERT,
             *cdc_cursor_id,
-            column_registers_start,
+            rowid_and_columns_start_register,
             None,
             after_record_reg,
             &table_name.0,
