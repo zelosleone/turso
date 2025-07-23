@@ -16,7 +16,9 @@ use std::{
 };
 
 use std::{io::ErrorKind, sync::Arc};
-use tracing::{debug, instrument, trace, Level};
+#[cfg(feature = "fs")]
+use tracing::debug;
+use tracing::{instrument, trace, Level};
 
 struct OwnedCallbacks(UnsafeCell<Callbacks>);
 // We assume we locking on IO level is done by user.
@@ -25,6 +27,7 @@ unsafe impl Sync for OwnedCallbacks {}
 struct BorrowedCallbacks<'io>(UnsafeCell<&'io mut Callbacks>);
 
 impl OwnedCallbacks {
+    #[allow(dead_code)]
     fn new() -> Self {
         Self(UnsafeCell::new(Callbacks::new()))
     }
@@ -57,6 +60,7 @@ impl BorrowedCallbacks<'_> {
 struct EventsHandler(UnsafeCell<Events>);
 
 impl EventsHandler {
+    #[allow(dead_code)]
     fn new() -> Self {
         Self(UnsafeCell::new(Events::new()))
     }
@@ -87,6 +91,7 @@ impl BorrowedPollHandler<'_> {
 }
 
 impl PollHandler {
+    #[allow(dead_code)]
     fn new() -> Self {
         Self(UnsafeCell::new(Poller::new().unwrap()))
     }

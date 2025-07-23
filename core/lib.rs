@@ -45,6 +45,7 @@ use crate::storage::sqlite3_ondisk::is_valid_page_size;
 use crate::storage::{header_accessor, wal::DummyWAL};
 use crate::translate::optimizer::optimize_plan;
 use crate::translate::pragma::TURSO_CDC_DEFAULT_TABLE_NAME;
+#[cfg(feature = "fs")]
 use crate::util::{OpenMode, OpenOptions};
 use crate::vtab::VirtualTable;
 use core::str;
@@ -935,6 +936,7 @@ impl Connection {
     }
 
     pub fn list_vfs(&self) -> Vec<String> {
+        #[allow(unused_mut)]
         let mut all_vfs = vec![String::from("memory")];
         #[cfg(feature = "fs")]
         {
