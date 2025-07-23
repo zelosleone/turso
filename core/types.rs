@@ -762,7 +762,7 @@ impl<'a> TryFrom<&'a RefValue> for &'a str {
 /// A value in a record that has already been serialized can stay serialized and what this struct offsers
 /// is easy acces to each value which point to the payload.
 /// The name might be contradictory as it is immutable in the sense that you cannot modify the values without modifying the payload.
-#[derive(Debug, Clone, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ImmutableRecord {
     // We have to be super careful with this buffer since we make values point to the payload we need to take care reallocations
     // happen in a controlled manner. If we realocate with values that should be correct, they will now point to undefined data.
@@ -770,6 +770,31 @@ pub struct ImmutableRecord {
     //
     // payload is the Vec<u8> but in order to use Register which holds ImmutableRecord as a Value - we store Vec<u8> as Value::Blob
     payload: Value,
+}
+
+impl std::fmt::Debug for ImmutableRecord {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.payload {
+            Value::Blob(bytes) => {
+                let preview = if bytes.len() > 20 {
+                    format!("{:?} ... ({} bytes total)", &bytes[..20], bytes.len())
+                } else {
+                    format!("{bytes:?}")
+                };
+                write!(f, "ImmutableRecord {{ payload: {preview} }}")
+            }
+            Value::Text(s) => {
+                let string = s.as_str();
+                let preview = if string.len() > 20 {
+                    format!("{:?} ... ({} chars total)", &string[..20], string.len())
+                } else {
+                    format!("{string:?}")
+                };
+                write!(f, "ImmutableRecord {{ payload: {preview} }}")
+            }
+            other => write!(f, "ImmutableRecord {{ payload: {other:?} }}"),
+        }
+    }
 }
 
 #[derive(PartialEq)]
