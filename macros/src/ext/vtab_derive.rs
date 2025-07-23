@@ -236,6 +236,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
                 let name_c = ::std::ffi::CString::new(name).unwrap().into_raw() as *const ::std::ffi::c_char;
                 let module = ::turso_ext::VTabModuleImpl {
                     name: name_c,
+                    readonly: <#struct_name as ::turso_ext::VTabModule>::READONLY,
                     create: Self::#create_fn_name,
                     open: Self::#open_fn_name,
                     close: Self::#close_fn_name,
