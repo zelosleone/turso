@@ -1147,9 +1147,10 @@ impl Pager {
                                 page_id,
                                 page.get().id
                             );
-                            turso_assert!(page.is_loaded(), "Pager::free_page: In memory page with id {} about to be dropped is not loaded", page.get().id);
-                            let page_contents = page.get_contents();
-                            page_contents.overflow_cells.clear();
+                            if page.is_loaded() {
+                                let page_contents = page.get_contents();
+                                page_contents.overflow_cells.clear();
+                            }
                             page
                         }
                         None => self.read_page(page_id)?,
