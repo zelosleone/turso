@@ -392,15 +392,9 @@ pub fn translate_insert(
         });
         let rowid_column = column_mappings
             .iter()
-            .filter(|x| x.value_index.is_some() && x.column.is_rowid_alias)
-            .next()
+            .find(|x| x.value_index.is_some() && x.column.is_rowid_alias)
             .expect("rowid alias column must be provided");
-        let rowid_column_name = rowid_column
-            .column
-            .name
-            .as_ref()
-            .map(|x| x.as_str())
-            .unwrap_or(ROWID);
+        let rowid_column_name = rowid_column.column.name.as_deref().unwrap_or(ROWID);
         program.emit_insn(Insn::Halt {
             err_code: SQLITE_CONSTRAINT_PRIMARYKEY,
             description: format!("{}.{}", table_name.0, rowid_column_name),
@@ -614,7 +608,7 @@ struct ColumnMapping<'a> {
     default_value: Option<&'a Expr>,
 }
 
-pub const ROWID_COLUMN: &'static Column = &Column {
+pub const ROWID_COLUMN: &Column = &Column {
     name: None,
     ty: schema::Type::Integer,
     ty_str: String::new(),
@@ -659,7 +653,7 @@ fn resolve_columns_for_insert<'a>(
     });
     for column in table_columns {
         column_mappings.push(ColumnMapping {
-            column: column,
+            column,
             value_index: None,
             default_value: column.default.as_ref(),
         });
