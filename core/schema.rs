@@ -156,7 +156,7 @@ impl Schema {
         let mut automatic_indices: HashMap<String, Vec<(String, usize)>> =
             HashMap::with_capacity(10);
 
-        if matches!(pager.io.block(|| pager.begin_read_tx())?, LimboResult::Busy) {
+        if matches!(pager.begin_read_tx()?, LimboResult::Busy) {
             return Err(LimboError::Busy);
         }
 

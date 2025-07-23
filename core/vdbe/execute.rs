@@ -1961,7 +1961,7 @@ pub fn op_transaction(
         };
 
         if updated && matches!(current_state, TransactionState::None) {
-            if let LimboResult::Busy = return_if_io!(pager.begin_read_tx()) {
+            if let LimboResult::Busy = pager.begin_read_tx()? {
                 return Ok(InsnFunctionStepResult::Busy);
             }
         }

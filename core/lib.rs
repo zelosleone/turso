@@ -874,7 +874,7 @@ impl Connection {
     #[cfg(feature = "fs")]
     pub fn wal_insert_begin(&self) -> Result<()> {
         let pager = self.pager.borrow();
-        match pager.io.block(|| pager.begin_read_tx())? {
+        match pager.begin_read_tx()? {
             result::LimboResult::Busy => return Err(LimboError::Busy),
             result::LimboResult::Ok => {}
         }

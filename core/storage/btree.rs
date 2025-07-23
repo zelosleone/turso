@@ -7111,7 +7111,7 @@ mod tests {
             tracing::info!("seed: {seed}");
             for insert_id in 0..inserts {
                 let do_validate = do_validate_btree || (insert_id % VALIDATE_INTERVAL == 0);
-                run_until_done(|| pager.begin_read_tx(), &pager).unwrap();
+                pager.begin_read_tx().unwrap();
                 run_until_done(|| pager.begin_write_tx(), &pager).unwrap();
                 let size = size(&mut rng);
                 let key = {
@@ -7163,7 +7163,7 @@ mod tests {
                         }
                     }
                 }
-                run_until_done(|| pager.begin_read_tx(), &pager).unwrap();
+                pager.begin_read_tx().unwrap();
                 // FIXME: add sorted vector instead, should be okay for small amounts of keys for now :P, too lazy to fix right now
                 cursor.move_to_root().unwrap();
                 let mut valid = true;
@@ -7193,7 +7193,7 @@ mod tests {
                 }
                 pager.end_read_tx().unwrap();
             }
-            run_until_done(|| pager.begin_read_tx(), &pager).unwrap();
+            pager.begin_read_tx().unwrap();
             tracing::info!(
                 "=========== btree ===========\n{}\n\n",
                 format_btree(pager.clone(), root_page, 0)

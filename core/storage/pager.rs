@@ -735,13 +735,13 @@ impl Pager {
 
     #[inline(always)]
     #[instrument(skip_all, level = Level::DEBUG)]
-    pub fn begin_read_tx(&self) -> Result<IOResult<LimboResult>> {
+    pub fn begin_read_tx(&self) -> Result<LimboResult> {
         let (result, changed) = self.wal.borrow_mut().begin_read_tx()?;
         if changed {
             // Someone else changed the database -> assume our page cache is invalid (this is default SQLite behavior, we can probably do better with more granular invalidation)
             self.clear_page_cache();
         }
-        Ok(IOResult::Done(result))
+        Ok(result)
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
