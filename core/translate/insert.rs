@@ -784,12 +784,20 @@ fn populate_columns_multiple_rows(
     resolver: &Resolver,
     temp_table_ctx: &Option<TempTableCtx>,
 ) -> Result<()> {
+    // In case when both rowid and rowid-alias column provided in the query - turso-db overwrite rowid with **latest** value from the list
+    // As we iterate by column in natural order of their definition in scheme,
+    // we need to track last value_index we wrote to the rowid and overwrite rowid register only if new value_index is greater
+    let mut last_rowid_explicit_value = None;
     for (i, mapping) in column_mappings.iter().enumerate() {
         let column_register = column_registers_start + i;
 
         if let Some(value_index) = mapping.value_index {
             let write_directly_to_rowid_reg = mapping.column.is_rowid_alias;
             let write_reg = if write_directly_to_rowid_reg {
+                if last_rowid_explicit_value.map_or(false, |x| x > value_index) {
+                    continue;
+                }
+                last_rowid_explicit_value = Some(value_index);
                 column_registers_start // rowid always the first register in the array for insertion record
             } else {
                 column_register
@@ -843,6 +851,10 @@ fn populate_column_registers(
     column_registers_start: usize,
     resolver: &Resolver,
 ) -> Result<()> {
+    // In case when both rowid and rowid-alias column provided in the query - turso-db overwrite rowid with **latest** value from the list
+    // As we iterate by column in natural order of their definition in scheme,
+    // we need to track last value_index we wrote to the rowid and overwrite rowid register only if new value_index is greater
+    let mut last_rowid_explicit_value = None;
     for (i, mapping) in column_mappings.iter().enumerate() {
         let column_register = column_registers_start + i;
 
@@ -852,10 +864,15 @@ fn populate_column_registers(
             // directly into the rowid register and writes a NULL into the rowid alias column.
             let write_directly_to_rowid_reg = mapping.column.is_rowid_alias;
             let write_reg = if write_directly_to_rowid_reg {
+                if last_rowid_explicit_value.map_or(false, |x| x > value_index) {
+                    continue;
+                }
+                last_rowid_explicit_value = Some(value_index);
                 column_registers_start // rowid always the first register in the array for insertion record
             } else {
                 column_register
             };
+
             translate_expr_no_constant_opt(
                 program,
                 None,
