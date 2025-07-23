@@ -1,6 +1,7 @@
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rusqlite::types::Value;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::common::{limbo_exec_rows, rng_from_time, TempDatabase};
 
@@ -59,6 +60,46 @@ fn test_wal_frame_transfer_no_schema_changes() {
 }
 
 #[test]
+fn test_wal_frame_transfer_schema_changes() {
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .try_init()
+        .unwrap();
+    let db1 = TempDatabase::new_empty(false);
+    let conn1 = db1.connect_limbo();
+    let db2 = TempDatabase::new_empty(false);
+    let conn2 = db2.connect_limbo();
+    conn1
+        .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y)")
+        .unwrap();
+    conn1
+        .execute("INSERT INTO t VALUES (10, 10), (5, 1)")
+        .unwrap();
+    conn1
+        .execute("INSERT INTO t VALUES (1024, randomblob(4096 * 10))")
+        .unwrap();
+    assert_eq!(conn1.wal_frame_count().unwrap(), 15);
+    let mut frame = [0u8; 24 + 4096];
+    conn2.wal_insert_begin().unwrap();
+    for frame_id in 1..=conn1.wal_frame_count().unwrap() as u32 {
+        let c = conn1.wal_get_frame(frame_id, &mut frame).unwrap();
+        db1.io.wait_for_completion(c).unwrap();
+        conn2.wal_insert_frame(frame_id, &frame).unwrap();
+    }
+    conn2.wal_insert_end().unwrap();
+    assert_eq!(conn2.wal_frame_count().unwrap(), 15);
+    assert_eq!(
+        limbo_exec_rows(&db2, &conn2, "SELECT x, length(y) FROM t"),
+        vec![
+            vec![Value::Integer(5), Value::Integer(1)],
+            vec![Value::Integer(10), Value::Integer(2)],
+            vec![Value::Integer(1024), Value::Integer(40960)],
+        ]
+    );
+}
+
+#[test]
 fn test_wal_frame_transfer_no_schema_changes_rollback() {
     let db1 = TempDatabase::new_empty(false);
     let conn1 = db1.connect_limbo();
@@ -68,6 +109,42 @@ fn test_wal_frame_transfer_no_schema_changes_rollback() {
         .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y)")
         .unwrap();
     conn2
+        .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y)")
+        .unwrap();
+    conn1
+        .execute("INSERT INTO t VALUES (1024, randomblob(4096 * 10))")
+        .unwrap();
+    assert_eq!(conn1.wal_frame_count().unwrap(), 14);
+    let mut frame = [0u8; 24 + 4096];
+    conn2.wal_insert_begin().unwrap();
+    for frame_id in 1..=(conn1.wal_frame_count().unwrap() as u32 - 1) {
+        let c = conn1.wal_get_frame(frame_id, &mut frame).unwrap();
+        db1.io.wait_for_completion(c).unwrap();
+        conn2.wal_insert_frame(frame_id, &frame).unwrap();
+    }
+    conn2.wal_insert_end().unwrap();
+    assert_eq!(conn2.wal_frame_count().unwrap(), 2);
+    assert_eq!(
+        limbo_exec_rows(&db2, &conn2, "SELECT x, length(y) FROM t"),
+        vec![] as Vec<Vec<rusqlite::types::Value>>
+    );
+    conn2.execute("CREATE TABLE q(x)").unwrap();
+    conn2
+        .execute("INSERT INTO q VALUES (randomblob(4096 * 10))")
+        .unwrap();
+    assert_eq!(
+        limbo_exec_rows(&db2, &conn2, "SELECT x, LENGTH(y) FROM t"),
+        vec![] as Vec<Vec<rusqlite::types::Value>>
+    );
+}
+
+#[test]
+fn test_wal_frame_transfer_schema_changes_rollback() {
+    let db1 = TempDatabase::new_empty(false);
+    let conn1 = db1.connect_limbo();
+    let db2 = TempDatabase::new_empty(false);
+    let conn2 = db2.connect_limbo();
+    conn1
         .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y)")
         .unwrap();
     conn1

@@ -41,6 +41,7 @@ mod numeric;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+use crate::storage::header_accessor::get_schema_cookie;
 use crate::storage::sqlite3_ondisk::is_valid_page_size;
 use crate::storage::{header_accessor, wal::DummyWAL};
 use crate::translate::optimizer::optimize_plan;
@@ -446,10 +447,34 @@ impl Database {
     }
 
     #[inline]
-    pub fn with_schema_mut<T>(&self, f: impl FnOnce(&mut Schema) -> Result<T>) -> Result<T> {
+    pub(crate) fn with_schema_mut<T>(&self, f: impl FnOnce(&mut Schema) -> Result<T>) -> Result<T> {
         let mut schema_ref = self.schema.lock().map_err(|_| LimboError::SchemaLocked)?;
         let schema = Arc::make_mut(&mut *schema_ref);
         f(schema)
+    }
+
+    pub(crate) fn clone_schema(&self) -> Result<Arc<Schema>> {
+        let schema = self.schema.lock().map_err(|_| LimboError::SchemaLocked)?;
+        Ok(schema.clone())
+    }
+
+    pub(crate) fn update_schema_if_newer(&self, another: Arc<Schema>) -> Result<()> {
+        let mut schema = self.schema.lock().map_err(|_| LimboError::SchemaLocked)?;
+        if schema.schema_version < another.schema_version {
+            tracing::debug!(
+                "DB schema is outdated: {} < {}",
+                schema.schema_version,
+                another.schema_version
+            );
+            *schema = another;
+        } else {
+            tracing::debug!(
+                "DB schema is up to date: {} >= {}",
+                schema.schema_version,
+                another.schema_version
+            );
+        }
+        Ok(())
     }
 }
 
@@ -616,6 +641,35 @@ impl Connection {
             Cmd::Explain(_stmt) => todo!(),
             Cmd::ExplainQueryPlan(_stmt) => todo!(),
         }
+    }
+
+    /// Parse schema from scratch if version of schema for the connection differs from the schema cookie in the root page
+    fn maybe_reparse_schema(self: &Arc<Connection>) -> Result<()> {
+        let pager = self.pager.borrow().clone();
+
+        pager.begin_read_tx()?;
+        let db_cookie = get_schema_cookie(&pager);
+        pager.end_read_tx().expect("read txn must be finished");
+
+        let db_cookie = db_cookie?;
+        let connection_cookie = self.schema.borrow().schema_version;
+        turso_assert!(
+            connection_cookie <= db_cookie,
+            "connection cookie can't be larger than db cookie: {} vs {}",
+            connection_cookie,
+            db_cookie
+        );
+
+        if self.schema.borrow().schema_version != db_cookie {
+            let stmt = self.prepare("SELECT * FROM sqlite_schema")?;
+            self.with_schema_mut(|schema| {
+                // TODO: This function below is synchronous, make it async
+                parse_schema_rows(Some(stmt), schema, &self.syms.borrow(), None)
+            })?;
+            let schema = self.schema.borrow().clone();
+            self._db.update_schema_if_newer(schema)?;
+        }
+        Ok(())
     }
 
     #[instrument(skip_all, level = Level::INFO)]
@@ -841,15 +895,19 @@ impl Connection {
     /// All frames written after last commit frame (db_size > 0) within the session will be rolled back
     #[cfg(feature = "fs")]
     pub fn wal_insert_end(self: &Arc<Connection>) -> Result<()> {
-        let pager = self.pager.borrow();
+        {
+            let pager = self.pager.borrow();
 
-        // remove all non-commited changes in case if WAL session left some suffix without commit frame
-        pager.rollback(false, self).expect("rollback must succeed");
+            // remove all non-commited changes in case if WAL session left some suffix without commit frame
+            pager.rollback(false, self).expect("rollback must succeed");
 
-        let wal = pager.wal.borrow_mut();
-        wal.end_write_tx();
-        wal.end_read_tx();
-        Ok(())
+            let wal = pager.wal.borrow_mut();
+            wal.end_write_tx();
+            wal.end_read_tx();
+        }
+
+        // let's re-parse schema from scratch if schema cookie changed compared to the our in-memory view of schema
+        self.maybe_reparse_schema()
     }
 
     /// Flush dirty pages to disk.
