@@ -1,7 +1,6 @@
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rusqlite::types::Value;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::common::{limbo_exec_rows, rng_from_time, TempDatabase};
 
@@ -61,11 +60,6 @@ fn test_wal_frame_transfer_no_schema_changes() {
 
 #[test]
 fn test_wal_frame_transfer_schema_changes() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer())
-        .with(EnvFilter::from_default_env())
-        .try_init()
-        .unwrap();
     let db1 = TempDatabase::new_empty(false);
     let conn1 = db1.connect_limbo();
     let db2 = TempDatabase::new_empty(false);
