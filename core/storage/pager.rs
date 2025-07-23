@@ -303,7 +303,7 @@ pub struct Pager {
     /// Source of the database pages.
     pub db_file: Arc<dyn DatabaseStorage>,
     /// The write-ahead log (WAL) for the database.
-    wal: Rc<RefCell<dyn Wal>>,
+    pub(crate) wal: Rc<RefCell<dyn Wal>>,
     /// A page cache for the database.
     page_cache: Arc<RwLock<DumbLruPageCache>>,
     /// Buffer pool for temporary data storage.
@@ -772,16 +772,16 @@ impl Pager {
     ) -> Result<IOResult<PagerCommitResult>> {
         tracing::trace!("end_tx(rollback={})", rollback);
         if rollback {
-            self.wal.borrow().end_write_tx()?;
-            self.wal.borrow().end_read_tx()?;
+            self.wal.borrow().end_write_tx();
+            self.wal.borrow().end_read_tx();
             return Ok(IOResult::Done(PagerCommitResult::Rollback));
         }
         let commit_status = self.commit_dirty_pages(wal_checkpoint_disabled)?;
         match commit_status {
             IOResult::IO => Ok(IOResult::IO),
             IOResult::Done(_) => {
-                self.wal.borrow().end_write_tx()?;
-                self.wal.borrow().end_read_tx()?;
+                self.wal.borrow().end_write_tx();
+                self.wal.borrow().end_read_tx();
 
                 if schema_did_change {
                     let schema = connection.schema.borrow().clone();
@@ -798,7 +798,7 @@ impl Pager {
 
     #[instrument(skip_all, level = Level::DEBUG)]
     pub fn end_read_tx(&self) -> Result<()> {
-        self.wal.borrow().end_read_tx()?;
+        self.wal.borrow().end_read_tx();
         Ok(())
     }
 
@@ -1009,6 +1009,12 @@ impl Pager {
     pub fn wal_get_frame(&self, frame_no: u32, frame: &mut [u8]) -> Result<Arc<Completion>> {
         let wal = self.wal.borrow();
         wal.read_frame_raw(frame_no.into(), frame)
+    }
+
+    #[instrument(skip_all, level = Level::DEBUG)]
+    pub fn wal_insert_frame(&self, frame_no: u32, frame: &[u8]) -> Result<()> {
+        let mut wal = self.wal.borrow_mut();
+        wal.write_frame_raw(self.buffer_pool.clone(), frame_no as u64, frame)
     }
 
     #[instrument(skip_all, level = Level::DEBUG, name = "pager_checkpoint",)]

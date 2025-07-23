@@ -46,7 +46,7 @@ use crate::storage::{header_accessor, wal::DummyWAL};
 use crate::translate::optimizer::optimize_plan;
 use crate::translate::pragma::TURSO_CDC_DEFAULT_TABLE_NAME;
 #[cfg(feature = "fs")]
-use crate::util::{OpenMode, OpenOptions};
+use crate::util::{IOExt, OpenMode, OpenOptions};
 use crate::vtab::VirtualTable;
 use core::str;
 pub use error::LimboError;
@@ -801,12 +801,55 @@ impl Connection {
         Ok(())
     }
 
+    #[cfg(feature = "fs")]
     pub fn wal_frame_count(&self) -> Result<u64> {
         self.pager.borrow().wal_frame_count()
     }
 
+    #[cfg(feature = "fs")]
     pub fn wal_get_frame(&self, frame_no: u32, frame: &mut [u8]) -> Result<Arc<Completion>> {
         self.pager.borrow().wal_get_frame(frame_no, frame)
+    }
+
+    /// Insert `frame` (header included) at the position `frame_no` in the WAL
+    /// If WAL already has frame at that position - turso-db will compare content of the page and either report conflict or return OK
+    /// If attempt to write frame at the position `frame_no` will create gap in the WAL - method will return error
+    #[cfg(feature = "fs")]
+    pub fn wal_insert_frame(&self, frame_no: u32, frame: &[u8]) -> Result<()> {
+        self.pager.borrow().wal_insert_frame(frame_no, frame)
+    }
+
+    /// Start WAL session by initiating read+write transaction for this connection
+    #[cfg(feature = "fs")]
+    pub fn wal_insert_begin(&self) -> Result<()> {
+        let pager = self.pager.borrow();
+        match pager.io.block(|| pager.begin_read_tx())? {
+            result::LimboResult::Busy => return Err(LimboError::Busy),
+            result::LimboResult::Ok => {}
+        }
+        match pager.io.block(|| pager.begin_write_tx())? {
+            result::LimboResult::Busy => {
+                pager.end_read_tx().expect("read txn must be closed");
+                return Err(LimboError::Busy);
+            }
+            result::LimboResult::Ok => {}
+        }
+        Ok(())
+    }
+
+    /// Finish WAL session by ending read+write transaction taken in the [Self::wal_insert_begin] method
+    /// All frames written after last commit frame (db_size > 0) within the session will be rolled back
+    #[cfg(feature = "fs")]
+    pub fn wal_insert_end(&self) -> Result<()> {
+        let pager = self.pager.borrow();
+        let mut wal = pager.wal.borrow_mut();
+        // remove all non-commited changes in case if WAL session left some suffix without commit frame
+        wal.rollback()
+            .expect("wal must be able to rollback any non-commited changes");
+
+        wal.end_write_tx();
+        wal.end_read_tx();
+        Ok(())
     }
 
     /// Flush dirty pages to disk.
