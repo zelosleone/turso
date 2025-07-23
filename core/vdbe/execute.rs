@@ -1090,6 +1090,9 @@ pub fn op_vupdate(
     let CursorType::VirtualTable(virtual_table) = cursor_type else {
         panic!("VUpdate on non-virtual table cursor");
     };
+    if virtual_table.readonly() {
+        return Err(LimboError::ReadOnly);
+    }
 
     if *arg_count < 2 {
         return Err(LimboError::InternalError(

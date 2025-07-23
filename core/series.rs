@@ -29,6 +29,7 @@ impl VTabModule for GenerateSeriesVTabModule {
     type Table = GenerateSeriesTable;
     const NAME: &'static str = "generate_series";
     const VTAB_KIND: VTabKind = VTabKind::TableValuedFunction;
+    const READONLY: bool = true;
 
     fn create(_args: &[Value]) -> Result<(String, Self::Table), ResultCode> {
         let schema = "CREATE TABLE generate_series (
