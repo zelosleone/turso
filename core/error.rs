@@ -55,7 +55,7 @@ pub enum LimboError {
     IntegerOverflow,
     #[error("Schema is locked for write")]
     SchemaLocked,
-    #[error("Database Connection is read-only")]
+    #[error("Error: Resource is read-only")]
     ReadOnly,
     #[error("Database is busy")]
     Busy,
