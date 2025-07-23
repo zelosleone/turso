@@ -24,8 +24,8 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 use turso_ext::{
-    register_extension, Connection, ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabCursor,
-    VTabKind, VTabModule, VTabModuleDerive, VTable, Value,
+    register_extension, Connection, ResultCode, VTabCursor, VTabKind, VTabModule, VTabModuleDerive,
+    VTable, Value,
 };
 
 register_extension! {
@@ -108,6 +108,7 @@ impl VTabModule for CsvVTabModule {
     type Table = CsvTable;
     const VTAB_KIND: VTabKind = VTabKind::VirtualTable;
     const NAME: &'static str = "csv";
+    const READONLY: bool = true;
 
     fn create(args: &[Value]) -> Result<(String, Self::Table), ResultCode> {
         if args.is_empty() {
@@ -261,29 +262,6 @@ impl VTable for CsvTable {
         match self.new_reader() {
             Ok(reader) => Ok(CsvCursor::new(reader, self)),
             Err(_) => Err(ResultCode::Error),
-        }
-    }
-
-    fn update(&mut self, _rowid: i64, _args: &[Value]) -> Result<(), Self::Error> {
-        Err(ResultCode::ReadOnly)
-    }
-
-    fn insert(&mut self, _args: &[Value]) -> Result<i64, Self::Error> {
-        Err(ResultCode::ReadOnly)
-    }
-
-    fn delete(&mut self, _rowid: i64) -> Result<(), Self::Error> {
-        Err(ResultCode::ReadOnly)
-    }
-
-    fn best_index(_constraints: &[ConstraintInfo], _order_by: &[OrderByInfo]) -> IndexInfo {
-        // Only a forward full table scan is supported.
-        IndexInfo {
-            idx_num: -1,
-            idx_str: None,
-            order_by_consumed: false,
-            estimated_cost: 1_000_000.,
-            ..Default::default()
         }
     }
 }
