@@ -108,15 +108,25 @@ impl Sorter {
     }
 
     pub fn next(&mut self) -> Result<IOResult<()>> {
-        if self.chunks.is_empty() {
+        let record = if self.chunks.is_empty() {
             // Serve from the in-memory buffer.
-            self.current = self.records.pop().map(|r| r.record);
+            self.records.pop()
         } else {
             // Serve from sorted chunk files.
             match self.next_from_chunk_heap()? {
                 IOResult::IO => return Ok(IOResult::IO),
-                IOResult::Done(record) => self.current = record,
+                IOResult::Done(record) => record,
             }
+        };
+        match record {
+            Some(record) => {
+                if let Some(error) = record.deserialization_error.replace(None) {
+                    // If there was a key deserialization error during the comparison, return the error.
+                    return Err(error);
+                }
+                self.current = Some(record.record);
+            }
+            None => self.current = None,
         }
         Ok(IOResult::Done(()))
     }
@@ -169,7 +179,7 @@ impl Sorter {
         Ok(IOResult::Done(()))
     }
 
-    fn next_from_chunk_heap(&mut self) -> Result<IOResult<Option<ImmutableRecord>>> {
+    fn next_from_chunk_heap(&mut self) -> Result<IOResult<Option<SortableImmutableRecord>>> {
         let mut all_read_complete = true;
         for chunk_idx in self.wait_for_read_complete.iter() {
             let chunk_io_state = self.chunks[*chunk_idx].io_state.get();
@@ -190,7 +200,7 @@ impl Sorter {
 
         if let Some((next_record, next_chunk_idx)) = self.chunk_heap.pop() {
             self.push_to_chunk_heap(next_chunk_idx)?;
-            Ok(IOResult::Done(Some(next_record.0.record)))
+            Ok(IOResult::Done(Some(next_record.0)))
         } else {
             Ok(IOResult::Done(None))
         }
@@ -448,6 +458,8 @@ struct SortableImmutableRecord {
     cursor: RecordCursor,
     key_values: RefCell<Vec<RefValue>>,
     index_key_info: Rc<Vec<KeyInfo>>,
+    /// The key deserialization error, if any.
+    deserialization_error: RefCell<Option<LimboError>>,
 }
 
 impl SortableImmutableRecord {
@@ -467,39 +479,61 @@ impl SortableImmutableRecord {
             cursor,
             key_values: RefCell::new(Vec::with_capacity(key_len)),
             index_key_info,
+            deserialization_error: RefCell::new(None),
         })
+    }
+
+    /// Attempts to deserialize the key value at the given index.
+    /// If the key value has already been deserialized, this does nothing.
+    /// The deserialized key value is stored in the `key_values` field.
+    /// In case of an error, the error is stored in the `deserialization_error` field.
+    fn try_deserialize_key(&self, idx: usize) {
+        let mut key_values = self.key_values.borrow_mut();
+        if idx < key_values.len() {
+            // The key value with this index has already been deserialized.
+            return;
+        }
+        match self.cursor.deserialize_column(&self.record, idx) {
+            Ok(value) => key_values.push(value),
+            Err(error) => {
+                self.deserialization_error.replace(Some(error));
+            }
+        }
     }
 }
 
 impl Ord for SortableImmutableRecord {
     fn cmp(&self, other: &Self) -> Ordering {
+        if self.deserialization_error.borrow().is_some()
+            || other.deserialization_error.borrow().is_some()
+        {
+            // If one of the records has a deserialization error, circumvent the comparison and return early.
+            return Ordering::Equal;
+        }
         assert_eq!(
             self.cursor.serial_types.len(),
             other.cursor.serial_types.len()
         );
-        let mut this_key_values = self.key_values.borrow_mut();
-        let mut other_key_values = other.key_values.borrow_mut();
+        let this_key_values_len = self.key_values.borrow().len();
+        let other_key_values_len = other.key_values.borrow().len();
 
         for i in 0..self.cursor.serial_types.len() {
             // Lazily deserialize the key values if they haven't been deserialized already.
-            if i >= this_key_values.len() {
-                this_key_values.push(
-                    self.cursor
-                        .deserialize_column(&self.record, i)
-                        .expect("Failed to deserialize the key value"),
-                );
+            if i >= this_key_values_len {
+                self.try_deserialize_key(i);
+                if self.deserialization_error.borrow().is_some() {
+                    return Ordering::Equal;
+                }
             }
-            if i >= other_key_values.len() {
-                other_key_values.push(
-                    other
-                        .cursor
-                        .deserialize_column(&other.record, i)
-                        .expect("Failed to deserialize the key value"),
-                );
+            if i >= other_key_values_len {
+                other.try_deserialize_key(i);
+                if other.deserialization_error.borrow().is_some() {
+                    return Ordering::Equal;
+                }
             }
 
-            let this_key_value = &this_key_values[i];
-            let other_key_value = &other_key_values[i];
+            let this_key_value = &self.key_values.borrow()[i];
+            let other_key_value = &other.key_values.borrow()[i];
             let column_order = self.index_key_info[i].sort_order;
             let collation = self.index_key_info[i].collation;
 
