@@ -924,27 +924,25 @@ fn translate_virtual_table_insert(
     };
     let table = Table::Virtual(virtual_table.clone());
     let column_mappings = resolve_columns_for_insert(&table, &columns, num_values)?;
-    let registers_start = program.alloc_registers(2);
+    let registers_start = program.alloc_registers(column_mappings.len() + 1);
 
     /* *
      * Inserts for virtual tables are done in a single step.
      * argv[0] = (NULL for insert)
-     * argv[1] = (NULL for insert)
+     * argv[1] = (rowid for insert - NULL in most cases)
      * argv[2..] = column values
      * */
 
     program.emit_insn(Insn::Null {
         dest: registers_start,
-        dest_end: Some(registers_start + 1),
+        dest_end: None,
     });
 
-    let values_reg = program.alloc_registers(column_mappings.len());
     populate_column_registers(
         &mut program,
         &value,
         &column_mappings,
-        values_reg,
-        registers_start,
+        registers_start + 1,
         resolver,
     )?;
     let conflict_action = on_conflict.as_ref().map(|c| c.bit_value()).unwrap_or(0) as u16;
@@ -953,7 +951,7 @@ fn translate_virtual_table_insert(
 
     program.emit_insn(Insn::VUpdate {
         cursor_id,
-        arg_count: column_mappings.len() + 2,
+        arg_count: column_mappings.len() + 1,
         start_reg: registers_start,
         conflict_action,
     });
