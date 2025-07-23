@@ -1140,7 +1140,16 @@ impl Pager {
 
                     let page = match page.clone() {
                         Some(page) => {
-                            assert_eq!(page.get().id, page_id, "Page id mismatch");
+                            assert_eq!(
+                                page.get().id,
+                                page_id,
+                                "Pager::free_page: Page id mismatch: expected {} but got {}",
+                                page_id,
+                                page.get().id
+                            );
+                            turso_assert!(page.is_loaded(), "Pager::free_page: In memory page with id {} about to be dropped is not loaded", page.get().id);
+                            let page_contents = page.get_contents();
+                            page_contents.overflow_cells.clear();
                             page
                         }
                         None => self.read_page(page_id)?,
