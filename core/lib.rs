@@ -1167,6 +1167,10 @@ impl Connection {
         let schema = Arc::make_mut(&mut *schema_ref);
         f(schema)
     }
+
+    pub fn is_db_initialized(&self) -> bool {
+        self._db.db_state.is_initialized()
+    }
 }
 
 pub struct Statement {
