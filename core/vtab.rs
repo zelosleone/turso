@@ -11,7 +11,7 @@ use turso_ext::{ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabKind, VT
 use turso_sqlite3_parser::{ast, lexer::sql::Parser};
 
 #[derive(Debug, Clone)]
-enum VirtualTableType {
+pub(crate) enum VirtualTableType {
     Pragma(PragmaVirtualTable),
     External(ExtVirtualTable),
 }
@@ -25,6 +25,13 @@ pub struct VirtualTable {
 }
 
 impl VirtualTable {
+    pub(crate) fn readonly(self: &Rc<VirtualTable>) -> bool {
+        match &self.vtab_type {
+            VirtualTableType::Pragma(_) => true,
+            VirtualTableType::External(table) => table.readonly(),
+        }
+    }
+
     pub(crate) fn builtin_functions() -> Vec<Rc<VirtualTable>> {
         PragmaVirtualTable::functions()
             .into_iter()
@@ -173,7 +180,7 @@ impl VirtualTableCursor {
 }
 
 #[derive(Clone, Debug)]
-struct ExtVirtualTable {
+pub(crate) struct ExtVirtualTable {
     implementation: Rc<VTabModuleImpl>,
     table_ptr: *const c_void,
     connection_ptr: RefCell<Option<*mut turso_ext::Conn>>,
@@ -195,6 +202,9 @@ impl Drop for ExtVirtualTable {
 }
 
 impl ExtVirtualTable {
+    pub(crate) fn readonly(&self) -> bool {
+        self.implementation.readonly
+    }
     fn best_index(&self, constraints: &[ConstraintInfo], order_by: &[OrderByInfo]) -> IndexInfo {
         unsafe {
             IndexInfo::from_ffi((self.implementation.best_idx)(
