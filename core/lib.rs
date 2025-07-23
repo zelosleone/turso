@@ -840,13 +840,13 @@ impl Connection {
     /// Finish WAL session by ending read+write transaction taken in the [Self::wal_insert_begin] method
     /// All frames written after last commit frame (db_size > 0) within the session will be rolled back
     #[cfg(feature = "fs")]
-    pub fn wal_insert_end(&self) -> Result<()> {
+    pub fn wal_insert_end(self: &Arc<Connection>) -> Result<()> {
         let pager = self.pager.borrow();
-        let mut wal = pager.wal.borrow_mut();
-        // remove all non-commited changes in case if WAL session left some suffix without commit frame
-        wal.rollback()
-            .expect("wal must be able to rollback any non-commited changes");
 
+        // remove all non-commited changes in case if WAL session left some suffix without commit frame
+        pager.rollback(false, self).expect("rollback must succeed");
+
+        let wal = pager.wal.borrow_mut();
         wal.end_write_tx();
         wal.end_read_tx();
         Ok(())

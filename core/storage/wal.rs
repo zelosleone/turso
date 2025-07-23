@@ -20,8 +20,8 @@ use crate::fast_lock::SpinLock;
 use crate::io::{File, IO};
 use crate::result::LimboResult;
 use crate::storage::sqlite3_ondisk::{
-    begin_read_wal_frame, begin_read_wal_frame_raw, finish_read_page, parse_wal_frame_header,
-    prepare_wal_frame, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
+    begin_read_wal_frame, begin_read_wal_frame_raw, finish_read_page, prepare_wal_frame,
+    WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
 };
 use crate::types::IOResult;
 use crate::{turso_assert, Buffer, LimboError, Result};
@@ -223,7 +223,9 @@ pub trait Wal {
         &mut self,
         buffer_pool: Arc<BufferPool>,
         frame_id: u64,
-        frame: &[u8],
+        page_id: u64,
+        db_size: u64,
+        page: &[u8],
     ) -> Result<()>;
 
     /// Write a frame to the WAL.
@@ -296,7 +298,9 @@ impl Wal for DummyWAL {
         &mut self,
         _buffer_pool: Arc<BufferPool>,
         _frame_id: u64,
-        _frame: &[u8],
+        _page_id: u64,
+        _db_size: u64,
+        _page: &[u8],
     ) -> Result<()> {
         todo!();
     }
@@ -659,15 +663,16 @@ impl Wal for WalFile {
         &mut self,
         buffer_pool: Arc<BufferPool>,
         frame_id: u64,
-        frame: &[u8],
+        page_id: u64,
+        db_size: u64,
+        page: &[u8],
     ) -> Result<()> {
         tracing::debug!("write_raw_frame({})", frame_id);
-        let expected_frame_len = WAL_FRAME_HEADER_SIZE + self.page_size() as usize;
-        if frame.len() != expected_frame_len {
+        if page.len() != self.page_size() as usize {
             return Err(LimboError::InvalidArgument(format!(
-                "unexpected frame size: got={}, expected={}",
-                frame.len(),
-                expected_frame_len
+                "unexpected page size in frame: got={}, expected={}",
+                page.len(),
+                self.page_size(),
             )));
         }
         if frame_id > self.max_frame + 1 {
@@ -681,7 +686,7 @@ impl Wal for WalFile {
             // just validate if page content from the frame matches frame in the WAL
             let offset = self.frame_offset(frame_id);
             let conflict = Arc::new(Cell::new(false));
-            let (frame_ptr, frame_len) = (frame.as_ptr(), frame.len());
+            let (page_ptr, page_len) = (page.as_ptr(), page.len());
             let complete = Box::new({
                 let conflict = conflict.clone();
                 move |buf: Arc<RefCell<Buffer>>, bytes_read: i32| {
@@ -691,8 +696,8 @@ impl Wal for WalFile {
                         bytes_read == buf_len as i32,
                         "read({bytes_read}) != expected({buf_len})"
                     );
-                    let frame = unsafe { std::slice::from_raw_parts(frame_ptr, frame_len) };
-                    if buf.as_slice() != &frame[WAL_FRAME_HEADER_SIZE..] {
+                    let page = unsafe { std::slice::from_raw_parts(page_ptr, page_len) };
+                    if buf.as_slice() != page {
                         conflict.set(true);
                     }
                 }
@@ -719,20 +724,19 @@ impl Wal for WalFile {
         let header = shared.wal_header.clone();
         let header = header.lock();
         let checksums = self.last_checksum;
-        let frame_header = parse_wal_frame_header(frame);
         let (checksums, frame_bytes) = prepare_wal_frame(
             &header,
             checksums,
             header.page_size,
-            frame_header.page_number,
-            frame_header.db_size,
-            &frame[WAL_FRAME_HEADER_SIZE..],
+            page_id as u32,
+            db_size as u32,
+            page,
         );
         let c = Arc::new(Completion::new_write(|_| {}));
         let c = shared.file.pwrite(offset, frame_bytes, c)?;
         self.io.wait_for_completion(c)?;
-        self.complete_append_frame(frame_header.page_number as u64, frame_id, checksums);
-        if frame_header.db_size > 0 {
+        self.complete_append_frame(page_id, frame_id, checksums);
+        if db_size > 0 {
             self.finish_append_frames_commit()?;
         }
         Ok(())

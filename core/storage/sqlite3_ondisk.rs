@@ -1546,21 +1546,23 @@ pub fn begin_read_wal_frame(
     Ok(c)
 }
 
-pub fn parse_wal_frame_header(frame: &[u8]) -> WalFrameHeader {
+pub fn parse_wal_frame_header(frame: &[u8]) -> (WalFrameHeader, &[u8]) {
     let page_number = u32::from_be_bytes(frame[0..4].try_into().unwrap());
     let db_size = u32::from_be_bytes(frame[4..8].try_into().unwrap());
     let salt_1 = u32::from_be_bytes(frame[8..12].try_into().unwrap());
     let salt_2 = u32::from_be_bytes(frame[12..16].try_into().unwrap());
     let checksum_1 = u32::from_be_bytes(frame[16..20].try_into().unwrap());
     let checksum_2 = u32::from_be_bytes(frame[20..24].try_into().unwrap());
-    WalFrameHeader {
+    let header = WalFrameHeader {
         page_number,
         db_size,
         salt_1,
         salt_2,
         checksum_1,
         checksum_2,
-    }
+    };
+    let page = &frame[WAL_FRAME_HEADER_SIZE..];
+    (header, page)
 }
 
 pub fn prepare_wal_frame(

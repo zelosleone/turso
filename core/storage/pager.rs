@@ -3,7 +3,9 @@ use crate::storage::btree::BTreePageInner;
 use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
 use crate::storage::header_accessor;
-use crate::storage::sqlite3_ondisk::{self, DatabaseHeader, PageContent, PageType};
+use crate::storage::sqlite3_ondisk::{
+    self, parse_wal_frame_header, DatabaseHeader, PageContent, PageType,
+};
 use crate::storage::wal::{CheckpointResult, Wal};
 use crate::types::IOResult;
 use crate::util::IOExt as _;
@@ -1018,7 +1020,29 @@ impl Pager {
     #[instrument(skip_all, level = Level::DEBUG)]
     pub fn wal_insert_frame(&self, frame_no: u32, frame: &[u8]) -> Result<()> {
         let mut wal = self.wal.borrow_mut();
-        wal.write_frame_raw(self.buffer_pool.clone(), frame_no as u64, frame)
+        let (header, raw_page) = parse_wal_frame_header(frame);
+        wal.write_frame_raw(
+            self.buffer_pool.clone(),
+            frame_no as u64,
+            header.page_number as u64,
+            header.db_size as u64,
+            raw_page,
+        )?;
+        if let Some(page) = self.cache_get(header.page_number as usize) {
+            let content = page.get_contents();
+            content.as_ptr().copy_from_slice(raw_page);
+            self.add_dirty(header.page_number as usize, &page);
+        }
+        if header.db_size > 0 {
+            for page_id in self.dirty_pages.borrow().iter() {
+                let page_key = PageCacheKey::new(*page_id);
+                let mut cache = self.page_cache.write();
+                let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
+                page.clear_dirty();
+            }
+            self.dirty_pages.borrow_mut().clear();
+        }
+        Ok(())
     }
 
     #[instrument(skip_all, level = Level::DEBUG, name = "pager_checkpoint",)]
