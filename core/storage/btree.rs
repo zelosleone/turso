@@ -228,7 +228,9 @@ struct DeleteInfo {
 
 #[derive(Debug, Clone)]
 pub enum OverwriteCellState {
+    /// Fill the cell payload with the new value.
     FillPayload,
+    /// Clear the overflow pages of the old celland overwrite the cell.
     ClearOverflowPagesAndOverwrite {
         new_payload: Vec<u8>,
         old_offset: usize,
@@ -241,15 +243,21 @@ pub enum OverwriteCellState {
 #[derive(Debug, Clone)]
 enum WriteState {
     Start,
+    /// Overwrite an existing cell.
+    /// In addition to deleting the old cell and writing a new one,
+    /// we may also need to clear the old cell's overflow pages
+    /// and add them to the freelist.
     Overwrite {
         page: Arc<BTreePageInner>,
         cell_idx: usize,
         state: OverwriteCellState,
     },
+    /// Insert a new cell. This path is taken when inserting a new row.
     Insert {
         page: Arc<BTreePageInner>,
         cell_idx: usize,
     },
+    /// Check whether the page overflows and needs balancing after an insert.
     CheckNeedsBalancing {
         page: Arc<BTreePageInner>,
     },
