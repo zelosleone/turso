@@ -1,4 +1,5 @@
-use rand::{rng, RngCore};
+use rand::{rng, RngCore, SeedableRng};
+use rand_chacha::ChaCha8Rng;
 use rusqlite::params;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -236,6 +237,15 @@ pub(crate) fn limbo_exec_rows_error(
             r => panic!("unexpected result {r:?}: expecting single row"),
         }
     }
+}
+
+pub(crate) fn rng_from_time() -> (ChaCha8Rng, u64) {
+    let seed = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let rng = ChaCha8Rng::seed_from_u64(seed);
+    (rng, seed)
 }
 
 #[cfg(test)]

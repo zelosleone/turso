@@ -1,6 +1,8 @@
+use rand::{RngCore, SeedableRng};
+use rand_chacha::ChaCha8Rng;
 use rusqlite::types::Value;
 
-use crate::common::{limbo_exec_rows, TempDatabase};
+use crate::common::{limbo_exec_rows, rng_from_time, TempDatabase};
 
 #[test]
 fn test_wal_frame_count() {
@@ -141,4 +143,62 @@ fn test_wal_frame_far_away_write() {
     let c = conn1.wal_get_frame(5, &mut frame).unwrap();
     db1.io.wait_for_completion(c).unwrap();
     assert!(conn2.wal_insert_frame(5, &frame).is_err());
+}
+
+#[test]
+fn test_wal_frame_api_no_schema_changes_fuzz() {
+    let (mut rng, _) = rng_from_time();
+    for _ in 0..4 {
+        let db1 = TempDatabase::new_empty(false);
+        let conn1 = db1.connect_limbo();
+        let db2 = TempDatabase::new_empty(false);
+        let conn2 = db2.connect_limbo();
+        conn1
+            .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y)")
+            .unwrap();
+        conn2
+            .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y)")
+            .unwrap();
+
+        let seed = rng.next_u64();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+        println!("SEED: {seed}");
+
+        let (mut size, mut synced_frame) = (0, conn2.wal_frame_count().unwrap());
+        let mut commit_frames = vec![conn1.wal_frame_count().unwrap()];
+        for _ in 0..256 {
+            if rng.next_u32() % 10 != 0 {
+                let key = rng.next_u32();
+                let length = rng.next_u32() % (4 * 4096);
+                let query = format!("INSERT INTO t VALUES ({key}, randomblob({length}))");
+                conn1.execute(&query).unwrap();
+                commit_frames.push(conn1.wal_frame_count().unwrap());
+            } else {
+                let last_frame = conn1.wal_frame_count().unwrap();
+                let next_frame =
+                    synced_frame + (rng.next_u32() as u64 % (last_frame - synced_frame + 1));
+                let mut frame = [0u8; 24 + 4096];
+                conn2.wal_insert_begin().unwrap();
+                for frame_no in (synced_frame + 1)..=next_frame {
+                    let c = conn1.wal_get_frame(frame_no as u32, &mut frame).unwrap();
+                    db1.io.wait_for_completion(c).unwrap();
+                    conn2.wal_insert_frame(frame_no as u32, &frame[..]).unwrap();
+                }
+                conn2.wal_insert_end().unwrap();
+                for (i, committed) in commit_frames.iter().enumerate() {
+                    if *committed <= next_frame {
+                        size = size.max(i);
+                        synced_frame = *committed;
+                    }
+                }
+                if rng.next_u32() % 10 == 0 {
+                    synced_frame = rng.next_u32() as u64 % synced_frame;
+                }
+                assert_eq!(
+                    limbo_exec_rows(&db2, &conn2, "SELECT COUNT(*) FROM t"),
+                    vec![vec![Value::Integer(size as i64)]]
+                );
+            }
+        }
+    }
 }

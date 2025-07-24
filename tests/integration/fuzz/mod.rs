@@ -10,20 +10,11 @@ mod tests {
     use rusqlite::params;
 
     use crate::{
-        common::{limbo_exec_rows, sqlite_exec_rows, TempDatabase},
+        common::{limbo_exec_rows, rng_from_time, sqlite_exec_rows, TempDatabase},
         fuzz::grammar_generator::{const_str, rand_int, rand_str, GrammarGenerator},
     };
 
     use super::grammar_generator::SymbolHandle;
-
-    fn rng_from_time() -> (ChaCha8Rng, u64) {
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let rng = ChaCha8Rng::seed_from_u64(seed);
-        (rng, seed)
-    }
 
     /// [See this issue for more info](https://github.com/tursodatabase/turso/issues/1763)
     #[test]
