@@ -257,10 +257,6 @@ enum WriteState {
         page: Arc<BTreePageInner>,
         cell_idx: usize,
     },
-    /// Check whether the page overflows and needs balancing after an insert.
-    CheckNeedsBalancing {
-        page: Arc<BTreePageInner>,
-    },
     BalanceStart,
     BalanceFreePages {
         curr_page: usize,
@@ -2265,7 +2261,21 @@ impl BTreeCursor {
                         .state
                         .mut_write_info()
                         .expect("write info should be present");
-                    write_info.state = WriteState::CheckNeedsBalancing { page: page.clone() };
+                    let overflows = !page.get().get_contents().overflow_cells.is_empty();
+                    if overflows {
+                        write_info.state = WriteState::BalanceStart;
+                        // If we balance, we must save the cursor position and seek to it later.
+                        // FIXME: we shouldn't have both DeleteState::SeekAfterBalancing and
+                        // save_context()/restore/context(), they are practically the same thing.
+                        self.save_context(match bkey {
+                            BTreeKey::TableRowId(rowid) => CursorContext::TableRowId(rowid.0),
+                            BTreeKey::IndexKey(record) => {
+                                CursorContext::IndexKeyRowId((*record).clone())
+                            }
+                        });
+                    } else {
+                        write_info.state = WriteState::Finish;
+                    }
                     continue;
                 }
                 WriteState::Overwrite {
@@ -2299,22 +2309,8 @@ impl BTreeCursor {
                         .state
                         .mut_write_info()
                         .expect("write info should be present");
-                    write_info.state = WriteState::CheckNeedsBalancing { page: page.clone() };
-                    continue;
-                }
-                WriteState::CheckNeedsBalancing { page } => {
-                    turso_assert!(
-                        page.get().is_loaded(),
-                        "page {}is not loaded",
-                        page.get().get().id
-                    );
-                    let write_info = self
-                        .state
-                        .mut_write_info()
-                        .expect("write info should be present");
-                    if page.get().get_contents().overflow_cells.is_empty() {
-                        write_info.state = WriteState::Finish;
-                    } else {
+                    let overflows = !page.get().get_contents().overflow_cells.is_empty();
+                    if overflows {
                         write_info.state = WriteState::BalanceStart;
                         // If we balance, we must save the cursor position and seek to it later.
                         // FIXME: we shouldn't have both DeleteState::SeekAfterBalancing and
@@ -2325,6 +2321,8 @@ impl BTreeCursor {
                                 CursorContext::IndexKeyRowId((*record).clone())
                             }
                         });
+                    } else {
+                        write_info.state = WriteState::Finish;
                     }
                     continue;
                 }
@@ -2457,7 +2455,6 @@ impl BTreeCursor {
             WriteState::Start
             | WriteState::Overwrite { .. }
             | WriteState::Insert { .. }
-            | WriteState::CheckNeedsBalancing { .. }
             | WriteState::BalanceStart
             | WriteState::Finish => panic!("balance_non_root: unexpected state {state:?}"),
             WriteState::BalanceNonRootPickSiblings => {
