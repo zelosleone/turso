@@ -1620,6 +1620,7 @@ pub fn op_column(
                         state.registers[*dest] = Register::Value(default.clone());
                     }
                 }
+                state.pc += 1;
                 return Ok(InsnFunctionStepResult::Step);
             };
 
