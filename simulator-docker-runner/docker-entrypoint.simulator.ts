@@ -72,6 +72,8 @@ const timeouter = (seconds: number, runNumber: number) => {
   return timeouterPromise;
 }
 
+let unexpectedExits = 0;
+
 const run = async (seed: string, bin: string, args: string[]): Promise<boolean> => {
   const proc = spawn([`/app/${bin}`, ...args], {
     stdout: LOG_TO_STDOUT ? "inherit" : "pipe",
@@ -87,7 +89,7 @@ const run = async (seed: string, bin: string, args: string[]): Promise<boolean> 
     const stdout = await new Response(proc.stdout).text();
     const stderr = await new Response(proc.stderr).text();
 
-    if (exitCode !== 0) {
+    if (exitCode !== 0 && exitCode !== 137) {
       console.log(`[${new Date().toISOString()}]: ${bin} ${args.join(" ")} exited with code ${exitCode}`);
       const output = stdout + stderr;
 
@@ -123,6 +125,9 @@ const run = async (seed: string, bin: string, args: string[]): Promise<boolean> 
         console.log(`Simulator seed: ${seed}`);
         process.exit(1);
       }
+    } else if (exitCode === 137) {
+      console.error("Child process exited due to sigkill, ignoring...");
+      unexpectedExits++;
     }
   } catch (err) {
     if (err instanceof TimeoutError) {
@@ -190,6 +195,7 @@ console.log(`\nRun completed! Total runs: ${runNumber}, Issues posted: ${totalIs
 await slack.postRunSummary({
   totalRuns: runNumber,
   issuesPosted: totalIssuesPosted,
+  unexpectedExits,
   timeElapsed,
   gitHash: github.GIT_HASH,
 });
