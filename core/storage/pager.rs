@@ -1031,7 +1031,11 @@ impl Pager {
         if let Some(page) = self.cache_get(header.page_number as usize) {
             let content = page.get_contents();
             content.as_ptr().copy_from_slice(raw_page);
-            self.add_dirty(header.page_number as usize, &page);
+            turso_assert!(
+                page.get().id == header.page_number as usize,
+                "page has unexpected id"
+            );
+            self.add_dirty(&page);
         }
         if header.is_commit_frame() {
             for page_id in self.dirty_pages.borrow().iter() {
