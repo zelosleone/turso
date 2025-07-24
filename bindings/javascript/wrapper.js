@@ -5,11 +5,14 @@ const { Database: NativeDB } = require("./index.js");
 const SqliteError = require("./sqlite-error.js");
 
 const convertibleErrorTypes = { TypeError };
-const CONVERTIBLE_ERROR_PREFIX = '[TURSO_CONVERT_TYPE]';
+const CONVERTIBLE_ERROR_PREFIX = "[TURSO_CONVERT_TYPE]";
 
 function convertError(err) {
-  if ((err.code ?? '').startsWith(CONVERTIBLE_ERROR_PREFIX)) {
-    return createErrorByName(err.code.substring(CONVERTIBLE_ERROR_PREFIX.length), err.message);
+  if ((err.code ?? "").startsWith(CONVERTIBLE_ERROR_PREFIX)) {
+    return createErrorByName(
+      err.code.substring(CONVERTIBLE_ERROR_PREFIX.length),
+      err.message,
+    );
   }
 
   return new SqliteError(err.message, err.code, err.rawCode);
@@ -40,7 +43,8 @@ class Database {
    */
   constructor(path, opts = {}) {
     opts.readonly = opts.readonly === undefined ? false : opts.readonly;
-    opts.fileMustExist = opts.fileMustExist === undefined ? false : opts.fileMustExist;
+    opts.fileMustExist =
+      opts.fileMustExist === undefined ? false : opts.fileMustExist;
     opts.timeout = opts.timeout === undefined ? 0 : opts.timeout;
 
     this.db = new NativeDB(path, opts);
@@ -66,8 +70,8 @@ class Database {
       open: {
         get() {
           return this.db.open;
-        }
-      }
+        },
+      },
     });
   }
 
@@ -78,7 +82,7 @@ class Database {
    */
   prepare(sql) {
     if (!sql) {
-      throw new RangeError('The supplied SQL string contains no statements');
+      throw new RangeError("The supplied SQL string contains no statements");
     }
 
     try {
@@ -265,10 +269,7 @@ class Statement {
    * @param bindParameters - The bind parameters for executing the statement.
    */
   *iterate(...bindParameters) {
-    // revisit this solution when https://github.com/napi-rs/napi-rs/issues/2574 is fixed
-    for (const row of this.stmt.iterate(bindParameters.flat())) {
-      yield row;
-    }
+    throw new Error("not implemented");
   }
 
   /**
