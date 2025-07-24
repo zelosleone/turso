@@ -189,7 +189,7 @@ impl FromClause {
     fn to_sql_ast(&self) -> ast::FromClause {
         ast::FromClause {
             select: Some(Box::new(ast::SelectTable::Table(
-                ast::QualifiedName::single(ast::Name(self.table.clone())),
+                ast::QualifiedName::single(ast::Name::from_str(&self.table)),
                 None,
                 None,
             ))),
@@ -218,7 +218,7 @@ impl FromClause {
                                 }
                             },
                             table: ast::SelectTable::Table(
-                                ast::QualifiedName::single(ast::Name(join.table.clone())),
+                                ast::QualifiedName::single(ast::Name::from_str(&join.table)),
                                 None,
                                 None,
                             ),
@@ -460,9 +460,10 @@ impl Select {
                                 ast::ResultColumn::Expr(expr.0.clone(), None)
                             }
                             ResultColumn::Star => ast::ResultColumn::Star,
-                            ResultColumn::Column(name) => {
-                                ast::ResultColumn::Expr(ast::Expr::Id(ast::Id(name.clone())), None)
-                            }
+                            ResultColumn::Column(name) => ast::ResultColumn::Expr(
+                                ast::Expr::Id(ast::Name::Ident(name.clone())),
+                                None,
+                            ),
                         })
                         .collect(),
                     from: self.body.select.from.as_ref().map(|f| f.to_sql_ast()),
@@ -491,7 +492,7 @@ impl Select {
                                         }
                                         ResultColumn::Star => ast::ResultColumn::Star,
                                         ResultColumn::Column(name) => ast::ResultColumn::Expr(
-                                            ast::Expr::Id(ast::Id(name.clone())),
+                                            ast::Expr::Id(ast::Name::Ident(name.clone())),
                                             None,
                                         ),
                                     })
@@ -509,7 +510,7 @@ impl Select {
                 o.columns
                     .iter()
                     .map(|(name, order)| ast::SortedColumn {
-                        expr: ast::Expr::Id(ast::Id(name.clone())),
+                        expr: ast::Expr::Id(ast::Name::Ident(name.clone())),
                         order: match order {
                             SortOrder::Asc => Some(ast::SortOrder::Asc),
                             SortOrder::Desc => Some(ast::SortOrder::Desc),

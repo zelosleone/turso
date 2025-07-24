@@ -109,7 +109,7 @@ pub fn prepare_update_plan(
             "UPDATE table disabled for table with indexes is disabled by default. Run with `--experimental-indexes` to enable this feature."
         );
     }
-    let table = match schema.get_table(table_name.0.as_str()) {
+    let table = match schema.get_table(table_name.as_str()) {
         Some(table) => table,
         None => bail_parse_error!("Parse error: no such table: {}", table_name),
     };
@@ -132,7 +132,7 @@ pub fn prepare_update_plan(
             Table::BTree(btree_table) => Table::BTree(btree_table.clone()),
             _ => unreachable!(),
         },
-        identifier: table_name.0.clone(),
+        identifier: table_name.as_str().to_string(),
         internal_id: program.table_reference_counter.next(),
         op: Operation::Scan {
             iter_dir,
@@ -152,7 +152,7 @@ pub fn prepare_update_plan(
 
     let mut set_clauses = Vec::with_capacity(body.sets.len());
     for set in &mut body.sets {
-        let ident = normalize_ident(set.col_names[0].0.as_str());
+        let ident = normalize_ident(set.col_names[0].as_str());
         let Some(col_index) = column_lookup.get(&ident) else {
             bail_parse_error!("Parse error: no such column: {}", ident);
         };
@@ -214,7 +214,7 @@ pub fn prepare_update_plan(
                 Table::BTree(btree_table) => Table::BTree(btree_table.clone()),
                 _ => unreachable!(),
             },
-            identifier: table_name.0.clone(),
+            identifier: table_name.as_str().to_string(),
             internal_id,
             op: Operation::Scan {
                 iter_dir,
@@ -317,7 +317,7 @@ pub fn prepare_update_plan(
 
     // Check what indexes will need to be updated by checking set_clauses and see
     // if a column is contained in an index.
-    let indexes = schema.get_indices(&table_name.0);
+    let indexes = schema.get_indices(table_name.as_str());
     let indexes_to_update = indexes
         .iter()
         .filter(|index| {

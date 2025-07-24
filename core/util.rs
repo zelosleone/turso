@@ -402,7 +402,7 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
                 filter_over: filter2,
             },
         ) => {
-            name1.0.eq_ignore_ascii_case(&name2.0)
+            name1.as_str().eq_ignore_ascii_case(name2.as_str())
                 && distinct1 == distinct2
                 && args1 == args2
                 && order1 == order2
@@ -418,7 +418,7 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
                 filter_over: filter2,
             },
         ) => {
-            name1.0.eq_ignore_ascii_case(&name2.0)
+            name1.as_str().eq_ignore_ascii_case(name2.as_str())
                 && match (filter1, filter2) {
                     (None, None) => true,
                     (
@@ -443,7 +443,7 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
         (Expr::NotNull(expr1), Expr::NotNull(expr2)) => exprs_are_equivalent(expr1, expr2),
         (Expr::IsNull(expr1), Expr::IsNull(expr2)) => exprs_are_equivalent(expr1, expr2),
         (Expr::Literal(lit1), Expr::Literal(lit2)) => check_literal_equivalency(lit1, lit2),
-        (Expr::Id(id1), Expr::Id(id2)) => check_ident_equivalency(&id1.0, &id2.0),
+        (Expr::Id(id1), Expr::Id(id2)) => check_ident_equivalency(id1.as_str(), id2.as_str()),
         (Expr::Unary(op1, expr1), Expr::Unary(op2, expr2)) => {
             op1 == op2 && exprs_are_equivalent(expr1, expr2)
         }
@@ -463,12 +463,13 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
             exprs1.len() == 1 && exprs_are_equivalent(&exprs1[0], exprs2)
         }
         (Expr::Qualified(tn1, cn1), Expr::Qualified(tn2, cn2)) => {
-            check_ident_equivalency(&tn1.0, &tn2.0) && check_ident_equivalency(&cn1.0, &cn2.0)
+            check_ident_equivalency(tn1.as_str(), tn2.as_str())
+                && check_ident_equivalency(cn1.as_str(), cn2.as_str())
         }
         (Expr::DoublyQualified(sn1, tn1, cn1), Expr::DoublyQualified(sn2, tn2, cn2)) => {
-            check_ident_equivalency(&sn1.0, &sn2.0)
-                && check_ident_equivalency(&tn1.0, &tn2.0)
-                && check_ident_equivalency(&cn1.0, &cn2.0)
+            check_ident_equivalency(sn1.as_str(), sn2.as_str())
+                && check_ident_equivalency(tn1.as_str(), tn2.as_str())
+                && check_ident_equivalency(cn1.as_str(), cn2.as_str())
         }
         (
             Expr::InList {
@@ -512,7 +513,7 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
         .into_iter()
         .map(|(name, column_def)| {
             Column {
-                name: Some(normalize_ident(&name.0)),
+                name: Some(normalize_ident(name.as_str())),
                 ty: match column_def.col_type {
                     Some(ref data_type) => {
                         // https://www.sqlite.org/datatype3.html
@@ -581,7 +582,7 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
                         // before reading the columns
                         turso_sqlite3_parser::ast::ColumnConstraint::Collate { collation_name } => {
                             Some(
-                                CollationSeq::new(collation_name.0.as_str()).expect(
+                                CollationSeq::new(collation_name.as_str()).expect(
                                     "collation should have been set correctly in create table",
                                 ),
                             )
@@ -617,7 +618,7 @@ pub fn can_pushdown_predicate(
             }
             Expr::FunctionCall { args, name, .. } => {
                 let function = crate::function::Func::resolve_function(
-                    &name.0,
+                    name.as_str(),
                     args.as_ref().map_or(0, |a| a.len()),
                 )?;
                 // is deterministic
@@ -1062,7 +1063,9 @@ pub fn parse_signed_number(expr: &Expr) -> Result<Value> {
 
 pub fn parse_string(expr: &Expr) -> Result<String> {
     match expr {
-        Expr::Name(ast::Name(s)) if s.len() >= 2 && s.starts_with("'") && s.ends_with("'") => {
+        Expr::Name(ast::Name::Ident(s)) | Expr::Name(ast::Name::Quoted(s))
+            if s.len() >= 2 && s.starts_with("'") && s.ends_with("'") =>
+        {
             Ok(s[1..s.len() - 1].to_string())
         }
         _ => Err(LimboError::InvalidArgument(format!(
@@ -1080,7 +1083,7 @@ pub fn parse_pragma_bool(expr: &Expr) -> Result<bool> {
             return Ok(x != 0);
         }
     } else if let Expr::Name(name) = expr {
-        let ident = normalize_ident(&name.0);
+        let ident = normalize_ident(name.as_str());
         if TRUE_VALUES.contains(&ident.as_str()) {
             return Ok(true);
         }
@@ -1188,25 +1191,25 @@ pub mod tests {
     #[test]
     fn test_expressions_equivalent_case_insensitive_functioncalls() {
         let func1 = Expr::FunctionCall {
-            name: Id("SUM".to_string()),
+            name: Name::Ident("SUM".to_string()),
             distinctness: None,
-            args: Some(vec![Expr::Id(Id("x".to_string()))]),
+            args: Some(vec![Expr::Id(Name::Ident("x".to_string()))]),
             order_by: None,
             filter_over: None,
         };
         let func2 = Expr::FunctionCall {
-            name: Id("sum".to_string()),
+            name: Name::Ident("sum".to_string()),
             distinctness: None,
-            args: Some(vec![Expr::Id(Id("x".to_string()))]),
+            args: Some(vec![Expr::Id(Name::Ident("x".to_string()))]),
             order_by: None,
             filter_over: None,
         };
         assert!(exprs_are_equivalent(&func1, &func2));
 
         let func3 = Expr::FunctionCall {
-            name: Id("SUM".to_string()),
+            name: Name::Ident("SUM".to_string()),
             distinctness: Some(ast::Distinctness::Distinct),
-            args: Some(vec![Expr::Id(Id("x".to_string()))]),
+            args: Some(vec![Expr::Id(Name::Ident("x".to_string()))]),
             order_by: None,
             filter_over: None,
         };
@@ -1216,16 +1219,16 @@ pub mod tests {
     #[test]
     fn test_expressions_equivalent_identical_fn_with_distinct() {
         let sum = Expr::FunctionCall {
-            name: Id("SUM".to_string()),
+            name: Name::Ident("SUM".to_string()),
             distinctness: None,
-            args: Some(vec![Expr::Id(Id("x".to_string()))]),
+            args: Some(vec![Expr::Id(Name::Ident("x".to_string()))]),
             order_by: None,
             filter_over: None,
         };
         let sum_distinct = Expr::FunctionCall {
-            name: Id("SUM".to_string()),
+            name: Name::Ident("SUM".to_string()),
             distinctness: Some(ast::Distinctness::Distinct),
-            args: Some(vec![Expr::Id(Id("x".to_string()))]),
+            args: Some(vec![Expr::Id(Name::Ident("x".to_string()))]),
             order_by: None,
             filter_over: None,
         };
@@ -1279,14 +1282,14 @@ pub mod tests {
     #[test]
     fn test_like_expressions_equivalent() {
         let expr1 = Expr::Like {
-            lhs: Box::new(Expr::Id(Id("name".to_string()))),
+            lhs: Box::new(Expr::Id(Name::Ident("name".to_string()))),
             not: false,
             op: ast::LikeOperator::Like,
             rhs: Box::new(Expr::Literal(Literal::String("%john%".to_string()))),
             escape: Some(Box::new(Expr::Literal(Literal::String("\\".to_string())))),
         };
         let expr2 = Expr::Like {
-            lhs: Box::new(Expr::Id(Id("name".to_string()))),
+            lhs: Box::new(Expr::Id(Name::Ident("name".to_string()))),
             not: false,
             op: ast::LikeOperator::Like,
             rhs: Box::new(Expr::Literal(Literal::String("%john%".to_string()))),
@@ -1298,14 +1301,14 @@ pub mod tests {
     #[test]
     fn test_expressions_equivalent_like_escaped() {
         let expr1 = Expr::Like {
-            lhs: Box::new(Expr::Id(Id("name".to_string()))),
+            lhs: Box::new(Expr::Id(Name::Ident("name".to_string()))),
             not: false,
             op: ast::LikeOperator::Like,
             rhs: Box::new(Expr::Literal(Literal::String("%john%".to_string()))),
             escape: Some(Box::new(Expr::Literal(Literal::String("\\".to_string())))),
         };
         let expr2 = Expr::Like {
-            lhs: Box::new(Expr::Id(Id("name".to_string()))),
+            lhs: Box::new(Expr::Id(Name::Ident("name".to_string()))),
             not: false,
             op: ast::LikeOperator::Like,
             rhs: Box::new(Expr::Literal(Literal::String("%john%".to_string()))),
@@ -1316,13 +1319,13 @@ pub mod tests {
     #[test]
     fn test_expressions_equivalent_between() {
         let expr1 = Expr::Between {
-            lhs: Box::new(Expr::Id(Id("age".to_string()))),
+            lhs: Box::new(Expr::Id(Name::Ident("age".to_string()))),
             not: false,
             start: Box::new(Expr::Literal(Literal::Numeric("18".to_string()))),
             end: Box::new(Expr::Literal(Literal::Numeric("65".to_string()))),
         };
         let expr2 = Expr::Between {
-            lhs: Box::new(Expr::Id(Id("age".to_string()))),
+            lhs: Box::new(Expr::Id(Name::Ident("age".to_string()))),
             not: false,
             start: Box::new(Expr::Literal(Literal::Numeric("18".to_string()))),
             end: Box::new(Expr::Literal(Literal::Numeric("65".to_string()))),
@@ -1331,7 +1334,7 @@ pub mod tests {
 
         // differing BETWEEN bounds
         let expr3 = Expr::Between {
-            lhs: Box::new(Expr::Id(Id("age".to_string()))),
+            lhs: Box::new(Expr::Id(Name::Ident("age".to_string()))),
             not: false,
             start: Box::new(Expr::Literal(Literal::Numeric("20".to_string()))),
             end: Box::new(Expr::Literal(Literal::Numeric("65".to_string()))),
@@ -2056,17 +2059,17 @@ pub mod tests {
     #[test]
     fn test_parse_pragma_bool() {
         assert!(parse_pragma_bool(&Expr::Literal(Literal::Numeric("1".into()))).unwrap(),);
-        assert!(parse_pragma_bool(&Expr::Name(Name("true".into()))).unwrap(),);
-        assert!(parse_pragma_bool(&Expr::Name(Name("on".into()))).unwrap(),);
-        assert!(parse_pragma_bool(&Expr::Name(Name("yes".into()))).unwrap(),);
+        assert!(parse_pragma_bool(&Expr::Name(Name::Ident("true".into()))).unwrap(),);
+        assert!(parse_pragma_bool(&Expr::Name(Name::Ident("on".into()))).unwrap(),);
+        assert!(parse_pragma_bool(&Expr::Name(Name::Ident("yes".into()))).unwrap(),);
 
         assert!(!parse_pragma_bool(&Expr::Literal(Literal::Numeric("0".into()))).unwrap(),);
-        assert!(!parse_pragma_bool(&Expr::Name(Name("false".into()))).unwrap(),);
-        assert!(!parse_pragma_bool(&Expr::Name(Name("off".into()))).unwrap(),);
-        assert!(!parse_pragma_bool(&Expr::Name(Name("no".into()))).unwrap(),);
+        assert!(!parse_pragma_bool(&Expr::Name(Name::Ident("false".into()))).unwrap(),);
+        assert!(!parse_pragma_bool(&Expr::Name(Name::Ident("off".into()))).unwrap(),);
+        assert!(!parse_pragma_bool(&Expr::Name(Name::Ident("no".into()))).unwrap(),);
 
-        assert!(parse_pragma_bool(&Expr::Name(Name("nono".into()))).is_err());
-        assert!(parse_pragma_bool(&Expr::Name(Name("10".into()))).is_err());
-        assert!(parse_pragma_bool(&Expr::Name(Name("-1".into()))).is_err());
+        assert!(parse_pragma_bool(&Expr::Name(Name::Ident("nono".into()))).is_err());
+        assert!(parse_pragma_bool(&Expr::Name(Name::Ident("10".into()))).is_err());
+        assert!(parse_pragma_bool(&Expr::Name(Name::Ident("-1".into()))).is_err());
     }
 }

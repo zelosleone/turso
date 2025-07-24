@@ -77,7 +77,7 @@ fn vtab_args() -> Result<(), Error> {
         panic!("unexpected AST")
     };
     assert_eq!(create_virtual_table.tbl_name.name, "mail");
-    assert_eq!(create_virtual_table.module_name.0, "fts3");
+    assert_eq!(create_virtual_table.module_name.as_str(), "fts3");
     let args = create_virtual_table.args.as_ref().unwrap();
     assert_eq!(args.len(), 2);
     assert_eq!(args[0], "subject VARCHAR(256) NOT NULL");

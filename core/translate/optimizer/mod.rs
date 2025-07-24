@@ -593,8 +593,8 @@ impl Optimizable for ast::Expr {
             }
             Expr::Exists(_) => false,
             Expr::FunctionCall { args, name, .. } => {
-                let Some(func) =
-                    resolver.resolve_function(&name.0, args.as_ref().map_or(0, |args| args.len()))
+                let Some(func) = resolver
+                    .resolve_function(name.as_str(), args.as_ref().map_or(0, |args| args.len()))
                 else {
                     return false;
                 };
@@ -606,7 +606,7 @@ impl Optimizable for ast::Expr {
             Expr::FunctionCallStar { .. } => false,
             Expr::Id(id) => {
                 // If we got here with an id, this has to be double-quotes identifier
-                assert!(is_double_quoted_identifier(&id.0));
+                assert!(is_double_quoted_identifier(id.as_str()));
                 true
             }
             Expr::Column { .. } => false,
@@ -1307,11 +1307,11 @@ pub fn rewrite_expr(top_level_expr: &mut ast::Expr, param_idx: &mut usize) -> Re
         match expr {
             ast::Expr::Id(id) => {
                 // Convert "true" and "false" to 1 and 0
-                if id.0.eq_ignore_ascii_case("true") {
+                if id.as_str().eq_ignore_ascii_case("true") {
                     *expr = ast::Expr::Literal(ast::Literal::Numeric(1.to_string()));
                     return Ok(());
                 }
-                if id.0.eq_ignore_ascii_case("false") {
+                if id.as_str().eq_ignore_ascii_case("false") {
                     *expr = ast::Expr::Literal(ast::Literal::Numeric(0.to_string()));
                 }
             }

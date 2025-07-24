@@ -41,7 +41,7 @@ pub fn translate_create_table(
         approx_num_labels: 1,
     };
     program.extend(&opts);
-    let normalized_tbl_name = normalize_ident(&tbl_name.name.0);
+    let normalized_tbl_name = normalize_ident(tbl_name.name.as_str());
     if schema.get_table(&normalized_tbl_name).is_some() {
         if if_not_exists {
             program.epilogue(crate::translate::emitter::TransactionMode::Write);
@@ -91,7 +91,8 @@ pub fn translate_create_table(
     // https://github.com/sqlite/sqlite/blob/95f6df5b8d55e67d1e34d2bff217305a2f21b1fb/src/build.c#L2856-L2871
     // https://github.com/sqlite/sqlite/blob/95f6df5b8d55e67d1e34d2bff217305a2f21b1fb/src/build.c#L1334C5-L1336C65
 
-    let index_regs = check_automatic_pk_index_required(&body, &mut program, &tbl_name.name.0)?;
+    let index_regs =
+        check_automatic_pk_index_required(&body, &mut program, tbl_name.name.as_str())?;
     if let Some(index_regs) = index_regs.as_ref() {
         if !schema.indexes_enabled() {
             bail_parse_error!("Constraints UNIQUE and PRIMARY KEY (unless INTEGER PRIMARY KEY) on table are not supported without indexes");
@@ -130,7 +131,7 @@ pub fn translate_create_table(
             let index_name = format!(
                 "{}{}_{}",
                 PRIMARY_KEY_AUTOMATIC_INDEX_NAME_PREFIX,
-                tbl_name.name.0,
+                tbl_name.name.as_str(),
                 idx + 1
             );
             emit_schema_entry(
@@ -243,7 +244,7 @@ pub fn emit_schema_entry(
 
 #[derive(Debug)]
 struct PrimaryKeyColumnInfo<'a> {
-    name: &'a String,
+    name: &'a str,
     is_descending: bool,
 }
 
@@ -285,11 +286,11 @@ fn check_automatic_pk_index_required(
                             .iter()
                             .map(|col| match &col.expr {
                                 ast::Expr::Id(name) => {
-                                    if !columns.iter().any(|(k, _)| k.0 == name.0) {
-                                        bail_parse_error!("No such column: {}", name.0);
+                                    if !columns.iter().any(|(k, _)| k.as_str() == name.as_str()) {
+                                        bail_parse_error!("No such column: {}", name.as_str());
                                     }
                                     Ok(PrimaryKeyColumnInfo {
-                                        name: &name.0,
+                                        name: &name.as_str(),
                                         is_descending: matches!(
                                             col.order,
                                             Some(ast::SortOrder::Desc)
@@ -307,7 +308,7 @@ fn check_automatic_pk_index_required(
                             let column_name = pk_info.name;
                             let (_, column_def) = columns
                                 .iter()
-                                .find(|(k, _)| k.0 == *column_name)
+                                .find(|(k, _)| k.as_str() == column_name)
                                 .expect("primary key column should be in Create Body columns");
 
                             match &mut primary_key_definition {
@@ -315,12 +316,12 @@ fn check_automatic_pk_index_required(
                                     let mut columns = HashSet::new();
                                     columns.insert(std::mem::take(column));
                                     // Have to also insert the current column_name we are iterating over in primary_key_column_results
-                                    columns.insert(column_name.clone());
+                                    columns.insert(column_name.to_string());
                                     primary_key_definition =
                                         Some(PrimaryKeyDefinitionType::Composite { columns });
                                 }
                                 Some(PrimaryKeyDefinitionType::Composite { columns }) => {
-                                    columns.insert(column_name.clone());
+                                    columns.insert(column_name.to_string());
                                 }
                                 None => {
                                     let typename =
@@ -330,7 +331,7 @@ fn check_automatic_pk_index_required(
                                         Some(PrimaryKeyDefinitionType::Simple {
                                             typename,
                                             is_descending,
-                                            column: column_name.clone(),
+                                            column: column_name.to_string(),
                                         });
                                 }
                             }
@@ -348,10 +349,10 @@ fn check_automatic_pk_index_required(
                             .iter()
                             .map(|column| match &column.expr {
                                 turso_sqlite3_parser::ast::Expr::Id(id) => {
-                                    if !columns.iter().any(|(k, _)| k.0 == id.0) {
-                                        bail_parse_error!("No such column: {}", id.0);
+                                    if !columns.iter().any(|(k, _)| k.as_str() == id.as_str()) {
+                                        bail_parse_error!("No such column: {}", id.as_str());
                                     }
-                                    Ok(crate::util::normalize_ident(&id.0))
+                                    Ok(crate::util::normalize_ident(id.as_str()))
                                 }
                                 _ => {
                                     todo!("Unsupported unique expression");
@@ -377,11 +378,11 @@ fn check_automatic_pk_index_required(
                         primary_key_definition = Some(PrimaryKeyDefinitionType::Simple {
                             typename,
                             is_descending: false,
-                            column: col_def.col_name.0.clone(),
+                            column: col_def.col_name.as_str().to_string(),
                         });
                     } else if matches!(constraint.constraint, ast::ColumnConstraint::Unique(..)) {
                         let mut single_set = HashSet::new();
-                        single_set.insert(col_def.col_name.0.clone());
+                        single_set.insert(col_def.col_name.as_str().to_string());
                         unique_sets.push(single_set);
                     }
                 }
@@ -454,7 +455,7 @@ fn create_table_body_to_str(tbl_name: &ast::QualifiedName, body: &ast::CreateTab
     sql.push_str(
         format!(
             "CREATE TABLE {} {}",
-            tbl_name.name.0,
+            tbl_name.name.as_str(),
             body.format().unwrap()
         )
         .as_str(),
@@ -503,15 +504,15 @@ fn create_vtable_body_to_str(vtab: &CreateVirtualTable, module: Rc<VTabImpl>) ->
     };
     format!(
         "CREATE VIRTUAL TABLE {} {} USING {}{}\n /*{}{}*/",
-        vtab.tbl_name.name.0,
+        vtab.tbl_name.name.as_str(),
         if_not_exists,
-        vtab.module_name.0,
+        vtab.module_name.as_str(),
         if args.is_empty() {
             String::new()
         } else {
             format!("({args})")
         },
-        vtab.tbl_name.name.0,
+        vtab.tbl_name.name.as_str(),
         vtab_args
     )
 }
@@ -529,8 +530,8 @@ pub fn translate_create_virtual_table(
         args,
     } = &vtab;
 
-    let table_name = tbl_name.name.0.clone();
-    let module_name_str = module_name.0.clone();
+    let table_name = tbl_name.name.as_str().to_string();
+    let module_name_str = module_name.as_str().to_string();
     let args_vec = args.clone().unwrap_or_default();
     let Some(vtab_module) = syms.vtab_modules.get(&module_name_str) else {
         bail_parse_error!("no such module: {}", module_name_str);
@@ -593,8 +594,8 @@ pub fn translate_create_virtual_table(
         &mut program,
         sqlite_schema_cursor_id,
         SchemaEntryType::Table,
-        &tbl_name.name.0,
-        &tbl_name.name.0,
+        tbl_name.name.as_str(),
+        tbl_name.name.as_str(),
         0, // virtual tables dont have a root page
         Some(sql),
     );
@@ -633,14 +634,14 @@ pub fn translate_drop_table(
         approx_num_labels: 4,
     };
     program.extend(&opts);
-    let table = schema.get_table(tbl_name.name.0.as_str());
+    let table = schema.get_table(tbl_name.name.as_str());
     if table.is_none() {
         if if_exists {
             program.epilogue(crate::translate::emitter::TransactionMode::Write);
 
             return Ok(program);
         }
-        bail_parse_error!("No such table: {}", tbl_name.name.0.as_str());
+        bail_parse_error!("No such table: {}", tbl_name.name.as_str());
     }
 
     let table = table.unwrap(); // safe since we just checked for None
@@ -648,7 +649,7 @@ pub fn translate_drop_table(
     let null_reg = program.alloc_register(); //  r1
     program.emit_null(null_reg, None);
     let table_name_and_root_page_register = program.alloc_register(); //  r2, this register is special because it's first used to track table name and then moved root page
-    let table_reg = program.emit_string8_new_reg(tbl_name.name.0.clone()); //  r3
+    let table_reg = program.emit_string8_new_reg(tbl_name.name.as_str().to_string()); //  r3
     program.mark_last_insn_constant();
     let table_type = program.emit_string8_new_reg("trigger".to_string()); //  r4
     program.mark_last_insn_constant();
@@ -718,7 +719,7 @@ pub fn translate_drop_table(
     //  end of loop on schema table
 
     //  2. Destroy the indices within a loop
-    let indices = schema.get_indices(&tbl_name.name.0);
+    let indices = schema.get_indices(tbl_name.name.as_str());
     for index in indices {
         program.emit_insn(Insn::Destroy {
             root: index.root_page,
@@ -929,7 +930,7 @@ pub fn translate_drop_table(
         db: 0,
         _p2: 0,
         _p3: 0,
-        table_name: tbl_name.name.0,
+        table_name: tbl_name.name.as_str().to_string(),
     });
 
     program.emit_insn(Insn::SetCookie {

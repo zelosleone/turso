@@ -223,7 +223,7 @@ impl ArbitraryFrom<&SimulatorEnv> for QualifiedName {
         let table_idx = pick_index(t.tables.len(), rng);
         let table = &t.tables[table_idx];
         // TODO: for now forego alias
-        Self::single(Name(table.name.clone()))
+        Self::single(Name::from_str(&table.name))
     }
 }
 

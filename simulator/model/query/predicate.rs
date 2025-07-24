@@ -90,9 +90,11 @@ impl Predicate {
 // to already know more values before hand
 pub fn expr_to_value(expr: &ast::Expr, row: &[SimValue], table: &Table) -> Option<SimValue> {
     match expr {
-        ast::Expr::DoublyQualified(_, _, ast::Name(col_name))
-        | ast::Expr::Qualified(_, ast::Name(col_name))
-        | ast::Expr::Id(ast::Id(col_name)) => {
+        ast::Expr::DoublyQualified(_, _, ast::Name::Ident(col_name))
+        | ast::Expr::DoublyQualified(_, _, ast::Name::Quoted(col_name))
+        | ast::Expr::Qualified(_, ast::Name::Ident(col_name))
+        | ast::Expr::Qualified(_, ast::Name::Quoted(col_name))
+        | ast::Expr::Id(ast::Name::Ident(col_name)) => {
             assert_eq!(row.len(), table.columns.len());
             table
                 .columns

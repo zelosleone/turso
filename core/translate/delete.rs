@@ -52,7 +52,7 @@ pub fn prepare_delete_plan(
     limit: Option<Box<Limit>>,
     table_ref_counter: &mut TableRefIdCounter,
 ) -> Result<Plan> {
-    let table = match schema.get_table(tbl_name.name.0.as_str()) {
+    let table = match schema.get_table(tbl_name.name.as_str()) {
         Some(table) => table,
         None => crate::bail_parse_error!("no such table: {}", tbl_name),
     };
@@ -63,7 +63,7 @@ pub fn prepare_delete_plan(
     } else {
         crate::bail_parse_error!("Table is neither a virtual table nor a btree table");
     };
-    let name = tbl_name.name.0.as_str().to_string();
+    let name = tbl_name.name.as_str().to_string();
     let indexes = schema.get_indices(table.get_name()).to_vec();
     let joined_tables = vec![JoinedTable {
         table,

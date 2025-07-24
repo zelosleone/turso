@@ -66,7 +66,7 @@ pub fn translate_insert(
         );
     }
     let table_name = &tbl_name.name;
-    let table = match schema.get_table(table_name.0.as_str()) {
+    let table = match schema.get_table(table_name.as_str()) {
         Some(table) => table,
         None => crate::bail_parse_error!("no such table: {}", table_name),
     };
@@ -279,7 +279,7 @@ pub fn translate_insert(
     // allocate cursor id's for each btree index cursor we'll need to populate the indexes
     // (idx name, root_page, idx cursor id)
     let idx_cursors = schema
-        .get_indices(&table_name.0)
+        .get_indices(&table_name.as_str())
         .iter()
         .map(|idx| {
             (
@@ -397,7 +397,7 @@ pub fn translate_insert(
         let rowid_column_name = rowid_column.column.name.as_deref().unwrap_or(ROWID);
         program.emit_insn(Insn::Halt {
             err_code: SQLITE_CONSTRAINT_PRIMARYKEY,
-            description: format!("{}.{}", table_name.0, rowid_column_name),
+            description: format!("{}.{}", table_name.as_str(), rowid_column_name),
         });
         program.preassign_label_to_next_insn(make_record_label);
     }
@@ -445,7 +445,7 @@ pub fn translate_insert(
         });
 
         let index = schema
-            .get_index(&table_name.0, &index_col_mapping.idx_name)
+            .get_index(&table_name.as_str(), &index_col_mapping.idx_name)
             .expect("index should be present");
 
         let record_reg = program.alloc_register();
@@ -566,7 +566,7 @@ pub fn translate_insert(
             rowid_and_columns_start_register,
             None,
             after_record_reg,
-            &table_name.0,
+            table_name.as_str(),
         )?;
     }
 
@@ -681,7 +681,7 @@ fn resolve_columns_for_insert<'a>(
         // Case 2: Columns specified - map named columns to their values
         // Map each named column to its value index
         for (value_index, column_name) in columns.as_ref().unwrap().iter().enumerate() {
-            let column_name = normalize_ident(column_name.0.as_str());
+            let column_name = normalize_ident(column_name.as_str());
             let table_index = if column_name == ROWID {
                 Some(0)
             } else {

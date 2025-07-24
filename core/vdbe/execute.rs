@@ -4590,7 +4590,7 @@ pub fn op_function(
                                 columns,
                                 where_clause,
                             } => {
-                                let table_name = normalize_ident(&tbl_name.0);
+                                let table_name = normalize_ident(tbl_name.as_str());
 
                                 if rename_from != table_name {
                                     break 'sql None;
@@ -4601,7 +4601,7 @@ pub fn op_function(
                                         unique,
                                         if_not_exists,
                                         idx_name,
-                                        tbl_name: ast::Name(rename_to),
+                                        tbl_name: ast::Name::from_str(&rename_to),
                                         columns,
                                         where_clause,
                                     }
@@ -4615,7 +4615,7 @@ pub fn op_function(
                                 tbl_name,
                                 body,
                             } => {
-                                let table_name = normalize_ident(&tbl_name.name.0);
+                                let table_name = normalize_ident(tbl_name.name.as_str());
 
                                 if rename_from != table_name {
                                     break 'sql None;
@@ -4627,7 +4627,7 @@ pub fn op_function(
                                         if_not_exists,
                                         tbl_name: ast::QualifiedName {
                                             db_name: None,
-                                            name: ast::Name(rename_to),
+                                            name: ast::Name::from_str(&rename_to),
                                             alias: None,
                                         },
                                         body,
@@ -4687,13 +4687,13 @@ pub fn op_function(
                                 mut columns,
                                 where_clause,
                             } => {
-                                if table != normalize_ident(&tbl_name.0) {
+                                if table != normalize_ident(tbl_name.as_str()) {
                                     break 'sql None;
                                 }
 
                                 for column in &mut columns {
                                     match &mut column.expr {
-                                        ast::Expr::Id(ast::Id(id))
+                                        ast::Expr::Id(ast::Name::Ident(id))
                                             if normalize_ident(id) == rename_from =>
                                         {
                                             *id = rename_to.clone();
@@ -4721,7 +4721,7 @@ pub fn op_function(
                                 tbl_name,
                                 body,
                             } => {
-                                if table != normalize_ident(&tbl_name.name.0) {
+                                if table != normalize_ident(tbl_name.name.as_str()) {
                                     break 'sql None;
                                 }
 
@@ -4735,16 +4735,19 @@ pub fn op_function(
                                 };
 
                                 let column_index = columns
-                                    .get_index_of(&ast::Name(rename_from))
+                                    .get_index_of(&ast::Name::from_str(&rename_from))
                                     .expect("column being renamed should be present");
 
                                 let mut column_definition =
                                     columns.get_index(column_index).unwrap().1.clone();
 
-                                column_definition.col_name = ast::Name(rename_to.clone());
+                                column_definition.col_name = ast::Name::from_str(&rename_to);
 
                                 assert!(columns
-                                    .insert(ast::Name(rename_to), column_definition.clone())
+                                    .insert(
+                                        ast::Name::from_str(&rename_to),
+                                        column_definition.clone()
+                                    )
                                     .is_none());
 
                                 // Swaps indexes with the last one and pops the end, effectively

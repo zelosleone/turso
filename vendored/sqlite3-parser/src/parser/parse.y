@@ -376,7 +376,7 @@ generated(X) ::= LP expr(E) RP. {
   X = ColumnConstraint::Generated{ expr: E, typ: None };
 }
 generated(X) ::= LP expr(E) RP ID(TYPE). {
-  X = ColumnConstraint::Generated{ expr: E, typ: Some(Id::from_token(@TYPE, TYPE)) };
+  X = ColumnConstraint::Generated{ expr: E, typ: Some(Name::from_token(@TYPE, TYPE)) };
 }
 
 // The optional AUTOINCREMENT keyword
@@ -916,24 +916,24 @@ expr(A) ::= CAST LP expr(E) AS typetoken(T) RP. {
 %endif  SQLITE_OMIT_CAST
 
 expr(A) ::= idj(X) LP distinct(D) exprlist(Y) RP. {
-  A = Expr::FunctionCall{ name: Id::from_token(@X, X), distinctness: D, args: Y, order_by: None, filter_over: None }; /*A-overwrites-X*/
+  A = Expr::FunctionCall{ name: Name::from_token(@X, X), distinctness: D, args: Y, order_by: None, filter_over: None }; /*A-overwrites-X*/
 }
 expr(A) ::= idj(X) LP distinct(D) exprlist(Y) ORDER BY sortlist(O) RP. {
-  A = Expr::FunctionCall{ name: Id::from_token(@X, X), distinctness: D, args: Y, order_by: Some(O), filter_over: None }; /*A-overwrites-X*/
+  A = Expr::FunctionCall{ name: Name::from_token(@X, X), distinctness: D, args: Y, order_by: Some(O), filter_over: None }; /*A-overwrites-X*/
 }
 expr(A) ::= idj(X) LP STAR RP. {
-  A = Expr::FunctionCallStar{ name: Id::from_token(@X, X), filter_over: None }; /*A-overwrites-X*/
+  A = Expr::FunctionCallStar{ name: Name::from_token(@X, X), filter_over: None }; /*A-overwrites-X*/
 }
 
 %ifndef SQLITE_OMIT_WINDOWFUNC
 expr(A) ::= idj(X) LP distinct(D) exprlist(Y) RP filter_over(Z). {
-  A = Expr::FunctionCall{ name: Id::from_token(@X, X), distinctness: D, args: Y, order_by: None, filter_over: Some(Z) }; /*A-overwrites-X*/
+  A = Expr::FunctionCall{ name: Name::from_token(@X, X), distinctness: D, args: Y, order_by: None, filter_over: Some(Z) }; /*A-overwrites-X*/
 }
 expr(A) ::= idj(X) LP distinct(D) exprlist(Y) ORDER BY sortlist(O) RP filter_over(Z). {
-  A = Expr::FunctionCall{ name: Id::from_token(@X, X), distinctness: D, args: Y, order_by: Some(O), filter_over: Some(Z) }; /*A-overwrites-X*/
+  A = Expr::FunctionCall{ name: Name::from_token(@X, X), distinctness: D, args: Y, order_by: Some(O), filter_over: Some(Z) }; /*A-overwrites-X*/
 }
 expr(A) ::= idj(X) LP STAR RP filter_over(Z). {
-  A = Expr::FunctionCallStar{ name: Id::from_token(@X, X), filter_over: Some(Z) }; /*A-overwrites-X*/
+  A = Expr::FunctionCallStar{ name: Name::from_token(@X, X), filter_over: Some(Z) }; /*A-overwrites-X*/
 }
 %endif
 
