@@ -1,4 +1,5 @@
 import { Connection, connect, type Config as TursoConfig } from './connection.js';
+import { DatabaseError } from './error.js';
 
 /**
  * Configuration options for creating a libSQL-compatible client.

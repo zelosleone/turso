@@ -3,6 +3,7 @@ import {
   type CursorEntry
 } from './protocol.js';
 import { Session, type SessionConfig } from './session.js';
+import { DatabaseError } from './error.js';
 
 /**
  * A prepared SQL statement that can be executed in multiple ways.
@@ -117,7 +118,7 @@ export class Statement {
           break;
         case 'step_error':
         case 'error':
-          throw new Error(entry.error?.message || 'SQL execution failed');
+          throw new DatabaseError(entry.error?.message || 'SQL execution failed');
       }
     }
   }

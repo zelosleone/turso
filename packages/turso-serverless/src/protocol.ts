@@ -1,3 +1,5 @@
+import { DatabaseError } from './error';
+
 export interface Value {
   type: 'null' | 'integer' | 'float' | 'text' | 'blob';
   value?: string | number;
@@ -165,12 +167,12 @@ export async function executeCursor(
     } catch {
       // If we can't parse the error body, use the default HTTP error message
     }
-    throw new Error(errorMessage);
+    throw new DatabaseError(errorMessage);
   }
 
   const reader = response.body?.getReader();
   if (!reader) {
-    throw new Error('No response body');
+    throw new DatabaseError('No response body');
   }
 
   const decoder = new TextDecoder();
@@ -238,7 +240,7 @@ export async function executePipeline(
   });
 
   if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+    throw new DatabaseError(`HTTP error! status: ${response.status}`);
   }
 
   return response.json();
