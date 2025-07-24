@@ -35,6 +35,7 @@ impl VTabModule for KVStoreVTabModule {
     type Table = KVStoreTable;
     const VTAB_KIND: VTabKind = VTabKind::VirtualTable;
     const NAME: &'static str = "kv_store";
+    const READONLY: bool = false;
 
     fn create(_args: &[Value]) -> Result<(String, Self::Table), ResultCode> {
         // The hidden column is placed first to verify that column index handling

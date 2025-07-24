@@ -688,17 +688,17 @@ def test_csv():
     )
     limbo.run_test_fn(
         "INSERT INTO temp.csv VALUES (5, 6.0, 'String3');",
-        lambda res: "Virtual table update failed" in res,
+        lambda res: "Table is read-only" in res,
         "INSERT into CSV table should fail",
     )
     limbo.run_test_fn(
         "UPDATE temp.csv SET c0 = 10 WHERE c1 = '2.0';",
-        lambda res: "Virtual table update failed" in res,
+        lambda res: "is read-only" in res,
         "UPDATE on CSV table should fail",
     )
     limbo.run_test_fn(
         "DELETE FROM temp.csv WHERE c1 = '2.0';",
-        lambda res: "Virtual table update failed" in res,
+        lambda res: "is read-only" in res,
         "DELETE on CSV table should fail",
     )
     limbo.run_test_fn("DROP TABLE temp.csv;", null, "Drop CSV table")
@@ -847,7 +847,9 @@ def test_hidden_columns():
 def _test_hidden_columns(exec_name, ext_path):
     console.info(f"Running test_hidden_columns for {ext_path}")
 
-    limbo = TestTursoShell(exec_name=exec_name,)
+    limbo = TestTursoShell(
+        exec_name=exec_name,
+    )
     limbo.execute_dot(f".load {ext_path}")
     limbo.execute_dot(
         "create virtual table t using kv_store;",

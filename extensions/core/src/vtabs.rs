@@ -16,6 +16,7 @@ pub type RegisterModuleFn = unsafe extern "C" fn(
 #[derive(Clone, Debug)]
 pub struct VTabModuleImpl {
     pub name: *const c_char,
+    pub readonly: bool,
     pub create: VtabFnCreate,
     pub open: VtabFnOpen,
     pub close: VtabFnClose,
@@ -119,6 +120,7 @@ pub trait VTabModule: 'static {
     type Table: VTable;
     const VTAB_KIND: VTabKind;
     const NAME: &'static str;
+    const READONLY: bool = true;
 
     /// Creates a new instance of a virtual table.
     /// Returns a tuple where the first element is the table's schema.
@@ -146,7 +148,7 @@ pub trait VTable {
     }
     fn best_index(_constraints: &[ConstraintInfo], _order_by: &[OrderByInfo]) -> IndexInfo {
         IndexInfo {
-            idx_num: 0,
+            idx_num: -1,
             idx_str: None,
             order_by_consumed: false,
             estimated_cost: 1_000_000.0,

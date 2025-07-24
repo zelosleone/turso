@@ -478,6 +478,13 @@ fn emit_delete_insns(
     table_references: &TableReferences,
 ) -> Result<()> {
     let table_reference = table_references.joined_tables().first().unwrap();
+    if table_reference
+        .virtual_table()
+        .is_some_and(|t| t.readonly())
+    {
+        return Err(crate::LimboError::ReadOnly);
+    }
+
     let cursor_id = match &table_reference.op {
         Operation::Scan { .. } => {
             program.resolve_cursor_id(&CursorKey::table(table_reference.internal_id))

@@ -926,6 +926,9 @@ fn translate_virtual_table_insert(
     on_conflict: Option<ResolveType>,
     resolver: &Resolver,
 ) -> Result<ProgramBuilder> {
+    if virtual_table.readonly() {
+        crate::bail_constraint_error!("Table is read-only: {}", virtual_table.name);
+    }
     let (num_values, value) = match &mut body {
         InsertBody::Select(select, None) => match select.body.select.as_mut() {
             OneSelect::Values(values) => (values[0].len(), values.pop().unwrap()),
