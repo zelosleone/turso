@@ -245,6 +245,12 @@ pub struct WalFrameHeader {
     pub(crate) checksum_2: u32,
 }
 
+impl WalFrameHeader {
+    pub fn is_commit_frame(&self) -> bool {
+        self.db_size > 0
+    }
+}
+
 impl Default for DatabaseHeader {
     fn default() -> Self {
         Self {

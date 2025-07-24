@@ -1033,7 +1033,7 @@ impl Pager {
             content.as_ptr().copy_from_slice(raw_page);
             self.add_dirty(header.page_number as usize, &page);
         }
-        if header.db_size > 0 {
+        if header.is_commit_frame() {
             for page_id in self.dirty_pages.borrow().iter() {
                 let page_key = PageCacheKey::new(*page_id);
                 let mut cache = self.page_cache.write();
