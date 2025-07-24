@@ -197,7 +197,7 @@ impl LimboRwLock {
 /// Write-ahead log (WAL).
 pub trait Wal {
     /// Begin a read transaction.
-    fn begin_read_tx(&mut self) -> Result<LimboResult>;
+    fn begin_read_tx(&mut self) -> Result<(LimboResult, bool)>;
 
     /// Begin a write transaction.
     fn begin_write_tx(&mut self) -> Result<LimboResult>;
@@ -265,8 +265,8 @@ pub trait Wal {
 pub struct DummyWAL;
 
 impl Wal for DummyWAL {
-    fn begin_read_tx(&mut self) -> Result<LimboResult> {
-        Ok(LimboResult::Ok)
+    fn begin_read_tx(&mut self) -> Result<(LimboResult, bool)> {
+        Ok((LimboResult::Ok, false))
     }
 
     fn end_read_tx(&self) {}
@@ -494,8 +494,10 @@ impl fmt::Debug for WalFileShared {
 impl Wal for WalFile {
     /// Begin a read transaction.
     #[instrument(skip_all, level = Level::DEBUG)]
-    fn begin_read_tx(&mut self) -> Result<LimboResult> {
+    fn begin_read_tx(&mut self) -> Result<(LimboResult, bool)> {
         let max_frame_in_wal = self.get_shared().max_frame.load(Ordering::SeqCst);
+
+        let db_has_changed = max_frame_in_wal > self.max_frame;
 
         let mut max_read_mark = 0;
         let mut max_read_mark_index = -1;
@@ -525,7 +527,7 @@ impl Wal for WalFile {
         }
 
         if max_read_mark_index == -1 {
-            return Ok(LimboResult::Busy);
+            return Ok((LimboResult::Busy, db_has_changed));
         }
 
         let (min_frame, last_checksum, start_pages_in_frames) = {
@@ -534,7 +536,7 @@ impl Wal for WalFile {
             tracing::trace!("begin_read_tx_read_lock(lock={})", max_read_mark_index);
             let busy = !lock.read();
             if busy {
-                return Ok(LimboResult::Busy);
+                return Ok((LimboResult::Busy, db_has_changed));
             }
             (
                 shared.nbackfills.load(Ordering::SeqCst) + 1,
@@ -554,7 +556,7 @@ impl Wal for WalFile {
             self.max_frame_read_lock_index,
             max_frame_in_wal
         );
-        Ok(LimboResult::Ok)
+        Ok((LimboResult::Ok, db_has_changed))
     }
 
     /// End a read transaction.
