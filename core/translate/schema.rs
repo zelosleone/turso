@@ -932,6 +932,13 @@ pub fn translate_drop_table(
         table_name: tbl_name.name.0,
     });
 
+    program.emit_insn(Insn::SetCookie {
+        db: 0,
+        cookie: Cookie::SchemaVersion,
+        value: schema.schema_version as i32 + 1,
+        p5: 0,
+    });
+
     //  end of the program
     program.epilogue(super::emitter::TransactionMode::Write);
 
