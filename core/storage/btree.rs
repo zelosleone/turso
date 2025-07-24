@@ -1152,8 +1152,7 @@ impl BTreeCursor {
         buffer: &mut [u8],
         page: BTreePage,
     ) {
-        page.get().set_dirty();
-        self.pager.add_dirty(page.get().get().id);
+        self.pager.add_dirty(&page.get());
         // SAFETY: This is safe as long as the page is not evicted from the cache.
         let payload_mut =
             unsafe { std::slice::from_raw_parts_mut(payload.as_ptr() as *mut u8, payload.len()) };
@@ -2127,8 +2126,7 @@ impl BTreeCursor {
                         return_if_locked!(page.get());
                         let page = page.get();
 
-                        page.set_dirty();
-                        self.pager.add_dirty(page.get().id);
+                        self.pager.add_dirty(&page);
 
                         self.stack.current_cell_index()
                     };
@@ -2389,8 +2387,7 @@ impl BTreeCursor {
                     // to prevent panic in the asserts below due to -1 index
                     self.stack.advance();
                 }
-                parent_page.set_dirty();
-                self.pager.add_dirty(parent_page.get().id);
+                self.pager.add_dirty(&parent_page);
                 let parent_contents = parent_page.get().contents.as_ref().unwrap();
                 let page_to_balance_idx = self.stack.current_cell_index() as usize;
 
@@ -2469,8 +2466,7 @@ impl BTreeCursor {
                     {
                         // mark as dirty
                         let sibling_page = page.get();
-                        sibling_page.set_dirty();
-                        self.pager.add_dirty(sibling_page.get().id);
+                        self.pager.add_dirty(&sibling_page);
                     }
                     #[cfg(debug_assertions)]
                     {
@@ -2964,7 +2960,10 @@ impl BTreeCursor {
                 for i in 0..sibling_count_new {
                     if i < balance_info.sibling_count {
                         let page = balance_info.pages_to_balance[i].as_ref().unwrap();
-                        page.get().set_dirty();
+                        turso_assert!(
+                            page.get().is_dirty(),
+                            "sibling page must be already marked dirty"
+                        );
                         pages_to_balance_new[i].replace(page.clone());
                     } else {
                         // FIXME: handle page cache is full
@@ -3865,8 +3864,11 @@ impl BTreeCursor {
             root.get_contents().page_type()
         );
 
-        self.pager.add_dirty(root.get().id);
-        self.pager.add_dirty(child_btree.get().get().id);
+        turso_assert!(root.is_dirty(), "root must be marked dirty");
+        turso_assert!(
+            child_btree.get().is_dirty(),
+            "child must be marked dirty as freshly allocated page"
+        );
 
         let root_buf = root_contents.as_ptr();
         let child = child_btree.get();
@@ -4285,8 +4287,7 @@ impl BTreeCursor {
             match delete_state {
                 DeleteState::Start => {
                     let page = self.stack.top();
-                    page.get().set_dirty();
-                    self.pager.add_dirty(page.get().get().id);
+                    self.pager.add_dirty(&page.get());
                     if matches!(
                         page.get().get_contents().page_type(),
                         PageType::TableLeaf | PageType::TableInterior
@@ -4469,10 +4470,8 @@ impl BTreeCursor {
 
                     let leaf_page = self.stack.top();
 
-                    page.set_dirty();
-                    self.pager.add_dirty(page.get().id);
-                    leaf_page.get().set_dirty();
-                    self.pager.add_dirty(leaf_page.get().get().id);
+                    self.pager.add_dirty(&page);
+                    self.pager.add_dirty(&leaf_page.get());
 
                     // Step 2: Replace the cell in the parent (interior) page.
                     {
