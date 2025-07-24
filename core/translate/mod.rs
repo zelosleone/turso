@@ -158,7 +158,7 @@ pub fn translate_inner(
         ast::Stmt::DropIndex {
             if_exists,
             idx_name,
-        } => translate_drop_index(&idx_name.name.as_str(), if_exists, schema, program)?,
+        } => translate_drop_index(idx_name.name.as_str(), if_exists, schema, program)?,
         ast::Stmt::DropTable {
             if_exists,
             tbl_name,

@@ -234,7 +234,7 @@ fn update_pragma(
             if let Some(table) = &opts.table() {
                 // make sure that we have table created
                 program = translate_create_table(
-                    QualifiedName::single(ast::Name::from_str(&table)),
+                    QualifiedName::single(ast::Name::from_str(table)),
                     false,
                     ast::CreateTableBody::columns_and_constraints_from_definition(
                         turso_cdc_table_columns(),

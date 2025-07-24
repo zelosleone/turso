@@ -290,7 +290,7 @@ fn check_automatic_pk_index_required(
                                         bail_parse_error!("No such column: {}", name.as_str());
                                     }
                                     Ok(PrimaryKeyColumnInfo {
-                                        name: &name.as_str(),
+                                        name: name.as_str(),
                                         is_descending: matches!(
                                             col.order,
                                             Some(ast::SortOrder::Desc)

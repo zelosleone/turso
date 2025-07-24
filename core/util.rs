@@ -1100,7 +1100,7 @@ pub fn parse_pragma_bool(expr: &Expr) -> Result<bool> {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use turso_sqlite3_parser::ast::{self, Expr, Id, Literal, Name, Operator::*, Type};
+    use turso_sqlite3_parser::ast::{self, Expr, Literal, Name, Operator::*, Type};
 
     #[test]
     fn test_normalize_ident() {

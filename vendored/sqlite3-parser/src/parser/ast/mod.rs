@@ -1117,20 +1117,6 @@ pub struct GroupBy {
     pub having: Option<Box<Expr>>, // HAVING clause on a non-aggregate query
 }
 
-/// identifier or one of several keywords or `INDEXED`
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Id(pub String);
-
-impl Id {
-    /// Constructor
-    pub fn from_token(ty: YYCODETYPE, token: Token) -> Self {
-        Self(from_token(ty, token))
-    }
-}
-
-// TODO ids (identifier or string)
-
 /// identifier or string or `CROSS` or `FULL` or `INNER` or `LEFT` or `NATURAL` or `OUTER` or `RIGHT`.
 #[derive(Clone, Debug, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -1180,6 +1166,7 @@ impl Name {
     }
 
     /// Identifying from a string
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         let bytes = s.as_bytes();
         if s.is_empty() {

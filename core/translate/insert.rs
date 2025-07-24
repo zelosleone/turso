@@ -279,7 +279,7 @@ pub fn translate_insert(
     // allocate cursor id's for each btree index cursor we'll need to populate the indexes
     // (idx name, root_page, idx cursor id)
     let idx_cursors = schema
-        .get_indices(&table_name.as_str())
+        .get_indices(table_name.as_str())
         .iter()
         .map(|idx| {
             (
@@ -445,7 +445,7 @@ pub fn translate_insert(
         });
 
         let index = schema
-            .get_index(&table_name.as_str(), &index_col_mapping.idx_name)
+            .get_index(table_name.as_str(), &index_col_mapping.idx_name)
             .expect("index should be present");
 
         let record_reg = program.alloc_register();

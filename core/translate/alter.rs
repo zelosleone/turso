@@ -24,7 +24,7 @@ pub fn translate_alter_table(
 ) -> Result<ProgramBuilder> {
     let (table_name, alter_table) = alter;
     let table_name = table_name.name.as_str();
-    if schema.table_has_indexes(&table_name) && !schema.indexes_enabled() {
+    if schema.table_has_indexes(table_name) && !schema.indexes_enabled() {
         // Let's disable altering a table with indices altogether instead of checking column by
         // column to be extra safe.
         crate::bail_parse_error!(
@@ -32,10 +32,7 @@ pub fn translate_alter_table(
         );
     }
 
-    let Some(original_btree) = schema
-        .get_table(&table_name)
-        .and_then(|table| table.btree())
-    else {
+    let Some(original_btree) = schema.get_table(table_name).and_then(|table| table.btree()) else {
         return Err(LimboError::ParseError(format!(
             "no such table: {table_name}"
         )));
@@ -56,7 +53,7 @@ pub fn translate_alter_table(
                 )));
             }
 
-            let (dropped_index, column) = btree.get_column(&column_name).ok_or_else(|| {
+            let (dropped_index, column) = btree.get_column(column_name).ok_or_else(|| {
                 LimboError::ParseError(format!("no such column: \"{column_name}\""))
             })?;
 
@@ -70,7 +67,7 @@ pub fn translate_alter_table(
                 || btree.unique_sets.as_ref().is_some_and(|set| {
                     set.iter().any(|set| {
                         set.iter()
-                            .any(|(name, _)| name == &normalize_ident(&column_name))
+                            .any(|(name, _)| name == &normalize_ident(column_name))
                     })
                 })
             {
@@ -218,13 +215,13 @@ pub fn translate_alter_table(
             let rename_from = old.as_str();
             let rename_to = new.as_str();
 
-            if btree.get_column(&rename_from).is_none() {
+            if btree.get_column(rename_from).is_none() {
                 return Err(LimboError::ParseError(format!(
                     "no such column: \"{rename_from}\""
                 )));
             };
 
-            if btree.get_column(&rename_to).is_some() {
+            if btree.get_column(rename_to).is_some() {
                 return Err(LimboError::ParseError(format!(
                     "duplicate column name: \"{rename_from}\""
                 )));
@@ -311,7 +308,7 @@ pub fn translate_alter_table(
         ast::AlterTableBody::RenameTo(new_name) => {
             let new_name = new_name.as_str();
 
-            if schema.get_table(&new_name).is_some() {
+            if schema.get_table(new_name).is_some() {
                 return Err(LimboError::ParseError(format!(
                     "there is already another table or index with this name: {new_name}"
                 )));
