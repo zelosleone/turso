@@ -5872,14 +5872,14 @@ pub fn op_parse_schema(
 
         conn.with_schema_mut(|schema| {
             // TODO: This function below is synchronous, make it async
-            parse_schema_rows(Some(stmt), schema, &conn.syms.borrow(), state.mv_tx_id)
+            parse_schema_rows(stmt, schema, &conn.syms.borrow(), state.mv_tx_id)
         })?;
     } else {
         let stmt = conn.prepare("SELECT * FROM sqlite_schema")?;
 
         conn.with_schema_mut(|schema| {
             // TODO: This function below is synchronous, make it async
-            parse_schema_rows(Some(stmt), schema, &conn.syms.borrow(), state.mv_tx_id)
+            parse_schema_rows(stmt, schema, &conn.syms.borrow(), state.mv_tx_id)
         })?;
     }
     conn.auto_commit.set(previous_auto_commit);

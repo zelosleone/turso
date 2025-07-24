@@ -1,13 +1,14 @@
 #![allow(unused)]
+use crate::storage::header_accessor::get_schema_cookie;
 use crate::translate::expr::WalkControl;
 use crate::types::IOResult;
-use crate::IO;
 use crate::{
     schema::{self, Column, Schema, Type},
     translate::{collate::CollationSeq, expr::walk_expr, plan::JoinOrderMember},
     types::{Value, ValueType},
     LimboError, OpenFlags, Result, Statement, StepResult, SymbolTable,
 };
+use crate::{Connection, IO};
 use std::{rc::Rc, sync::Arc};
 use tracing::{instrument, Level};
 use turso_sqlite3_parser::ast::{
@@ -69,120 +70,117 @@ pub struct UnparsedFromSqlIndex {
 
 #[instrument(skip_all, level = Level::INFO)]
 pub fn parse_schema_rows(
-    rows: Option<Statement>,
+    mut rows: Statement,
     schema: &mut Schema,
     syms: &SymbolTable,
     mv_tx_id: Option<u64>,
 ) -> Result<()> {
-    if let Some(mut rows) = rows {
-        rows.set_mv_tx_id(mv_tx_id);
-        // TODO: if we IO, this unparsed indexes is lost. Will probably need some state between
-        // IO runs
-        let mut from_sql_indexes = Vec::with_capacity(10);
-        let mut automatic_indices: std::collections::HashMap<String, Vec<(String, usize)>> =
-            std::collections::HashMap::with_capacity(10);
-        loop {
-            match rows.step()? {
-                StepResult::Row => {
-                    let row = rows.row().unwrap();
-                    let ty = row.get::<&str>(0)?;
-                    if !["table", "index"].contains(&ty) {
-                        continue;
-                    }
-                    match ty {
-                        "table" => {
-                            let root_page: i64 = row.get::<i64>(3)?;
-                            let sql: &str = row.get::<&str>(4)?;
-                            if root_page == 0 && sql.to_lowercase().contains("create virtual") {
-                                let name: &str = row.get::<&str>(1)?;
-                                // a virtual table is found in the sqlite_schema, but it's no
-                                // longer in the in-memory schema. We need to recreate it if
-                                // the module is loaded in the symbol table.
-                                let vtab = if let Some(vtab) = syms.vtabs.get(name) {
-                                    vtab.clone()
-                                } else {
-                                    let mod_name = module_name_from_sql(sql)?;
-                                    crate::VirtualTable::table(
-                                        Some(name),
-                                        mod_name,
-                                        module_args_from_sql(sql)?,
-                                        syms,
-                                    )?
-                                };
-                                schema.add_virtual_table(vtab);
+    rows.set_mv_tx_id(mv_tx_id);
+    // TODO: if we IO, this unparsed indexes is lost. Will probably need some state between
+    // IO runs
+    let mut from_sql_indexes = Vec::with_capacity(10);
+    let mut automatic_indices = std::collections::HashMap::with_capacity(10);
+    loop {
+        match rows.step()? {
+            StepResult::Row => {
+                let row = rows.row().unwrap();
+                let ty = row.get::<&str>(0)?;
+                if !["table", "index"].contains(&ty) {
+                    continue;
+                }
+                match ty {
+                    "table" => {
+                        let root_page: i64 = row.get::<i64>(3)?;
+                        let sql: &str = row.get::<&str>(4)?;
+                        if root_page == 0 && sql.to_lowercase().contains("create virtual") {
+                            let name: &str = row.get::<&str>(1)?;
+                            // a virtual table is found in the sqlite_schema, but it's no
+                            // longer in the in-memory schema. We need to recreate it if
+                            // the module is loaded in the symbol table.
+                            let vtab = if let Some(vtab) = syms.vtabs.get(name) {
+                                vtab.clone()
                             } else {
-                                let table = schema::BTreeTable::from_sql(sql, root_page as usize)?;
-                                schema.add_btree_table(Rc::new(table));
-                            }
+                                let mod_name = module_name_from_sql(sql)?;
+                                crate::VirtualTable::table(
+                                    Some(name),
+                                    mod_name,
+                                    module_args_from_sql(sql)?,
+                                    syms,
+                                )?
+                            };
+                            schema.add_virtual_table(vtab);
+                        } else {
+                            let table = schema::BTreeTable::from_sql(sql, root_page as usize)?;
+                            schema.add_btree_table(Rc::new(table));
                         }
-                        "index" => {
-                            let root_page: i64 = row.get::<i64>(3)?;
-                            match row.get::<&str>(4) {
-                                Ok(sql) => {
-                                    from_sql_indexes.push(UnparsedFromSqlIndex {
-                                        table_name: row.get::<&str>(2)?.to_string(),
-                                        root_page: root_page as usize,
-                                        sql: sql.to_string(),
-                                    });
-                                }
-                                _ => {
-                                    // Automatic index on primary key and/or unique constraint, e.g.
-                                    // table|foo|foo|2|CREATE TABLE foo (a text PRIMARY KEY, b)
-                                    // index|sqlite_autoindex_foo_1|foo|3|
-                                    let index_name = row.get::<&str>(1)?.to_string();
-                                    let table_name = row.get::<&str>(2)?.to_string();
-                                    let root_page = row.get::<i64>(3)?;
-                                    match automatic_indices.entry(table_name) {
-                                        std::collections::hash_map::Entry::Vacant(e) => {
-                                            e.insert(vec![(index_name, root_page as usize)]);
-                                        }
-                                        std::collections::hash_map::Entry::Occupied(mut e) => {
-                                            e.get_mut().push((index_name, root_page as usize));
-                                        }
+                    }
+                    "index" => {
+                        let root_page: i64 = row.get::<i64>(3)?;
+                        match row.get::<&str>(4) {
+                            Ok(sql) => {
+                                from_sql_indexes.push(UnparsedFromSqlIndex {
+                                    table_name: row.get::<&str>(2)?.to_string(),
+                                    root_page: root_page as usize,
+                                    sql: sql.to_string(),
+                                });
+                            }
+                            _ => {
+                                // Automatic index on primary key and/or unique constraint, e.g.
+                                // table|foo|foo|2|CREATE TABLE foo (a text PRIMARY KEY, b)
+                                // index|sqlite_autoindex_foo_1|foo|3|
+                                let index_name = row.get::<&str>(1)?.to_string();
+                                let table_name = row.get::<&str>(2)?.to_string();
+                                let root_page = row.get::<i64>(3)?;
+                                match automatic_indices.entry(table_name) {
+                                    std::collections::hash_map::Entry::Vacant(e) => {
+                                        e.insert(vec![(index_name, root_page as usize)]);
+                                    }
+                                    std::collections::hash_map::Entry::Occupied(mut e) => {
+                                        e.get_mut().push((index_name, root_page as usize));
                                     }
                                 }
                             }
                         }
-                        _ => continue,
                     }
+                    _ => continue,
                 }
-                StepResult::IO => {
-                    // TODO: How do we ensure that the I/O we submitted to
-                    // read the schema is actually complete?
-                    rows.run_once()?;
-                }
-                StepResult::Interrupt => break,
-                StepResult::Done => break,
-                StepResult::Busy => break,
             }
+            StepResult::IO => {
+                // TODO: How do we ensure that the I/O we submitted to
+                // read the schema is actually complete?
+                rows.run_once()?;
+            }
+            StepResult::Interrupt => break,
+            StepResult::Done => break,
+            StepResult::Busy => break,
         }
-        for unparsed_sql_from_index in from_sql_indexes {
-            if !schema.indexes_enabled() {
-                schema.table_set_has_index(&unparsed_sql_from_index.table_name);
-            } else {
-                let table = schema
-                    .get_btree_table(&unparsed_sql_from_index.table_name)
-                    .unwrap();
-                let index = schema::Index::from_sql(
-                    &unparsed_sql_from_index.sql,
-                    unparsed_sql_from_index.root_page,
-                    table.as_ref(),
-                )?;
+    }
+    for unparsed_sql_from_index in from_sql_indexes {
+        if !schema.indexes_enabled() {
+            schema.table_set_has_index(&unparsed_sql_from_index.table_name);
+        } else {
+            let table = schema
+                .get_btree_table(&unparsed_sql_from_index.table_name)
+                .unwrap();
+            let index = schema::Index::from_sql(
+                &unparsed_sql_from_index.sql,
+                unparsed_sql_from_index.root_page,
+                table.as_ref(),
+            )?;
+            schema.add_index(Arc::new(index));
+        }
+    }
+    for automatic_index in automatic_indices {
+        if !schema.indexes_enabled() {
+            schema.table_set_has_index(&automatic_index.0);
+        } else {
+            let table = schema.get_btree_table(&automatic_index.0).unwrap();
+            let ret_index = schema::Index::automatic_from_primary_key_and_unique(
+                table.as_ref(),
+                automatic_index.1,
+            )?;
+            for index in ret_index {
                 schema.add_index(Arc::new(index));
-            }
-        }
-        for automatic_index in automatic_indices {
-            if !schema.indexes_enabled() {
-                schema.table_set_has_index(&automatic_index.0);
-            } else {
-                let table = schema.get_btree_table(&automatic_index.0).unwrap();
-                let ret_index = schema::Index::automatic_from_primary_key_and_unique(
-                    table.as_ref(),
-                    automatic_index.1,
-                )?;
-                for index in ret_index {
-                    schema.add_index(Arc::new(index));
-                }
             }
         }
     }
