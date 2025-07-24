@@ -1152,7 +1152,7 @@ impl BTreeCursor {
         buffer: &mut [u8],
         page: BTreePage,
     ) {
-        self.pager.add_dirty(page.get().get().id, &page.get());
+        self.pager.add_dirty(&page.get());
         // SAFETY: This is safe as long as the page is not evicted from the cache.
         let payload_mut =
             unsafe { std::slice::from_raw_parts_mut(payload.as_ptr() as *mut u8, payload.len()) };
@@ -2126,7 +2126,7 @@ impl BTreeCursor {
                         return_if_locked!(page.get());
                         let page = page.get();
 
-                        self.pager.add_dirty(page.get().id, &page);
+                        self.pager.add_dirty(&page);
 
                         self.stack.current_cell_index()
                     };
@@ -2387,7 +2387,7 @@ impl BTreeCursor {
                     // to prevent panic in the asserts below due to -1 index
                     self.stack.advance();
                 }
-                self.pager.add_dirty(parent_page.get().id, &parent_page);
+                self.pager.add_dirty(&parent_page);
                 let parent_contents = parent_page.get().contents.as_ref().unwrap();
                 let page_to_balance_idx = self.stack.current_cell_index() as usize;
 
@@ -2466,7 +2466,7 @@ impl BTreeCursor {
                     {
                         // mark as dirty
                         let sibling_page = page.get();
-                        self.pager.add_dirty(sibling_page.get().id, &sibling_page);
+                        self.pager.add_dirty(&sibling_page);
                     }
                     #[cfg(debug_assertions)]
                     {
@@ -4287,7 +4287,7 @@ impl BTreeCursor {
             match delete_state {
                 DeleteState::Start => {
                     let page = self.stack.top();
-                    self.pager.add_dirty(page.get().get().id, &page.get());
+                    self.pager.add_dirty(&page.get());
                     if matches!(
                         page.get().get_contents().page_type(),
                         PageType::TableLeaf | PageType::TableInterior
@@ -4470,9 +4470,8 @@ impl BTreeCursor {
 
                     let leaf_page = self.stack.top();
 
-                    self.pager.add_dirty(page.get().id, &page);
-                    self.pager
-                        .add_dirty(leaf_page.get().get().id, &leaf_page.get());
+                    self.pager.add_dirty(&page);
+                    self.pager.add_dirty(&leaf_page.get());
 
                     // Step 2: Replace the cell in the parent (interior) page.
                     {

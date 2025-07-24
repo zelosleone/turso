@@ -1,4 +1,5 @@
 use crate::storage::sqlite3_ondisk::MAX_PAGE_SIZE;
+use crate::turso_assert;
 use crate::{
     storage::{
         self,
@@ -59,7 +60,11 @@ fn get_header_page_for_write(pager: &Pager) -> Result<IOResult<PageRef>> {
     if page.is_locked() {
         return Ok(IOResult::IO);
     }
-    pager.add_dirty(DATABASE_HEADER_PAGE_ID, &page);
+    turso_assert!(
+        page.get().id == DATABASE_HEADER_PAGE_ID,
+        "page must have number 1"
+    );
+    pager.add_dirty(&page);
     Ok(IOResult::Done(page))
 }
 
@@ -142,7 +147,8 @@ macro_rules! impl_header_field_accessor {
                 let mut buf = page_content.buffer.borrow_mut();
                 let buf_slice = buf.as_mut_slice();
                 buf_slice[$offset..$offset + std::mem::size_of::<$type>()].copy_from_slice(&value.to_be_bytes());
-                pager.add_dirty(1, &page);
+                turso_assert!(page.get().id == 1, "page must have number 1");
+                pager.add_dirty(&page);
                 Ok(IOResult::Done(()))
             }
 
