@@ -2305,12 +2305,18 @@ impl BTreeCursor {
                         *old_state = state;
                         return Ok(IOResult::IO);
                     }
+                    let usable_space = self.usable_space();
                     let write_info = self
                         .state
                         .mut_write_info()
                         .expect("write info should be present");
                     let overflows = !page.get().get_contents().overflow_cells.is_empty();
-                    if overflows {
+                    let underflows = !overflows && {
+                        let free_space =
+                            compute_free_space(page.get().get_contents(), usable_space as u16);
+                        free_space as usize * 3 > usable_space * 2
+                    };
+                    if overflows || underflows {
                         write_info.state = WriteState::BalanceStart;
                         // If we balance, we must save the cursor position and seek to it later.
                         // FIXME: we shouldn't have both DeleteState::SeekAfterBalancing and
