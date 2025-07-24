@@ -6,6 +6,7 @@ import {
   type CursorResponse,
   type CursorEntry
 } from './protocol.js';
+import { DatabaseError } from './error.js';
 
 /**
  * Configuration options for a session.
@@ -123,7 +124,7 @@ export class Session {
           break;
         case 'step_error':
         case 'error':
-          throw new Error(entry.error?.message || 'SQL execution failed');
+          throw new DatabaseError(entry.error?.message || 'SQL execution failed');
       }
     }
 
@@ -204,7 +205,7 @@ export class Session {
           break;
         case 'step_error':
         case 'error':
-          throw new Error(entry.error?.message || 'Batch execution failed');
+          throw new DatabaseError(entry.error?.message || 'Batch execution failed');
       }
     }
 
