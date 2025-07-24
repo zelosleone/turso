@@ -874,7 +874,7 @@ impl Connection {
     #[cfg(feature = "fs")]
     pub fn wal_insert_begin(&self) -> Result<()> {
         let pager = self.pager.borrow();
-        match pager.io.block(|| pager.begin_read_tx())? {
+        match pager.begin_read_tx()? {
             result::LimboResult::Busy => return Err(LimboError::Busy),
             result::LimboResult::Ok => {}
         }
@@ -1166,6 +1166,10 @@ impl Connection {
         let mut schema_ref = self.schema.borrow_mut();
         let schema = Arc::make_mut(&mut *schema_ref);
         f(schema)
+    }
+
+    pub fn is_db_initialized(&self) -> bool {
+        self._db.db_state.is_initialized()
     }
 }
 

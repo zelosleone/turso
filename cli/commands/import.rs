@@ -40,58 +40,60 @@ impl<'a> ImportFile<'a> {
             args.table
         );
 
-        let table_exists = 'check: {
-            match self.conn.query(table_check_query) {
-                Ok(rows) => {
-                    if let Some(mut rows) = rows {
-                        loop {
-                            match rows.step() {
-                                Ok(turso_core::StepResult::Row) => {
-                                    break 'check true;
-                                }
-                                Ok(turso_core::StepResult::Done) => break 'check false,
-                                Ok(turso_core::StepResult::IO) => {
-                                    if let Err(e) = rows.run_once() {
+        let mut table_exists = false;
+        if self.conn.is_db_initialized() {
+            table_exists = 'check: {
+                match self.conn.query(table_check_query) {
+                    Ok(rows) => {
+                        if let Some(mut rows) = rows {
+                            loop {
+                                match rows.step() {
+                                    Ok(turso_core::StepResult::Row) => {
+                                        break 'check true;
+                                    }
+                                    Ok(turso_core::StepResult::Done) => break 'check false,
+                                    Ok(turso_core::StepResult::IO) => {
+                                        if let Err(e) = rows.run_once() {
+                                            let _ = self.writer.write_all(
+                                                format!("Error checking table existence: {e:?}\n")
+                                                    .as_bytes(),
+                                            );
+                                            return;
+                                        }
+                                    }
+                                    Ok(
+                                        turso_core::StepResult::Interrupt
+                                        | turso_core::StepResult::Busy,
+                                    ) => {
+                                        if let Err(e) = rows.run_once() {
+                                            let _ = self.writer.write_all(
+                                                format!("Error checking table existence: {e:?}\n")
+                                                    .as_bytes(),
+                                            );
+                                            return;
+                                        }
+                                    }
+                                    Err(e) => {
                                         let _ = self.writer.write_all(
                                             format!("Error checking table existence: {e:?}\n")
                                                 .as_bytes(),
                                         );
                                         return;
                                     }
-                                }
-                                Ok(
-                                    turso_core::StepResult::Interrupt
-                                    | turso_core::StepResult::Busy,
-                                ) => {
-                                    if let Err(e) = rows.run_once() {
-                                        let _ = self.writer.write_all(
-                                            format!("Error checking table existence: {e:?}\n")
-                                                .as_bytes(),
-                                        );
-                                        return;
-                                    }
-                                }
-                                Err(e) => {
-                                    let _ = self.writer.write_all(
-                                        format!("Error checking table existence: {e:?}\n")
-                                            .as_bytes(),
-                                    );
-                                    return;
                                 }
                             }
                         }
+                        false
                     }
-                    false
+                    Err(e) => {
+                        let _ = self.writer.write_all(
+                            format!("Error checking table existence: {e:?}\n").as_bytes(),
+                        );
+                        return;
+                    }
                 }
-                Err(e) => {
-                    let _ = self
-                        .writer
-                        .write_all(format!("Error checking table existence: {e:?}\n").as_bytes());
-                    return;
-                }
-            }
-        };
-
+            };
+        }
         let file = match File::open(args.file) {
             Ok(file) => file,
             Err(e) => {
