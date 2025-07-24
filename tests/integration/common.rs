@@ -250,9 +250,9 @@ pub(crate) fn rng_from_time() -> (ChaCha8Rng, u64) {
 
 #[cfg(test)]
 mod tests {
-    use std::vec;
-    use tempfile::TempDir;
-    use turso_core::types::IOResult;
+    use std::{sync::Arc, vec};
+    use tempfile::{NamedTempFile, TempDir};
+    use turso_core::{types::IOResult, Database, StepResult, IO};
 
     use super::{limbo_exec_rows, limbo_exec_rows_error, TempDatabase};
     use rusqlite::types::Value;
@@ -538,6 +538,72 @@ mod tests {
         // Should see no rows since transaction was never committed
         let ret = limbo_exec_rows(&db, &conn, "SELECT x FROM t");
         assert!(ret.is_empty(), "Expected 0 rows but got {ret:?}");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_multi_connection_table_drop_persistence() -> Result<(), Box<dyn std::error::Error>> {
+        // Create a temporary database file
+        let temp_file = NamedTempFile::new()?;
+        let db_path = temp_file.path().to_string_lossy().to_string();
+
+        // Open database
+        #[allow(clippy::arc_with_non_send_sync)]
+        let io: Arc<dyn IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
+        let db = Database::open_file(io, &db_path, false, false)?;
+
+        const NUM_CONNECTIONS: usize = 5;
+        let mut connections = Vec::new();
+
+        // Create a new connection to verify persistence
+        let verification_conn = db.connect()?;
+        // Create multiple connections and create a table from each
+
+        for i in 0..NUM_CONNECTIONS {
+            let conn = db.connect()?;
+            connections.push(conn);
+
+            // Create a unique table name for this connection
+            let table_name = format!("test_table_{i}");
+            let create_sql = format!(
+                "CREATE TABLE {table_name} (id INTEGER PRIMARY KEY, name TEXT, value INTEGER)"
+            );
+
+            // Execute CREATE TABLE
+            verification_conn.execute(&create_sql)?;
+        }
+
+        for (i, conn) in connections.iter().enumerate().take(NUM_CONNECTIONS) {
+            // Create a unique table name for this connection
+            let table_name = format!("test_table_{i}");
+            let create_sql = format!("DROP TABLE {table_name}");
+
+            // Execute DROP TABLE
+            conn.execute(&create_sql)?;
+        }
+
+        // Also verify via sqlite_schema table that all tables are present
+        let stmt = verification_conn.query("SELECT name FROM sqlite_schema WHERE type='table' AND name LIKE 'test_table_%' ORDER BY name")?;
+
+        assert!(stmt.is_some(), "Should be able to query sqlite_schema");
+        let mut stmt = stmt.unwrap();
+
+        let mut found_tables = Vec::new();
+        loop {
+            match stmt.step()? {
+                StepResult::Row => {
+                    let row = stmt.row().unwrap();
+                    let table_name = row.get::<String>(0)?;
+                    found_tables.push(table_name);
+                }
+                StepResult::Done => break,
+                _ => {}
+            }
+        }
+
+        // Verify we found all expected tables
+        assert_eq!(found_tables.len(), 0, "Should find no tables in schema");
 
         Ok(())
     }
