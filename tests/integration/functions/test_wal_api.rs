@@ -59,6 +59,66 @@ fn test_wal_frame_transfer_no_schema_changes() {
 }
 
 #[test]
+fn test_wal_frame_transfer_various_schema_changes() {
+    let db1 = TempDatabase::new_empty(false);
+    let conn1 = db1.connect_limbo();
+    let db2 = TempDatabase::new_empty(false);
+    let conn2 = db2.connect_limbo();
+    let conn3 = db2.connect_limbo();
+    conn1
+        .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y)")
+        .unwrap();
+    let mut frame = [0u8; 24 + 4096];
+    let mut synced_frame = 0;
+    let mut sync = || {
+        let last_frame = conn1.wal_frame_count().unwrap() as u32;
+        conn2.wal_insert_begin().unwrap();
+        for frame_id in (synced_frame + 1)..=last_frame {
+            let c = conn1.wal_get_frame(frame_id, &mut frame).unwrap();
+            db1.io.wait_for_completion(c).unwrap();
+            conn2.wal_insert_frame(frame_id, &frame).unwrap();
+        }
+        conn2.wal_insert_end().unwrap();
+        synced_frame = last_frame;
+    };
+
+    sync();
+    assert_eq!(
+        limbo_exec_rows(&db2, &conn2, "SELECT * FROM t"),
+        vec![] as Vec<Vec<rusqlite::types::Value>>
+    );
+    assert_eq!(
+        limbo_exec_rows(&db2, &conn3, "SELECT * FROM t"),
+        vec![] as Vec<Vec<rusqlite::types::Value>>
+    );
+
+    conn1.execute("DROP TABLE t").unwrap();
+
+    sync();
+    assert!(matches!(
+        conn2.prepare("SELECT * FROM t").err().unwrap(),
+        turso_core::LimboError::ParseError(error) if error == "no such table: t"
+    ));
+    assert!(matches!(
+        conn3.prepare("SELECT * FROM t").err().unwrap(),
+        turso_core::LimboError::ParseError(error) if error == "no such table: t"
+    ));
+
+    conn1.execute("CREATE TABLE a(x)").unwrap();
+    conn1.execute("CREATE TABLE b(x, y)").unwrap();
+
+    sync();
+    assert_eq!(
+        limbo_exec_rows(&db2, &conn2, "SELECT 1 FROM a UNION ALL SELECT 1 FROM b"),
+        vec![] as Vec<Vec<rusqlite::types::Value>>
+    );
+    assert_eq!(
+        limbo_exec_rows(&db2, &conn3, "SELECT 1 FROM a UNION ALL SELECT 1 FROM b"),
+        vec![] as Vec<Vec<rusqlite::types::Value>>
+    );
+}
+
+#[test]
 fn test_wal_frame_transfer_schema_changes() {
     let db1 = TempDatabase::new_empty(false);
     let conn1 = db1.connect_limbo();
