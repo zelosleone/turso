@@ -16,6 +16,7 @@ use crate::vdbe::builder::{ProgramBuilderOpts, TableRefIdCounter};
 use crate::vdbe::insn::Insn;
 use crate::SymbolTable;
 use crate::{schema::Schema, vdbe::builder::ProgramBuilder, Result};
+use std::sync::Arc;
 use turso_sqlite3_parser::ast::{self, CompoundSelect, SortOrder};
 use turso_sqlite3_parser::ast::{ResultColumn, SelectInner};
 
@@ -30,6 +31,7 @@ pub fn translate_select(
     syms: &SymbolTable,
     mut program: ProgramBuilder,
     query_destination: QueryDestination,
+    connection: &Arc<crate::Connection>,
 ) -> Result<TranslateSelectResult> {
     let mut select_plan = prepare_select_plan(
         schema,
@@ -38,6 +40,7 @@ pub fn translate_select(
         &[],
         &mut program.table_reference_counter,
         query_destination,
+        connection,
     )?;
     optimize_plan(&mut select_plan, schema)?;
     let num_result_cols;
@@ -92,6 +95,7 @@ pub fn prepare_select_plan(
     outer_query_refs: &[OuterQueryReference],
     table_ref_counter: &mut TableRefIdCounter,
     query_destination: QueryDestination,
+    connection: &Arc<crate::Connection>,
 ) -> Result<Plan> {
     let compounds = select.body.compounds.take();
     match compounds {
@@ -107,6 +111,7 @@ pub fn prepare_select_plan(
                 outer_query_refs,
                 table_ref_counter,
                 query_destination,
+                connection,
             )?))
         }
         Some(compounds) => {
@@ -120,6 +125,7 @@ pub fn prepare_select_plan(
                 outer_query_refs,
                 table_ref_counter,
                 query_destination.clone(),
+                connection,
             )?;
 
             let mut left = Vec::with_capacity(compounds.len());
@@ -135,6 +141,7 @@ pub fn prepare_select_plan(
                     outer_query_refs,
                     table_ref_counter,
                     query_destination.clone(),
+                    connection,
                 )?;
             }
 
@@ -181,6 +188,7 @@ fn prepare_one_select_plan(
     outer_query_refs: &[OuterQueryReference],
     table_ref_counter: &mut TableRefIdCounter,
     query_destination: QueryDestination,
+    connection: &Arc<crate::Connection>,
 ) -> Result<SelectPlan> {
     match select {
         ast::OneSelect::Select(select_inner) => {
@@ -223,6 +231,7 @@ fn prepare_one_select_plan(
                 &mut where_predicates,
                 &mut table_references,
                 table_ref_counter,
+                connection,
             )?;
 
             // Preallocate space for the result columns

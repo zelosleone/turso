@@ -54,7 +54,7 @@ Turso aims to be fully compatible with SQLite, with opt-in features not supporte
 |---------------------------|---------|-----------------------------------------------------------------------------------|
 | ALTER TABLE               | Yes     |                                                                                   |
 | ANALYZE                   | No      |                                                                                   |
-| ATTACH DATABASE           | No      |                                                                                   |
+| ATTACH DATABASE           | Partial | Only for reads. All modifications will currently fail to find the table           |
 | BEGIN TRANSACTION         | Partial | Transaction names are not supported.                                              |
 | COMMIT TRANSACTION        | Partial | Transaction names are not supported.                                              |
 | CREATE INDEX              | Partial | Disabled by default.                                                              |

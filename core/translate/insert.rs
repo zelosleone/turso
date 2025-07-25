@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::sync::Arc;
 
 use turso_sqlite3_parser::ast::{
     DistinctNames, Expr, InsertBody, OneSelect, QualifiedName, ResolveType, ResultColumn, With,
@@ -44,6 +45,7 @@ pub fn translate_insert(
     _returning: Option<Vec<ResultColumn>>,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
+    connection: &Arc<crate::Connection>,
 ) -> Result<ProgramBuilder> {
     let opts = ProgramBuilderOpts {
         num_cursors: 1,
@@ -168,7 +170,14 @@ pub fn translate_insert(
                     coroutine_implementation_start: halt_label,
                 };
                 program.incr_nesting();
-                let result = translate_select(schema, *select, syms, program, query_destination)?;
+                let result = translate_select(
+                    schema,
+                    *select,
+                    syms,
+                    program,
+                    query_destination,
+                    connection,
+                )?;
                 program = result.program;
                 program.decr_nesting();
 

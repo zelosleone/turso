@@ -323,6 +323,8 @@ pub enum ScalarFunc {
     Likelihood,
     TableColumnsJsonArray,
     BinRecordJsonObject,
+    Attach,
+    Detach,
 }
 
 impl ScalarFunc {
@@ -382,6 +384,8 @@ impl ScalarFunc {
             ScalarFunc::Likelihood => true,
             ScalarFunc::TableColumnsJsonArray => true, // while columns of the table can change with DDL statements, within single query plan it's static
             ScalarFunc::BinRecordJsonObject => true,
+            ScalarFunc::Attach => false, // changes database state
+            ScalarFunc::Detach => false, // changes database state
         }
     }
 }
@@ -443,6 +447,8 @@ impl Display for ScalarFunc {
             Self::Likelihood => "likelihood".to_string(),
             Self::TableColumnsJsonArray => "table_columns_json_array".to_string(),
             Self::BinRecordJsonObject => "bin_record_json_object".to_string(),
+            Self::Attach => "attach".to_string(),
+            Self::Detach => "detach".to_string(),
         };
         write!(f, "{str}")
     }

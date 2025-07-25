@@ -75,6 +75,7 @@ pub fn prepare_delete_plan(
         },
         join_info: None,
         col_used_mask: ColumnUsedMask::default(),
+        database_id: 0,
     }];
     let mut table_references = TableReferences::new(joined_tables, vec![]);
 

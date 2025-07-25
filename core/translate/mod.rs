@@ -9,6 +9,7 @@
 
 pub(crate) mod aggregation;
 pub(crate) mod alter;
+pub(crate) mod attach;
 pub(crate) mod collate;
 mod compound_select;
 pub(crate) mod delete;
@@ -96,7 +97,7 @@ pub fn translate(
             connection.clone(),
             program,
         )?,
-        stmt => translate_inner(schema, stmt, syms, program)?,
+        stmt => translate_inner(schema, stmt, syms, program, &connection)?,
     };
 
     // TODO: bring epilogue here when I can sort out what instructions correspond to a Write or a Read transaction
@@ -112,11 +113,14 @@ pub fn translate_inner(
     stmt: ast::Stmt,
     syms: &SymbolTable,
     program: ProgramBuilder,
+    connection: &Arc<Connection>,
 ) -> Result<ProgramBuilder> {
     let program = match stmt {
         ast::Stmt::AlterTable(alter) => translate_alter_table(*alter, syms, schema, program)?,
         ast::Stmt::Analyze(_) => bail_parse_error!("ANALYZE not supported yet"),
-        ast::Stmt::Attach { .. } => bail_parse_error!("ATTACH not supported yet"),
+        ast::Stmt::Attach { expr, db_name, key } => {
+            attach::translate_attach(&expr, &db_name, &key, schema, syms, program)?
+        }
         ast::Stmt::Begin(tx_type, tx_name) => translate_tx_begin(tx_type, tx_name, program)?,
         ast::Stmt::Commit(tx_name) => translate_tx_commit(tx_name, program)?,
         ast::Stmt::CreateIndex {
@@ -154,7 +158,7 @@ pub fn translate_inner(
             } = *delete;
             translate_delete(schema, &tbl_name, where_clause, limit, syms, program)?
         }
-        ast::Stmt::Detach(_) => bail_parse_error!("DETACH not supported yet"),
+        ast::Stmt::Detach(expr) => attach::translate_detach(&expr, schema, syms, program)?,
         ast::Stmt::DropIndex {
             if_exists,
             idx_name,
@@ -182,6 +186,7 @@ pub fn translate_inner(
                 syms,
                 program,
                 plan::QueryDestination::ResultRows,
+                connection,
             )?
             .program
         }
@@ -206,6 +211,7 @@ pub fn translate_inner(
                 returning,
                 syms,
                 program,
+                connection,
             )?
         }
     };

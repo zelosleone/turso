@@ -1310,6 +1310,7 @@ mod tests {
             identifier: "t1".to_string(),
             join_info: None,
             col_used_mask: ColumnUsedMask::default(),
+            database_id: 0,
         });
 
         // Create where clause that only references second column
@@ -1401,6 +1402,7 @@ mod tests {
             identifier: "t1".to_string(),
             join_info: None,
             col_used_mask: ColumnUsedMask::default(),
+            database_id: 0,
         });
 
         // Create where clause that references first and third columns
@@ -1517,6 +1519,7 @@ mod tests {
             identifier: "t1".to_string(),
             join_info: None,
             col_used_mask: ColumnUsedMask::default(),
+            database_id: 0,
         });
 
         // Create where clause: c1 = 5 AND c2 > 10 AND c3 = 7
@@ -1666,6 +1669,7 @@ mod tests {
             internal_id,
             join_info,
             col_used_mask: ColumnUsedMask::default(),
+            database_id: 0,
         }
     }
 

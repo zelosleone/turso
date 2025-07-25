@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::sync::Arc;
 
 use super::{
     expr::walk_expr,
@@ -249,6 +250,7 @@ pub fn bind_column_references(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn parse_from_clause_table(
     schema: &Schema,
     table: ast::SelectTable,
@@ -257,10 +259,10 @@ fn parse_from_clause_table(
     ctes: &mut Vec<JoinedTable>,
     syms: &SymbolTable,
     table_ref_counter: &mut TableRefIdCounter,
+    connection: &Arc<crate::Connection>,
 ) -> Result<()> {
     match table {
         ast::SelectTable::Table(qualified_name, maybe_alias, _) => parse_table(
-            schema,
             table_references,
             ctes,
             table_ref_counter,
@@ -268,6 +270,7 @@ fn parse_from_clause_table(
             qualified_name,
             maybe_alias,
             None,
+            connection,
         ),
         ast::SelectTable::Select(subselect, maybe_alias) => {
             let Plan::Select(subplan) = prepare_select_plan(
@@ -280,6 +283,7 @@ fn parse_from_clause_table(
                     yield_reg: usize::MAX, // will be set later in bytecode emission
                     coroutine_implementation_start: BranchOffset::Placeholder, // will be set later in bytecode emission
                 },
+                connection,
             )?
             else {
                 crate::bail_parse_error!("Only non-compound SELECT queries are currently supported in FROM clause subqueries");
@@ -300,7 +304,6 @@ fn parse_from_clause_table(
             Ok(())
         }
         ast::SelectTable::TableCall(qualified_name, maybe_args, maybe_alias) => parse_table(
-            schema,
             table_references,
             ctes,
             table_ref_counter,
@@ -308,6 +311,7 @@ fn parse_from_clause_table(
             qualified_name,
             maybe_alias,
             maybe_args,
+            connection,
         ),
         _ => todo!(),
     }
@@ -315,7 +319,6 @@ fn parse_from_clause_table(
 
 #[allow(clippy::too_many_arguments)]
 fn parse_table(
-    schema: &Schema,
     table_references: &mut TableReferences,
     ctes: &mut Vec<JoinedTable>,
     table_ref_counter: &mut TableRefIdCounter,
@@ -323,8 +326,12 @@ fn parse_table(
     qualified_name: QualifiedName,
     maybe_alias: Option<As>,
     maybe_args: Option<Vec<Expr>>,
+    connection: &Arc<crate::Connection>,
 ) -> Result<()> {
     let normalized_qualified_name = normalize_ident(qualified_name.name.0.as_str());
+    let database_id = connection.resolve_database_id(&qualified_name)?;
+    let table_name = qualified_name.name;
+
     // Check if the FROM clause table is referring to a CTE in the current scope.
     if let Some(cte_idx) = ctes
         .iter()
@@ -336,8 +343,10 @@ fn parse_table(
         return Ok(());
     };
 
-    // Check if our top level schema has this table.
-    if let Some(table) = schema.get_table(&normalized_qualified_name) {
+    // Resolve table using connection's with_schema method
+    let table = connection.with_schema(database_id, |schema| schema.get_table(&table_name.0));
+
+    if let Some(table) = table {
         let alias = maybe_alias
             .map(|a| match a {
                 ast::As::As(id) => id,
@@ -372,6 +381,7 @@ fn parse_table(
             internal_id,
             join_info: None,
             col_used_mask: ColumnUsedMask::default(),
+            database_id,
         });
         return Ok(());
     };
@@ -397,6 +407,7 @@ fn parse_table(
                 internal_id: table_ref_counter.next(),
                 join_info: None,
                 col_used_mask: ColumnUsedMask::default(),
+                database_id,
             });
             return Ok(());
         }
@@ -471,6 +482,7 @@ fn contains_column_reference(top_level_expr: &Expr) -> Result<bool> {
     Ok(contains)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn parse_from(
     schema: &Schema,
     mut from: Option<FromClause>,
@@ -479,6 +491,7 @@ pub fn parse_from(
     out_where_clause: &mut Vec<WhereTerm>,
     table_references: &mut TableReferences,
     table_ref_counter: &mut TableRefIdCounter,
+    connection: &Arc<crate::Connection>,
 ) -> Result<()> {
     if from.as_ref().and_then(|f| f.select.as_ref()).is_none() {
         return Ok(());
@@ -541,6 +554,7 @@ pub fn parse_from(
                     yield_reg: usize::MAX, // will be set later in bytecode emission
                     coroutine_implementation_start: BranchOffset::Placeholder, // will be set later in bytecode emission
                 },
+                connection,
             )?;
             let Plan::Select(cte_plan) = cte_plan else {
                 crate::bail_parse_error!("Only SELECT queries are currently supported in CTEs");
@@ -565,6 +579,7 @@ pub fn parse_from(
         &mut ctes_as_subqueries,
         syms,
         table_ref_counter,
+        connection,
     )?;
 
     for join in joins_owned.into_iter() {
@@ -576,6 +591,7 @@ pub fn parse_from(
             out_where_clause,
             table_references,
             table_ref_counter,
+            connection,
         )?;
     }
 
@@ -781,6 +797,7 @@ pub fn determine_where_to_eval_expr(
     Ok(eval_at)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn parse_join(
     schema: &Schema,
     join: ast::JoinedSelectTable,
@@ -789,6 +806,7 @@ fn parse_join(
     out_where_clause: &mut Vec<WhereTerm>,
     table_references: &mut TableReferences,
     table_ref_counter: &mut TableRefIdCounter,
+    connection: &Arc<crate::Connection>,
 ) -> Result<()> {
     let ast::JoinedSelectTable {
         operator: join_operator,
@@ -804,6 +822,7 @@ fn parse_join(
         ctes,
         syms,
         table_ref_counter,
+        connection,
     )?;
 
     let (outer, natural) = match join_operator {

@@ -617,6 +617,8 @@ pub struct JoinedTable {
     /// Bitmask of columns that are referenced in the query.
     /// Used to decide whether a covering index can be used.
     pub col_used_mask: ColumnUsedMask,
+    /// The index of the database. "main" is always zero.
+    pub database_id: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -938,6 +940,7 @@ impl JoinedTable {
             internal_id,
             join_info,
             col_used_mask: ColumnUsedMask::default(),
+            database_id: 0,
         }
     }
 
