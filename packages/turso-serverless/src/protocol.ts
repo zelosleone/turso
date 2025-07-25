@@ -1,4 +1,4 @@
-import { DatabaseError } from './error';
+import { DatabaseError } from './error.js';
 
 export interface Value {
   type: 'null' | 'integer' | 'float' | 'text' | 'blob';
