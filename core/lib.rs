@@ -317,7 +317,7 @@ impl Database {
             wal_checkpoint_disabled: Cell::new(false),
             capture_data_changes: RefCell::new(CaptureDataChangesMode::Off),
             closed: Cell::new(false),
-            attached_databases: RefCell::new(DatabaseIndexer::new()),
+            attached_databases: RefCell::new(DatabaseCatalog::new()),
         });
         let builtin_syms = self.builtin_syms.borrow();
         // add built-in extensions symbols to the connection to prevent having to load each time
@@ -582,14 +582,14 @@ impl CaptureDataChangesMode {
 }
 
 // Optimized for fast get() operations and supports unlimited attached databases.
-struct DatabaseIndexer {
+struct DatabaseCatalog {
     name_to_index: HashMap<String, usize>,
     allocated: Vec<u64>,
     index_to_data: HashMap<usize, (Arc<Database>, Rc<Pager>)>,
 }
 
 #[allow(unused)]
-impl DatabaseIndexer {
+impl DatabaseCatalog {
     fn new() -> Self {
         Self {
             name_to_index: HashMap::new(),
@@ -712,7 +712,7 @@ pub struct Connection {
     capture_data_changes: RefCell<CaptureDataChangesMode>,
     closed: Cell<bool>,
     /// Attached databases
-    attached_databases: RefCell<DatabaseIndexer>,
+    attached_databases: RefCell<DatabaseCatalog>,
 }
 
 impl Connection {
