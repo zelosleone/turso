@@ -498,7 +498,7 @@ impl Value {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AggContext {
     Avg(Value, Value), // acc and count
-    Sum(Value, bool),  // acc and has_non_numeric
+    Sum(Value),
     Count(Value),
     Max(Option<Value>),
     Min(Option<Value>),
@@ -522,7 +522,7 @@ impl AggContext {
     pub fn final_value(&self) -> &Value {
         match self {
             Self::Avg(acc, _count) => acc,
-            Self::Sum(acc, _) => acc,
+            Self::Sum(acc) => acc,
             Self::Count(count) => count,
             Self::Max(max) => max.as_ref().unwrap_or(&NULL),
             Self::Min(min) => min.as_ref().unwrap_or(&NULL),
@@ -596,7 +596,7 @@ impl PartialOrd<AggContext> for AggContext {
     fn partial_cmp(&self, other: &AggContext) -> Option<std::cmp::Ordering> {
         match (self, other) {
             (Self::Avg(a, _), Self::Avg(b, _)) => a.partial_cmp(b),
-            (Self::Sum(a, _), Self::Sum(b, _)) => a.partial_cmp(b),
+            (Self::Sum(a), Self::Sum(b)) => a.partial_cmp(b),
             (Self::Count(a), Self::Count(b)) => a.partial_cmp(b),
             (Self::Max(a), Self::Max(b)) => a.partial_cmp(b),
             (Self::Min(a), Self::Min(b)) => a.partial_cmp(b),
