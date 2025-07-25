@@ -715,7 +715,7 @@ impl Connection {
             pager.end_read_tx().expect("read txn must be finished");
         }
         // now we can safely propagate error after ensured that transaction state is reset
-        let _ = reparse_result?;
+        reparse_result?;
 
         let schema = self.schema.borrow().clone();
         self._db.update_schema_if_newer(schema)?;
