@@ -212,7 +212,7 @@ pub fn bind_column_references(
                     Ok(())
                 } else {
                     // Unquoted identifiers must resolve to columns - no fallback
-                    crate::bail_parse_error!("Column {} not found", id.as_str())
+                    crate::bail_parse_error!("no such column: {}", id.as_str())
                 }
             }
             Expr::Qualified(tbl, id) => {
