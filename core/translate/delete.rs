@@ -5,6 +5,7 @@ use crate::translate::plan::{DeletePlan, Operation, Plan};
 use crate::translate::planner::{parse_limit, parse_where};
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, TableRefIdCounter};
 use crate::{schema::Schema, Result, SymbolTable};
+use std::sync::Arc;
 use turso_sqlite3_parser::ast::{Expr, Limit, QualifiedName};
 
 use super::plan::{ColumnUsedMask, IterationDirection, JoinedTable, TableReferences};
@@ -16,6 +17,7 @@ pub fn translate_delete(
     limit: Option<Box<Limit>>,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
+    connection: &Arc<crate::Connection>,
 ) -> Result<ProgramBuilder> {
     if schema.table_has_indexes(&tbl_name.name.to_string()) && !schema.indexes_enabled() {
         // Let's disable altering a table with indices altogether instead of checking column by
@@ -30,6 +32,7 @@ pub fn translate_delete(
         where_clause,
         limit,
         &mut program.table_reference_counter,
+        connection,
     )?;
     optimize_plan(&mut delete_plan, schema)?;
     let Plan::Delete(ref delete) = delete_plan else {
@@ -51,6 +54,7 @@ pub fn prepare_delete_plan(
     where_clause: Option<Box<Expr>>,
     limit: Option<Box<Limit>>,
     table_ref_counter: &mut TableRefIdCounter,
+    connection: &Arc<crate::Connection>,
 ) -> Result<Plan> {
     let table = match schema.get_table(tbl_name.name.as_str()) {
         Some(table) => table,
@@ -87,6 +91,7 @@ pub fn prepare_delete_plan(
         &mut table_references,
         None,
         &mut where_predicates,
+        connection,
     )?;
 
     // Parse the LIMIT/OFFSET clause
