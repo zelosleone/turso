@@ -542,7 +542,7 @@ fn create_table(
     body: CreateTableBody,
     root_page: usize,
 ) -> Result<BTreeTable> {
-    let table_name = normalize_ident(&tbl_name.name.0);
+    let table_name = normalize_ident(tbl_name.name.as_str());
     trace!("Creating table {}", table_name);
     let mut has_rowid = true;
     let mut primary_key_columns = vec![];
@@ -565,7 +565,7 @@ fn create_table(
                     {
                         for column in columns {
                             let col_name = match column.expr {
-                                Expr::Id(id) => normalize_ident(&id.0),
+                                Expr::Id(id) => normalize_ident(id.as_str()),
                                 Expr::Literal(Literal::String(value)) => {
                                     value.trim_matches('\'').to_owned()
                                 }
@@ -588,7 +588,7 @@ fn create_table(
                             .into_iter()
                             .map(|column| {
                                 let column_name = match column.expr {
-                                    Expr::Id(id) => normalize_ident(&id.0),
+                                    Expr::Id(id) => normalize_ident(id.as_str()),
                                     _ => {
                                         todo!("Unsupported unique expression");
                                     }
@@ -604,7 +604,7 @@ fn create_table(
                 }
             }
             for (col_name, col_def) in columns {
-                let name = col_name.0.to_string();
+                let name = col_name.as_str().to_string();
                 // Regular sqlite tables have an integer rowid that uniquely identifies a row.
                 // Even if you create a table with a column e.g. 'id INT PRIMARY KEY', there will still
                 // be a separate hidden rowid, and the 'id' column will have a separate index built for it.
@@ -687,7 +687,7 @@ fn create_table(
                             unique = true;
                         }
                         turso_sqlite3_parser::ast::ColumnConstraint::Collate { collation_name } => {
-                            collation = Some(CollationSeq::new(collation_name.0.as_str())?);
+                            collation = Some(CollationSeq::new(collation_name.as_str())?);
                         }
                         _ => {}
                     }
@@ -796,7 +796,7 @@ impl Column {
 // TODO: This might replace some of util::columns_from_create_table_body
 impl From<ColumnDefinition> for Column {
     fn from(value: ColumnDefinition) -> Self {
-        let ast::Name(name) = value.col_name;
+        let name = value.col_name.as_str();
 
         let mut default = None;
         let mut notnull = false;
@@ -814,7 +814,7 @@ impl From<ColumnDefinition> for Column {
                 }
                 ast::ColumnConstraint::Collate { collation_name } => {
                     collation.replace(
-                        CollationSeq::new(&collation_name.0)
+                        CollationSeq::new(collation_name.as_str())
                             .expect("collation should have been set correctly in create table"),
                     );
                 }
@@ -854,7 +854,7 @@ impl From<ColumnDefinition> for Column {
             .unwrap_or_default();
 
         Column {
-            name: Some(name),
+            name: Some(name.to_string()),
             ty,
             default,
             notnull,
@@ -1178,7 +1178,7 @@ impl Index {
                 unique,
                 ..
             })) => {
-                let index_name = normalize_ident(&idx_name.name.0);
+                let index_name = normalize_ident(idx_name.name.as_str());
                 let mut index_columns = Vec::with_capacity(columns.len());
                 for col in columns.into_iter() {
                     let name = normalize_ident(&col.expr.to_string());
@@ -1199,7 +1199,7 @@ impl Index {
                 }
                 Ok(Index {
                     name: index_name,
-                    table_name: normalize_ident(&tbl_name.0),
+                    table_name: normalize_ident(tbl_name.as_str()),
                     root_page,
                     columns: index_columns,
                     unique,

@@ -49,12 +49,12 @@ pub fn translate_pragma(
     };
     program.extend(&opts);
 
-    if name.name.0.eq_ignore_ascii_case("pragma_list") {
+    if name.name.as_str().eq_ignore_ascii_case("pragma_list") {
         list_pragmas(&mut program);
         return Ok(program);
     }
 
-    let pragma = match PragmaName::from_str(&name.name.0) {
+    let pragma = match PragmaName::from_str(name.name.as_str()) {
         Ok(pragma) => pragma,
         Err(_) => bail_parse_error!("Not a valid pragma name"),
     };
@@ -172,7 +172,7 @@ fn update_pragma(
         PragmaName::AutoVacuum => {
             let auto_vacuum_mode = match value {
                 Expr::Name(name) => {
-                    let name = name.0.to_lowercase();
+                    let name = name.as_str().to_lowercase();
                     match name.as_str() {
                         "none" => 0,
                         "full" => 1,
@@ -234,7 +234,7 @@ fn update_pragma(
             if let Some(table) = &opts.table() {
                 // make sure that we have table created
                 program = translate_create_table(
-                    QualifiedName::single(ast::Name(table.to_string())),
+                    QualifiedName::single(ast::Name::from_str(table)),
                     false,
                     ast::CreateTableBody::columns_and_constraints_from_definition(
                         turso_cdc_table_columns(),
@@ -317,7 +317,7 @@ fn query_pragma(
             // Allocate two more here as one was allocated at the top.
             let mode = match value {
                 Some(ast::Expr::Name(name)) => {
-                    let mode_name = normalize_ident(&name.0);
+                    let mode_name = normalize_ident(name.as_str());
                     CheckpointMode::from_str(&mode_name).map_err(|e| {
                         LimboError::ParseError(format!("Unknown Checkpoint Mode: {e}"))
                     })?
@@ -352,7 +352,7 @@ fn query_pragma(
         PragmaName::TableInfo => {
             let table = match value {
                 Some(ast::Expr::Name(name)) => {
-                    let tbl = normalize_ident(&name.0);
+                    let tbl = normalize_ident(name.as_str());
                     schema.get_table(&tbl)
                 }
                 _ => None,
@@ -532,7 +532,7 @@ pub const TURSO_CDC_DEFAULT_TABLE_NAME: &str = "turso_cdc";
 fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
     vec![
         ast::ColumnDefinition {
-            col_name: ast::Name("change_id".to_string()),
+            col_name: ast::Name::from_str("change_id"),
             col_type: Some(ast::Type {
                 name: "INTEGER".to_string(),
                 size: None,
@@ -547,7 +547,7 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
             }],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name("change_time".to_string()),
+            col_name: ast::Name::from_str("change_time"),
             col_type: Some(ast::Type {
                 name: "INTEGER".to_string(),
                 size: None,
@@ -555,7 +555,7 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
             constraints: vec![],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name("change_type".to_string()),
+            col_name: ast::Name::from_str("change_type"),
             col_type: Some(ast::Type {
                 name: "INTEGER".to_string(),
                 size: None,
@@ -563,7 +563,7 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
             constraints: vec![],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name("table_name".to_string()),
+            col_name: ast::Name::from_str("table_name"),
             col_type: Some(ast::Type {
                 name: "TEXT".to_string(),
                 size: None,
@@ -571,12 +571,12 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
             constraints: vec![],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name("id".to_string()),
+            col_name: ast::Name::from_str("id"),
             col_type: None,
             constraints: vec![],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name("before".to_string()),
+            col_name: ast::Name::from_str("before"),
             col_type: Some(ast::Type {
                 name: "BLOB".to_string(),
                 size: None,
@@ -584,7 +584,7 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
             constraints: vec![],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name("after".to_string()),
+            col_name: ast::Name::from_str("after"),
             col_type: Some(ast::Type {
                 name: "BLOB".to_string(),
                 size: None,

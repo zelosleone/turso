@@ -1414,7 +1414,7 @@ impl Connection {
 
         // Check if this is a qualified name (database.table) or unqualified
         if let Some(db_name) = &qualified_name.db_name {
-            let db_name_normalized = normalize_ident(&db_name.0);
+            let db_name_normalized = normalize_ident(db_name.as_str());
 
             if db_name_normalized.eq_ignore_ascii_case("main") {
                 Ok(0)

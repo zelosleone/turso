@@ -54,7 +54,7 @@ pub fn resolve_aggregates(
                 } else {
                     0
                 };
-                match Func::resolve_function(&name.0, args_count) {
+                match Func::resolve_function(name.as_str(), args_count) {
                     Ok(Func::Agg(f)) => {
                         let distinctness = Distinctness::from_ast(distinctness.as_ref());
                         if !schema.indexes_enabled() && distinctness.is_distinct() {
@@ -86,7 +86,7 @@ pub fn resolve_aggregates(
                 }
             }
             Expr::FunctionCallStar { name, .. } => {
-                if let Ok(Func::Agg(f)) = Func::resolve_function(&name.0, 0) {
+                if let Ok(Func::Agg(f)) = Func::resolve_function(name.as_str(), 0) {
                     aggs.push(Aggregate {
                         func: f,
                         args: vec![],
@@ -115,10 +115,12 @@ pub fn bind_column_references(
             Expr::Id(id) => {
                 // true and false are special constants that are effectively aliases for 1 and 0
                 // and not identifiers of columns
-                if id.0.eq_ignore_ascii_case("true") || id.0.eq_ignore_ascii_case("false") {
+                if id.as_str().eq_ignore_ascii_case("true")
+                    || id.as_str().eq_ignore_ascii_case("false")
+                {
                     return Ok(());
                 }
-                let normalized_id = normalize_ident(id.0.as_str());
+                let normalized_id = normalize_ident(id.as_str());
 
                 if !referenced_tables.joined_tables().is_empty() {
                     if let Some(row_id_expr) = parse_row_id(
@@ -142,7 +144,7 @@ pub fn bind_column_references(
                     });
                     if col_idx.is_some() {
                         if match_result.is_some() {
-                            crate::bail_parse_error!("Column {} is ambiguous", id.0);
+                            crate::bail_parse_error!("Column {} is ambiguous", id.as_str());
                         }
                         let col = joined_table.table.columns().get(col_idx.unwrap()).unwrap();
                         match_result = Some((
@@ -170,7 +172,7 @@ pub fn bind_column_references(
                         });
                         if col_idx.is_some() {
                             if match_result.is_some() {
-                                crate::bail_parse_error!("Column {} is ambiguous", id.0);
+                                crate::bail_parse_error!("Column {} is ambiguous", id.as_str());
                             }
                             let col = outer_ref.table.columns().get(col_idx.unwrap()).unwrap();
                             match_result =
@@ -203,24 +205,24 @@ pub fn bind_column_references(
                 }
                 // SQLite behavior: Only double-quoted identifiers get fallback to string literals
                 // Single quotes are handled as literals earlier, unquoted identifiers must resolve to columns
-                if crate::translate::expr::is_double_quoted_identifier(&id.0) {
+                if crate::translate::expr::is_double_quoted_identifier(id.as_str()) {
                     // Convert failed double-quoted identifier to string literal
-                    *expr = Expr::Literal(Literal::String(id.0.clone()));
+                    *expr = Expr::Literal(Literal::String(id.as_str().to_string()));
                     Ok(())
                 } else {
                     // Unquoted identifiers must resolve to columns - no fallback
-                    crate::bail_parse_error!("Column {} not found", id.0)
+                    crate::bail_parse_error!("Column {} not found", id.as_str())
                 }
             }
             Expr::Qualified(tbl, id) => {
-                let normalized_table_name = normalize_ident(tbl.0.as_str());
+                let normalized_table_name = normalize_ident(tbl.as_str());
                 let matching_tbl = referenced_tables
                     .find_table_and_internal_id_by_identifier(&normalized_table_name);
                 if matching_tbl.is_none() {
                     crate::bail_parse_error!("no such table: {}", normalized_table_name);
                 }
                 let (tbl_id, tbl) = matching_tbl.unwrap();
-                let normalized_id = normalize_ident(id.0.as_str());
+                let normalized_id = normalize_ident(id.as_str());
 
                 if let Some(row_id_expr) = parse_row_id(&normalized_id, tbl_id, || false)? {
                     *expr = row_id_expr;
@@ -291,8 +293,8 @@ fn parse_from_clause_table(
             let cur_table_index = table_references.joined_tables().len();
             let identifier = maybe_alias
                 .map(|a| match a {
-                    ast::As::As(id) => id.0.clone(),
-                    ast::As::Elided(id) => id.0.clone(),
+                    ast::As::As(id) => id.as_str().to_string(),
+                    ast::As::Elided(id) => id.as_str().to_string(),
                 })
                 .unwrap_or(format!("subquery_{cur_table_index}"));
             table_references.add_joined_table(JoinedTable::new_subquery(
@@ -328,7 +330,7 @@ fn parse_table(
     maybe_args: Option<Vec<Expr>>,
     connection: &Arc<crate::Connection>,
 ) -> Result<()> {
-    let normalized_qualified_name = normalize_ident(qualified_name.name.0.as_str());
+    let normalized_qualified_name = normalize_ident(qualified_name.name.as_str());
     let database_id = connection.resolve_database_id(&qualified_name)?;
     let table_name = qualified_name.name;
 
@@ -344,7 +346,7 @@ fn parse_table(
     };
 
     // Resolve table using connection's with_schema method
-    let table = connection.with_schema(database_id, |schema| schema.get_table(&table_name.0));
+    let table = connection.with_schema(database_id, |schema| schema.get_table(table_name.as_str()));
 
     if let Some(table) = table {
         let alias = maybe_alias
@@ -352,7 +354,7 @@ fn parse_table(
                 ast::As::As(id) => id,
                 ast::As::Elided(id) => id,
             })
-            .map(|a| a.0);
+            .map(|a| a.as_str().to_string());
         let internal_id = table_ref_counter.next();
         let tbl_ref = if let Table::Virtual(tbl) = table.as_ref() {
             if let Some(args) = maybe_args {
@@ -514,11 +516,11 @@ pub fn parse_from(
             // Check if normalized name conflicts with catalog tables or other CTEs
             // TODO: sqlite actually allows overriding a catalog table with a CTE.
             // We should carry over the 'Scope' struct to all of our identifier resolution.
-            let cte_name_normalized = normalize_ident(&cte.tbl_name.0);
+            let cte_name_normalized = normalize_ident(cte.tbl_name.as_str());
             if schema.get_table(&cte_name_normalized).is_some() {
                 crate::bail_parse_error!(
                     "CTE name {} conflicts with catalog table name",
-                    cte.tbl_name.0
+                    cte.tbl_name.as_str()
                 );
             }
             if table_references
@@ -528,7 +530,7 @@ pub fn parse_from(
             {
                 crate::bail_parse_error!(
                     "CTE name {} conflicts with WITH table name {}",
-                    cte.tbl_name.0,
+                    cte.tbl_name.as_str(),
                     cte_name_normalized
                 );
             }
@@ -858,13 +860,13 @@ fn parse_join(
                     if left_col.name == right_col.name {
                         if let Some(distinct_names) = distinct_names.as_mut() {
                             distinct_names
-                                .insert(ast::Name(
-                                    left_col.name.clone().expect("column name is None"),
+                                .insert(ast::Name::from_str(
+                                    &left_col.name.clone().expect("column name is None"),
                                 ))
                                 .unwrap();
                         } else {
-                            distinct_names = Some(ast::DistinctNames::new(ast::Name(
-                                left_col.name.clone().expect("column name is None"),
+                            distinct_names = Some(ast::DistinctNames::new(ast::Name::from_str(
+                                &left_col.name.clone().expect("column name is None"),
                             )));
                         }
                         found_match = true;
@@ -908,7 +910,7 @@ fn parse_join(
             ast::JoinConstraint::Using(distinct_names) => {
                 // USING join is replaced with a list of equality predicates
                 for distinct_name in distinct_names.iter() {
-                    let name_normalized = normalize_ident(distinct_name.0.as_str());
+                    let name_normalized = normalize_ident(distinct_name.as_str());
                     let cur_table_idx = table_references.joined_tables().len() - 1;
                     let left_tables = &table_references.joined_tables()[..cur_table_idx];
                     assert!(!left_tables.is_empty());
@@ -933,7 +935,7 @@ fn parse_join(
                     if left_col.is_none() {
                         crate::bail_parse_error!(
                             "cannot join using column {} - column not present in all tables",
-                            distinct_name.0
+                            distinct_name.as_str()
                         );
                     }
                     let right_col = right_table.columns().iter().enumerate().find(|(_, col)| {
@@ -944,7 +946,7 @@ fn parse_join(
                     if right_col.is_none() {
                         crate::bail_parse_error!(
                             "cannot join using column {} - column not present in all tables",
-                            distinct_name.0
+                            distinct_name.as_str()
                         );
                     }
                     let (left_table_idx, left_table_id, left_col_idx, left_col) = left_col.unwrap();
@@ -1028,9 +1030,9 @@ pub fn parse_limit(limit: &Limit) -> Result<(Option<isize>, Option<isize>)> {
             crate::bail_parse_error!("Invalid LIMIT clause");
         }
     } else if let Expr::Id(id) = &limit.expr {
-        if id.0.eq_ignore_ascii_case("true") {
+        if id.as_str().eq_ignore_ascii_case("true") {
             Ok((Some(1), offset_val))
-        } else if id.0.eq_ignore_ascii_case("false") {
+        } else if id.as_str().eq_ignore_ascii_case("false") {
             Ok((Some(0), offset_val))
         } else {
             crate::bail_parse_error!("Invalid LIMIT clause");

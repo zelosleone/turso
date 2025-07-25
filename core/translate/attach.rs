@@ -52,7 +52,7 @@ pub fn translate_attach(
             // For ATTACH, identifiers should be treated as filename strings
             // Use normalize_ident to strip quotes from double-quoted identifiers
             program.emit_insn(Insn::String8 {
-                value: normalize_ident(&id.0),
+                value: normalize_ident(id.as_str()),
                 dest: arg_reg,
             });
         }
@@ -83,7 +83,7 @@ pub fn translate_attach(
             // For ATTACH, identifiers should be treated as name strings
             // Use normalize_ident to strip quotes from double-quoted identifiers
             program.emit_insn(Insn::String8 {
-                value: normalize_ident(&id.0),
+                value: normalize_ident(id.as_str()),
                 dest: arg_reg + 1,
             });
         }
@@ -158,7 +158,7 @@ pub fn translate_detach(
             // For DETACH, identifiers should be treated as name strings
             // Use normalize_ident to strip quotes from double-quoted identifiers
             program.emit_insn(Insn::String8 {
-                value: normalize_ident(&id.0),
+                value: normalize_ident(id.as_str()),
                 dest: arg_reg,
             });
         }

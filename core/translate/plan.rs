@@ -482,14 +482,14 @@ impl SelectPlan {
         }
 
         let count = turso_sqlite3_parser::ast::Expr::FunctionCall {
-            name: turso_sqlite3_parser::ast::Id("count".to_string()),
+            name: turso_sqlite3_parser::ast::Name::Ident("count".to_string()),
             distinctness: None,
             args: None,
             order_by: None,
             filter_over: None,
         };
         let count_star = turso_sqlite3_parser::ast::Expr::FunctionCallStar {
-            name: turso_sqlite3_parser::ast::Id("count".to_string()),
+            name: turso_sqlite3_parser::ast::Name::Ident("count".to_string()),
             filter_over: None,
         };
         let result_col_expr = &self.result_columns.first().unwrap().expr;
@@ -563,7 +563,7 @@ pub fn select_star(tables: &[JoinedTable], out_columns: &mut Vec<ResultSetColumn
                         !using_cols.iter().any(|using_col| {
                             col.name
                                 .as_ref()
-                                .is_some_and(|name| name.eq_ignore_ascii_case(&using_col.0))
+                                .is_some_and(|name| name.eq_ignore_ascii_case(using_col.as_str()))
                         })
                     } else {
                         true

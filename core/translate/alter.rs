@@ -23,8 +23,8 @@ pub fn translate_alter_table(
     mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     let (table_name, alter_table) = alter;
-    let ast::Name(table_name) = table_name.name;
-    if schema.table_has_indexes(&table_name) && !schema.indexes_enabled() {
+    let table_name = table_name.name.as_str();
+    if schema.table_has_indexes(table_name) && !schema.indexes_enabled() {
         // Let's disable altering a table with indices altogether instead of checking column by
         // column to be extra safe.
         crate::bail_parse_error!(
@@ -32,10 +32,7 @@ pub fn translate_alter_table(
         );
     }
 
-    let Some(original_btree) = schema
-        .get_table(&table_name)
-        .and_then(|table| table.btree())
-    else {
+    let Some(original_btree) = schema.get_table(table_name).and_then(|table| table.btree()) else {
         return Err(LimboError::ParseError(format!(
             "no such table: {table_name}"
         )));
@@ -45,7 +42,7 @@ pub fn translate_alter_table(
 
     Ok(match alter_table {
         ast::AlterTableBody::DropColumn(column_name) => {
-            let ast::Name(column_name) = column_name;
+            let column_name = column_name.as_str();
 
             // Tables always have at least one column.
             assert_ne!(btree.columns.len(), 0);
@@ -56,7 +53,7 @@ pub fn translate_alter_table(
                 )));
             }
 
-            let (dropped_index, column) = btree.get_column(&column_name).ok_or_else(|| {
+            let (dropped_index, column) = btree.get_column(column_name).ok_or_else(|| {
                 LimboError::ParseError(format!("no such column: \"{column_name}\""))
             })?;
 
@@ -70,7 +67,7 @@ pub fn translate_alter_table(
                 || btree.unique_sets.as_ref().is_some_and(|set| {
                     set.iter().any(|set| {
                         set.iter()
-                            .any(|(name, _)| name == &normalize_ident(&column_name))
+                            .any(|(name, _)| name == &normalize_ident(column_name))
                     })
                 })
             {
@@ -215,16 +212,16 @@ pub fn translate_alter_table(
             })?
         }
         ast::AlterTableBody::RenameColumn { old, new } => {
-            let ast::Name(rename_from) = old;
-            let ast::Name(rename_to) = new;
+            let rename_from = old.as_str();
+            let rename_to = new.as_str();
 
-            if btree.get_column(&rename_from).is_none() {
+            if btree.get_column(rename_from).is_none() {
                 return Err(LimboError::ParseError(format!(
                     "no such column: \"{rename_from}\""
                 )));
             };
 
-            if btree.get_column(&rename_to).is_some() {
+            if btree.get_column(rename_to).is_some() {
                 return Err(LimboError::ParseError(format!(
                     "duplicate column name: \"{rename_from}\""
                 )));
@@ -254,13 +251,13 @@ pub fn translate_alter_table(
                     program.emit_column(cursor_id, i, first_column + i);
                 }
 
-                program.emit_string8_new_reg(table_name.clone());
+                program.emit_string8_new_reg(table_name.to_string());
                 program.mark_last_insn_constant();
 
-                program.emit_string8_new_reg(rename_from.clone());
+                program.emit_string8_new_reg(rename_from.to_string());
                 program.mark_last_insn_constant();
 
-                program.emit_string8_new_reg(rename_to.clone());
+                program.emit_string8_new_reg(rename_to.to_string());
                 program.mark_last_insn_constant();
 
                 let out = program.alloc_registers(sqlite_schema_column_len);
@@ -289,7 +286,7 @@ pub fn translate_alter_table(
                     key_reg: rowid,
                     record_reg: record,
                     flag: crate::vdbe::insn::InsertFlags(0),
-                    table_name: table_name.clone(),
+                    table_name: table_name.to_string(),
                 });
             });
 
@@ -309,9 +306,9 @@ pub fn translate_alter_table(
             program
         }
         ast::AlterTableBody::RenameTo(new_name) => {
-            let ast::Name(new_name) = new_name;
+            let new_name = new_name.as_str();
 
-            if schema.get_table(&new_name).is_some() {
+            if schema.get_table(new_name).is_some() {
                 return Err(LimboError::ParseError(format!(
                     "there is already another table or index with this name: {new_name}"
                 )));
@@ -341,10 +338,10 @@ pub fn translate_alter_table(
                     program.emit_column(cursor_id, i, first_column + i);
                 }
 
-                program.emit_string8_new_reg(table_name.clone());
+                program.emit_string8_new_reg(table_name.to_string());
                 program.mark_last_insn_constant();
 
-                program.emit_string8_new_reg(new_name.clone());
+                program.emit_string8_new_reg(new_name.to_string());
                 program.mark_last_insn_constant();
 
                 let out = program.alloc_registers(5);
@@ -373,7 +370,7 @@ pub fn translate_alter_table(
                     key_reg: rowid,
                     record_reg: record,
                     flag: crate::vdbe::insn::InsertFlags(0),
-                    table_name: table_name.clone(),
+                    table_name: table_name.to_string(),
                 });
             });
 

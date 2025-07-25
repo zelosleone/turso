@@ -14,7 +14,7 @@ use indexmap::{IndexMap, IndexSet};
 
 use crate::custom_err;
 use crate::dialect::TokenType::{self, *};
-use crate::dialect::{from_token, Token};
+use crate::dialect::{from_bytes, from_token, Token};
 use crate::parser::{parse::YYCODETYPE, ParserError};
 
 /// `?` or `$` Prepared statement arg placeholder(s)
@@ -379,7 +379,7 @@ pub enum Expr {
     /// call to a built-in function
     FunctionCall {
         /// function name
-        name: Id,
+        name: Name,
         /// `DISTINCT`
         distinctness: Option<Distinctness>,
         /// arguments
@@ -392,12 +392,12 @@ pub enum Expr {
     /// Function call expression with '*' as arg
     FunctionCallStar {
         /// function name
-        name: Id,
+        name: Name,
         /// `FILTER`
         filter_over: Option<FunctionTail>,
     },
     /// Identifier
-    Id(Id),
+    Id(Name),
     /// Column
     Column {
         /// the x in `x.y.z`. index of the db in catalog.
@@ -487,7 +487,7 @@ impl Expr {
     }
     /// Constructor
     pub fn id(xt: YYCODETYPE, x: Token) -> Self {
-        Self::Id(Id::from_token(xt, x))
+        Self::Id(Name::from_token(xt, x))
     }
     /// Constructor
     pub fn collate(x: Self, ct: YYCODETYPE, c: Token) -> Self {
@@ -1027,7 +1027,7 @@ impl JoinOperator {
         Ok({
             let mut jt = JoinType::try_from(token.1)?;
             for n in [&n1, &n2].into_iter().flatten() {
-                jt |= JoinType::try_from(n.0.as_ref())?;
+                jt |= JoinType::try_from(n.as_str().as_bytes())?;
             }
             if (jt & (JoinType::INNER | JoinType::OUTER)) == (JoinType::INNER | JoinType::OUTER)
                 || (jt & (JoinType::OUTER | JoinType::LEFT | JoinType::RIGHT)) == JoinType::OUTER
@@ -1117,49 +1117,66 @@ pub struct GroupBy {
     pub having: Option<Box<Expr>>, // HAVING clause on a non-aggregate query
 }
 
-/// identifier or one of several keywords or `INDEXED`
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Id(pub String);
-
-impl Id {
-    /// Constructor
-    pub fn from_token(ty: YYCODETYPE, token: Token) -> Self {
-        Self(from_token(ty, token))
-    }
-}
-
-// TODO ids (identifier or string)
-
 /// identifier or string or `CROSS` or `FULL` or `INNER` or `LEFT` or `NATURAL` or `OUTER` or `RIGHT`.
 #[derive(Clone, Debug, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct Name(pub String); // TODO distinction between Name and "Name"/[Name]/`Name`
-
+pub enum Name {
+    /// Identifier
+    Ident(String),
+    /// Quoted values
+    Quoted(String),
+}
 impl Name {
     /// Constructor
-    pub fn from_token(ty: YYCODETYPE, token: Token) -> Self {
-        Self(from_token(ty, token))
+    pub fn from_token(_ty: YYCODETYPE, token: Token) -> Self {
+        let text = from_bytes(token.1);
+        Self::from_str(&text)
     }
 
     fn as_bytes(&self) -> QuotedIterator<'_> {
-        if self.0.is_empty() {
-            return QuotedIterator(self.0.bytes(), 0);
+        match self {
+            Name::Ident(s) => QuotedIterator(s.bytes(), 0),
+            Name::Quoted(s) => {
+                if s.is_empty() {
+                    return QuotedIterator(s.bytes(), 0);
+                }
+                let bytes = s.as_bytes();
+                let mut quote = bytes[0];
+                if quote != b'"' && quote != b'`' && quote != b'\'' && quote != b'[' {
+                    return QuotedIterator(s.bytes(), 0);
+                } else if quote == b'[' {
+                    quote = b']';
+                }
+                debug_assert!(bytes.len() > 1);
+                debug_assert_eq!(quote, bytes[bytes.len() - 1]);
+                let sub = &s.as_str()[1..bytes.len() - 1];
+                if quote == b']' {
+                    return QuotedIterator(sub.bytes(), 0); // no escape
+                }
+                QuotedIterator(sub.bytes(), quote)
+            }
         }
-        let bytes = self.0.as_bytes();
-        let mut quote = bytes[0];
-        if quote != b'"' && quote != b'`' && quote != b'\'' && quote != b'[' {
-            return QuotedIterator(self.0.bytes(), 0);
-        } else if quote == b'[' {
-            quote = b']';
+    }
+
+    /// as_str
+    pub fn as_str(&self) -> &str {
+        match self {
+            Name::Ident(s) | Name::Quoted(s) => s.as_str(),
         }
-        debug_assert!(bytes.len() > 1);
-        debug_assert_eq!(quote, bytes[bytes.len() - 1]);
-        let sub = &self.0.as_str()[1..bytes.len() - 1];
-        if quote == b']' {
-            return QuotedIterator(sub.bytes(), 0); // no escape
+    }
+
+    /// Identifying from a string
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Self {
+        let bytes = s.as_bytes();
+        if s.is_empty() {
+            return Name::Ident(s.to_string());
         }
-        QuotedIterator(sub.bytes(), quote)
+
+        match bytes[0] {
+            b'"' | b'\'' | b'`' | b'[' => Name::Quoted(s.to_string()),
+            _ => Name::Ident(s.to_string()),
+        }
     }
 }
 
@@ -1510,7 +1527,7 @@ pub enum ColumnConstraint {
         /// expression
         expr: Expr,
         /// `STORED` / `VIRTUAL`
-        typ: Option<Id>,
+        typ: Option<Name>,
     },
 }
 
@@ -2139,6 +2156,6 @@ mod test {
     }
 
     fn name(s: &'static str) -> Name {
-        Name(s.to_owned())
+        Name::from_str(s)
     }
 }

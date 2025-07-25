@@ -214,8 +214,8 @@ impl<'input> yyParser<'input> {
         let idx = self.shift(shift);
 
         // TODO: The compiler optimizes `std::mem::take` to two `memcpy` 
-        // but `yyStackEntry` requires 168 bytes, so it is not worth it (maybe).
-        assert_eq!(std::mem::size_of::<yyStackEntry>(), 168);
+        // but `yyStackEntry` requires 208 bytes, so it is not worth it (maybe).
+        assert_eq!(std::mem::size_of::<yyStackEntry>(), 208);
         std::mem::take(&mut self.yystack[idx])
     }
 

@@ -1326,23 +1326,13 @@ impl ToTokens for GroupBy {
     }
 }
 
-impl ToTokens for Id {
-    fn to_tokens_with_context<S: TokenStream + ?Sized, C: ToSqlContext>(
-        &self,
-        s: &mut S,
-        _: &C,
-    ) -> Result<(), S::Error> {
-        double_quote(&self.0, s)
-    }
-}
-
 impl ToTokens for Name {
     fn to_tokens_with_context<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
         s: &mut S,
         _: &C,
     ) -> Result<(), S::Error> {
-        double_quote(self.0.as_str(), s)
+        double_quote(self.as_str(), s)
     }
 }
 

@@ -249,7 +249,7 @@ fn prepare_one_select_plan(
                         ResultColumn::TableStar(n) => table_references
                             .joined_tables()
                             .iter()
-                            .find(|t| t.identifier == n.0)
+                            .find(|t| t.identifier == n.as_str())
                             .map(|t| t.columns().iter().filter(|col| !col.hidden).count())
                             .unwrap_or(5),
                         // Otherwise allocate space for 1 column
@@ -302,7 +302,7 @@ fn prepare_one_select_plan(
                         }
                     }
                     ResultColumn::TableStar(name) => {
-                        let name_normalized = normalize_ident(name.0.as_str());
+                        let name_normalized = normalize_ident(name.as_str());
                         let referenced_table = plan
                             .table_references
                             .joined_tables_mut()
@@ -310,7 +310,7 @@ fn prepare_one_select_plan(
                             .find(|t| t.identifier == name_normalized);
 
                         if referenced_table.is_none() {
-                            crate::bail_parse_error!("no such table: {}", name.0);
+                            crate::bail_parse_error!("no such table: {}", name.as_str());
                         }
                         let table = referenced_table.unwrap();
                         let num_columns = table.columns().len();
@@ -361,7 +361,7 @@ fn prepare_one_select_plan(
                                 if distinctness.is_distinct() && args_count != 1 {
                                     crate::bail_parse_error!("DISTINCT aggregate functions must have exactly one argument");
                                 }
-                                match Func::resolve_function(&name.0, args_count) {
+                                match Func::resolve_function(name.as_str(), args_count) {
                                     Ok(Func::Agg(f)) => {
                                         let agg_args = match (args, &f) {
                                             (None, crate::function::AggFunc::Count0) => {
@@ -372,7 +372,7 @@ fn prepare_one_select_plan(
                                             }
                                             (None, _) => crate::bail_parse_error!(
                                                 "Aggregate function {} requires arguments",
-                                                name.0
+                                                name.as_str()
                                             ),
                                             (Some(args), _) => args.clone(),
                                         };
@@ -386,8 +386,10 @@ fn prepare_one_select_plan(
                                         aggregate_expressions.push(agg.clone());
                                         plan.result_columns.push(ResultSetColumn {
                                             alias: maybe_alias.as_ref().map(|alias| match alias {
-                                                ast::As::Elided(alias) => alias.0.clone(),
-                                                ast::As::As(alias) => alias.0.clone(),
+                                                ast::As::Elided(alias) => {
+                                                    alias.as_str().to_string()
+                                                }
+                                                ast::As::As(alias) => alias.as_str().to_string(),
                                             }),
                                             expr: expr.clone(),
                                             contains_aggregates: true,
@@ -401,15 +403,18 @@ fn prepare_one_select_plan(
                                         )?;
                                         plan.result_columns.push(ResultSetColumn {
                                             alias: maybe_alias.as_ref().map(|alias| match alias {
-                                                ast::As::Elided(alias) => alias.0.clone(),
-                                                ast::As::As(alias) => alias.0.clone(),
+                                                ast::As::Elided(alias) => {
+                                                    alias.as_str().to_string()
+                                                }
+                                                ast::As::As(alias) => alias.as_str().to_string(),
                                             }),
                                             expr: expr.clone(),
                                             contains_aggregates,
                                         });
                                     }
                                     Err(e) => {
-                                        if let Some(f) = syms.resolve_function(&name.0, args_count)
+                                        if let Some(f) =
+                                            syms.resolve_function(name.as_str(), args_count)
                                         {
                                             if let ExtFunc::Scalar(_) = f.as_ref().func {
                                                 let contains_aggregates = resolve_aggregates(
@@ -421,9 +426,11 @@ fn prepare_one_select_plan(
                                                     alias: maybe_alias.as_ref().map(|alias| {
                                                         match alias {
                                                             ast::As::Elided(alias) => {
-                                                                alias.0.clone()
+                                                                alias.as_str().to_string()
                                                             }
-                                                            ast::As::As(alias) => alias.0.clone(),
+                                                            ast::As::As(alias) => {
+                                                                alias.as_str().to_string()
+                                                            }
                                                         }
                                                     }),
                                                     expr: expr.clone(),
@@ -441,9 +448,11 @@ fn prepare_one_select_plan(
                                                     alias: maybe_alias.as_ref().map(|alias| {
                                                         match alias {
                                                             ast::As::Elided(alias) => {
-                                                                alias.0.clone()
+                                                                alias.as_str().to_string()
                                                             }
-                                                            ast::As::As(alias) => alias.0.clone(),
+                                                            ast::As::As(alias) => {
+                                                                alias.as_str().to_string()
+                                                            }
                                                         }
                                                     }),
                                                     expr: expr.clone(),
@@ -460,7 +469,7 @@ fn prepare_one_select_plan(
                             ast::Expr::FunctionCallStar {
                                 name,
                                 filter_over: _,
-                            } => match Func::resolve_function(&name.0, 0) {
+                            } => match Func::resolve_function(name.as_str(), 0) {
                                 Ok(Func::Agg(f)) => {
                                     let agg = Aggregate {
                                         func: f,
@@ -473,8 +482,8 @@ fn prepare_one_select_plan(
                                     aggregate_expressions.push(agg.clone());
                                     plan.result_columns.push(ResultSetColumn {
                                         alias: maybe_alias.as_ref().map(|alias| match alias {
-                                            ast::As::Elided(alias) => alias.0.clone(),
-                                            ast::As::As(alias) => alias.0.clone(),
+                                            ast::As::Elided(alias) => alias.as_str().to_string(),
+                                            ast::As::As(alias) => alias.as_str().to_string(),
                                         }),
                                         expr: expr.clone(),
                                         contains_aggregates: true,
@@ -483,7 +492,7 @@ fn prepare_one_select_plan(
                                 Ok(_) => {
                                     crate::bail_parse_error!(
                                         "Invalid aggregate function: {}",
-                                        name.0
+                                        name.as_str()
                                     );
                                 }
                                 Err(e) => match e {
@@ -493,7 +502,7 @@ fn prepare_one_select_plan(
                                     _ => {
                                         crate::bail_parse_error!(
                                             "Invalid aggregate function: {}",
-                                            name.0
+                                            name.as_str()
                                         );
                                     }
                                 },
@@ -503,8 +512,8 @@ fn prepare_one_select_plan(
                                     resolve_aggregates(schema, expr, &mut aggregate_expressions)?;
                                 plan.result_columns.push(ResultSetColumn {
                                     alias: maybe_alias.as_ref().map(|alias| match alias {
-                                        ast::As::Elided(alias) => alias.0.clone(),
-                                        ast::As::As(alias) => alias.0.clone(),
+                                        ast::As::Elided(alias) => alias.as_str().to_string(),
+                                        ast::As::As(alias) => alias.as_str().to_string(),
                                     }),
                                     expr: expr.clone(),
                                     contains_aggregates,

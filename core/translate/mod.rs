@@ -132,8 +132,8 @@ pub fn translate_inner(
             ..
         } => translate_create_index(
             (unique, if_not_exists),
-            &idx_name.name.0,
-            &tbl_name.0,
+            idx_name.name.as_str(),
+            tbl_name.as_str(),
             &columns,
             schema,
             program,
@@ -162,7 +162,7 @@ pub fn translate_inner(
         ast::Stmt::DropIndex {
             if_exists,
             idx_name,
-        } => translate_drop_index(&idx_name.name.0, if_exists, schema, program)?,
+        } => translate_drop_index(idx_name.name.as_str(), if_exists, schema, program)?,
         ast::Stmt::DropTable {
             if_exists,
             tbl_name,

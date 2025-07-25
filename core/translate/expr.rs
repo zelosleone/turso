@@ -680,10 +680,10 @@ pub fn translate_expr(
             order_by: _,
         } => {
             let args_count = if let Some(args) = args { args.len() } else { 0 };
-            let func_type = resolver.resolve_function(&name.0, args_count);
+            let func_type = resolver.resolve_function(name.as_str(), args_count);
 
             if func_type.is_none() {
-                crate::bail_parse_error!("unknown function {}", name.0);
+                crate::bail_parse_error!("unknown function {}", name.as_str());
             }
 
             let func_ctx = FuncCtx {
@@ -693,7 +693,7 @@ pub fn translate_expr(
 
             match &func_ctx.func {
                 Func::Agg(_) => {
-                    crate::bail_parse_error!("misuse of aggregate function {}()", name.0)
+                    crate::bail_parse_error!("misuse of aggregate function {}()", name.as_str())
                 }
                 Func::External(_) => {
                     let regs = program.alloc_registers(args_count);
@@ -1900,7 +1900,7 @@ pub fn translate_expr(
         ast::Expr::Id(id) => {
             // Treat double-quoted identifiers as string literals (SQLite compatibility)
             program.emit_insn(Insn::String8 {
-                value: sanitize_double_quoted_string(&id.0),
+                value: sanitize_double_quoted_string(id.as_str()),
                 dest: target_register,
             });
             Ok(target_register)
