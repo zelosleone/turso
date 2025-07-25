@@ -503,9 +503,25 @@ impl Value {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct SumAggState {
+    pub r_err: f64,   // Error term for Kahan-Babushka-Neumaier summation
+    pub approx: bool, // True if any non-integer value was input to the sum
+    pub ovrfl: bool,  // Integer overflow seen
+}
+impl Default for SumAggState {
+    fn default() -> Self {
+        Self {
+            r_err: 0.0,
+            approx: false,
+            ovrfl: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum AggContext {
     Avg(Value, Value), // acc and count
-    Sum(Value, f64),   // Error term for Kahan-Babushka-Neumaier summation
+    Sum(Value, SumAggState),
     Count(Value),
     Max(Option<Value>),
     Min(Option<Value>),
