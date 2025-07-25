@@ -1448,16 +1448,16 @@ mod tests {
             let limbo_result = limbo_exec_rows(&db, &limbo_conn, query);
             let sqlite_result = sqlite_exec_rows(&sqlite_conn, query);
 
-            let limbo_val = match limbo_result.get(0).and_then(|row| row.get(0)) {
+            let limbo_val = match limbo_result.first().and_then(|row| row.first()) {
                 Some(Value::Real(f)) => *f,
                 Some(Value::Null) | None => 0.0,
-                _ => panic!("Unexpected type in limbo result: {:?}", limbo_result),
+                _ => panic!("Unexpected type in limbo result: {limbo_result:?}"),
             };
 
-            let sqlite_val = match sqlite_result.get(0).and_then(|row| row.get(0)) {
+            let sqlite_val = match sqlite_result.first().and_then(|row| row.first()) {
                 Some(Value::Real(f)) => *f,
                 Some(Value::Null) | None => 0.0,
-                _ => panic!("Unexpected type in sqlite result: {:?}", sqlite_result),
+                _ => panic!("Unexpected type in limbo result: {limbo_result:?}"),
             };
             assert_eq!(limbo_val, sqlite_val, "seed: {seed}, values: {values:?}");
         }
