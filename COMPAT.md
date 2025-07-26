@@ -64,7 +64,7 @@ Turso aims to be fully compatible with SQLite, with opt-in features not supporte
 | CREATE VIEW               | No      |                                                                                   |
 | CREATE VIRTUAL TABLE      | Yes     |                                                                                   |
 | DELETE                    | Yes     |                                                                                   |
-| DETACH DATABASE           | No      |                                                                                   |
+| DETACH DATABASE           | Yes     |                                                                                   |
 | DROP INDEX                | Partial | Disabled by default.                                                              |
 | DROP TABLE                | Yes     |                                                                                   |
 | DROP TRIGGER              | No      |                                                                                   |
