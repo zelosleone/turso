@@ -123,7 +123,7 @@ Turso aims to be fully compatible with SQLite, with opt-in features not supporte
 | PRAGMA default_cache_size        | Not Needed | deprecated in SQLite                         |
 | PRAGMA defer_foreign_keys        | No         |                                              |
 | PRAGMA empty_result_callbacks    | Not Needed | deprecated in SQLite                         |
-| PRAGMA encoding                  | No         |                                              |
+| PRAGMA encoding                  | Yes        |                                              |
 | PRAGMA foreign_key_check         | No         |                                              |
 | PRAGMA foreign_key_list          | No         |                                              |
 | PRAGMA foreign_keys              | No         |                                              |
