@@ -802,7 +802,8 @@ impl Wal for WalFile {
     fn should_checkpoint(&self) -> bool {
         let shared = self.get_shared();
         let frame_id = shared.max_frame.load(Ordering::SeqCst) as usize;
-        frame_id > self.checkpoint_threshold
+        let nbackfills = shared.nbackfills.load(Ordering::SeqCst) as usize;
+        frame_id > self.checkpoint_threshold + nbackfills
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
