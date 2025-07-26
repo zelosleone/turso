@@ -116,7 +116,9 @@ pub fn translate_inner(
     connection: &Arc<Connection>,
 ) -> Result<ProgramBuilder> {
     let program = match stmt {
-        ast::Stmt::AlterTable(alter) => translate_alter_table(*alter, syms, schema, program)?,
+        ast::Stmt::AlterTable(alter) => {
+            translate_alter_table(*alter, syms, schema, program, connection)?
+        }
         ast::Stmt::Analyze(_) => bail_parse_error!("ANALYZE not supported yet"),
         ast::Stmt::Attach { expr, db_name, key } => {
             attach::translate_attach(&expr, &db_name, &key, schema, syms, program)?
@@ -156,7 +158,15 @@ pub fn translate_inner(
                 limit,
                 ..
             } = *delete;
-            translate_delete(schema, &tbl_name, where_clause, limit, syms, program)?
+            translate_delete(
+                schema,
+                &tbl_name,
+                where_clause,
+                limit,
+                syms,
+                program,
+                connection,
+            )?
         }
         ast::Stmt::Detach(expr) => attach::translate_detach(&expr, schema, syms, program)?,
         ast::Stmt::DropIndex {
@@ -190,7 +200,9 @@ pub fn translate_inner(
             )?
             .program
         }
-        ast::Stmt::Update(mut update) => translate_update(schema, &mut update, syms, program)?,
+        ast::Stmt::Update(mut update) => {
+            translate_update(schema, &mut update, syms, program, connection)?
+        }
         ast::Stmt::Vacuum(_, _) => bail_parse_error!("VACUUM not supported yet"),
         ast::Stmt::Insert(insert) => {
             let Insert {

@@ -47,6 +47,18 @@ do_execsql_test select-limit-0 {
   SELECT id FROM users LIMIT 0;
 } {}
 
+do_execsql_test select-doubly-qualified {
+  SELECT main.users.id FROM users LIMIT 0;
+} {}
+
+do_execsql_test_error select-doubly-qualified-wrong-table {
+  SELECT main.wrong.id FROM users LIMIT 0;
+} {.*}
+
+do_execsql_test_error select-doubly-qualified-wrong-column {
+  SELECT main.users.wrong FROM users LIMIT 0;
+} {.*}
+
 # ORDER BY id here because sqlite uses age_idx here and we (yet) don't so force it to evaluate in ID order
 do_execsql_test select-limit-true {
   SELECT id FROM users ORDER BY id LIMIT true;

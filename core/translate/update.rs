@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use crate::schema::{BTreeTable, Column, Type};
 use crate::translate::optimizer::optimize_select_plan;
@@ -56,8 +57,9 @@ pub fn translate_update(
     body: &mut Update,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
+    connection: &Arc<crate::Connection>,
 ) -> crate::Result<ProgramBuilder> {
-    let mut plan = prepare_update_plan(&mut program, schema, body)?;
+    let mut plan = prepare_update_plan(&mut program, schema, body, connection)?;
     optimize_plan(&mut plan, schema)?;
     // TODO: freestyling these numbers
     let opts = ProgramBuilderOpts {
@@ -75,9 +77,10 @@ pub fn translate_update_with_after(
     body: &mut Update,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
+    connection: &Arc<crate::Connection>,
     after: impl FnOnce(&mut ProgramBuilder),
 ) -> crate::Result<ProgramBuilder> {
-    let mut plan = prepare_update_plan(&mut program, schema, body)?;
+    let mut plan = prepare_update_plan(&mut program, schema, body, connection)?;
     optimize_plan(&mut plan, schema)?;
     // TODO: freestyling these numbers
     let opts = ProgramBuilderOpts {
@@ -94,6 +97,7 @@ pub fn prepare_update_plan(
     program: &mut ProgramBuilder,
     schema: &Schema,
     body: &mut Update,
+    connection: &Arc<crate::Connection>,
 ) -> crate::Result<Plan> {
     if body.with.is_some() {
         bail_parse_error!("WITH clause is not supported");
@@ -158,7 +162,7 @@ pub fn prepare_update_plan(
             bail_parse_error!("Parse error: no such column: {}", ident);
         };
 
-        let _ = bind_column_references(&mut set.expr, &mut table_references, None);
+        let _ = bind_column_references(&mut set.expr, &mut table_references, None, connection);
 
         if let Some(idx) = set_clauses.iter().position(|(idx, _)| *idx == *col_index) {
             set_clauses[idx].1 = set.expr.clone();
@@ -171,7 +175,7 @@ pub fn prepare_update_plan(
     if let Some(returning) = &mut body.returning {
         for rc in returning.iter_mut() {
             if let ResultColumn::Expr(expr, alias) = rc {
-                bind_column_references(expr, &mut table_references, None)?;
+                bind_column_references(expr, &mut table_references, None, connection)?;
                 result_columns.push(ResultSetColumn {
                     expr: expr.clone(),
                     alias: alias.as_ref().and_then(|a| {
@@ -233,6 +237,7 @@ pub fn prepare_update_plan(
             &mut table_references,
             Some(&result_columns),
             &mut where_clause,
+            connection,
         )?;
 
         let table = Rc::new(BTreeTable {
@@ -307,6 +312,7 @@ pub fn prepare_update_plan(
             &mut table_references,
             Some(&result_columns),
             &mut where_clause,
+            connection,
         )?;
     };
 
