@@ -802,11 +802,7 @@ impl Wal for WalFile {
     fn should_checkpoint(&self) -> bool {
         let shared = self.get_shared();
         let frame_id = shared.max_frame.load(Ordering::SeqCst) as usize;
-        let nbackfilled = shared.nbackfills.load(Ordering::SeqCst) as usize;
-        if frame_id < self.checkpoint_threshold {
-            return false;
-        }
-        frame_id >= nbackfilled + self.checkpoint_threshold
+        frame_id > self.checkpoint_threshold
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
@@ -826,7 +822,6 @@ impl Wal for WalFile {
             match state {
                 CheckpointState::Start => {
                     // TODO(pere): check what frames are safe to checkpoint between many readers!
-                    self.ongoing_checkpoint.min_frame = self.min_frame;
                     let (shared_max, nbackfills) = {
                         let shared = self.get_shared();
                         (
@@ -838,6 +833,7 @@ impl Wal for WalFile {
                         // nothing to checkpoint, everything is already backfilled
                         return Ok(IOResult::Done(CheckpointResult::default()));
                     }
+                    self.ongoing_checkpoint.min_frame = nbackfills + 1;
                     let shared = self.get_shared();
                     let busy = !shared.checkpoint_lock.write();
                     if busy {
