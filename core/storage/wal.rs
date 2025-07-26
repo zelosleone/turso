@@ -802,7 +802,11 @@ impl Wal for WalFile {
     fn should_checkpoint(&self) -> bool {
         let shared = self.get_shared();
         let frame_id = shared.max_frame.load(Ordering::SeqCst) as usize;
-        frame_id >= self.checkpoint_threshold
+        let nbackfilled = shared.nbackfills.load(Ordering::SeqCst) as usize;
+        if frame_id < self.checkpoint_threshold {
+            return false;
+        }
+        frame_id >= nbackfilled + self.checkpoint_threshold
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
@@ -823,6 +827,17 @@ impl Wal for WalFile {
                 CheckpointState::Start => {
                     // TODO(pere): check what frames are safe to checkpoint between many readers!
                     self.ongoing_checkpoint.min_frame = self.min_frame;
+                    let (shared_max, nbackfills) = {
+                        let shared = self.get_shared();
+                        (
+                            shared.max_frame.load(Ordering::SeqCst),
+                            shared.nbackfills.load(Ordering::SeqCst),
+                        )
+                    };
+                    if shared_max <= nbackfills {
+                        // nothing to checkpoint, everything is already backfilled
+                        return Ok(IOResult::Done(CheckpointResult::default()));
+                    }
                     let shared = self.get_shared();
                     let busy = !shared.checkpoint_lock.write();
                     if busy {
@@ -945,6 +960,9 @@ impl Wal for WalFile {
                     };
                     let everything_backfilled = shared.max_frame.load(Ordering::SeqCst)
                         == self.ongoing_checkpoint.max_frame;
+                    shared
+                        .nbackfills
+                        .store(self.ongoing_checkpoint.max_frame, Ordering::SeqCst);
                     if everything_backfilled {
                         // TODO: Even in Passive mode, if everything was backfilled we should
                         // truncate and fsync the *db file*
@@ -962,10 +980,6 @@ impl Wal for WalFile {
                             // TODO: if all frames were backfilled into the db file, calls fsync
                             // TODO(pere): truncate wal file here.
                         }
-                    } else {
-                        shared
-                            .nbackfills
-                            .store(self.ongoing_checkpoint.max_frame, Ordering::SeqCst);
                     }
                     self.ongoing_checkpoint.state = CheckpointState::Start;
                     return Ok(IOResult::Done(checkpoint_result));
