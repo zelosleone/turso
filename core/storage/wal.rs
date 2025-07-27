@@ -39,7 +39,7 @@ pub const NO_LOCK: u32 = 0;
 pub const SHARED_LOCK: u32 = 1;
 pub const WRITE_LOCK: u32 = 2;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct CheckpointResult {
     /// number of frames in WAL
     pub num_wal_frames: u64,
@@ -47,17 +47,11 @@ pub struct CheckpointResult {
     pub num_checkpointed_frames: u64,
 }
 
-impl Default for CheckpointResult {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl CheckpointResult {
-    pub fn new() -> Self {
+    pub fn new(n_frames: u64, n_ckpt: u64) -> Self {
         Self {
-            num_wal_frames: 0,
-            num_checkpointed_frames: 0,
+            num_wal_frames: n_frames,
+            num_checkpointed_frames: n_ckpt,
         }
     }
 }
@@ -422,6 +416,9 @@ pub struct WalFile {
 
     /// Hack for now in case of rollback, will not be needed once we remove this bullshit frame cache.
     start_pages_in_frames: usize,
+
+    /// Count of possible pages to checkpoint, and number of backfilled
+    prev_checkpoint: CheckpointResult,
 
     /// Private copy of WalHeader
     pub header: WalHeader,
@@ -831,8 +828,9 @@ impl Wal for WalFile {
                         )
                     };
                     if shared_max <= nbackfills {
-                        // nothing to checkpoint, everything is already backfilled
-                        return Ok(IOResult::Done(CheckpointResult::default()));
+                        // if there's nothing to do and we are fully back-filled, to match sqlite
+                        // we return the previous number of backfilled pages from last checkpoint.
+                        return Ok(IOResult::Done(self.prev_checkpoint));
                     }
                     self.ongoing_checkpoint.min_frame = nbackfills + 1;
                     let shared = self.get_shared();
@@ -948,13 +946,18 @@ impl Wal for WalFile {
                     }
                     let shared = self.get_shared();
                     shared.checkpoint_lock.unlock();
+                    let max_frame = shared.max_frame.load(Ordering::SeqCst);
+                    let nbackfills = shared.nbackfills.load(Ordering::SeqCst);
 
                     // Record two num pages fields to return as checkpoint result to caller.
                     // Ref: pnLog, pnCkpt on https://www.sqlite.org/c3ref/wal_checkpoint_v2.html
-                    let checkpoint_result = CheckpointResult {
-                        num_wal_frames: shared.max_frame.load(Ordering::SeqCst),
-                        num_checkpointed_frames: self.ongoing_checkpoint.max_frame,
-                    };
+                    let frames_in_wal = max_frame.saturating_sub(nbackfills);
+                    let frames_checkpointed = self
+                        .ongoing_checkpoint
+                        .max_frame
+                        .saturating_sub(self.ongoing_checkpoint.min_frame - 1);
+                    let checkpoint_result =
+                        CheckpointResult::new(frames_in_wal, frames_checkpointed);
                     let everything_backfilled = shared.max_frame.load(Ordering::SeqCst)
                         == self.ongoing_checkpoint.max_frame;
                     shared
@@ -978,6 +981,7 @@ impl Wal for WalFile {
                             // TODO(pere): truncate wal file here.
                         }
                     }
+                    self.prev_checkpoint = checkpoint_result;
                     self.ongoing_checkpoint.state = CheckpointState::Start;
                     return Ok(IOResult::Done(checkpoint_result));
                 }
@@ -1105,6 +1109,7 @@ impl WalFile {
             min_frame: 0,
             max_frame_read_lock_index: 0,
             last_checksum,
+            prev_checkpoint: CheckpointResult::default(),
             start_pages_in_frames: 0,
             header: *header,
         }
