@@ -94,7 +94,6 @@ Turso aims to be fully compatible with SQLite, with opt-in features not supporte
 | SELECT ... JOIN USING     | Yes     |                                                                                   |
 | SELECT ... NATURAL JOIN   | Yes     |                                                                                   |
 | UPDATE                    | Yes     |                                                                                   |
-| UPSERT                    | No      |                                                                                   |
 | VACUUM                    | No      |                                                                                   |
 | WITH clause               | Partial | No RECURSIVE, no MATERIALIZED, only SELECT supported in CTEs                      |
 
