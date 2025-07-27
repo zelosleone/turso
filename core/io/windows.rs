@@ -1,5 +1,6 @@
 use super::MemoryIO;
 use crate::{Clock, Completion, File, Instant, LimboError, OpenFlags, Result, IO};
+use parking_lot::RwLock;
 use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
@@ -12,9 +13,6 @@ impl WindowsIO {
         Ok(Self {})
     }
 }
-
-unsafe impl Send for WindowsIO {}
-unsafe impl Sync for WindowsIO {}
 
 impl IO for WindowsIO {
     fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>> {
@@ -29,7 +27,7 @@ impl IO for WindowsIO {
 
         let file = file.open(path)?;
         Ok(Arc::new(WindowsFile {
-            file: RefCell::new(file),
+            file: RwLock::new(file),
         }))
     }
 
@@ -66,11 +64,8 @@ impl Clock for WindowsIO {
 }
 
 pub struct WindowsFile {
-    file: RefCell<std::fs::File>,
+    file: RwLock<std::fs::File>,
 }
-
-unsafe impl Send for WindowsFile {}
-unsafe impl Sync for WindowsFile {}
 
 impl File for WindowsFile {
     fn lock_file(&self, exclusive: bool) -> Result<()> {
@@ -82,7 +77,7 @@ impl File for WindowsFile {
     }
 
     fn pread(&self, pos: usize, c: Arc<Completion>) -> Result<Arc<Completion>> {
-        let mut file = self.file.borrow_mut();
+        let mut file = self.file.write();
         file.seek(std::io::SeekFrom::Start(pos as u64))?;
         let nr = {
             let r = c.as_read();
@@ -101,7 +96,7 @@ impl File for WindowsFile {
         buffer: Arc<RefCell<crate::Buffer>>,
         c: Arc<Completion>,
     ) -> Result<Arc<Completion>> {
-        let mut file = self.file.borrow_mut();
+        let mut file = self.file.write();
         file.seek(std::io::SeekFrom::Start(pos as u64))?;
         let buf = buffer.borrow();
         let buf = buf.as_slice();
@@ -111,14 +106,14 @@ impl File for WindowsFile {
     }
 
     fn sync(&self, c: Arc<Completion>) -> Result<Arc<Completion>> {
-        let file = self.file.borrow_mut();
+        let file = self.file.write();
         file.sync_all().map_err(LimboError::IOError)?;
         c.complete(0);
         Ok(c)
     }
 
     fn size(&self) -> Result<u64> {
-        let file = self.file.borrow();
+        let file = self.file.read();
         Ok(file.metadata().unwrap().len())
     }
 }
