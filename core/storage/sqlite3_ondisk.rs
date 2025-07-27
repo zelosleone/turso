@@ -96,6 +96,37 @@ pub const INTERIOR_PAGE_HEADER_SIZE_BYTES: usize = 12;
 pub const LEAF_PAGE_HEADER_SIZE_BYTES: usize = 8;
 pub const LEFT_CHILD_PTR_SIZE_BYTES: usize = 4;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum DatabaseEncoding {
+    Utf8 = 1,
+    Utf16Le = 2,
+    Utf16Be = 3,
+}
+
+impl TryFrom<u32> for DatabaseEncoding {
+    type Error = LimboError;
+
+    fn try_from(value: u32) -> Result<Self> {
+        match value {
+            1 => Ok(Self::Utf8),
+            2 => Ok(Self::Utf16Le),
+            3 => Ok(Self::Utf16Be),
+            _ => Err(LimboError::Corrupt(format!("Invalid encoding: {value}"))),
+        }
+    }
+}
+
+impl From<DatabaseEncoding> for &'static str {
+    fn from(encoding: DatabaseEncoding) -> Self {
+        match encoding {
+            DatabaseEncoding::Utf8 => "UTF-8",
+            DatabaseEncoding::Utf16Le => "UTF-16le",
+            DatabaseEncoding::Utf16Be => "UTF-16be",
+        }
+    }
+}
+
 /// The database header.
 /// The first 100 bytes of the database file comprise the database file header.
 /// The database file header is divided into fields as shown by the table below.

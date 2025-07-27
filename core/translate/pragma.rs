@@ -1,6 +1,7 @@
 //! VDBE bytecode generation for pragma statements.
 //! More info: https://www.sqlite.org/pragma.html.
 
+use chrono::Datelike;
 use std::rc::Rc;
 use std::sync::Arc;
 use turso_sqlite3_parser::ast::{self, ColumnDefinition, Expr};
@@ -9,7 +10,7 @@ use turso_sqlite3_parser::ast::{PragmaName, QualifiedName};
 use crate::pragma::pragma_for;
 use crate::schema::Schema;
 use crate::storage::pager::AutoVacuumMode;
-use crate::storage::sqlite3_ondisk::MIN_PAGE_CACHE_SIZE;
+use crate::storage::sqlite3_ondisk::{DatabaseEncoding, MIN_PAGE_CACHE_SIZE};
 use crate::storage::wal::CheckpointMode;
 use crate::translate::schema::translate_create_table;
 use crate::util::{normalize_ident, parse_signed_number, parse_string};
@@ -106,6 +107,10 @@ fn update_pragma(
             };
             update_cache_size(cache_size, pager, connection)?;
             Ok((program, TransactionMode::None))
+        }
+        PragmaName::Encoding => {
+            let year = chrono::Local::now().year();
+            bail_parse_error!("It's {year}. UTF-8 won.");
         }
         PragmaName::JournalMode => query_pragma(
             PragmaName::JournalMode,
@@ -303,6 +308,20 @@ fn query_pragma(
             for col_name in pragma.columns.iter() {
                 program.add_pragma_result_column(col_name.to_string());
             }
+            Ok((program, TransactionMode::None))
+        }
+        PragmaName::Encoding => {
+            let encoding: &str = if !pager.db_state.is_initialized() {
+                DatabaseEncoding::Utf8
+            } else {
+                let encoding: DatabaseEncoding =
+                    header_accessor::get_text_encoding(&pager)?.try_into()?;
+                encoding
+            }
+            .into();
+            program.emit_string8(encoding.into(), register);
+            program.emit_result_row(register, 1);
+            program.add_pragma_result_column(pragma.to_string());
             Ok((program, TransactionMode::None))
         }
         PragmaName::JournalMode => {
