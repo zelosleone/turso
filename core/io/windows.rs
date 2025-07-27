@@ -4,7 +4,7 @@ use parking_lot::RwLock;
 use std::cell::RefCell;
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
-use tracing::{debug, trace};
+use tracing::{debug, instrument, trace, Level};
 pub struct WindowsIO {}
 
 impl WindowsIO {
@@ -15,6 +15,7 @@ impl WindowsIO {
 }
 
 impl IO for WindowsIO {
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>> {
         trace!("open_file(path = {})", path);
         let mut file = std::fs::File::options();
@@ -31,6 +32,7 @@ impl IO for WindowsIO {
         }))
     }
 
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn wait_for_completion(&self, c: Arc<Completion>) -> Result<()> {
         while !c.is_completed() {
             self.run_once()?;
@@ -38,16 +40,19 @@ impl IO for WindowsIO {
         Ok(())
     }
 
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn run_once(&self) -> Result<()> {
         Ok(())
     }
 
+    #[instrument(skip_all, level = Level::TRACE)]
     fn generate_random_number(&self) -> i64 {
         let mut buf = [0u8; 8];
         getrandom::getrandom(&mut buf).unwrap();
         i64::from_ne_bytes(buf)
     }
 
+    #[instrument(skip_all, level = Level::TRACE)]
     fn get_memory_io(&self) -> Arc<MemoryIO> {
         Arc::new(MemoryIO::new())
     }
@@ -68,14 +73,17 @@ pub struct WindowsFile {
 }
 
 impl File for WindowsFile {
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn lock_file(&self, exclusive: bool) -> Result<()> {
         unimplemented!()
     }
 
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn unlock_file(&self) -> Result<()> {
         unimplemented!()
     }
 
+    #[instrument(skip(self, c), level = Level::TRACE)]
     fn pread(&self, pos: usize, c: Arc<Completion>) -> Result<Arc<Completion>> {
         let mut file = self.file.write();
         file.seek(std::io::SeekFrom::Start(pos as u64))?;
@@ -90,6 +98,7 @@ impl File for WindowsFile {
         Ok(c)
     }
 
+    #[instrument(skip(self, c, buffer), level = Level::TRACE)]
     fn pwrite(
         &self,
         pos: usize,
@@ -105,6 +114,7 @@ impl File for WindowsFile {
         Ok(c)
     }
 
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn sync(&self, c: Arc<Completion>) -> Result<Arc<Completion>> {
         let file = self.file.write();
         file.sync_all().map_err(LimboError::IOError)?;
@@ -112,6 +122,7 @@ impl File for WindowsFile {
         Ok(c)
     }
 
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn size(&self) -> Result<u64> {
         let file = self.file.read();
         Ok(file.metadata().unwrap().len())
