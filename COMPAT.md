@@ -437,8 +437,6 @@ Modifiers:
 | Copy           | Yes    |         |
 | Count          | Yes    |         |
 | CreateBTree    | Partial| no temp databases |
-| CreateTable    | No     |         |
-| CreateTable    | No     |         |
 | DecrJumpZero   | Yes    |         |
 | Delete         | Yes    |         |
 | Destroy        | Yes    |         |
