@@ -4,12 +4,26 @@ use std::cell::{RefCell, RefMut};
 use std::num::{NonZero, NonZeroUsize};
 
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use napi::bindgen_prelude::{JsObjectValue, Null, Object, ToNapiValue};
 use napi::{bindgen_prelude::ObjectFinalize, Env, JsValue, Unknown};
 use napi_derive::napi;
+use tracing_subscriber::fmt::format::FmtSpan;
+use tracing_subscriber::EnvFilter;
 use turso_core::{LimboError, StepResult};
+
+static TRACING_INIT: OnceLock<()> = OnceLock::new();
+
+fn init_tracing() {
+    TRACING_INIT.get_or_init(|| {
+        tracing_subscriber::fmt()
+            .with_thread_ids(true)
+            .with_span_events(FmtSpan::ACTIVE)
+            .with_env_filter(EnvFilter::from_default_env())
+            .init();
+    });
+}
 
 #[derive(Default)]
 #[napi(object)]
@@ -68,6 +82,8 @@ impl ObjectFinalize for Database {
 impl Database {
     #[napi(constructor)]
     pub fn new(path: String, options: Option<OpenDatabaseOptions>) -> napi::Result<Self, String> {
+        init_tracing();
+
         let memory = path == ":memory:";
         let io: Arc<dyn turso_core::IO> = if memory {
             Arc::new(turso_core::MemoryIO::new())
