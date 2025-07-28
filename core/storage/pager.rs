@@ -365,11 +365,6 @@ pub enum PagerCommitResult {
 #[derive(Debug, Clone)]
 enum AllocatePageState {
     Start,
-    /// Load the first freelist trunk page into memory.
-    LoadFreelistTrunkPage {
-        current_trunk: u32,
-        current_db_size: u32,
-    },
     /// Search the trunk page for an available free list leaf.
     /// If none are found, there are two options:
     /// - If there are no more trunk pages, the freelist is empty, so allocate a new page.
@@ -1570,23 +1565,10 @@ impl Pager {
                         };
                         continue;
                     }
-                    *state = AllocatePageState::LoadFreelistTrunkPage {
-                        current_trunk: first_freelist_trunk_page_id,
-                        current_db_size: new_db_size,
-                    };
-                    continue;
-                }
-                AllocatePageState::LoadFreelistTrunkPage {
-                    current_trunk,
-                    current_db_size,
-                } => {
-                    let page = self.read_page(*current_trunk as usize)?;
-                    if page.is_locked() {
-                        return Ok(IOResult::IO);
-                    }
+                    let trunk_page = self.read_page(first_freelist_trunk_page_id as usize)?;
                     *state = AllocatePageState::SearchAvailableFreeListLeaf {
-                        trunk_page: page,
-                        current_db_size: *current_db_size,
+                        trunk_page,
+                        current_db_size: new_db_size,
                     };
                     continue;
                 }
@@ -1594,6 +1576,9 @@ impl Pager {
                     trunk_page,
                     current_db_size,
                 } => {
+                    if trunk_page.is_locked() {
+                        return Ok(IOResult::IO);
+                    }
                     turso_assert!(
                         trunk_page.is_loaded(),
                         "Freelist trunk page {} is not loaded",
