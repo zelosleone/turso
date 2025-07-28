@@ -6,6 +6,7 @@
     "url": "https://github.com/tursodatabase/turso"
   },
   "description": "The Turso database library",
+  "main": "wrapper.js",
   "files": [
     "wrapper.js",
     "browser.js"
