@@ -1,7 +1,7 @@
 // This module contains code for emitting bytecode instructions for SQL query execution.
 // It handles translating high-level SQL operations into low-level bytecode that can be executed by the virtual machine.
 
-use std::rc::Rc;
+use std::sync::Arc;
 
 use tracing::{instrument, Level};
 use turso_sqlite3_parser::ast::{self, Expr};
@@ -1055,7 +1055,7 @@ fn emit_update_insns(
                 start_reg: start,
                 count: table_ref.columns().len(),
                 check_generated: true,
-                table_reference: Rc::clone(&btree_table),
+                table_reference: Arc::clone(&btree_table),
             });
         }
 

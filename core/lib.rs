@@ -1676,8 +1676,8 @@ pub type StepResult = vdbe::StepResult;
 
 #[derive(Default)]
 pub struct SymbolTable {
-    pub functions: HashMap<String, Rc<function::ExternalFunc>>,
-    pub vtabs: HashMap<String, Rc<VirtualTable>>,
+    pub functions: HashMap<String, Arc<function::ExternalFunc>>,
+    pub vtabs: HashMap<String, Arc<VirtualTable>>,
     pub vtab_modules: HashMap<String, Rc<crate::ext::VTabImpl>>,
 }
 
@@ -1726,7 +1726,7 @@ impl SymbolTable {
         &self,
         name: &str,
         _arg_count: usize,
-    ) -> Option<Rc<function::ExternalFunc>> {
+    ) -> Option<Arc<function::ExternalFunc>> {
         self.functions.get(name).cloned()
     }
 

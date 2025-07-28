@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::schema::{BTreeTable, Column, Type};
@@ -235,7 +234,7 @@ pub fn prepare_update_plan(
             connection,
         )?;
 
-        let table = Rc::new(BTreeTable {
+        let table = Arc::new(BTreeTable {
             root_page: 0, // Not relevant for ephemeral table definition
             name: "ephemeral_scratch".to_string(),
             has_rowid: true,
