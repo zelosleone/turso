@@ -977,7 +977,7 @@ impl Pager {
                 self.flush_info.borrow_mut().state = CacheFlushState::WaitAppendFrame {
                     current_page_to_append_idx,
                 };
-                return Ok(IOResult::IO);
+                Ok(IOResult::IO)
             }
             CacheFlushState::WaitAppendFrame {
                 current_page_to_append_idx,
