@@ -179,7 +179,7 @@ impl Connection {
             .lock()
             .map_err(|e| Error::MutexError(e.to_string()))?;
         conn.wal_frame_count()
-            .map_err(|e| Error::WalOperationError(format!("wal_insert_begin failed: {}", e)))
+            .map_err(|e| Error::WalOperationError(format!("wal_insert_begin failed: {e}")))
     }
 
     pub fn wal_insert_begin(&self) -> Result<()> {
@@ -188,7 +188,7 @@ impl Connection {
             .lock()
             .map_err(|e| Error::MutexError(e.to_string()))?;
         conn.wal_insert_begin()
-            .map_err(|e| Error::WalOperationError(format!("wal_insert_begin failed: {}", e)))
+            .map_err(|e| Error::WalOperationError(format!("wal_insert_begin failed: {e}")))
     }
 
     pub fn wal_insert_end(&self) -> Result<()> {
@@ -197,7 +197,7 @@ impl Connection {
             .lock()
             .map_err(|e| Error::MutexError(e.to_string()))?;
         conn.wal_insert_end()
-            .map_err(|e| Error::WalOperationError(format!("wal_insert_end failed: {}", e)))
+            .map_err(|e| Error::WalOperationError(format!("wal_insert_end failed: {e}")))
     }
 
     pub fn wal_insert_frame(&self, frame_no: u32, frame: &[u8]) -> Result<WalInsertInfo> {
@@ -206,7 +206,7 @@ impl Connection {
             .lock()
             .map_err(|e| Error::MutexError(e.to_string()))?;
         conn.wal_insert_frame(frame_no, frame)
-            .map_err(|e| Error::WalOperationError(format!("wal_insert_frame failed: {}", e)))
+            .map_err(|e| Error::WalOperationError(format!("wal_insert_frame failed: {e}")))
     }
 
     pub fn wal_get_frame(&self, frame_no: u32, frame: &mut [u8]) -> Result<()> {
@@ -215,7 +215,7 @@ impl Connection {
             .lock()
             .map_err(|e| Error::MutexError(e.to_string()))?;
         conn.wal_get_frame(frame_no, frame)
-            .map_err(|e| Error::WalOperationError(format!("wal_insert_frame failed: {}", e)))
+            .map_err(|e| Error::WalOperationError(format!("wal_insert_frame failed: {e}")))
     }
 
     /// Prepare a SQL statement for later execution.
