@@ -245,10 +245,8 @@ impl Database {
             .and_then(|p| p.to_str().map(|s| s.to_string()))
             .unwrap_or_else(|| path.to_string());
 
-        if let Some(db) = registry.get(&canonical_path) {
-            if let Some(db) = db.upgrade() {
-                return Ok(db);
-            }
+        if let Some(db) = registry.get(&canonical_path).and_then(Weak::upgrade) {
+            return Ok(db);
         }
         let db = Self::do_open_with_flags(io, path, db_file, flags, enable_mvcc, enable_indexes)?;
         registry.insert(canonical_path, Arc::downgrade(&db));
