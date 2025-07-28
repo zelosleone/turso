@@ -4,7 +4,6 @@ use std::{
 };
 
 use crate::{
-    errors::Error,
     types::{
         DatabaseChange, DatabaseTapeOperation, DatabaseTapeRowChange, DatabaseTapeRowChangeType,
     },

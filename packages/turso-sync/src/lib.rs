@@ -1,5 +1,6 @@
 pub mod database_tape;
 pub mod errors;
+pub mod types;
 
 pub type Result<T> = std::result::Result<T, errors::Error>;
 
