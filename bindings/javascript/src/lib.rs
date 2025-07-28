@@ -189,9 +189,12 @@ impl Database {
     #[napi]
     pub fn load_extension(&self, path: String) -> napi::Result<()> {
         let ext_path = turso_core::resolve_ext_path(path.as_str()).map_err(into_napi_error)?;
-        self.conn
-            .load_extension(ext_path)
-            .map_err(into_napi_error)?;
+        #[cfg(not(target_family = "wasm"))]
+        {
+            self.conn
+                .load_extension(ext_path)
+                .map_err(into_napi_error)?;
+        }
         Ok(())
     }
 
