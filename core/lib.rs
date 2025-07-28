@@ -752,8 +752,7 @@ impl Connection {
                 )?);
                 Ok(Statement::new(program, self._db.mv_store.clone(), pager))
             }
-            Cmd::Explain(_stmt) => todo!(),
-            Cmd::ExplainQueryPlan(_stmt) => todo!(),
+            _ => unreachable!(),
         }
     }
 

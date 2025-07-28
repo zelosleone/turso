@@ -425,7 +425,7 @@ impl BTreeTable {
             Some(Cmd::Stmt(Stmt::CreateTable { tbl_name, body, .. })) => {
                 create_table(tbl_name, *body, root_page)
             }
-            _ => todo!("Expected CREATE TABLE statement"),
+            _ => unreachable!("Expected CREATE TABLE statement"),
         }
     }
 
