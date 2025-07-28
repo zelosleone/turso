@@ -7203,7 +7203,7 @@ mod tests {
     fn empty_btree() -> (Rc<Pager>, usize, Arc<Database>, Arc<Connection>) {
         #[allow(clippy::arc_with_non_send_sync)]
         let io: Arc<dyn IO> = Arc::new(MemoryIO::new());
-        let db = Database::open_file(io.clone(), "test.db", false, false).unwrap();
+        let db = Database::open_file(io.clone(), ":memory:", false, false).unwrap();
         let conn = db.connect().unwrap();
         let pager = conn.pager.borrow().clone();
 
@@ -8129,7 +8129,7 @@ mod tests {
 
         let io: Arc<dyn IO> = Arc::new(MemoryIO::new());
         let db_file = Arc::new(DatabaseFile::new(
-            io.open_file("test.db", OpenFlags::Create, false).unwrap(),
+            io.open_file(":memory:", OpenFlags::Create, false).unwrap(),
         ));
 
         let wal_file = io.open_file("test.wal", OpenFlags::Create, false).unwrap();
