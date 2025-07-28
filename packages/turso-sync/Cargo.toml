@@ -1,5 +1,5 @@
 [package]
-name = "turso_sync"
+name = "turso-sync"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

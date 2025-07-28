@@ -96,6 +96,14 @@ vector:
   - changed-files:
       - any-glob-to-any-file: "core/vector/*"
 
+turso-serverless:
+  - changed-files:
+    - any-glob-to-any-file: 'packages/turso-serverless'
+
+turso-sync:
+  - changed-files:
+    - any-glob-to-any-file: 'packages/turso-sync'
+
 antithesis:
   - changed-files:
       - any-glob-to-any-file:
