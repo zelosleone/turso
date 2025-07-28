@@ -75,8 +75,7 @@ fn test_wal_frame_transfer_various_schema_changes() {
         let last_frame = conn1.wal_frame_count().unwrap() as u32;
         conn2.wal_insert_begin().unwrap();
         for frame_id in (synced_frame + 1)..=last_frame {
-            let c = conn1.wal_get_frame(frame_id, &mut frame).unwrap();
-            db1.io.wait_for_completion(c).unwrap();
+            conn1.wal_get_frame(frame_id, &mut frame).unwrap();
             conn2.wal_insert_frame(frame_id, &frame).unwrap();
         }
         conn2.wal_insert_end().unwrap();
