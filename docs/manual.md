@@ -74,6 +74,7 @@ Turso aims towards full SQLite compatibility but has the following limitations:
 * No triggers
 * No views
 * No vacuum
+* UTF-8 is the only supported character encoding
 
 For more detailed list of SQLite compatibility, please refer to [COMPAT.md](../COMPAT.md).
 
