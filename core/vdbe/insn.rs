@@ -1,6 +1,5 @@
 use std::{
     num::{NonZero, NonZeroUsize},
-    rc::Rc,
     sync::Arc,
 };
 
@@ -417,7 +416,7 @@ pub enum Insn {
         /// GENERATED ALWAYS AS ... STATIC columns are only checked if P3 is zero.
         /// When P3 is non-zero, no type checking occurs for static generated columns.
         check_generated: bool, // P3
-        table_reference: Rc<BTreeTable>, // P4
+        table_reference: Arc<BTreeTable>, // P4
     },
 
     // Make a record and write it to destination register.

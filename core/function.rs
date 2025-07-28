@@ -1,6 +1,7 @@
 use std::fmt;
 use std::fmt::{Debug, Display};
 use std::rc::Rc;
+use std::sync::Arc;
 use turso_ext::{FinalizeFunction, InitAggFunction, ScalarFunction, StepFunction};
 
 use crate::LimboError;
@@ -593,7 +594,7 @@ pub enum Func {
     #[cfg(feature = "json")]
     Json(JsonFunc),
     AlterTable(AlterTableFunc),
-    External(Rc<ExternalFunc>),
+    External(Arc<ExternalFunc>),
 }
 
 impl Display for Func {

@@ -111,7 +111,7 @@ pub fn parse_schema_rows(
                             schema.add_virtual_table(vtab);
                         } else {
                             let table = schema::BTreeTable::from_sql(sql, root_page as usize)?;
-                            schema.add_btree_table(Rc::new(table));
+                            schema.add_btree_table(Arc::new(table));
                         }
                     }
                     "index" => {

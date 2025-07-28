@@ -1,4 +1,3 @@
-use std::rc::Rc;
 use std::sync::Arc;
 
 use turso_sqlite3_parser::ast::{
@@ -439,7 +438,7 @@ pub fn translate_insert(
                 start_reg: columns_start_register,
                 count: num_cols,
                 check_generated: true,
-                table_reference: Rc::clone(&t),
+                table_reference: Arc::clone(&t),
             });
         }
         _ => (),
@@ -962,7 +961,7 @@ fn populate_column_registers(
 // TODO: comeback here later to apply the same improvements on select
 fn translate_virtual_table_insert(
     mut program: ProgramBuilder,
-    virtual_table: Rc<VirtualTable>,
+    virtual_table: Arc<VirtualTable>,
     columns: Option<DistinctNames>,
     mut body: InsertBody,
     on_conflict: Option<ResolveType>,
