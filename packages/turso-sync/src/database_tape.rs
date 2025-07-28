@@ -41,7 +41,7 @@ impl DatabaseTape {
         tracing::debug!("create local sync database with options {:?}", opts);
         let cdc_table = opts.cdc_table.unwrap_or(DEFAULT_CDC_TABLE_NAME.to_string());
         let cdc_mode = opts.cdc_mode.unwrap_or(DEFAULT_CDC_MODE.to_string());
-        let pragma_query = format!("PRAGMA {}('{},{}')", CDC_PRAGMA_NAME, cdc_mode, cdc_table);
+        let pragma_query = format!("PRAGMA {CDC_PRAGMA_NAME}('{cdc_mode},{cdc_table}')");
         Self {
             inner: database,
             cdc_table: Arc::new(cdc_table.to_string()),
@@ -50,7 +50,7 @@ impl DatabaseTape {
     }
     pub async fn connect(&self) -> Result<turso::Connection> {
         let connection = self.inner.connect()?;
-        tracing::debug!("set '{}' for new connection", CDC_PRAGMA_NAME);
+        tracing::debug!("set '{CDC_PRAGMA_NAME}' for new connection");
         connection.execute(&self.pragma_query, ()).await?;
         Ok(connection)
     }
@@ -96,8 +96,7 @@ impl DatabaseChangesIteratorMode {
             DatabaseChangesIteratorMode::Revert => ("<=", "DESC"),
         };
         format!(
-            "SELECT * FROM {} WHERE change_id {} ? ORDER BY change_id {} LIMIT {}",
-            table_name, operation, order, limit
+            "SELECT * FROM {table_name} WHERE change_id {operation} ? ORDER BY change_id {order} LIMIT {limit}",
         )
     }
     pub fn first_id(&self) -> i64 {
@@ -243,7 +242,7 @@ impl DatabaseReplaySession {
     async fn cached_delete_stmt(&mut self, table_name: &str) -> Result<&mut turso::Statement> {
         if !self.cached_delete_stmt.contains_key(table_name) {
             tracing::trace!("prepare delete statement for replay: table={}", table_name);
-            let query = format!("DELETE FROM {} WHERE rowid = ?", table_name);
+            let query = format!("DELETE FROM {table_name} WHERE rowid = ?");
             let stmt = self.conn.prepare(&query).await?;
             self.cached_delete_stmt.insert(table_name.to_string(), stmt);
         }
@@ -268,7 +267,7 @@ impl DatabaseReplaySession {
             let mut table_info = self
                 .conn
                 .query(
-                    &format!("SELECT name FROM pragma_table_info('{}')", table_name),
+                    &format!("SELECT name FROM pragma_table_info('{table_name}')"),
                     (),
                 )
                 .await?;
@@ -281,12 +280,8 @@ impl DatabaseReplaySession {
             column_names.push("rowid".to_string());
 
             let placeholders = ["?"].repeat(columns + 1).join(",");
-            let query = format!(
-                "INSERT INTO {}({}) VALUES ({})",
-                table_name,
-                column_names.join(", "),
-                placeholders
-            );
+            let column_names = column_names.join(", ");
+            let query = format!("INSERT INTO {table_name}({column_names}) VALUES ({placeholders})");
             let stmt = self.conn.prepare(&query).await?;
             self.cached_insert_stmt.insert(key.clone(), stmt);
         }

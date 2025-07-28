@@ -34,16 +34,16 @@ impl DatabaseChange {
             DatabaseChangeType::Delete => DatabaseTapeRowChangeType::Delete,
             DatabaseChangeType::Update => DatabaseTapeRowChangeType::Update {
                 bin_record: self.after.ok_or_else(|| {
-                    Error::DatabaseTapeError(format!(
-                        "cdc_mode must be set to either 'full' or 'after'"
-                    ))
+                    Error::DatabaseTapeError(
+                        "cdc_mode must be set to either 'full' or 'after'".to_string(),
+                    )
                 })?,
             },
             DatabaseChangeType::Insert => DatabaseTapeRowChangeType::Insert {
                 bin_record: self.after.ok_or_else(|| {
-                    Error::DatabaseTapeError(format!(
-                        "cdc_mode must be set to either 'full' or 'after'"
-                    ))
+                    Error::DatabaseTapeError(
+                        "cdc_mode must be set to either 'full' or 'after'".to_string(),
+                    )
                 })?,
             },
         };
@@ -60,16 +60,16 @@ impl DatabaseChange {
         let tape_change = match self.change_type {
             DatabaseChangeType::Delete => DatabaseTapeRowChangeType::Insert {
                 bin_record: self.before.ok_or_else(|| {
-                    Error::DatabaseTapeError(format!(
-                        "cdc_mode must be set to either 'full' or 'before'"
-                    ))
+                    Error::DatabaseTapeError(
+                        "cdc_mode must be set to either 'full' or 'before'".to_string(),
+                    )
                 })?,
             },
             DatabaseChangeType::Update => DatabaseTapeRowChangeType::Update {
                 bin_record: self.before.ok_or_else(|| {
-                    Error::DatabaseTapeError(format!(
-                        "cdc_mode must be set to either 'full' or 'before'"
-                    ))
+                    Error::DatabaseTapeError(
+                        "cdc_mode must be set to either 'full' or 'before'".to_string(),
+                    )
                 })?,
             },
             DatabaseChangeType::Insert => DatabaseTapeRowChangeType::Delete,
