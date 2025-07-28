@@ -626,7 +626,7 @@ impl Wal for WalFile {
             let frame = frame.clone();
             finish_read_page(page.get().id, buf, frame).unwrap();
         });
-        begin_read_wal_frame(
+        let c = begin_read_wal_frame(
             &self.get_shared().file,
             offset + WAL_FRAME_HEADER_SIZE,
             buffer_pool,
@@ -784,7 +784,7 @@ impl Wal for WalFile {
                     *write_counter.borrow_mut() -= 1;
                 }
             });
-            let result = shared.file.pwrite(offset, frame_bytes.clone(), c.into());
+            let result = shared.file.pwrite(offset, frame_bytes.clone(), c);
             if let Err(err) = result {
                 *write_counter.borrow_mut() -= 1;
                 return Err(err);
@@ -1001,7 +1001,7 @@ impl Wal for WalFile {
                     syncing.set(false);
                 });
                 let shared = self.get_shared();
-                shared.file.sync(completion.into())?;
+                let c = shared.file.sync(completion)?;
                 self.sync_state.set(SyncState::Syncing);
                 Ok(IOResult::IO)
             }

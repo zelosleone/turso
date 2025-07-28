@@ -346,7 +346,7 @@ impl turso_core::DatabaseStorage for DatabaseFile {
             return Err(turso_core::LimboError::NotADB);
         }
         let pos = (page_idx - 1) * size;
-        self.file.pread(pos, c.into())
+        self.file.pread(pos, c)
     }
 
     fn write_page(
@@ -357,11 +357,11 @@ impl turso_core::DatabaseStorage for DatabaseFile {
     ) -> Result<turso_core::Completion> {
         let size = buffer.borrow().len();
         let pos = (page_idx - 1) * size;
-        self.file.pwrite(pos, buffer, c.into())
+        self.file.pwrite(pos, buffer, c)
     }
 
     fn sync(&self, c: turso_core::Completion) -> Result<turso_core::Completion> {
-        self.file.sync(c.into())
+        self.file.sync(c)
     }
 
     fn size(&self) -> Result<u64> {

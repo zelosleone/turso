@@ -41,7 +41,7 @@ impl DatabaseStorage for DatabaseFile {
             return Err(LimboError::NotADB);
         }
         let pos = (page_idx - 1) * size;
-        self.file.pread(pos, c.into())
+        self.file.pread(pos, c)
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
@@ -57,12 +57,12 @@ impl DatabaseStorage for DatabaseFile {
         assert!(buffer_size <= 65536);
         assert_eq!(buffer_size & (buffer_size - 1), 0);
         let pos = (page_idx - 1) * buffer_size;
-        self.file.pwrite(pos, buffer, c.into())
+        self.file.pwrite(pos, buffer, c)
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
     fn sync(&self, c: Completion) -> Result<Completion> {
-        self.file.sync(c.into())
+        self.file.sync(c)
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
@@ -95,7 +95,7 @@ impl DatabaseStorage for FileMemoryStorage {
             return Err(LimboError::NotADB);
         }
         let pos = (page_idx - 1) * size;
-        self.file.pread(pos, c.into())
+        self.file.pread(pos, c)
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
@@ -110,12 +110,12 @@ impl DatabaseStorage for FileMemoryStorage {
         assert!(buffer_size <= 65536);
         assert_eq!(buffer_size & (buffer_size - 1), 0);
         let pos = (page_idx - 1) * buffer_size;
-        self.file.pwrite(pos, buffer, c.into())
+        self.file.pwrite(pos, buffer, c)
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
     fn sync(&self, c: Completion) -> Result<Completion> {
-        self.file.sync(c.into())
+        self.file.sync(c)
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
