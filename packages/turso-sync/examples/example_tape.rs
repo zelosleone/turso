@@ -57,14 +57,14 @@ async fn main() {
             for i in 0..row.column_count() {
                 let value = row.get_value(i).unwrap();
                 match value {
-                    turso::Value::Null => values.push(format!("NULL")),
-                    turso::Value::Integer(x) => values.push(format!("{}", x)),
-                    turso::Value::Real(x) => values.push(format!("{}", x)),
-                    turso::Value::Text(x) => values.push(format!("'{}'", x)),
+                    turso::Value::Null => values.push("NULL".to_string()),
+                    turso::Value::Integer(x) => values.push(format!("{x}",)),
+                    turso::Value::Real(x) => values.push(format!("{x}")),
+                    turso::Value::Text(x) => values.push(format!("'{x}'")),
                     turso::Value::Blob(x) => values.push(format!(
                         "x'{}'",
                         x.iter()
-                            .map(|x| format!("{:02x}", x))
+                            .map(|x| format!("{x:02x}"))
                             .collect::<Vec<_>>()
                             .join(""),
                     )),
