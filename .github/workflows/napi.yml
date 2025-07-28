@@ -44,6 +44,7 @@ jobs:
           - host: ubuntu-latest
             target: wasm32-wasip1-threads
             setup: |
+              rustup target add wasm32-wasip1-threads
               wget https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
               tar -xvf wasi-sdk-25.0-x86_64-linux.tar.gz
             build: |
@@ -51,7 +52,7 @@ jobs:
               export CMAKE_BUILD_PARALLEL_LEVEL=2
               export TARGET_CXXFLAGS="--target=wasm32-wasi-threads --sysroot=$(pwd)/wasi-sdk-25.0-x86_64-linux/share/wasi-sysroot -pthread -mllvm -wasm-enable-sjlj -lsetjmp"
               export TARGET_CFLAGS="$TARGET_CXXFLAGS"
-              yarn build --target wasm32-wasip1-thread
+              yarn build --target wasm32-wasip1-threads
     name: stable - ${{ matrix.settings.target }} - node@20
     runs-on: ${{ matrix.settings.host }}
     steps:
@@ -108,7 +109,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: bindings-${{ matrix.settings.target }}
-          path: bindings/javascript/${{ env.APP_NAME }}.*.node
+          path: |
+            bindings/javascript/${{ env.APP_NAME }}.*.node
+            bindings/javascript/${{ env.APP_NAME }}.*.wasm
           if-no-files-found: error
   test-macOS-windows-binding:
     name: Test bindings on ${{ matrix.settings.target }} - node@${{ matrix.node }}
