@@ -1114,6 +1114,26 @@ impl Connection {
             return Ok(());
         }
         self.closed.set(true);
+
+        match self.transaction_state.get() {
+            TransactionState::Write { schema_did_change } => {
+                let _result = self.pager.borrow().end_tx(
+                    true, // rollback = true for close
+                    schema_did_change,
+                    self,
+                    self.wal_checkpoint_disabled.get(),
+                );
+                self.transaction_state.set(TransactionState::None);
+            }
+            TransactionState::Read => {
+                let _result = self.pager.borrow().end_read_tx();
+                self.transaction_state.set(TransactionState::None);
+            }
+            TransactionState::None => {
+                // No active transaction
+            }
+        }
+
         self.pager
             .borrow()
             .checkpoint_shutdown(self.wal_checkpoint_disabled.get())
