@@ -39,7 +39,7 @@ pub struct sqlite3 {
 }
 
 struct sqlite3Inner {
-    pub(crate) io: Arc<dyn turso_core::IO>,
+    pub(crate) _io: Arc<dyn turso_core::IO>,
     pub(crate) _db: Arc<turso_core::Database>,
     pub(crate) conn: Arc<turso_core::Connection>,
     pub(crate) err_code: ffi::c_int,
@@ -56,7 +56,7 @@ impl sqlite3 {
         conn: Arc<turso_core::Connection>,
     ) -> Self {
         let inner = sqlite3Inner {
-            io,
+            _io: io,
             _db: db,
             conn,
             err_code: SQLITE_OK,
