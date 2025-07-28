@@ -82,7 +82,6 @@ impl Text {
             subtype: TextSubtype::Text,
         }
     }
-
     #[cfg(feature = "json")]
     pub fn json(value: String) -> Self {
         Self {
@@ -93,6 +92,63 @@ impl Text {
 
     pub fn as_str(&self) -> &str {
         unsafe { std::str::from_utf8_unchecked(self.value.as_ref()) }
+    }
+}
+
+pub trait Extendable<T> {
+    fn do_extend(&mut self, other: &T);
+}
+
+impl<T: AnyText> Extendable<T> for Text {
+    fn do_extend(&mut self, other: &T) {
+        self.value.clear();
+        self.value.extend_from_slice(other.as_ref().as_bytes());
+        self.subtype = other.subtype();
+    }
+}
+
+impl<T: AnyBlob> Extendable<T> for Vec<u8> {
+    fn do_extend(&mut self, other: &T) {
+        self.clear();
+        self.extend_from_slice(other.as_slice());
+    }
+}
+
+pub trait AnyText: AsRef<str> {
+    fn subtype(&self) -> TextSubtype;
+}
+
+impl AsRef<str> for TextRef {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+impl AnyText for Text {
+    fn subtype(&self) -> TextSubtype {
+        self.subtype
+    }
+}
+
+impl AnyText for TextRef {
+    fn subtype(&self) -> TextSubtype {
+        self.subtype
+    }
+}
+
+pub trait AnyBlob {
+    fn as_slice(&self) -> &[u8];
+}
+
+impl AnyBlob for RawSlice {
+    fn as_slice(&self) -> &[u8] {
+        self.to_slice()
+    }
+}
+
+impl AnyBlob for Vec<u8> {
+    fn as_slice(&self) -> &[u8] {
+        self.as_slice()
     }
 }
 
