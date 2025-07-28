@@ -552,36 +552,38 @@ mod tests {
             }
         } // db and conn are dropped here, simulating closing
 
-        // Now, re-open the database and check if the data is still there
-        let db = Builder::new_local(db_path).build().await?;
-        let conn = db.connect()?;
+        {
+            // Now, re-open the database and check if the data is still there
+            let db = Builder::new_local(db_path).build().await?;
+            let conn = db.connect()?;
 
-        let mut rows = conn
-            .query("SELECT data FROM test_large_persistence ORDER BY id;", ())
-            .await?;
+            let mut rows = conn
+                .query("SELECT data FROM test_large_persistence ORDER BY id;", ())
+                .await?;
 
-        for (i, value) in original_data.iter().enumerate().take(NUM_INSERTS) {
-            let row = rows
-                .next()
-                .await?
-                .unwrap_or_else(|| panic!("Expected row {i} but found None"));
-            assert_eq!(
-                row.get_value(0)?,
-                Value::Text(value.clone()),
-                "Mismatch in retrieved data for row {i}"
+            for (i, value) in original_data.iter().enumerate().take(NUM_INSERTS) {
+                let row = rows
+                    .next()
+                    .await?
+                    .unwrap_or_else(|| panic!("Expected row {i} but found None"));
+                assert_eq!(
+                    row.get_value(0)?,
+                    Value::Text(value.clone()),
+                    "Mismatch in retrieved data for row {i}"
+                );
+            }
+
+            assert!(
+                rows.next().await?.is_none(),
+                "Expected no more rows after retrieving all inserted data"
             );
+
+            // Delete the WAL file only and try to re-open and query
+            let wal_path = format!("{db_path}-wal");
+            std::fs::remove_file(&wal_path)
+                .map_err(|e| eprintln!("Warning: Failed to delete WAL file for test: {e}"))
+                .unwrap();
         }
-
-        assert!(
-            rows.next().await?.is_none(),
-            "Expected no more rows after retrieving all inserted data"
-        );
-
-        // Delete the WAL file only and try to re-open and query
-        let wal_path = format!("{db_path}-wal");
-        std::fs::remove_file(&wal_path)
-            .map_err(|e| eprintln!("Warning: Failed to delete WAL file for test: {e}"))
-            .unwrap();
 
         // Attempt to re-open the database after deleting WAL and assert that table is missing.
         let db_after_wal_delete = Builder::new_local(db_path).build().await?;
