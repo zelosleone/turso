@@ -313,6 +313,10 @@ impl Schema {
 }
 
 impl Clone for Schema {
+    /// Cloning a `Schema` requires deep cloning of all internal tables and indexes, even though they are wrapped in `Arc`.
+    /// Simply copying the `Arc` pointers would result in multiple `Schema` instances sharing the same underlying tables and indexes,
+    /// which could lead to panics or data races if any instance attempts to modify them.
+    /// To ensure each `Schema` is independent and safe to modify, we clone the underlying data for all tables and indexes.
     fn clone(&self) -> Self {
         let tables = self
             .tables
