@@ -762,7 +762,7 @@ pub fn begin_read_page(
     buffer_pool: Arc<BufferPool>,
     page: PageRef,
     page_idx: usize,
-) -> Result<Arc<Completion>> {
+) -> Result<Completion> {
     tracing::trace!("begin_read_btree_page(page_idx = {})", page_idx);
     let buf = buffer_pool.get();
     let drop_fn = Rc::new(move |buf| {
@@ -813,7 +813,7 @@ pub fn begin_write_btree_page(
     pager: &Pager,
     page: &PageRef,
     write_counter: Rc<RefCell<usize>>,
-) -> Result<Arc<Completion>> {
+) -> Result<Completion> {
     tracing::trace!("begin_write_btree_page(page={})", page.get().id);
     let page_source = &pager.db_file;
     let page_finish = page.clone();
@@ -1575,7 +1575,7 @@ pub fn begin_read_wal_frame_raw(
     offset: usize,
     page_size: u32,
     complete: Box<dyn Fn(Arc<RefCell<Buffer>>, i32)>,
-) -> Result<Arc<Completion>> {
+) -> Result<Completion> {
     tracing::trace!("begin_read_wal_frame_raw(offset={})", offset);
     let drop_fn = Rc::new(|_buf| {});
     let buf = Arc::new(RefCell::new(Buffer::allocate(
@@ -1593,7 +1593,7 @@ pub fn begin_read_wal_frame(
     offset: usize,
     buffer_pool: Arc<BufferPool>,
     complete: Box<dyn Fn(Arc<RefCell<Buffer>>, i32)>,
-) -> Result<Arc<Completion>> {
+) -> Result<Completion> {
     tracing::trace!("begin_read_wal_frame(offset={})", offset);
     let buf = buffer_pool.get();
     let drop_fn = Rc::new(move |buf| {

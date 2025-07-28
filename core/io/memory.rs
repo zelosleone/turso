@@ -53,7 +53,7 @@ impl IO for MemoryIO {
         Ok(())
     }
 
-    fn wait_for_completion(&self, _c: Arc<Completion>) -> Result<()> {
+    fn wait_for_completion(&self, _c: Completion) -> Result<()> {
         todo!();
     }
 
@@ -83,7 +83,7 @@ impl File for MemoryFile {
         Ok(())
     }
 
-    fn pread(&self, pos: usize, c: Arc<Completion>) -> Result<Arc<Completion>> {
+    fn pread(&self, pos: usize, c: Completion) -> Result<Completion> {
         let r = c.as_read();
         let buf_len = r.buf().len();
         if buf_len == 0 {
@@ -128,8 +128,8 @@ impl File for MemoryFile {
         &self,
         pos: usize,
         buffer: Arc<RefCell<Buffer>>,
-        c: Arc<Completion>,
-    ) -> Result<Arc<Completion>> {
+        c: Completion,
+    ) -> Result<Completion> {
         let buf = buffer.borrow();
         let buf_len = buf.len();
         if buf_len == 0 {
@@ -165,7 +165,7 @@ impl File for MemoryFile {
         Ok(c)
     }
 
-    fn sync(&self, c: Arc<Completion>) -> Result<Arc<Completion>> {
+    fn sync(&self, c: Completion) -> Result<Completion> {
         // no-op
         c.complete(0);
         Ok(c)

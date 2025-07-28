@@ -43,7 +43,7 @@ impl IO for VfsMod {
         Ok(())
     }
 
-    fn wait_for_completion(&self, _c: Arc<Completion>) -> Result<()> {
+    fn wait_for_completion(&self, _c: Completion) -> Result<()> {
         todo!();
     }
 
@@ -97,7 +97,7 @@ impl File for VfsFileImpl {
         Ok(())
     }
 
-    fn pread(&self, pos: usize, c: Arc<Completion>) -> Result<Arc<Completion>> {
+    fn pread(&self, pos: usize, c: Completion) -> Result<Completion> {
         let r = c.as_read();
         let result = {
             let mut buf = r.buf_mut();
@@ -117,8 +117,8 @@ impl File for VfsFileImpl {
         &self,
         pos: usize,
         buffer: Arc<RefCell<Buffer>>,
-        c: Arc<Completion>,
-    ) -> Result<Arc<Completion>> {
+        c: Completion,
+    ) -> Result<Completion> {
         let buf = buffer.borrow();
         let count = buf.as_slice().len();
         if self.vfs.is_null() {
@@ -142,7 +142,7 @@ impl File for VfsFileImpl {
         }
     }
 
-    fn sync(&self, c: Arc<Completion>) -> Result<Arc<Completion>> {
+    fn sync(&self, c: Completion) -> Result<Completion> {
         let vfs = unsafe { &*self.vfs };
         let result = unsafe { (vfs.sync)(self.file) };
         if result < 0 {

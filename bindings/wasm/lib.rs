@@ -213,11 +213,7 @@ impl turso_core::File for File {
         Ok(())
     }
 
-    fn pread(
-        &self,
-        pos: usize,
-        c: Arc<turso_core::Completion>,
-    ) -> Result<Arc<turso_core::Completion>> {
+    fn pread(&self, pos: usize, c: turso_core::Completion) -> Result<turso_core::Completion> {
         let r = c.as_read();
         let nr = {
             let mut buf = r.buf_mut();
@@ -233,8 +229,8 @@ impl turso_core::File for File {
         &self,
         pos: usize,
         buffer: Arc<std::cell::RefCell<turso_core::Buffer>>,
-        c: Arc<turso_core::Completion>,
-    ) -> Result<Arc<turso_core::Completion>> {
+        c: turso_core::Completion,
+    ) -> Result<turso_core::Completion> {
         let w = c.as_write();
         let buf = buffer.borrow();
         let buf: &[u8] = buf.as_slice();
@@ -244,7 +240,7 @@ impl turso_core::File for File {
         Ok(c)
     }
 
-    fn sync(&self, c: Arc<turso_core::Completion>) -> Result<Arc<turso_core::Completion>> {
+    fn sync(&self, c: turso_core::Completion) -> Result<turso_core::Completion> {
         self.vfs.sync(self.fd);
         c.complete(0);
         #[allow(clippy::arc_with_non_send_sync)]
@@ -288,7 +284,7 @@ impl turso_core::IO for PlatformIO {
         }))
     }
 
-    fn wait_for_completion(&self, c: Arc<turso_core::Completion>) -> Result<()> {
+    fn wait_for_completion(&self, c: turso_core::Completion) -> Result<()> {
         while !c.is_completed() {
             self.run_once()?;
         }
@@ -342,7 +338,7 @@ impl turso_core::DatabaseStorage for DatabaseFile {
         &self,
         page_idx: usize,
         c: turso_core::Completion,
-    ) -> Result<Arc<turso_core::Completion>> {
+    ) -> Result<turso_core::Completion> {
         let r = c.as_read();
         let size = r.buf().len();
         assert!(page_idx > 0);
@@ -358,13 +354,13 @@ impl turso_core::DatabaseStorage for DatabaseFile {
         page_idx: usize,
         buffer: Arc<std::cell::RefCell<turso_core::Buffer>>,
         c: turso_core::Completion,
-    ) -> Result<Arc<turso_core::Completion>> {
+    ) -> Result<turso_core::Completion> {
         let size = buffer.borrow().len();
         let pos = (page_idx - 1) * size;
         self.file.pwrite(pos, buffer, c.into())
     }
 
-    fn sync(&self, c: turso_core::Completion) -> Result<Arc<turso_core::Completion>> {
+    fn sync(&self, c: turso_core::Completion) -> Result<turso_core::Completion> {
         self.file.sync(c.into())
     }
 

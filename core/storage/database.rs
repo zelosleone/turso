@@ -9,14 +9,14 @@ use tracing::{instrument, Level};
 /// the storage medium. A database can either be a file on disk, like in SQLite,
 /// or something like a remote page server service.
 pub trait DatabaseStorage: Send + Sync {
-    fn read_page(&self, page_idx: usize, c: Completion) -> Result<Arc<Completion>>;
+    fn read_page(&self, page_idx: usize, c: Completion) -> Result<Completion>;
     fn write_page(
         &self,
         page_idx: usize,
         buffer: Arc<RefCell<Buffer>>,
         c: Completion,
-    ) -> Result<Arc<Completion>>;
-    fn sync(&self, c: Completion) -> Result<Arc<Completion>>;
+    ) -> Result<Completion>;
+    fn sync(&self, c: Completion) -> Result<Completion>;
     fn size(&self) -> Result<u64>;
 }
 
@@ -33,7 +33,7 @@ unsafe impl Sync for DatabaseFile {}
 #[cfg(feature = "fs")]
 impl DatabaseStorage for DatabaseFile {
     #[instrument(skip_all, level = Level::DEBUG)]
-    fn read_page(&self, page_idx: usize, c: Completion) -> Result<Arc<Completion>> {
+    fn read_page(&self, page_idx: usize, c: Completion) -> Result<Completion> {
         let r = c.as_read();
         let size = r.buf().len();
         assert!(page_idx > 0);
@@ -50,7 +50,7 @@ impl DatabaseStorage for DatabaseFile {
         page_idx: usize,
         buffer: Arc<RefCell<Buffer>>,
         c: Completion,
-    ) -> Result<Arc<Completion>> {
+    ) -> Result<Completion> {
         let buffer_size = buffer.borrow().len();
         assert!(page_idx > 0);
         assert!(buffer_size >= 512);
@@ -61,7 +61,7 @@ impl DatabaseStorage for DatabaseFile {
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
-    fn sync(&self, c: Completion) -> Result<Arc<Completion>> {
+    fn sync(&self, c: Completion) -> Result<Completion> {
         self.file.sync(c.into())
     }
 
@@ -87,7 +87,7 @@ unsafe impl Sync for FileMemoryStorage {}
 
 impl DatabaseStorage for FileMemoryStorage {
     #[instrument(skip_all, level = Level::DEBUG)]
-    fn read_page(&self, page_idx: usize, c: Completion) -> Result<Arc<Completion>> {
+    fn read_page(&self, page_idx: usize, c: Completion) -> Result<Completion> {
         let r = c.as_read();
         let size = r.buf().len();
         assert!(page_idx > 0);
@@ -104,7 +104,7 @@ impl DatabaseStorage for FileMemoryStorage {
         page_idx: usize,
         buffer: Arc<RefCell<Buffer>>,
         c: Completion,
-    ) -> Result<Arc<Completion>> {
+    ) -> Result<Completion> {
         let buffer_size = buffer.borrow().len();
         assert!(buffer_size >= 512);
         assert!(buffer_size <= 65536);
@@ -114,7 +114,7 @@ impl DatabaseStorage for FileMemoryStorage {
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
-    fn sync(&self, c: Completion) -> Result<Arc<Completion>> {
+    fn sync(&self, c: Completion) -> Result<Completion> {
         self.file.sync(c.into())
     }
 

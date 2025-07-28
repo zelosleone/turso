@@ -209,7 +209,7 @@ pub trait Wal {
     fn read_frame(&self, frame_id: u64, page: PageRef, buffer_pool: Arc<BufferPool>) -> Result<()>;
 
     /// Read a raw frame (header included) from the WAL.
-    fn read_frame_raw(&self, frame_id: u64, frame: &mut [u8]) -> Result<Arc<Completion>>;
+    fn read_frame_raw(&self, frame_id: u64, frame: &mut [u8]) -> Result<Completion>;
 
     /// Write a raw frame (header included) from the WAL.
     /// Note, that turso-db will use page_no and size_after fields from the header, but will overwrite checksum with proper value
@@ -284,7 +284,7 @@ impl Wal for DummyWAL {
         Ok(())
     }
 
-    fn read_frame_raw(&self, _frame_id: u64, _frame: &mut [u8]) -> Result<Arc<Completion>> {
+    fn read_frame_raw(&self, _frame_id: u64, _frame: &mut [u8]) -> Result<Completion> {
         todo!();
     }
 
@@ -636,7 +636,7 @@ impl Wal for WalFile {
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
-    fn read_frame_raw(&self, frame_id: u64, frame: &mut [u8]) -> Result<Arc<Completion>> {
+    fn read_frame_raw(&self, frame_id: u64, frame: &mut [u8]) -> Result<Completion> {
         tracing::debug!("read_frame({})", frame_id);
         let offset = self.frame_offset(frame_id);
         let (frame_ptr, frame_len) = (frame.as_mut_ptr(), frame.len());
@@ -731,7 +731,7 @@ impl Wal for WalFile {
             db_size as u32,
             page,
         );
-        let c = Arc::new(Completion::new_write(|_| {}));
+        let c = Completion::new_write(|_| {});
         let c = shared.file.pwrite(offset, frame_bytes, c)?;
         self.io.wait_for_completion(c)?;
         self.complete_append_frame(page_id, frame_id, checksums);

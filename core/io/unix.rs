@@ -286,7 +286,7 @@ impl IO for UnixIO {
         Ok(())
     }
 
-    fn wait_for_completion(&self, c: Arc<Completion>) -> Result<()> {
+    fn wait_for_completion(&self, c: Completion) -> Result<()> {
         while !c.is_completed() {
             self.run_once()?;
         }
@@ -305,10 +305,10 @@ impl IO for UnixIO {
 }
 
 enum CompletionCallback {
-    Read(Arc<Mutex<std::fs::File>>, Arc<Completion>, usize),
+    Read(Arc<Mutex<std::fs::File>>, Completion, usize),
     Write(
         Arc<Mutex<std::fs::File>>,
-        Arc<Completion>,
+        Completion,
         Arc<RefCell<crate::Buffer>>,
         usize,
     ),
@@ -364,7 +364,7 @@ impl File for UnixFile<'_> {
     }
 
     #[instrument(err, skip_all, level = Level::TRACE)]
-    fn pread(&self, pos: usize, c: Arc<Completion>) -> Result<Arc<Completion>> {
+    fn pread(&self, pos: usize, c: Completion) -> Result<Completion> {
         let file = self.file.lock().unwrap();
         let result = {
             let r = c.as_read();
@@ -401,8 +401,8 @@ impl File for UnixFile<'_> {
         &self,
         pos: usize,
         buffer: Arc<RefCell<crate::Buffer>>,
-        c: Arc<Completion>,
-    ) -> Result<Arc<Completion>> {
+        c: Completion,
+    ) -> Result<Completion> {
         let file = self.file.lock().unwrap();
         let result = {
             let buf = buffer.borrow();
@@ -432,7 +432,7 @@ impl File for UnixFile<'_> {
     }
 
     #[instrument(err, skip_all, level = Level::TRACE)]
-    fn sync(&self, c: Arc<Completion>) -> Result<Arc<Completion>> {
+    fn sync(&self, c: Completion) -> Result<Completion> {
         let file = self.file.lock().unwrap();
         let result = fs::fsync(file.as_fd());
         match result {

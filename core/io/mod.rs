@@ -14,14 +14,10 @@ use std::{
 pub trait File: Send + Sync {
     fn lock_file(&self, exclusive: bool) -> Result<()>;
     fn unlock_file(&self) -> Result<()>;
-    fn pread(&self, pos: usize, c: Arc<Completion>) -> Result<Arc<Completion>>;
-    fn pwrite(
-        &self,
-        pos: usize,
-        buffer: Arc<RefCell<Buffer>>,
-        c: Arc<Completion>,
-    ) -> Result<Arc<Completion>>;
-    fn sync(&self, c: Arc<Completion>) -> Result<Arc<Completion>>;
+    fn pread(&self, pos: usize, c: Completion) -> Result<Completion>;
+    fn pwrite(&self, pos: usize, buffer: Arc<RefCell<Buffer>>, c: Completion)
+        -> Result<Completion>;
+    fn sync(&self, c: Completion) -> Result<Completion>;
     fn size(&self) -> Result<u64>;
 }
 
@@ -47,7 +43,7 @@ pub trait IO: Clock + Send + Sync {
 
     fn run_once(&self) -> Result<()>;
 
-    fn wait_for_completion(&self, c: Arc<Completion>) -> Result<()>;
+    fn wait_for_completion(&self, c: Completion) -> Result<()>;
 
     fn generate_random_number(&self) -> i64;
 
