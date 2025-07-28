@@ -1595,14 +1595,10 @@ pub fn op_column(
                 };
                 match (default, &mut state.registers[*dest]) {
                     (Value::Text(new_text), Register::Value(Value::Text(existing_text))) => {
-                        if !existing_text.maybe_extend(new_text) {
-                            state.registers[*dest] = Register::Value(default.clone());
-                        }
+                        existing_text.do_extend(new_text);
                     }
                     (Value::Blob(new_blob), Register::Value(Value::Blob(existing_blob))) => {
-                        if !existing_blob.maybe_extend(new_blob) {
-                            state.registers[*dest] = Register::Value(default.clone());
-                        }
+                        existing_blob.do_extend(new_blob);
                     }
                     _ => {
                         state.registers[*dest] = Register::Value(default.clone());
@@ -1615,16 +1611,10 @@ pub fn op_column(
             // Try to reuse the registers when allocation is not needed.
             match (&value, &mut state.registers[*dest]) {
                 (RefValue::Text(new_text), Register::Value(Value::Text(existing_text))) => {
-                    if !existing_text.maybe_extend(new_text) {
-                        state.registers[*dest] =
-                            Register::Value(Value::Text(Text::new(new_text.as_str())));
-                    }
+                    existing_text.do_extend(new_text);
                 }
                 (RefValue::Blob(new_blob), Register::Value(Value::Blob(existing_blob))) => {
-                    if !existing_blob.maybe_extend(new_blob) {
-                        state.registers[*dest] =
-                            Register::Value(Value::Blob(new_blob.to_slice().to_vec()));
-                    }
+                    existing_blob.do_extend(new_blob);
                 }
                 _ => {
                     state.registers[*dest] = Register::Value(match value {

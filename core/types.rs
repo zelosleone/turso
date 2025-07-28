@@ -96,31 +96,21 @@ impl Text {
 }
 
 pub trait Extendable<T> {
-    fn maybe_extend(&mut self, other: &T) -> bool;
+    fn do_extend(&mut self, other: &T);
 }
 
 impl<T: AnyText> Extendable<T> for Text {
-    fn maybe_extend(&mut self, other: &T) -> bool {
-        if self.value.capacity() >= other.as_ref().len() {
-            self.value.clear();
-            self.value.extend_from_slice(other.as_ref().as_bytes());
-            self.subtype = other.subtype();
-            true
-        } else {
-            false
-        }
+    fn do_extend(&mut self, other: &T) {
+        self.value.clear();
+        self.value.extend_from_slice(other.as_ref().as_bytes());
+        self.subtype = other.subtype();
     }
 }
 
 impl<T: AnyBlob> Extendable<T> for Vec<u8> {
-    fn maybe_extend(&mut self, other: &T) -> bool {
-        if self.capacity() >= other.as_slice().len() {
-            self.clear();
-            self.extend_from_slice(other.as_slice());
-            true
-        } else {
-            false
-        }
+    fn do_extend(&mut self, other: &T) {
+        self.clear();
+        self.extend_from_slice(other.as_slice());
     }
 }
 
