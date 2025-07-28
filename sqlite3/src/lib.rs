@@ -39,7 +39,7 @@ pub struct sqlite3 {
 }
 
 struct sqlite3Inner {
-    pub(crate) io: Arc<dyn turso_core::IO>,
+    pub(crate) _io: Arc<dyn turso_core::IO>,
     pub(crate) _db: Arc<turso_core::Database>,
     pub(crate) conn: Arc<turso_core::Connection>,
     pub(crate) err_code: ffi::c_int,
@@ -56,7 +56,7 @@ impl sqlite3 {
         conn: Arc<turso_core::Connection>,
     ) -> Self {
         let inner = sqlite3Inner {
-            io,
+            _io: io,
             _db: db,
             conn,
             err_code: SQLITE_OK,
@@ -1193,10 +1193,7 @@ pub unsafe extern "C" fn libsql_wal_get_frame(
     let db = db.inner.lock().unwrap();
     let frame = std::slice::from_raw_parts_mut(p_frame, frame_len as usize);
     match db.conn.wal_get_frame(frame_no, frame) {
-        Ok(c) => match db.io.wait_for_completion(c) {
-            Ok(_) => SQLITE_OK,
-            Err(_) => SQLITE_ERROR,
-        },
+        Ok(()) => SQLITE_OK,
         Err(_) => SQLITE_ERROR,
     }
 }
@@ -1233,7 +1230,7 @@ pub unsafe extern "C" fn libsql_wal_insert_frame(
     let db = db.inner.lock().unwrap();
     let frame = std::slice::from_raw_parts(p_frame, frame_len as usize);
     match db.conn.wal_insert_frame(frame_no, frame) {
-        Ok(()) => SQLITE_OK,
+        Ok(_) => SQLITE_OK,
         Err(LimboError::Conflict(..)) => {
             if !p_conflict.is_null() {
                 *p_conflict = 1;

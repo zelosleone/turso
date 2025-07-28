@@ -7,7 +7,7 @@ use crate::storage::sqlite3_ondisk::{
     self, parse_wal_frame_header, DatabaseHeader, PageContent, PageType,
 };
 use crate::storage::wal::{CheckpointResult, Wal};
-use crate::types::IOResult;
+use crate::types::{IOResult, WalInsertInfo};
 use crate::util::IOExt as _;
 use crate::{return_if_io, Completion};
 use crate::{turso_assert, Buffer, Connection, LimboError, Result};
@@ -1173,7 +1173,7 @@ impl Pager {
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
-    pub fn wal_insert_frame(&self, frame_no: u32, frame: &[u8]) -> Result<()> {
+    pub fn wal_insert_frame(&self, frame_no: u32, frame: &[u8]) -> Result<WalInsertInfo> {
         let mut wal = self.wal.borrow_mut();
         let (header, raw_page) = parse_wal_frame_header(frame);
         wal.write_frame_raw(
@@ -1201,7 +1201,10 @@ impl Pager {
             }
             self.dirty_pages.borrow_mut().clear();
         }
-        Ok(())
+        Ok(WalInsertInfo {
+            page_no: header.page_number as usize,
+            is_commit: header.is_commit_frame(),
+        })
     }
 
     #[instrument(skip_all, level = Level::DEBUG, name = "pager_checkpoint",)]

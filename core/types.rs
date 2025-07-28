@@ -2435,6 +2435,12 @@ impl RawSlice {
     }
 }
 
+#[derive(Debug)]
+pub struct WalInsertInfo {
+    pub page_no: usize,
+    pub is_commit: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

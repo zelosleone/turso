@@ -37,11 +37,12 @@ pub mod transaction;
 pub mod value;
 
 use transaction::TransactionBehavior;
+use turso_core::types::WalInsertInfo;
 pub use value::Value;
 
 pub use params::params_from_iter;
+pub use params::IntoParams;
 
-use crate::params::*;
 use std::fmt::Debug;
 use std::num::NonZero;
 use std::sync::{Arc, Mutex};
@@ -54,6 +55,8 @@ pub enum Error {
     MutexError(String),
     #[error("SQL execution failure: `{0}`")]
     SqlExecutionFailure(String),
+    #[error("WAL operation error: `{0}`")]
+    WalOperationError(String),
 }
 
 impl From<turso_core::LimboError> for Error {
@@ -168,6 +171,51 @@ impl Connection {
     pub async fn execute(&self, sql: &str, params: impl IntoParams) -> Result<u64> {
         let mut stmt = self.prepare(sql).await?;
         stmt.execute(params).await
+    }
+
+    pub fn wal_frame_count(&self) -> Result<u64> {
+        let conn = self
+            .inner
+            .lock()
+            .map_err(|e| Error::MutexError(e.to_string()))?;
+        conn.wal_frame_count()
+            .map_err(|e| Error::WalOperationError(format!("wal_insert_begin failed: {e}")))
+    }
+
+    pub fn wal_insert_begin(&self) -> Result<()> {
+        let conn = self
+            .inner
+            .lock()
+            .map_err(|e| Error::MutexError(e.to_string()))?;
+        conn.wal_insert_begin()
+            .map_err(|e| Error::WalOperationError(format!("wal_insert_begin failed: {e}")))
+    }
+
+    pub fn wal_insert_end(&self) -> Result<()> {
+        let conn = self
+            .inner
+            .lock()
+            .map_err(|e| Error::MutexError(e.to_string()))?;
+        conn.wal_insert_end()
+            .map_err(|e| Error::WalOperationError(format!("wal_insert_end failed: {e}")))
+    }
+
+    pub fn wal_insert_frame(&self, frame_no: u32, frame: &[u8]) -> Result<WalInsertInfo> {
+        let conn = self
+            .inner
+            .lock()
+            .map_err(|e| Error::MutexError(e.to_string()))?;
+        conn.wal_insert_frame(frame_no, frame)
+            .map_err(|e| Error::WalOperationError(format!("wal_insert_frame failed: {e}")))
+    }
+
+    pub fn wal_get_frame(&self, frame_no: u32, frame: &mut [u8]) -> Result<()> {
+        let conn = self
+            .inner
+            .lock()
+            .map_err(|e| Error::MutexError(e.to_string()))?;
+        conn.wal_get_frame(frame_no, frame)
+            .map_err(|e| Error::WalOperationError(format!("wal_insert_frame failed: {e}")))
     }
 
     /// Prepare a SQL statement for later execution.
@@ -350,6 +398,12 @@ impl Statement {
         }
 
         cols
+    }
+
+    /// Reset internal statement state after previous execution so it can be reused again
+    pub fn reset(&self) {
+        let mut stmt = self.inner.lock().unwrap();
+        stmt.reset();
     }
 }
 
