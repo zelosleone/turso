@@ -10,6 +10,7 @@ use fallible_iterator::FallibleIterator;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
+use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::Arc;
 use tracing::trace;
@@ -22,7 +23,7 @@ use turso_sqlite3_parser::{
 const SCHEMA_TABLE_NAME: &str = "sqlite_schema";
 const SCHEMA_TABLE_NAME_ALT: &str = "sqlite_master";
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Schema {
     pub tables: HashMap<String, Arc<Table>>,
     /// table_name to list of indexes for the table
@@ -308,6 +309,50 @@ impl Schema {
         }
 
         Ok(())
+    }
+}
+
+impl Clone for Schema {
+    fn clone(&self) -> Self {
+        let tables = self
+            .tables
+            .iter()
+            .map(|(name, table)| match table.deref() {
+                Table::BTree(table) => {
+                    let table = Rc::deref(table);
+                    (name.clone(), Arc::new(Table::BTree(Rc::new(table.clone()))))
+                }
+                Table::Virtual(table) => {
+                    let table = Rc::deref(table);
+                    (
+                        name.clone(),
+                        Arc::new(Table::Virtual(Rc::new(table.clone()))),
+                    )
+                }
+                Table::FromClauseSubquery(from_clause_subquery) => (
+                    name.clone(),
+                    Arc::new(Table::FromClauseSubquery(from_clause_subquery.clone())),
+                ),
+            })
+            .collect();
+        let indexes = self
+            .indexes
+            .iter()
+            .map(|(name, indexes)| {
+                let indexes = indexes
+                    .iter()
+                    .map(|index| Arc::new((**index).clone()))
+                    .collect();
+                (name.clone(), indexes)
+            })
+            .collect();
+        Self {
+            tables,
+            indexes,
+            has_indexes: self.has_indexes.clone(),
+            indexes_enabled: self.indexes_enabled,
+            schema_version: self.schema_version,
+        }
     }
 }
 
@@ -1135,7 +1180,7 @@ pub fn sqlite_schema_table() -> BTreeTable {
 }
 
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Index {
     pub name: String,
     pub table_name: String,
