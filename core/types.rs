@@ -2323,6 +2323,7 @@ impl Cursor {
 }
 
 #[derive(Debug)]
+#[must_use]
 pub enum IOResult<T> {
     Done(T),
     IO,
