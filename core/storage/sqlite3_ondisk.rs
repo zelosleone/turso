@@ -1683,7 +1683,10 @@ pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<
         Arc::new(RefCell::new(buffer))
     };
 
+    let cloned = buffer.clone();
     let write_complete = move |bytes_written: i32| {
+        // make sure to reference buffer so it's alive for async IO
+        let _buf = cloned.borrow();
         turso_assert!(
             bytes_written == WAL_HEADER_SIZE as i32,
             "wal header wrote({bytes_written}) != expected({WAL_HEADER_SIZE})"
