@@ -355,6 +355,7 @@ mod tests {
                     ),
                     SQLITE_OK
                 );
+                assert_eq!(sqlite3_close(db), SQLITE_OK);
             }
             let mut wal_path = temp_file.path().to_path_buf();
             assert!(wal_path.set_extension("db-wal"));
@@ -380,6 +381,7 @@ mod tests {
                         assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
                         assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
                     }
+                    assert_eq!(sqlite3_close(db), SQLITE_OK);
                 }
             }
 
@@ -459,6 +461,7 @@ mod tests {
                     ),
                     SQLITE_OK
                 );
+                assert_eq!(sqlite3_close(db), SQLITE_OK);
             }
             let mut wal_path = temp_file.path().to_path_buf();
             assert!(wal_path.set_extension("db-wal"));
@@ -483,6 +486,7 @@ mod tests {
                         assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
                         assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
                     }
+                    assert_eq!(sqlite3_close(db), SQLITE_OK);
                 }
             }
 

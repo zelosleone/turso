@@ -74,7 +74,7 @@ use std::{
     num::NonZero,
     ops::Deref,
     rc::Rc,
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex, Weak},
 };
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
@@ -110,6 +110,15 @@ pub(crate) type MvStore = mvcc::MvStore<mvcc::LocalClock>;
 
 pub(crate) type MvCursor = mvcc::cursor::ScanCursor<mvcc::LocalClock>;
 
+/// The database manager ensures that there is a single, shared
+/// `Database` object per a database file. We need because it is not safe
+/// to have multiple independent WAL files open because coordination
+/// happens at process-level POSIX file advisory locks.
+static DATABASE_MANAGER: LazyLock<Mutex<HashMap<String, Weak<Database>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The `Database` object contains per database file state that is shared
+/// between multiple connections.
 pub struct Database {
     mv_store: Option<Rc<MvStore>>,
     schema: Mutex<Arc<Schema>>,
@@ -220,6 +229,34 @@ impl Database {
 
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn open_with_flags(
+        io: Arc<dyn IO>,
+        path: &str,
+        db_file: Arc<dyn DatabaseStorage>,
+        flags: OpenFlags,
+        enable_mvcc: bool,
+        enable_indexes: bool,
+    ) -> Result<Arc<Database>> {
+        if path == ":memory:" {
+            return Self::do_open_with_flags(io, path, db_file, flags, enable_mvcc, enable_indexes);
+        }
+
+        let mut registry = DATABASE_MANAGER.lock().unwrap();
+
+        let canonical_path = std::fs::canonicalize(path)
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| path.to_string());
+
+        if let Some(db) = registry.get(&canonical_path).and_then(Weak::upgrade) {
+            return Ok(db);
+        }
+        let db = Self::do_open_with_flags(io, path, db_file, flags, enable_mvcc, enable_indexes)?;
+        registry.insert(canonical_path, Arc::downgrade(&db));
+        Ok(db)
+    }
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    fn do_open_with_flags(
         io: Arc<dyn IO>,
         path: &str,
         db_file: Arc<dyn DatabaseStorage>,
@@ -1117,6 +1154,26 @@ impl Connection {
             return Ok(());
         }
         self.closed.set(true);
+
+        match self.transaction_state.get() {
+            TransactionState::Write { schema_did_change } => {
+                let _result = self.pager.borrow().end_tx(
+                    true, // rollback = true for close
+                    schema_did_change,
+                    self,
+                    self.wal_checkpoint_disabled.get(),
+                );
+                self.transaction_state.set(TransactionState::None);
+            }
+            TransactionState::Read => {
+                let _result = self.pager.borrow().end_read_tx();
+                self.transaction_state.set(TransactionState::None);
+            }
+            TransactionState::None => {
+                // No active transaction
+            }
+        }
+
         self.pager
             .borrow()
             .checkpoint_shutdown(self.wal_checkpoint_disabled.get())
