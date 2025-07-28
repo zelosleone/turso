@@ -1815,6 +1815,7 @@ impl Pager {
             in_flight_writes: Rc::new(RefCell::new(0)),
             dirty_pages: Vec::new(),
         });
+        self.allocate_page_state.replace(AllocatePageState::Start);
     }
 }
 
