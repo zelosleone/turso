@@ -814,7 +814,7 @@ pub fn begin_write_btree_page(
     pager: &Pager,
     page: &PageRef,
     write_counter: Rc<RefCell<usize>>,
-) -> Result<()> {
+) -> Result<Arc<Completion>> {
     tracing::trace!("begin_write_btree_page(page={})", page.get().id);
     let page_source = &pager.db_file;
     let page_finish = page.clone();

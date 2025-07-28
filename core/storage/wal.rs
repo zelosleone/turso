@@ -914,7 +914,7 @@ impl Wal for WalFile {
                 }
                 CheckpointState::WritePage => {
                     self.ongoing_checkpoint.page.set_dirty();
-                    begin_write_btree_page(
+                    let c = begin_write_btree_page(
                         pager,
                         &self.ongoing_checkpoint.page,
                         write_counter.clone(),
