@@ -40,7 +40,7 @@ Turso Database is a _work-in-progress_, in-process OLTP database engine library 
   * [Java](bindings/java)
   * [Python](bindings/python)
   * [Rust](bindings/rust)
-  * [WebAssembly](bindings/wasm)
+  * [WebAssembly](bindings/javascript)
 * **Asynchronous I/O** support on Linux with `io_uring`
 * **OS support** for Linux, macOS, and Windows
 

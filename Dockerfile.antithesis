@@ -18,7 +18,6 @@ COPY ./bindings/java ./bindings/java/
 COPY ./bindings/javascript ./bindings/javascript/
 COPY ./bindings/python ./bindings/python/
 COPY ./bindings/rust ./bindings/rust/
-COPY ./bindings/wasm ./bindings/wasm/
 COPY ./cli ./cli/
 COPY ./core ./core/
 COPY ./extensions ./extensions/
@@ -35,7 +34,7 @@ RUN cargo chef prepare --bin turso_stress --recipe-path recipe.json
 # Build the project.
 #
 
-FROM chef AS builder 
+FROM chef AS builder
 
 ARG antithesis=true
 
@@ -62,7 +61,6 @@ COPY --from=planner /app/bindings/go ./bindings/go/
 COPY --from=planner /app/bindings/javascript ./bindings/javascript/
 COPY --from=planner /app/bindings/java ./bindings/java/
 COPY --from=planner /app/bindings/python ./bindings/python/
-COPY --from=planner /app/bindings/wasm ./bindings/wasm/
 COPY --from=planner /app/core ./core/
 COPY --from=planner /app/extensions ./extensions/
 COPY --from=planner /app/macros ./macros/
@@ -97,7 +95,7 @@ COPY --from=builder /app/target/antithesis/turso_stress /symbols
 COPY stress/docker-entrypoint.sh /bin
 RUN chmod +x /bin/docker-entrypoint.sh
 
-COPY --from=builder /app/target/wheels/* /tmp 
+COPY --from=builder /app/target/wheels/* /tmp
 RUN pip install /tmp/*.whl
 
 WORKDIR /app
