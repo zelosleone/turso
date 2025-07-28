@@ -1,5 +1,4 @@
 use crate::error::LimboError;
-use crate::io::CompletionType;
 use crate::{io::Completion, Buffer, Result};
 use std::{cell::RefCell, sync::Arc};
 use tracing::{instrument, Level};
@@ -89,10 +88,7 @@ unsafe impl Sync for FileMemoryStorage {}
 impl DatabaseStorage for FileMemoryStorage {
     #[instrument(skip_all, level = Level::DEBUG)]
     fn read_page(&self, page_idx: usize, c: Completion) -> Result<Arc<Completion>> {
-        let r = match c.completion_type {
-            CompletionType::Read(ref r) => r,
-            _ => unreachable!(),
-        };
+        let r = c.as_read();
         let size = r.buf().len();
         assert!(page_idx > 0);
         if !(512..=65536).contains(&size) || size & (size - 1) != 0 {

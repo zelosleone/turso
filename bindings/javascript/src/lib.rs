@@ -695,10 +695,7 @@ impl turso_core::DatabaseStorage for DatabaseFile {
         page_idx: usize,
         c: turso_core::Completion,
     ) -> turso_core::Result<Arc<turso_core::Completion>> {
-        let r = match c.completion_type {
-            turso_core::CompletionType::Read(ref r) => r,
-            _ => unreachable!(),
-        };
+        let r = c.as_read();
         let size = r.buf().len();
         assert!(page_idx > 0);
         if !(512..=65536).contains(&size) || size & (size - 1) != 0 {

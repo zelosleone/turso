@@ -218,10 +218,7 @@ impl turso_core::File for File {
         pos: usize,
         c: Arc<turso_core::Completion>,
     ) -> Result<Arc<turso_core::Completion>> {
-        let r = match c.completion_type {
-            turso_core::CompletionType::Read(ref r) => r,
-            _ => unreachable!(),
-        };
+        let r = c.as_read();
         let nr = {
             let mut buf = r.buf_mut();
             let buf: &mut [u8] = buf.as_mut_slice();
@@ -238,10 +235,7 @@ impl turso_core::File for File {
         buffer: Arc<std::cell::RefCell<turso_core::Buffer>>,
         c: Arc<turso_core::Completion>,
     ) -> Result<Arc<turso_core::Completion>> {
-        let w = match c.completion_type {
-            turso_core::CompletionType::Write(ref w) => w,
-            _ => unreachable!(),
-        };
+        let w = c.as_write();
         let buf = buffer.borrow();
         let buf: &[u8] = buf.as_slice();
         self.vfs.pwrite(self.fd, buf, pos);
@@ -349,10 +343,7 @@ impl turso_core::DatabaseStorage for DatabaseFile {
         page_idx: usize,
         c: turso_core::Completion,
     ) -> Result<Arc<turso_core::Completion>> {
-        let r = match c.completion_type {
-            turso_core::CompletionType::Read(ref r) => r,
-            _ => unreachable!(),
-        };
+        let r = c.as_read();
         let size = r.buf().len();
         assert!(page_idx > 0);
         if !(512..=65536).contains(&size) || size & (size - 1) != 0 {

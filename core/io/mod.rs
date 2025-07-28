@@ -58,7 +58,13 @@ pub type Complete = dyn Fn(Arc<RefCell<Buffer>>, i32);
 pub type WriteComplete = dyn Fn(i32);
 pub type SyncComplete = dyn Fn(i32);
 
+#[must_use]
+#[derive(Clone)]
 pub struct Completion {
+    inner: Arc<CompletionInner>,
+}
+
+struct CompletionInner {
     pub completion_type: CompletionType,
     is_completed: Cell<bool>,
 }
@@ -77,8 +83,10 @@ pub struct ReadCompletion {
 impl Completion {
     pub fn new(completion_type: CompletionType) -> Self {
         Self {
-            completion_type,
-            is_completed: Cell::new(false),
+            inner: Arc::new(CompletionInner {
+                completion_type,
+                is_completed: Cell::new(false),
+            }),
         }
     }
 
@@ -110,23 +118,32 @@ impl Completion {
     }
 
     pub fn is_completed(&self) -> bool {
-        self.is_completed.get()
+        self.inner.is_completed.get()
     }
 
     pub fn complete(&self, result: i32) {
-        match &self.completion_type {
+        match &self.inner.completion_type {
             CompletionType::Read(r) => r.complete(result),
             CompletionType::Write(w) => w.complete(result),
             CompletionType::Sync(s) => s.complete(result), // fix
         };
-        self.is_completed.set(true);
+        self.inner.is_completed.set(true);
     }
 
     /// only call this method if you are sure that the completion is
     /// a ReadCompletion, panics otherwise
     pub fn as_read(&self) -> &ReadCompletion {
-        match self.completion_type {
+        match self.inner.completion_type {
             CompletionType::Read(ref r) => r,
+            _ => unreachable!(),
+        }
+    }
+
+    /// only call this method if you are sure that the completion is
+    /// a WriteCompletion, panics otherwise
+    pub fn as_write(&self) -> &WriteCompletion {
+        match self.inner.completion_type {
+            CompletionType::Write(ref w) => w,
             _ => unreachable!(),
         }
     }

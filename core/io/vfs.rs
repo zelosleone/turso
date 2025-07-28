@@ -1,7 +1,6 @@
 use super::{Buffer, Completion, File, MemoryIO, OpenFlags, IO};
 use crate::ext::VfsMod;
 use crate::io::clock::{Clock, Instant};
-use crate::io::CompletionType;
 use crate::{LimboError, Result};
 use std::cell::RefCell;
 use std::ffi::{c_void, CString};
@@ -99,10 +98,7 @@ impl File for VfsFileImpl {
     }
 
     fn pread(&self, pos: usize, c: Arc<Completion>) -> Result<Arc<Completion>> {
-        let r = match c.completion_type {
-            CompletionType::Read(ref r) => r,
-            _ => unreachable!(),
-        };
+        let r = c.as_read();
         let result = {
             let mut buf = r.buf_mut();
             let count = buf.len();
