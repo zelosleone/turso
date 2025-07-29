@@ -2443,7 +2443,7 @@ impl BTreeCursor {
                     }
 
                     if !self.stack.has_parent() {
-                        self.balance_root()?;
+                        let res = self.balance_root()?;
                     }
 
                     let write_info = self.state.mut_write_info().unwrap();
@@ -5256,7 +5256,8 @@ impl BTreeCursor {
                     let new_payload = &mut *new_payload;
                     // if it all fits in local space and old_local_size is enough, do an in-place overwrite
                     if new_payload.len() == *old_local_size {
-                        self.overwrite_content(page_ref.clone(), *old_offset, new_payload)?;
+                        let res =
+                            self.overwrite_content(page_ref.clone(), *old_offset, new_payload)?;
                         return Ok(IOResult::Done(()));
                     }
 
@@ -7751,7 +7752,7 @@ mod tests {
             tracing::info!("seed: {seed}");
             for i in 0..inserts {
                 pager.begin_read_tx().unwrap();
-                pager.begin_write_tx().unwrap();
+                let res = pager.begin_write_tx().unwrap();
                 let key = {
                     let result;
                     loop {
@@ -7921,7 +7922,7 @@ mod tests {
             for i in 0..operations {
                 let print_progress = i % 100 == 0;
                 pager.begin_read_tx().unwrap();
-                pager.begin_write_tx().unwrap();
+                let res = pager.begin_write_tx().unwrap();
 
                 // Decide whether to insert or delete (80% chance of insert)
                 let is_insert = rng.next_u64() % 100 < (insert_chance * 100.0) as u64;
@@ -8302,7 +8303,7 @@ mod tests {
 
         let _ = run_until_done(|| pager.allocate_page1(), &pager);
         for _ in 0..(database_size - 1) {
-            pager.allocate_page().unwrap();
+            let res = pager.allocate_page().unwrap();
         }
 
         header_accessor::set_page_size(&pager, page_size).unwrap();
@@ -8334,7 +8335,7 @@ mod tests {
             )));
             let c = Completion::new_write(|_| {});
             #[allow(clippy::arc_with_non_send_sync)]
-            pager
+            let c = pager
                 .db_file
                 .write_page(current_page as usize, buf.clone(), c)?;
             pager.io.run_once()?;

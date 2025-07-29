@@ -33,7 +33,7 @@ impl IO for WindowsIO {
     }
 
     #[instrument(err, skip_all, level = Level::TRACE)]
-    fn wait_for_completion(&self, c: Arc<Completion>) -> Result<()> {
+    fn wait_for_completion(&self, c: Completion) -> Result<()> {
         while !c.is_completed() {
             self.run_once()?;
         }
@@ -84,7 +84,7 @@ impl File for WindowsFile {
     }
 
     #[instrument(skip(self, c), level = Level::TRACE)]
-    fn pread(&self, pos: usize, c: Arc<Completion>) -> Result<Arc<Completion>> {
+    fn pread(&self, pos: usize, c: Completion) -> Result<Completion> {
         let mut file = self.file.write();
         file.seek(std::io::SeekFrom::Start(pos as u64))?;
         let nr = {
@@ -103,8 +103,8 @@ impl File for WindowsFile {
         &self,
         pos: usize,
         buffer: Arc<RefCell<crate::Buffer>>,
-        c: Arc<Completion>,
-    ) -> Result<Arc<Completion>> {
+        c: Completion,
+    ) -> Result<Completion> {
         let mut file = self.file.write();
         file.seek(std::io::SeekFrom::Start(pos as u64))?;
         let buf = buffer.borrow();
@@ -115,7 +115,7 @@ impl File for WindowsFile {
     }
 
     #[instrument(err, skip_all, level = Level::TRACE)]
-    fn sync(&self, c: Arc<Completion>) -> Result<Arc<Completion>> {
+    fn sync(&self, c: Completion) -> Result<Completion> {
         let file = self.file.write();
         file.sync_all().map_err(LimboError::IOError)?;
         c.complete(0);

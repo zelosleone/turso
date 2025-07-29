@@ -762,7 +762,7 @@ pub fn begin_read_page(
     buffer_pool: Arc<BufferPool>,
     page: PageRef,
     page_idx: usize,
-) -> Result<()> {
+) -> Result<Completion> {
     tracing::trace!("begin_read_btree_page(page_idx = {})", page_idx);
     let buf = buffer_pool.get();
     let drop_fn = Rc::new(move |buf| {
@@ -783,8 +783,7 @@ pub fn begin_read_page(
         }
     });
     let c = Completion::new_read(buf, complete);
-    db_file.read_page(page_idx, c)?;
-    Ok(())
+    db_file.read_page(page_idx, c)
 }
 
 #[instrument(skip_all, level = Level::INFO)]
@@ -814,7 +813,7 @@ pub fn begin_write_btree_page(
     pager: &Pager,
     page: &PageRef,
     write_counter: Rc<RefCell<usize>>,
-) -> Result<()> {
+) -> Result<Completion> {
     tracing::trace!("begin_write_btree_page(page={})", page.get().id);
     let page_source = &pager.db_file;
     let page_finish = page.clone();
@@ -861,7 +860,7 @@ pub fn begin_sync(db_file: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>)
         *syncing.borrow_mut() = false;
     });
     #[allow(clippy::arc_with_non_send_sync)]
-    db_file.sync(completion)?;
+    let c = db_file.sync(completion)?;
     Ok(())
 }
 
@@ -1566,7 +1565,7 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
         wfs_data.loaded.store(true, Ordering::SeqCst);
     });
     let c = Completion::new_read(buf_for_pread, complete);
-    file.pread(0, c.into())?;
+    let c = file.pread(0, c)?;
 
     Ok(wal_file_shared_ret)
 }
@@ -1576,7 +1575,7 @@ pub fn begin_read_wal_frame_raw(
     offset: usize,
     page_size: u32,
     complete: Box<dyn Fn(Arc<RefCell<Buffer>>, i32)>,
-) -> Result<Arc<Completion>> {
+) -> Result<Completion> {
     tracing::trace!("begin_read_wal_frame_raw(offset={})", offset);
     let drop_fn = Rc::new(|_buf| {});
     let buf = Arc::new(RefCell::new(Buffer::allocate(
@@ -1585,7 +1584,7 @@ pub fn begin_read_wal_frame_raw(
     )));
     #[allow(clippy::arc_with_non_send_sync)]
     let c = Completion::new_read(buf, complete);
-    let c = io.pread(offset, c.into())?;
+    let c = io.pread(offset, c)?;
     Ok(c)
 }
 
@@ -1594,7 +1593,7 @@ pub fn begin_read_wal_frame(
     offset: usize,
     buffer_pool: Arc<BufferPool>,
     complete: Box<dyn Fn(Arc<RefCell<Buffer>>, i32)>,
-) -> Result<Arc<Completion>> {
+) -> Result<Completion> {
     tracing::trace!("begin_read_wal_frame(offset={})", offset);
     let buf = buffer_pool.get();
     let drop_fn = Rc::new(move |buf| {
@@ -1604,7 +1603,7 @@ pub fn begin_read_wal_frame(
     let buf = Arc::new(RefCell::new(Buffer::new(buf, drop_fn)));
     #[allow(clippy::arc_with_non_send_sync)]
     let c = Completion::new_read(buf, complete);
-    let c = io.pread(offset, c.into())?;
+    let c = io.pread(offset, c)?;
     Ok(c)
 }
 
@@ -1694,7 +1693,7 @@ pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<
     };
     #[allow(clippy::arc_with_non_send_sync)]
     let c = Completion::new_write(write_complete);
-    io.pwrite(0, buffer.clone(), c.into())?;
+    let c = io.pwrite(0, buffer.clone(), c)?;
     Ok(())
 }
 

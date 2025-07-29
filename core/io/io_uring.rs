@@ -1,6 +1,6 @@
 #![allow(clippy::arc_with_non_send_sync)]
 
-use super::{common, Completion, File, OpenFlags, IO};
+use super::{common, Completion, CompletionInner, File, OpenFlags, IO};
 use crate::io::clock::{Clock, Instant};
 use crate::{turso_assert, LimboError, MemoryIO, Result};
 use rustix::fs::{self, FlockOperation, OFlags};
@@ -168,7 +168,7 @@ impl IO for UringIO {
         Ok(uring_file)
     }
 
-    fn wait_for_completion(&self, c: Arc<Completion>) -> Result<()> {
+    fn wait_for_completion(&self, c: Completion) -> Result<()> {
         while !c.is_completed() {
             self.run_once()?;
         }
@@ -225,14 +225,15 @@ impl Clock for UringIO {
 #[inline(always)]
 /// use the callback pointer as the user_data for the operation as is
 /// common practice for io_uring to prevent more indirection
-fn get_key(c: Arc<Completion>) -> u64 {
-    Arc::into_raw(c) as u64
+fn get_key(c: Completion) -> u64 {
+    Arc::into_raw(c.inner) as u64
 }
 
 #[inline(always)]
-/// convert the user_data back to an Arc<Completion> pointer
-fn completion_from_key(key: u64) -> Arc<Completion> {
-    unsafe { Arc::from_raw(key as *const Completion) }
+/// convert the user_data back to an Completion pointer
+fn completion_from_key(key: u64) -> Completion {
+    let c_inner = unsafe { Arc::from_raw(key as *const CompletionInner) };
+    Completion { inner: c_inner }
 }
 
 pub struct UringFile {
@@ -297,7 +298,7 @@ impl File for UringFile {
         Ok(())
     }
 
-    fn pread(&self, pos: usize, c: Arc<Completion>) -> Result<Arc<Completion>> {
+    fn pread(&self, pos: usize, c: Completion) -> Result<Completion> {
         let r = c.as_read();
         trace!("pread(pos = {}, length = {})", pos, r.buf().len());
         let mut io = self.io.borrow_mut();
@@ -320,8 +321,8 @@ impl File for UringFile {
         &self,
         pos: usize,
         buffer: Arc<RefCell<crate::Buffer>>,
-        c: Arc<Completion>,
-    ) -> Result<Arc<Completion>> {
+        c: Completion,
+    ) -> Result<Completion> {
         let mut io = self.io.borrow_mut();
         let write = {
             let buf = buffer.borrow();
@@ -337,7 +338,7 @@ impl File for UringFile {
         Ok(c)
     }
 
-    fn sync(&self, c: Arc<Completion>) -> Result<Arc<Completion>> {
+    fn sync(&self, c: Completion) -> Result<Completion> {
         let mut io = self.io.borrow_mut();
         trace!("sync()");
         let sync = with_fd!(self, |fd| {
