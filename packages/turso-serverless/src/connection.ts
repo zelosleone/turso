@@ -17,6 +17,9 @@ export class Connection {
   private session: Session;
 
   constructor(config: Config) {
+    if (!config.url) {
+      throw new Error("invalid config: url is required");
+    }
     this.config = config;
     this.session = new Session(config);
   }
