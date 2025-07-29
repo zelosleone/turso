@@ -8,8 +8,10 @@
   "description": "The Turso database library",
   "main": "wrapper.js",
   "files": [
-    "wrapper.js",
-    "browser.js"
+    "browser.js",
+    "index.js",
+    "sqlite-error.js",
+    "wrapper.js"
   ],
   "types": "index.d.ts",
   "napi": {
