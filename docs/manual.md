@@ -21,7 +21,7 @@ Welcome to Turso database manual!
   * [`ROLLBACK TRANSACTION` — abort the current transaction](#rollback-transaction--abort-the-current-transaction)
   * [`SELECT` — retrieve rows from a table](#select--retrieve-rows-from-a-table)
   * [`UPDATE` — update rows of a table](#update--update-rows-of-a-table)
-* [JavaScript API)(#javascript-api)
+* [JavaScript API](#javascript-api)
 * [SQLite C API](#sqlite-c-api)
   * [WAL manipulation](#wal-manipulation)
     * [`libsql_wal_frame_count`](#libsql_wal_frame_count)
