@@ -53,7 +53,7 @@ export class Connection {
    * console.log(result.rows);
    * ```
    */
-  async execute(sql: string, args: any[] = []): Promise<any> {
+  async exec(sql: string, args: any[] = []): Promise<any> {
     return this.session.execute(sql, args);
   }
 

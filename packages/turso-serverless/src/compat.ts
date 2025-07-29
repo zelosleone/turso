@@ -246,7 +246,7 @@ class LibSQLClient implements Client {
         normalizedStmt = this.normalizeStatement(stmtOrSql);
       }
 
-      const result = await this.connection.execute(normalizedStmt.sql, normalizedStmt.args);
+      const result = await this.connection.exec(normalizedStmt.sql, normalizedStmt.args);
       return this.convertResult(result);
     } catch (error: any) {
       throw new LibsqlError(error.message, "EXECUTE_ERROR");
