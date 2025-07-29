@@ -4336,6 +4336,7 @@ pub fn op_function(
                 ));
             }
             #[cfg(feature = "fs")]
+            #[cfg(not(target_family = "wasm"))]
             ScalarFunc::LoadExtension => {
                 let extension = &state.registers[*start_reg];
                 let ext = resolve_ext_path(&extension.get_owned_value().to_string())?;

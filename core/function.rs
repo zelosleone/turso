@@ -316,6 +316,7 @@ pub enum ScalarFunc {
     LastInsertRowid,
     Replace,
     #[cfg(feature = "fs")]
+    #[cfg(not(target_family = "wasm"))]
     LoadExtension,
     StrfTime,
     Printf,
@@ -377,6 +378,7 @@ impl ScalarFunc {
             ScalarFunc::LastInsertRowid => false,
             ScalarFunc::Replace => true,
             #[cfg(feature = "fs")]
+            #[cfg(not(target_family = "wasm"))]
             ScalarFunc::LoadExtension => true,
             ScalarFunc::StrfTime => false,
             ScalarFunc::Printf => false,
@@ -440,6 +442,7 @@ impl Display for ScalarFunc {
             Self::Replace => "replace".to_string(),
             Self::DateTime => "datetime".to_string(),
             #[cfg(feature = "fs")]
+            #[cfg(not(target_family = "wasm"))]
             Self::LoadExtension => "load_extension".to_string(),
             Self::StrfTime => "strftime".to_string(),
             Self::Printf => "printf".to_string(),
@@ -825,6 +828,7 @@ impl Func {
             "tanh" => Ok(Self::Math(MathFunc::Tanh)),
             "trunc" => Ok(Self::Math(MathFunc::Trunc)),
             #[cfg(feature = "fs")]
+            #[cfg(not(target_family = "wasm"))]
             "load_extension" => Ok(Self::Scalar(ScalarFunc::LoadExtension)),
             "strftime" => Ok(Self::Scalar(ScalarFunc::StrfTime)),
             "printf" => Ok(Self::Scalar(ScalarFunc::Printf)),

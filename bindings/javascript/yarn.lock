@@ -1073,6 +1073,7 @@ __metadata:
   resolution: "@tursodatabase/turso@workspace:."
   dependencies:
     "@napi-rs/cli": "npm:^3.0.4"
+    "@napi-rs/wasm-runtime": "npm:^1.0.1"
     ava: "npm:^6.0.1"
     better-sqlite3: "npm:^11.9.1"
   languageName: unknown

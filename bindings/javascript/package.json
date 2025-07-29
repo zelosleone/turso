@@ -7,18 +7,24 @@
   },
   "description": "The Turso database library",
   "main": "wrapper.js",
+  "files": [
+    "wrapper.js",
+    "browser.js"
+  ],
   "types": "index.d.ts",
   "napi": {
     "binaryName": "turso",
     "targets": [
       "x86_64-unknown-linux-gnu",
       "x86_64-pc-windows-msvc",
-      "universal-apple-darwin"
+      "universal-apple-darwin",
+      "wasm32-wasip1-threads"
     ]
   },
   "license": "MIT",
   "devDependencies": {
     "@napi-rs/cli": "^3.0.4",
+    "@napi-rs/wasm-runtime": "^1.0.1",
     "ava": "^6.0.1",
     "better-sqlite3": "^11.9.1"
   },
