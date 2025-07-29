@@ -464,7 +464,7 @@ impl SelectPlan {
                 QueryDestination::CoroutineYield { .. }
             )
             || self.table_references.joined_tables().len() != 1
-            || self.table_references.outer_query_refs().is_empty()
+            || !self.table_references.outer_query_refs().is_empty()
             || self.result_columns.len() != 1
             || self.group_by.is_some()
             || self.contains_constant_false_condition
