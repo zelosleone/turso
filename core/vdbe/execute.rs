@@ -123,6 +123,18 @@ pub enum InsnFunctionStepResult {
     Step,
 }
 
+impl From<StepResult> for InsnFunctionStepResult {
+    fn from(value: StepResult) -> Self {
+        match value {
+            super::StepResult::Done => Self::Done,
+            super::StepResult::IO => Self::IO,
+            super::StepResult::Row => Self::Row,
+            super::StepResult::Interrupt => Self::Interrupt,
+            super::StepResult::Busy => Self::Busy,
+        }
+    }
+}
+
 pub fn op_init(
     _program: &Program,
     state: &mut ProgramState,
@@ -2035,13 +2047,9 @@ pub fn op_auto_commit(
     };
     let conn = program.connection.clone();
     if state.commit_state == CommitState::Committing {
-        return match program.commit_txn(pager.clone(), state, mv_store, *rollback)? {
-            super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
-            super::StepResult::IO => Ok(InsnFunctionStepResult::IO),
-            super::StepResult::Row => Ok(InsnFunctionStepResult::Row),
-            super::StepResult::Interrupt => Ok(InsnFunctionStepResult::Interrupt),
-            super::StepResult::Busy => Ok(InsnFunctionStepResult::Busy),
-        };
+        return program
+            .commit_txn(pager.clone(), state, mv_store, *rollback)
+            .map(Into::into);
     }
     let schema_did_change =
         if let TransactionState::Write { schema_did_change } = conn.transaction_state.get() {
@@ -2071,13 +2079,9 @@ pub fn op_auto_commit(
             "cannot commit - no transaction is active".to_string(),
         ));
     }
-    match program.commit_txn(pager.clone(), state, mv_store, *rollback)? {
-        super::StepResult::Done => Ok(InsnFunctionStepResult::Done),
-        super::StepResult::IO => Ok(InsnFunctionStepResult::IO),
-        super::StepResult::Row => Ok(InsnFunctionStepResult::Row),
-        super::StepResult::Interrupt => Ok(InsnFunctionStepResult::Interrupt),
-        super::StepResult::Busy => Ok(InsnFunctionStepResult::Busy),
-    }
+    program
+        .commit_txn(pager.clone(), state, mv_store, *rollback)
+        .map(Into::into)
 }
 
 pub fn op_goto(
