@@ -21,6 +21,7 @@ Welcome to Turso database manual!
   * [`ROLLBACK TRANSACTION` — abort the current transaction](#rollback-transaction--abort-the-current-transaction)
   * [`SELECT` — retrieve rows from a table](#select--retrieve-rows-from-a-table)
   * [`UPDATE` — update rows of a table](#update--update-rows-of-a-table)
+* [JavaScript API)(#javascript-api)
 * [SQLite C API](#sqlite-c-api)
   * [WAL manipulation](#wal-manipulation)
     * [`libsql_wal_frame_count`](#libsql_wal_frame_count)
@@ -310,6 +311,37 @@ turso> SELECT * FROM t;
 ├───┤
 │ 4 │
 └───┘
+```
+
+## JavaScript API
+
+Turso supports a JavaScript API, both with native and WebAssembly package options.
+
+### Installation
+
+Installing the native package:
+
+```console
+npm i @tursodatabase/turso
+```
+
+Installing the WebAssembly package:
+
+```console
+npm i @tursodatabase/turso --cpu wasm32
+```
+
+### Getting Started
+
+To use Turso from JavaScript application, you need to import `Database` type from the `@tursodatabase/turso` package.
+You can the prepare a statement with `Database.prepare` method and execute the SQL statement with `Statement.get()` method.
+
+```
+import Database from '@tursodatabase/turso';
+
+const db = new Database('turso.db');
+const row = db.prepare('SELECT 1').get();
+console.log(row);
 ```
 
 ## SQLite C API
