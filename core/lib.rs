@@ -108,7 +108,7 @@ enum TransactionState {
 
 pub(crate) type MvStore = mvcc::MvStore<mvcc::LocalClock>;
 
-pub(crate) type MvCursor = mvcc::cursor::ScanCursor<mvcc::LocalClock>;
+pub(crate) type MvCursor = mvcc::cursor::MvccLazyCursor<mvcc::LocalClock>;
 
 /// The database manager ensures that there is a single, shared
 /// `Database` object per a database file. We need because it is not safe
