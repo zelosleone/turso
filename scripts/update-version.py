@@ -79,6 +79,12 @@ def update_package_json(dir_path, new_version):  # noqa: C901
         # Update version regardless of current value
         package_data["version"] = new_version
 
+        # Update optionalDependencies if they exist
+        if "optionalDependencies" in package_data:
+            for dep_name in package_data["optionalDependencies"]:
+                if dep_name.startswith("@tursodatabase/turso-"):
+                    package_data["optionalDependencies"][dep_name] = new_version
+
         # Write updated package.json
         with open(package_path, "w") as f:
             json.dump(package_data, f, indent=2)
