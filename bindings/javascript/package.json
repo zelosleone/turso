@@ -45,11 +45,5 @@
     "universal": "napi universalize",
     "version": "napi version"
   },
-  "packageManager": "yarn@4.9.2",
-  "optionalDependencies": {
-    "@tursodatabase/turso-linux-x64-gnu": "0.1.3-pre.10",
-    "@tursodatabase/turso-win32-x64-msvc": "0.1.3-pre.10",
-    "@tursodatabase/turso-darwin-universal": "0.1.3-pre.10",
-    "@tursodatabase/turso-wasm32-wasi": "0.1.3-pre.10"
-  }
+  "packageManager": "yarn@4.9.2"
 }
