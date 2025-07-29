@@ -410,6 +410,11 @@ const connect = async (path, options = {}) => {
     const db = new x.default(path, options);
     return [db, x.SqliteError];
   }
+  if (provider === "libsql") {
+    const x = await import("libsql/promise");
+    const db = new x.default(path, options);
+    return [db, x.SqliteError, path];
+  }
   if (provider === "serverless") {
     const x = await import("@tursodatabase/serverless");
     const url = process.env.TURSO_DATABASE_URL;

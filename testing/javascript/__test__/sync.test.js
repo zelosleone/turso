@@ -453,6 +453,11 @@ const connect = async (path, options = {}) => {
     const db = new x.default(path, options);
     return [db, x.SqliteError, provider];
   }
+  if (provider === "libsql") {
+    const x = await import("libsql");
+    const db = new x.default(path, options);
+    return [db, x.SqliteError, provider, path];
+  }
   if (provider == "better-sqlite3") {
     const x = await import("better-sqlite3");
     const db = x.default(path, options);
