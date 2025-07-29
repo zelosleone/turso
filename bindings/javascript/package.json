@@ -6,12 +6,17 @@
     "url": "https://github.com/tursodatabase/turso"
   },
   "description": "The Turso database library",
-  "main": "wrapper.js",
+  "main": "promise.js",
+  "exports": {
+    ".": "./promise.js",
+    "./sync": "./sync.js"
+  },
   "files": [
     "browser.js",
     "index.js",
+    "promise.js",
     "sqlite-error.js",
-    "wrapper.js"
+    "sync.js"
   ],
   "types": "index.d.ts",
   "napi": {
