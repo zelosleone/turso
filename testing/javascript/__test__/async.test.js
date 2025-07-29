@@ -413,10 +413,13 @@ const connect = async (path, options = {}) => {
   if (provider === "serverless") {
     const x = await import("@tursodatabase/serverless");
     const url = process.env.TURSO_DATABASE_URL;
+    if (!url) {
+      throw new Error("TURSO_DATABASE_URL is not set");
+    }
     const authToken = process.env.TURSO_AUTH_TOKEN;
     const db = new x.connect({
-      url: process.env.TURSO_DATABASE_URL,
-      authToken: process.env.TURSO_AUTH_TOKEN,
+      url,
+      authToken,
     });
     return [db, x.SqliteError];
   }
