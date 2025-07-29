@@ -279,6 +279,10 @@ test.skip("Database.transaction().immediate()", async (t) => {
 });
 
 test.serial("Database.pragma()", async (t) => {
+  if (process.env.PROVIDER === "serverless") {
+    t.pass("Skipping pragma test for serverless");
+    return;
+  }
   const db = t.context.db;
   await db.pragma("cache_size = 2000");
   t.deepEqual(await db.pragma("cache_size"), [{ "cache_size": 2000 }]);

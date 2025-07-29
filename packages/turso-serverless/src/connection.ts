@@ -76,6 +76,17 @@ export class Connection {
   async batch(statements: string[], mode?: string): Promise<any> {
     return this.session.batch(statements);
   }
+
+  /**
+   * Execute a pragma.
+   * 
+   * @param pragma - The pragma to execute
+   * @returns Promise resolving to the result of the pragma
+   */
+  async pragma(pragma: string): Promise<any> {
+    const sql = `PRAGMA ${pragma}`;
+    return this.session.execute(sql);
+  }
 }
 
 /**
