@@ -4,7 +4,7 @@ import fs from 'fs';
 
 
 test.beforeEach(async (t) => {
-  const [db, errorType] = await connect();
+  const [db, path,errorType] = await connect();
   await db.exec(`
       DROP TABLE IF EXISTS users;
       CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)
@@ -17,13 +17,29 @@ test.beforeEach(async (t) => {
   );
   t.context = {
     db,
+    path,
     errorType
   };
 });
 
-test.after.always(async (t) => {
+test.afterEach.always(async (t) => {
+  // Close the database connection
   if (t.context.db != undefined) {
     t.context.db.close();
+  }
+  // Remove the database file if it exists
+  if (t.context.path) {
+    const walPath = t.context.path + "-wal";
+    const shmPath = t.context.path + "-shm";
+    if (fs.existsSync(t.context.path)) {
+      fs.unlinkSync(t.context.path);
+    }
+    if (fs.existsSync(walPath)) {
+      fs.unlinkSync(walPath);
+    }
+    if (fs.existsSync(shmPath)) {
+      fs.unlinkSync(shmPath);
+    }
   }
 });
 
@@ -408,17 +424,25 @@ const connect = async (path, options = {}) => {
   if (provider === "turso") {
     const x = await import("@tursodatabase/turso");
     const db = new x.default(path, options);
-    return [db, x.SqliteError];
+    return [db, path, x.SqliteError];
+  }
+  if (provider === "libsql") {
+    const x = await import("libsql/promise");
+    const db = new x.default(path, options);
+    return [db, path, x.SqliteError, path];
   }
   if (provider === "serverless") {
     const x = await import("@tursodatabase/serverless");
     const url = process.env.TURSO_DATABASE_URL;
+    if (!url) {
+      throw new Error("TURSO_DATABASE_URL is not set");
+    }
     const authToken = process.env.TURSO_AUTH_TOKEN;
     const db = new x.connect({
-      url: process.env.TURSO_DATABASE_URL,
-      authToken: process.env.TURSO_AUTH_TOKEN,
+      url,
+      authToken,
     });
-    return [db, x.SqliteError];
+    return [db, null, x.SqliteError];
   }
 };
 

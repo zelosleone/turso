@@ -3,7 +3,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 
 test.beforeEach(async (t) => {
-  const [db, errorType, provider] = await connect();
+  const [db, path, provider, errorType] = await connect();
   db.exec(`
       DROP TABLE IF EXISTS users;
       CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)
@@ -16,14 +16,30 @@ test.beforeEach(async (t) => {
   );
   t.context = {
     db,
+    path,
+    provider,
     errorType,
-    provider
   };
 });
 
-test.after.always(async (t) => {
+test.afterEach.always(async (t) => {
+  // Close the database connection
   if (t.context.db != undefined) {
     t.context.db.close();
+  }
+  // Remove the database file if it exists
+  if (t.context.path) {
+    const walPath = t.context.path + "-wal";
+    const shmPath = t.context.path + "-shm";
+    if (fs.existsSync(t.context.path)) {
+      fs.unlinkSync(t.context.path);
+    }
+    if (fs.existsSync(walPath)) {
+      fs.unlinkSync(walPath);
+    }
+    if (fs.existsSync(shmPath)) {
+      fs.unlinkSync(shmPath);
+    }
   }
 });
 
@@ -451,12 +467,17 @@ const connect = async (path, options = {}) => {
   if (provider === "turso") {
     const x = await import("@tursodatabase/turso/sync");
     const db = new x.default(path, options);
-    return [db, x.SqliteError, provider];
+    return [db, path, provider, x.SqliteError];
+  }
+  if (provider === "libsql") {
+    const x = await import("libsql");
+    const db = new x.default(path, options);
+    return [db, path, provider, x.SqliteError];
   }
   if (provider == "better-sqlite3") {
     const x = await import("better-sqlite3");
     const db = x.default(path, options);
-    return [db, x.default.SqliteError, provider];
+    return [db, path, provider, x.default.SqliteError];
   }
   throw new Error("Unknown provider: " + provider);
 };
