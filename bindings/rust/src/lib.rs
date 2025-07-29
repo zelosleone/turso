@@ -356,8 +356,9 @@ impl Statement {
             let mut stmt = self.inner.lock().unwrap();
             match stmt.step() {
                 Ok(turso_core::StepResult::Row) => {
-                    // unexpected row during execution, error out.
-                    return Ok(2);
+                    return Err(Error::SqlExecutionFailure(
+                        "unexpected row during execution".to_string(),
+                    ));
                 }
                 Ok(turso_core::StepResult::Done) => {
                     let changes = stmt.n_change();
@@ -365,14 +366,13 @@ impl Statement {
                     return Ok(changes as u64);
                 }
                 Ok(turso_core::StepResult::IO) => {
-                    let _ = stmt.run_once();
-                    //return Ok(1);
+                    stmt.run_once()?;
                 }
                 Ok(turso_core::StepResult::Busy) => {
-                    return Ok(4);
+                    return Err(Error::SqlExecutionFailure("database is locked".to_string()));
                 }
                 Ok(turso_core::StepResult::Interrupt) => {
-                    return Ok(3);
+                    return Err(Error::SqlExecutionFailure("interrupted".to_string()));
                 }
                 Err(err) => {
                     return Err(err.into());
