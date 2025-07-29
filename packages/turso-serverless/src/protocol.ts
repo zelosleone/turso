@@ -47,9 +47,14 @@ export interface BatchRequest {
   };
 }
 
+export interface SequenceRequest {
+  type: 'sequence';
+  sql: string;
+}
+
 export interface PipelineRequest {
   baton: string | null;
-  requests: (ExecuteRequest | BatchRequest)[];
+  requests: (ExecuteRequest | BatchRequest | SequenceRequest)[];
 }
 
 export interface PipelineResponse {
@@ -58,8 +63,8 @@ export interface PipelineResponse {
   results: Array<{
     type: 'ok' | 'error';
     response?: {
-      type: 'execute' | 'batch';
-      result: ExecuteResult;
+      type: 'execute' | 'batch' | 'sequence';
+      result?: ExecuteResult;
     };
     error?: {
       message: string;

@@ -1,10 +1,13 @@
 import { 
   executeCursor, 
+  executePipeline,
   encodeValue, 
   decodeValue, 
   type CursorRequest,
   type CursorResponse,
-  type CursorEntry
+  type CursorEntry,
+  type PipelineRequest,
+  type SequenceRequest
 } from './protocol.js';
 import { DatabaseError } from './error.js';
 
@@ -213,5 +216,36 @@ export class Session {
       rowsAffected: totalRowsAffected,
       lastInsertRowid
     };
+  }
+
+  /**
+   * Execute a sequence of SQL statements separated by semicolons.
+   * 
+   * @param sql - SQL string containing multiple statements separated by semicolons
+   * @returns Promise resolving when all statements are executed
+   */
+  async sequence(sql: string): Promise<void> {
+    const request: PipelineRequest = {
+      baton: this.baton,
+      requests: [{
+        type: "sequence",
+        sql: sql
+      } as SequenceRequest]
+    };
+
+    const response = await executePipeline(this.baseUrl, this.config.authToken, request);
+    
+    this.baton = response.baton;
+    if (response.base_url) {
+      this.baseUrl = response.base_url;
+    }
+
+    // Check for errors in the response
+    if (response.results && response.results[0]) {
+      const result = response.results[0];
+      if (result.type === "error") {
+        throw new DatabaseError(result.error?.message || 'Sequence execution failed');
+      }
+    }
   }
 }

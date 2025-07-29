@@ -44,7 +44,6 @@ export class Connection {
    * Execute a SQL statement and return all results.
    * 
    * @param sql - The SQL statement to execute
-   * @param args - Optional array of parameter values
    * @returns Promise resolving to the complete result set
    * 
    * @example
@@ -53,8 +52,8 @@ export class Connection {
    * console.log(result.rows);
    * ```
    */
-  async execute(sql: string, args: any[] = []): Promise<any> {
-    return this.session.execute(sql, args);
+  async exec(sql: string): Promise<any> {
+    return this.session.sequence(sql);
   }
 
 
@@ -76,6 +75,17 @@ export class Connection {
    */
   async batch(statements: string[], mode?: string): Promise<any> {
     return this.session.batch(statements);
+  }
+
+  /**
+   * Execute a pragma.
+   * 
+   * @param pragma - The pragma to execute
+   * @returns Promise resolving to the result of the pragma
+   */
+  async pragma(pragma: string): Promise<any> {
+    const sql = `PRAGMA ${pragma}`;
+    return this.session.execute(sql);
   }
 }
 
