@@ -9,7 +9,7 @@
 //! The instruction set of the VDBE is similar to SQLite's instruction set,
 //! but with the exception that bytecodes that perform I/O operations are
 //! return execution back to the caller instead of blocking. This is because
-//! Limbo is designed for applications that need high concurrency such as
+//! Turso is designed for applications that need high concurrency such as
 //! serverless runtimes. In addition, asynchronous I/O makes storage
 //! disaggregation easier.
 //!
