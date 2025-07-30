@@ -329,6 +329,13 @@ impl Value {
         }
     }
 
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            Value::Integer(i) => Some(*i),
+            _ => None,
+        }
+    }
+
     pub fn from_text(text: &str) -> Self {
         Value::Text(Text::new(text))
     }
