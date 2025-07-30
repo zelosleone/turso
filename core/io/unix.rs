@@ -450,6 +450,22 @@ impl File for UnixFile<'_> {
         let file = self.file.lock().unwrap();
         Ok(file.metadata()?.len())
     }
+
+    #[instrument(err, skip_all, level = Level::INFO)]
+    fn truncate(&self, len: usize, c: Completion) -> Result<Completion> {
+        let file = self.file.lock().map_err(|e| {
+            LimboError::LockingError(format!("Failed to lock file for truncation: {e}"))
+        })?;
+        let result = file.set_len(len as u64);
+        match result {
+            Ok(()) => {
+                trace!("file truncated to len=({})", len);
+                c.complete(0);
+                Ok(c)
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
 }
 
 impl Drop for UnixFile<'_> {

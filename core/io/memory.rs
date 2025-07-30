@@ -174,6 +174,19 @@ impl File for MemoryFile {
         Ok(c)
     }
 
+    fn truncate(&self, len: usize, c: Completion) -> Result<Completion> {
+        if len < self.size.get() {
+            // Truncate pages
+            unsafe {
+                let pages = &mut *self.pages.get();
+                pages.retain(|&k, _| k * PAGE_SIZE < len);
+            }
+        }
+        self.size.set(len);
+        c.complete(0);
+        Ok(c)
+    }
+
     fn size(&self) -> Result<u64> {
         Ok(self.size.get() as u64)
     }

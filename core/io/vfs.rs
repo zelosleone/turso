@@ -43,10 +43,8 @@ impl IO for VfsMod {
         Ok(())
     }
 
-    fn wait_for_completion(&self, c: Completion) -> Result<()> {
-        while !c.is_completed() {
-            self.run_once()?;
-        }
+    fn wait_for_completion(&self, _c: Completion) -> Result<()> {
+        // for the moment anyway, this is currently a sync api
         Ok(())
     }
 
@@ -163,6 +161,20 @@ impl File for VfsFileImpl {
             Err(LimboError::ExtensionError("size failed".to_string()))
         } else {
             Ok(result as u64)
+        }
+    }
+
+    fn truncate(&self, len: usize, c: Completion) -> Result<Completion> {
+        if self.vfs.is_null() {
+            return Err(LimboError::ExtensionError("VFS is null".to_string()));
+        }
+        let vfs = unsafe { &*self.vfs };
+        let result = unsafe { (vfs.truncate)(self.file, len as i64) };
+        if result.is_error() {
+            Err(LimboError::ExtensionError("truncate failed".to_string()))
+        } else {
+            c.complete(0);
+            Ok(c)
         }
     }
 }

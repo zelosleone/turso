@@ -62,7 +62,10 @@ use crate::{
     vector::{vector32, vector64, vector_distance_cos, vector_distance_l2, vector_extract},
 };
 
-use crate::{info, BufferPool, MvCursor, OpenFlags, RefValue, Row, StepResult, TransactionState};
+use crate::{
+    info, turso_assert, BufferPool, MvCursor, OpenFlags, RefValue, Row, StepResult,
+    TransactionState,
+};
 
 use super::{
     insn::{Cookie, RegisterOrLiteral},
@@ -326,17 +329,18 @@ pub fn op_checkpoint(
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Checkpoint {
         database: _,
-        checkpoint_mode: _,
+        checkpoint_mode,
         dest,
     } = insn
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
-    let result = program.connection.checkpoint();
+    let result = program.connection.checkpoint(*checkpoint_mode);
     match result {
         Ok(CheckpointResult {
             num_wal_frames: num_wal_pages,
             num_checkpointed_frames: num_checkpointed_pages,
+            ..
         }) => {
             // https://sqlite.org/pragma.html#pragma_wal_checkpoint
             // 1st col: 1 (checkpoint SQLITE_BUSY) or 0 (not busy).
@@ -1982,6 +1986,20 @@ pub fn op_transaction(
     } else {
         let current_state = conn.transaction_state.get();
         let (new_transaction_state, updated) = match (current_state, write) {
+            // pending state means that we tried beginning a tx and the method returned IO.
+            // instead of ending the read tx, just update the state to pending.
+            (TransactionState::PendingUpgrade, write) => {
+                turso_assert!(
+                    *write,
+                    "pending upgrade should only be set for write transactions"
+                );
+                (
+                    TransactionState::Write {
+                        schema_did_change: false,
+                    },
+                    true,
+                )
+            }
             (TransactionState::Write { schema_did_change }, true) => {
                 (TransactionState::Write { schema_did_change }, false)
             }
@@ -2003,7 +2021,6 @@ pub fn op_transaction(
             ),
             (TransactionState::None, false) => (TransactionState::Read, true),
         };
-
         if updated && matches!(current_state, TransactionState::None) {
             if let LimboResult::Busy = pager.begin_read_tx()? {
                 return Ok(InsnFunctionStepResult::Busy);
@@ -2015,11 +2032,18 @@ pub fn op_transaction(
                 IOResult::Done(r) => {
                     if let LimboResult::Busy = r {
                         pager.end_read_tx()?;
+                        conn.transaction_state.replace(TransactionState::None);
+                        conn.auto_commit.replace(true);
                         return Ok(InsnFunctionStepResult::Busy);
                     }
                 }
                 IOResult::IO => {
-                    pager.end_read_tx()?;
+                    // set the transaction state to pending so we don't have to
+                    // end the read transaction.
+                    program
+                        .connection
+                        .transaction_state
+                        .replace(TransactionState::PendingUpgrade);
                     return Ok(InsnFunctionStepResult::IO);
                 }
             }
@@ -2062,7 +2086,8 @@ pub fn op_auto_commit(
     if *auto_commit != conn.auto_commit.get() {
         if *rollback {
             // TODO(pere): add rollback I/O logic once we implement rollback journal
-            pager.rollback(schema_did_change, &conn)?;
+            return_if_io!(pager.end_tx(true, schema_did_change, &conn, false));
+            conn.transaction_state.replace(TransactionState::None);
             conn.auto_commit.replace(true);
         } else {
             conn.auto_commit.replace(*auto_commit);
@@ -6101,6 +6126,7 @@ pub fn op_set_cookie(
                     },
                     TransactionState::Read => unreachable!("invalid transaction state for SetCookie: TransactionState::Read, should be write"),
                     TransactionState::None => unreachable!("invalid transaction state for SetCookie: TransactionState::None, should be write"),
+                    TransactionState::PendingUpgrade => unreachable!("invalid transaction state for SetCookie: TransactionState::PendingUpgrade, should be write"),
                 }
             }
             program
@@ -6325,6 +6351,9 @@ pub fn op_open_ephemeral(
         }
         OpOpenEphemeralState::StartingTxn { pager } => {
             tracing::trace!("StartingTxn");
+            pager
+                .begin_read_tx() // we have to begin a read tx before beginning a write
+                .expect("Failed to start read transaction");
             return_if_io!(pager.begin_write_tx());
             state.op_open_ephemeral_state = OpOpenEphemeralState::CreateBtree {
                 pager: pager.clone(),

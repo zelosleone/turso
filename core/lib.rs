@@ -103,6 +103,7 @@ pub type Result<T, E = LimboError> = std::result::Result<T, E>;
 enum TransactionState {
     Write { schema_did_change: bool },
     Read,
+    PendingUpgrade,
     None,
 }
 
@@ -311,9 +312,13 @@ impl Database {
 
             db.with_schema_mut(|schema| {
                 schema.schema_version = get_schema_version(&conn)?;
-                if let Err(LimboError::ExtensionError(e)) =
-                    schema.make_from_btree(None, pager, &syms)
-                {
+                let result = schema
+                    .make_from_btree(None, pager.clone(), &syms)
+                    .or_else(|e| {
+                        pager.end_read_tx()?;
+                        Err(e)
+                    });
+                if let Err(LimboError::ExtensionError(e)) = result {
                     // this means that a vtab exists and we no longer have the module loaded. we print
                     // a warning to the user to load the module
                     eprintln!("Warning: {e}");
@@ -1146,7 +1151,9 @@ impl Connection {
             result::LimboResult::Busy => return Err(LimboError::Busy),
             result::LimboResult::Ok => {}
         }
-        match pager.io.block(|| pager.begin_write_tx())? {
+        match pager.io.block(|| pager.begin_write_tx()).inspect_err(|_| {
+            pager.end_read_tx().expect("read txn must be closed");
+        })? {
             result::LimboResult::Busy => {
                 pager.end_read_tx().expect("read txn must be closed");
                 return Err(LimboError::Busy);
@@ -1163,12 +1170,13 @@ impl Connection {
         {
             let pager = self.pager.borrow();
 
+            {
+                let wal = pager.wal.borrow_mut();
+                wal.end_write_tx();
+                wal.end_read_tx();
+            }
             // remove all non-commited changes in case if WAL session left some suffix without commit frame
-            pager.rollback(false, self).expect("rollback must succeed");
-
-            let wal = pager.wal.borrow_mut();
-            wal.end_write_tx();
-            wal.end_read_tx();
+            pager.rollback(false, self)?;
         }
 
         // let's re-parse schema from scratch if schema cookie changed compared to the our in-memory view of schema
@@ -1188,13 +1196,13 @@ impl Connection {
         Ok(())
     }
 
-    pub fn checkpoint(&self) -> Result<CheckpointResult> {
+    pub fn checkpoint(&self, mode: CheckpointMode) -> Result<CheckpointResult> {
         if self.closed.get() {
             return Err(LimboError::InternalError("Connection closed".to_string()));
         }
         self.pager
             .borrow()
-            .wal_checkpoint(self.wal_checkpoint_disabled.get())
+            .wal_checkpoint(self.wal_checkpoint_disabled.get(), mode)
     }
 
     /// Close a connection and checkpoint.
@@ -1206,16 +1214,18 @@ impl Connection {
 
         match self.transaction_state.get() {
             TransactionState::Write { schema_did_change } => {
-                let _result = self.pager.borrow().end_tx(
+                while let IOResult::IO = self.pager.borrow().end_tx(
                     true, // rollback = true for close
                     schema_did_change,
                     self,
                     self.wal_checkpoint_disabled.get(),
-                );
+                )? {
+                    self.run_once()?;
+                }
                 self.transaction_state.set(TransactionState::None);
             }
-            TransactionState::Read => {
-                let _result = self.pager.borrow().end_read_tx();
+            TransactionState::PendingUpgrade | TransactionState::Read => {
+                self.pager.borrow().end_read_tx()?;
                 self.transaction_state.set(TransactionState::None);
             }
             TransactionState::None => {
@@ -1719,13 +1729,6 @@ impl Statement {
         if res.is_err() {
             let state = self.program.connection.transaction_state.get();
             if let TransactionState::Write { schema_did_change } = state {
-                if let Err(e) = self
-                    .pager
-                    .rollback(schema_did_change, &self.program.connection)
-                {
-                    // Let's panic for now as we don't want to leave state in a bad state.
-                    panic!("rollback failed: {e:?}");
-                }
                 let end_tx_res =
                     self.pager
                         .end_tx(true, schema_did_change, &self.program.connection, true)?;

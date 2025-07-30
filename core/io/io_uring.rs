@@ -226,7 +226,7 @@ impl Clock for UringIO {
 /// use the callback pointer as the user_data for the operation as is
 /// common practice for io_uring to prevent more indirection
 fn get_key(c: Completion) -> u64 {
-    Arc::into_raw(c.inner) as u64
+    Arc::into_raw(c.inner.clone()) as u64
 }
 
 #[inline(always)]
@@ -352,6 +352,17 @@ impl File for UringFile {
 
     fn size(&self) -> Result<u64> {
         Ok(self.file.metadata()?.len())
+    }
+
+    fn truncate(&self, len: usize, c: Completion) -> Result<Completion> {
+        let mut io = self.io.borrow_mut();
+        let truncate = with_fd!(self, |fd| {
+            io_uring::opcode::Ftruncate::new(fd, len as u64)
+                .build()
+                .user_data(get_key(c.clone()))
+        });
+        io.ring.submit_entry(&truncate);
+        Ok(c)
     }
 }
 
