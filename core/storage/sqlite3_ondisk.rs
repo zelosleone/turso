@@ -853,15 +853,17 @@ pub fn begin_write_btree_page(
 }
 
 #[instrument(skip_all, level = Level::DEBUG)]
-pub fn begin_sync(db_file: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>) -> Result<()> {
+pub fn begin_sync(
+    db_file: Arc<dyn DatabaseStorage>,
+    syncing: Rc<RefCell<bool>>,
+) -> Result<Completion> {
     assert!(!*syncing.borrow());
     *syncing.borrow_mut() = true;
     let completion = Completion::new_sync(move |_| {
         *syncing.borrow_mut() = false;
     });
     #[allow(clippy::arc_with_non_send_sync)]
-    let c = db_file.sync(completion)?;
-    Ok(())
+    db_file.sync(completion)
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -1661,7 +1663,7 @@ pub fn prepare_wal_frame(
     (final_checksum, Arc::new(RefCell::new(buffer)))
 }
 
-pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<()> {
+pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<Completion> {
     tracing::trace!("begin_write_wal_header");
     let buffer = {
         let drop_fn = Rc::new(|_buf| {});
@@ -1693,8 +1695,7 @@ pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<
     };
     #[allow(clippy::arc_with_non_send_sync)]
     let c = Completion::new_write(write_complete);
-    let c = io.pwrite(0, buffer.clone(), c)?;
-    Ok(())
+    io.pwrite(0, buffer.clone(), c)
 }
 
 /// Checks if payload will overflow a cell based on the maximum allowed size.

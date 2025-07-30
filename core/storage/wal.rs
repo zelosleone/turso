@@ -206,7 +206,12 @@ pub trait Wal {
     fn find_frame(&self, page_id: u64) -> Result<Option<u64>>;
 
     /// Read a frame from the WAL.
-    fn read_frame(&self, frame_id: u64, page: PageRef, buffer_pool: Arc<BufferPool>) -> Result<()>;
+    fn read_frame(
+        &self,
+        frame_id: u64,
+        page: PageRef,
+        buffer_pool: Arc<BufferPool>,
+    ) -> Result<Completion>;
 
     /// Read a raw frame (header included) from the WAL.
     fn read_frame_raw(&self, frame_id: u64, frame: &mut [u8]) -> Result<Completion>;
@@ -232,7 +237,7 @@ pub trait Wal {
         page: PageRef,
         db_size: u32,
         write_counter: Rc<RefCell<usize>>,
-    ) -> Result<()>;
+    ) -> Result<Completion>;
 
     /// Complete append of frames by updating shared wal state. Before this
     /// all changes were stored locally.
@@ -280,8 +285,9 @@ impl Wal for DummyWAL {
         _frame_id: u64,
         _page: crate::PageRef,
         _buffer_pool: Arc<BufferPool>,
-    ) -> Result<()> {
-        Ok(())
+    ) -> Result<Completion> {
+        // Dummy completion
+        Ok(Completion::new_write(|_| {}))
     }
 
     fn read_frame_raw(&self, _frame_id: u64, _frame: &mut [u8]) -> Result<Completion> {
@@ -304,8 +310,8 @@ impl Wal for DummyWAL {
         _page: crate::PageRef,
         _db_size: u32,
         _write_counter: Rc<RefCell<usize>>,
-    ) -> Result<()> {
-        Ok(())
+    ) -> Result<Completion> {
+        Ok(Completion::new_write(|_| {}))
     }
 
     fn should_checkpoint(&self) -> bool {
@@ -612,7 +618,12 @@ impl Wal for WalFile {
 
     /// Read a frame from the WAL.
     #[instrument(skip_all, level = Level::DEBUG)]
-    fn read_frame(&self, frame_id: u64, page: PageRef, buffer_pool: Arc<BufferPool>) -> Result<()> {
+    fn read_frame(
+        &self,
+        frame_id: u64,
+        page: PageRef,
+        buffer_pool: Arc<BufferPool>,
+    ) -> Result<Completion> {
         tracing::debug!("read_frame({})", frame_id);
         let offset = self.frame_offset(frame_id);
         page.set_locked();
@@ -626,13 +637,12 @@ impl Wal for WalFile {
             let frame = frame.clone();
             finish_read_page(page.get().id, buf, frame).unwrap();
         });
-        let c = begin_read_wal_frame(
+        begin_read_wal_frame(
             &self.get_shared().file,
             offset + WAL_FRAME_HEADER_SIZE,
             buffer_pool,
             complete,
-        )?;
-        Ok(())
+        )
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
@@ -748,12 +758,12 @@ impl Wal for WalFile {
         page: PageRef,
         db_size: u32,
         write_counter: Rc<RefCell<usize>>,
-    ) -> Result<()> {
+    ) -> Result<Completion> {
         let page_id = page.get().id;
         let frame_id = self.max_frame + 1;
         let offset = self.frame_offset(frame_id);
         tracing::debug!(frame_id, offset, page_id);
-        let checksums = {
+        let (c, checksums) = {
             let shared = self.get_shared();
             let header = shared.wal_header.clone();
             let header = header.lock();
@@ -789,10 +799,10 @@ impl Wal for WalFile {
                 *write_counter.borrow_mut() -= 1;
                 return Err(err);
             }
-            frame_checksums
+            (result.unwrap(), frame_checksums)
         };
         self.complete_append_frame(page_id as u64, frame_id, checksums);
-        Ok(())
+        Ok(c)
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
@@ -894,7 +904,7 @@ impl Wal for WalFile {
                             );
                             self.ongoing_checkpoint.page.get().id = page as usize;
 
-                            self.read_frame(
+                            let c = self.read_frame(
                                 *frame,
                                 self.ongoing_checkpoint.page.clone(),
                                 self.buffer_pool.clone(),
@@ -1217,7 +1227,9 @@ impl WalFileShared {
         );
         wal_header.checksum_1 = checksums.0;
         wal_header.checksum_2 = checksums.1;
-        sqlite3_ondisk::begin_write_wal_header(&file, &wal_header)?;
+        let c = sqlite3_ondisk::begin_write_wal_header(&file, &wal_header)?;
+        // TODO: for now wait for completion
+        io.wait_for_completion(c)?;
         let header = Arc::new(SpinLock::new(wal_header));
         let checksum = {
             let checksum = header.lock();

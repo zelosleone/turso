@@ -493,7 +493,7 @@ impl Pager {
             ptrmap_pg_no
         );
 
-        let ptrmap_page = self.read_page(ptrmap_pg_no as usize)?;
+        let (ptrmap_page, c) = self.read_page(ptrmap_pg_no as usize)?;
         if ptrmap_page.is_locked() {
             return Ok(IOResult::IO);
         }
@@ -584,7 +584,7 @@ impl Pager {
             offset_in_ptrmap_page
         );
 
-        let ptrmap_page = self.read_page(ptrmap_pg_no as usize)?;
+        let (ptrmap_page, c) = self.read_page(ptrmap_pg_no as usize)?;
         if ptrmap_page.is_locked() {
             return Ok(IOResult::IO);
         }
@@ -846,24 +846,24 @@ impl Pager {
 
     /// Reads a page from the database.
     #[tracing::instrument(skip_all, level = Level::DEBUG)]
-    pub fn read_page(&self, page_idx: usize) -> Result<PageRef, LimboError> {
+    pub fn read_page(&self, page_idx: usize) -> Result<(PageRef, Completion)> {
         tracing::trace!("read_page(page_idx = {})", page_idx);
         let mut page_cache = self.page_cache.write();
         let page_key = PageCacheKey::new(page_idx);
         if let Some(page) = page_cache.get(&page_key) {
             tracing::trace!("read_page(page_idx = {}) = cached", page_idx);
-            return Ok(page.clone());
+            // Dummy completion being passed, as we do not need to read from database or wal
+            return Ok((page.clone(), Completion::new_write(|_| {})));
         }
         let page = Arc::new(Page::new(page_idx));
         page.set_locked();
 
         if let Some(frame_id) = self.wal.borrow().find_frame(page_idx as u64)? {
-            self.wal
-                .borrow()
-                .read_frame(frame_id, page.clone(), self.buffer_pool.clone())?;
-            {
-                page.set_uptodate();
-            }
+            let c =
+                self.wal
+                    .borrow()
+                    .read_frame(frame_id, page.clone(), self.buffer_pool.clone())?;
+            page.set_uptodate();
             // TODO(pere) should probably first insert to page cache, and if successful,
             // read frame or page
             match page_cache.insert(page_key, page.clone()) {
@@ -878,7 +878,7 @@ impl Pager {
                     )))
                 }
             }
-            return Ok(page);
+            return Ok((page, c));
         }
 
         let c = sqlite3_ondisk::begin_read_page(
@@ -899,7 +899,7 @@ impl Pager {
                 )))
             }
         }
-        Ok(page)
+        Ok((page, c))
     }
 
     // Get a page from the cache, if it exists.
@@ -969,7 +969,7 @@ impl Pager {
                     page
                 };
 
-                self.wal.borrow_mut().append_frame(
+                let c = self.wal.borrow_mut().append_frame(
                     page.clone(),
                     0,
                     self.flush_info.borrow().in_flight_writes.clone(),
@@ -1081,7 +1081,7 @@ impl Pager {
                             0
                         }
                     };
-                    self.wal.borrow_mut().append_frame(
+                    let c = self.wal.borrow_mut().append_frame(
                         page.clone(),
                         db_size,
                         self.commit_info.borrow().in_flight_writes.clone(),
@@ -1148,7 +1148,7 @@ impl Pager {
                     self.commit_info.borrow_mut().state = CommitState::SyncDbFile;
                 }
                 CommitState::SyncDbFile => {
-                    sqlite3_ondisk::begin_sync(self.db_file.clone(), self.syncing.clone())?;
+                    let c = sqlite3_ondisk::begin_sync(self.db_file.clone(), self.syncing.clone())?;
                     self.commit_info.borrow_mut().state = CommitState::WaitSyncDbFile;
                 }
                 CommitState::WaitSyncDbFile => {
@@ -1229,7 +1229,7 @@ impl Pager {
                     };
                 }
                 CheckpointState::SyncDbFile => {
-                    sqlite3_ondisk::begin_sync(self.db_file.clone(), self.syncing.clone())?;
+                    let c = sqlite3_ondisk::begin_sync(self.db_file.clone(), self.syncing.clone())?;
                     self.checkpoint_state
                         .replace(CheckpointState::WaitSyncDbFile);
                 }
@@ -1334,7 +1334,7 @@ impl Pager {
                         )));
                     }
 
-                    let page = match page.clone() {
+                    let (page, c) = match page.clone() {
                         Some(page) => {
                             assert_eq!(
                                 page.get().id,
@@ -1347,9 +1347,12 @@ impl Pager {
                                 let page_contents = page.get_contents();
                                 page_contents.overflow_cells.clear();
                             }
-                            page
+                            (page, None)
                         }
-                        None => self.read_page(page_id)?,
+                        None => {
+                            let (page, c) = self.read_page(page_id)?;
+                            (page, Some(c))
+                        }
                     };
                     header_accessor::set_freelist_pages(
                         self,
@@ -1371,7 +1374,8 @@ impl Pager {
                     let trunk_page_id = header_accessor::get_freelist_trunk_page(self)?;
                     if trunk_page.is_none() {
                         // Add as leaf to current trunk
-                        trunk_page.replace(self.read_page(trunk_page_id as usize)?);
+                        let (page, c) = self.read_page(trunk_page_id as usize)?;
+                        trunk_page.replace(page);
                     }
                     let trunk_page = trunk_page.as_ref().unwrap();
                     if trunk_page.is_locked() || !trunk_page.is_loaded() {
@@ -1568,7 +1572,7 @@ impl Pager {
                         };
                         continue;
                     }
-                    let trunk_page = self.read_page(first_freelist_trunk_page_id as usize)?;
+                    let (trunk_page, c) = self.read_page(first_freelist_trunk_page_id as usize)?;
                     *state = AllocatePageState::SearchAvailableFreeListLeaf {
                         trunk_page,
                         current_db_size: new_db_size,
@@ -1657,7 +1661,7 @@ impl Pager {
                     let page_contents = trunk_page.get().contents.as_ref().unwrap();
                     let next_leaf_page_id =
                         page_contents.read_u32(FREELIST_TRUNK_OFFSET_FIRST_LEAF);
-                    let leaf_page = self.read_page(next_leaf_page_id as usize)?;
+                    let (leaf_page, c) = self.read_page(next_leaf_page_id as usize)?;
                     if leaf_page.is_locked() {
                         return Ok(IOResult::IO);
                     }
