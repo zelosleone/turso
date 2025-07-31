@@ -58,14 +58,15 @@ use crate::storage::btree::{payload_overflow_threshold_max, payload_overflow_thr
 use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
 use crate::storage::pager::Pager;
+use crate::storage::wal::PendingFlush;
 use crate::types::{RawSlice, RefValue, SerialType, SerialTypeKind, TextRef, TextSubtype};
 use crate::{turso_assert, File, Result, WalFileShared};
 use std::cell::{RefCell, UnsafeCell};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 
 /// The size of the database header in bytes.
@@ -850,6 +851,115 @@ pub fn begin_write_btree_page(
         *write_counter.borrow_mut() -= 1;
     }
     res
+}
+
+#[instrument(skip_all, level = Level::DEBUG)]
+/// Write a batch of pages to the database file.
+///
+/// we have a batch of pages to write, lets say the following:
+/// (they are already sorted by id thanks to BTreeMap)
+/// [1,2,3,6,7,9,10,11,12]
+//
+/// we want to collect this into runs of:
+/// [1,2,3], [6,7], [9,10,11,12]
+/// and submit each run as a `writev` call,
+/// for 3 total syscalls instead of 9.
+pub fn write_pages_vectored(
+    pager: &Pager,
+    batch: BTreeMap<usize, Arc<RefCell<Buffer>>>,
+) -> Result<PendingFlush> {
+    if batch.is_empty() {
+        return Ok(PendingFlush::default());
+    }
+
+    // batch item array is already sorted by id, so we just need to find contiguous ranges of page_id's
+    // to submit as `writev`/write_pages calls.
+
+    let page_sz = pager.page_size.get().unwrap_or(DEFAULT_PAGE_SIZE) as usize;
+
+    // Count expected number of runs to create the atomic counter we need to track each batch
+    let mut run_count = 0;
+    let mut prev_id = None;
+    for &id in batch.keys() {
+        if let Some(prev) = prev_id {
+            if id != prev + 1 {
+                run_count += 1;
+            }
+        } else {
+            run_count = 1; // First run
+        }
+        prev_id = Some(id);
+    }
+
+    // Create the atomic counters
+    let runs_left = Arc::new(AtomicUsize::new(run_count));
+    let done = Arc::new(AtomicBool::new(false));
+    // we know how many runs, but we don't know how many buffers per run, so we can only give an
+    // estimate of the capacity
+    const EST_BUFF_CAPACITY: usize = 32;
+
+    // Iterate through the batch, submitting each run as soon as it ends
+    // We can reuse this across runs without reallocating
+    let mut run_bufs = Vec::with_capacity(EST_BUFF_CAPACITY);
+    let mut run_start_id: Option<usize> = None;
+    let mut all_ids = Vec::with_capacity(batch.len());
+
+    // Iterate through the batch
+    let mut iter = batch.into_iter().peekable();
+
+    while let Some((id, item)) = iter.next() {
+        // Track the start of the run
+        if run_start_id.is_none() {
+            run_start_id = Some(id);
+        }
+
+        // Add this page to the current run
+        run_bufs.push(item);
+        all_ids.push(id);
+
+        // Check if this is the end of a run
+        let is_end_of_run = match iter.peek() {
+            Some(&(next_id, _)) => next_id != id + 1,
+            None => true,
+        };
+
+        if is_end_of_run {
+            let start_id = run_start_id.expect("should have a start id");
+            let runs_left_cl = runs_left.clone();
+            let done_cl = done.clone();
+
+            let c = Completion::new_write(move |_| {
+                if runs_left_cl.fetch_sub(1, Ordering::AcqRel) == 1 {
+                    done_cl.store(true, Ordering::Release);
+                }
+            });
+
+            // Submit write operation for this run, decrementing the counter if we error
+            if let Err(e) = pager
+                .db_file
+                .write_pages(start_id, page_sz, run_bufs.clone(), c)
+            {
+                if runs_left.fetch_sub(1, Ordering::AcqRel) == 1 {
+                    done.store(true, Ordering::Release);
+                }
+                return Err(e);
+            }
+
+            // Reset for next run
+            run_bufs.clear();
+            run_start_id = None;
+        }
+    }
+
+    tracing::debug!(
+        "write_pages_vectored: {} pages to write, runs: {run_count}",
+        all_ids.len()
+    );
+
+    Ok(PendingFlush {
+        pages: all_ids,
+        done,
+    })
 }
 
 #[instrument(skip_all, level = Level::DEBUG)]

@@ -3,7 +3,7 @@
 
 use std::array;
 use std::cell::UnsafeCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use strum::EnumString;
 use tracing::{instrument, Level};
 
@@ -21,7 +21,7 @@ use crate::io::{File, IO};
 use crate::result::LimboResult;
 use crate::storage::sqlite3_ondisk::{
     begin_read_wal_frame, begin_read_wal_frame_raw, finish_read_page, prepare_wal_frame,
-    WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
+    write_pages_vectored, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
 };
 use crate::types::IOResult;
 use crate::{turso_assert, Buffer, LimboError, Result};
@@ -31,7 +31,7 @@ use self::sqlite3_ondisk::{checksum_wal, PageContent, WAL_MAGIC_BE, WAL_MAGIC_LE
 
 use super::buffer_pool::BufferPool;
 use super::pager::{PageRef, Pager};
-use super::sqlite3_ondisk::{self, begin_write_btree_page, WalHeader};
+use super::sqlite3_ondisk::{self, WalHeader};
 
 pub const READMARK_NOT_USED: u32 = 0xffffffff;
 
@@ -393,9 +393,67 @@ pub enum CheckpointState {
     Start,
     ReadFrame,
     WaitReadFrame,
-    WritePage,
-    WaitWritePage,
+    AccumulatePage,
+    FlushBatch,
+    WaitFlush,
     Done,
+}
+
+/// IOV_MAX is 1024 on most systems, lets use 512 to be safe
+pub const CKPT_BATCH_PAGES: usize = 512;
+type PageId = usize;
+
+/// Batch is a collection of pages that are being checkpointed together. It is used to
+/// aggregate contiguous pages into a single write operation to the database file.
+pub(super) struct Batch {
+    items: BTreeMap<PageId, Arc<RefCell<Buffer>>>,
+}
+// TODO(preston): implement the same thing for `readv`
+impl Batch {
+    fn new() -> Self {
+        Self {
+            items: BTreeMap::new(),
+        }
+    }
+    fn is_full(&self) -> bool {
+        self.items.len() >= CKPT_BATCH_PAGES
+    }
+    fn add_to_batch(&mut self, scratch: &PageRef, pool: &Arc<BufferPool>) {
+        let (id, buf_clone) = unsafe {
+            let inner = &*scratch.inner.get();
+            let id = inner.id;
+            let contents = inner.contents.as_ref().expect("scratch has contents");
+            let buf = contents.buffer.clone();
+            (id, buf)
+        };
+        // Insert the new batch item at the correct position
+        self.items.insert(id, buf_clone);
+
+        // Re-initialize scratch with a fresh buffer
+        let raw = pool.get();
+        let pool_clone = pool.clone();
+        let drop_fn = Rc::new(move |b| pool_clone.put(b));
+        let new_buf = Arc::new(RefCell::new(Buffer::new(raw, drop_fn)));
+
+        unsafe {
+            let inner = &mut *scratch.inner.get();
+            inner.contents = Some(PageContent::new(0, new_buf));
+            // reset flags on scratch so it won't be cleared later with the real page
+            inner.flags.store(0, Ordering::SeqCst);
+        }
+    }
+}
+
+impl std::ops::Deref for Batch {
+    type Target = BTreeMap<PageId, Arc<RefCell<Buffer>>>;
+    fn deref(&self) -> &Self::Target {
+        &self.items
+    }
+}
+impl std::ops::DerefMut for Batch {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.items
+    }
 }
 
 // Checkpointing is a state machine that has multiple steps. Since there are multiple steps we save
@@ -407,11 +465,43 @@ pub enum CheckpointState {
 // current_page is a helper to iterate through all the pages that might have a frame in the safe
 // range. This is inefficient for now.
 struct OngoingCheckpoint {
-    page: PageRef,
+    scratch_page: PageRef,
+    batch: Batch,
     state: CheckpointState,
+    pending_flush: Option<PendingFlush>,
     min_frame: u64,
     max_frame: u64,
     current_page: u64,
+}
+
+pub(super) struct PendingFlush {
+    // page ids to clear
+    pub(super) pages: Vec<usize>,
+    // completion flag set by IO callback
+    pub(super) done: Arc<AtomicBool>,
+}
+
+impl Default for PendingFlush {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PendingFlush {
+    pub fn new() -> Self {
+        Self {
+            pages: Vec::with_capacity(CKPT_BATCH_PAGES),
+            done: Arc::new(AtomicBool::new(false)),
+        }
+    }
+    // clear the dirty flag of all pages in the pending flush batch
+    fn clear_dirty(&self, pager: &Pager) {
+        for id in &self.pages {
+            if let Some(p) = pager.cache_get(*id) {
+                p.clear_dirty();
+            }
+        }
+    }
 }
 
 impl fmt::Debug for OngoingCheckpoint {
@@ -1079,7 +1169,7 @@ impl Wal for WalFile {
     fn checkpoint(
         &mut self,
         pager: &Pager,
-        write_counter: Rc<RefCell<usize>>,
+        _write_counter: Rc<RefCell<usize>>,
         mode: CheckpointMode,
     ) -> Result<IOResult<CheckpointResult>> {
         if matches!(mode, CheckpointMode::Full) {
@@ -1087,7 +1177,7 @@ impl Wal for WalFile {
                 "Full checkpoint mode is not implemented yet".into(),
             ));
         }
-        self.checkpoint_inner(pager, write_counter, mode)
+        self.checkpoint_inner(pager, _write_counter, mode)
             .inspect_err(|_| {
                 let _ = self.checkpoint_guard.take();
             })
@@ -1204,7 +1294,9 @@ impl WalFile {
             max_frame: unsafe { (*shared.get()).max_frame.load(Ordering::SeqCst) },
             shared,
             ongoing_checkpoint: OngoingCheckpoint {
-                page: checkpoint_page,
+                scratch_page: checkpoint_page,
+                batch: Batch::new(),
+                pending_flush: None,
                 state: CheckpointState::Start,
                 min_frame: 0,
                 max_frame: 0,
@@ -1263,6 +1355,8 @@ impl WalFile {
         self.ongoing_checkpoint.max_frame = 0;
         self.ongoing_checkpoint.current_page = 0;
         self.max_frame_read_lock_index.set(NO_LOCK_HELD);
+        self.ongoing_checkpoint.batch.clear();
+        let _ = self.ongoing_checkpoint.pending_flush.take();
         self.sync_state.set(SyncState::NotSyncing);
         self.syncing.set(false);
     }
@@ -1311,7 +1405,7 @@ impl WalFile {
     fn checkpoint_inner(
         &mut self,
         pager: &Pager,
-        write_counter: Rc<RefCell<usize>>,
+        _write_counter: Rc<RefCell<usize>>,
         mode: CheckpointMode,
     ) -> Result<IOResult<CheckpointResult>> {
         'checkpoint_loop: loop {
@@ -1358,7 +1452,14 @@ impl WalFile {
                     let frame_cache = frame_cache.lock();
                     assert!(self.ongoing_checkpoint.current_page as usize <= pages_in_frames.len());
                     if self.ongoing_checkpoint.current_page as usize == pages_in_frames.len() {
-                        self.ongoing_checkpoint.state = CheckpointState::Done;
+                        if self.ongoing_checkpoint.batch.is_empty() {
+                            // no more pages to checkpoint, we are done
+                            tracing::info!("checkpoint done, no more pages to checkpoint");
+                            self.ongoing_checkpoint.state = CheckpointState::Done;
+                        } else {
+                            // flush the batch
+                            self.ongoing_checkpoint.state = CheckpointState::FlushBatch;
+                        }
                         continue 'checkpoint_loop;
                     }
                     let page = pages_in_frames[self.ongoing_checkpoint.current_page as usize];
@@ -1374,10 +1475,10 @@ impl WalFile {
                                 page,
                                 *frame
                             );
-                            self.ongoing_checkpoint.page.get().id = page as usize;
+                            self.ongoing_checkpoint.scratch_page.get().id = page as usize;
                             let _ = self.read_frame(
                                 *frame,
-                                self.ongoing_checkpoint.page.clone(),
+                                self.ongoing_checkpoint.scratch_page.clone(),
                                 self.buffer_pool.clone(),
                             )?;
                             self.ongoing_checkpoint.state = CheckpointState::WaitReadFrame;
@@ -1387,30 +1488,65 @@ impl WalFile {
                     self.ongoing_checkpoint.current_page += 1;
                 }
                 CheckpointState::WaitReadFrame => {
-                    if self.ongoing_checkpoint.page.is_locked() {
+                    if self.ongoing_checkpoint.scratch_page.is_locked() {
                         return Ok(IOResult::IO);
                     } else {
-                        self.ongoing_checkpoint.state = CheckpointState::WritePage;
+                        self.ongoing_checkpoint.state = CheckpointState::AccumulatePage;
                     }
                 }
-                CheckpointState::WritePage => {
-                    self.ongoing_checkpoint.page.set_dirty();
-                    let _ = begin_write_btree_page(
+                CheckpointState::AccumulatePage => {
+                    // mark before batching
+                    self.ongoing_checkpoint.scratch_page.set_dirty();
+                    // we read the frame into memory, add it to our batch
+                    self.ongoing_checkpoint
+                        .batch
+                        .add_to_batch(&self.ongoing_checkpoint.scratch_page, &self.buffer_pool);
+
+                    let more_pages = (self.ongoing_checkpoint.current_page as usize)
+                        < self
+                            .get_shared()
+                            .pages_in_frames
+                            .lock()
+                            .len()
+                            .saturating_sub(1)
+                        && !self.ongoing_checkpoint.batch.is_full();
+
+                    // if we can read more pages, continue reading and accumulating pages
+                    if more_pages {
+                        self.ongoing_checkpoint.current_page += 1;
+                        self.ongoing_checkpoint.state = CheckpointState::ReadFrame;
+                    } else {
+                        // if we have enough pages in the batch, flush it
+                        self.ongoing_checkpoint.state = CheckpointState::FlushBatch;
+                    }
+                }
+                CheckpointState::FlushBatch => {
+                    tracing::trace!("started checkpoint backfilling batch");
+                    self.ongoing_checkpoint.pending_flush = Some(write_pages_vectored(
                         pager,
-                        &self.ongoing_checkpoint.page,
-                        write_counter.clone(),
-                    )?;
-                    self.ongoing_checkpoint.state = CheckpointState::WaitWritePage;
+                        std::mem::take(&mut self.ongoing_checkpoint.batch),
+                    )?);
+                    // batch is queued
+                    self.ongoing_checkpoint.batch.clear();
+                    self.ongoing_checkpoint.state = CheckpointState::WaitFlush;
                 }
-                CheckpointState::WaitWritePage => {
-                    if *write_counter.borrow() > 0 {
-                        return Ok(IOResult::IO);
+                CheckpointState::WaitFlush => {
+                    match self.ongoing_checkpoint.pending_flush.as_ref() {
+                        Some(pf) if pf.done.load(Ordering::SeqCst) => {
+                            // flush is done, we can continue
+                            tracing::trace!("checkpoint backfilling batch done");
+                        }
+                        Some(_) => return Ok(IOResult::IO),
+                        None => panic!("we should have a pending flush here"),
                     }
-                    // If page was in cache clear it.
-                    if let Some(page) = pager.cache_get(self.ongoing_checkpoint.page.get().id) {
-                        page.clear_dirty();
-                    }
-                    self.ongoing_checkpoint.page.clear_dirty();
+                    tracing::debug!("finished checkpoint backfilling batch");
+                    let pf = self
+                        .ongoing_checkpoint
+                        .pending_flush
+                        .as_ref()
+                        .expect("we should have a pending flush here");
+                    pf.clear_dirty(pager);
+                    // done with batch
                     let shared = self.get_shared();
                     if (self.ongoing_checkpoint.current_page as usize)
                         < shared.pages_in_frames.lock().len()
@@ -1418,6 +1554,7 @@ impl WalFile {
                         self.ongoing_checkpoint.current_page += 1;
                         self.ongoing_checkpoint.state = CheckpointState::ReadFrame;
                     } else {
+                        tracing::debug!("WaitFlush transitioning checkpoint to Done");
                         self.ongoing_checkpoint.state = CheckpointState::Done;
                     }
                 }
@@ -1426,8 +1563,11 @@ impl WalFile {
                 // In Restart or Truncate mode, we need to restart the log over and possibly truncate the file
                 // Release all locks and return the current num of wal frames and the amount we backfilled
                 CheckpointState::Done => {
-                    if *write_counter.borrow() > 0 {
-                        return Ok(IOResult::IO);
+                    if let Some(pf) = self.ongoing_checkpoint.pending_flush.as_ref() {
+                        turso_assert!(
+                            pf.done.load(Ordering::Relaxed),
+                            "checkpoint pending flush must have finished"
+                        );
                     }
                     let mut checkpoint_result = {
                         let shared = self.get_shared();
@@ -1491,6 +1631,11 @@ impl WalFile {
                     } else {
                         let _ = self.checkpoint_guard.take();
                     }
+                    self.ongoing_checkpoint.scratch_page.clear_dirty();
+                    self.ongoing_checkpoint.scratch_page.get().id = 0;
+                    self.ongoing_checkpoint.scratch_page.get().contents = None;
+                    let _ = self.ongoing_checkpoint.pending_flush.take();
+                    self.ongoing_checkpoint.batch.clear();
                     self.ongoing_checkpoint.state = CheckpointState::Start;
                     return Ok(IOResult::Done(checkpoint_result));
                 }
@@ -1916,6 +2061,25 @@ pub mod test {
             }
             conn.execute("commit").unwrap();
         }
+    }
+
+    fn count_test_table(conn: &Arc<Connection>) -> i64 {
+        let mut stmt = conn.prepare("select count(*) from test").unwrap();
+        loop {
+            match stmt.step() {
+                Ok(StepResult::Row) => {
+                    break;
+                }
+                Ok(StepResult::IO) => {
+                    stmt.run_once().unwrap();
+                }
+                _ => {
+                    panic!("Failed to step through the statement");
+                }
+            }
+        }
+        let count: i64 = stmt.row().unwrap().get(0).unwrap();
+        count
     }
 
     fn run_checkpoint_until_done(
@@ -2493,6 +2657,75 @@ pub mod test {
         assert_eq!(hdr.file_format, 3007000);
         assert_eq!(hdr.page_size, 4096, "invalid page size");
         assert_eq!(hdr.checkpoint_seq, 1, "invalid checkpoint_seq");
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn test_wal_checkpoint_truncate_db_file_contains_data() {
+        let (db, path) = get_database();
+        let conn = db.connect().unwrap();
+
+        let walpath = {
+            let mut p = path.clone().into_os_string().into_string().unwrap();
+            p.push_str("/test.db-wal");
+            std::path::PathBuf::from(p)
+        };
+
+        conn.execute("create table test(id integer primary key, value text)")
+            .unwrap();
+        bulk_inserts(&conn, 10, 100);
+
+        // Get size before checkpoint
+        let size_before = std::fs::metadata(&walpath).unwrap().len();
+        assert!(size_before > 0, "WAL file should have content");
+
+        // Do a TRUNCATE checkpoint
+        {
+            let pager = conn.pager.borrow();
+            let mut wal = pager.wal.borrow_mut();
+            run_checkpoint_until_done(&mut *wal, &pager, CheckpointMode::Truncate);
+        }
+
+        // Check file size after truncate
+        let size_after = std::fs::metadata(&walpath).unwrap().len();
+        assert_eq!(size_after, 0, "WAL file should be truncated to 0 bytes");
+
+        // Verify we can still write to the database
+        conn.execute("INSERT INTO test VALUES (1001, 'after-truncate')")
+            .unwrap();
+
+        // Check WAL has new content
+        let new_size = std::fs::metadata(&walpath).unwrap().len();
+        assert!(new_size >= 32, "WAL file too small");
+        let hdr = read_wal_header(&walpath);
+        let expected_magic = if cfg!(target_endian = "big") {
+            sqlite3_ondisk::WAL_MAGIC_BE
+        } else {
+            sqlite3_ondisk::WAL_MAGIC_LE
+        };
+        assert!(
+            hdr.magic == expected_magic,
+            "bad WAL magic: {:#X}, expected: {:#X}",
+            hdr.magic,
+            sqlite3_ondisk::WAL_MAGIC_BE
+        );
+        assert_eq!(hdr.file_format, 3007000);
+        assert_eq!(hdr.page_size, 4096, "invalid page size");
+        assert_eq!(hdr.checkpoint_seq, 1, "invalid checkpoint_seq");
+        {
+            let pager = conn.pager.borrow();
+            let mut wal = pager.wal.borrow_mut();
+            run_checkpoint_until_done(&mut *wal, &pager, CheckpointMode::Passive);
+        }
+        // delete the WAL file so we can read right from db and assert
+        // that everything was backfilled properly
+        std::fs::remove_file(&walpath).unwrap();
+
+        let count = count_test_table(&conn);
+        assert_eq!(
+            count, 1001,
+            "we should have 1001 rows in the table all together"
+        );
         std::fs::remove_dir_all(path).unwrap();
     }
 

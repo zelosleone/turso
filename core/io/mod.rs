@@ -18,6 +18,46 @@ pub trait File: Send + Sync {
     fn pwrite(&self, pos: usize, buffer: Arc<RefCell<Buffer>>, c: Completion)
         -> Result<Completion>;
     fn sync(&self, c: Completion) -> Result<Completion>;
+    fn pwritev(
+        &self,
+        pos: usize,
+        buffers: Vec<Arc<RefCell<Buffer>>>,
+        c: Completion,
+    ) -> Result<Completion> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        if buffers.is_empty() {
+            c.complete(0);
+            return Ok(c);
+        }
+        // naive default implementation can be overridden on backends where it makes sense to
+        let mut pos = pos;
+        let outstanding = Arc::new(AtomicUsize::new(buffers.len()));
+        let total_written = Arc::new(AtomicUsize::new(0));
+
+        for buf in buffers {
+            let len = buf.borrow().len();
+            let child_c = {
+                let c_main = c.clone();
+                let outstanding = outstanding.clone();
+                let total_written = total_written.clone();
+                Completion::new_write(move |n| {
+                    // accumulate bytes actually reported by the backend
+                    total_written.fetch_add(n as usize, Ordering::Relaxed);
+                    if outstanding.fetch_sub(1, Ordering::AcqRel) == 1 {
+                        // last one finished
+                        c_main.complete(total_written.load(Ordering::Acquire) as i32);
+                    }
+                })
+            };
+            if let Err(e) = self.pwrite(pos, buf.clone(), child_c) {
+                // best-effort: mark as done so caller won't wait forever
+                c.complete(-1);
+                return Err(e);
+            }
+            pos += len;
+        }
+        Ok(c)
+    }
     fn size(&self) -> Result<u64>;
     fn truncate(&self, len: usize, c: Completion) -> Result<Completion>;
 }
@@ -304,10 +344,10 @@ cfg_block! {
         pub use unix::UnixIO as PlatformIO;
     }
 
-    #[cfg(target_os = "windows")] {
+     #[cfg(target_os = "windows")] {
         mod windows;
         pub use windows::WindowsIO as PlatformIO;
-        pub use PlatformIO as SyscallIO;
+         pub use PlatformIO as SyscallIO;
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "android", target_os = "ios")))] {
