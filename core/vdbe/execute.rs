@@ -2,18 +2,16 @@
 use crate::function::AlterTableFunc;
 use crate::numeric::{NullableInteger, Numeric};
 use crate::storage::btree::{integrity_check, IntegrityCheckError, IntegrityCheckState};
-use crate::storage::database::FileMemoryStorage;
+use crate::storage::database::DatabaseFile;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::{AtomicDbState, CreateBTreeFlags, DbState};
 use crate::storage::sqlite3_ondisk::read_varint;
-use crate::storage::wal::DummyWAL;
-use crate::storage::{self, header_accessor};
 use crate::translate::collate::CollationSeq;
 use crate::types::{
     compare_immutable, compare_records_generic, Extendable, ImmutableRecord, RawSlice, SeekResult,
     Text, TextRef, TextSubtype,
 };
-use crate::util::normalize_ident;
+use crate::util::{normalize_ident, IOExt as _};
 use crate::vdbe::insn::InsertFlags;
 use crate::vdbe::registers_to_ref_values;
 use crate::vector::{vector_concat, vector_slice};
@@ -29,8 +27,8 @@ use crate::{
         },
         printf::exec_printf,
     },
-    IO,
 };
+use std::env::temp_dir;
 use std::ops::DerefMut;
 use std::{
     borrow::BorrowMut,
@@ -115,7 +113,7 @@ pub type InsnFunction = fn(
     &mut ProgramState,
     &Insn,
     &Rc<Pager>,
-    Option<&Rc<MvStore>>,
+    Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult>;
 
 pub enum InsnFunctionStepResult {
@@ -144,7 +142,7 @@ pub fn op_init(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Init { target_pc } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -159,7 +157,7 @@ pub fn op_add(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Add { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -178,7 +176,7 @@ pub fn op_subtract(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Subtract { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -197,7 +195,7 @@ pub fn op_multiply(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Multiply { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -216,7 +214,7 @@ pub fn op_divide(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Divide { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -235,7 +233,7 @@ pub fn op_drop_index(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::DropIndex { index, db: _ } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -252,7 +250,7 @@ pub fn op_remainder(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Remainder { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -271,7 +269,7 @@ pub fn op_bit_and(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::BitAnd { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -290,7 +288,7 @@ pub fn op_bit_or(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::BitOr { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -309,7 +307,7 @@ pub fn op_bit_not(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::BitNot { reg, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -325,7 +323,7 @@ pub fn op_checkpoint(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Checkpoint {
         database: _,
@@ -335,6 +333,13 @@ pub fn op_checkpoint(
     else {
         unreachable!("unexpected Insn {:?}", insn)
     };
+    if !program.connection.auto_commit.get() {
+        // TODO: sqlite returns "Runtime error: database table is locked (6)" when a table is in use
+        // when a checkpoint is attempted. We don't have table locks, so return TableLocked for any
+        // attempt to checkpoint in an interactive transaction. This does not end the transaction,
+        // however.
+        return Err(LimboError::TableLocked);
+    }
     let result = program.connection.checkpoint(*checkpoint_mode);
     match result {
         Ok(CheckpointResult {
@@ -363,7 +368,7 @@ pub fn op_null(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     match insn {
         Insn::Null { dest, dest_end } | Insn::BeginSubrtn { dest, dest_end } => {
@@ -386,7 +391,7 @@ pub fn op_null_row(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::NullRow { cursor_id } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -405,7 +410,7 @@ pub fn op_compare(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Compare {
         start_reg_a,
@@ -451,7 +456,7 @@ pub fn op_jump(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Jump {
         target_pc_lt,
@@ -484,7 +489,7 @@ pub fn op_move(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Move {
         source_reg,
@@ -512,7 +517,7 @@ pub fn op_if_pos(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IfPos {
         reg,
@@ -547,7 +552,7 @@ pub fn op_not_null(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::NotNull { reg, target_pc } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -634,7 +639,7 @@ pub fn op_comparison(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let (lhs, rhs, target_pc, flags, collation, op) = match insn {
         Insn::Eq {
@@ -841,7 +846,7 @@ pub fn op_if(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::If {
         reg,
@@ -868,7 +873,7 @@ pub fn op_if_not(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IfNot {
         reg,
@@ -895,7 +900,7 @@ pub fn op_open_read(
     state: &mut ProgramState,
     insn: &Insn,
     _pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::OpenRead {
         cursor_id,
@@ -914,7 +919,7 @@ pub fn op_open_read(
             let table_id = *root_page as u64;
             let mv_store = mv_store.unwrap().clone();
             let mv_cursor = Rc::new(RefCell::new(
-                MvCursor::new(mv_store.clone(), tx_id, table_id).unwrap(),
+                MvCursor::new(mv_store, tx_id, table_id, pager.clone()).unwrap(),
             ));
             Some(mv_cursor)
         }
@@ -967,7 +972,7 @@ pub fn op_vopen(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::VOpen { cursor_id } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -992,7 +997,7 @@ pub fn op_vcreate(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::VCreate {
         module_name,
@@ -1033,7 +1038,7 @@ pub fn op_vfilter(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::VFilter {
         cursor_id,
@@ -1073,7 +1078,7 @@ pub fn op_vcolumn(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::VColumn {
         cursor_id,
@@ -1098,7 +1103,7 @@ pub fn op_vupdate(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::VUpdate {
         cursor_id,
@@ -1162,7 +1167,7 @@ pub fn op_vnext(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::VNext {
         cursor_id,
@@ -1189,7 +1194,7 @@ pub fn op_vdestroy(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::VDestroy { db, table_name } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -1213,7 +1218,7 @@ pub fn op_open_pseudo(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::OpenPseudo {
         cursor_id,
@@ -1240,7 +1245,7 @@ pub fn op_rewind(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Rewind {
         cursor_id,
@@ -1269,7 +1274,7 @@ pub fn op_last(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Last {
         cursor_id,
@@ -1390,7 +1395,7 @@ pub fn op_column(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Column {
         cursor_id,
@@ -1685,7 +1690,7 @@ pub fn op_type_check(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::TypeCheck {
         start_reg,
@@ -1747,7 +1752,7 @@ pub fn op_make_record(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::MakeRecord {
         start_reg,
@@ -1769,7 +1774,7 @@ pub fn op_result_row(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::ResultRow { start_reg, count } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -1788,7 +1793,7 @@ pub fn op_next(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Next {
         cursor_id,
@@ -1819,7 +1824,7 @@ pub fn op_prev(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Prev {
         cursor_id,
@@ -1849,7 +1854,7 @@ pub fn halt(
     program: &Program,
     state: &mut ProgramState,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
     err_code: usize,
     description: &str,
 ) -> Result<InsnFunctionStepResult> {
@@ -1889,7 +1894,7 @@ pub fn op_halt(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Halt {
         err_code,
@@ -1940,7 +1945,7 @@ pub fn op_halt_if_null(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::HaltIfNull {
         target_reg,
@@ -1963,7 +1968,7 @@ pub fn op_transaction(
     state: &mut ProgramState,
     insn: &Insn,
     _pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Transaction { db, write } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -1979,7 +1984,7 @@ pub fn op_transaction(
         if state.mv_tx_id.is_none() {
             // We allocate the first page lazily in the first transaction.
             return_if_io!(pager.maybe_allocate_page1());
-            let tx_id = mv_store.begin_tx();
+            let tx_id = mv_store.begin_tx(pager.clone());
             conn.mv_transactions.borrow_mut().push(tx_id);
             state.mv_tx_id = Some(tx_id);
         }
@@ -2061,7 +2066,7 @@ pub fn op_auto_commit(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::AutoCommit {
         auto_commit,
@@ -2115,7 +2120,7 @@ pub fn op_goto(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Goto { target_pc } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2130,7 +2135,7 @@ pub fn op_gosub(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Gosub {
         target_pc,
@@ -2150,7 +2155,7 @@ pub fn op_return(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Return {
         return_reg,
@@ -2180,7 +2185,7 @@ pub fn op_integer(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Integer { value, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2195,7 +2200,7 @@ pub fn op_real(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Real { value, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2210,7 +2215,7 @@ pub fn op_real_affinity(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::RealAffinity { register } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2227,7 +2232,7 @@ pub fn op_string8(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::String8 { value, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2242,7 +2247,7 @@ pub fn op_blob(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Blob { value, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2257,7 +2262,7 @@ pub fn op_row_data(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::RowData { cursor_id, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2288,7 +2293,7 @@ pub fn op_row_id(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::RowId { cursor_id, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2353,7 +2358,7 @@ pub fn op_idx_row_id(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IdxRowId { cursor_id, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -2375,7 +2380,7 @@ pub fn op_seek_rowid(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SeekRowid {
         cursor_id,
@@ -2431,7 +2436,7 @@ pub fn op_deferred_seek(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::DeferredSeek {
         index_cursor_id,
@@ -2473,7 +2478,7 @@ pub fn op_seek(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let (cursor_id, is_index, record_source, target_pc) = match insn {
         Insn::SeekGE {
@@ -2579,7 +2584,7 @@ pub fn seek_internal(
     program: &Program,
     state: &mut ProgramState,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
     record_source: RecordSource,
     cursor_id: usize,
     is_index: bool,
@@ -2590,7 +2595,7 @@ pub fn seek_internal(
         program: &Program,
         state: &mut ProgramState,
         pager: &Rc<Pager>,
-        mv_store: Option<&Rc<MvStore>>,
+        mv_store: Option<&Arc<MvStore>>,
         record_source: RecordSource,
         cursor_id: usize,
         is_index: bool,
@@ -2856,7 +2861,7 @@ pub fn op_idx_ge(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IdxGE {
         cursor_id,
@@ -2907,7 +2912,7 @@ pub fn op_seek_end(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     if let Insn::SeekEnd { cursor_id } = *insn {
         let mut cursor = state.get_cursor(cursor_id);
@@ -2926,7 +2931,7 @@ pub fn op_idx_le(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IdxLE {
         cursor_id,
@@ -2977,7 +2982,7 @@ pub fn op_idx_gt(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IdxGT {
         cursor_id,
@@ -3028,7 +3033,7 @@ pub fn op_idx_lt(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IdxLT {
         cursor_id,
@@ -3079,7 +3084,7 @@ pub fn op_decr_jump_zero(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::DecrJumpZero { reg, target_pc } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -3132,7 +3137,7 @@ pub fn op_agg_step(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::AggStep {
         acc_reg,
@@ -3437,7 +3442,7 @@ pub fn op_agg_final(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::AggFinal { register, func } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -3577,7 +3582,7 @@ pub fn op_sorter_open(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SorterOpen {
         cursor_id,
@@ -3590,8 +3595,12 @@ pub fn op_sorter_open(
     };
     let cache_size = program.connection.get_cache_size();
     // Set the buffer size threshold to be roughly the same as the limit configured for the page-cache.
-    let page_size = header_accessor::get_page_size(pager)
-        .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE) as usize;
+    let page_size = pager
+        .io
+        .block(|| pager.with_header(|header| header.page_size))
+        .unwrap_or_default()
+        .get() as usize;
+
     let max_buffer_size_bytes = if cache_size < 0 {
         (cache_size.abs() * 1024) as usize
     } else {
@@ -3621,7 +3630,7 @@ pub fn op_sorter_data(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SorterData {
         cursor_id,
@@ -3657,7 +3666,7 @@ pub fn op_sorter_insert(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SorterInsert {
         cursor_id,
@@ -3684,7 +3693,7 @@ pub fn op_sorter_sort(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SorterSort {
         cursor_id,
@@ -3717,7 +3726,7 @@ pub fn op_sorter_next(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SorterNext {
         cursor_id,
@@ -3748,7 +3757,7 @@ pub fn op_function(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Function {
         constant_mask,
@@ -4342,7 +4351,8 @@ pub fn op_function(
                 }
             }
             ScalarFunc::SqliteVersion => {
-                let version_integer: i64 = header_accessor::get_version_number(pager)? as i64;
+                let version_integer =
+                    return_if_io!(pager.with_header(|header| header.version_number)).get() as i64;
                 let version = execute_sqlite_version(version_integer);
                 state.registers[*dest] = Register::Value(Value::build_text(version));
             }
@@ -4965,7 +4975,7 @@ pub fn op_init_coroutine(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::InitCoroutine {
         yield_reg,
@@ -4993,7 +5003,7 @@ pub fn op_end_coroutine(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::EndCoroutine { yield_reg } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -5015,7 +5025,7 @@ pub fn op_yield(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Yield {
         yield_reg,
@@ -5058,7 +5068,7 @@ pub fn op_insert(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Insert {
         cursor: cursor_id,
@@ -5139,7 +5149,7 @@ pub fn op_int_64(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Int64 {
         _p1,
@@ -5160,7 +5170,7 @@ pub fn op_delete(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Delete { cursor_id } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -5187,7 +5197,7 @@ pub fn op_idx_delete(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IdxDelete {
         cursor_id,
@@ -5294,7 +5304,7 @@ pub fn op_idx_insert(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IdxInsert {
         cursor_id,
@@ -5442,7 +5452,7 @@ pub fn op_new_rowid(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::NewRowid {
         cursor, rowid_reg, ..
@@ -5573,7 +5583,7 @@ pub fn op_must_be_int(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::MustBeInt { reg } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -5608,7 +5618,7 @@ pub fn op_soft_null(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SoftNull { reg } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -5627,7 +5637,7 @@ pub fn op_no_conflict(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::NoConflict {
         cursor_id,
@@ -5709,7 +5719,7 @@ pub fn op_not_exists(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::NotExists {
         cursor,
@@ -5737,7 +5747,7 @@ pub fn op_offset_limit(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::OffsetLimit {
         limit_reg,
@@ -5782,7 +5792,7 @@ pub fn op_open_write(
     state: &mut ProgramState,
     insn: &Insn,
     _pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::OpenWrite {
         cursor_id,
@@ -5819,7 +5829,7 @@ pub fn op_open_write(
             let table_id = root_page;
             let mv_store = mv_store.unwrap().clone();
             let mv_cursor = Rc::new(RefCell::new(
-                MvCursor::new(mv_store.clone(), tx_id, table_id).unwrap(),
+                MvCursor::new(mv_store.clone(), tx_id, table_id, pager.clone()).unwrap(),
             ));
             Some(mv_cursor)
         }
@@ -5866,7 +5876,7 @@ pub fn op_copy(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Copy {
         src_reg,
@@ -5888,7 +5898,7 @@ pub fn op_create_btree(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::CreateBtree { db, root, flags } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -5915,7 +5925,7 @@ pub fn op_destroy(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Destroy {
         root,
@@ -5944,7 +5954,7 @@ pub fn op_drop_table(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::DropTable { db, table_name, .. } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -5968,7 +5978,7 @@ pub fn op_close(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Close { cursor_id } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -5984,7 +5994,7 @@ pub fn op_is_null(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IsNull { reg, target_pc } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -6002,7 +6012,7 @@ pub fn op_page_count(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::PageCount { db, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -6011,8 +6021,12 @@ pub fn op_page_count(
         // TODO: implement temp databases
         todo!("temp databases not implemented yet");
     }
-    let count = header_accessor::get_database_size(pager).unwrap_or(0);
-    state.registers[*dest] = Register::Value(Value::Integer(count as i64));
+    let count = match pager.with_header(|header| header.database_size.get()) {
+        Err(_) => 0.into(),
+        Ok(IOResult::Done(v)) => v.into(),
+        Ok(IOResult::IO) => return Ok(InsnFunctionStepResult::IO),
+    };
+    state.registers[*dest] = Register::Value(Value::Integer(count));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -6022,7 +6036,7 @@ pub fn op_parse_schema(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::ParseSchema {
         db: _,
@@ -6062,7 +6076,7 @@ pub fn op_read_cookie(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::ReadCookie { db, dest, cookie } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -6071,15 +6085,19 @@ pub fn op_read_cookie(
         // TODO: implement temp databases
         todo!("temp databases not implemented yet");
     }
-    let cookie_value = match cookie {
-        Cookie::ApplicationId => header_accessor::get_application_id(pager).unwrap_or(0) as i64,
-        Cookie::UserVersion => header_accessor::get_user_version(pager).unwrap_or(0) as i64,
-        Cookie::SchemaVersion => header_accessor::get_schema_cookie(pager).unwrap_or(0) as i64,
-        Cookie::LargestRootPageNumber => {
-            header_accessor::get_vacuum_mode_largest_root_page(pager).unwrap_or(0) as i64
-        }
+
+    let cookie_value = match pager.with_header(|header| match cookie {
+        Cookie::ApplicationId => header.application_id.get().into(),
+        Cookie::UserVersion => header.user_version.get().into(),
+        Cookie::SchemaVersion => header.schema_cookie.get().into(),
+        Cookie::LargestRootPageNumber => header.vacuum_mode_largest_root_page.get().into(),
         cookie => todo!("{cookie:?} is not yet implement for ReadCookie"),
+    }) {
+        Err(_) => 0.into(),
+        Ok(IOResult::Done(v)) => v,
+        Ok(IOResult::IO) => return Ok(InsnFunctionStepResult::IO),
     };
+
     state.registers[*dest] = Register::Value(Value::Integer(cookie_value));
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -6090,7 +6108,7 @@ pub fn op_set_cookie(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::SetCookie {
         db,
@@ -6104,38 +6122,38 @@ pub fn op_set_cookie(
     if *db > 0 {
         todo!("temp databases not implemented yet");
     }
-    match cookie {
-        Cookie::ApplicationId => {
-            header_accessor::set_application_id(pager, *value)?;
-        }
-        Cookie::UserVersion => {
-            header_accessor::set_user_version(pager, *value)?;
-        }
-        Cookie::LargestRootPageNumber => {
-            header_accessor::set_vacuum_mode_largest_root_page(pager, *value as u32)?;
-        }
-        Cookie::IncrementalVacuum => {
-            header_accessor::set_incremental_vacuum_enabled(pager, *value as u32)?;
-        }
-        Cookie::SchemaVersion => {
-            if mv_store.is_none() {
-                // we update transaction state to indicate that the schema has changed
-                match program.connection.transaction_state.get() {
-                    TransactionState::Write { schema_did_change } => {
-                        program.connection.transaction_state.set(TransactionState::Write { schema_did_change: true });
-                    },
-                    TransactionState::Read => unreachable!("invalid transaction state for SetCookie: TransactionState::Read, should be write"),
-                    TransactionState::None => unreachable!("invalid transaction state for SetCookie: TransactionState::None, should be write"),
-                    TransactionState::PendingUpgrade => unreachable!("invalid transaction state for SetCookie: TransactionState::PendingUpgrade, should be write"),
-                }
+
+    return_if_io!(pager.with_header_mut(|header| {
+        match cookie {
+            Cookie::ApplicationId => header.application_id = (*value).into(),
+            Cookie::UserVersion => header.user_version = (*value).into(),
+            Cookie::LargestRootPageNumber => {
+                header.vacuum_mode_largest_root_page = (*value as u32).into();
             }
-            program
-                .connection
-                .with_schema_mut(|schema| schema.schema_version = *value as u32);
-            header_accessor::set_schema_cookie(pager, *value as u32)?;
-        }
-        cookie => todo!("{cookie:?} is not yet implement for SetCookie"),
-    }
+            Cookie::IncrementalVacuum => {
+                header.incremental_vacuum_enabled = (*value as u32).into()
+            }
+            Cookie::SchemaVersion => {
+                if mv_store.is_none() {
+                    // we update transaction state to indicate that the schema has changed
+                    match program.connection.transaction_state.get() {
+                        TransactionState::Write { schema_did_change } => {
+                            program.connection.transaction_state.set(TransactionState::Write { schema_did_change: true });
+                        },
+                        TransactionState::Read => unreachable!("invalid transaction state for SetCookie: TransactionState::Read, should be write"),
+                        TransactionState::None => unreachable!("invalid transaction state for SetCookie: TransactionState::None, should be write"),
+                        TransactionState::PendingUpgrade => unreachable!("invalid transaction state for SetCookie: TransactionState::PendingUpgrade, should be write"),
+                    }
+                }
+                program
+                    .connection
+                    .with_schema_mut(|schema| schema.schema_version = *value as u32);
+                header.schema_cookie = (*value as u32).into();
+            }
+            cookie => todo!("{cookie:?} is not yet implement for SetCookie"),
+        };
+    }));
+
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -6145,7 +6163,7 @@ pub fn op_shift_right(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::ShiftRight { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -6164,7 +6182,7 @@ pub fn op_shift_left(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::ShiftLeft { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -6178,12 +6196,43 @@ pub fn op_shift_left(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_add_imm(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Arc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::AddImm { register, value } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+
+    let current = &state.registers[*register];
+    let current_value = match current {
+        Register::Value(val) => val,
+        Register::Aggregate(_) => &Value::Null,
+        Register::Record(_) => &Value::Null,
+    };
+
+    let int_val = match current_value {
+        Value::Integer(i) => i + value,
+        Value::Float(f) => (*f as i64) + value,
+        Value::Text(s) => s.as_str().parse::<i64>().unwrap_or(0) + value,
+        Value::Blob(_) => *value, // BLOB becomes the added value
+        Value::Null => *value,    // NULL becomes the added value
+    };
+
+    state.registers[*register] = Register::Value(Value::Integer(int_val));
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 pub fn op_variable(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Variable { index, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -6198,7 +6247,7 @@ pub fn op_zero_or_null(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::ZeroOrNull { rg1, rg2, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -6219,7 +6268,7 @@ pub fn op_not(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Not { reg, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -6235,7 +6284,7 @@ pub fn op_concat(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Concat { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -6254,7 +6303,7 @@ pub fn op_and(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::And { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -6273,7 +6322,7 @@ pub fn op_or(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Or { lhs, rhs, dest } = insn else {
         unreachable!("unexpected Insn {:?}", insn)
@@ -6292,7 +6341,7 @@ pub fn op_noop(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     // Do nothing
     // Advance the program counter for the next opcode
@@ -6310,7 +6359,7 @@ pub fn op_open_ephemeral(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let (cursor_id, is_table) = match insn {
         Insn::OpenEphemeral {
@@ -6324,17 +6373,30 @@ pub fn op_open_ephemeral(
         OpOpenEphemeralState::Start => {
             tracing::trace!("Start");
             let conn = program.connection.clone();
-            let io = conn.pager.borrow().io.get_memory_io();
+            let io = conn.pager.borrow().io.clone();
+            let rand_num = io.generate_random_number();
+            let temp_dir = temp_dir();
+            let rand_path =
+                std::path::Path::new(&temp_dir).join(format!("tursodb-ephemeral-{rand_num}"));
+            let Some(rand_path_str) = rand_path.to_str() else {
+                return Err(LimboError::InternalError(
+                    "Failed to convert path to string".to_string(),
+                ));
+            };
+            let file = io.open_file(rand_path_str, OpenFlags::Create, false)?;
+            let db_file = Arc::new(DatabaseFile::new(file));
 
-            let file = io.open_file("", OpenFlags::Create, true)?;
-            let db_file = Arc::new(FileMemoryStorage::new(file));
+            let page_size = pager
+                .io
+                .block(|| pager.with_header(|header| header.page_size))?
+                .get();
 
-            let buffer_pool = Arc::new(BufferPool::new(None));
+            let buffer_pool = Arc::new(BufferPool::new(Some(page_size as usize)));
             let page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
 
             let pager = Rc::new(Pager::new(
                 db_file,
-                Rc::new(RefCell::new(DummyWAL)),
+                None,
                 io,
                 page_cache,
                 buffer_pool.clone(),
@@ -6342,9 +6404,11 @@ pub fn op_open_ephemeral(
                 Arc::new(Mutex::new(())),
             )?);
 
-            let page_size = header_accessor::get_page_size(&pager)
-                .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE)
-                as usize;
+            let page_size = pager
+                .io
+                .block(|| pager.with_header(|header| header.page_size))
+                .unwrap_or_default()
+                .get() as usize;
             buffer_pool.set_page_size(page_size);
 
             state.op_open_ephemeral_state = OpOpenEphemeralState::StartingTxn { pager };
@@ -6375,7 +6439,7 @@ pub fn op_open_ephemeral(
                     let table_id = root_page as u64;
                     let mv_store = mv_store.unwrap().clone();
                     let mv_cursor = Rc::new(RefCell::new(
-                        MvCursor::new(mv_store.clone(), tx_id, table_id).unwrap(),
+                        MvCursor::new(mv_store.clone(), tx_id, table_id, pager.clone()).unwrap(),
                     ));
                     Some(mv_cursor)
                 }
@@ -6446,7 +6510,7 @@ pub fn op_once(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Once {
         target_pc_when_reentered,
@@ -6470,7 +6534,7 @@ pub fn op_found(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let (cursor_id, target_pc, record_reg, num_regs) = match insn {
         Insn::NotFound {
@@ -6532,7 +6596,7 @@ pub fn op_affinity(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Affinity {
         start_reg,
@@ -6566,7 +6630,7 @@ pub fn op_count(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::Count {
         cursor_id,
@@ -6603,7 +6667,7 @@ pub fn op_integrity_check(
     state: &mut ProgramState,
     insn: &Insn,
     pager: &Rc<Pager>,
-    mv_store: Option<&Rc<MvStore>>,
+    mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     let Insn::IntegrityCk {
         max_errors,
@@ -6648,6 +6712,31 @@ pub fn op_integrity_check(
         }
     }
 
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_cast(
+    _program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    _pager: &Rc<Pager>,
+    _mv_store: Option<&Arc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let Insn::Cast { reg, affinity } = insn else {
+        unreachable!("unexpected Insn {:?}", insn)
+    };
+
+    let value = state.registers[*reg].get_owned_value().clone();
+    let result = match affinity {
+        Affinity::Blob => value.exec_cast("BLOB"),
+        Affinity::Text => value.exec_cast("TEXT"),
+        Affinity::Numeric => value.exec_cast("NUMERIC"),
+        Affinity::Integer => value.exec_cast("INTEGER"),
+        Affinity::Real => value.exec_cast("REAL"),
+    };
+
+    state.registers[*reg] = Register::Value(result);
+    state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }
 

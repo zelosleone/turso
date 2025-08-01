@@ -55,12 +55,20 @@ pub enum LimboError {
     IntegerOverflow,
     #[error("Schema is locked for write")]
     SchemaLocked,
+    #[error("Runtime error: database table is locked")]
+    TableLocked,
     #[error("Error: Resource is read-only")]
     ReadOnly,
     #[error("Database is busy")]
     Busy,
     #[error("Conflict: {0}")]
     Conflict(String),
+    #[error("Transaction terminated")]
+    TxTerminated,
+    #[error("Write-write conflict")]
+    WriteWriteConflict,
+    #[error("No such transaction ID: {0}")]
+    NoSuchTransactionID(String),
 }
 
 #[macro_export]

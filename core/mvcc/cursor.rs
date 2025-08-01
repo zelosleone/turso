@@ -1,7 +1,10 @@
 use crate::mvcc::clock::LogicalClock;
-use crate::mvcc::database::{MvStore, Result, Row, RowID};
+use crate::mvcc::database::{MvStore, Row, RowID};
+use crate::Pager;
+use crate::Result;
 use std::fmt::Debug;
 use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Debug, Copy, Clone)]
 enum CursorPosition {
@@ -14,20 +17,27 @@ enum CursorPosition {
 }
 #[derive(Debug)]
 pub struct MvccLazyCursor<Clock: LogicalClock> {
-    pub db: Rc<MvStore<Clock>>,
+    pub db: Arc<MvStore<Clock>>,
     current_pos: CursorPosition,
     table_id: u64,
     tx_id: u64,
 }
 
 impl<Clock: LogicalClock> MvccLazyCursor<Clock> {
-    pub fn new(db: Rc<MvStore<Clock>>, tx_id: u64, table_id: u64) -> Result<MvccLazyCursor<Clock>> {
-        Ok(Self {
+    pub fn new(
+        db: Arc<MvStore<Clock>>,
+        tx_id: u64,
+        table_id: u64,
+        pager: Rc<Pager>,
+    ) -> Result<MvccLazyCursor<Clock>> {
+        db.maybe_initialize_table(table_id, pager)?;
+        let cursor = Self {
             db,
             tx_id,
             current_pos: CursorPosition::BeforeFirst,
             table_id,
-        })
+        };
+        Ok(cursor)
     }
 
     /// Insert a row into the table.
@@ -40,18 +50,37 @@ impl<Clock: LogicalClock> MvccLazyCursor<Clock> {
         Ok(())
     }
 
-    pub fn current_row_id(&self) -> Option<RowID> {
+    pub fn current_row_id(&mut self) -> Option<RowID> {
         match self.current_pos {
             CursorPosition::Loaded(id) => Some(id),
-            CursorPosition::BeforeFirst => None,
+            CursorPosition::BeforeFirst => {
+                // If we are before first, we need to try and find the first row.
+                let maybe_rowid = self.db.get_next_row_id_for_table(self.table_id, i64::MIN);
+                if let Some(id) = maybe_rowid {
+                    self.current_pos = CursorPosition::Loaded(id);
+                    Some(id)
+                } else {
+                    self.current_pos = CursorPosition::BeforeFirst;
+                    None
+                }
+            }
             CursorPosition::End => None,
         }
     }
 
-    pub fn current_row(&self) -> Result<Option<Row>> {
+    pub fn current_row(&mut self) -> Result<Option<Row>> {
         match self.current_pos {
             CursorPosition::Loaded(id) => self.db.read(self.tx_id, id),
-            CursorPosition::BeforeFirst => Ok(None),
+            CursorPosition::BeforeFirst => {
+                // If we are before first, we need to try and find the first row.
+                let maybe_rowid = self.db.get_next_row_id_for_table(self.table_id, i64::MIN);
+                if let Some(id) = maybe_rowid {
+                    self.current_pos = CursorPosition::Loaded(id);
+                    self.db.read(self.tx_id, id)
+                } else {
+                    Ok(None)
+                }
+            }
             CursorPosition::End => Ok(None),
         }
     }
@@ -65,7 +94,8 @@ impl<Clock: LogicalClock> MvccLazyCursor<Clock> {
         let before_first = matches!(self.current_pos, CursorPosition::BeforeFirst);
         let min_id = match self.current_pos {
             CursorPosition::Loaded(id) => id.row_id + 1,
-            CursorPosition::BeforeFirst => i64::MIN, // we need to find first row, so we look from the first id
+            // TODO: do we need to forward twice?
+            CursorPosition::BeforeFirst => i64::MIN, // we need to find first row, so we look from the first id,
             CursorPosition::End => {
                 // let's keep same state, we reached the end so no point in moving forward.
                 return false;

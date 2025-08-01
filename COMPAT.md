@@ -415,8 +415,8 @@ Modifiers:
 | Opcode         | Status | Comment |
 |----------------|--------|---------|
 | Add            | Yes    |         |
-| AddImm         | No     |         |
-| Affinity       | No     |         |
+| AddImm         | Yes    |         |
+| Affinity       | Yes    |         |
 | AggFinal       | Yes    |         |
 | AggStep        | Yes    |         |
 | AggStep        | Yes    |         |
@@ -427,6 +427,7 @@ Modifiers:
 | BitOr          | Yes    |         |
 | Blob           | Yes    |         |
 | BeginSubrtn    | Yes    |         |
+| Cast           | Yes    |         |
 | Checkpoint     | Yes    |         |
 | Clear          | No     |         |
 | Close          | Yes    |         |
@@ -473,7 +474,6 @@ Modifiers:
 | Init           | Yes    |         |
 | InitCoroutine  | Yes    |         |
 | Insert         | Yes    |         |
-| InsertInt      | No     |         |
 | Int64          | Yes    |         |
 | Integer        | Yes    |         |
 | IntegrityCk    | Yes    |         |
@@ -550,15 +550,10 @@ Modifiers:
 | SorterNext     | Yes    |         |
 | SorterOpen     | Yes    |         |
 | SorterSort     | Yes    |         |
-| String         | No     |         |
+| String         | NotNeeded | SQLite uses String for sized strings and String8 for null-terminated. All our strings are sized |
 | String8        | Yes    |         |
 | Subtract       | Yes    |         |
 | TableLock      | No     |         |
-| ToBlob         | No     |         |
-| ToInt          | No     |         |
-| ToNumeric      | No     |         |
-| ToReal         | No     |         |
-| ToText         | No     |         |
 | Trace          | No     |         |
 | Transaction    | Yes    |         |
 | VBegin         | No     |         |
@@ -572,7 +567,6 @@ Modifiers:
 | VUpdate        | Yes    |         |
 | Vacuum         | No     |         |
 | Variable       | Yes    |         |
-| VerifyCookie   | No     |         |
 | Yield          | Yes    |         |
 | ZeroOrNull     | Yes    |         |
 

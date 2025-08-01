@@ -706,6 +706,12 @@ pub enum Insn {
         func: FuncCtx,      // P4
     },
 
+    /// Cast register P1 to affinity P2 and store in register P1
+    Cast {
+        reg: usize,
+        affinity: Affinity,
+    },
+
     InitCoroutine {
         yield_reg: usize,
         jump_on_definition: BranchOffset,
@@ -869,6 +875,14 @@ pub enum Insn {
         lhs: usize,
         rhs: usize,
         dest: usize,
+    },
+
+    /// Add immediate value to register and force integer conversion.
+    /// Add the constant P2 to the value in register P1. The result is always an integer.
+    /// To force any register to be an integer, just add 0.
+    AddImm {
+        register: usize, // P1: target register
+        value: i64,      // P2: immediate value to add
     },
 
     /// Get parameter variable.
@@ -1075,6 +1089,7 @@ impl Insn {
             Insn::SorterData { .. } => execute::op_sorter_data,
             Insn::SorterNext { .. } => execute::op_sorter_next,
             Insn::Function { .. } => execute::op_function,
+            Insn::Cast { .. } => execute::op_cast,
             Insn::InitCoroutine { .. } => execute::op_init_coroutine,
             Insn::EndCoroutine { .. } => execute::op_end_coroutine,
             Insn::Yield { .. } => execute::op_yield,
@@ -1099,6 +1114,7 @@ impl Insn {
             Insn::ParseSchema { .. } => execute::op_parse_schema,
             Insn::ShiftRight { .. } => execute::op_shift_right,
             Insn::ShiftLeft { .. } => execute::op_shift_left,
+            Insn::AddImm { .. } => execute::op_add_imm,
             Insn::Variable { .. } => execute::op_variable,
             Insn::ZeroOrNull { .. } => execute::op_zero_or_null,
             Insn::Not { .. } => execute::op_not,

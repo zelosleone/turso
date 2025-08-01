@@ -18,6 +18,7 @@ pub mod result;
 mod schema;
 #[cfg(feature = "series")]
 mod series;
+mod state_machine;
 mod storage;
 #[allow(dead_code)]
 #[cfg(feature = "time")]
@@ -41,15 +42,12 @@ mod numeric;
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-use crate::storage::header_accessor::get_schema_cookie;
-use crate::storage::sqlite3_ondisk::is_valid_page_size;
-use crate::storage::{header_accessor, wal::DummyWAL};
 use crate::translate::optimizer::optimize_plan;
 use crate::translate::pragma::TURSO_CDC_DEFAULT_TABLE_NAME;
 #[cfg(feature = "fs")]
 use crate::types::WalInsertInfo;
 #[cfg(feature = "fs")]
-use crate::util::{IOExt, OpenMode, OpenOptions};
+use crate::util::{OpenMode, OpenOptions};
 use crate::vtab::VirtualTable;
 use core::str;
 pub use error::LimboError;
@@ -80,6 +78,7 @@ use std::{
 use storage::database::DatabaseFile;
 use storage::page_cache::DumbLruPageCache;
 use storage::pager::{AtomicDbState, DbState};
+use storage::sqlite3_ondisk::PageSize;
 pub use storage::{
     buffer_pool::BufferPool,
     database::DatabaseStorage,
@@ -93,7 +92,7 @@ use turso_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
 use types::IOResult;
 pub use types::RefValue;
 pub use types::Value;
-use util::parse_schema_rows;
+use util::{parse_schema_rows, IOExt as _};
 use vdbe::builder::QueryMode;
 use vdbe::builder::TableRefIdCounter;
 
@@ -121,7 +120,7 @@ static DATABASE_MANAGER: LazyLock<Mutex<HashMap<String, Weak<Database>>>> =
 /// The `Database` object contains per database file state that is shared
 /// between multiple connections.
 pub struct Database {
-    mv_store: Option<Rc<MvStore>>,
+    mv_store: Option<Arc<MvStore>>,
     schema: Mutex<Arc<Schema>>,
     db_file: Arc<dyn DatabaseStorage>,
     path: String,
@@ -269,7 +268,7 @@ impl Database {
         let maybe_shared_wal = WalFileShared::open_shared_if_exists(&io, wal_path.as_str())?;
 
         let mv_store = if enable_mvcc {
-            Some(Rc::new(MvStore::new(
+            Some(Arc::new(MvStore::new(
                 mvcc::LocalClock::new(),
                 mvcc::persistent_storage::Storage::new_noop(),
             )))
@@ -333,10 +332,17 @@ impl Database {
     pub fn connect(self: &Arc<Database>) -> Result<Arc<Connection>> {
         let pager = self.init_pager(None)?;
 
-        let page_size = header_accessor::get_page_size(&pager)
-            .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE);
-        let default_cache_size = header_accessor::get_default_page_cache_size(&pager)
-            .unwrap_or(storage::sqlite3_ondisk::DEFAULT_CACHE_SIZE);
+        let page_size = pager
+            .io
+            .block(|| pager.with_header(|header| header.page_size))
+            .unwrap_or_default()
+            .get();
+
+        let default_cache_size = pager
+            .io
+            .block(|| pager.with_header(|header| header.default_page_cache_size))
+            .unwrap_or_default()
+            .get();
 
         let conn = Arc::new(Connection {
             _db: self.clone(),
@@ -391,7 +397,7 @@ impl Database {
             )));
             let pager = Pager::new(
                 self.db_file.clone(),
-                wal,
+                Some(wal),
                 self.io.clone(),
                 Arc::new(RwLock::new(DumbLruPageCache::default())),
                 buffer_pool.clone(),
@@ -403,12 +409,10 @@ impl Database {
 
         let buffer_pool = Arc::new(BufferPool::new(page_size));
         // No existing WAL; create one.
-        // TODO: currently Pager needs to be instantiated with some implementation of trait Wal, so here's a workaround.
-        let dummy_wal = Rc::new(RefCell::new(DummyWAL {}));
         let db_state = self.db_state.clone();
         let mut pager = Pager::new(
             self.db_file.clone(),
-            dummy_wal,
+            None,
             self.io.clone(),
             Arc::new(RwLock::new(DumbLruPageCache::default())),
             buffer_pool.clone(),
@@ -419,8 +423,11 @@ impl Database {
         let size = match page_size {
             Some(size) => size as u32,
             None => {
-                let size = header_accessor::get_page_size(&pager)
-                    .unwrap_or(storage::sqlite3_ondisk::DEFAULT_PAGE_SIZE);
+                let size = pager
+                    .io
+                    .block(|| pager.with_header(|header| header.page_size))
+                    .unwrap_or_default()
+                    .get();
                 buffer_pool.set_page_size(size as usize);
                 size
             }
@@ -521,6 +528,10 @@ impl Database {
             );
         }
         Ok(())
+    }
+
+    pub fn get_mv_store(&self) -> Option<&Arc<MvStore>> {
+        self.mv_store.as_ref()
     }
 }
 
@@ -807,10 +818,12 @@ impl Connection {
 
         // first, quickly read schema_version from the root page in order to check if schema changed
         pager.begin_read_tx()?;
-        let db_schema_version = get_schema_cookie(&pager);
+        let db_schema_version = pager
+            .io
+            .block(|| pager.with_header(|header| header.schema_cookie));
         pager.end_read_tx().expect("read txn must be finished");
 
-        let db_schema_version = db_schema_version?;
+        let db_schema_version = db_schema_version?.get();
         let conn_schema_version = self.schema.borrow().schema_version;
         turso_assert!(
             conn_schema_version <= db_schema_version,
@@ -838,7 +851,10 @@ impl Connection {
                 let mut fresh = Schema::new(false); // todo: indices!
 
                 // read cookie before consuming statement program - otherwise we can end up reading cookie with closed transaction state
-                let cookie = get_schema_cookie(&pager)?;
+                let cookie = pager
+                    .io
+                    .block(|| pager.with_header(|header| header.schema_cookie))?
+                    .get();
 
                 // TODO: This function below is synchronous, make it async
                 parse_schema_rows(stmt, &mut fresh, &self.syms.borrow(), None)?;
@@ -1170,13 +1186,19 @@ impl Connection {
         {
             let pager = self.pager.borrow();
 
+            let Some(wal) = pager.wal.as_ref() else {
+                return Err(LimboError::InternalError(
+                    "wal_insert_end called without a wal".to_string(),
+                ));
+            };
+
             {
-                let wal = pager.wal.borrow_mut();
+                let wal = wal.borrow_mut();
                 wal.end_write_tx();
                 wal.end_read_tx();
             }
             // remove all non-commited changes in case if WAL session left some suffix without commit frame
-            pager.rollback(false, self)?;
+            pager.rollback(false, self, true)?;
         }
 
         // let's re-parse schema from scratch if schema cookie changed compared to the our in-memory view of schema
@@ -1315,7 +1337,7 @@ impl Connection {
     /// is first created, if it does not already exist when the page_size pragma is issued,
     /// or at the next VACUUM command that is run on the same database connection while not in WAL mode.
     pub fn reset_page_size(&self, size: u32) -> Result<()> {
-        if !is_valid_page_size(size) {
+        if PageSize::new(size).is_none() {
             return Ok(());
         }
 
@@ -1683,19 +1705,23 @@ impl Connection {
         databases.sort_by_key(|&(seq, _, _)| seq);
         databases
     }
+
+    pub fn get_pager(&self) -> Rc<Pager> {
+        self.pager.borrow().clone()
+    }
 }
 
 pub struct Statement {
     program: Rc<vdbe::Program>,
     state: vdbe::ProgramState,
-    mv_store: Option<Rc<MvStore>>,
+    mv_store: Option<Arc<MvStore>>,
     pager: Rc<Pager>,
 }
 
 impl Statement {
     pub fn new(
         program: Rc<vdbe::Program>,
-        mv_store: Option<Rc<MvStore>>,
+        mv_store: Option<Arc<MvStore>>,
         pager: Rc<Pager>,
     ) -> Self {
         let state = vdbe::ProgramState::new(program.max_registers, program.cursor_ref.len());

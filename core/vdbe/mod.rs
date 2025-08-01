@@ -27,6 +27,7 @@ pub mod sorter;
 use crate::{
     error::LimboError,
     function::{AggFunc, FuncCtx},
+    state_machine::StateTransition,
     storage::sqlite3_ondisk::SmallVec,
     translate::plan::TableReferences,
     types::{IOResult, RawSlice, TextRef},
@@ -390,7 +391,7 @@ impl Program {
     pub fn step(
         &self,
         state: &mut ProgramState,
-        mv_store: Option<Rc<MvStore>>,
+        mv_store: Option<Arc<MvStore>>,
         pager: Rc<Pager>,
     ) -> Result<StepResult> {
         loop {
@@ -432,16 +433,22 @@ impl Program {
         &self,
         pager: Rc<Pager>,
         program_state: &mut ProgramState,
-        mv_store: Option<&Rc<MvStore>>,
+        mv_store: Option<&Arc<MvStore>>,
         rollback: bool,
     ) -> Result<StepResult> {
         if let Some(mv_store) = mv_store {
             let conn = self.connection.clone();
             let auto_commit = conn.auto_commit.get();
             if auto_commit {
+                // FIXME: we don't want to commit stuff from other programs.
                 let mut mv_transactions = conn.mv_transactions.borrow_mut();
                 for tx_id in mv_transactions.iter() {
-                    mv_store.commit_tx(*tx_id).unwrap();
+                    let mut state_machine =
+                        mv_store.commit_tx(*tx_id, pager.clone(), &conn).unwrap();
+                    state_machine
+                        .step(mv_store)
+                        .map_err(|e| LimboError::InternalError(e.to_string()))?;
+                    assert!(state_machine.is_finalized());
                 }
                 mv_transactions.clear();
             }
@@ -757,7 +764,10 @@ pub fn handle_program_error(
     err: &LimboError,
 ) -> Result<()> {
     match err {
+        // Transaction errors, e.g. trying to start a nested transaction, do not cause a rollback.
         LimboError::TxError(_) => {}
+        // Table locked errors, e.g. trying to checkpoint in an interactive transaction, do not cause a rollback.
+        LimboError::TableLocked => {}
         _ => {
             let state = connection.transaction_state.get();
             if let TransactionState::Write { schema_did_change } = state {

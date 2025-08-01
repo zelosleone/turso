@@ -266,7 +266,7 @@ pub fn emit_query<'a>(
     t_ctx: &mut TranslateCtx<'a>,
 ) -> Result<usize> {
     if !plan.values.is_empty() {
-        let reg_result_cols_start = emit_values(program, plan, &t_ctx.resolver, t_ctx.limit_ctx)?;
+        let reg_result_cols_start = emit_values(program, plan, t_ctx)?;
         return Ok(reg_result_cols_start);
     }
 
@@ -825,7 +825,6 @@ fn emit_update_insns(
     });
 
     // Check if rowid was provided (through INTEGER PRIMARY KEY as a rowid alias)
-
     let rowid_alias_index = table_ref.columns().iter().position(|c| c.is_rowid_alias);
 
     let has_user_provided_rowid = if let Some(index) = rowid_alias_index {
