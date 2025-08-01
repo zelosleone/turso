@@ -2,11 +2,10 @@
 use crate::function::AlterTableFunc;
 use crate::numeric::{NullableInteger, Numeric};
 use crate::storage::btree::{integrity_check, IntegrityCheckError, IntegrityCheckState};
-use crate::storage::database::FileMemoryStorage;
+use crate::storage::database::DatabaseFile;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::{AtomicDbState, CreateBTreeFlags, DbState};
 use crate::storage::sqlite3_ondisk::read_varint;
-use crate::storage::wal::DummyWAL;
 use crate::translate::collate::CollationSeq;
 use crate::types::{
     compare_immutable, compare_records_generic, Extendable, ImmutableRecord, RawSlice, SeekResult,
@@ -28,8 +27,8 @@ use crate::{
         },
         printf::exec_printf,
     },
-    IO,
 };
+use std::env::temp_dir;
 use std::ops::DerefMut;
 use std::{
     borrow::BorrowMut,
@@ -6374,17 +6373,30 @@ pub fn op_open_ephemeral(
         OpOpenEphemeralState::Start => {
             tracing::trace!("Start");
             let conn = program.connection.clone();
-            let io = conn.pager.borrow().io.get_memory_io();
+            let io = conn.pager.borrow().io.clone();
+            let rand_num = io.generate_random_number();
+            let temp_dir = temp_dir();
+            let rand_path =
+                std::path::Path::new(&temp_dir).join(format!("tursodb-ephemeral-{rand_num}"));
+            let Some(rand_path_str) = rand_path.to_str() else {
+                return Err(LimboError::InternalError(
+                    "Failed to convert path to string".to_string(),
+                ));
+            };
+            let file = io.open_file(rand_path_str, OpenFlags::Create, false)?;
+            let db_file = Arc::new(DatabaseFile::new(file));
 
-            let file = io.open_file("", OpenFlags::Create, true)?;
-            let db_file = Arc::new(FileMemoryStorage::new(file));
+            let page_size = pager
+                .io
+                .block(|| pager.with_header(|header| header.page_size))?
+                .get();
 
-            let buffer_pool = Arc::new(BufferPool::new(None));
+            let buffer_pool = Arc::new(BufferPool::new(Some(page_size as usize)));
             let page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
 
             let pager = Rc::new(Pager::new(
                 db_file,
-                Rc::new(RefCell::new(DummyWAL)),
+                None,
                 io,
                 page_cache,
                 buffer_pool.clone(),
