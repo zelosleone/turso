@@ -1,18 +1,27 @@
 use crate::mvcc::clock::LogicalClock;
 use crate::mvcc::errors::DatabaseError;
 use crate::mvcc::persistent_storage::Storage;
+use crate::storage::btree::BTreeCursor;
+use crate::storage::btree::BTreeKey;
+use crate::types::IOResult;
+use crate::types::ImmutableRecord;
+use crate::{Connection, Pager};
 use crossbeam_skiplist::{SkipMap, SkipSet};
 use parking_lot::RwLock;
+use std::collections::HashSet;
 use std::fmt::Debug;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 pub type Result<T> = std::result::Result<T, DatabaseError>;
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RowID {
+    /// The table ID. Analogous to table's root page number.
     pub table_id: u64,
     pub row_id: i64,
 }
@@ -28,11 +37,16 @@ impl RowID {
 pub struct Row {
     pub id: RowID,
     pub data: Vec<u8>,
+    pub column_count: usize,
 }
 
 impl Row {
-    pub fn new(id: RowID, data: Vec<u8>) -> Self {
-        Self { id, data }
+    pub fn new(id: RowID, data: Vec<u8>, column_count: usize) -> Self {
+        Self {
+            id,
+            data,
+            column_count,
+        }
     }
 }
 
@@ -230,6 +244,7 @@ pub struct MvStore<Clock: LogicalClock> {
     next_rowid: AtomicU64,
     clock: Clock,
     storage: Storage,
+    loaded_tables: RwLock<HashSet<u64>>,
 }
 
 impl<Clock: LogicalClock> MvStore<Clock> {
@@ -242,6 +257,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
             next_rowid: AtomicU64::new(0), // TODO: determine this from B-Tree
             clock,
             storage,
+            loaded_tables: RwLock::new(HashSet::new()),
         }
     }
 
@@ -297,9 +313,9 @@ impl<Clock: LogicalClock> MvStore<Clock> {
     /// # Returns
     ///
     /// Returns `true` if the row was successfully updated, and `false` otherwise.
-    pub fn update(&self, tx_id: TxID, row: Row) -> Result<bool> {
+    pub fn update(&self, tx_id: TxID, row: Row, pager: Rc<Pager>) -> Result<bool> {
         tracing::trace!("update(tx_id={}, row.id={:?})", tx_id, row.id);
-        if !self.delete(tx_id, row.id)? {
+        if !self.delete(tx_id, row.id, pager)? {
             return Ok(false);
         }
         self.insert(tx_id, row)?;
@@ -308,9 +324,9 @@ impl<Clock: LogicalClock> MvStore<Clock> {
 
     /// Inserts a row in the database with new values, previously deleting
     /// any old data if it existed. Bails on a delete error, e.g. write-write conflict.
-    pub fn upsert(&self, tx_id: TxID, row: Row) -> Result<()> {
+    pub fn upsert(&self, tx_id: TxID, row: Row, pager: Rc<Pager>) -> Result<()> {
         tracing::trace!("upsert(tx_id={}, row.id={:?})", tx_id, row.id);
-        self.delete(tx_id, row.id)?;
+        self.delete(tx_id, row.id, pager)?;
         self.insert(tx_id, row)
     }
 
@@ -328,7 +344,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
     ///
     /// Returns `true` if the row was successfully deleted, and `false` otherwise.
     ///
-    pub fn delete(&self, tx_id: TxID, id: RowID) -> Result<bool> {
+    pub fn delete(&self, tx_id: TxID, id: RowID, pager: Rc<Pager>) -> Result<bool> {
         tracing::trace!("delete(tx_id={}, id={:?})", tx_id, id);
         let row_versions_opt = self.rows.get(&id);
         if let Some(ref row_versions) = row_versions_opt {
@@ -349,7 +365,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
                     drop(row_versions);
                     drop(row_versions_opt);
                     drop(tx);
-                    self.rollback_tx(tx_id);
+                    self.rollback_tx(tx_id, pager);
                     return Err(DatabaseError::WriteWriteConflict);
                 }
 
@@ -409,24 +425,6 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         Ok(keys.collect())
     }
 
-    /// Gets all row ids in the database for a given table.
-    pub fn scan_row_ids_for_table(&self, table_id: u64) -> Result<Vec<RowID>> {
-        tracing::trace!("scan_row_ids_for_table(table_id={})", table_id);
-        Ok(self
-            .rows
-            .range(
-                RowID {
-                    table_id,
-                    row_id: 0,
-                }..RowID {
-                    table_id,
-                    row_id: i64::MAX,
-                },
-            )
-            .map(|entry| *entry.key())
-            .collect())
-    }
-
     pub fn get_row_id_range(
         &self,
         table_id: u64,
@@ -484,12 +482,16 @@ impl<Clock: LogicalClock> MvStore<Clock> {
     /// This function starts a new transaction in the database and returns a `TxID` value
     /// that you can use to perform operations within the transaction. All changes made within the
     /// transaction are isolated from other transactions until you commit the transaction.
-    pub fn begin_tx(&self) -> TxID {
+    pub fn begin_tx(&self, pager: Rc<Pager>) -> TxID {
         let tx_id = self.get_tx_id();
         let begin_ts = self.get_timestamp();
         let tx = Transaction::new(tx_id, begin_ts);
         tracing::trace!("begin_tx(tx_id={})", tx_id);
         self.txs.insert(tx_id, RwLock::new(tx));
+
+        // TODO: we need to tie a pager's read transaction to a transaction ID, so that future refactors to read
+        // pages from WAL/DB read from a consistent state to maintiain snapshot isolation.
+        pager.begin_read_tx().unwrap();
         tx_id
     }
 
@@ -502,7 +504,12 @@ impl<Clock: LogicalClock> MvStore<Clock> {
     /// # Arguments
     ///
     /// * `tx_id` - The ID of the transaction to commit.
-    pub fn commit_tx(&self, tx_id: TxID) -> Result<()> {
+    pub fn commit_tx(
+        &self,
+        tx_id: TxID,
+        pager: Rc<Pager>,
+        connection: &Arc<Connection>,
+    ) -> Result<()> {
         let end_ts = self.get_timestamp();
         // NOTICE: the first shadowed tx keeps the entry alive in the map
         // for the duration of this whole function, which is important for correctness!
@@ -595,7 +602,73 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         let write_set: Vec<RowID> = tx.write_set.iter().map(|v| *v.value()).collect();
         drop(tx);
         // Postprocessing: inserting row versions and logging the transaction to persistent storage.
-        // TODO: we should probably save to persistent storage first, and only then update the in-memory structures.
+
+        // FIXME: how do we deal with multiple concurrent writes?
+        // WAL requires a txn to be written sequentially. Either we:
+        // 1. Wait for currently writer to finish before second txn starts.
+        // 2. Choose a txn to write depending on some heuristics like amount of frames will be written.
+        // 3. ..
+        //
+        loop {
+            match pager.begin_write_tx() {
+                Ok(crate::types::IOResult::Done(result)) => {
+                    if let crate::result::LimboResult::Busy = result {
+                        return Err(DatabaseError::Io(
+                            "Pager write transaction busy".to_string(),
+                        ));
+                    }
+                    break;
+                }
+                Ok(crate::types::IOResult::IO) => {
+                    // FIXME: this is a hack to make the pager run the IO loop
+                    pager.io.run_once().unwrap();
+                    continue;
+                }
+                Err(e) => {
+                    return Err(DatabaseError::Io(e.to_string()));
+                }
+            }
+        }
+
+        // 1. Write rows to btree for persistence
+        for id in &write_set {
+            if let Some(row_versions) = self.rows.get(id) {
+                let row_versions = row_versions.value().read();
+                // Find rows that were written by this transaction
+                for row_version in row_versions.iter() {
+                    if let TxTimestampOrID::TxID(row_tx_id) = row_version.begin {
+                        if row_tx_id == tx_id {
+                            self.write_row_to_pager(pager.clone(), &row_version.row)?;
+                            break;
+                        }
+                    }
+                    if let Some(TxTimestampOrID::Timestamp(row_tx_id)) = row_version.end {
+                        if row_tx_id == tx_id {
+                            self.write_row_to_pager(pager.clone(), &row_version.row)?;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        // Write committed data to pager for persistence
+        // Flush dirty pages to WAL - this is critical for data persistence
+        // Similar to what step_end_write_txn does for legacy transactions
+        loop {
+            let result = pager
+                .end_tx(
+                    false, // rollback = false since we're committing
+                    false, // schema_did_change = false for now (could be improved)
+                    connection,
+                    connection.wal_checkpoint_disabled.get(),
+                )
+                .map_err(|e| DatabaseError::Io(e.to_string()))
+                .unwrap();
+            if let crate::types::IOResult::Done(_) = result {
+                break;
+            }
+        }
+        // 2. Commit rows to log
         let mut log_record = LogRecord::new(end_ts);
         for ref id in write_set {
             if let Some(row_versions) = self.rows.get(id) {
@@ -627,6 +700,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
             }
         }
         tracing::trace!("updated(tx_id={})", tx_id);
+
         // We have now updated all the versions with a reference to the
         // transaction ID to a timestamp and can, therefore, remove the
         // transaction. Please note that when we move to lockless, the
@@ -651,7 +725,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
     /// # Arguments
     ///
     /// * `tx_id` - The ID of the transaction to abort.
-    pub fn rollback_tx(&self, tx_id: TxID) {
+    pub fn rollback_tx(&self, tx_id: TxID, pager: Rc<Pager>) {
         let tx_unlocked = self.txs.get(&tx_id).unwrap();
         let tx = tx_unlocked.value().write();
         assert_eq!(tx.state, TransactionState::Active);
@@ -673,6 +747,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         let tx = tx_unlocked.value().read();
         tx.state.store(TransactionState::Terminated);
         tracing::trace!("terminate(tx_id={})", tx_id);
+        pager.end_read_tx().unwrap();
         // FIXME: verify that we can already remove the transaction here!
         // Maybe it's fine for snapshot isolation, but too early for serializable?
         self.txs.remove(&tx_id);
@@ -797,6 +872,161 @@ impl<Clock: LogicalClock> MvStore<Clock> {
             );
         }
         versions.insert(position, row_version);
+    }
+
+    fn write_row_to_pager(&self, pager: Rc<Pager>, row: &Row) -> Result<()> {
+        use crate::storage::btree::BTreeCursor;
+        use crate::types::{IOResult, SeekKey, SeekOp};
+
+        // The row.data is already a properly serialized SQLite record payload
+        // Create an ImmutableRecord and copy the data
+        let mut record = ImmutableRecord::new(row.data.len());
+        record.start_serialization(&row.data);
+
+        // Create a BTreeKey for the row
+        let key = BTreeKey::new_table_rowid(row.id.row_id, Some(&record));
+
+        // Get the column count from the row
+        let root_page = row.id.table_id as usize;
+        let num_columns = row.column_count;
+
+        let mut cursor = BTreeCursor::new_table(
+            None, // Write directly to B-tree
+            pager.clone(),
+            root_page,
+            num_columns,
+        );
+
+        // Position the cursor first by seeking to the row position
+        let seek_key = SeekKey::TableRowId(row.id.row_id);
+        match cursor
+            .seek(seek_key, SeekOp::GE { eq_only: true })
+            .map_err(|e| DatabaseError::Io(e.to_string()))?
+        {
+            IOResult::Done(_) => {}
+            IOResult::IO => {
+                panic!("IOResult::IO not supported in write_row_to_pager seek");
+            }
+        }
+
+        // Insert the record into the B-tree
+        loop {
+            match cursor
+                .insert(&key, true)
+                .map_err(|e| DatabaseError::Io(e.to_string()))
+            {
+                Ok(IOResult::Done(())) => break,
+                Ok(IOResult::IO) => {
+                    pager.io.run_once().unwrap();
+                    continue;
+                }
+                Err(e) => {
+                    return Err(DatabaseError::Io(e.to_string()));
+                }
+            }
+        }
+
+        tracing::trace!(
+            "write_row_to_pager(table_id={}, row_id={})",
+            row.id.table_id,
+            row.id.row_id
+        );
+        Ok(())
+    }
+
+    /// Try to scan for row ids in the table.
+    ///
+    /// This function loads all row ids of a table if the rowids of table were not populated yet.
+    /// TODO: This is quite expensive so we should try and load rowids in a lazy way.
+    ///
+    /// # Arguments
+    ///
+    pub fn maybe_initialize_table(&self, table_id: u64, pager: Rc<Pager>) -> Result<()> {
+        tracing::trace!("scan_row_ids_for_table(table_id={})", table_id);
+
+        // First, check if the table is already loaded.
+        if self.loaded_tables.read().contains(&table_id) {
+            return Ok(());
+        }
+
+        // Then, scan the disk B-tree to find existing rows
+        self.scan_load_table(table_id, pager)?;
+
+        self.loaded_tables.write().insert(table_id);
+
+        Ok(())
+    }
+
+    /// Scans the table and inserts the rows into the database.
+    ///
+    /// This is initialization step for a table, where we still don't have any rows so we need to insert them if there are.
+    fn scan_load_table(&self, table_id: u64, pager: Rc<Pager>) -> Result<()> {
+        let root_page = table_id as usize;
+        let mut cursor = BTreeCursor::new_table(
+            None, // No MVCC cursor for scanning
+            pager.clone(),
+            root_page,
+            1, // We'll adjust this as needed
+        );
+        loop {
+            match cursor
+                .rewind()
+                .map_err(|e| DatabaseError::Io(e.to_string()))?
+            {
+                IOResult::Done(()) => break,
+                IOResult::IO => {
+                    pager.io.run_once().unwrap();
+                    continue;
+                }
+            }
+        }
+        loop {
+            let rowid_result = cursor
+                .rowid()
+                .map_err(|e| DatabaseError::Io(e.to_string()))?;
+            let row_id = match rowid_result {
+                IOResult::Done(Some(row_id)) => row_id,
+                IOResult::Done(None) => break,
+                IOResult::IO => {
+                    pager.io.run_once().unwrap();
+                    continue;
+                }
+            };
+            match cursor
+                .record()
+                .map_err(|e| DatabaseError::Io(e.to_string()))?
+            {
+                IOResult::Done(Some(record)) => {
+                    let id = RowID { table_id, row_id };
+                    let column_count = record.column_count();
+                    // We insert row with 0 timestamp, because it's the only version we have on initialization.
+                    self.insert_version(
+                        id,
+                        RowVersion {
+                            begin: TxTimestampOrID::Timestamp(0),
+                            end: None,
+                            row: Row::new(id, record.get_payload().to_vec(), column_count),
+                        },
+                    );
+                }
+                IOResult::Done(None) => break,
+                IOResult::IO => unreachable!(), // FIXME: lazy me not wanting to do state machine right now
+            }
+
+            // Move to next record
+            match cursor
+                .next()
+                .map_err(|e| DatabaseError::Io(e.to_string()))?
+            {
+                IOResult::Done(has_next) => {
+                    if !has_next {
+                        break;
+                    }
+                }
+                IOResult::IO => unreachable!(), // FIXME: lazy me not wanting to do state machine right now
+            }
+        }
+        Ok(())
     }
 }
 

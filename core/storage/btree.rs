@@ -4278,7 +4278,7 @@ impl BTreeCursor {
     pub fn rowid(&mut self) -> Result<IOResult<Option<i64>>> {
         if let Some(mv_cursor) = &self.mv_cursor {
             if self.has_record.get() {
-                let mv_cursor = mv_cursor.borrow();
+                let mut mv_cursor = mv_cursor.borrow_mut();
                 return Ok(IOResult::Done(
                     mv_cursor.current_row_id().map(|rowid| rowid.row_id),
                 ));
@@ -4350,7 +4350,7 @@ impl BTreeCursor {
             return Ok(IOResult::Done(Some(record_ref)));
         }
         if self.mv_cursor.is_some() {
-            let mv_cursor = self.mv_cursor.as_ref().unwrap().borrow();
+            let mut mv_cursor = self.mv_cursor.as_ref().unwrap().borrow_mut();
             let row = mv_cursor.current_row().unwrap().unwrap();
             self.get_immutable_record_or_create()
                 .as_mut()
@@ -4433,7 +4433,13 @@ impl BTreeCursor {
                 Some(rowid) => {
                     let row_id = crate::mvcc::database::RowID::new(self.table_id() as u64, rowid);
                     let record_buf = key.get_record().unwrap().get_payload().to_vec();
-                    let row = crate::mvcc::database::Row::new(row_id, record_buf);
+                    let num_columns = match key {
+                        BTreeKey::IndexKey(record) => record.column_count(),
+                        BTreeKey::TableRowId((_, record)) => {
+                            record.as_ref().unwrap().column_count()
+                        }
+                    };
+                    let row = crate::mvcc::database::Row::new(row_id, record_buf, num_columns);
                     mv_cursor.borrow_mut().insert(row).unwrap();
                 }
                 None => todo!("Support mvcc inserts with index btrees"),

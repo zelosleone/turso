@@ -119,7 +119,7 @@ static DATABASE_MANAGER: LazyLock<Mutex<HashMap<String, Weak<Database>>>> =
 /// The `Database` object contains per database file state that is shared
 /// between multiple connections.
 pub struct Database {
-    mv_store: Option<Rc<MvStore>>,
+    mv_store: Option<Arc<MvStore>>,
     schema: Mutex<Arc<Schema>>,
     db_file: Arc<dyn DatabaseStorage>,
     path: String,
@@ -267,7 +267,7 @@ impl Database {
         let maybe_shared_wal = WalFileShared::open_shared_if_exists(&io, wal_path.as_str())?;
 
         let mv_store = if enable_mvcc {
-            Some(Rc::new(MvStore::new(
+            Some(Arc::new(MvStore::new(
                 mvcc::LocalClock::new(),
                 mvcc::persistent_storage::Storage::new_noop(),
             )))
@@ -527,6 +527,10 @@ impl Database {
             );
         }
         Ok(())
+    }
+
+    pub fn get_mv_store(&self) -> Option<&Arc<MvStore>> {
+        self.mv_store.as_ref()
     }
 }
 
@@ -1700,19 +1704,23 @@ impl Connection {
         databases.sort_by_key(|&(seq, _, _)| seq);
         databases
     }
+
+    pub fn get_pager(&self) -> Rc<Pager> {
+        self.pager.borrow().clone()
+    }
 }
 
 pub struct Statement {
     program: Rc<vdbe::Program>,
     state: vdbe::ProgramState,
-    mv_store: Option<Rc<MvStore>>,
+    mv_store: Option<Arc<MvStore>>,
     pager: Rc<Pager>,
 }
 
 impl Statement {
     pub fn new(
         program: Rc<vdbe::Program>,
-        mv_store: Option<Rc<MvStore>>,
+        mv_store: Option<Arc<MvStore>>,
         pager: Rc<Pager>,
     ) -> Self {
         let state = vdbe::ProgramState::new(program.max_registers, program.cursor_ref.len());

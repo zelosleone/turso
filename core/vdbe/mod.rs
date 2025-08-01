@@ -390,7 +390,7 @@ impl Program {
     pub fn step(
         &self,
         state: &mut ProgramState,
-        mv_store: Option<Rc<MvStore>>,
+        mv_store: Option<Arc<MvStore>>,
         pager: Rc<Pager>,
     ) -> Result<StepResult> {
         loop {
@@ -432,16 +432,17 @@ impl Program {
         &self,
         pager: Rc<Pager>,
         program_state: &mut ProgramState,
-        mv_store: Option<&Rc<MvStore>>,
+        mv_store: Option<&Arc<MvStore>>,
         rollback: bool,
     ) -> Result<StepResult> {
         if let Some(mv_store) = mv_store {
             let conn = self.connection.clone();
             let auto_commit = conn.auto_commit.get();
             if auto_commit {
+                // FIXME: we don't want to commit stuff from other programs.
                 let mut mv_transactions = conn.mv_transactions.borrow_mut();
                 for tx_id in mv_transactions.iter() {
-                    mv_store.commit_tx(*tx_id).unwrap();
+                    mv_store.commit_tx(*tx_id, pager.clone(), &conn).unwrap();
                 }
                 mv_transactions.clear();
             }
