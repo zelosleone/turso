@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use pprof::criterion::{Output, PProfProfiler};
-use turso_core::parser::lexer::Lexer;
+use turso_core::parser::{lexer::Lexer, parser::Parser};
 
 fn bench_lexer(criterion: &mut Criterion) {
     let queries = [
@@ -25,9 +25,28 @@ fn bench_lexer(criterion: &mut Criterion) {
     }
 }
 
+fn bench_parser(criterion: &mut Criterion) {
+    let queries = ["BEGIN", "BEGIN EXCLUSIVE TRANSACTION my_trans"];
+
+    for query in queries.iter() {
+        let mut group = criterion.benchmark_group(format!("Parser `{query}`"));
+        let qb = query.as_bytes();
+
+        group.bench_function(BenchmarkId::new("limbo_parser_query", ""), |b| {
+            b.iter(|| {
+                for stmt in Parser::new(black_box(qb)) {
+                    stmt.unwrap();
+                }
+            });
+        });
+
+        group.finish();
+    }
+}
+
 criterion_group! {
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = bench_lexer
+    targets = bench_lexer, bench_parser
 }
 criterion_main!(benches);

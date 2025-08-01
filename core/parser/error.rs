@@ -2,13 +2,13 @@ use std::error;
 use std::fmt;
 use std::io;
 
+use super::token::TokenType;
+
 /// SQL lexer and parser errors
 #[non_exhaustive]
 #[derive(Debug, miette::Diagnostic)]
 #[diagnostic()]
 pub enum Error {
-    /// I/O Error
-    Io(io::Error),
     /// Lexer error
     UnrecognizedToken(usize, #[label("here")] Option<miette::SourceSpan>),
     /// Missing quote or double-quote or backtick
@@ -40,20 +40,23 @@ pub enum Error {
     ),
     /// Invalid or missing sign after `!`
     ExpectedEqualsSign(usize, #[label("here")] Option<miette::SourceSpan>),
-    /// BLOB literals are string literals containing hexadecimal data and preceded by a single "x" or "X" character.
-    MalformedBlobLiteral(usize, #[label("here")] Option<miette::SourceSpan>),
     /// Hexadecimal integer literals follow the C-language notation of "0x" or "0X" followed by hexadecimal digits.
     MalformedHexInteger(
         usize,
         #[label("here")] Option<miette::SourceSpan>,
         #[help] Option<&'static str>,
     ),
+    // parse errors
+    ParseUnexpectedEOF,
+    ParseUnexpectedToken {
+        got: TokenType,
+        expected: &'static [TokenType],
+    },
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Self::Io(ref err) => err.fmt(f),
             Self::UnrecognizedToken(pos, _) => {
                 write!(f, "unrecognized token at {:?}", pos)
             }
@@ -75,20 +78,21 @@ impl fmt::Display for Error {
                 write!(f, "bad exponent part at {:?}", pos)
             }
             Self::ExpectedEqualsSign(pos, _) => write!(f, "expected = sign at {:?}", pos),
-            Self::MalformedBlobLiteral(pos, _) => {
-                write!(f, "malformed blob literal at {:?}", pos)
-            }
             Self::MalformedHexInteger(pos, _, _) => {
                 write!(f, "malformed hex integer at {:?}", pos)
+            }
+            Self::ParseUnexpectedEOF => {
+                write!(f, "unexpected end of file")
+            }
+            Self::ParseUnexpectedToken { got, expected } => {
+                write!(
+                    f,
+                    "got unexpected token: expected {:?}, found {}",
+                    expected, got
+                )
             }
         }
     }
 }
 
 impl error::Error for Error {}
-
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Self {
-        Self::Io(err)
-    }
-}

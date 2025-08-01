@@ -15,6 +15,7 @@ pub(crate) fn is_identifier_continue(b: u8) -> bool {
         || b > b'\x7F'
 }
 
+#[derive(Clone, PartialEq, Eq)] // do not derive Copy for Token, just use .clone() when needed
 pub struct Token<'a> {
     pub value: &'a [u8],
     pub token_type: Option<TokenType>, // None means Token is whitespaces or comments
@@ -500,9 +501,11 @@ impl<'a> Lexer<'a> {
                     self.eat_while_number_hexdigit()?;
 
                     if start_hex == self.offset {
-                        return Err(Error::BadNumber(self.offset, None, unsafe {
-                            String::from_utf8_unchecked(self.input[start..self.offset].to_vec())
-                        }));
+                        return Err(Error::MalformedHexInteger(
+                            self.offset,
+                            None,
+                            Some("Did you forget to add digits after '0x' or '0X'?"), // Help Message
+                        ));
                     }
 
                     if self.peek().is_some() && is_identifier_start(self.peek().unwrap()) {
