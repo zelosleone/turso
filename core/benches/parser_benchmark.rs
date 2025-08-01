@@ -1,6 +1,11 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use fallible_iterator::FallibleIterator;
 use pprof::criterion::{Output, PProfProfiler};
 use turso_core::parser::{lexer::Lexer, parser::Parser};
+use turso_sqlite3_parser::lexer::{
+    sql::{Parser as OldParser, Tokenizer},
+    Scanner,
+};
 
 fn bench_lexer(criterion: &mut Criterion) {
     let queries = [
@@ -21,6 +26,19 @@ fn bench_lexer(criterion: &mut Criterion) {
             });
         });
 
+        group.bench_function(BenchmarkId::new("limbo_old_lexer_query", ""), |b| {
+            b.iter(|| {
+                let tokenizer = Tokenizer::new();
+                let mut scanner = Scanner::new(black_box(tokenizer));
+                loop {
+                    match scanner.scan(black_box(qb)).unwrap() {
+                        (_, None, _) => break,
+                        _ => {}
+                    }
+                }
+            });
+        });
+
         group.finish();
     }
 }
@@ -37,6 +55,13 @@ fn bench_parser(criterion: &mut Criterion) {
                 for stmt in Parser::new(black_box(qb)) {
                     stmt.unwrap();
                 }
+            });
+        });
+
+        group.bench_function(BenchmarkId::new("limbo_old_parser_query", ""), |b| {
+            b.iter(|| {
+                let mut parser = OldParser::new(black_box(qb));
+                parser.next().unwrap().unwrap()
             });
         });
 
