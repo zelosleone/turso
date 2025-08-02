@@ -8010,11 +8010,9 @@ fn create_result_from_significand(
     }
 
     // For pure integers without exponent, try to return as integer
-    if !has_decimal && !has_exponent && exponent == 0 {
+    if !has_decimal && !has_exponent && exponent == 0 && significand <= i64::MAX as u64 {
         let signed_val = (significand as i64).wrapping_mul(sign);
-        if (significand as i64) * sign == signed_val {
-            return (parse_result, ParsedNumber::Integer(signed_val));
-        }
+        return (parse_result, ParsedNumber::Integer(signed_val));
     }
 
     // Convert to float
@@ -8110,6 +8108,12 @@ pub fn apply_numeric_affinity(register: &mut Register, try_for_int: bool) -> boo
         NumericParseResult::PureInteger => {
             if let Some(int_val) = parsed_value.as_integer() {
                 *register = Register::Value(Value::Integer(int_val));
+                true
+            } else if let Some(float_val) = parsed_value.as_float() {
+                *register = Register::Value(Value::Float(float_val));
+                if try_for_int {
+                    apply_integer_affinity(register);
+                }
                 true
             } else {
                 false
