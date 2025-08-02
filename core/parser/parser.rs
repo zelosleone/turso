@@ -219,12 +219,14 @@ impl<'a> Parser<'a> {
             TokenType::TK_BEGIN,
             TokenType::TK_COMMIT,
             TokenType::TK_END,
+            TokenType::TK_ROLLBACK,
             // add more
         ])?;
 
         match tok.token_type.unwrap() {
             TokenType::TK_BEGIN => self.parse_begin(),
             TokenType::TK_COMMIT | TokenType::TK_END => self.parse_commit(),
+            TokenType::TK_ROLLBACK => self.parse_rollback(),
             _ => unreachable!(),
         }
     }
@@ -307,6 +309,38 @@ impl<'a> Parser<'a> {
         self.eat_assert(&[TokenType::TK_COMMIT, TokenType::TK_END]);
         Ok(Stmt::Commit {
             name: self.parse_transopt()?,
+        })
+    }
+
+    #[inline(always)]
+    fn parse_rollback(&mut self) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_ROLLBACK]);
+
+        let tx_name = self.parse_transopt()?;
+
+        let savepoint_name = match self.peek_ignore_eof()? {
+            None => None,
+            Some(tok) => {
+                if tok.token_type == Some(TokenType::TK_TO) {
+                    self.eat_assert(&[TokenType::TK_TO]);
+
+                    if let Some(tok) = self.peek_ignore_eof()? {
+                        if tok.token_type == Some(TokenType::TK_SAVEPOINT) {
+                            self.eat_assert(&[TokenType::TK_SAVEPOINT]);
+                        }
+                    }
+
+                    self.peek_nm()?;
+                    self.parse_nm().ok()
+                } else {
+                    None
+                }
+            }
+        };
+
+        Ok(Stmt::Rollback {
+            tx_name,
+            savepoint_name,
         })
     }
 }
@@ -440,6 +474,42 @@ mod tests {
                 b"END TRANSACTION my_transaction".as_slice(),
                 vec![Cmd::Stmt(Stmt::Commit {
                     name: Some(Name::Ident("my_transaction".to_string())),
+                })],
+            ),
+            // Rollback
+            (
+                b"ROLLBACK".as_slice(),
+                vec![Cmd::Stmt(Stmt::Rollback {
+                    tx_name: None,
+                    savepoint_name: None,
+                })],
+            ),
+            (
+                b"ROLLBACK TO SAVEPOINT my_savepoint".as_slice(),
+                vec![Cmd::Stmt(Stmt::Rollback {
+                    tx_name: None,
+                    savepoint_name: Some(Name::Ident("my_savepoint".to_string())),
+                })],
+            ),
+            (
+                b"ROLLBACK TO my_savepoint".as_slice(),
+                vec![Cmd::Stmt(Stmt::Rollback {
+                    tx_name: None,
+                    savepoint_name: Some(Name::Ident("my_savepoint".to_string())),
+                })],
+            ),
+            (
+                b"ROLLBACK TRANSACTION my_transaction".as_slice(),
+                vec![Cmd::Stmt(Stmt::Rollback {
+                    tx_name: Some(Name::Ident("my_transaction".to_string())),
+                    savepoint_name: None,
+                })],
+            ),
+            (
+                b"ROLLBACK TRANSACTION my_transaction TO my_savepoint".as_slice(),
+                vec![Cmd::Stmt(Stmt::Rollback {
+                    tx_name: Some(Name::Ident("my_transaction".to_string())),
+                    savepoint_name: Some(Name::Ident("my_savepoint".to_string())),
                 })],
             ),
         ];

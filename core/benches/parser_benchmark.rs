@@ -49,6 +49,8 @@ fn bench_parser(criterion: &mut Criterion) {
         "BEGIN EXCLUSIVE TRANSACTION my_trans",
         "COMMIT",
         "COMMIT TRANSACTION my_trans",
+        "ROLLBACK",
+        "ROLLBACK TRANSACTION my_transaction TO my_savepoint",
     ];
 
     for query in queries.iter() {
