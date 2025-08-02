@@ -51,6 +51,8 @@ fn bench_parser(criterion: &mut Criterion) {
         "COMMIT TRANSACTION my_trans",
         "ROLLBACK",
         "ROLLBACK TRANSACTION my_transaction TO my_savepoint",
+        "SAVEPOINT my_savepoint",
+        "RELEASE SAVEPOINT my_savepoint",
     ];
 
     for query in queries.iter() {

@@ -220,6 +220,8 @@ impl<'a> Parser<'a> {
             TokenType::TK_COMMIT,
             TokenType::TK_END,
             TokenType::TK_ROLLBACK,
+            TokenType::TK_SAVEPOINT,
+            TokenType::TK_RELEASE,
             // add more
         ])?;
 
@@ -227,6 +229,8 @@ impl<'a> Parser<'a> {
             TokenType::TK_BEGIN => self.parse_begin(),
             TokenType::TK_COMMIT | TokenType::TK_END => self.parse_commit(),
             TokenType::TK_ROLLBACK => self.parse_rollback(),
+            TokenType::TK_SAVEPOINT => self.parse_savepoint(),
+            TokenType::TK_RELEASE => self.parse_release(),
             _ => unreachable!(),
         }
     }
@@ -242,7 +246,7 @@ impl<'a> Parser<'a> {
     }
 
     #[inline(always)]
-    fn parse_nm(&mut self) -> Result<Name, Error> {
+    fn parse_nm(&mut self) -> Name {
         let tok = self.eat_assert(&[
             TokenType::TK_ID,
             TokenType::TK_STRING,
@@ -252,8 +256,8 @@ impl<'a> Parser<'a> {
 
         let first_char = tok.value[0]; // no need to check empty
         match first_char {
-            b'[' | b'\'' | b'`' | b'"' => Ok(Name::Quoted(from_bytes(tok.value))),
-            _ => Ok(Name::Ident(from_bytes(tok.value))),
+            b'[' | b'\'' | b'`' | b'"' => Name::Quoted(from_bytes(tok.value)),
+            _ => Name::Ident(from_bytes(tok.value)),
         }
     }
 
@@ -265,7 +269,7 @@ impl<'a> Parser<'a> {
                 TokenType::TK_TRANSACTION => {
                     self.eat_assert(&[TokenType::TK_TRANSACTION]);
                     if self.peek_nm().ok().is_some() {
-                        Ok(self.parse_nm().ok())
+                        Ok(Some(self.parse_nm()))
                     } else {
                         Ok(None)
                     }
@@ -324,14 +328,12 @@ impl<'a> Parser<'a> {
                 if tok.token_type == Some(TokenType::TK_TO) {
                     self.eat_assert(&[TokenType::TK_TO]);
 
-                    if let Some(tok) = self.peek_ignore_eof()? {
-                        if tok.token_type == Some(TokenType::TK_SAVEPOINT) {
-                            self.eat_assert(&[TokenType::TK_SAVEPOINT]);
-                        }
+                    if self.peek_no_eof()?.token_type == Some(TokenType::TK_SAVEPOINT) {
+                        self.eat_assert(&[TokenType::TK_SAVEPOINT]);
                     }
 
                     self.peek_nm()?;
-                    self.parse_nm().ok()
+                    Some(self.parse_nm())
                 } else {
                     None
                 }
@@ -341,6 +343,29 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Rollback {
             tx_name,
             savepoint_name,
+        })
+    }
+
+    #[inline(always)]
+    fn parse_savepoint(&mut self) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_SAVEPOINT]);
+        self.peek_nm()?;
+        Ok(Stmt::Savepoint {
+            name: self.parse_nm(),
+        })
+    }
+
+    #[inline(always)]
+    fn parse_release(&mut self) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_RELEASE]);
+
+        if self.peek_no_eof()?.token_type == Some(TokenType::TK_SAVEPOINT) {
+            self.eat_assert(&[TokenType::TK_SAVEPOINT]);
+        }
+
+        self.peek_nm()?;
+        Ok(Stmt::Release {
+            name: self.parse_nm(),
         })
     }
 }
@@ -510,6 +535,38 @@ mod tests {
                 vec![Cmd::Stmt(Stmt::Rollback {
                     tx_name: Some(Name::Ident("my_transaction".to_string())),
                     savepoint_name: Some(Name::Ident("my_savepoint".to_string())),
+                })],
+            ),
+            // savepoint
+            (
+                b"SAVEPOINT my_savepoint".as_slice(),
+                vec![Cmd::Stmt(Stmt::Savepoint {
+                    name: Name::Ident("my_savepoint".to_string()),
+                })],
+            ),
+            (
+                b"SAVEPOINT 'my_savepoint'".as_slice(),
+                vec![Cmd::Stmt(Stmt::Savepoint {
+                    name: Name::Quoted("'my_savepoint'".to_string()),
+                })],
+            ),
+            // release
+            (
+                b"RELEASE my_savepoint".as_slice(),
+                vec![Cmd::Stmt(Stmt::Release {
+                    name: Name::Ident("my_savepoint".to_string()),
+                })],
+            ),
+            (
+                b"RELEASE SAVEPOINT my_savepoint".as_slice(),
+                vec![Cmd::Stmt(Stmt::Release {
+                    name: Name::Ident("my_savepoint".to_string()),
+                })],
+            ),
+            (
+                b"RELEASE SAVEPOINT 'my_savepoint'".as_slice(),
+                vec![Cmd::Stmt(Stmt::Release {
+                    name: Name::Quoted("'my_savepoint'".to_string()),
                 })],
             ),
         ];
