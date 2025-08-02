@@ -17,16 +17,25 @@ impl<'a> Iterator for Parser<'a> {
     type Item = Result<Cmd, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.peek() {
+        // consumes prefix SEMI
+        while let Some(Ok(token)) = self.peek() {
+            if token.token_type == Some(TokenType::TK_SEMI) {
+                self.eat_assert(&[TokenType::TK_SEMI]);
+            } else {
+                break;
+            }
+        }
+
+        let result = match self.peek() {
             None => None, // EOF
             Some(Ok(token)) => match token.token_type {
                 Some(TokenType::TK_EXPLAIN) => {
-                    self.eat_assert(TokenType::TK_EXPLAIN);
+                    self.eat_assert(&[TokenType::TK_EXPLAIN]);
 
                     let mut is_query_plan = false;
                     match self.peek_no_eof() {
                         Ok(tok) if tok.token_type == Some(TokenType::TK_QUERY) => {
-                            self.eat_assert(TokenType::TK_QUERY);
+                            self.eat_assert(&[TokenType::TK_QUERY]);
 
                             if let Err(err) = self.eat_expect(&[TokenType::TK_PLAN]) {
                                 return Some(Err(err));
@@ -44,10 +53,10 @@ impl<'a> Iterator for Parser<'a> {
                     }
 
                     if is_query_plan {
-                        return Some(Ok(Cmd::ExplainQueryPlan(stmt.unwrap())));
+                        Some(Ok(Cmd::ExplainQueryPlan(stmt.unwrap())))
+                    } else {
+                        Some(Ok(Cmd::Explain(stmt.unwrap())))
                     }
-
-                    Some(Ok(Cmd::Explain(stmt.unwrap())))
                 }
                 _ => {
                     let stmt = self.parse_stmt();
@@ -58,8 +67,33 @@ impl<'a> Iterator for Parser<'a> {
                     Some(Ok(Cmd::Stmt(stmt.unwrap())))
                 }
             },
-            Some(Err(err)) => Some(Err(err)),
+            Some(Err(err)) => return Some(Err(err)),
+        };
+
+        // consumes suffix SEMI
+        let mut found_semi = false;
+        loop {
+            match self.peek_ignore_eof() {
+                Ok(None) => break,
+                Ok(Some(token)) if token.token_type == Some(TokenType::TK_SEMI) => {
+                    found_semi = true;
+                    self.eat_expect(&[TokenType::TK_SEMI]).unwrap();
+                }
+                Ok(Some(token)) => {
+                    if !found_semi {
+                        return Some(Err(Error::ParseUnexpectedToken {
+                            expected: &[TokenType::TK_SEMI],
+                            got: token.token_type.unwrap(),
+                        }));
+                    }
+
+                    break;
+                }
+                Err(err) => return Some(Err(err)),
+            }
         }
+
+        result
     }
 }
 
@@ -102,29 +136,31 @@ impl<'a> Parser<'a> {
 
     #[inline(always)]
     fn eat_expect(&mut self, expected: &'static [TokenType]) -> Result<Token<'a>, Error> {
-        let token = self.eat_no_eof()?;
-        for expected in expected {
-            if token.token_type == Some(*expected) {
-                return Ok(token);
-            }
-        }
-
-        Err(Error::ParseUnexpectedToken {
-            expected: expected,
-            got: token.token_type.unwrap(), // no whitespace or comment tokens here
-        })
+        self.peek_expect(expected)?;
+        Ok(self.eat_assert(expected))
     }
 
     #[inline(always)]
-    fn eat_assert(&mut self, expected: TokenType) {
+    fn eat_assert(&mut self, expected: &'static [TokenType]) -> Token<'a> {
         let token = self.eat_no_eof().unwrap();
-        debug_assert_eq!(
-            token.token_type,
-            Some(expected),
-            "Expected token {:?}, got {:?}",
-            expected,
-            token.token_type
-        );
+
+        #[cfg(debug_assertions)]
+        {
+            for expected in expected {
+                if token.token_type == Some(*expected) {
+                    return token;
+                }
+            }
+
+            panic!(
+                "Expected token {:?}, got {:?}",
+                expected,
+                token.token_type.unwrap()
+            );
+        }
+
+        #[cfg(not(debug_assertions))]
+        token // in release mode, we assume the caller has checked the token type
     }
 
     /// Peek at the next token without consuming it
@@ -179,15 +215,6 @@ impl<'a> Parser<'a> {
 
     #[inline(always)]
     fn parse_stmt(&mut self) -> Result<Stmt, Error> {
-        // consumes prefix SEMI
-        while let Ok(token) = self.peek_no_eof() {
-            if token.token_type == Some(TokenType::TK_SEMI) {
-                self.eat_assert(TokenType::TK_SEMI);
-            } else {
-                break;
-            }
-        }
-
         let tok = self.peek_expect(&[
             TokenType::TK_BEGIN,
             // add more
@@ -197,28 +224,6 @@ impl<'a> Parser<'a> {
             TokenType::TK_BEGIN => self.parse_begin()?,
             _ => unreachable!(),
         };
-
-        // consumes suffix SEMI
-        let mut found_semi = false;
-        loop {
-            match self.peek_ignore_eof()? {
-                None => break,
-                Some(token) if token.token_type == Some(TokenType::TK_SEMI) => {
-                    found_semi = true;
-                    self.eat_expect(&[TokenType::TK_SEMI]).unwrap();
-                }
-                Some(token) => {
-                    if !found_semi {
-                        return Err(Error::ParseUnexpectedToken {
-                            expected: &[TokenType::TK_SEMI],
-                            got: token.token_type.unwrap(),
-                        });
-                    }
-
-                    break;
-                }
-            }
-        }
 
         return Ok(stmt);
     }
@@ -235,40 +240,37 @@ impl<'a> Parser<'a> {
 
     #[inline(always)]
     fn parse_nm(&mut self) -> Result<Name, Error> {
-        let tok = self.eat_expect(&[
+        let tok = self.eat_assert(&[
             TokenType::TK_ID,
             TokenType::TK_STRING,
             TokenType::TK_INDEXED,
             TokenType::TK_JOIN_KW,
-        ])?;
+        ]);
 
-        let first_char = tok.value[0];
+        let first_char = tok.value[0]; // no need to check empty
         match first_char {
-            b'[' | b'\'' | b'`' | b'"' => {
-                let value = &tok.value[1..tok.value.len() - 1];
-                Ok(Name::Quoted(from_bytes(value)))
-            }
+            b'[' | b'\'' | b'`' | b'"' => Ok(Name::Quoted(from_bytes(tok.value))),
             _ => Ok(Name::Ident(from_bytes(tok.value))),
         }
     }
 
     #[inline(always)]
     fn parse_begin(&mut self) -> Result<Stmt, Error> {
-        self.eat_assert(TokenType::TK_BEGIN);
+        self.eat_assert(&[TokenType::TK_BEGIN]);
 
         let transtype = match self.peek_ignore_eof()? {
             None => None,
             Some(tok) => match tok.token_type.unwrap() {
                 TokenType::TK_DEFERRED => {
-                    self.eat_assert(TokenType::TK_DEFERRED);
+                    self.eat_assert(&[TokenType::TK_DEFERRED]);
                     Some(TransactionType::Deferred)
                 }
                 TokenType::TK_IMMEDIATE => {
-                    self.eat_assert(TokenType::TK_IMMEDIATE);
+                    self.eat_assert(&[TokenType::TK_IMMEDIATE]);
                     Some(TransactionType::Immediate)
                 }
                 TokenType::TK_EXCLUSIVE => {
-                    self.eat_assert(TokenType::TK_EXCLUSIVE);
+                    self.eat_assert(&[TokenType::TK_EXCLUSIVE]);
                     Some(TransactionType::Exclusive)
                 }
                 _ => None,
@@ -279,7 +281,7 @@ impl<'a> Parser<'a> {
             None => None,
             Some(tok) => match tok.token_type.unwrap() {
                 TokenType::TK_TRANSACTION => {
-                    self.eat_assert(TokenType::TK_TRANSACTION);
+                    self.eat_assert(&[TokenType::TK_TRANSACTION]);
                     if self.peek_nm().ok().is_some() {
                         self.parse_nm().ok()
                     } else {
@@ -379,7 +381,7 @@ mod tests {
                 b"BEGIN EXCLUSIVE TRANSACTION 'my_transaction'".as_slice(),
                 vec![Cmd::Stmt(Stmt::Begin {
                     typ: Some(TransactionType::Exclusive),
-                    name: Some(Name::Quoted("my_transaction".to_string())),
+                    name: Some(Name::Quoted("'my_transaction'".to_string())),
                 })],
             ),
             (
