@@ -77,7 +77,7 @@ impl<'a> Iterator for Parser<'a> {
                 Ok(None) => break,
                 Ok(Some(token)) if token.token_type == Some(TokenType::TK_SEMI) => {
                     found_semi = true;
-                    self.eat_expect(&[TokenType::TK_SEMI]).unwrap();
+                    self.eat_assert(&[TokenType::TK_SEMI]);
                 }
                 Ok(Some(token)) => {
                     if !found_semi {
@@ -217,15 +217,16 @@ impl<'a> Parser<'a> {
     fn parse_stmt(&mut self) -> Result<Stmt, Error> {
         let tok = self.peek_expect(&[
             TokenType::TK_BEGIN,
+            TokenType::TK_COMMIT,
+            TokenType::TK_END,
             // add more
         ])?;
 
-        let stmt = match tok.token_type.unwrap() {
-            TokenType::TK_BEGIN => self.parse_begin()?,
+        match tok.token_type.unwrap() {
+            TokenType::TK_BEGIN => self.parse_begin(),
+            TokenType::TK_COMMIT | TokenType::TK_END => self.parse_commit(),
             _ => unreachable!(),
-        };
-
-        return Ok(stmt);
+        }
     }
 
     #[inline(always)]
@@ -255,6 +256,24 @@ impl<'a> Parser<'a> {
     }
 
     #[inline(always)]
+    fn parse_transopt(&mut self) -> Result<Option<Name>, Error> {
+        match self.peek_ignore_eof()? {
+            None => Ok(None),
+            Some(tok) => match tok.token_type.unwrap() {
+                TokenType::TK_TRANSACTION => {
+                    self.eat_assert(&[TokenType::TK_TRANSACTION]);
+                    if self.peek_nm().ok().is_some() {
+                        Ok(self.parse_nm().ok())
+                    } else {
+                        Ok(None)
+                    }
+                }
+                _ => Ok(None),
+            },
+        }
+    }
+
+    #[inline(always)]
     fn parse_begin(&mut self) -> Result<Stmt, Error> {
         self.eat_assert(&[TokenType::TK_BEGIN]);
 
@@ -277,24 +296,17 @@ impl<'a> Parser<'a> {
             },
         };
 
-        let trans_opt = match self.peek_ignore_eof()? {
-            None => None,
-            Some(tok) => match tok.token_type.unwrap() {
-                TokenType::TK_TRANSACTION => {
-                    self.eat_assert(&[TokenType::TK_TRANSACTION]);
-                    if self.peek_nm().ok().is_some() {
-                        self.parse_nm().ok()
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            },
-        };
-
         Ok(Stmt::Begin {
             typ: transtype,
-            name: trans_opt,
+            name: self.parse_transopt()?,
+        })
+    }
+
+    #[inline(always)]
+    fn parse_commit(&mut self) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_COMMIT, TokenType::TK_END]);
+        Ok(Stmt::Commit {
+            name: self.parse_transopt()?,
         })
     }
 }
@@ -402,9 +414,38 @@ mod tests {
                 ],
             ),
             // commit
+            (
+                b"COMMIT".as_slice(),
+                vec![Cmd::Stmt(Stmt::Commit { name: None })],
+            ),
+            (
+                b"END".as_slice(),
+                vec![Cmd::Stmt(Stmt::Commit { name: None })],
+            ),
+            (
+                b"COMMIT TRANSACTION".as_slice(),
+                vec![Cmd::Stmt(Stmt::Commit { name: None })],
+            ),
+            (
+                b"END TRANSACTION".as_slice(),
+                vec![Cmd::Stmt(Stmt::Commit { name: None })],
+            ),
+            (
+                b"COMMIT TRANSACTION my_transaction".as_slice(),
+                vec![Cmd::Stmt(Stmt::Commit {
+                    name: Some(Name::Ident("my_transaction".to_string())),
+                })],
+            ),
+            (
+                b"END TRANSACTION my_transaction".as_slice(),
+                vec![Cmd::Stmt(Stmt::Commit {
+                    name: Some(Name::Ident("my_transaction".to_string())),
+                })],
+            ),
         ];
 
         for (input, expected) in test_cases {
+            println!("Testing input: {:?}", from_bytes(input));
             let mut parser = Parser::new(input);
             let mut results = Vec::new();
             while let Some(cmd) = parser.next() {

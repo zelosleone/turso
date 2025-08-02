@@ -44,7 +44,12 @@ fn bench_lexer(criterion: &mut Criterion) {
 }
 
 fn bench_parser(criterion: &mut Criterion) {
-    let queries = ["BEGIN", "BEGIN EXCLUSIVE TRANSACTION my_trans"];
+    let queries = [
+        "BEGIN",
+        "BEGIN EXCLUSIVE TRANSACTION my_trans",
+        "COMMIT",
+        "COMMIT TRANSACTION my_trans",
+    ];
 
     for query in queries.iter() {
         let mut group = criterion.benchmark_group(format!("Parser `{query}`"));
