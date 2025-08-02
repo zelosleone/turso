@@ -2206,19 +2206,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "limbo_sqlite3"
-version = "0.1.4-pre.1"
-dependencies = [
- "env_logger 0.11.7",
- "libc",
- "tempfile",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "turso_core",
-]
-
-[[package]]
 name = "limbo_sqlite_test_ext"
 version = "0.1.4-pre.1"
 dependencies = [
@@ -4346,6 +4333,19 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "tracing-subscriber",
+ "turso_core",
+]
+
+[[package]]
+name = "turso_sqlite3"
+version = "0.1.4-pre.1"
+dependencies = [
+ "env_logger 0.11.7",
+ "libc",
+ "tempfile",
+ "tracing",
+ "tracing-appender",
  "tracing-subscriber",
  "turso_core",
 ]
