@@ -1,6 +1,5 @@
 use std::error;
 use std::fmt;
-use std::io;
 
 use super::token::TokenType;
 
@@ -92,7 +91,7 @@ impl fmt::Display for Error {
                     expected, got
                 )
             }
-            Self::Custom(s) => {
+            Self::Custom(ref s) => {
                 write!(f, "custom error: {}", s)
             }
         }
