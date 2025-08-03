@@ -11,7 +11,7 @@ use turso_ext::{
     VTabModuleDerive, VTable, Value,
 };
 #[cfg(not(target_family = "wasm"))]
-use turso_ext::{VfsDerive, VfsExtension, VfsFile};
+use turso_ext::{BufferRef, Callback, VfsDerive, VfsExtension, VfsFile};
 
 register_extension! {
     vtabs: { KVStoreVTabModule, TableStatsVtabModule },
@@ -302,36 +302,58 @@ impl VfsExtension for TestFS {
 
 #[cfg(not(target_family = "wasm"))]
 impl VfsFile for TestFile {
-    fn read(&mut self, buf: &mut [u8], count: usize, offset: i64) -> ExtResult<i32> {
-        log::debug!("reading file with testing VFS: bytes: {count} offset: {offset}");
+    fn read(&mut self, mut buf: BufferRef, offset: i64, cb: Callback) -> ExtResult<()> {
+        log::debug!(
+            "reading file with testing VFS: bytes: {} offset: {}",
+            buf.len(),
+            offset
+        );
         if self.file.seek(SeekFrom::Start(offset as u64)).is_err() {
             return Err(ResultCode::Error);
         }
-        self.file
-            .read(&mut buf[..count])
+        let len = buf.len();
+        let buf = buf.as_mut_slice();
+        let res = self
+            .file
+            .read(&mut buf[..len])
             .map_err(|_| ResultCode::Error)
-            .map(|n| n as i32)
+            .map(|n| n as i32)?;
+        cb(res as i32);
+        Ok(())
     }
 
-    fn write(&mut self, buf: &[u8], count: usize, offset: i64) -> ExtResult<i32> {
-        log::debug!("writing to file with testing VFS: bytes: {count} offset: {offset}");
+    fn write(&mut self, buf: turso_ext::BufferRef, offset: i64, cb: Callback) -> ExtResult<()> {
+        log::debug!(
+            "writing to file with testing VFS: bytes: {} offset: {offset}",
+            buf.len()
+        );
         if self.file.seek(SeekFrom::Start(offset as u64)).is_err() {
             return Err(ResultCode::Error);
         }
-        self.file
-            .write(&buf[..count])
+        let len = buf.len();
+        let n = self
+            .file
+            .write(&buf[..len])
             .map_err(|_| ResultCode::Error)
-            .map(|n| n as i32)
+            .map(|n| n as i32)?;
+        cb(n as i32);
+        Ok(())
     }
 
-    fn sync(&self) -> ExtResult<()> {
+    fn sync(&self, cb: Callback) -> ExtResult<()> {
         log::debug!("syncing file with testing VFS");
-        self.file.sync_all().map_err(|_| ResultCode::Error)
+        self.file.sync_all().map_err(|_| ResultCode::Error)?;
+        cb(0);
+        Ok(())
     }
 
-    fn truncate(&self, len: i64) -> ExtResult<()> {
+    fn truncate(&self, len: i64, cb: Callback) -> ExtResult<()> {
         log::debug!("truncating file with testing VFS to length: {len}");
-        self.file.set_len(len as u64).map_err(|_| ResultCode::Error)
+        self.file
+            .set_len(len as u64)
+            .map_err(|_| ResultCode::Error)?;
+        cb(0);
+        Ok(())
     }
 
     fn size(&self) -> i64 {
