@@ -308,7 +308,7 @@ pub enum Expr {
         type_name: Option<Type>,
     },
     /// `COLLATE`: expression
-    Collate(Box<Expr>, String),
+    Collate(Box<Expr>, Name),
     /// schema-name.table-name.column-name
     DoublyQualified(Name, Name, Name),
     /// `EXISTS` subquery
@@ -360,7 +360,7 @@ pub enum Expr {
         /// `NOT`
         not: bool,
         /// values
-        rhs: Option<Vec<Box<Expr>>>,
+        rhs: Vec<Box<Expr>>,
     },
     /// `IN` subselect
     InSelect {
@@ -380,7 +380,7 @@ pub enum Expr {
         /// table name
         rhs: QualifiedName,
         /// table function arguments
-        args: Option<Vec<Box<Expr>>>,
+        args: Vec<Box<Expr>>,
     },
     /// `IS NULL`
     IsNull(Box<Expr>),
@@ -532,7 +532,7 @@ pub struct Select {
     /// body
     pub body: SelectBody,
     /// `ORDER BY`
-    pub order_by: Option<Vec<SortedColumn>>, // ORDER BY term does not match any column in the result set
+    pub order_by: Vec<SortedColumn>, // ORDER BY term does not match any column in the result set
     /// `LIMIT`
     pub limit: Option<Limit>,
 }
@@ -544,7 +544,7 @@ pub struct SelectBody {
     /// first select
     pub select: OneSelect,
     /// compounds
-    pub compounds: Option<Vec<CompoundSelect>>,
+    pub compounds: Vec<CompoundSelect>,
 }
 
 /// Compound select
@@ -1271,7 +1271,7 @@ pub struct CommonTableExpr {
     /// table name
     pub tbl_name: Name,
     /// table columns
-    pub columns: Option<Vec<IndexedColumn>>, // check no duplicate
+    pub columns: Vec<IndexedColumn>, // check no duplicate
     /// `MATERIALIZED`
     pub materialized: Materialized,
     /// query

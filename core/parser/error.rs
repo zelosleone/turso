@@ -52,6 +52,7 @@ pub enum Error {
         got: TokenType,
         expected: &'static [TokenType],
     },
+    Custom(String),
 }
 
 impl fmt::Display for Error {
@@ -90,6 +91,9 @@ impl fmt::Display for Error {
                     "got unexpected token: expected {:?}, found {}",
                     expected, got
                 )
+            }
+            Self::Custom(s) => {
+                write!(f, "custom error: {}", s)
             }
         }
     }
