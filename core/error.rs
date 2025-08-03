@@ -75,6 +75,8 @@ pub enum LimboError {
     InvalidColumnType,
     #[error("Invalid blob size, expected {0}")]
     InvalidBlobSize(usize),
+    #[error("Planning error: {0}")]
+    PlanningError(String),
 }
 
 #[macro_export]
