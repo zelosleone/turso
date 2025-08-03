@@ -77,6 +77,9 @@ impl VfsMod {
     }
 }
 
+// #Safety:
+// the callback wrapper in the extension library is FnOnce, so we know
+// that the into_raw/from_raw contract will hold
 unsafe extern "C" fn callback_fn(result: i32, ctx: SendPtr) {
     let completion = Completion {
         inner: (Arc::from_raw(ctx.inner().as_ptr() as *mut CompletionInner)),
