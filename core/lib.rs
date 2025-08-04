@@ -1737,6 +1737,17 @@ impl Connection {
     pub fn get_pager(&self) -> Rc<Pager> {
         self.pager.borrow().clone()
     }
+
+    /// Copy the current Database and write out to a new file
+    pub fn copy_db(&self, file: &str) -> Result<()> {
+        let io = self._db.io.clone();
+        let disabled = false;
+        // checkpoint so everything is in the DB file before copying
+        self.pager
+            .borrow_mut()
+            .wal_checkpoint(disabled, CheckpointMode::Truncate)?;
+        self.pager.borrow_mut().db_file.copy_to(&*io, file)
+    }
 }
 
 pub struct Statement {
