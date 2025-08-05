@@ -1,12 +1,11 @@
-use std::cell::Cell;
 use std::sync::Arc;
 
 use super::{
     expr::walk_expr,
     plan::{
-        Aggregate, ColumnUsedMask, Distinctness, EvalAt, IterationDirection, JoinInfo,
-        JoinOrderMember, JoinedTable, Operation, OuterQueryReference, Plan, QueryDestination,
-        ResultSetColumn, TableReferences, WhereTerm,
+        Aggregate, ColumnUsedMask, Distinctness, EvalAt, JoinInfo, JoinOrderMember, JoinedTable,
+        Operation, OuterQueryReference, Plan, QueryDestination, ResultSetColumn, TableReferences,
+        WhereTerm,
     },
     select::prepare_select_plan,
     SymbolTable,
@@ -327,7 +326,7 @@ fn parse_from_clause_table(
     schema: &Schema,
     table: ast::SelectTable,
     table_references: &mut TableReferences,
-    out_where_clause: &mut Vec<WhereTerm>,
+    vtab_predicates: &mut Vec<Expr>,
     ctes: &mut Vec<JoinedTable>,
     syms: &SymbolTable,
     table_ref_counter: &mut TableRefIdCounter,
@@ -338,7 +337,7 @@ fn parse_from_clause_table(
             table_references,
             ctes,
             table_ref_counter,
-            out_where_clause,
+            vtab_predicates,
             qualified_name,
             maybe_alias,
             None,
@@ -379,7 +378,7 @@ fn parse_from_clause_table(
             table_references,
             ctes,
             table_ref_counter,
-            out_where_clause,
+            vtab_predicates,
             qualified_name,
             maybe_alias,
             maybe_args,
@@ -394,7 +393,7 @@ fn parse_table(
     table_references: &mut TableReferences,
     ctes: &mut Vec<JoinedTable>,
     table_ref_counter: &mut TableRefIdCounter,
-    out_where_clause: &mut Vec<WhereTerm>,
+    vtab_predicates: &mut Vec<Expr>,
     qualified_name: QualifiedName,
     maybe_alias: Option<As>,
     maybe_args: Option<Vec<Expr>>,
@@ -431,7 +430,7 @@ fn parse_table(
                 transform_args_into_where_terms(
                     args,
                     internal_id,
-                    out_where_clause,
+                    vtab_predicates,
                     table.as_ref(),
                 )?;
             }
@@ -444,10 +443,7 @@ fn parse_table(
             ));
         };
         table_references.add_joined_table(JoinedTable {
-            op: Operation::Scan {
-                iter_dir: IterationDirection::Forwards,
-                index: None,
-            },
+            op: Operation::default_scan_for(&tbl_ref),
             table: tbl_ref,
             identifier: alias.unwrap_or(normalized_qualified_name),
             internal_id,
@@ -470,10 +466,7 @@ fn parse_table(
     {
         if matches!(outer_ref.table, Table::FromClauseSubquery(_)) {
             table_references.add_joined_table(JoinedTable {
-                op: Operation::Scan {
-                    iter_dir: IterationDirection::Forwards,
-                    index: None,
-                },
+                op: Operation::default_scan_for(&outer_ref.table),
                 table: outer_ref.table.clone(),
                 identifier: outer_ref.identifier.clone(),
                 internal_id: table_ref_counter.next(),
@@ -491,7 +484,7 @@ fn parse_table(
 fn transform_args_into_where_terms(
     args: Vec<Expr>,
     internal_id: TableInternalId,
-    out_where_clause: &mut Vec<WhereTerm>,
+    predicates: &mut Vec<Expr>,
     table: &Table,
 ) -> Result<()> {
     let mut args_iter = args.into_iter();
@@ -503,11 +496,6 @@ fn transform_args_into_where_terms(
         hidden_count += 1;
 
         if let Some(arg_expr) = args_iter.next() {
-            if contains_column_reference(&arg_expr)? {
-                crate::bail_parse_error!(
-                    "Column references are not supported as table-valued function arguments yet"
-                );
-            }
             let column_expr = Expr::Column {
                 database: None,
                 table: internal_id,
@@ -522,11 +510,7 @@ fn transform_args_into_where_terms(
                     Box::new(other),
                 ),
             };
-            out_where_clause.push(WhereTerm {
-                expr,
-                from_outer_join: None,
-                consumed: Cell::new(false),
-            });
+            predicates.push(expr);
         }
     }
 
@@ -542,18 +526,6 @@ fn transform_args_into_where_terms(
     Ok(())
 }
 
-fn contains_column_reference(top_level_expr: &Expr) -> Result<bool> {
-    let mut contains = false;
-    walk_expr(top_level_expr, &mut |expr: &Expr| -> Result<WalkControl> {
-        match expr {
-            Expr::Id(_) | Expr::Qualified(_, _) | Expr::Column { .. } => contains = true,
-            _ => {}
-        };
-        Ok(WalkControl::Continue)
-    })?;
-    Ok(contains)
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn parse_from(
     schema: &Schema,
@@ -561,6 +533,7 @@ pub fn parse_from(
     syms: &SymbolTable,
     with: Option<With>,
     out_where_clause: &mut Vec<WhereTerm>,
+    vtab_predicates: &mut Vec<Expr>,
     table_references: &mut TableReferences,
     table_ref_counter: &mut TableRefIdCounter,
     connection: &Arc<crate::Connection>,
@@ -647,7 +620,7 @@ pub fn parse_from(
         schema,
         select_owned,
         table_references,
-        out_where_clause,
+        vtab_predicates,
         &mut ctes_as_subqueries,
         syms,
         table_ref_counter,
@@ -661,6 +634,7 @@ pub fn parse_from(
             syms,
             &mut ctes_as_subqueries,
             out_where_clause,
+            vtab_predicates,
             table_references,
             table_ref_counter,
             connection,
@@ -687,7 +661,7 @@ pub fn parse_where(
             out_where_clause.push(WhereTerm {
                 expr,
                 from_outer_join: None,
-                consumed: Cell::new(false),
+                consumed: false,
             });
         }
         Ok(())
@@ -877,6 +851,7 @@ fn parse_join(
     syms: &SymbolTable,
     ctes: &mut Vec<JoinedTable>,
     out_where_clause: &mut Vec<WhereTerm>,
+    vtab_predicates: &mut Vec<Expr>,
     table_references: &mut TableReferences,
     table_ref_counter: &mut TableRefIdCounter,
     connection: &Arc<crate::Connection>,
@@ -891,7 +866,7 @@ fn parse_join(
         schema,
         table,
         table_references,
-        out_where_clause,
+        vtab_predicates,
         ctes,
         syms,
         table_ref_counter,
@@ -974,7 +949,7 @@ fn parse_join(
                         } else {
                             None
                         },
-                        consumed: Cell::new(false),
+                        consumed: false,
                     });
                 }
             }
@@ -1055,7 +1030,7 @@ fn parse_join(
                         } else {
                             None
                         },
-                        consumed: Cell::new(false),
+                        consumed: false,
                     });
                 }
                 using = Some(distinct_names);
