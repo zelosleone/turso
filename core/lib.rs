@@ -1739,8 +1739,10 @@ impl Connection {
     }
 
     /// Copy the current Database and write out to a new file
+    #[cfg(feature = "fs")]
     pub fn copy_db(&self, file: &str) -> Result<()> {
-        let io = self._db.io.clone();
+        // use a new PlatformIO instance here to allow for copying in-memory databases
+        let io: Arc<dyn IO> = Arc::new(PlatformIO::new()?);
         let disabled = false;
         // checkpoint so everything is in the DB file before copying
         self.pager
