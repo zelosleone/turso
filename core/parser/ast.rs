@@ -1,5 +1,3 @@
-use std::str::{self, Bytes};
-
 use strum_macros::{EnumIter, EnumString};
 
 /// `?` or `$` Prepared statement arg placeholder(s)
@@ -320,18 +318,18 @@ pub enum Expr {
         /// `DISTINCT`
         distinctness: Option<Distinctness>,
         /// arguments
-        args: Option<Vec<Box<Expr>>>,
+        args: Vec<Box<Expr>>,
         /// `ORDER BY`
-        order_by: Option<Vec<SortedColumn>>,
+        order_by: Vec<SortedColumn>,
         /// `FILTER`
-        filter_over: Option<FunctionTail>,
+        filter_over: FunctionTail,
     },
     /// Function call expression with '*' as arg
     FunctionCallStar {
         /// function name
         name: Name,
         /// `FILTER`
-        filter_over: Option<FunctionTail>,
+        filter_over: FunctionTail,
     },
     /// Identifier
     Id(Name),
@@ -578,27 +576,22 @@ pub enum CompoundOperator {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum OneSelect {
     /// `SELECT`
-    Select(SelectInner),
+    Select {
+        /// `DISTINCT`
+        distinctness: Option<Distinctness>,
+        /// columns
+        columns: Vec<ResultColumn>,
+        /// `FROM` clause
+        from: Option<FromClause>,
+        /// `WHERE` clause
+        where_clause: Option<Box<Expr>>,
+        /// `GROUP BY`
+        group_by: Option<GroupBy>,
+        /// `WINDOW` definition
+        window_clause: Vec<WindowDef>,
+    },
     /// `VALUES`
     Values(Vec<Vec<Box<Expr>>>),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-/// `SELECT` core
-pub struct SelectInner {
-    /// `DISTINCT`
-    pub distinctness: Option<Distinctness>,
-    /// columns
-    pub columns: Vec<ResultColumn>,
-    /// `FROM` clause
-    pub from: Option<FromClause>,
-    /// `WHERE` clause
-    pub where_clause: Option<Box<Expr>>,
-    /// `GROUP BY`
-    pub group_by: Option<GroupBy>,
-    /// `WINDOW` definition
-    pub window_clause: Option<Vec<WindowDef>>,
 }
 
 /// `SELECT` ... `FROM` clause
@@ -607,11 +600,9 @@ pub struct SelectInner {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FromClause {
     /// table
-    pub select: Option<Box<SelectTable>>, // FIXME mandatory
+    pub select: Box<SelectTable>, // FIXME mandatory
     /// `JOIN`ed tabled
-    pub joins: Option<Vec<JoinedSelectTable>>,
-    /// A default join operator
-    pub op: Option<JoinOperator>, // FIXME transient
+    pub joins: Vec<JoinedSelectTable>,
 }
 
 /// `SELECT` distinctness
@@ -668,7 +659,7 @@ pub enum SelectTable {
     /// table
     Table(QualifiedName, Option<As>, Option<Indexed>),
     /// table function call
-    TableCall(QualifiedName, Option<Vec<Box<Expr>>>, Option<As>),
+    TableCall(QualifiedName, Vec<Box<Expr>>, Option<As>),
     /// `SELECT` subquery
     Select(Select, Option<As>),
     /// subquery
@@ -1358,7 +1349,7 @@ pub struct FunctionTail {
     /// `FILTER` clause
     pub filter_clause: Option<Box<Expr>>,
     /// `OVER` clause
-    pub over_clause: Option<Box<Over>>,
+    pub over_clause: Option<Over>,
 }
 
 /// Function call `OVER` clause
@@ -1390,9 +1381,9 @@ pub struct Window {
     /// base window name
     pub base: Option<Name>,
     /// `PARTITION BY`
-    pub partition_by: Option<Vec<Box<Expr>>>,
+    pub partition_by: Vec<Box<Expr>>,
     /// `ORDER BY`
-    pub order_by: Option<Vec<SortedColumn>>,
+    pub order_by: Vec<SortedColumn>,
     /// frame spec
     pub frame_clause: Option<FrameClause>,
 }

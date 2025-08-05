@@ -7,6 +7,27 @@ use turso_sqlite3_parser::lexer::{
     Scanner,
 };
 
+fn bench_parser(criterion: &mut Criterion) {
+    let queries = ["SELECT 1"];
+
+    for query in queries.iter() {
+        let mut group = criterion.benchmark_group(format!("Parser `{query}`"));
+        let qb = query.as_bytes();
+
+        group.bench_function(BenchmarkId::new("limbo_parser_query", ""), |b| {
+            b.iter(|| Parser::new(black_box(qb)).next().unwrap());
+        });
+
+        group.bench_function(BenchmarkId::new("limbo_old_parser_query", ""), |b| {
+            b.iter(|| {
+                OldParser::new(black_box(qb)).next().unwrap().unwrap();
+            });
+        });
+
+        group.finish();
+    }
+}
+
 fn bench_lexer(criterion: &mut Criterion) {
     let queries = [
         "SELECT 1",
@@ -43,44 +64,9 @@ fn bench_lexer(criterion: &mut Criterion) {
     }
 }
 
-fn bench_parser(criterion: &mut Criterion) {
-    let queries = [
-        "BEGIN",
-        "BEGIN EXCLUSIVE TRANSACTION my_trans",
-        "COMMIT",
-        "COMMIT TRANSACTION my_trans",
-        "ROLLBACK",
-        "ROLLBACK TRANSACTION my_transaction TO my_savepoint",
-        "SAVEPOINT my_savepoint",
-        "RELEASE SAVEPOINT my_savepoint",
-    ];
-
-    for query in queries.iter() {
-        let mut group = criterion.benchmark_group(format!("Parser `{query}`"));
-        let qb = query.as_bytes();
-
-        group.bench_function(BenchmarkId::new("limbo_parser_query", ""), |b| {
-            b.iter(|| {
-                for stmt in Parser::new(black_box(qb)) {
-                    stmt.unwrap();
-                }
-            });
-        });
-
-        group.bench_function(BenchmarkId::new("limbo_old_parser_query", ""), |b| {
-            b.iter(|| {
-                let mut parser = OldParser::new(black_box(qb));
-                parser.next().unwrap().unwrap()
-            });
-        });
-
-        group.finish();
-    }
-}
-
 criterion_group! {
     name = benches;
     config = Criterion::default().with_profiler(PProfProfiler::new(100, Output::Flamegraph(None)));
-    targets = bench_lexer, bench_parser
+    targets = bench_parser, bench_lexer
 }
 criterion_main!(benches);

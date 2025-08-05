@@ -2,10 +2,12 @@ use crate::parser::{error::Error, token::TokenType};
 
 include!(concat!(env!("OUT_DIR"), "/keywords.rs"));
 
+#[inline(always)]
 pub(crate) fn is_identifier_start(b: u8) -> bool {
     b.is_ascii_uppercase() || b == b'_' || b.is_ascii_lowercase() || b > b'\x7F'
 }
 
+#[inline(always)]
 pub(crate) fn is_identifier_continue(b: u8) -> bool {
     b == b'$'
         || b.is_ascii_digit()
@@ -22,13 +24,14 @@ pub struct Token<'a> {
 }
 
 pub struct Lexer<'a> {
-    offset: usize,
+    pub(crate) offset: usize,
     input: &'a [u8],
 }
 
 impl<'a> Iterator for Lexer<'a> {
     type Item = Result<Token<'a>, Error>;
 
+    #[inline(always)]
     fn next(&mut self) -> Option<Self::Item> {
         match self.peek() {
             None => None, // End of file
@@ -41,22 +44,22 @@ impl<'a> Iterator for Lexer<'a> {
                 b';' => Some(Ok(self.eat_token(1, TokenType::TK_SEMI))),
                 b'+' => Some(Ok(self.eat_token(1, TokenType::TK_PLUS))),
                 b'*' => Some(Ok(self.eat_token(1, TokenType::TK_STAR))),
-                b'/' => Some(self.eat_slash_or_comment()),
+                b'/' => Some(self.mark(|l| l.eat_slash_or_comment())),
                 b'%' => Some(Ok(self.eat_token(1, TokenType::TK_REM))),
                 b'=' => Some(Ok(self.eat_eq())),
                 b'<' => Some(Ok(self.eat_le_or_ne_or_lshift_or_lt())),
                 b'>' => Some(Ok(self.eat_ge_or_gt_or_rshift())),
-                b'!' => Some(self.eat_ne()),
+                b'!' => Some(self.mark(|l| l.eat_ne())),
                 b'|' => Some(Ok(self.eat_concat_or_bitor())),
                 b',' => Some(Ok(self.eat_token(1, TokenType::TK_COMMA))),
                 b'&' => Some(Ok(self.eat_token(1, TokenType::TK_BITAND))),
                 b'~' => Some(Ok(self.eat_token(1, TokenType::TK_BITNOT))),
-                b'\'' | b'"' | b'`' => Some(self.eat_lit_or_id()),
-                b'.' => Some(self.eat_dot_or_frac()),
-                b'0'..=b'9' => Some(self.eat_number()),
-                b'[' => Some(self.eat_bracket()),
-                b'?' | b'$' | b'@' | b'#' | b':' => Some(self.eat_var()),
-                b if is_identifier_start(b) => Some(self.eat_blob_or_id()),
+                b'\'' | b'"' | b'`' => Some(self.mark(|l| l.eat_lit_or_id())),
+                b'.' => Some(self.mark(|l| l.eat_dot_or_frac())),
+                b'0'..=b'9' => Some(self.mark(|l| l.eat_number())),
+                b'[' => Some(self.mark(|l| l.eat_bracket())),
+                b'?' | b'$' | b'@' | b'#' | b':' => Some(self.mark(|l| l.eat_var())),
+                b if is_identifier_start(b) => Some(self.mark(|l| l.eat_blob_or_id())),
                 _ => Some(Ok(self.eat_unrecognized())),
             },
         }
@@ -72,6 +75,19 @@ impl<'a> Lexer<'a> {
     #[inline(always)]
     pub fn remaining(&self) -> &'a [u8] {
         &self.input[self.offset..]
+    }
+
+    #[inline(always)]
+    pub fn mark<F, R>(&mut self, exc: F) -> Result<R, Error>
+    where
+        F: FnOnce(&mut Self) -> Result<R, Error>,
+    {
+        let start_offset = self.offset;
+        let result = exc(self);
+        if result.is_err() {
+            self.offset = start_offset; // Reset to the start offset if an error occurs
+        }
+        result
     }
 
     /// Returns the current offset in the input without consuming.
