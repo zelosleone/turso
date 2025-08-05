@@ -81,6 +81,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// A builder for `Database`.
 pub struct Builder {
     path: String,
+    enable_mvcc: bool,
 }
 
 impl Builder {
@@ -88,7 +89,13 @@ impl Builder {
     pub fn new_local(path: &str) -> Self {
         Self {
             path: path.to_string(),
+            enable_mvcc: false,
         }
+    }
+
+    pub fn with_mvcc(mut self, mvcc_enabled: bool) -> Self {
+        self.enable_mvcc = mvcc_enabled;
+        self
     }
 
     /// Build the database.
@@ -100,7 +107,7 @@ impl Builder {
                 let db = turso_core::Database::open_file(
                     io,
                     self.path.as_str(),
-                    false,
+                    self.enable_mvcc,
                     indexes_enabled(),
                 )?;
                 Ok(Database { inner: db })
