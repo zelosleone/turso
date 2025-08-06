@@ -18,9 +18,9 @@ fn replace_column_with_null(rows: Vec<Vec<Value>>, column: usize) -> Vec<Vec<Val
 fn test_cdc_simple_id() {
     let db = TempDatabase::new_empty(false);
     let conn = db.connect_limbo();
-    conn.execute("PRAGMA unstable_capture_data_changes_conn('id')")
-        .unwrap();
     conn.execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y)")
+        .unwrap();
+    conn.execute("PRAGMA unstable_capture_data_changes_conn('id')")
         .unwrap();
     conn.execute("INSERT INTO t VALUES (10, 10), (5, 1)")
         .unwrap();
@@ -78,9 +78,9 @@ fn record<const N: usize>(values: [Value; N]) -> Vec<u8> {
 fn test_cdc_simple_before() {
     let db = TempDatabase::new_empty(false);
     let conn = db.connect_limbo();
-    conn.execute("PRAGMA unstable_capture_data_changes_conn('before')")
-        .unwrap();
     conn.execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y)")
+        .unwrap();
+    conn.execute("PRAGMA unstable_capture_data_changes_conn('before')")
         .unwrap();
     conn.execute("INSERT INTO t VALUES (1, 2), (3, 4)").unwrap();
     conn.execute("UPDATE t SET y = 3 WHERE x = 1").unwrap();
@@ -144,9 +144,9 @@ fn test_cdc_simple_before() {
 fn test_cdc_simple_after() {
     let db = TempDatabase::new_empty(false);
     let conn = db.connect_limbo();
-    conn.execute("PRAGMA unstable_capture_data_changes_conn('after')")
-        .unwrap();
     conn.execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y)")
+        .unwrap();
+    conn.execute("PRAGMA unstable_capture_data_changes_conn('after')")
         .unwrap();
     conn.execute("INSERT INTO t VALUES (1, 2), (3, 4)").unwrap();
     conn.execute("UPDATE t SET y = 3 WHERE x = 1").unwrap();
@@ -210,9 +210,9 @@ fn test_cdc_simple_after() {
 fn test_cdc_simple_full() {
     let db = TempDatabase::new_empty(false);
     let conn = db.connect_limbo();
-    conn.execute("PRAGMA unstable_capture_data_changes_conn('full')")
-        .unwrap();
     conn.execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y)")
+        .unwrap();
+    conn.execute("PRAGMA unstable_capture_data_changes_conn('full')")
         .unwrap();
     conn.execute("INSERT INTO t VALUES (1, 2), (3, 4)").unwrap();
     conn.execute("UPDATE t SET y = 3 WHERE x = 1").unwrap();
@@ -276,9 +276,9 @@ fn test_cdc_simple_full() {
 fn test_cdc_crud() {
     let db = TempDatabase::new_empty(false);
     let conn = db.connect_limbo();
-    conn.execute("PRAGMA unstable_capture_data_changes_conn('id')")
-        .unwrap();
     conn.execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y)")
+        .unwrap();
+    conn.execute("PRAGMA unstable_capture_data_changes_conn('id')")
         .unwrap();
     conn.execute("INSERT INTO t VALUES (20, 20), (10, 10), (5, 1)")
         .unwrap();
@@ -388,9 +388,9 @@ fn test_cdc_crud() {
 fn test_cdc_failed_op() {
     let db = TempDatabase::new_empty(true);
     let conn = db.connect_limbo();
-    conn.execute("PRAGMA unstable_capture_data_changes_conn('id')")
-        .unwrap();
     conn.execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y UNIQUE)")
+        .unwrap();
+    conn.execute("PRAGMA unstable_capture_data_changes_conn('id')")
         .unwrap();
     conn.execute("INSERT INTO t VALUES (1, 10), (2, 20)")
         .unwrap();
@@ -701,13 +701,13 @@ fn test_cdc_independent_connections() {
     let conn1 = db.connect_limbo();
     let conn2 = db.connect_limbo();
     conn1
+        .execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y UNIQUE)")
+        .unwrap();
+    conn1
         .execute("PRAGMA unstable_capture_data_changes_conn('id,custom_cdc1')")
         .unwrap();
     conn2
         .execute("PRAGMA unstable_capture_data_changes_conn('id,custom_cdc2')")
-        .unwrap();
-    conn1
-        .execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y UNIQUE)")
         .unwrap();
     conn1.execute("INSERT INTO t VALUES (1, 10)").unwrap();
     conn2.execute("INSERT INTO t VALUES (2, 20)").unwrap();
@@ -755,13 +755,13 @@ fn test_cdc_independent_connections_different_cdc_not_ignore() {
     let conn1 = db.connect_limbo();
     let conn2 = db.connect_limbo();
     conn1
+        .execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y UNIQUE)")
+        .unwrap();
+    conn1
         .execute("PRAGMA unstable_capture_data_changes_conn('id,custom_cdc1')")
         .unwrap();
     conn2
         .execute("PRAGMA unstable_capture_data_changes_conn('id,custom_cdc2')")
-        .unwrap();
-    conn1
-        .execute("CREATE TABLE t (x INTEGER PRIMARY KEY, y UNIQUE)")
         .unwrap();
     conn1.execute("INSERT INTO t VALUES (1, 10)").unwrap();
     conn1.execute("INSERT INTO t VALUES (2, 20)").unwrap();
@@ -877,5 +877,207 @@ fn test_cdc_bin_record() {
         vec![vec![Value::Text(
             r#"{"a":null,"b":1,"c":1.61803,"d":"hello"}"#.to_string()
         )]]
+    );
+}
+
+#[test]
+fn test_cdc_schema_changes() {
+    let db = TempDatabase::new_empty(true);
+    let conn = db.connect_limbo();
+    conn.execute("PRAGMA unstable_capture_data_changes_conn('full')")
+        .unwrap();
+    conn.execute("CREATE TABLE t(x, y, z UNIQUE, q, PRIMARY KEY (x, y))")
+        .unwrap();
+    conn.execute("CREATE TABLE q(a, b, c)").unwrap();
+    conn.execute("CREATE INDEX t_q ON t(q)").unwrap();
+    conn.execute("CREATE INDEX q_abc ON q(a, b, c)").unwrap();
+    conn.execute("DROP TABLE t").unwrap();
+    conn.execute("DROP INDEX q_abc").unwrap();
+    let rows = replace_column_with_null(limbo_exec_rows(&db, &conn, "SELECT * FROM turso_cdc"), 1);
+
+    assert_eq!(
+        rows,
+        vec![
+            vec![
+                Value::Integer(1),
+                Value::Null,
+                Value::Integer(1),
+                Value::Text("sqlite_schema".to_string()),
+                Value::Integer(2),
+                Value::Null,
+                Value::Blob(record([
+                    Value::Text("table".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Integer(3),
+                    Value::Text(
+                        "CREATE TABLE t (x, y, z UNIQUE, q, PRIMARY KEY (x, y))".to_string()
+                    )
+                ])),
+            ],
+            vec![
+                Value::Integer(2),
+                Value::Null,
+                Value::Integer(1),
+                Value::Text("sqlite_schema".to_string()),
+                Value::Integer(5),
+                Value::Null,
+                Value::Blob(record([
+                    Value::Text("table".to_string()),
+                    Value::Text("q".to_string()),
+                    Value::Text("q".to_string()),
+                    Value::Integer(6),
+                    Value::Text("CREATE TABLE q (a, b, c)".to_string())
+                ])),
+            ],
+            vec![
+                Value::Integer(3),
+                Value::Null,
+                Value::Integer(1),
+                Value::Text("sqlite_schema".to_string()),
+                Value::Integer(6),
+                Value::Null,
+                Value::Blob(record([
+                    Value::Text("index".to_string()),
+                    Value::Text("t_q".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Integer(7),
+                    Value::Text("CREATE INDEX t_q ON t (q)".to_string())
+                ])),
+            ],
+            vec![
+                Value::Integer(4),
+                Value::Null,
+                Value::Integer(1),
+                Value::Text("sqlite_schema".to_string()),
+                Value::Integer(7),
+                Value::Null,
+                Value::Blob(record([
+                    Value::Text("index".to_string()),
+                    Value::Text("q_abc".to_string()),
+                    Value::Text("q".to_string()),
+                    Value::Integer(8),
+                    Value::Text("CREATE INDEX q_abc ON q (a, b, c)".to_string())
+                ])),
+            ],
+            vec![
+                Value::Integer(5),
+                Value::Null,
+                Value::Integer(-1),
+                Value::Text("sqlite_schema".to_string()),
+                Value::Integer(2),
+                Value::Blob(record([
+                    Value::Text("table".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Integer(3),
+                    Value::Text(
+                        "CREATE TABLE t (x, y, z UNIQUE, q, PRIMARY KEY (x, y))".to_string()
+                    )
+                ])),
+                Value::Null,
+            ],
+            vec![
+                Value::Integer(6),
+                Value::Null,
+                Value::Integer(-1),
+                Value::Text("sqlite_schema".to_string()),
+                Value::Integer(7),
+                Value::Blob(record([
+                    Value::Text("index".to_string()),
+                    Value::Text("q_abc".to_string()),
+                    Value::Text("q".to_string()),
+                    Value::Integer(8),
+                    Value::Text("CREATE INDEX q_abc ON q (a, b, c)".to_string())
+                ])),
+                Value::Null,
+            ]
+        ]
+    );
+}
+
+#[test]
+fn test_cdc_schema_changes_alter_table() {
+    let db = TempDatabase::new_empty(true);
+    let conn = db.connect_limbo();
+    conn.execute("PRAGMA unstable_capture_data_changes_conn('full')")
+        .unwrap();
+    conn.execute("CREATE TABLE t(x, y, z UNIQUE, q, PRIMARY KEY (x, y))")
+        .unwrap();
+    conn.execute("ALTER TABLE t DROP COLUMN q").unwrap();
+    conn.execute("ALTER TABLE t ADD COLUMN t").unwrap();
+    let rows = replace_column_with_null(limbo_exec_rows(&db, &conn, "SELECT * FROM turso_cdc"), 1);
+
+    assert_eq!(
+        rows,
+        vec![
+            vec![
+                Value::Integer(1),
+                Value::Null,
+                Value::Integer(1),
+                Value::Text("sqlite_schema".to_string()),
+                Value::Integer(2),
+                Value::Null,
+                Value::Blob(record([
+                    Value::Text("table".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Integer(3),
+                    Value::Text(
+                        "CREATE TABLE t (x, y, z UNIQUE, q, PRIMARY KEY (x, y))".to_string()
+                    )
+                ])),
+            ],
+            vec![
+                Value::Integer(2),
+                Value::Null,
+                Value::Integer(0),
+                Value::Text("sqlite_schema".to_string()),
+                Value::Integer(2),
+                Value::Blob(record([
+                    Value::Text("table".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Integer(3),
+                    Value::Text(
+                        "CREATE TABLE t (x, y, z UNIQUE, q, PRIMARY KEY (x, y))".to_string()
+                    )
+                ])),
+                Value::Blob(record([
+                    Value::Text("table".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Integer(3),
+                    Value::Text(
+                        "CREATE TABLE t (x PRIMARY KEY, y PRIMARY KEY, z UNIQUE)".to_string()
+                    )
+                ])),
+            ],
+            vec![
+                Value::Integer(3),
+                Value::Null,
+                Value::Integer(0),
+                Value::Text("sqlite_schema".to_string()),
+                Value::Integer(2),
+                Value::Blob(record([
+                    Value::Text("table".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Integer(3),
+                    Value::Text(
+                        "CREATE TABLE t (x PRIMARY KEY, y PRIMARY KEY, z UNIQUE)".to_string()
+                    )
+                ])),
+                Value::Blob(record([
+                    Value::Text("table".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Text("t".to_string()),
+                    Value::Integer(3),
+                    Value::Text(
+                        "CREATE TABLE t (x PRIMARY KEY, y PRIMARY KEY, z UNIQUE, t)".to_string()
+                    )
+                ])),
+            ],
+        ]
     );
 }
