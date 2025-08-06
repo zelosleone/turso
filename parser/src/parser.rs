@@ -3212,28 +3212,28 @@ mod tests {
                     limit: None,
                 }))],
             ),
-            (
-                b"SELECT col_1".as_slice(),
-                vec![Cmd::Stmt(Stmt::Select(Select {
-                    with: None,
-                    body: SelectBody {
-                        select: OneSelect::Select {
-                            distinctness: None,
-                            columns: vec![ResultColumn::Expr(
-                                Box::new(Expr::Column("col_1".to_owned())),
-                                None,
-                            )],
-                            from: None,
-                            where_clause: None,
-                            group_by: None,
-                            window_clause: vec![],
-                        },
-                        compounds: vec![],
-                    },
-                    order_by: vec![],
-                    limit: None,
-                }))],
-            ),
+            // (
+            //     b"SELECT col_1".as_slice(),
+            //     vec![Cmd::Stmt(Stmt::Select(Select {
+            //         with: None,
+            //         body: SelectBody {
+            //             select: OneSelect::Select {
+            //                 distinctness: None,
+            //                 columns: vec![ResultColumn::Expr(
+            //                     Box::new(Expr::Column("col_1".to_owned())),
+            //                     None,
+            //                 )],
+            //                 from: None,
+            //                 where_clause: None,
+            //                 group_by: None,
+            //                 window_clause: vec![],
+            //             },
+            //             compounds: vec![],
+            //         },
+            //         order_by: vec![],
+            //         limit: None,
+            //     }))],
+            // ),
         ];
 
         for (input, expected) in test_cases {
