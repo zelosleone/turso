@@ -9,86 +9,79 @@ use crate::token::TokenType;
 #[diagnostic()]
 pub enum Error {
     /// Lexer error
-    UnrecognizedToken(usize, #[label("here")] Option<miette::SourceSpan>),
+    UnrecognizedToken(#[label("here")] miette::SourceSpan),
     /// Missing quote or double-quote or backtick
-    UnterminatedLiteral(usize, #[label("here")] Option<miette::SourceSpan>),
+    UnterminatedLiteral(#[label("here")] miette::SourceSpan),
     /// Missing `]`
-    UnterminatedBracket(usize, #[label("here")] Option<miette::SourceSpan>),
+    UnterminatedBracket(#[label("here")] miette::SourceSpan),
     /// Missing `*/`
-    UnterminatedBlockComment(usize, #[label("here")] Option<miette::SourceSpan>),
+    UnterminatedBlockComment(#[label("here")] miette::SourceSpan),
     /// Invalid parameter name
-    BadVariableName(usize, #[label("here")] Option<miette::SourceSpan>),
+    BadVariableName(#[label("here")] miette::SourceSpan),
     /// Invalid number format
-    #[diagnostic(help("Invalid digit at `{0}`"))]
-    BadNumber(
-        usize,
-        #[label("here")] Option<miette::SourceSpan>,
-        String, // Holds the offending number as a string
-    ),
-    #[diagnostic(help("Invalid digit at `{0}`"))]
-    BadFractionalPart(
-        usize,
-        #[label("here")] Option<miette::SourceSpan>,
-        String, // Holds the offending number as a string
-    ),
-    #[diagnostic(help("Invalid digit at `{0}`"))]
-    BadExponentPart(
-        usize,
-        #[label("here")] Option<miette::SourceSpan>,
-        String, // Holds the offending number as a string
-    ),
+    BadNumber(#[label("here")] miette::SourceSpan),
+    // Bad fractional part of a number
+    BadFractionalPart(#[label("here")] miette::SourceSpan),
+    // Bad exponent part of a number
+    BadExponentPart(#[label("here")] miette::SourceSpan),
     /// Invalid or missing sign after `!`
-    ExpectedEqualsSign(usize, #[label("here")] Option<miette::SourceSpan>),
+    ExpectedEqualsSign(#[label("here")] miette::SourceSpan),
     /// Hexadecimal integer literals follow the C-language notation of "0x" or "0X" followed by hexadecimal digits.
-    MalformedHexInteger(
-        usize,
-        #[label("here")] Option<miette::SourceSpan>,
-        #[help] Option<&'static str>,
-    ),
+    MalformedHexInteger(#[label("here")] miette::SourceSpan),
     // parse errors
+    // Unexpected end of file
     ParseUnexpectedEOF,
+    // Unexpected token
     ParseUnexpectedToken {
+        #[label("parsed to here")]
+        parsed_offset: miette::SourceSpan,
+
         got: TokenType,
         expected: &'static [TokenType],
     },
+    // Custom error message
     Custom(String),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
-            Self::UnrecognizedToken(pos, _) => {
+            Self::UnrecognizedToken(pos) => {
                 write!(f, "unrecognized token at {:?}", pos)
             }
-            Self::UnterminatedLiteral(pos, _) => {
+            Self::UnterminatedLiteral(pos) => {
                 write!(f, "non-terminated literal at {:?}", pos)
             }
-            Self::UnterminatedBracket(pos, _) => {
+            Self::UnterminatedBracket(pos) => {
                 write!(f, "non-terminated bracket at {:?}", pos)
             }
-            Self::UnterminatedBlockComment(pos, _) => {
+            Self::UnterminatedBlockComment(pos) => {
                 write!(f, "non-terminated block comment at {:?}", pos)
             }
-            Self::BadVariableName(pos, _) => write!(f, "bad variable name at {:?}", pos),
-            Self::BadNumber(pos, _, _) => write!(f, "bad number at {:?}", pos),
-            Self::BadFractionalPart(pos, _, _) => {
+            Self::BadVariableName(pos) => write!(f, "bad variable name at {:?}", pos),
+            Self::BadNumber(pos) => write!(f, "bad number at {:?}", pos),
+            Self::BadFractionalPart(pos) => {
                 write!(f, "bad fractional part at {:?}", pos)
             }
-            Self::BadExponentPart(pos, _, _) => {
+            Self::BadExponentPart(pos) => {
                 write!(f, "bad exponent part at {:?}", pos)
             }
-            Self::ExpectedEqualsSign(pos, _) => write!(f, "expected = sign at {:?}", pos),
-            Self::MalformedHexInteger(pos, _, _) => {
+            Self::ExpectedEqualsSign(pos) => write!(f, "expected = sign at {:?}", pos),
+            Self::MalformedHexInteger(pos) => {
                 write!(f, "malformed hex integer at {:?}", pos)
             }
             Self::ParseUnexpectedEOF => {
                 write!(f, "unexpected end of file")
             }
-            Self::ParseUnexpectedToken { got, expected } => {
+            Self::ParseUnexpectedToken {
+                parsed_offset,
+                got,
+                expected,
+            } => {
                 write!(
                     f,
-                    "got unexpected token: expected {:?}, found {}",
-                    expected, got
+                    "got unexpected token after parsing to offset {:?}: expected {:?}, found {}",
+                    parsed_offset, expected, got
                 )
             }
             Self::Custom(ref s) => {

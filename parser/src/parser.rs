@@ -153,6 +153,7 @@ impl<'a> Parser<'a> {
                 Some(token) => {
                     if !found_semi {
                         return Err(Error::ParseUnexpectedToken {
+                            parsed_offset: (self.lexer.offset, 1).into(),
                             expected: &[TokenType::TK_SEMI],
                             got: token.token_type.unwrap(),
                         });
@@ -427,6 +428,7 @@ impl<'a> Parser<'a> {
         }
 
         Err(Error::ParseUnexpectedToken {
+            parsed_offset: (self.lexer.offset, 1).into(),
             expected: expected,
             got: token.token_type.unwrap(), // no whitespace or comment tokens here
         })
@@ -985,7 +987,6 @@ impl<'a> Parser<'a> {
         };
 
         let partition_by = match self.peek()? {
-            None => vec![],
             Some(tok) if tok.token_type == Some(TokenType::TK_PARTITION) => {
                 self.eat_assert(&[TokenType::TK_PARTITION]);
                 self.eat_expect(&[TokenType::TK_BY])?;
@@ -1026,7 +1027,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_LP => {
                 self.eat_assert(&[TokenType::TK_LP]);
                 let window = self.parse_window()?;
-                self.eat_expect(&[TokenType::TK_LP])?;
+                self.eat_expect(&[TokenType::TK_RP])?;
                 Ok(Some(Over::Window(window)))
             }
             _ => {
@@ -1234,6 +1235,7 @@ impl<'a> Parser<'a> {
                     None
                 };
 
+                self.eat_expect(&[TokenType::TK_RP])?;
                 Ok(Box::new(Expr::Raise(resolve, expr)))
             }
             _ => {
@@ -1249,6 +1251,7 @@ impl<'a> Parser<'a> {
                     } else if tok.token_type == Some(TokenType::TK_LP) {
                         if can_be_lit_str {
                             return Err(Error::ParseUnexpectedToken {
+                                parsed_offset: (self.lexer.offset, 1).into(),
                                 got: TokenType::TK_STRING,
                                 expected: &[
                                     TokenType::TK_ID,
@@ -1293,6 +1296,7 @@ impl<'a> Parser<'a> {
 
                 let third_name = if let Some(tok) = self.peek()? {
                     if tok.token_type == Some(TokenType::TK_DOT) {
+                        debug_assert!(second_name.is_some());
                         self.eat_assert(&[TokenType::TK_DOT]);
                         self.peek_nm()?;
                         Some(self.parse_nm())
@@ -3212,28 +3216,1073 @@ mod tests {
                     limit: None,
                 }))],
             ),
-            // (
-            //     b"SELECT col_1".as_slice(),
-            //     vec![Cmd::Stmt(Stmt::Select(Select {
-            //         with: None,
-            //         body: SelectBody {
-            //             select: OneSelect::Select {
-            //                 distinctness: None,
-            //                 columns: vec![ResultColumn::Expr(
-            //                     Box::new(Expr::Column("col_1".to_owned())),
-            //                     None,
-            //                 )],
-            //                 from: None,
-            //                 where_clause: None,
-            //                 group_by: None,
-            //                 window_clause: vec![],
-            //             },
-            //             compounds: vec![],
-            //         },
-            //         order_by: vec![],
-            //         limit: None,
-            //     }))],
-            // ),
+            (
+                b"SELECT (SELECT 1)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Subquery(Select {
+                                    with: None,
+                                    body: SelectBody {
+                                        select: OneSelect::Select {
+                                            distinctness: None,
+                                            columns: vec![ResultColumn::Expr(
+                                                Box::new(Expr::Literal(Literal::Numeric(
+                                                    "1".to_owned(),
+                                                ))),
+                                                None,
+                                            )],
+                                            from: None,
+                                            where_clause: None,
+                                            group_by: None,
+                                            window_clause: vec![],
+                                        },
+                                        compounds: vec![],
+                                    },
+                                    order_by: vec![],
+                                    limit: None,
+                                })),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT RAISE (Ignore)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Raise(ResolveType::Ignore, None)),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT RAISE (FAIL, 'error')".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Raise(
+                                    ResolveType::Fail,
+                                    Some(Box::new(Expr::Literal(Literal::String(
+                                        "'error'".to_owned(),
+                                    )))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT RAISE (ROLLBACK, 'error')".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Raise(
+                                    ResolveType::Rollback,
+                                    Some(Box::new(Expr::Literal(Literal::String(
+                                        "'error'".to_owned(),
+                                    )))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT RAISE (ABORT, 'error')".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Raise(
+                                    ResolveType::Abort,
+                                    Some(Box::new(Expr::Literal(Literal::String(
+                                        "'error'".to_owned(),
+                                    )))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT RAISE (ABORT, 'error')".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Raise(
+                                    ResolveType::Abort,
+                                    Some(Box::new(Expr::Literal(Literal::String(
+                                        "'error'".to_owned(),
+                                    )))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT col_1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Id(Name::Ident("col_1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 'col_1'".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::String("'col_1'".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT tbl_name.col_1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Qualified(
+                                    Name::Ident("tbl_name".to_owned()),
+                                    Name::Ident("col_1".to_owned()),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT schema_name.tbl_name.col_1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::DoublyQualified(
+                                    Name::Ident("schema_name".to_owned()),
+                                    Name::Ident("tbl_name".to_owned()),
+                                    Name::Ident("col_1".to_owned()),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name()".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: None,
+                                    args: vec![],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: None,
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) FILTER (WHERE x) OVER window_name".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: Some(Box::new(Expr::Id(Name::Ident(
+                                            "x".to_owned(),
+                                        )))),
+                                        over_clause: Some(Over::Name(Name::Ident(
+                                            "window_name".to_owned(),
+                                        ))),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (PARTITION BY product)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: None,
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: None,
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: None,
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product ORDER BY test ASC NULLS LAST)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![
+                                                SortedColumn {
+                                                    expr: Box::new(Expr::Id(Name::Ident("test".to_owned()))),
+                                                    order: Some(SortOrder::Asc),
+                                                    nulls: Some(NullsOrder::Last),
+                                                }
+                                            ],
+                                            frame_clause: None,
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: Some(FrameClause{
+                                                mode: FrameMode::Rows,
+                                                start: FrameBound::Preceding(Box::new(Expr::Literal(Literal::Numeric("2".to_owned())))),
+                                                end: Some(FrameBound::CurrentRow),
+                                                exclude: None
+                                            }),
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product RANGE BETWEEN 2 PRECEDING AND CURRENT ROW)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: Some(FrameClause{
+                                                mode: FrameMode::Range,
+                                                start: FrameBound::Preceding(Box::new(Expr::Literal(Literal::Numeric("2".to_owned())))),
+                                                end: Some(FrameBound::CurrentRow),
+                                                exclude: None
+                                            }),
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product GROUPS BETWEEN 2 PRECEDING AND CURRENT ROW)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: Some(FrameClause{
+                                                mode: FrameMode::Groups,
+                                                start: FrameBound::Preceding(Box::new(Expr::Literal(Literal::Numeric("2".to_owned())))),
+                                                end: Some(FrameBound::CurrentRow),
+                                                exclude: None
+                                            }),
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product GROUPS BETWEEN 2 FOLLOWING AND CURRENT ROW)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: Some(FrameClause{
+                                                mode: FrameMode::Groups,
+                                                start: FrameBound::Following(Box::new(Expr::Literal(Literal::Numeric("2".to_owned())))),
+                                                end: Some(FrameBound::CurrentRow),
+                                                exclude: None
+                                            }),
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product GROUPS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: Some(FrameClause{
+                                                mode: FrameMode::Groups,
+                                                start: FrameBound::UnboundedPreceding,
+                                                end: Some(FrameBound::CurrentRow),
+                                                exclude: None
+                                            }),
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product GROUPS BETWEEN CURRENT ROW AND CURRENT ROW)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: Some(FrameClause{
+                                                mode: FrameMode::Groups,
+                                                start: FrameBound::CurrentRow,
+                                                end: Some(FrameBound::CurrentRow),
+                                                exclude: None
+                                            }),
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product GROUPS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: Some(FrameClause{
+                                                mode: FrameMode::Groups,
+                                                start: FrameBound::CurrentRow,
+                                                end: Some(FrameBound::UnboundedFollowing),
+                                                exclude: None
+                                            }),
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product GROUPS BETWEEN CURRENT ROW AND 1 PRECEDING)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: Some(FrameClause{
+                                                mode: FrameMode::Groups,
+                                                start: FrameBound::CurrentRow,
+                                                end: Some(FrameBound::Preceding(
+                                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned())))
+                                                )),
+                                                exclude: None
+                                            }),
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product GROUPS BETWEEN CURRENT ROW AND 1 FOLLOWING)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: Some(FrameClause{
+                                                mode: FrameMode::Groups,
+                                                start: FrameBound::CurrentRow,
+                                                end: Some(FrameBound::Following(
+                                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned())))
+                                                )),
+                                                exclude: None
+                                            }),
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product GROUPS CURRENT ROW EXCLUDE NO OTHERS)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: Some(FrameClause{
+                                                mode: FrameMode::Groups,
+                                                start: FrameBound::CurrentRow,
+                                                end: None,
+                                                exclude: Some(FrameExclude::NoOthers)
+                                            }),
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product GROUPS CURRENT ROW EXCLUDE CURRENT ROW)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: Some(FrameClause{
+                                                mode: FrameMode::Groups,
+                                                start: FrameBound::CurrentRow,
+                                                end: None,
+                                                exclude: Some(FrameExclude::CurrentRow)
+                                            }),
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product GROUPS CURRENT ROW EXCLUDE GROUP)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: Some(FrameClause{
+                                                mode: FrameMode::Groups,
+                                                start: FrameBound::CurrentRow,
+                                                end: None,
+                                                exclude: Some(FrameExclude::Group)
+                                            }),
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT func_name(DISTINCT 1, 2) OVER (test PARTITION BY product GROUPS CURRENT ROW EXCLUDE TIES)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::FunctionCall {
+                                    name: Name::Ident("func_name".to_owned()),
+                                    distinctness: Some(Distinctness::Distinct),
+                                    args: vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    order_by: vec![],
+                                    filter_over: FunctionTail {
+                                        filter_clause: None,
+                                        over_clause: Some(Over::Window(Window {
+                                            base: Some(Name::Ident("test".to_owned())),
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
+                                                "product".to_owned(),
+                                            )))],
+                                            order_by: vec![],
+                                            frame_clause: Some(FrameClause{
+                                                mode: FrameMode::Groups,
+                                                start: FrameBound::CurrentRow,
+                                                end: None,
+                                                exclude: Some(FrameExclude::Ties)
+                                            }),
+                                        })),
+                                    },
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
         ];
 
         for (input, expected) in test_cases {
