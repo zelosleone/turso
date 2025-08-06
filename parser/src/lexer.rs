@@ -1,4 +1,4 @@
-use crate::parser::{error::Error, token::TokenType};
+use crate::{error::Error, token::TokenType};
 
 include!(concat!(env!("OUT_DIR"), "/keywords.rs"));
 
@@ -134,7 +134,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_while_number_digit(&mut self) -> Result<(), Error> {
         loop {
             let start = self.offset;
@@ -164,7 +163,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_while_number_hexdigit(&mut self) -> Result<(), Error> {
         loop {
             let start = self.offset;
@@ -194,7 +192,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_token(&mut self, size: usize, typ: TokenType) -> Token<'a> {
         debug_assert!(size > 0);
         debug_assert!(self.remaining().len() >= size);
@@ -207,7 +204,6 @@ impl<'a> Lexer<'a> {
         tok
     }
 
-    #[inline(always)]
     fn eat_white_space(&mut self) -> Token<'a> {
         let start = self.offset;
         self.eat_and_assert(|b| b.is_ascii_whitespace());
@@ -218,7 +214,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_minus_or_comment_or_ptr(&mut self) -> Token<'a> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'-');
@@ -254,7 +249,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_slash_or_comment(&mut self) -> Result<Token<'a>, Error> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'/');
@@ -294,7 +288,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_eq(&mut self) -> Token<'a> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'=');
@@ -308,7 +301,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_le_or_ne_or_lshift_or_lt(&mut self) -> Token<'a> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'<');
@@ -341,7 +333,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_ge_or_gt_or_rshift(&mut self) -> Token<'a> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'>');
@@ -367,7 +358,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_ne(&mut self) -> Result<Token<'a>, Error> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'!');
@@ -384,7 +374,6 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    #[inline(always)]
     fn eat_concat_or_bitor(&mut self) -> Token<'a> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'|');
@@ -402,7 +391,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_lit_or_id(&mut self) -> Result<Token<'a>, Error> {
         let start = self.offset;
         let quote = self.eat().unwrap();
@@ -437,7 +425,6 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    #[inline(always)]
     fn eat_dot_or_frac(&mut self) -> Result<Token<'a>, Error> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'.');
@@ -471,7 +458,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_expo(&mut self) -> Result<Token<'a>, Error> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'e' || b == b'E');
@@ -502,7 +488,6 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    #[inline(always)]
     fn eat_number(&mut self) -> Result<Token<'a>, Error> {
         let start = self.offset;
         let first_digit = self.eat().unwrap();
@@ -565,7 +550,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_bracket(&mut self) -> Result<Token<'a>, Error> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'[');
@@ -583,7 +567,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_var(&mut self) -> Result<Token<'a>, Error> {
         let start = self.offset;
         let tok = self.eat().unwrap();
@@ -621,7 +604,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_blob_or_id(&mut self) -> Result<Token<'a>, Error> {
         let start = self.offset;
         let start_char = self.eat().unwrap();
@@ -662,7 +644,6 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    #[inline(always)]
     fn eat_unrecognized(&mut self) -> Token<'a> {
         let start = self.offset;
         self.eat_while(|b| b.is_some() && !b.unwrap().is_ascii_whitespace());

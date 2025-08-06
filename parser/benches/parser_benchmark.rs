@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use fallible_iterator::FallibleIterator;
 use pprof::criterion::{Output, PProfProfiler};
-use turso_core::parser::{lexer::Lexer, parser::Parser};
+use turso_parser::{lexer::Lexer, parser::Parser};
 use turso_sqlite3_parser::lexer::{
     sql::{Parser as OldParser, Tokenizer},
     Scanner,

@@ -30,7 +30,6 @@ mod uuid;
 mod vdbe;
 mod vector;
 mod vtab;
-pub mod parser;
 
 #[cfg(feature = "fuzz")]
 pub mod numeric;

@@ -1,7 +1,7 @@
 use std::error;
 use std::fmt;
 
-use super::token::TokenType;
+use crate::token::TokenType;
 
 /// SQL lexer and parser errors
 #[non_exhaustive]

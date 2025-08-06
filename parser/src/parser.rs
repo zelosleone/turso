@@ -1,14 +1,14 @@
-use crate::parser::ast::{
+use crate::ast::{
     As, Cmd, CommonTableExpr, CompoundOperator, CompoundSelect, CreateTableBody, Distinctness,
     Expr, FrameBound, FrameClause, FrameExclude, FrameMode, FromClause, FunctionTail, GroupBy,
     Indexed, IndexedColumn, JoinConstraint, JoinOperator, JoinType, JoinedSelectTable,
     LikeOperator, Limit, Literal, Materialized, Name, NullsOrder, OneSelect, Operator, Over,
-    QualifiedName, ResultColumn, Select, SelectBody, SelectTable, SortOrder, SortedColumn, Stmt,
-    TransactionType, Type, TypeSize, UnaryOperator, Window, WindowDef, With,
+    QualifiedName, ResolveType, ResultColumn, Select, SelectBody, SelectTable, SortOrder,
+    SortedColumn, Stmt, TransactionType, Type, TypeSize, UnaryOperator, Window, WindowDef, With,
 };
-use crate::parser::error::Error;
-use crate::parser::lexer::{Lexer, Token};
-use crate::parser::token::TokenType;
+use crate::error::Error;
+use crate::lexer::{Lexer, Token};
+use crate::token::TokenType;
 
 #[inline(always)]
 fn from_bytes_as_str(bytes: &[u8]) -> &str {
@@ -105,7 +105,6 @@ impl<'a> Parser<'a> {
     }
 
     // entrypoint of parsing
-    #[inline(always)]
     fn next_cmd(&mut self) -> Result<Option<Cmd>, Error> {
         // consumes prefix SEMI
         while let Some(token) = self.peek()? {
@@ -184,7 +183,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    #[inline(always)]
     fn next_token(&mut self) -> Result<Option<Token<'a>>, Error> {
         debug_assert!(!self.peekable);
         let mut next = self.consume_lexer_without_whitespaces_or_comments();
@@ -377,12 +375,12 @@ impl<'a> Parser<'a> {
     }
 
     #[inline(always)]
-    fn eat_assert(&mut self, expected: &'static [TokenType]) -> Token<'a> {
+    fn eat_assert(&mut self, _expected: &'static [TokenType]) -> Token<'a> {
         let token = self.eat_no_eof().unwrap();
 
         #[cfg(debug_assertions)]
         {
-            for expected in expected {
+            for expected in _expected {
                 if token.token_type == Some(*expected) {
                     return token;
                 }
@@ -396,7 +394,7 @@ impl<'a> Parser<'a> {
 
             panic!(
                 "Expected token {:?}, got {:?}",
-                expected,
+                _expected,
                 token.token_type.unwrap()
             );
         }
@@ -461,7 +459,6 @@ impl<'a> Parser<'a> {
         }
     }
 
-    #[inline(always)]
     fn peek_nm(&mut self) -> Result<Token<'a>, Error> {
         self.peek_expect(&[
             TokenType::TK_ID,
@@ -471,7 +468,6 @@ impl<'a> Parser<'a> {
         ])
     }
 
-    #[inline(always)]
     fn parse_nm(&mut self) -> Name {
         let tok = self.eat_assert(&[
             TokenType::TK_ID,
@@ -782,7 +778,6 @@ impl<'a> Parser<'a> {
     ///
     /// this function detect precedence by peeking first token of operator
     /// after parsing a operand (binary operator)
-
     fn current_token_precedence(&mut self) -> Result<Option<u8>, Error> {
         let tok = self.peek()?;
         if tok.is_none() {
@@ -1050,13 +1045,12 @@ impl<'a> Parser<'a> {
         })
     }
 
-
-    #[inline(always)] // this function is hot :)
     fn parse_expr_operand(&mut self) -> Result<Box<Expr>, Error> {
         let tok = self.peek_expect(&[
             TokenType::TK_LP,
             TokenType::TK_CAST,
             TokenType::TK_CTIME_KW,
+            TokenType::TK_RAISE,
             TokenType::TK_ID,
             TokenType::TK_STRING,
             TokenType::TK_INDEXED,
@@ -1077,9 +1071,18 @@ impl<'a> Parser<'a> {
         match tok.token_type.unwrap() {
             TokenType::TK_LP => {
                 self.eat_assert(&[TokenType::TK_LP]);
-                let exprs = self.parse_nexpr_list()?;
-                self.eat_expect(&[TokenType::TK_RP])?;
-                Ok(Box::new(Expr::Parenthesized(exprs)))
+                match self.peek_no_eof()?.token_type.unwrap() {
+                    TokenType::TK_WITH | TokenType::TK_SELECT | TokenType::TK_VALUES => {
+                        let select = self.parse_select()?;
+                        self.eat_expect(&[TokenType::TK_RP])?;
+                        Ok(Box::new(Expr::Subquery(select)))
+                    }
+                    _ => {
+                        let exprs = self.parse_nexpr_list()?;
+                        self.eat_expect(&[TokenType::TK_RP])?;
+                        Ok(Box::new(Expr::Parenthesized(exprs)))
+                    }
+                }
             }
             TokenType::TK_NULL => {
                 self.eat_assert(&[TokenType::TK_NULL]);
@@ -1166,7 +1169,11 @@ impl<'a> Parser<'a> {
                     None
                 };
 
-                let mut when_then_pairs = vec![];
+                self.eat_expect(&[TokenType::TK_WHEN])?;
+                let first_when = self.parse_expr(0)?;
+                self.eat_expect(&[TokenType::TK_THEN])?;
+                let mut when_then_pairs = vec![(first_when, self.parse_expr(0)?)];
+
                 loop {
                     if let Some(tok) = self.peek()? {
                         if tok.token_type.unwrap() != TokenType::TK_WHEN {
@@ -1194,11 +1201,40 @@ impl<'a> Parser<'a> {
                     None
                 };
 
+                self.eat_expect(&[TokenType::TK_END])?;
                 Ok(Box::new(Expr::Case {
                     base,
                     when_then_pairs,
                     else_expr,
                 }))
+            }
+            TokenType::TK_RAISE => {
+                self.eat_assert(&[TokenType::TK_RAISE]);
+                self.eat_expect(&[TokenType::TK_LP])?;
+
+                let tok = self.eat_expect(&[
+                    TokenType::TK_IGNORE,
+                    TokenType::TK_ROLLBACK,
+                    TokenType::TK_ABORT,
+                    TokenType::TK_FAIL,
+                ])?;
+
+                let resolve = match tok.token_type.unwrap() {
+                    TokenType::TK_IGNORE => ResolveType::Ignore,
+                    TokenType::TK_ROLLBACK => ResolveType::Rollback,
+                    TokenType::TK_ABORT => ResolveType::Abort,
+                    TokenType::TK_FAIL => ResolveType::Fail,
+                    _ => unreachable!(),
+                };
+
+                let expr = if resolve != ResolveType::Ignore {
+                    self.eat_expect(&[TokenType::TK_COMMA])?;
+                    Some(self.parse_expr(0)?)
+                } else {
+                    None
+                };
+
+                Ok(Box::new(Expr::Raise(resolve, expr)))
             }
             _ => {
                 let can_be_lit_str = tok.token_type == Some(TokenType::TK_STRING);
@@ -2604,7 +2640,7 @@ mod tests {
                     name: Name::Ident("ABORT".to_string()),
                 })],
             ),
-            // test exprs
+            // test expr operand
             (
                 b"SELECT 1".as_slice(),
                 vec![Cmd::Stmt(Stmt::Select(Select {
@@ -2614,6 +2650,577 @@ mod tests {
                             distinctness: None,
                             columns: vec![ResultColumn::Expr(
                                 Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT (1)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Parenthesized(vec![Box::new(Expr::Literal(
+                                    Literal::Numeric("1".to_owned()),
+                                ))])),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT NULL".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Null)),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT X'ab'".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Blob("ab".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 3.333".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("3.333".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT ?1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Variable("1".to_owned())),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT CAST(1 AS INTEGER)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Cast {
+                                    expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    type_name: Some(Type {
+                                        name: "INTEGER".to_owned(),
+                                        size: None,
+                                    }),
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT CAST(1 AS VARCHAR(255))".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Cast {
+                                    expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    type_name: Some(Type {
+                                        name: "VARCHAR".to_owned(),
+                                        size: Some(TypeSize::MaxSize(Box::new(Expr::Literal(
+                                            Literal::Numeric("255".to_owned()),
+                                        )))),
+                                    }),
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT CAST(1 AS DECIMAL(10, 5))".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Cast {
+                                    expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    type_name: Some(Type {
+                                        name: "DECIMAL".to_owned(),
+                                        size: Some(TypeSize::TypeSize(
+                                            Box::new(Expr::Literal(Literal::Numeric(
+                                                "10".to_owned(),
+                                            ))),
+                                            Box::new(Expr::Literal(Literal::Numeric(
+                                                "5".to_owned(),
+                                            ))),
+                                        )),
+                                    }),
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT CURRENT_DATE".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::CurrentDate)),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT CURRENT_TIME".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::CurrentTime)),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT CURRENT_TIMESTAMP".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::CurrentTimestamp)),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT NOT 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Unary(
+                                    UnaryOperator::Not,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT NOT 1 + 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Unary(
+                                    UnaryOperator::Not,
+                                    Box::new(Expr::Binary(
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::Add,
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    )),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT ~1 + 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary(
+                                    Box::new(Expr::Unary(
+                                        UnaryOperator::BitwiseNot,
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    )),
+                                    Operator::Add,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT +1 + 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary(
+                                    Box::new(Expr::Unary(
+                                        UnaryOperator::Positive,
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    )),
+                                    Operator::Add,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT -1 + 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary(
+                                    Box::new(Expr::Unary(
+                                        UnaryOperator::Negative,
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    )),
+                                    Operator::Add,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT EXISTS (SELECT 1)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Exists(Select {
+                                    with: None,
+                                    body: SelectBody {
+                                        select: OneSelect::Select {
+                                            distinctness: None,
+                                            columns: vec![ResultColumn::Expr(
+                                                Box::new(Expr::Literal(Literal::Numeric(
+                                                    "1".to_owned(),
+                                                ))),
+                                                None,
+                                            )],
+                                            from: None,
+                                            where_clause: None,
+                                            group_by: None,
+                                            window_clause: vec![],
+                                        },
+                                        compounds: vec![],
+                                    },
+                                    order_by: vec![],
+                                    limit: None,
+                                })),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT CASE WHEN 1 THEN 2 ELSE 3 END".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Case {
+                                    base: None,
+                                    when_then_pairs: vec![(
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )],
+                                    else_expr: Some(Box::new(Expr::Literal(Literal::Numeric(
+                                        "3".to_owned(),
+                                    )))),
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT CASE 4 WHEN 1 THEN 2 ELSE 3 END".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Case {
+                                    base: Some(Box::new(Expr::Literal(Literal::Numeric(
+                                        "4".to_owned(),
+                                    )))),
+                                    when_then_pairs: vec![(
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )],
+                                    else_expr: Some(Box::new(Expr::Literal(Literal::Numeric(
+                                        "3".to_owned(),
+                                    )))),
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT CASE 4 WHEN 1 THEN 2 END".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Case {
+                                    base: Some(Box::new(Expr::Literal(Literal::Numeric(
+                                        "4".to_owned(),
+                                    )))),
+                                    when_then_pairs: vec![(
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )],
+                                    else_expr: None,
+                                }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT col_1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Column("col_1".to_owned())),
                                 None,
                             )],
                             from: None,
