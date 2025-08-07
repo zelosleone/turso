@@ -147,7 +147,7 @@ test.skip("Statement.iterate()", async (t) => {
   }
 });
 
-test.skip("Statement.all()", async (t) => {
+test.serial("Statement.all()", async (t) => {
   const db = t.context.db;
 
   const stmt = await db.prepare("SELECT * FROM users");
@@ -158,7 +158,7 @@ test.skip("Statement.all()", async (t) => {
   t.deepEqual(await stmt.all(), expected);
 });
 
-test.skip("Statement.all() [raw]", async (t) => {
+test.serial("Statement.all() [raw]", async (t) => {
   const db = t.context.db;
 
   const stmt = await db.prepare("SELECT * FROM users");
@@ -330,7 +330,7 @@ test.skip("errors", async (t) => {
   t.is(noTableError.rawCode, 1)
 });
 
-test.skip("Database.prepare() after close()", async (t) => {
+test.serial("Database.prepare() after close()", async (t) => {
   const db = t.context.db;
   await db.close();
   await t.throwsAsync(async () => {
@@ -341,7 +341,18 @@ test.skip("Database.prepare() after close()", async (t) => {
   });
 });
 
-test.skip("Database.exec() after close()", async (t) => {
+test.serial("Database.pragma() after close()", async (t) => {
+  const db = t.context.db;
+  await db.close();
+  await t.throwsAsync(async () => {
+    await db.pragma("cache_size = 2000");
+  }, {
+    instanceOf: TypeError,
+    message: "The database connection is not open"
+  });
+});
+
+test.serial("Database.exec() after close()", async (t) => {
   const db = t.context.db;
   await db.close();
   await t.throwsAsync(async () => {
