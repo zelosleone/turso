@@ -68,7 +68,7 @@ pub trait File: Send + Sync {
         while pos < file_size {
             let chunk_size = (file_size - pos).min(BUFFER_SIZE);
             // Read from source
-            let read_buffer = Arc::new(RefCell::new(Buffer::allocate(chunk_size, Rc::new(|_| {}))));
+            let read_buffer = Arc::new(Buffer::allocate(chunk_size, Rc::new(|_| {})));
             let read_completion = self.pread(
                 pos,
                 Completion::new_read(read_buffer.clone(), move |_, _| {}),
