@@ -229,6 +229,18 @@ impl<'a> Parser<'a> {
              **
              **   * the previous token was TK_RP, and
              **   * the next token is TK_LP.
+             **
+             ** UNION is a keyword if:
+             **
+             **   * the next token is TK_ALL|TK_SELECT|TK_VALUES.
+             **
+             ** EXCEPT is a keyword if:
+             **
+             **   * the next token is TK_SELECT|TK_VALUES.
+             **
+             ** INTERSECT is a keyword if:
+             **
+             **   * the next token is TK_SELECT|TK_VALUES.
              */
             match tok.token_type.unwrap() {
                 TokenType::TK_WINDOW => {
@@ -295,6 +307,38 @@ impl<'a> Parser<'a> {
                     };
 
                     if !can_be_filter {
+                        tok.token_type = Some(TokenType::TK_ID);
+                    }
+                }
+                TokenType::TK_UNION => {
+                    let can_be_union = self.try_parse(|p| {
+                        match p.consume_lexer_without_whitespaces_or_comments() {
+                            None => return Ok(false),
+                            Some(tok) => match get_token(tok?.token_type.unwrap()) {
+                                TokenType::TK_ALL | TokenType::TK_SELECT | TokenType::TK_VALUES => {
+                                    Ok(true)
+                                }
+                                _ => Ok(false),
+                            },
+                        }
+                    })?;
+
+                    if !can_be_union {
+                        tok.token_type = Some(TokenType::TK_ID);
+                    }
+                }
+                TokenType::TK_EXCEPT | TokenType::TK_INTERSECT => {
+                    let can_be_except = self.try_parse(|p| {
+                        match p.consume_lexer_without_whitespaces_or_comments() {
+                            None => return Ok(false),
+                            Some(tok) => match get_token(tok?.token_type.unwrap()) {
+                                TokenType::TK_SELECT | TokenType::TK_VALUES => Ok(true),
+                                _ => Ok(false),
+                            },
+                        }
+                    })?;
+
+                    if !can_be_except {
                         tok.token_type = Some(TokenType::TK_ID);
                     }
                 }
@@ -1788,18 +1832,14 @@ impl<'a> Parser<'a> {
         };
 
         let mut ctes = vec![self.parse_common_table_expr()?];
-        if let Some(tok) = self.peek()? {
-            if tok.token_type == Some(TokenType::TK_COMMA) {
-                self.eat_assert(&[TokenType::TK_COMMA]);
-                loop {
+
+        loop {
+            match self.peek()? {
+                Some(tok) if tok.token_type == Some(TokenType::TK_COMMA) => {
+                    self.eat_assert(&[TokenType::TK_COMMA]);
                     ctes.push(self.parse_common_table_expr()?);
-                    match self.peek_no_eof()?.token_type.unwrap() {
-                        TokenType::TK_COMMA => {
-                            self.eat_assert(&[TokenType::TK_COMMA]);
-                        }
-                        _ => break,
-                    }
                 }
+                _ => break,
             }
         }
 
@@ -1981,13 +2021,7 @@ impl<'a> Parser<'a> {
                                 JoinOperator::TypedJoin(Some(new_join_type(jkw.value, None, None)?))
                             }
                             _ => {
-                                let tok_name_1 = self.eat_assert(&[
-                                    TokenType::TK_ID,
-                                    TokenType::TK_STRING,
-                                    TokenType::TK_INDEXED,
-                                    TokenType::TK_JOIN_KW,
-                                ]);
-
+                                let name_1 = tok.value;
                                 let tok = self.eat_expect(&[
                                     TokenType::TK_JOIN,
                                     TokenType::TK_ID,
@@ -1998,20 +2032,15 @@ impl<'a> Parser<'a> {
 
                                 match tok.token_type.unwrap() {
                                     TokenType::TK_JOIN => JoinOperator::TypedJoin(Some(
-                                        new_join_type(jkw.value, Some(tok_name_1.value), None)?,
+                                        new_join_type(jkw.value, Some(name_1), None)?,
                                     )),
                                     _ => {
-                                        let tok_name_2 = self.eat_assert(&[
-                                            TokenType::TK_ID,
-                                            TokenType::TK_STRING,
-                                            TokenType::TK_INDEXED,
-                                            TokenType::TK_JOIN_KW,
-                                        ]);
+                                        let name_2 = tok.value;
                                         self.eat_expect(&[TokenType::TK_JOIN])?;
                                         JoinOperator::TypedJoin(Some(new_join_type(
                                             jkw.value,
-                                            Some(tok_name_1.value),
-                                            Some(tok_name_2.value),
+                                            Some(name_1),
+                                            Some(name_2),
                                         )?))
                                     }
                                 }
@@ -5315,6 +5344,1288 @@ mod tests {
                                 None,
                             )],
                             from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            // test select
+            (
+                b"VALUES (1, 2), (3, 4), (5, 6)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Values(vec![
+                            vec![
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                            ],
+                            vec![
+                                Box::new(Expr::Literal(Literal::Numeric("3".to_owned()))),
+                                Box::new(Expr::Literal(Literal::Numeric("4".to_owned()))),
+                            ],
+                            vec![
+                                Box::new(Expr::Literal(Literal::Numeric("5".to_owned()))),
+                                Box::new(Expr::Literal(Literal::Numeric("6".to_owned()))),
+                            ],
+                        ]),
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT *".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Star],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT tbl_name.*".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::TableStar(
+                                Name::Ident("tbl_name".to_owned()),
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT col_1 OVER".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Id(Name::Ident("col_1".to_owned()))),
+                                Some(As::Elided(Name::Ident("OVER".to_owned()))),
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT col_1 AS OVER".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Id(Name::Ident("col_1".to_owned()))),
+                                Some(As::As(Name::Ident("OVER".to_owned()))),
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"WITH test AS (SELECT 1) SELECT 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: Some(With {
+                        recursive: false,
+                        ctes: vec![
+                            CommonTableExpr {
+                                tbl_name: Name::Ident("test".to_owned()),
+                                columns: vec![],
+                                materialized: Materialized::Any,
+                                select: Select {
+                                    with: None,
+                                    body: SelectBody {
+                                        select: OneSelect::Select {
+                                            distinctness: None,
+                                            columns: vec![ResultColumn::Expr(
+                                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                None,
+                                            )],
+                                            from: None,
+                                            where_clause: None,
+                                            group_by: None,
+                                            window_clause: vec![],
+                                        },
+                                        compounds: vec![],
+                                    },
+                                    order_by: vec![],
+                                    limit: None,
+                                }
+                            },
+                        ]
+                    }),
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"WITH test(col_1) AS MATERIALIZED (SELECT 1 AS col_1) SELECT 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: Some(With {
+                        recursive: false,
+                        ctes: vec![
+                            CommonTableExpr {
+                                tbl_name: Name::Ident("test".to_owned()),
+                                columns: vec![
+                                    IndexedColumn {
+                                        col_name: Name::Ident("col_1".to_owned()),
+                                        collation_name: None,
+                                        order: None,
+                                    },
+                                ],
+                                materialized: Materialized::Yes,
+                                select: Select {
+                                    with: None,
+                                    body: SelectBody {
+                                        select: OneSelect::Select {
+                                            distinctness: None,
+                                            columns: vec![ResultColumn::Expr(
+                                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                Some(As::As(Name::Ident("col_1".to_owned()))),
+                                            )],
+                                            from: None,
+                                            where_clause: None,
+                                            group_by: None,
+                                            window_clause: vec![],
+                                        },
+                                        compounds: vec![],
+                                    },
+                                    order_by: vec![],
+                                    limit: None,
+                                }
+                            },
+                        ]
+                    }),
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"WITH test(col_1) AS NOT MATERIALIZED (SELECT 1 AS col_1) SELECT 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: Some(With {
+                        recursive: false,
+                        ctes: vec![
+                            CommonTableExpr {
+                                tbl_name: Name::Ident("test".to_owned()),
+                                columns: vec![
+                                    IndexedColumn {
+                                        col_name: Name::Ident("col_1".to_owned()),
+                                        collation_name: None,
+                                        order: None,
+                                    },
+                                ],
+                                materialized: Materialized::No,
+                                select: Select {
+                                    with: None,
+                                    body: SelectBody {
+                                        select: OneSelect::Select {
+                                            distinctness: None,
+                                            columns: vec![ResultColumn::Expr(
+                                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                Some(As::As(Name::Ident("col_1".to_owned()))),
+                                            )],
+                                            from: None,
+                                            where_clause: None,
+                                            group_by: None,
+                                            window_clause: vec![],
+                                        },
+                                        compounds: vec![],
+                                    },
+                                    order_by: vec![],
+                                    limit: None,
+                                }
+                            },
+                        ]
+                    }),
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"WITH test AS (SELECT 1), test_2 AS (SELECT 1) SELECT 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: Some(With {
+                        recursive: false,
+                        ctes: vec![
+                            CommonTableExpr {
+                                tbl_name: Name::Ident("test".to_owned()),
+                                columns: vec![],
+                                materialized: Materialized::Any,
+                                select: Select {
+                                    with: None,
+                                    body: SelectBody {
+                                        select: OneSelect::Select {
+                                            distinctness: None,
+                                            columns: vec![ResultColumn::Expr(
+                                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                None
+                                            )],
+                                            from: None,
+                                            where_clause: None,
+                                            group_by: None,
+                                            window_clause: vec![],
+                                        },
+                                        compounds: vec![],
+                                    },
+                                    order_by: vec![],
+                                    limit: None,
+                                }
+                            },
+                            CommonTableExpr {
+                                tbl_name: Name::Ident("test_2".to_owned()),
+                                columns: vec![],
+                                materialized: Materialized::Any,
+                                select: Select {
+                                    with: None,
+                                    body: SelectBody {
+                                        select: OneSelect::Select {
+                                            distinctness: None,
+                                            columns: vec![ResultColumn::Expr(
+                                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                None
+                                            )],
+                                            from: None,
+                                            where_clause: None,
+                                            group_by: None,
+                                            window_clause: vec![],
+                                        },
+                                        compounds: vec![],
+                                    },
+                                    order_by: vec![],
+                                    limit: None,
+                                }
+                            },
+                        ]
+                    }),
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 ORDER BY 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![
+                        SortedColumn {
+                            expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                            order: None,
+                            nulls: None,
+                        },
+                    ],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 ORDER BY 1 DESC NULLS FIRST".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![
+                        SortedColumn {
+                            expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                            order: Some(SortOrder::Desc),
+                            nulls: Some(NullsOrder::First),
+                        },
+                    ],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 ORDER BY 1 ASC NULLS LAST".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![
+                        SortedColumn {
+                            expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                            order: Some(SortOrder::Asc),
+                            nulls: Some(NullsOrder::Last),
+                        },
+                    ],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 LIMIT 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: Some(Limit { 
+                        expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                        offset: None,
+                    }),
+                }))],
+            ),
+            (
+                b"SELECT 1 LIMIT 1,2".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: Some(Limit { 
+                        expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                        offset: Some(Box::new(Expr::Literal(Literal::Numeric("2".to_owned())))),
+                    }),
+                }))],
+            ),
+            (
+                b"SELECT 1 LIMIT 1 OFFSET 2".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: Some(Limit { 
+                        expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                        offset: Some(Box::new(Expr::Literal(Literal::Numeric("2".to_owned())))),
+                    }),
+                }))],
+            ),
+            (
+                b"SELECT 1 UNION SELECT 2".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![
+                            CompoundSelect {
+                                operator: CompoundOperator::Union,
+                                select: OneSelect::Select {
+                                    distinctness: None,
+                                    columns: vec![ResultColumn::Expr(
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                        None,
+                                    )],
+                                    from: None,
+                                    where_clause: None,
+                                    group_by: None,
+                                    window_clause: vec![],
+                                }
+                            }
+                        ],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 UNION ALL SELECT 2".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![
+                            CompoundSelect {
+                                operator: CompoundOperator::UnionAll,
+                                select: OneSelect::Select {
+                                    distinctness: None,
+                                    columns: vec![ResultColumn::Expr(
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                        None,
+                                    )],
+                                    from: None,
+                                    where_clause: None,
+                                    group_by: None,
+                                    window_clause: vec![],
+                                }
+                            }
+                        ],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 EXCEPT SELECT 2".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![
+                            CompoundSelect {
+                                operator: CompoundOperator::Except,
+                                select: OneSelect::Select {
+                                    distinctness: None,
+                                    columns: vec![ResultColumn::Expr(
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                        None,
+                                    )],
+                                    from: None,
+                                    where_clause: None,
+                                    group_by: None,
+                                    window_clause: vec![],
+                                }
+                            }
+                        ],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 INTERSECT SELECT 2".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![
+                            CompoundSelect {
+                                operator: CompoundOperator::Intersect,
+                                select: OneSelect::Select {
+                                    distinctness: None,
+                                    columns: vec![ResultColumn::Expr(
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                        None,
+                                    )],
+                                    from: None,
+                                    where_clause: None,
+                                    group_by: None,
+                                    window_clause: vec![],
+                                }
+                            }
+                        ],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo(1, 2)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::TableCall(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    ],
+                                    None,
+                                )),
+                                joins: vec![]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM (SELECT 1)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Select(
+                                    Select {
+                                        with: None,
+                                        body: SelectBody {
+                                            select: OneSelect::Select {
+                                                distinctness: None,
+                                                columns: vec![ResultColumn::Expr(
+                                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                    None,
+                                                )],
+                                                from: None,
+                                                where_clause: None,
+                                                group_by: None,
+                                                window_clause: vec![],
+                                            },
+                                            compounds: vec![],
+                                        },
+                                        order_by: vec![],
+                                        limit: None,
+                                    },
+                                    None,
+                                )),
+                                joins: vec![]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM (tbl_name)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Sub(
+                                    FromClause {
+                                        select: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("tbl_name".to_owned()), alias: None },
+                                            None, 
+                                            None
+                                        )),
+                                        joins: vec![]
+                                    },
+                                    None,
+                                )),
+                                joins: vec![]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo INDEXED BY bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    Some(Indexed::IndexedBy(Name::Ident("bar".to_owned()))),
+                                )),
+                                joins: vec![]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo NOT INDEXED".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    Some(Indexed::NotIndexed),
+                                )),
+                                joins: vec![]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo, bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::Comma,
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            None,
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo, bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::Comma,
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            None,
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo JOIN bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(None),
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            None,
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo NATURAL JOIN bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(Some(JoinType::NATURAL)),
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            None,
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo CROSS JOIN bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(Some(JoinType::INNER|JoinType::CROSS)),
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            None,
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo LEFT JOIN bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(Some(JoinType::LEFT|JoinType::OUTER)),
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            None,
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo RIGHT JOIN bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(Some(JoinType::RIGHT|JoinType::OUTER)),
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            None,
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo FULL JOIN bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(Some(JoinType::LEFT | JoinType::RIGHT | JoinType::OUTER)),
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            None,
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo INNER JOIN bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(Some(JoinType::INNER)),
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            None,
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo NATURAL INNER JOIN bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(Some(JoinType::NATURAL | JoinType::INNER)),
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            None,
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo NATURAL LEFT OUTER JOIN bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(Some(JoinType::NATURAL | JoinType::LEFT | JoinType::OUTER)),
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            None,
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
                             where_clause: None,
                             group_by: None,
                             window_clause: vec![],
