@@ -231,7 +231,7 @@ impl<'a> Lexer<'a> {
 
                 Token {
                     value: &self.input[start..self.offset],
-                    token_type: Some(TokenType::TK_RP),
+                    token_type: Some(TokenType::TK_PTR),
                 }
             }
             _ => Token {
@@ -258,12 +258,16 @@ impl<'a> Lexer<'a> {
                                     break; // End of block comment
                                 }
                                 None => {
-                                    return Err(Error::UnterminatedBlockComment((self.offset, 1).into()))
+                                    return Err(Error::UnterminatedBlockComment(
+                                        (self.offset, 1).into(),
+                                    ))
                                 }
                                 _ => {}
                             }
                         }
-                        None => return Err(Error::UnterminatedBlockComment((self.offset, 1).into())),
+                        None => {
+                            return Err(Error::UnterminatedBlockComment((self.offset, 1).into()))
+                        }
                         _ => unreachable!(), // We should not reach here
                     }
                 }
@@ -665,14 +669,14 @@ mod tests {
                 b"->".as_slice(),
                 Token {
                     value: b"->".as_slice(),
-                    token_type: Some(TokenType::TK_RP),
+                    token_type: Some(TokenType::TK_PTR),
                 },
             ),
             (
                 b"->>".as_slice(),
                 Token {
                     value: b"->>".as_slice(),
-                    token_type: Some(TokenType::TK_RP),
+                    token_type: Some(TokenType::TK_PTR),
                 },
             ),
             (

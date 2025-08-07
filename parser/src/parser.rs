@@ -446,6 +446,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_CREATE,
             TokenType::TK_SELECT,
             TokenType::TK_VALUES,
+            TokenType::TK_WITH,
             // add more
         ])?;
 
@@ -457,6 +458,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_RELEASE => self.parse_release(),
             TokenType::TK_CREATE => self.parse_create_stmt(),
             TokenType::TK_SELECT | TokenType::TK_VALUES => Ok(Stmt::Select(self.parse_select()?)),
+            TokenType::TK_WITH => self.parse_with_stmt(),
             _ => unreachable!(),
         }
     }
@@ -615,6 +617,26 @@ impl<'a> Parser<'a> {
             TokenType::TK_INDEX => todo!(),
             TokenType::TK_UNIQUE => todo!(),
             TokenType::TK_TRIGGER => todo!(),
+            _ => unreachable!(),
+        }
+    }
+
+    fn parse_with_stmt(&mut self) -> Result<Stmt, Error> {
+        let with = self.parse_with()?;
+        debug_assert!(with.is_some());
+        let first_tok = self.peek_expect(&[
+            TokenType::TK_SELECT,
+            TokenType::TK_VALUES,
+            TokenType::TK_UPDATE,
+            TokenType::TK_DELETE,
+        ])?;
+
+        match first_tok.token_type.unwrap() {
+            TokenType::TK_SELECT | TokenType::TK_VALUES => {
+                Ok(Stmt::Select(self.parse_select_without_cte(with)?))
+            }
+            TokenType::TK_UPDATE => todo!(),
+            TokenType::TK_DELETE => todo!(),
             _ => unreachable!(),
         }
     }
@@ -802,7 +824,8 @@ impl<'a> Parser<'a> {
             TokenType::TK_LT | TokenType::TK_GT | TokenType::TK_LE | TokenType::TK_GE => {
                 Ok(Some(4))
             }
-            TokenType::TK_ESCAPE => Ok(Some(5)),
+            TokenType::TK_ESCAPE => Ok(None), // ESCAPE will be consumed after parsing
+            // MATCH|LIKE_KW
             TokenType::TK_BITAND
             | TokenType::TK_BITOR
             | TokenType::TK_LSHIFT
@@ -1495,11 +1518,11 @@ impl<'a> Parser<'a> {
                         _ => unreachable!(),
                     };
 
-                    let expr = self.parse_expr(5)?; // do not consume ESCAPE
+                    let expr = self.parse_expr(pre)?;
                     let escape = if let Some(tok) = self.peek()? {
                         if tok.token_type == Some(TokenType::TK_ESCAPE) {
                             self.eat_assert(&[TokenType::TK_ESCAPE]);
-                            Some(self.parse_expr(5)?)
+                            Some(self.parse_expr(pre)?)
                         } else {
                             None
                         }
@@ -4270,6 +4293,1025 @@ mod tests {
                                         })),
                                     },
                                 }),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            // parse expr
+            (
+                b"SELECT 1 + 2 * 3".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                select: OneSelect::Select {
+                    distinctness: None,
+                    columns: vec![ResultColumn::Expr(
+                        Box::new(Expr::Binary (
+                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                            Operator::Add,
+                            Box::new(Expr::Binary (
+                                Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                Operator::Multiply,
+                                Box::new(Expr::Literal(Literal::Numeric("3".to_owned())))
+                            ))
+                        )),
+                        None,
+                    )],
+                    from: None,
+                    where_clause: None,
+                    group_by: None,
+                    window_clause: vec![],
+                },
+                compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 AND 2 OR 3".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                select: OneSelect::Select {
+                    distinctness: None,
+                    columns: vec![ResultColumn::Expr(
+                        Box::new(Expr::Binary (
+                            Box::new(Expr::Binary (
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                Operator::And,
+                                Box::new(Expr::Literal(Literal::Numeric("2".to_owned())))
+                            )),
+                            Operator::Or,
+                            Box::new(Expr::Literal(Literal::Numeric("3".to_owned()))),
+                        )),
+                        None,
+                    )],
+                    from: None,
+                    where_clause: None,
+                    group_by: None,
+                    window_clause: vec![],
+                },
+                compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 = 0 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                select: OneSelect::Select {
+                    distinctness: None,
+                    columns: vec![ResultColumn::Expr(
+                        Box::new(Expr::Binary (
+                            Box::new(Expr::Binary (
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                Operator::Equals,
+                                Box::new(Expr::Literal(Literal::Numeric("0".to_owned())))
+                            )),
+                            Operator::And,
+                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                        )),
+                        None,
+                    )],
+                    from: None,
+                    where_clause: None,
+                    group_by: None,
+                    window_clause: vec![],
+                },
+                compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 != 0 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                select: OneSelect::Select {
+                    distinctness: None,
+                    columns: vec![ResultColumn::Expr(
+                        Box::new(Expr::Binary (
+                            Box::new(Expr::Binary (
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                Operator::NotEquals,
+                                Box::new(Expr::Literal(Literal::Numeric("0".to_owned())))
+                            )),
+                            Operator::And,
+                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                        )),
+                        None,
+                    )],
+                    from: None,
+                    where_clause: None,
+                    group_by: None,
+                    window_clause: vec![],
+                },
+                compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 BETWEEN 2 AND 3 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Between {
+                                        lhs: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        not: false,
+                                        start: Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                        end: Box::new(Expr::Literal(Literal::Numeric("3".to_owned()))),
+                                    }),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 NOT BETWEEN 2 AND 3 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Between {
+                                        lhs: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        not: true,
+                                        start: Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                        end: Box::new(Expr::Literal(Literal::Numeric("3".to_owned()))),
+                                    }),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 IN (SELECT 1) AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::InSelect {
+                                        lhs: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        not: false,
+                                        rhs: Select {
+                                            with: None,
+                                            body: SelectBody {
+                                                select: OneSelect::Select {
+                                                    distinctness: None,
+                                                    columns: vec![ResultColumn::Expr(
+                                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                        None,
+                                                    )],
+                                                    from: None,
+                                                    where_clause: None,
+                                                    group_by: None,
+                                                    window_clause: vec![],
+                                                },
+                                                compounds: vec![],
+                                            },
+                                            order_by: vec![],
+                                            limit: None
+                                        },
+                                    }),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 NOT IN (SELECT 1) AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::InSelect {
+                                        lhs: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        not: true,
+                                        rhs: Select {
+                                            with: None,
+                                            body: SelectBody {
+                                                select: OneSelect::Select {
+                                                    distinctness: None,
+                                                    columns: vec![ResultColumn::Expr(
+                                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                        None,
+                                                    )],
+                                                    from: None,
+                                                    where_clause: None,
+                                                    group_by: None,
+                                                    window_clause: vec![],
+                                                },
+                                                compounds: vec![],
+                                            },
+                                            order_by: vec![],
+                                            limit: None
+                                        },
+                                    }),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 IN (1, 2, 3) AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::InList {
+                                        lhs: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        not: false,
+                                        rhs: vec![
+                                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                            Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                            Box::new(Expr::Literal(Literal::Numeric("3".to_owned()))),
+                                        ],
+                                    }),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 IN test(1, 2, 3) AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::InTable {
+                                        lhs: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        not: false,
+                                        rhs: QualifiedName {
+                                            db_name: None,
+                                            name: Name::Ident("test".to_owned()),
+                                            alias: None,
+                                        },
+                                        args: vec![
+                                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                            Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                            Box::new(Expr::Literal(Literal::Numeric("3".to_owned()))),
+                                        ],
+                                    }),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 'test' MATCH 'foo' AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Like {
+                                        lhs: Box::new(Expr::Literal(Literal::String("'test'".to_owned()))),
+                                        not: false,
+                                        op: LikeOperator::Match,
+                                        rhs: Box::new(Expr::Literal(Literal::String("'foo'".to_owned()))),
+                                        escape: None,
+                                    }),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 'test' NOT MATCH 'foo' AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Like {
+                                        lhs: Box::new(Expr::Literal(Literal::String("'test'".to_owned()))),
+                                        not: true,
+                                        op: LikeOperator::Match,
+                                        rhs: Box::new(Expr::Literal(Literal::String("'foo'".to_owned()))),
+                                        escape: None,
+                                    }),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 'test' NOT MATCH 'foo' ESCAPE 'bar' AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Like {
+                                        lhs: Box::new(Expr::Literal(Literal::String("'test'".to_owned()))),
+                                        not: true,
+                                        op: LikeOperator::Match,
+                                        rhs: Box::new(Expr::Literal(Literal::String("'foo'".to_owned()))),
+                                        escape: Some(Box::new(Expr::Literal(Literal::String("'bar'".to_owned())))),
+                                    }),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 'test' NOT LIKE 'foo' ESCAPE 'bar' AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Like {
+                                        lhs: Box::new(Expr::Literal(Literal::String("'test'".to_owned()))),
+                                        not: true,
+                                        op: LikeOperator::Like,
+                                        rhs: Box::new(Expr::Literal(Literal::String("'foo'".to_owned()))),
+                                        escape: Some(Box::new(Expr::Literal(Literal::String("'bar'".to_owned())))),
+                                    }),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 'test' NOT GLOB 'foo' ESCAPE 'bar' AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Like {
+                                        lhs: Box::new(Expr::Literal(Literal::String("'test'".to_owned()))),
+                                        not: true,
+                                        op: LikeOperator::Glob,
+                                        rhs: Box::new(Expr::Literal(Literal::String("'foo'".to_owned()))),
+                                        escape: Some(Box::new(Expr::Literal(Literal::String("'bar'".to_owned())))),
+                                    }),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 'test' NOT REGEXP 'foo' ESCAPE 'bar' AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Like {
+                                        lhs: Box::new(Expr::Literal(Literal::String("'test'".to_owned()))),
+                                        not: true,
+                                        op: LikeOperator::Regexp,
+                                        rhs: Box::new(Expr::Literal(Literal::String("'foo'".to_owned()))),
+                                        escape: Some(Box::new(Expr::Literal(Literal::String("'bar'".to_owned())))),
+                                    }),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 ISNULL AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::IsNull (
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 NOTNULL AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::NotNull(
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 < 2 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Binary (
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::Less,
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 > 2 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Binary (
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::Greater,
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 <= 2 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Binary (
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::LessEquals,
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 >= 2 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Binary (
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::GreaterEquals,
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 & 2 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Binary (
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::BitwiseAnd,
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 | 2 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Binary (
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::BitwiseOr,
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 << 2 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Binary (
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::LeftShift,
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 >> 2 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Binary (
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::RightShift,
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 / 2 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Binary (
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::Divide,
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 % 2 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Binary (
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::Modulus,
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 || 2 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Binary (
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::Concat,
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 -> 2 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Binary (
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::ArrowRight,
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 ->> 2 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Binary (
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::ArrowRightShift,
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 'foo' COLLATE bar AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::Collate (
+                                        Box::new(Expr::Literal(Literal::String("'foo'".to_owned()))),
+                                        Name::Ident("bar".to_owned()),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
                                 None,
                             )],
                             from: None,
