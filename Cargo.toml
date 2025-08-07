@@ -27,6 +27,7 @@ members = [
     "tests",
     "vendored/sqlite3-parser/sqlparser_bench",
     "packages/turso-sync",
+    "packages/turso-sync-engine",
 ]
 exclude = ["perf/latency/limbo"]
 
