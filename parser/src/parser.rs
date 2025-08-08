@@ -496,7 +496,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_VALUES,
             TokenType::TK_WITH,
             TokenType::TK_ANALYZE,
-
+            TokenType::TK_ATTACH,
             // add more
         ])?;
 
@@ -510,6 +510,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_SELECT | TokenType::TK_VALUES => Ok(Stmt::Select(self.parse_select()?)),
             TokenType::TK_WITH => self.parse_with_stmt(),
             TokenType::TK_ANALYZE => self.parse_analyze(),
+            TokenType::TK_ATTACH => self.parse_attach(),
             _ => unreachable!(),
         }
     }
@@ -2516,6 +2517,36 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Analyze { name: name })
     }
 
+    fn parse_attach(&mut self) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_ATTACH]);
+        match self.peek_no_eof()?.token_type.unwrap() {
+            TokenType::TK_DATABASE => {
+                self.eat_assert(&[TokenType::TK_DATABASE]);
+            }
+            _ => {}
+        }
+
+        let expr = self.parse_expr(0)?;
+        self.eat_expect(&[TokenType::TK_AS])?;
+        let db_name = self.parse_expr(0)?;
+        let key = match self.peek()? {
+            Some(tok) => match tok.token_type.unwrap() {
+                TokenType::TK_KEY => {
+                    self.eat_assert(&[TokenType::TK_KEY]);
+                    Some(self.parse_expr(0)?)
+                }
+                _ => None,
+            },
+            _ => None
+        };
+
+
+        Ok(Stmt::Attach {
+            expr,
+            db_name,
+            key,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -7219,6 +7250,31 @@ mod tests {
                 b"ANALYZE foo".as_slice(),
                 vec![Cmd::Stmt(Stmt::Analyze {
                     name: Some(QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None }),
+                })],
+            ),
+            // parse attach
+            (
+                b"ATTACH DATABASE 'foo' AS bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Attach {
+                    expr: Box::new(Expr::Literal(Literal::String("'foo'".to_owned()))),
+                    db_name: Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
+                    key: None,
+                })],
+            ),
+            (
+                b"ATTACH 'foo' AS bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Attach {
+                    expr: Box::new(Expr::Literal(Literal::String("'foo'".to_owned()))),
+                    db_name: Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
+                    key: None,
+                })],
+            ),
+            (
+                b"ATTACH 'foo' AS bar key baz".as_slice(),
+                vec![Cmd::Stmt(Stmt::Attach {
+                    expr: Box::new(Expr::Literal(Literal::String("'foo'".to_owned()))),
+                    db_name: Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
+                    key: Some(Box::new(Expr::Id(Name::Ident("baz".to_owned())))),
                 })],
             ),
         ];
