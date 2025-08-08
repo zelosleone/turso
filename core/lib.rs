@@ -380,6 +380,11 @@ impl Database {
     }
 
     fn init_pager(&self, page_size: Option<usize>) -> Result<Pager> {
+        let arena_size = if std::env::var("TESTING").is_ok_and(|v| v.eq_ignore_ascii_case("true")) {
+            BufferPool::TEST_ARENA_SIZE
+        } else {
+            BufferPool::DEFAULT_ARENA_SIZE
+        };
         // Open existing WAL file if present
         let mut maybe_shared_wal = self.maybe_shared_wal.write();
         if let Some(shared_wal) = maybe_shared_wal.clone() {
@@ -387,7 +392,8 @@ impl Database {
                 None => unsafe { (*shared_wal.get()).page_size() as usize },
                 Some(size) => size,
             };
-            let buffer_pool = Arc::new(BufferPool::new(Some(size)));
+            let buffer_pool =
+                BufferPool::begin_init(&self.io, arena_size).finalize_with_page_size(size)?;
 
             let db_state = self.db_state.clone();
             let wal = Rc::new(RefCell::new(WalFile::new(
@@ -406,8 +412,8 @@ impl Database {
             )?;
             return Ok(pager);
         }
+        let buffer_pool = BufferPool::begin_init(&self.io, arena_size);
 
-        let buffer_pool = Arc::new(BufferPool::new(page_size));
         // No existing WAL; create one.
         let db_state = self.db_state.clone();
         let mut pager = Pager::new(
@@ -423,16 +429,15 @@ impl Database {
         let size = match page_size {
             Some(size) => size as u32,
             None => {
-                let size = pager
+                pager // if None is passed in, we know that we already initialized so we can safely call `with_header` here
                     .io
                     .block(|| pager.with_header(|header| header.page_size))
                     .unwrap_or_default()
-                    .get();
-                buffer_pool.set_page_size(size as usize);
-                size
+                    .get()
             }
         };
 
+        pager.page_size.set(Some(size));
         let wal_path = format!("{}-wal", self.path);
         let file = self.io.open_file(&wal_path, OpenFlags::Create, false)?;
         let real_shared_wal = WalFileShared::new_shared(size, &self.io, file)?;
@@ -1373,6 +1378,7 @@ impl Connection {
         }
 
         *self._db.maybe_shared_wal.write() = None;
+        self.pager.borrow_mut().clear_page_cache();
         let pager = self._db.init_pager(Some(size as usize))?;
         self.pager.replace(Rc::new(pager));
         self.pager.borrow().set_initial_page_size(size);

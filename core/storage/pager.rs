@@ -1,15 +1,18 @@
 use crate::result::LimboResult;
-use crate::storage::btree::BTreePageInner;
-use crate::storage::buffer_pool::BufferPool;
-use crate::storage::database::DatabaseStorage;
-use crate::storage::sqlite3_ondisk::{
-    self, parse_wal_frame_header, DatabaseHeader, PageContent, PageSize, PageType,
+use crate::storage::{
+    btree::BTreePageInner,
+    buffer_pool::BufferPool,
+    database::DatabaseStorage,
+    sqlite3_ondisk::{
+        self, parse_wal_frame_header, DatabaseHeader, PageContent, PageSize, PageType,
+    },
+    wal::{CheckpointResult, Wal},
 };
-use crate::storage::wal::{CheckpointResult, Wal};
-use crate::types::{IOResult, WalFrameInfo};
 use crate::util::IOExt as _;
-use crate::{return_if_io, Completion, TransactionState};
-use crate::{turso_assert, Buffer, Connection, LimboError, Result};
+use crate::{
+    return_if_io, turso_assert, types::WalFrameInfo, Completion, Connection, IOResult, LimboError,
+    Result, TransactionState,
+};
 use parking_lot::RwLock;
 use std::cell::{Cell, OnceCell, RefCell, UnsafeCell};
 use std::collections::HashSet;
@@ -787,7 +790,7 @@ impl Pager {
                 )?;
 
                 turso_assert!(
-                    ptrmap_page.get().id == ptrmap_pg_no as usize,
+                    ptrmap_page.get().id == ptrmap_pg_no,
                     "ptrmap page has unexpected number"
                 );
                 self.add_dirty(&ptrmap_page);
@@ -1763,6 +1766,8 @@ impl Pager {
                 if let Some(size) = self.page_size.get() {
                     default_header.page_size = PageSize::new(size).expect("page size");
                 }
+                self.buffer_pool
+                    .finalize_with_page_size(default_header.page_size.get() as usize)?;
                 let page = allocate_new_page(1, &self.buffer_pool, 0);
 
                 let contents = page.get_contents();
@@ -2151,12 +2156,8 @@ impl Pager {
 pub fn allocate_new_page(page_id: usize, buffer_pool: &Arc<BufferPool>, offset: usize) -> PageRef {
     let page = Arc::new(Page::new(page_id));
     {
-        let buffer = buffer_pool.get();
-        let bp = buffer_pool.clone();
-        let drop_fn = Rc::new(move |buf| {
-            bp.put(buf);
-        });
-        let buffer = Arc::new(Buffer::new(buffer, drop_fn));
+        let buffer = buffer_pool.get_page();
+        let buffer = Arc::new(buffer);
         page.set_loaded();
         page.get().contents = Some(PageContent::new(offset, buffer));
     }
@@ -2432,10 +2433,10 @@ mod ptrmap_tests {
         ));
 
         //  Construct interfaces for the pager
-        let buffer_pool = Arc::new(BufferPool::new(Some(page_size as usize)));
-        let page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(
-            (initial_db_pages + 10) as usize,
-        )));
+        let pages = initial_db_pages + 10;
+        let sz = std::cmp::max(std::cmp::min(pages, 64), pages);
+        let buffer_pool = BufferPool::begin_init(&io, (sz * page_size) as usize);
+        let page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(sz as usize)));
 
         let wal = Rc::new(RefCell::new(WalFile::new(
             io.clone(),

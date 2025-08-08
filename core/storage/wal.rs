@@ -336,10 +336,8 @@ impl Batch {
         self.items.insert(id, buf_clone);
 
         // Re-initialize scratch with a fresh buffer
-        let raw = pool.get();
-        let pool_clone = pool.clone();
-        let drop_fn = Rc::new(move |b| pool_clone.put(b));
-        let new_buf = Arc::new(Buffer::new(raw, drop_fn));
+        let raw = pool.get_page();
+        let new_buf = Arc::new(raw);
 
         unsafe {
             let inner = &mut *scratch.inner.get();
@@ -929,13 +927,13 @@ impl Wal for WalFile {
                 bytes_read == buf_len as i32,
                 "read({bytes_read}) != expected({buf_len})"
             );
-            let buf_ptr = buf.as_ptr();
+            let buf_ptr = buf.as_mut_ptr();
             unsafe {
                 std::ptr::copy_nonoverlapping(buf_ptr, frame_ptr, frame_len);
             }
         });
         let c =
-            begin_read_wal_frame_raw(&self.get_shared().file, offset, self.page_size(), complete)?;
+            begin_read_wal_frame_raw(&self.buffer_pool, &self.get_shared().file, offset, complete)?;
         Ok(c)
     }
 
@@ -1005,6 +1003,7 @@ impl Wal for WalFile {
         let header = header.lock();
         let checksums = self.last_checksum;
         let (checksums, frame_bytes) = prepare_wal_frame(
+            &self.buffer_pool,
             &header,
             checksums,
             header.page_size,
@@ -1046,6 +1045,7 @@ impl Wal for WalFile {
             let page_content = page.get_contents();
             let page_buf = page_content.as_ptr();
             let (frame_checksums, frame_bytes) = prepare_wal_frame(
+                &self.buffer_pool,
                 &header,
                 checksums,
                 header.page_size,
@@ -1218,14 +1218,9 @@ impl WalFile {
         buffer_pool: Arc<BufferPool>,
     ) -> Self {
         let checkpoint_page = Arc::new(Page::new(0));
-        let buffer = buffer_pool.get();
+        let buffer = buffer_pool.get_page();
         {
-            let buffer_pool = buffer_pool.clone();
-            let drop_fn = Rc::new(move |buf| {
-                buffer_pool.put(buf);
-            });
-            checkpoint_page.get().contents =
-                Some(PageContent::new(0, Arc::new(Buffer::new(buffer, drop_fn))));
+            checkpoint_page.get().contents = Some(PageContent::new(0, Arc::new(buffer)));
         }
 
         let header = unsafe { shared.get().as_mut().unwrap().wal_header.lock() };
