@@ -497,6 +497,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_WITH,
             TokenType::TK_ANALYZE,
             TokenType::TK_ATTACH,
+            TokenType::TK_DETACH,
             // add more
         ])?;
 
@@ -511,6 +512,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_WITH => self.parse_with_stmt(),
             TokenType::TK_ANALYZE => self.parse_analyze(),
             TokenType::TK_ATTACH => self.parse_attach(),
+            TokenType::TK_DETACH => self.parse_detach(),
             _ => unreachable!(),
         }
     }
@@ -2546,6 +2548,18 @@ impl<'a> Parser<'a> {
             db_name,
             key,
         })
+    }
+
+    fn parse_detach(&mut self) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_DETACH]);
+        match self.peek_no_eof()?.token_type.unwrap() {
+            TokenType::TK_DATABASE => {
+                self.eat_assert(&[TokenType::TK_DATABASE]);
+            }
+            _ => {}
+        }
+
+        Ok(Stmt::Detach { name: self.parse_expr(0)? })
     }
 }
 
@@ -7275,6 +7289,19 @@ mod tests {
                     expr: Box::new(Expr::Literal(Literal::String("'foo'".to_owned()))),
                     db_name: Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
                     key: Some(Box::new(Expr::Id(Name::Ident("baz".to_owned())))),
+                })],
+            ),
+            // parse detach
+            (
+                b"DETACH DATABASE bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Detach {
+                    name: Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
+                })],
+            ),
+            (
+                b"DETACH bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Detach {
+                    name: Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
                 })],
             ),
         ];
