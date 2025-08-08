@@ -1,9 +1,7 @@
-"use strict";
+import { Database as NativeDB, Statement as NativeStatement } from "#entry-point";
+import { bindParams } from "./bind.js";
 
-const { Database: NativeDB } = require("./index.js");
-const { bindParams } = require("./bind.js");
-
-const SqliteError = require("./sqlite-error.js");
+import { SqliteError } from "./sqlite-error.js";
 
 // Step result constants
 const STEP_ROW = 1;
@@ -37,6 +35,9 @@ function createErrorByName(name, message) {
  * Database represents a connection that can prepare and execute SQL statements.
  */
 class Database {
+  db: NativeDB;
+  memory: boolean;
+  open: boolean;
   /**
    * Creates a new database connection. If the database file pointed to by `path` does not exists, it will be created.
    *
@@ -47,30 +48,35 @@ class Database {
    * @param {boolean} [opts.fileMustExist=false] - If true, throws if database file does not exist.
    * @param {number} [opts.timeout=0] - Timeout duration in milliseconds for database operations. Defaults to 0 (no timeout).
    */
-  constructor(path, opts = {}) {
+  constructor(path: string, opts: any = {}) {
     opts.readonly = opts.readonly === undefined ? false : opts.readonly;
     opts.fileMustExist =
       opts.fileMustExist === undefined ? false : opts.fileMustExist;
     opts.timeout = opts.timeout === undefined ? 0 : opts.timeout;
 
-    this.db = new NativeDB(path, opts);
-    this.memory = this.db.memory;
-    const db = this.db;
-
+    const db = new NativeDB(path);
+    this.initialize(db, opts.path, opts.readonly);
+  }
+  static create() {
+    return Object.create(this.prototype);
+  }
+  initialize(db: NativeDB, name, readonly) {
+    this.db = db;
+    this.memory = db.memory;
     Object.defineProperties(this, {
       inTransaction: {
         get() {
-          return db.inTransaction();
+          throw new Error("not implemented");
         },
       },
       name: {
         get() {
-          return path;
+          return name;
         },
       },
       readonly: {
         get() {
-          return opts.readonly;
+          return readonly;
         },
       },
       open: {
@@ -90,7 +96,7 @@ class Database {
     if (!this.open) {
       throw new TypeError("The database connection is not open");
     }
-    
+
     if (!sql) {
       throw new RangeError("The supplied SQL string contains no statements");
     }
@@ -149,10 +155,10 @@ class Database {
       throw new TypeError("Expected second argument to be an options object");
 
     const pragma = `PRAGMA ${source}`;
-    
+
     const stmt = this.prepare(pragma);
     const results = stmt.all();
-    
+
     return results;
   }
 
@@ -177,7 +183,7 @@ class Database {
   }
 
   loadExtension(path) {
-    this.db.loadExtension(path);
+    throw new Error("not implemented");
   }
 
   maxWriteReplicationIndex() {
@@ -193,7 +199,7 @@ class Database {
     if (!this.open) {
       throw new TypeError("The database connection is not open");
     }
-    
+
     try {
       this.db.batch(sql);
     } catch (err) {
@@ -205,7 +211,7 @@ class Database {
    * Interrupts the database connection.
    */
   interrupt() {
-    this.db.interrupt();
+    throw new Error("not implemented");
   }
 
   /**
@@ -220,6 +226,8 @@ class Database {
  * Statement represents a prepared SQL statement that can be executed.
  */
 class Statement {
+  stmt: NativeStatement;
+  db: Database;
   constructor(stmt, database) {
     this.stmt = stmt;
     this.db = database;
@@ -246,15 +254,11 @@ class Statement {
   }
 
   get source() {
-    return this.stmt.source;
+    throw new Error("not implemented");
   }
 
   get reader() {
     throw new Error("not implemented");
-  }
-
-  get source() {
-    return this.stmt.source;
   }
 
   get database() {
@@ -264,15 +268,16 @@ class Statement {
   /**
    * Executes the SQL statement and returns an info object.
    */
-  run(...bindParameters) {
+  async run(...bindParameters) {
     const totalChangesBefore = this.db.db.totalChanges();
-    
+
     this.stmt.reset();
     bindParams(this.stmt, bindParameters);
-    for (;;) {
+
+    while (true) {
       const stepResult = this.stmt.step();
       if (stepResult === STEP_IO) {
-        this.db.db.ioLoopSync();
+        await this.db.db.ioLoopAsync();
         continue;
       }
       if (stepResult === STEP_DONE) {
@@ -283,10 +288,10 @@ class Statement {
         continue;
       }
     }
-    
+
     const lastInsertRowid = this.db.db.lastInsertRowid();
     const changes = this.db.db.totalChanges() === totalChangesBefore ? 0 : this.db.db.changes();
-    
+
     return { changes, lastInsertRowid };
   }
 
@@ -295,13 +300,14 @@ class Statement {
    *
    * @param bindParameters - The bind parameters for executing the statement.
    */
-  get(...bindParameters) {
+  async get(...bindParameters) {
     this.stmt.reset();
     bindParams(this.stmt, bindParameters);
-    for (;;) {
+
+    while (true) {
       const stepResult = this.stmt.step();
       if (stepResult === STEP_IO) {
-        this.db.db.ioLoopSync();
+        await this.db.db.ioLoopAsync();
         continue;
       }
       if (stepResult === STEP_DONE) {
@@ -318,14 +324,14 @@ class Statement {
    *
    * @param bindParameters - The bind parameters for executing the statement.
    */
-  *iterate(...bindParameters) {
+  async *iterate(...bindParameters) {
     this.stmt.reset();
     bindParams(this.stmt, bindParameters);
-    
+
     while (true) {
       const stepResult = this.stmt.step();
       if (stepResult === STEP_IO) {
-        this.db.db.ioLoopSync();
+        await this.db.db.ioLoopAsync();
         continue;
       }
       if (stepResult === STEP_DONE) {
@@ -342,14 +348,15 @@ class Statement {
    *
    * @param bindParameters - The bind parameters for executing the statement.
    */
-  all(...bindParameters) {
+  async all(...bindParameters) {
     this.stmt.reset();
     bindParams(this.stmt, bindParameters);
-    const rows = [];
-    for (;;) {
+    const rows: any[] = [];
+
+    while (true) {
       const stepResult = this.stmt.step();
       if (stepResult === STEP_IO) {
-        this.db.db.ioLoopSync();
+        await this.db.db.ioLoopAsync();
         continue;
       }
       if (stepResult === STEP_DONE) {
@@ -366,15 +373,14 @@ class Statement {
    * Interrupts the statement.
    */
   interrupt() {
-    this.stmt.interrupt();
-    return this;
+    throw new Error("not implemented");
   }
 
   /**
    * Returns the columns in the result set returned by this prepared statement.
    */
   columns() {
-    return this.stmt.columns();
+    throw new Error("not implemented");
   }
 
   /**
@@ -393,5 +399,4 @@ class Statement {
   }
 }
 
-module.exports = Database;
-module.exports.SqliteError = SqliteError;
+export { Database, SqliteError }
