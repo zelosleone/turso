@@ -456,53 +456,113 @@ impl PageContent {
         self.buffer.as_mut_slice()
     }
 
-    pub fn read_u8(&self, pos: usize) -> u8 {
+    /// Read a u8 from the page content at the given offset, taking account the possible db header on page 1 (self.offset).
+    /// Do not make this method public.
+    fn read_u8(&self, pos: usize) -> u8 {
         let buf = self.as_ptr();
         buf[self.offset + pos]
     }
 
-    pub fn read_u16(&self, pos: usize) -> u16 {
+    /// Read a u16 from the page content at the given offset, taking account the possible db header on page 1 (self.offset).
+    /// Do not make this method public.
+    fn read_u16(&self, pos: usize) -> u16 {
         let buf = self.as_ptr();
         u16::from_be_bytes([buf[self.offset + pos], buf[self.offset + pos + 1]])
     }
 
-    pub fn read_u16_no_offset(&self, pos: usize) -> u16 {
-        let buf = self.as_ptr();
-        u16::from_be_bytes([buf[pos], buf[pos + 1]])
-    }
-
-    pub fn read_u32_no_offset(&self, pos: usize) -> u32 {
-        let buf = self.as_ptr();
-        u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]])
-    }
-
-    pub fn read_u32(&self, pos: usize) -> u32 {
+    /// Read a u32 from the page content at the given offset, taking account the possible db header on page 1 (self.offset).
+    /// Do not make this method public.
+    fn read_u32(&self, pos: usize) -> u32 {
         let buf = self.as_ptr();
         read_u32(buf, self.offset + pos)
     }
 
-    pub fn write_u8(&self, pos: usize, value: u8) {
+    /// Write a u8 to the page content at the given offset, taking account the possible db header on page 1 (self.offset).
+    /// Do not make this method public.
+    fn write_u8(&self, pos: usize, value: u8) {
         tracing::trace!("write_u8(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[self.offset + pos] = value;
     }
 
-    pub fn write_u16(&self, pos: usize, value: u16) {
+    /// Write a u16 to the page content at the given offset, taking account the possible db header on page 1 (self.offset).
+    /// Do not make this method public.
+    fn write_u16(&self, pos: usize, value: u16) {
         tracing::trace!("write_u16(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[self.offset + pos..self.offset + pos + 2].copy_from_slice(&value.to_be_bytes());
     }
 
+    /// Write a u32 to the page content at the given offset, taking account the possible db header on page 1 (self.offset).
+    /// Do not make this method public.
+    fn write_u32(&self, pos: usize, value: u32) {
+        tracing::trace!("write_u32(pos={}, value={})", pos, value);
+        let buf = self.as_ptr();
+        buf[self.offset + pos..self.offset + pos + 4].copy_from_slice(&value.to_be_bytes());
+    }
+
+    /// Read a u16 from the page content at the given absolute offset, i.e. NOT taking account the possible db header on page 1 (self.offset).
+    /// This is useful when you want to read a location that you read from another location on the page, or when writing a field of an overflow
+    /// or freelist page, for example.
+    pub fn read_u16_no_offset(&self, pos: usize) -> u16 {
+        let buf = self.as_ptr();
+        u16::from_be_bytes([buf[pos], buf[pos + 1]])
+    }
+
+    /// Read a u32 from the page content at the given absolute offset, i.e. NOT taking account the possible db header on page 1 (self.offset).
+    /// This is useful when you want to read a location that you read from another location on the page, or when writing a field of an overflow
+    /// or freelist page, for example.
+    pub fn read_u32_no_offset(&self, pos: usize) -> u32 {
+        let buf = self.as_ptr();
+        u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]])
+    }
+
+    /// Write a u16 to the page content at the given absolute offset, i.e. NOT taking account the possible db header on page 1 (self.offset).
+    /// This is useful when you want to write a location that you read from another location on the page, or when writing a field of an overflow
+    /// or freelist page, for example.
     pub fn write_u16_no_offset(&self, pos: usize, value: u16) {
         tracing::trace!("write_u16(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[pos..pos + 2].copy_from_slice(&value.to_be_bytes());
     }
 
-    pub fn write_u32(&self, pos: usize, value: u32) {
+    /// Write a u32 to the page content at the given absolute offset, i.e. NOT taking account the possible db header on page 1 (self.offset).
+    /// This is useful when you want to write a location that you read from another location on the page, or when writing a field of an overflow
+    /// or freelist page, for example.
+    pub fn write_u32_no_offset(&self, pos: usize, value: u32) {
         tracing::trace!("write_u32(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
-        buf[self.offset + pos..self.offset + pos + 4].copy_from_slice(&value.to_be_bytes());
+        buf[pos..pos + 4].copy_from_slice(&value.to_be_bytes());
+    }
+
+    /// Assign a new page type to this page.
+    pub fn write_page_type(&self, value: u8) {
+        self.write_u8(BTREE_PAGE_TYPE, value);
+    }
+
+    /// Assign a new rightmost pointer to this page.
+    pub fn write_rightmost_ptr(&self, value: u32) {
+        self.write_u32(BTREE_RIGHTMOST_PTR, value);
+    }
+
+    /// Write the location (byte offset) of the first freeblock on this page, or zero if there are no freeblocks on the page.
+    pub fn write_first_freeblock(&self, value: u16) {
+        self.write_u16(BTREE_FIRST_FREEBLOCK, value);
+    }
+
+    /// Write the number of cells on this page.
+    pub fn write_cell_count(&self, value: u16) {
+        self.write_u16(BTREE_CELL_COUNT, value);
+    }
+
+    /// Write the beginning of the cell content area on this page.
+    pub fn write_cell_content_area(&self, value: u16) {
+        self.write_u16(BTREE_CELL_CONTENT_AREA, value);
+    }
+
+    /// Write the number of fragmented bytes on this page.
+    pub fn write_fragmented_bytes_count(&self, value: u8) {
+        self.write_u8(BTREE_FRAGMENTED_BYTES_COUNT, value);
     }
 
     /// The offset of the first freeblock, or zero if there are no freeblocks on the page.
@@ -660,28 +720,50 @@ impl PageContent {
         self.offset + self.header_size()
     }
 
-    /// Get region(start end length) of a cell's payload
-    pub fn cell_get_raw_region(&self, idx: usize, usable_size: usize) -> (usize, usize) {
-        let buf = self.as_ptr();
-        let ncells = self.cell_count();
-        let (cell_pointer_array_start, _) = self.cell_pointer_array_offset_and_size();
-        assert!(idx < ncells, "cell_get: idx out of bounds");
+    /// Get the start offset of a cell's payload, not taking into account the 100-byte offset that is present on page 1.
+    pub fn cell_get_raw_start_offset(&self, idx: usize) -> usize {
+        let cell_pointer_array_start = self.cell_pointer_array_offset();
         let cell_pointer = cell_pointer_array_start + (idx * CELL_PTR_SIZE_BYTES);
-        let cell_pointer = self.read_u16_no_offset(cell_pointer) as usize;
-        let start = cell_pointer;
-        let payload_overflow_threshold_max =
-            payload_overflow_threshold_max(self.page_type(), usable_size);
-        let payload_overflow_threshold_min =
-            payload_overflow_threshold_min(self.page_type(), usable_size);
-        let len = match self.page_type() {
+        self.read_u16_no_offset(cell_pointer) as usize
+    }
+
+    /// Get region(start end length) of a cell's payload
+    /// FIXME: make all usages of [cell_get_raw_region] to use the _faster version in cases where the method is called
+    /// repeatedly, since page_type, max_local, min_local are the same for all cells on the page. Also consider whether
+    /// max_local and min_local should be static properties of the page.
+    pub fn cell_get_raw_region(&self, idx: usize, usable_size: usize) -> (usize, usize) {
+        let page_type = self.page_type();
+        let max_local = payload_overflow_threshold_max(page_type, usable_size);
+        let min_local = payload_overflow_threshold_min(page_type, usable_size);
+        let cell_count = self.cell_count();
+        self._cell_get_raw_region_faster(
+            idx,
+            usable_size,
+            cell_count,
+            max_local,
+            min_local,
+            page_type,
+        )
+    }
+
+    /// Get region(start end length) of a cell's payload
+    pub fn _cell_get_raw_region_faster(
+        &self,
+        idx: usize,
+        usable_size: usize,
+        cell_count: usize,
+        max_local: usize,
+        min_local: usize,
+        page_type: PageType,
+    ) -> (usize, usize) {
+        let buf = self.as_ptr();
+        assert!(idx < cell_count, "cell_get: idx out of bounds");
+        let start = self.cell_get_raw_start_offset(idx);
+        let len = match page_type {
             PageType::IndexInterior => {
-                let (len_payload, n_payload) = read_varint(&buf[cell_pointer + 4..]).unwrap();
-                let (overflows, to_read) = payload_overflows(
-                    len_payload as usize,
-                    payload_overflow_threshold_max,
-                    payload_overflow_threshold_min,
-                    usable_size,
-                );
+                let (len_payload, n_payload) = read_varint(&buf[start + 4..]).unwrap();
+                let (overflows, to_read) =
+                    payload_overflows(len_payload as usize, max_local, min_local, usable_size);
                 if overflows {
                     4 + to_read + n_payload
                 } else {
@@ -689,17 +771,13 @@ impl PageContent {
                 }
             }
             PageType::TableInterior => {
-                let (_, n_rowid) = read_varint(&buf[cell_pointer + 4..]).unwrap();
+                let (_, n_rowid) = read_varint(&buf[start + 4..]).unwrap();
                 4 + n_rowid
             }
             PageType::IndexLeaf => {
-                let (len_payload, n_payload) = read_varint(&buf[cell_pointer..]).unwrap();
-                let (overflows, to_read) = payload_overflows(
-                    len_payload as usize,
-                    payload_overflow_threshold_max,
-                    payload_overflow_threshold_min,
-                    usable_size,
-                );
+                let (len_payload, n_payload) = read_varint(&buf[start..]).unwrap();
+                let (overflows, to_read) =
+                    payload_overflows(len_payload as usize, max_local, min_local, usable_size);
                 if overflows {
                     to_read + n_payload
                 } else {
@@ -711,14 +789,10 @@ impl PageContent {
                 }
             }
             PageType::TableLeaf => {
-                let (len_payload, n_payload) = read_varint(&buf[cell_pointer..]).unwrap();
-                let (_, n_rowid) = read_varint(&buf[cell_pointer + n_payload..]).unwrap();
-                let (overflows, to_read) = payload_overflows(
-                    len_payload as usize,
-                    payload_overflow_threshold_max,
-                    payload_overflow_threshold_min,
-                    usable_size,
-                );
+                let (len_payload, n_payload) = read_varint(&buf[start..]).unwrap();
+                let (_, n_rowid) = read_varint(&buf[start + n_payload..]).unwrap();
+                let (overflows, to_read) =
+                    payload_overflows(len_payload as usize, max_local, min_local, usable_size);
                 if overflows {
                     to_read + n_payload + n_rowid
                 } else {

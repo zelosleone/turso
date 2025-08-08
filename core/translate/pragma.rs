@@ -16,7 +16,7 @@ use crate::translate::schema::translate_create_table;
 use crate::util::{normalize_ident, parse_signed_number, parse_string, IOExt as _};
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts};
 use crate::vdbe::insn::{Cookie, Insn};
-use crate::{bail_parse_error, CaptureDataChangesMode, LimboError, Value};
+use crate::{bail_parse_error, CaptureDataChangesMode, LimboError, SymbolTable, Value};
 use std::str::FromStr;
 use strum::IntoEnumIterator;
 
@@ -35,6 +35,7 @@ fn list_pragmas(program: &mut ProgramBuilder) {
 #[allow(clippy::too_many_arguments)]
 pub fn translate_pragma(
     schema: &Schema,
+    syms: &SymbolTable,
     name: &ast::QualifiedName,
     body: Option<ast::PragmaBody>,
     pager: Rc<Pager>,
@@ -64,7 +65,7 @@ pub fn translate_pragma(
             PragmaName::TableInfo => {
                 query_pragma(pragma, schema, Some(value), pager, connection, program)?
             }
-            _ => update_pragma(pragma, schema, value, pager, connection, program)?,
+            _ => update_pragma(pragma, schema, syms, value, pager, connection, program)?,
         },
     };
     match mode {
@@ -83,6 +84,7 @@ pub fn translate_pragma(
 fn update_pragma(
     pragma: PragmaName,
     schema: &Schema,
+    syms: &SymbolTable,
     value: ast::Expr,
     pager: Rc<Pager>,
     connection: Arc<crate::Connection>,
@@ -118,14 +120,23 @@ fn update_pragma(
             let year = chrono::Local::now().year();
             bail_parse_error!("It's {year}. UTF-8 won.");
         }
-        PragmaName::JournalMode => query_pragma(
-            PragmaName::JournalMode,
-            schema,
-            None,
-            pager,
-            connection,
-            program,
-        ),
+        PragmaName::JournalMode => {
+            // For JournalMode, when setting a value, we use the opcode
+            let mode_str = match value {
+                Expr::Name(name) => name.as_str().to_string(),
+                _ => parse_string(&value)?,
+            };
+
+            let result_reg = program.alloc_register();
+            program.emit_insn(Insn::JournalMode {
+                db: 0,
+                dest: result_reg,
+                new_mode: Some(mode_str),
+            });
+            program.emit_result_row(result_reg, 1);
+            program.add_pragma_result_column("journal_mode".into());
+            Ok((program, TransactionMode::None))
+        }
         PragmaName::LegacyFileFormat => Ok((program, TransactionMode::None)),
         PragmaName::WalCheckpoint => query_pragma(
             PragmaName::WalCheckpoint,
@@ -143,6 +154,24 @@ fn update_pragma(
             connection,
             program,
         ),
+        PragmaName::MaxPageCount => {
+            let data = parse_signed_number(&value)?;
+            let max_page_count_value = match data {
+                Value::Integer(i) => i as usize,
+                Value::Float(f) => f as usize,
+                _ => unreachable!(),
+            };
+
+            let result_reg = program.alloc_register();
+            program.emit_insn(Insn::MaxPgcnt {
+                db: 0,
+                dest: result_reg,
+                new_max: max_page_count_value,
+            });
+            program.emit_result_row(result_reg, 1);
+            program.add_pragma_result_column("max_page_count".into());
+            Ok((program, TransactionMode::Write))
+        }
         PragmaName::UserVersion => {
             let data = parse_signed_number(&value)?;
             let version_value = match data {
@@ -255,6 +284,7 @@ fn update_pragma(
                     .unwrap(),
                     true,
                     schema,
+                    syms,
                     program,
                 )?;
             }
@@ -336,7 +366,12 @@ fn query_pragma(
             Ok((program, TransactionMode::None))
         }
         PragmaName::JournalMode => {
-            program.emit_string8("wal".into(), register);
+            // Use the JournalMode opcode to get the current journal mode
+            program.emit_insn(Insn::JournalMode {
+                db: 0,
+                dest: register,
+                new_mode: None,
+            });
             program.emit_result_row(register, 1);
             program.add_pragma_result_column(pragma.to_string());
             Ok((program, TransactionMode::None))
@@ -368,6 +403,16 @@ fn query_pragma(
             program.emit_insn(Insn::PageCount {
                 db: 0,
                 dest: register,
+            });
+            program.emit_result_row(register, 1);
+            program.add_pragma_result_column(pragma.to_string());
+            Ok((program, TransactionMode::Read))
+        }
+        PragmaName::MaxPageCount => {
+            program.emit_insn(Insn::MaxPgcnt {
+                db: 0,
+                dest: register,
+                new_max: 0, // 0 means just return current max
             });
             program.emit_result_row(register, 1);
             program.add_pragma_result_column(pragma.to_string());

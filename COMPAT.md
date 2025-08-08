@@ -142,7 +142,7 @@ Turso aims to be fully compatible with SQLite, with opt-in features not supporte
 | PRAGMA legacy_alter_table        | No         |                                              |
 | PRAGMA legacy_file_format         | Yes        |                                              |
 | PRAGMA locking_mode              | No         |                                              |
-| PRAGMA max_page_count            | No         |                                              |
+| PRAGMA max_page_count            | Yes        |                                              |
 | PRAGMA mmap_size                 | No         |                                              |
 | PRAGMA module_list               | No         |                                              |
 | PRAGMA optimize                  | No         |                                              |
@@ -431,7 +431,7 @@ Modifiers:
 | Checkpoint     | Yes    |         |
 | Clear          | No     |         |
 | Close          | Yes    |         |
-| CollSeq        | No     |         |
+| CollSeq        | Yes    |         |
 | Column         | Yes    |         |
 | Compare        | Yes    |         |
 | Concat         | Yes    |         |
@@ -479,14 +479,14 @@ Modifiers:
 | IntegrityCk    | Yes    |         |
 | IsNull         | Yes    |         |
 | IsUnique       | No     |         |
-| JournalMode    | No     |         |
+| JournalMode    | Yes    |         |
 | Jump           | Yes    |         |
 | Last           | Yes    |         |
 | Le             | Yes    |         |
 | LoadAnalysis   | No     |         |
 | Lt             | Yes    |         |
 | MakeRecord     | Yes    |         |
-| MaxPgcnt       | No     |         |
+| MaxPgcnt       | Yes    |         |
 | MemMax         | No     |         |
 | Move           | Yes    |         |
 | Multiply       | Yes    |         |
@@ -610,8 +610,8 @@ The `regexp` extension is compatible with [sqlean-regexp](https://github.com/nal
 | regexp(pattern, source)                        | Yes    |         |
 | regexp_like(source, pattern)                   | Yes    |         |
 | regexp_substr(source, pattern)                 | Yes    |         |
-| regexp_capture(source, pattern[, n])           | No     |         |
-| regexp_replace(source, pattern, replacement)   | No     |         |
+| regexp_capture(source, pattern[, n])           | Yes    |         |
+| regexp_replace(source, pattern, replacement)   | Yes    |         |
 
 ### Vector
 

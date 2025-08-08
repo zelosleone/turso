@@ -664,7 +664,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "core_tester"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -1385,6 +1385,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "genawaiter"
+version = "0.99.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c86bd0361bcbde39b13475e6e36cb24c329964aa2611be285289d1e4b751c1a0"
+dependencies = [
+ "genawaiter-macro",
+]
+
+[[package]]
+name = "genawaiter-macro"
+version = "0.99.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b32dfe1fdfc0bbde1f22a5da25355514b5e450c33a6af6770884c8750aedfbc"
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1609,7 +1624,7 @@ dependencies = [
  "hyper",
  "libc",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2",
  "tokio",
  "tower-service",
  "tracing",
@@ -2109,14 +2124,14 @@ dependencies = [
 
 [[package]]
 name = "limbo-go"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "turso_core",
 ]
 
 [[package]]
 name = "limbo_completion"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "mimalloc",
  "turso_ext",
@@ -2124,7 +2139,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_crypto"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "blake3",
  "data-encoding",
@@ -2137,7 +2152,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_csv"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "csv",
  "mimalloc",
@@ -2147,7 +2162,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_ipaddr"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "ipnetwork",
  "mimalloc",
@@ -2156,7 +2171,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_percentile"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "mimalloc",
  "turso_ext",
@@ -2164,7 +2179,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_regexp"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "mimalloc",
  "regex",
@@ -2173,7 +2188,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_sim"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "anarchist-readable-name-generator-lib",
  "anyhow",
@@ -2200,7 +2215,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_sqlite_test_ext"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "cc",
 ]
@@ -2902,7 +2917,7 @@ dependencies = [
 
 [[package]]
 name = "py-turso"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "anyhow",
  "pyo3",
@@ -3592,16 +3607,6 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
 name = "socket2"
-version = "0.5.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678"
-dependencies = [
- "libc",
- "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "socket2"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "233504af464074f9d066d7b5416c5f9b894a5862a6506e306f7b816cdd6f1807"
@@ -3970,7 +3975,7 @@ dependencies = [
  "pin-project-lite",
  "signal-hook-registry",
  "slab",
- "socket2 0.6.0",
+ "socket2",
  "tokio-macros",
  "windows-sys 0.59.0",
 ]
@@ -4125,7 +4130,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "turso"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -4137,7 +4142,7 @@ dependencies = [
 
 [[package]]
 name = "turso-java"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "jni",
  "thiserror 2.0.12",
@@ -4146,7 +4151,7 @@ dependencies = [
 
 [[package]]
 name = "turso-sync"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "ctor",
  "futures",
@@ -4173,7 +4178,7 @@ dependencies = [
 
 [[package]]
 name = "turso_cli"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -4205,7 +4210,7 @@ dependencies = [
 
 [[package]]
 name = "turso_core"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "antithesis_sdk",
  "bitflags 2.9.0",
@@ -4260,7 +4265,7 @@ dependencies = [
 
 [[package]]
 name = "turso_dart"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "flutter_rust_bridge",
  "turso_core",
@@ -4268,7 +4273,7 @@ dependencies = [
 
 [[package]]
 name = "turso_ext"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "chrono",
  "getrandom 0.3.2",
@@ -4277,7 +4282,7 @@ dependencies = [
 
 [[package]]
 name = "turso_ext_tests"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "env_logger 0.11.7",
  "lazy_static",
@@ -4288,7 +4293,7 @@ dependencies = [
 
 [[package]]
 name = "turso_macros"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4297,7 +4302,7 @@ dependencies = [
 
 [[package]]
 name = "turso_node"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "napi",
  "napi-build",
@@ -4308,7 +4313,7 @@ dependencies = [
 
 [[package]]
 name = "turso_sqlite3"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "env_logger 0.11.7",
  "libc",
@@ -4321,7 +4326,7 @@ dependencies = [
 
 [[package]]
 name = "turso_sqlite3_parser"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "bitflags 2.9.0",
  "cc",
@@ -4339,7 +4344,7 @@ dependencies = [
 
 [[package]]
 name = "turso_stress"
-version = "0.1.4-pre.1"
+version = "0.1.4-pre.2"
 dependencies = [
  "anarchist-readable-name-generator-lib",
  "antithesis_sdk",
@@ -4351,6 +4356,29 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "turso",
+]
+
+[[package]]
+name = "turso_sync_engine"
+version = "0.1.4-pre.2"
+dependencies = [
+ "bytes",
+ "ctor",
+ "futures",
+ "genawaiter",
+ "http",
+ "rand 0.9.2",
+ "rand_chacha 0.9.0",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "turso",
+ "turso_core",
+ "uuid",
 ]
 
 [[package]]

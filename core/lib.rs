@@ -1747,6 +1747,24 @@ impl Connection {
     pub fn set_query_only(&self, value: bool) {
         self.query_only.set(value);
     }
+
+    #[cfg(feature = "fs")]
+    /// Copy the current Database and write out to a new file.
+    /// TODO: sqlite3 instead essentially does the equivalent of
+    /// `.dump` and creates a new .db file from that.
+    ///
+    /// Because we are instead making a copy of the File, as a side-effect we are
+    /// also having to checkpoint the database.
+    pub fn copy_db(&self, file: &str) -> Result<()> {
+        // use a new PlatformIO instance here to allow for copying in-memory databases
+        let io: Arc<dyn IO> = Arc::new(PlatformIO::new()?);
+        let disabled = false;
+        // checkpoint so everything is in the DB file before copying
+        self.pager
+            .borrow_mut()
+            .wal_checkpoint(disabled, CheckpointMode::Truncate)?;
+        self.pager.borrow_mut().db_file.copy_to(&*io, file)
+    }
 }
 
 pub struct Statement {

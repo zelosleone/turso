@@ -13,7 +13,11 @@
 use napi::bindgen_prelude::*;
 use napi::{Env, Task};
 use napi_derive::napi;
-use std::{cell::RefCell, num::NonZeroUsize, sync::Arc};
+use std::{
+    cell::{Cell, RefCell},
+    num::NonZeroUsize,
+    sync::Arc,
+};
 
 /// Step result constants
 const STEP_ROW: u32 = 1;
@@ -35,6 +39,7 @@ pub struct Database {
     io: Arc<dyn turso_core::IO>,
     conn: Arc<turso_core::Connection>,
     is_memory: bool,
+    is_open: Cell<bool>,
 }
 
 #[napi]
@@ -76,6 +81,7 @@ impl Database {
             io,
             conn,
             is_memory,
+            is_open: Cell::new(true),
         })
     }
 
@@ -83,6 +89,12 @@ impl Database {
     #[napi(getter)]
     pub fn memory(&self) -> bool {
         self.is_memory
+    }
+
+    /// Returns whether the database connection is open.
+    #[napi(getter)]
+    pub fn open(&self) -> bool {
+        self.is_open.get()
     }
 
     /// Executes a batch of SQL statements.
@@ -114,12 +126,10 @@ impl Database {
     /// A `Statement` instance.
     #[napi]
     pub fn prepare(&self, sql: String) -> Result<Statement> {
-        let stmt = self.conn.prepare(&sql).map_err(|e| {
-            Error::new(
-                Status::GenericFailure,
-                format!("Failed to prepare statement: {e}"),
-            )
-        })?;
+        let stmt = self
+            .conn
+            .prepare(&sql)
+            .map_err(|e| Error::new(Status::GenericFailure, format!("{e}")))?;
         let column_names: Vec<std::ffi::CString> = (0..stmt.num_columns())
             .map(|i| std::ffi::CString::new(stmt.get_column_name(i).to_string()).unwrap())
             .collect();
@@ -167,6 +177,7 @@ impl Database {
     /// `Ok(())` if the database is closed successfully.
     #[napi]
     pub fn close(&self) -> Result<()> {
+        self.is_open.set(false);
         // Database close is handled automatically when dropped
         Ok(())
     }
@@ -504,5 +515,8 @@ impl turso_core::DatabaseStorage for DatabaseFile {
     ) -> turso_core::Result<turso_core::Completion> {
         let c = self.file.truncate(len, c)?;
         Ok(c)
+    }
+    fn copy_to(&self, io: &dyn turso_core::IO, path: &str) -> turso_core::Result<()> {
+        self.file.copy_to(io, path)
     }
 }

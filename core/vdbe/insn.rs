@@ -5,7 +5,7 @@ use std::{
 
 use super::{execute, AggFunc, BranchOffset, CursorID, FuncCtx, InsnFunction, PageIdx};
 use crate::{
-    schema::{Affinity, BTreeTable, Index},
+    schema::{Affinity, BTreeTable, Column, Index},
     storage::{pager::CreateBTreeFlags, wal::CheckpointMode},
     translate::collate::CollationSeq,
     Value,
@@ -864,6 +864,22 @@ pub enum Insn {
         /// Jump to this PC if the register is null (P2).
         target_pc: BranchOffset,
     },
+
+    /// Set the collation sequence for the next function call.
+    /// P4 is a pointer to a CollationSeq. If the next call to a user function
+    /// or aggregate calls sqlite3GetFuncCollSeq(), this collation sequence will
+    /// be returned. This is used by the built-in min(), max() and nullif()
+    /// functions.
+    ///
+    /// If P1 is not zero, then it is a register that a subsequent min() or
+    /// max() aggregate will set to 1 if the current row is not the minimum or
+    /// maximum.  The P1 register is initialized to 0 by this instruction.
+    CollSeq {
+        /// Optional register to initialize to 0 (P1).
+        reg: Option<usize>,
+        /// The collation sequence to set (P4).
+        collation: CollationSeq,
+    },
     ParseSchema {
         db: usize,
         where_clause: Option<String>,
@@ -1014,6 +1030,31 @@ pub enum Insn {
         from: String,
         to: String,
     },
+    DropColumn {
+        table: String,
+        column_index: usize,
+    },
+    AddColumn {
+        table: String,
+        column: Column,
+    },
+    /// Try to set the maximum page count for database P1 to the value in P3.
+    /// Do not let the maximum page count fall below the current page count and
+    /// do not change the maximum page count value if P3==0.
+    /// Store the maximum page count after the change in register P2.
+    MaxPgcnt {
+        db: usize,      // P1: database index
+        dest: usize,    // P2: output register
+        new_max: usize, // P3: new maximum page count (0 = just return current)
+    },
+    /// Get or set the journal mode for database P1.
+    /// If P3 is not null, it contains the new journal mode string.
+    /// Store the resulting journal mode in register P2.
+    JournalMode {
+        db: usize,                // P1: database index
+        dest: usize,              // P2: output register for result
+        new_mode: Option<String>, // P3: new journal mode (if setting)
+    },
 }
 
 impl Insn {
@@ -1121,6 +1162,7 @@ impl Insn {
             Insn::DropTable { .. } => execute::op_drop_table,
             Insn::Close { .. } => execute::op_close,
             Insn::IsNull { .. } => execute::op_is_null,
+            Insn::CollSeq { .. } => execute::op_coll_seq,
             Insn::ParseSchema { .. } => execute::op_parse_schema,
             Insn::ShiftRight { .. } => execute::op_shift_right,
             Insn::ShiftLeft { .. } => execute::op_shift_left,
@@ -1143,6 +1185,10 @@ impl Insn {
             Insn::Count { .. } => execute::op_count,
             Insn::IntegrityCk { .. } => execute::op_integrity_check,
             Insn::RenameTable { .. } => execute::op_rename_table,
+            Insn::DropColumn { .. } => execute::op_drop_column,
+            Insn::AddColumn { .. } => execute::op_add_column,
+            Insn::MaxPgcnt { .. } => execute::op_max_pgcnt,
+            Insn::JournalMode { .. } => execute::op_journal_mode,
         }
     }
 }

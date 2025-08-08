@@ -868,8 +868,8 @@ impl Wal for WalFile {
         // if it's not, than pages from WAL range [frame_watermark..nBackfill] are already in the DB file,
         // and in case if page first occurrence in WAL was after frame_watermark - we will be unable to read proper previous version of the page
         turso_assert!(
-            frame_watermark.is_none() || frame_watermark.unwrap() >= self.min_frame,
-            "frame_watermark must be >= than current WAL min_value value"
+            frame_watermark.is_none() || frame_watermark.unwrap() >= self.get_shared().nbackfills.load(Ordering::SeqCst),
+            "frame_watermark must be >= than current WAL backfill amount: frame_watermark={:?}, nBackfill={}", frame_watermark, self.get_shared().nbackfills.load(Ordering::SeqCst)
         );
 
         // if we are holding read_lock 0, skip and read right from db file.
@@ -905,7 +905,7 @@ impl Wal for WalFile {
             let buf_len = buf.len();
             turso_assert!(
                 bytes_read == buf_len as i32,
-                "read({bytes_read}) less than expected({buf_len})"
+                "read({bytes_read}) less than expected({buf_len}): frame_id={frame_id}"
             );
             let frame = frame.clone();
             finish_read_page(page.get().id, buf, frame).unwrap();
@@ -1279,11 +1279,12 @@ impl WalFile {
         let shared = self.get_shared();
         {
             let mut frame_cache = shared.frame_cache.lock();
-            let frames = frame_cache.get_mut(&page_id);
-            match frames.filter(|frames| !frames.is_empty()) {
+            match frame_cache.get_mut(&page_id) {
                 Some(frames) => {
-                    let pages_in_frames = shared.pages_in_frames.lock();
-                    turso_assert!(pages_in_frames.contains(&page_id), "page_id={page_id} must be in pages_in_frames if it's also already in frame_cache: pages_in_frames={:?}, frames={:?}", *pages_in_frames, frames);
+                    if frames.is_empty() {
+                        let mut pages_in_frames = shared.pages_in_frames.lock();
+                        pages_in_frames.push(page_id);
+                    }
                     frames.push(frame_id);
                 }
                 None => {

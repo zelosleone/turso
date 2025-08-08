@@ -87,6 +87,10 @@ class Database {
    * @param {string} sql - The SQL statement string to prepare.
    */
   prepare(sql) {
+    if (!this.open) {
+      throw new TypeError("The database connection is not open");
+    }
+    
     if (!sql) {
       throw new RangeError("The supplied SQL string contains no statements");
     }
@@ -186,6 +190,10 @@ class Database {
    * @param {string} sql - The SQL statement string to execute.
    */
   exec(sql) {
+    if (!this.open) {
+      throw new TypeError("The database connection is not open");
+    }
+    
     try {
       this.db.batch(sql);
     } catch (err) {
@@ -311,7 +319,22 @@ class Statement {
    * @param bindParameters - The bind parameters for executing the statement.
    */
   *iterate(...bindParameters) {
-    throw new Error("not implemented");
+    this.stmt.reset();
+    bindParams(this.stmt, bindParameters);
+    
+    while (true) {
+      const stepResult = this.stmt.step();
+      if (stepResult === STEP_IO) {
+        this.db.db.ioLoopSync();
+        continue;
+      }
+      if (stepResult === STEP_DONE) {
+        break;
+      }
+      if (stepResult === STEP_ROW) {
+        yield this.stmt.row();
+      }
+    }
   }
 
   /**
