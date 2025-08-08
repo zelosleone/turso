@@ -5,6 +5,7 @@ use crate::ast::{
     LikeOperator, Limit, Literal, Materialized, Name, NullsOrder, OneSelect, Operator, Over,
     QualifiedName, ResolveType, ResultColumn, Select, SelectBody, SelectTable, SortOrder,
     SortedColumn, Stmt, TransactionType, Type, TypeSize, UnaryOperator, Window, WindowDef, With,
+    PragmaBody, PragmaValue
 };
 use crate::error::Error;
 use crate::lexer::{Lexer, Token};
@@ -498,6 +499,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_ANALYZE,
             TokenType::TK_ATTACH,
             TokenType::TK_DETACH,
+            TokenType::TK_PRAGMA,
             // add more
         ])?;
 
@@ -513,6 +515,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_ANALYZE => self.parse_analyze(),
             TokenType::TK_ATTACH => self.parse_attach(),
             TokenType::TK_DETACH => self.parse_detach(),
+            TokenType::TK_PRAGMA => self.parse_pragma(),
             _ => unreachable!(),
         }
     }
@@ -2560,6 +2563,55 @@ impl<'a> Parser<'a> {
         }
 
         Ok(Stmt::Detach { name: self.parse_expr(0)? })
+    }
+
+    fn parse_pragma_value(&mut self) -> Result<PragmaValue, Error> {
+        match self.peek_no_eof()?.token_type.unwrap().fallback_id_if_ok() {
+            TokenType::TK_ON | TokenType::TK_DELETE | TokenType::TK_DEFAULT => {
+                let tok = self.eat_assert(&[TokenType::TK_ON, TokenType::TK_DELETE, TokenType::TK_DEFAULT]);
+                Ok(Box::new(Expr::Literal(Literal::Keyword(from_bytes(tok.value)))))
+            }
+            TokenType::TK_ID |
+            TokenType::TK_STRING |
+            TokenType::TK_INDEXED |
+            TokenType::TK_JOIN_KW  => { Ok(Box::new(Expr::Name(self.parse_nm()))) }
+            _ => {
+                self.parse_signed()
+            }
+        }
+    }
+
+    fn parse_pragma(&mut self) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_PRAGMA]);
+        let name = self.parse_fullname(false)?;
+        match self.peek()? {
+            Some(tok) => match tok.token_type.unwrap() {
+                TokenType::TK_EQ => {
+                    self.eat_assert(&[TokenType::TK_EQ]);
+                    Ok(Stmt::Pragma {
+                        name: name,
+                        body: Some(PragmaBody::Equals(self.parse_pragma_value()?)),
+                    })
+                },
+                TokenType::TK_LP => {
+                    self.eat_assert(&[TokenType::TK_LP]);
+                    let value = self.parse_pragma_value()?;
+                    self.eat_expect(&[TokenType::TK_RP])?;
+                    Ok(Stmt::Pragma {
+                        name: name,
+                        body: Some(PragmaBody::Call(value)),
+                    })
+                },
+                _ => Ok(Stmt::Pragma {
+                    name: name,
+                    body: None,
+                }),
+            },
+            _ => Ok(Stmt::Pragma {
+                name: name,
+                body: None,
+            }),
+        }
     }
 }
 
@@ -7302,6 +7354,49 @@ mod tests {
                 b"DETACH bar".as_slice(),
                 vec![Cmd::Stmt(Stmt::Detach {
                     name: Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
+                })],
+            ),
+            // parse pragma
+            (
+                b"PRAGMA foreign_keys = ON".as_slice(),
+                vec![Cmd::Stmt(Stmt::Pragma {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foreign_keys".to_owned()),  alias: None },
+                    body: Some(PragmaBody::Equals(Box::new(Expr::Literal(Literal::Keyword("ON".to_owned()))))),
+                })],
+            ),
+            (
+                b"PRAGMA foreign_keys = DELETE".as_slice(),
+                vec![Cmd::Stmt(Stmt::Pragma {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foreign_keys".to_owned()),  alias: None },
+                    body: Some(PragmaBody::Equals(Box::new(Expr::Literal(Literal::Keyword("DELETE".to_owned()))))),
+                })],
+            ),
+            (
+                b"PRAGMA foreign_keys = DEFAULT".as_slice(),
+                vec![Cmd::Stmt(Stmt::Pragma {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foreign_keys".to_owned()),  alias: None },
+                    body: Some(PragmaBody::Equals(Box::new(Expr::Literal(Literal::Keyword("DEFAULT".to_owned()))))),
+                })],
+            ),
+            (
+                b"PRAGMA foreign_keys".as_slice(),
+                vec![Cmd::Stmt(Stmt::Pragma {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foreign_keys".to_owned()),  alias: None },
+                    body: None,
+                })],
+            ),
+            (
+                b"PRAGMA foreign_keys = 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Pragma {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foreign_keys".to_owned()),  alias: None },
+                    body: Some(PragmaBody::Equals(Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))))),
+                })],
+            ),
+            (
+                b"PRAGMA foreign_keys = test".as_slice(),
+                vec![Cmd::Stmt(Stmt::Pragma {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foreign_keys".to_owned()),  alias: None },
+                    body: Some(PragmaBody::Equals(Box::new(Expr::Name(Name::Ident("test".to_owned()))))),
                 })],
             ),
         ];

@@ -1075,7 +1075,7 @@ pub enum PragmaBody {
 
 /// `PRAGMA` value
 // https://sqlite.org/syntax/pragma-value.html
-pub type PragmaValue = Expr; // TODO
+pub type PragmaValue = Box<Expr>; // TODO
 
 /// `PRAGMA` value
 // https://sqlite.org/pragma.html
