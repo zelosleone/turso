@@ -17,8 +17,8 @@ use crate::{
     translate::plan::IterationDirection,
     turso_assert,
     types::{
-        find_compare, get_tie_breaker_from_seek_op, IndexInfo, ParseRecordState, RecordCompare,
-        RecordCursor, SeekResult,
+        find_compare, get_tie_breaker_from_seek_op, IndexInfo, RecordCompare, RecordCursor,
+        SeekResult,
     },
     util::IOExt,
     Completion, MvCursor,
@@ -491,6 +491,11 @@ pub struct BTreeCursor {
     mv_cursor: Option<Rc<RefCell<MvCursor>>>,
     /// The pager that is used to read and write to the database file.
     pager: Rc<Pager>,
+    /// Cached value of the usable space of a BTree page, since it is very expensive to call in a hot loop via pager.usable_space().
+    /// This is OK to cache because both 'PRAGMA page_size' and '.filectrl reserve_bytes' only have an effect on:
+    /// 1. an uninitialized database,
+    /// 2. an initialized database when the command is immediately followed by VACUUM.
+    usable_space_cached: usize,
     /// Page id of the root page used to go back up fast.
     root_page: usize,
     /// Rowid and record are stored before being consumed.
@@ -512,8 +517,6 @@ pub struct BTreeCursor {
     stack: PageStack,
     /// Reusable immutable record, used to allow better allocation strategy.
     reusable_immutable_record: RefCell<Option<ImmutableRecord>>,
-    /// Reusable immutable record, used to allow better allocation strategy.
-    parse_record_state: RefCell<ParseRecordState>,
     /// Information about the index key structure (sort order, collation, etc)
     pub index_info: Option<IndexInfo>,
     /// Maintain count of the number of records in the btree. Used for the `Count` opcode
@@ -585,10 +588,12 @@ impl BTreeCursor {
         root_page: usize,
         num_columns: usize,
     ) -> Self {
+        let usable_space = pager.usable_space();
         Self {
             mv_cursor,
             pager,
             root_page,
+            usable_space_cached: usable_space,
             has_record: Cell::new(false),
             null_flag: false,
             going_upwards: false,
@@ -610,7 +615,6 @@ impl BTreeCursor {
             valid_state: CursorValidState::Valid,
             seek_state: CursorSeekState::Start,
             read_overflow_state: RefCell::new(None),
-            parse_record_state: RefCell::new(ParseRecordState::Init),
             record_cursor: RefCell::new(RecordCursor::with_capacity(num_columns)),
             is_empty_table_state: RefCell::new(EmptyTableState::Start),
             move_to_right_state: (MoveToRightState::Start, None),
@@ -4129,8 +4133,11 @@ impl BTreeCursor {
         Ok(IOResult::Done(()))
     }
 
+    #[inline(always)]
+    /// Returns the usable space of the current page (which is computed as: page_size - reserved_bytes).
+    /// This is cached to avoid calling `pager.usable_space()` in a hot loop.
     fn usable_space(&self) -> usize {
-        self.pager.usable_space()
+        self.usable_space_cached
     }
 
     pub fn seek_end(&mut self) -> Result<IOResult<()>> {
@@ -4340,7 +4347,6 @@ impl BTreeCursor {
             .as_ref()
             .is_none_or(|record| record.is_invalidated());
         if !invalidated {
-            *self.parse_record_state.borrow_mut() = ParseRecordState::Init;
             let record_ref =
                 Ref::filter_map(self.reusable_immutable_record.borrow(), |opt| opt.as_ref())
                     .unwrap();
@@ -4364,11 +4370,6 @@ impl BTreeCursor {
             return Ok(IOResult::Done(Some(record_ref)));
         }
 
-        if *self.parse_record_state.borrow() == ParseRecordState::Init {
-            *self.parse_record_state.borrow_mut() = ParseRecordState::Parsing {
-                payload: Vec::new(),
-            };
-        }
         let page = self.stack.top();
         return_if_locked_maybe_load!(self.pager, page);
         let page = page.get();
@@ -4409,7 +4410,6 @@ impl BTreeCursor {
             self.record_cursor.borrow_mut().invalidate();
         };
 
-        *self.parse_record_state.borrow_mut() = ParseRecordState::Init;
         let record_ref =
             Ref::filter_map(self.reusable_immutable_record.borrow(), |opt| opt.as_ref()).unwrap();
         Ok(IOResult::Done(Some(record_ref)))
