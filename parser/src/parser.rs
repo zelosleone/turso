@@ -495,6 +495,8 @@ impl<'a> Parser<'a> {
             TokenType::TK_SELECT,
             TokenType::TK_VALUES,
             TokenType::TK_WITH,
+            TokenType::TK_ANALYZE,
+
             // add more
         ])?;
 
@@ -507,6 +509,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_CREATE => self.parse_create_stmt(),
             TokenType::TK_SELECT | TokenType::TK_VALUES => Ok(Stmt::Select(self.parse_select()?)),
             TokenType::TK_WITH => self.parse_with_stmt(),
+            TokenType::TK_ANALYZE => self.parse_analyze(),
             _ => unreachable!(),
         }
     }
@@ -2496,6 +2499,23 @@ impl<'a> Parser<'a> {
             body,
         })
     }
+
+    fn parse_analyze(&mut self) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_ANALYZE]);
+        let name = match self.peek()? {
+            Some(tok) => match tok.token_type.unwrap().fallback_id_if_ok() {
+                TokenType::TK_ID |
+                TokenType::TK_STRING |
+                TokenType::TK_INDEXED |
+                TokenType::TK_JOIN_KW  => { Some(self.parse_fullname(false)?) }
+                _ => None,
+            },
+            _ => None
+        };
+
+        Ok(Stmt::Analyze { name: name })
+    }
+
 }
 
 #[cfg(test)]
@@ -7187,6 +7207,19 @@ mod tests {
                     order_by: vec![],
                     limit: None,
                 }))],
+            ),
+            // parse Analyze
+            (
+                b"ANALYZE".as_slice(),
+                vec![Cmd::Stmt(Stmt::Analyze {
+                    name: None,
+                })],
+            ),
+            (
+                b"ANALYZE foo".as_slice(),
+                vec![Cmd::Stmt(Stmt::Analyze {
+                    name: Some(QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None }),
+                })],
             ),
         ];
 
