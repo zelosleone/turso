@@ -380,8 +380,8 @@ impl Database {
     }
 
     fn init_pager(&self, page_size: Option<usize>) -> Result<Pager> {
-        let arena_size = if std::env::var("CI").is_ok_and(|v| v.eq_ignore_ascii_case("true")) {
-            BufferPool::TEST_AREA_SIZE
+        let arena_size = if std::env::var("TESTING").is_ok_and(|v| v.eq_ignore_ascii_case("true")) {
+            BufferPool::TEST_ARENA_SIZE
         } else {
             BufferPool::DEFAULT_ARENA_SIZE
         };

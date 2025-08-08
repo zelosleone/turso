@@ -42,7 +42,7 @@ const MAX_IOVEC_ENTRIES: usize = CKPT_BATCH_PAGES;
 const MAX_WAIT: usize = 4;
 
 /// One memory arena for DB pages and another for WAL frames
-const ARENAS: usize = 2;
+const ARENA_COUNT: usize = 2;
 
 pub struct UringIO {
     inner: Rc<RefCell<InnerUringIO>>,
@@ -61,7 +61,7 @@ struct WrappedIOUring {
 struct InnerUringIO {
     ring: WrappedIOUring,
     free_files: VecDeque<u32>,
-    free_arenas: [Option<(NonNull<u8>, usize)>; 2],
+    free_arenas: [Option<(NonNull<u8>, usize)>; ARENA_COUNT],
 }
 
 /// preallocated vec of iovec arrays to avoid allocations during writev operations
@@ -113,7 +113,8 @@ impl UringIO {
         // RL_MEMLOCK cap is typically 8MB, the current design is to have one large arena
         // registered at startup and therefore we can simply use the zero index, falling back
         // to similar logic as the existing buffer pool for cases where it is over capacity.
-        ring.submitter().register_buffers_sparse(ARENAS as u32)?;
+        ring.submitter()
+            .register_buffers_sparse(ARENA_COUNT as u32)?;
         let inner = InnerUringIO {
             ring: WrappedIOUring {
                 ring,
@@ -122,7 +123,7 @@ impl UringIO {
                 iov_pool: IovecPool::new(),
             },
             free_files: (0..FILES).collect(),
-            free_arenas: [const { None }; ARENAS],
+            free_arenas: [const { None }; ARENA_COUNT],
         };
         debug!("Using IO backend 'io-uring'");
         Ok(Self {
