@@ -500,6 +500,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_ATTACH,
             TokenType::TK_DETACH,
             TokenType::TK_PRAGMA,
+            TokenType::TK_VACUUM,
             // add more
         ])?;
 
@@ -516,6 +517,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_ATTACH => self.parse_attach(),
             TokenType::TK_DETACH => self.parse_detach(),
             TokenType::TK_PRAGMA => self.parse_pragma(),
+            TokenType::TK_VACUUM => self.parse_vacuum(),
             _ => unreachable!(),
         }
     }
@@ -2612,6 +2614,33 @@ impl<'a> Parser<'a> {
                 body: None,
             }),
         }
+    }
+
+    fn parse_vacuum(&mut self) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_VACUUM]);
+
+        let name = match self.peek()? {
+            Some(tok) => match tok.token_type.unwrap().fallback_id_if_ok() {
+                TokenType::TK_ID | TokenType::TK_STRING | TokenType::TK_INDEXED | TokenType::TK_JOIN_KW => {
+                    Some(self.parse_nm())
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+
+        let into = match self.peek()? {
+            Some(tok) if tok.token_type == Some(TokenType::TK_INTO) => {
+                self.eat_assert(&[TokenType::TK_INTO]);
+                Some(self.parse_expr(0)?)
+            }
+            _ => None,
+        };
+
+        Ok(Stmt::Vacuum {
+            name,
+            into,
+        })
     }
 }
 
@@ -7404,6 +7433,42 @@ mod tests {
                 vec![Cmd::Stmt(Stmt::Pragma {
                     name: QualifiedName { db_name: None, name: Name::Ident("foreign_keys".to_owned()),  alias: None },
                     body: None,
+                })],
+            ),
+            // parse vacuum
+            (
+                b"VACUUM".as_slice(),
+                vec![Cmd::Stmt(Stmt::Vacuum {
+                    name: None,
+                    into: None,
+                })],
+            ),
+            (
+                b"VACUUM INTO 'foo'".as_slice(),
+                vec![Cmd::Stmt(Stmt::Vacuum {
+                    name: None,
+                    into: Some(Box::new(Expr::Literal(Literal::String("'foo'".to_owned())))),
+                })],
+            ),
+            (
+                b"VACUUM INTO foo".as_slice(),
+                vec![Cmd::Stmt(Stmt::Vacuum {
+                    name: None,
+                    into: Some(Box::new(Expr::Id(Name::Ident("foo".to_owned())))),
+                })],
+            ),
+            (
+                b"VACUUM foo".as_slice(),
+                vec![Cmd::Stmt(Stmt::Vacuum {
+                    name: Some(Name::Ident("foo".to_owned())),
+                    into: None,
+                })],
+            ),
+            (
+                b"VACUUM foo INTO 'bar'".as_slice(),
+                vec![Cmd::Stmt(Stmt::Vacuum {
+                    name: Some(Name::Ident("foo".to_owned())),
+                    into: Some(Box::new(Expr::Literal(Literal::String("'bar'".to_owned())))),
                 })],
             ),
         ];
