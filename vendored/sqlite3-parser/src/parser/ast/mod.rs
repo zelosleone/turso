@@ -1816,6 +1816,8 @@ pub enum PragmaName {
     PageCount,
     /// Return the page size of the database in bytes.
     PageSize,
+    /// make connection query only
+    QueryOnly,
     /// Returns schema version of the database file.
     SchemaVersion,
     /// returns information about the columns of a table
