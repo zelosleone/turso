@@ -182,13 +182,13 @@ pub fn get_io(db_location: DbLocation, io_choice: &str) -> anyhow::Result<Arc<dy
 
 pub const BEFORE_HELP_MSG: &str = r#"
 
-Limbo SQL Shell Help
+Turso SQL Shell Help
 ==============
-Welcome to the Limbo SQL Shell! You can execute any standard SQL command here.
+Welcome to the Turso SQL Shell! You can execute any standard SQL command here.
 In addition to standard SQL commands, the following special commands are available:"#;
 pub const AFTER_HELP_MSG: &str = r#"Usage Examples:
 ---------------
-1. To quit the Limbo SQL Shell:
+1. To quit the Turso SQL Shell:
    .quit
 
 2. To open a database file at path './employees.db':
@@ -238,6 +238,9 @@ pub const AFTER_HELP_MSG: &str = r#"Usage Examples:
 
 17. To turn off column headers in list mode:
    .headers off
+
+18. To clone the open database to another file:
+   .clone output_file.db
 
 Note:
 - All SQL commands must end with a semicolon (;).
