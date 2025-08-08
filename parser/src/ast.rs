@@ -116,7 +116,7 @@ pub enum Stmt {
         /// view name
         view_name: QualifiedName,
         /// columns
-        columns: Option<Vec<IndexedColumn>>,
+        columns: Vec<IndexedColumn>,
         /// query
         select: Select,
     },
@@ -129,7 +129,7 @@ pub enum Stmt {
         /// module name
         module_name: Name,
         /// args
-        args: Option<Vec<String>>, // TODO smol str
+        args: Vec<String>, // TODO smol str
     },
     /// `DELETE`
     Delete {
@@ -142,9 +142,9 @@ pub enum Stmt {
         /// `WHERE` clause
         where_clause: Option<Box<Expr>>,
         /// `RETURNING`
-        returning: Option<Vec<ResultColumn>>,
+        returning: Vec<ResultColumn>,
         /// `ORDER BY`
-        order_by: Option<Vec<SortedColumn>>,
+        order_by: Vec<SortedColumn>,
         /// `LIMIT`
         limit: Option<Limit>,
     },
@@ -190,11 +190,11 @@ pub enum Stmt {
         /// table name
         tbl_name: QualifiedName,
         /// `COLUMNS`
-        columns: Option<Vec<Name>>,
+        columns: Vec<Name>,
         /// `VALUES` or `SELECT`
         body: InsertBody,
         /// `RETURNING`
-        returning: Option<Vec<ResultColumn>>,
+        returning: Vec<ResultColumn>,
     },
     /// `PRAGMA`: pragma name, body
     Pragma {
@@ -244,9 +244,9 @@ pub enum Stmt {
         /// `WHERE` clause
         where_clause: Option<Box<Expr>>,
         /// `RETURNING`
-        returning: Option<Vec<ResultColumn>>,
+        returning: Vec<ResultColumn>,
         /// `ORDER BY`
-        order_by: Option<Vec<SortedColumn>>,
+        order_by: Vec<SortedColumn>,
         /// `LIMIT`
         limit: Option<Limit>,
     },
@@ -771,7 +771,7 @@ pub enum CreateTableBody {
         /// table column definitions
         columns: Vec<ColumnDefinition>,
         /// table constraints
-        constraints: Option<Vec<NamedTableConstraint>>,
+        constraints: Vec<NamedTableConstraint>,
         /// table options
         options: TableOptions,
     },
@@ -940,7 +940,7 @@ pub struct ForeignKeyClause {
     /// foreign table name
     pub tbl_name: Name,
     /// foreign table columns
-    pub columns: Option<Vec<IndexedColumn>>,
+    pub columns: Vec<IndexedColumn>,
     /// referential action(s) / deferrable option(s)
     pub args: Vec<RefArg>,
 }
@@ -1182,13 +1182,13 @@ pub struct TriggerCmdInsert {
     /// table name
     pub tbl_name: Name,
     /// `COLUMNS`
-    pub col_names: Option<Vec<Name>>,
+    pub col_names: Vec<Name>,
     /// `SELECT` or `VALUES`
     pub select: Select,
     /// `ON CONFLICT` clause
     pub upsert: Option<Box<Upsert>>,
     /// `RETURNING`
-    pub returning: Option<Vec<ResultColumn>>,
+    pub returning: Vec<ResultColumn>,
 }
 
 /// `DELETE` trigger command
