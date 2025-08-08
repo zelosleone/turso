@@ -2136,8 +2136,8 @@ impl BTreeCursor {
         if let CursorState::None = &self.state {
             self.state = CursorState::Write(WriteState::Start);
         }
+        let usable_space = self.usable_space();
         let ret = loop {
-            let usable_space = self.usable_space();
             let CursorState::Write(write_state) = &mut self.state else {
                 panic!("expected write state");
             };
@@ -2559,8 +2559,8 @@ impl BTreeCursor {
                         // Hence: when we enter this branch with overflow_cells.len() == 1, we know that left-shifting has happened and we need to subtract 1.
                         let actual_cell_idx = first_cell_divider + sibling_pointer
                             - parent_contents.overflow_cells.len();
-                        let (start_of_cell, _) =
-                            parent_contents.cell_get_raw_region(actual_cell_idx, usable_space);
+                        let start_of_cell =
+                            parent_contents.cell_get_raw_start_offset(actual_cell_idx);
                         let buf = parent_contents.as_ptr().as_mut_ptr();
                         unsafe { buf.add(start_of_cell) }
                     };
@@ -2795,10 +2795,21 @@ impl BTreeCursor {
                     {
                         let old_page = old_page.as_ref().unwrap().get();
                         let old_page_contents = old_page.get_contents();
+                        let page_type = old_page_contents.page_type();
+                        let max_local = payload_overflow_threshold_max(page_type, usable_space);
+                        let min_local = payload_overflow_threshold_min(page_type, usable_space);
+                        let cell_count = old_page_contents.cell_count();
                         debug_validate_cells!(&old_page_contents, usable_space as u16);
-                        for cell_idx in 0..old_page_contents.cell_count() {
-                            let (cell_start, cell_len) =
-                                old_page_contents.cell_get_raw_region(cell_idx, usable_space);
+                        for cell_idx in 0..cell_count {
+                            let (cell_start, cell_len) = old_page_contents
+                                ._cell_get_raw_region_faster(
+                                    cell_idx,
+                                    usable_space,
+                                    cell_count,
+                                    max_local,
+                                    min_local,
+                                    page_type,
+                                );
                             let buf = old_page_contents.as_ptr();
                             let cell_buf = &mut buf[cell_start..cell_start + cell_len];
                             // TODO(pere): make this reference and not copy
