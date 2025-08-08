@@ -7399,6 +7399,13 @@ mod tests {
                     body: Some(PragmaBody::Equals(Box::new(Expr::Name(Name::Ident("test".to_owned()))))),
                 })],
             ),
+            (
+                b"PRAGMA foreign_keys".as_slice(),
+                vec![Cmd::Stmt(Stmt::Pragma {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foreign_keys".to_owned()),  alias: None },
+                    body: None,
+                })],
+            ),
         ];
 
         for (input, expected) in test_cases {
