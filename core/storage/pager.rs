@@ -787,7 +787,7 @@ impl Pager {
                 )?;
 
                 turso_assert!(
-                    ptrmap_page.get().id == ptrmap_pg_no as usize,
+                    ptrmap_page.get().id == ptrmap_pg_no,
                     "ptrmap page has unexpected number"
                 );
                 self.add_dirty(&ptrmap_page);
