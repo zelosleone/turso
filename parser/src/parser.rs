@@ -190,10 +190,14 @@ impl<'a> Parser<'a> {
 
         fn get_token(tt: TokenType) -> TokenType {
             match tt {
-                TokenType::TK_INDEX
+                TokenType::TK_ID
                 | TokenType::TK_STRING
                 | TokenType::TK_JOIN_KW
+                | TokenType::TK_UNION 
+                | TokenType::TK_EXCEPT 
+                | TokenType::TK_INTERSECT
                 | TokenType::TK_WINDOW
+                | TokenType::TK_FILTER
                 | TokenType::TK_OVER => TokenType::TK_ID,
                 _ => tt.fallback_id_if_ok(),
             }
@@ -1884,10 +1888,13 @@ impl<'a> Parser<'a> {
 
         let mut result = vec![self.parse_window_defn()?];
         loop {
-            match self.peek_no_eof()?.token_type.unwrap() {
-                TokenType::TK_COMMA => {
-                    self.eat_assert(&[TokenType::TK_COMMA]);
-                    result.push(self.parse_window_defn()?);
+            match self.peek()? {
+                Some(tok) => match tok.token_type.unwrap() {
+                    TokenType::TK_COMMA => {
+                        self.eat_assert(&[TokenType::TK_COMMA]);
+                        result.push(self.parse_window_defn()?);
+                    }
+                    _ => break
                 }
                 _ => break,
             }
@@ -6629,6 +6636,551 @@ mod tests {
                             where_clause: None,
                             group_by: None,
                             window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo JOIN bar ON 1 = 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(None),
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            None,
+                                            None,
+                                        )),
+                                        constraint: Some(JoinConstraint::On(Box::new(Expr::Binary(
+                                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                            Operator::Equals,
+                                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        )))),
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo JOIN bar USING (col_1)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(None),
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            None,
+                                            None,
+                                        )),
+                                        constraint: Some(JoinConstraint::Using(vec![
+                                            Name::Ident("col_1".to_owned()),
+                                        ])),
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo JOIN bar bar_alias USING (col_1)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(None),
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            Some(As::Elided(Name::Ident("bar_alias".to_owned()))),
+                                            None,
+                                        )),
+                                        constraint: Some(JoinConstraint::Using(vec![
+                                            Name::Ident("col_1".to_owned()),
+                                        ])),
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo JOIN bar(1, 2)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(None),
+                                        table: Box::new(SelectTable::TableCall(
+                                            QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                            vec![
+                                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                            ],
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo JOIN (VALUES (1,2), (3, 4))".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(None),
+                                        table: Box::new(SelectTable::Select(
+                                            Select {
+                                                with: None,
+                                                body: SelectBody {
+                                                    select: OneSelect::Values(vec![
+                                                    vec![
+                                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned())))
+                                                    ],
+                                                    vec![
+                                                        Box::new(Expr::Literal(Literal::Numeric("3".to_owned()))),
+                                                        Box::new(Expr::Literal(Literal::Numeric("4".to_owned())))
+                                                    ],
+                                                    ]),
+                                                    compounds: vec![],
+                                                },
+                                                order_by: vec![],
+                                                limit: None,
+                                            },
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo JOIN (bar)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(None),
+                                        table: Box::new(SelectTable::Sub(
+                                            FromClause {
+                                                select: Box::new(SelectTable::Table(
+                                                    QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
+                                                    None,
+                                                    None,
+                                                )),
+                                                joins: vec![]
+                                            },
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo WHERE 1 = 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![]
+                            }),
+                            where_clause: Some(Box::new(Expr::Binary(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                Operator::Equals,
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                            ))),
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo GROUP BY 1 = 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![]
+                            }),
+                            where_clause: None,
+                            group_by: Some(GroupBy {
+                                exprs: vec![
+                                    Box::new(Expr::Binary(
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::Equals,
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    )),
+                                ],
+                                having: None,
+                            }),
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo GROUP BY 1 = 1 HAVING 1 = 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![]
+                            }),
+                            where_clause: None,
+                            group_by: Some(GroupBy {
+                                exprs: vec![
+                                    Box::new(Expr::Binary(
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::Equals,
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    )),
+                                ],
+                                having: Some(Box::new(Expr::Binary(
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    Operator::Equals,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                ))),
+                            }),
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 FROM foo GROUP BY 1 = 1 HAVING 1 = 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                None,
+                            )],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![]
+                            }),
+                            where_clause: None,
+                            group_by: Some(GroupBy {
+                                exprs: vec![
+                                    Box::new(Expr::Binary(
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Operator::Equals,
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    )),
+                                ],
+                                having: Some(Box::new(Expr::Binary(
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    Operator::Equals,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                ))),
+                            }),
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT * FROM t0 WINDOW JOIN t0;".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Star],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("t0".to_owned()), alias: None },
+                                    Some(As::Elided(Name::Ident("WINDOW".to_owned()))),
+                                    None,
+                                )),
+                                joins: vec![
+                                    JoinedSelectTable {
+                                        operator: JoinOperator::TypedJoin(None),
+                                        table: Box::new(SelectTable::Table(
+                                            QualifiedName { db_name: None, name: Name::Ident("t0".to_owned()), alias: None },
+                                            None,
+                                            None,
+                                        )),
+                                        constraint: None,
+                                    }
+                                ]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT * FROM t0 WINDOW window_1 AS (PARTITION BY product)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Star],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("t0".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![
+                                WindowDef {
+                                    name: Name::Ident("window_1".to_owned()),
+                                    window: Window {
+                                        base: None,
+                                        partition_by: vec![
+                                            Box::new(Expr::Id(Name::Ident("product".to_owned()))),
+                                        ],
+                                        order_by: vec![],
+                                        frame_clause: None,
+                                    },
+                                }
+                            ],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT * FROM t0 WINDOW window_1 AS (PARTITION BY product), window_2 AS (PARTITION BY product_2)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Star],
+                            from: Some(FromClause {
+                                select: Box::new(SelectTable::Table(
+                                    QualifiedName { db_name: None, name: Name::Ident("t0".to_owned()), alias: None },
+                                    None,
+                                    None,
+                                )),
+                                joins: vec![]
+                            }),
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![
+                                WindowDef {
+                                    name: Name::Ident("window_1".to_owned()),
+                                    window: Window {
+                                        base: None,
+                                        partition_by: vec![
+                                            Box::new(Expr::Id(Name::Ident("product".to_owned()))),
+                                        ],
+                                        order_by: vec![],
+                                        frame_clause: None,
+                                    },
+                                },
+                                WindowDef {
+                                    name: Name::Ident("window_2".to_owned()),
+                                    window: Window {
+                                        base: None,
+                                        partition_by: vec![
+                                            Box::new(Expr::Id(Name::Ident("product_2".to_owned()))),
+                                        ],
+                                        order_by: vec![],
+                                        frame_clause: None,
+                                    },
+                                }
+                            ],
                         },
                         compounds: vec![],
                     },

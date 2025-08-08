@@ -8,7 +8,11 @@ use turso_sqlite3_parser::lexer::{
 };
 
 fn bench_parser(criterion: &mut Criterion) {
-    let queries = ["SELECT 1", "SELECT * FROM users LIMIT 1"];
+    let queries = [
+        "SELECT 1",
+        "SELECT * FROM users LIMIT 1",
+        "SELECT first_name, count(1) FROM users GROUP BY first_name HAVING count(1) > 1 ORDER BY count(1)  LIMIT 1",
+    ];
 
     for query in queries.iter() {
         let mut group = criterion.benchmark_group(format!("Parser `{query}`"));
