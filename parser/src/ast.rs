@@ -830,8 +830,6 @@ pub enum ColumnConstraint {
     Check(Box<Expr>),
     /// `DEFAULT`
     Default(Box<Expr>),
-    /// `DEFERRABLE`
-    Defer(DeferSubclause), // FIXME
     /// `COLLATE`
     Collate {
         /// collation name

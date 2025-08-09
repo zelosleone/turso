@@ -5,7 +5,8 @@ use crate::ast::{
     LikeOperator, Limit, Literal, Materialized, Name, NullsOrder, OneSelect, Operator, Over,
     QualifiedName, ResolveType, ResultColumn, Select, SelectBody, SelectTable, SortOrder,
     SortedColumn, Stmt, TransactionType, Type, TypeSize, UnaryOperator, Window, WindowDef, With,
-    PragmaBody, PragmaValue
+    PragmaBody, PragmaValue, AlterTableBody, NamedColumnConstraint, ColumnDefinition, ColumnConstraint,
+    RefArg, RefAct, ForeignKeyClause, DeferSubclause, InitDeferredPred
 };
 use crate::error::Error;
 use crate::lexer::{Lexer, Token};
@@ -197,6 +198,7 @@ impl<'a> Parser<'a> {
                 | TokenType::TK_UNION 
                 | TokenType::TK_EXCEPT 
                 | TokenType::TK_INTERSECT
+                | TokenType::TK_COLUMNKW
                 | TokenType::TK_WINDOW
                 | TokenType::TK_FILTER
                 | TokenType::TK_OVER => TokenType::TK_ID,
@@ -246,6 +248,10 @@ impl<'a> Parser<'a> {
              ** INTERSECT is a keyword if:
              **
              **   * the next token is TK_SELECT|TK_VALUES.
+             **
+             ** COLUMNKW is a keyword if:
+             **
+             **   * the previous token is TK_ADD|TK_RENAME|TK_DROP.
              */
             match tok.token_type.unwrap() {
                 TokenType::TK_WINDOW => {
@@ -344,6 +350,17 @@ impl<'a> Parser<'a> {
                     })?;
 
                     if !can_be_except {
+                        tok.token_type = Some(TokenType::TK_ID);
+                    }
+                }
+                TokenType::TK_COLUMNKW => {
+                    let prev_tt = self.current_token.token_type.unwrap_or(TokenType::TK_EOF);
+                    let can_be_columnkw = match prev_tt {
+                        TokenType::TK_ADD | TokenType::TK_RENAME | TokenType::TK_DROP => true,
+                        _ => false,
+                    };
+
+                    if !can_be_columnkw {
                         tok.token_type = Some(TokenType::TK_ID);
                     }
                 }
@@ -501,6 +518,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_DETACH,
             TokenType::TK_PRAGMA,
             TokenType::TK_VACUUM,
+            TokenType::TK_ALTER,
             // add more
         ])?;
 
@@ -518,6 +536,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_DETACH => self.parse_detach(),
             TokenType::TK_PRAGMA => self.parse_pragma(),
             TokenType::TK_VACUUM => self.parse_vacuum(),
+            TokenType::TK_ALTER => self.parse_alter(),
             _ => unreachable!(),
         }
     }
@@ -1128,6 +1147,21 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_raise_type(&mut self) -> Result<ResolveType, Error> {
+        let tok = self.eat_expect(&[
+            TokenType::TK_ROLLBACK,
+            TokenType::TK_ABORT,
+            TokenType::TK_FAIL,
+        ])?;
+
+        match tok.token_type.unwrap() {
+            TokenType::TK_ROLLBACK => Ok(ResolveType::Rollback),
+            TokenType::TK_ABORT => Ok(ResolveType::Abort),
+            TokenType::TK_FAIL => Ok(ResolveType::Fail),
+            _ => unreachable!(),
+        }
+    }
+
     fn parse_expr_operand(&mut self) -> Result<Box<Expr>, Error> {
         let tok = self.peek_expect(&[
             TokenType::TK_LP,
@@ -1295,19 +1329,12 @@ impl<'a> Parser<'a> {
                 self.eat_assert(&[TokenType::TK_RAISE]);
                 self.eat_expect(&[TokenType::TK_LP])?;
 
-                let tok = self.eat_expect(&[
-                    TokenType::TK_IGNORE,
-                    TokenType::TK_ROLLBACK,
-                    TokenType::TK_ABORT,
-                    TokenType::TK_FAIL,
-                ])?;
-
-                let resolve = match tok.token_type.unwrap() {
-                    TokenType::TK_IGNORE => ResolveType::Ignore,
-                    TokenType::TK_ROLLBACK => ResolveType::Rollback,
-                    TokenType::TK_ABORT => ResolveType::Abort,
-                    TokenType::TK_FAIL => ResolveType::Fail,
-                    _ => unreachable!(),
+                let resolve = match self.peek_no_eof()?.token_type.unwrap() {
+                    TokenType::TK_IGNORE => {
+                        self.eat_assert(&[TokenType::TK_IGNORE]);
+                        ResolveType::Ignore
+                    },
+                    _ => self.parse_raise_type()?,
                 };
 
                 let expr = if resolve != ResolveType::Ignore {
@@ -2641,6 +2668,455 @@ impl<'a> Parser<'a> {
             name,
             into,
         })
+    }
+
+    fn parse_term(&mut self) -> Result<Box<Expr>, Error> {
+        self.peek_expect(&[
+            TokenType::TK_NULL,
+            TokenType::TK_BLOB,
+            TokenType::TK_STRING,
+            TokenType::TK_FLOAT,
+            TokenType::TK_INTEGER,
+            TokenType::TK_CTIME_KW,
+        ])?;
+
+        self.parse_expr_operand()
+    }
+
+    fn parse_default_column_constraint(&mut self ) -> Result<ColumnConstraint, Error> {
+        self.eat_assert(&[TokenType::TK_DEFAULT]);
+        match self.peek_no_eof()?.token_type.unwrap().fallback_id_if_ok() {
+            TokenType::TK_LP => {
+                self.eat_assert(&[TokenType::TK_LP]);
+                let expr = self.parse_expr(0)?;
+                self.eat_expect(&[TokenType::TK_RP])?;
+                Ok(ColumnConstraint::Default(Box::new(Expr::Parenthesized(vec![expr]))))
+            }
+            TokenType::TK_PLUS => {
+                self.eat_assert(&[TokenType::TK_PLUS]);
+                Ok(ColumnConstraint::Default(Box::new(Expr::Unary(UnaryOperator::Positive, self.parse_term()?))))
+            },
+            TokenType::TK_MINUS => {
+                self.eat_assert(&[TokenType::TK_PLUS]);
+                Ok(ColumnConstraint::Default(Box::new(Expr::Unary(UnaryOperator::Negative, self.parse_term()?))))
+            },
+            TokenType::TK_ID | TokenType::TK_INDEXED => {
+                Ok(ColumnConstraint::Default(Box::new(Expr::Id(self.parse_nm()))))
+            },
+            _ => {
+                Ok(ColumnConstraint::Default(self.parse_term()?))
+            },
+        }
+    }
+
+    fn parse_on_conflict(&mut self) -> Result<Option<ResolveType>, Error> {
+        match self.peek()? {
+            None => return Ok(None),
+            Some(tok) => match tok.token_type.unwrap() {
+                TokenType::TK_ON => {
+                    self.eat_assert(&[TokenType::TK_ON]);
+                    self.eat_expect(&[TokenType::TK_CONFLICT])?;
+                }
+                TokenType::TK_OR => {
+                    self.eat_assert(&[TokenType::TK_OR]);
+                }
+                _ => return Ok(None),
+            },
+        }
+
+
+        match self.peek_no_eof()?.token_type.unwrap() {
+            TokenType::TK_IGNORE => {
+                self.eat_assert(&[TokenType::TK_IGNORE]);
+                Ok(Some(ResolveType::Ignore))
+            }
+            TokenType::TK_REPLACE => {
+                self.eat_assert(&[TokenType::TK_REPLACE]);
+                Ok(Some(ResolveType::Replace))
+            }
+            _ => Ok(Some(self.parse_raise_type()?))
+        }
+    }
+
+    fn parse_auto_increment(&mut self) -> Result<bool, Error> {
+        match self.peek()? {
+            None => Ok(false),
+            Some(tok) => match tok.token_type.unwrap() {
+                TokenType::TK_AUTOINCR => {
+                    self.eat_assert(&[TokenType::TK_AUTOINCR]);
+                    Ok(true)
+                }
+                _ => Ok(false),
+            },
+        }
+    }
+
+    fn parse_not_null_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
+        let has_not = match self.peek_no_eof()?.token_type.unwrap() {
+            TokenType::TK_NOT => {
+                self.eat_assert(&[TokenType::TK_NOT]);
+                true
+            },
+            _ => false
+        };
+
+        self.eat_expect(&[TokenType::TK_NULL])?;
+        Ok(ColumnConstraint::NotNull {
+            nullable: !has_not,
+            conflict_clause: self.parse_on_conflict()?,
+        })
+    }
+
+    fn parse_primary_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
+        self.eat_assert(&[TokenType::TK_PRIMARY]);
+        self.eat_expect(&[TokenType::TK_KEY])?;
+        let sort_order = self.parse_sort_order()?;
+        let conflict_clause = self.parse_on_conflict()?;
+        let autoincr = self.parse_auto_increment()?;
+
+        Ok(ColumnConstraint::PrimaryKey { 
+            order: sort_order,
+            conflict_clause,
+            auto_increment: autoincr,
+        })
+    }
+
+    fn parse_unique_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
+        self.eat_assert(&[TokenType::TK_UNIQUE]);
+        Ok(ColumnConstraint::Unique(self.parse_on_conflict()?))
+    }
+
+    fn parse_check_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
+        self.eat_assert(&[TokenType::TK_CHECK]);
+        self.eat_expect(&[TokenType::TK_LP])?;
+        let expr = self.parse_expr(0)?;
+        self.eat_expect(&[TokenType::TK_RP])?;
+        Ok(ColumnConstraint::Check(expr))
+    }
+
+    fn parse_ref_act(&mut self) -> Result<RefAct, Error> {
+        let tok = self.eat_expect(&[
+            TokenType::TK_SET,
+            TokenType::TK_CASCADE,
+            TokenType::TK_RESTRICT,
+            TokenType::TK_NO,
+        ])?;
+
+        match tok.token_type.unwrap() {
+            TokenType::TK_SET => {
+                let tok = self.eat_expect(&[TokenType::TK_NULL, TokenType::TK_DEFAULT])?;
+                match tok.token_type.unwrap() {
+                    TokenType::TK_NULL => Ok(RefAct::SetNull),
+                    TokenType::TK_DEFAULT => Ok(RefAct::SetDefault),
+                    _ => unreachable!(),
+                }
+            },
+            TokenType::TK_CASCADE => Ok(RefAct::Cascade),
+            TokenType::TK_RESTRICT => Ok(RefAct::Restrict),
+            TokenType::TK_NO => {
+                self.eat_expect(&[TokenType::TK_ACTION])?;
+                Ok(RefAct::NoAction)
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    fn parse_ref_args(&mut self) -> Result<Vec<RefArg>, Error> {
+        let mut result = vec![];
+
+        loop {
+            match self.peek()? {
+                Some(tok) => match tok.token_type.unwrap() {
+                    TokenType::TK_MATCH => {
+                        self.eat_assert(&[TokenType::TK_MATCH]);
+                        self.peek_nm()?;
+                        result.push(RefArg::Match(self.parse_nm()));
+                    },
+                    TokenType::TK_ON => {
+                        self.eat_assert(&[TokenType::TK_ON]);
+                        let tok = self.eat_expect(&[TokenType::TK_INSERT, TokenType::TK_DELETE, TokenType::TK_UPDATE])?;
+                        match tok.token_type.unwrap() {
+                            TokenType::TK_INSERT => result.push(RefArg::OnInsert(self.parse_ref_act()?)),
+                            TokenType::TK_DELETE => result.push(RefArg::OnDelete(self.parse_ref_act()?)),
+                            TokenType::TK_UPDATE => result.push(RefArg::OnUpdate(self.parse_ref_act()?)),
+                            _ => unreachable!(),
+                        }
+                    },
+                    _ => break,
+                }
+                _ => break,
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn parse_foreign_key_clause(&mut self) -> Result<ForeignKeyClause, Error> {
+        self.eat_assert(&[TokenType::TK_REFERENCES]);
+        self.peek_nm()?;
+        let name = self.parse_nm();
+        let eid_list = self.parse_eid_list()?;
+        let ref_args = self.parse_ref_args()?;
+        Ok(ForeignKeyClause {
+            tbl_name: name,
+            columns: eid_list,
+            args: ref_args,
+        })
+    }
+
+    fn parse_defer_subclause(&mut self) -> Result<Option<DeferSubclause>, Error> {
+        let has_not = match self.peek()? {
+            Some(tok) => match tok.token_type.unwrap() {
+                TokenType::TK_DEFERRABLE=> false,
+                TokenType::TK_NOT => {
+                    self.eat_assert(&[TokenType::TK_NOT]);
+                    true
+                },
+                _ => return Ok(None),
+            }
+            _ => return Ok(None),
+        };
+
+        self.eat_expect(&[TokenType::TK_DEFERRABLE])?;
+
+        let init = match self.peek()? {
+            Some(tok) => match tok.token_type.unwrap() {
+                TokenType::TK_INITIALLY => {
+                    self.eat_assert(&[TokenType::TK_INITIALLY]);
+                    let tok = self.eat_expect(&[TokenType::TK_DEFERRED, TokenType::TK_IMMEDIATE])?;
+                    match tok.token_type.unwrap() {
+                        TokenType::TK_DEFERRED => Some(InitDeferredPred::InitiallyDeferred),
+                        TokenType::TK_IMMEDIATE => Some(InitDeferredPred::InitiallyImmediate),
+                        _ => unreachable!(),
+                    }
+                },
+                _ => None,
+            },
+            _ => None,
+        };
+
+
+        Ok(Some(DeferSubclause {
+            deferrable: !has_not,
+            init_deferred: init,
+        }))
+    }
+
+    fn parse_reference_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
+        let clause = self.parse_foreign_key_clause()?;
+        let deref_clause = self.parse_defer_subclause()?;
+        Ok(ColumnConstraint::ForeignKey{
+            clause,
+            deref_clause,
+        })
+    }
+
+    fn parse_generated_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
+        let tok = self.eat_assert(&[TokenType::TK_GENERATED, TokenType::TK_AS]);
+        match tok.token_type.unwrap() {
+            TokenType::TK_GENERATED => {
+                self.eat_expect(&[TokenType::TK_ALWAYS])?;
+                self.eat_expect(&[TokenType::TK_AS])?;
+            }
+            TokenType::TK_AS => {}
+            _ => unreachable!(),
+        }
+
+        self.eat_expect(&[TokenType::TK_LP])?;
+        let expr = self.parse_expr(0)?;
+        self.eat_expect(&[TokenType::TK_RP])?;
+
+        let typ = match self.peek()? {
+            Some(tok) => match tok.token_type.unwrap().fallback_id_if_ok() {
+                TokenType::TK_ID => {
+                    let tok = self.eat_assert(&[TokenType::TK_ID]);
+                    Some(Name::Ident(from_bytes(tok.value)))
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+
+        Ok(ColumnConstraint::Generated {
+            expr,
+            typ,
+        })
+    }
+
+    fn parse_named_column_constraints(&mut self) -> Result<Vec<NamedColumnConstraint>, Error> {
+        let mut result = vec![];
+
+        loop {
+            let name = match self.peek()? {
+                Some(tok) => match tok.token_type.unwrap() {
+                    TokenType::TK_CONSTRAINT => {
+                        self.eat_assert(&[TokenType::TK_CONSTRAINT]);
+                        self.peek_nm()?;
+                        Some(self.parse_nm())
+                    }
+                    _ => None,
+                },
+                _ => None
+            };
+
+            match self.peek()? {
+                Some(tok) => match tok.token_type.unwrap() {
+                    TokenType::TK_DEFAULT => {
+                        result.push(NamedColumnConstraint { 
+                            name, 
+                            constraint: self.parse_default_column_constraint()?
+                        });
+                    }
+                    TokenType::TK_NOT | TokenType::TK_NULL => {
+                        result.push(NamedColumnConstraint { 
+                            name, 
+                            constraint: self.parse_not_null_column_constraint()?
+                        });
+                    }
+                    TokenType::TK_PRIMARY => {
+                        result.push(NamedColumnConstraint { 
+                            name, 
+                            constraint: self.parse_primary_column_constraint()?
+                        });
+                    }
+                    TokenType::TK_UNIQUE => {
+                        result.push(NamedColumnConstraint { 
+                            name, 
+                            constraint: self.parse_unique_column_constraint()?
+                        });
+                    }
+                    TokenType::TK_CHECK => {
+                        result.push(NamedColumnConstraint { 
+                            name, 
+                            constraint: self.parse_check_column_constraint()?
+                        });
+                    }
+                    TokenType::TK_REFERENCES => {
+                        result.push(NamedColumnConstraint { 
+                            name, 
+                            constraint: self.parse_reference_column_constraint()?
+                        });
+                    }
+                    TokenType::TK_COLLATE => {
+                        result.push(NamedColumnConstraint { 
+                            name, 
+                            constraint: ColumnConstraint::Collate{ collation_name: self.parse_collate()?.unwrap() }
+                        });
+                    }
+                    TokenType::TK_GENERATED | TokenType::TK_AS => {
+                        result.push(NamedColumnConstraint { 
+                            name, 
+                            constraint: self.parse_generated_column_constraint()?
+                        });
+                    }
+                    _ => {
+                        if name.is_some() {
+                            return Err(Error::Custom(
+                                "Expected a column constraint name after CONSTRAINT keyword".to_owned(),
+                            ));
+                        }
+
+                        break
+                    },
+                },
+                _ => {
+                    if name.is_some() {
+                        return Err(Error::Custom(
+                            "Expected a column constraint name after CONSTRAINT keyword".to_owned(),
+                        ));
+                    }
+
+                    break
+                },
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn parse_alter(&mut self) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_ALTER]);
+        self.eat_expect(&[TokenType::TK_TABLE])?;
+        let tbl_name = self.parse_fullname(false)?;
+        let tok = self.eat_expect(&[
+            TokenType::TK_ADD,
+            TokenType::TK_DROP,
+            TokenType::TK_RENAME,
+        ])?;
+
+        match tok.token_type.unwrap() {
+            TokenType::TK_ADD => {
+                match self.peek_no_eof()?.token_type.unwrap() {
+                    TokenType::TK_COLUMNKW => {
+                        self.eat_assert(&[TokenType::TK_COLUMNKW]);
+                    }
+                    _ => {},
+                }
+
+                self.peek_nm()?;
+                let col_name = self.parse_nm();
+                let col_type = self.parse_type()?;
+                let constraints = self.parse_named_column_constraints()?;
+                Ok(Stmt::AlterTable { 
+                    name: tbl_name,
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name,
+                        col_type,
+                        constraints,
+                    })
+                })
+            }
+            TokenType::TK_DROP => {
+                match self.peek_no_eof()?.token_type.unwrap() {
+                    TokenType::TK_COLUMNKW => {
+                        self.eat_assert(&[TokenType::TK_COLUMNKW]);
+                    }
+                    _ => {},
+                }
+
+                self.peek_nm()?;
+                Ok(Stmt::AlterTable { 
+                    name: tbl_name,
+                    body: AlterTableBody::DropColumn(self.parse_nm())
+                })
+            }
+            TokenType::TK_RENAME => {
+                let col_name = match self.peek_no_eof()?.token_type.unwrap().fallback_id_if_ok() {
+                    TokenType::TK_COLUMNKW => {
+                        self.eat_assert(&[TokenType::TK_COLUMNKW]);
+                        self.peek_nm()?;
+                        Some(self.parse_nm())
+                    }
+                    TokenType::TK_ID |
+                    TokenType::TK_STRING |
+                    TokenType::TK_INDEXED |
+                    TokenType::TK_JOIN_KW  => {
+                        Some(self.parse_nm())
+                    }
+                    _ => None,
+                };
+
+                self.eat_expect(&[TokenType::TK_TO])?;
+                self.peek_nm()?;
+                let to_name = self.parse_nm();
+
+                if col_name.is_some() {
+                    Ok(Stmt::AlterTable { 
+                        name: tbl_name,
+                        body: AlterTableBody::RenameColumn {
+                            old: col_name.unwrap(),
+                            new: to_name,
+                        }
+                    })
+                } else {
+                    Ok(Stmt::AlterTable { 
+                        name: tbl_name,
+                        body: AlterTableBody::RenameTo(to_name)
+                    })
+                }
+            }
+            _ => unreachable!(),
+        }
     }
 }
 
