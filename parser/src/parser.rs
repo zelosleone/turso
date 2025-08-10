@@ -1,12 +1,12 @@
 use crate::ast::{
-    As, Cmd, CommonTableExpr, CompoundOperator, CompoundSelect, CreateTableBody, Distinctness,
-    Expr, FrameBound, FrameClause, FrameExclude, FrameMode, FromClause, FunctionTail, GroupBy,
-    Indexed, IndexedColumn, JoinConstraint, JoinOperator, JoinType, JoinedSelectTable,
-    LikeOperator, Limit, Literal, Materialized, Name, NullsOrder, OneSelect, Operator, Over,
-    QualifiedName, ResolveType, ResultColumn, Select, SelectBody, SelectTable, SortOrder,
-    SortedColumn, Stmt, TransactionType, Type, TypeSize, UnaryOperator, Window, WindowDef, With,
-    PragmaBody, PragmaValue, AlterTableBody, NamedColumnConstraint, ColumnDefinition, ColumnConstraint,
-    RefArg, RefAct, ForeignKeyClause, DeferSubclause, InitDeferredPred
+    AlterTableBody, As, Cmd, ColumnConstraint, ColumnDefinition, CommonTableExpr, CompoundOperator,
+    CompoundSelect, CreateTableBody, DeferSubclause, Distinctness, Expr, ForeignKeyClause,
+    FrameBound, FrameClause, FrameExclude, FrameMode, FromClause, FunctionTail, GroupBy, Indexed,
+    IndexedColumn, InitDeferredPred, JoinConstraint, JoinOperator, JoinType, JoinedSelectTable,
+    LikeOperator, Limit, Literal, Materialized, Name, NamedColumnConstraint, NullsOrder, OneSelect,
+    Operator, Over, PragmaBody, PragmaValue, QualifiedName, RefAct, RefArg, ResolveType,
+    ResultColumn, Select, SelectBody, SelectTable, SortOrder, SortedColumn, Stmt, TransactionType,
+    Type, TypeSize, UnaryOperator, Window, WindowDef, With,
 };
 use crate::error::Error;
 use crate::lexer::{Lexer, Token};
@@ -195,9 +195,10 @@ impl<'a> Parser<'a> {
                 TokenType::TK_ID
                 | TokenType::TK_STRING
                 | TokenType::TK_JOIN_KW
-                | TokenType::TK_UNION 
-                | TokenType::TK_EXCEPT 
+                | TokenType::TK_UNION
+                | TokenType::TK_EXCEPT
                 | TokenType::TK_INTERSECT
+                | TokenType::TK_GENERATED
                 | TokenType::TK_COLUMNKW
                 | TokenType::TK_WINDOW
                 | TokenType::TK_FILTER
@@ -252,6 +253,11 @@ impl<'a> Parser<'a> {
              ** COLUMNKW is a keyword if:
              **
              **   * the previous token is TK_ADD|TK_RENAME|TK_DROP.
+             **
+             ** GENERATED is a keyword if:
+             **
+             **   * the next token is TK_ALWAYS.
+             **   * the token after than one is TK_AS.
              */
             match tok.token_type.unwrap() {
                 TokenType::TK_WINDOW => {
@@ -266,7 +272,7 @@ impl<'a> Parser<'a> {
 
                         match p.consume_lexer_without_whitespaces_or_comments() {
                             None => return Ok(false),
-                            Some(tok) => match get_token(tok?.token_type.unwrap()) {
+                            Some(tok) => match tok?.token_type.unwrap() {
                                 TokenType::TK_AS => Ok(true),
                                 _ => Ok(false),
                             },
@@ -306,7 +312,7 @@ impl<'a> Parser<'a> {
                             self.try_parse(|p| {
                                 match p.consume_lexer_without_whitespaces_or_comments() {
                                     None => return Ok(false),
-                                    Some(tok) => match get_token(tok?.token_type.unwrap()) {
+                                    Some(tok) => match tok?.token_type.unwrap() {
                                         TokenType::TK_LP => Ok(true),
                                         _ => Ok(false),
                                     },
@@ -325,7 +331,7 @@ impl<'a> Parser<'a> {
                     let can_be_union = self.try_parse(|p| {
                         match p.consume_lexer_without_whitespaces_or_comments() {
                             None => return Ok(false),
-                            Some(tok) => match get_token(tok?.token_type.unwrap()) {
+                            Some(tok) => match tok?.token_type.unwrap() {
                                 TokenType::TK_ALL | TokenType::TK_SELECT | TokenType::TK_VALUES => {
                                     Ok(true)
                                 }
@@ -342,7 +348,7 @@ impl<'a> Parser<'a> {
                     let can_be_except = self.try_parse(|p| {
                         match p.consume_lexer_without_whitespaces_or_comments() {
                             None => return Ok(false),
-                            Some(tok) => match get_token(tok?.token_type.unwrap()) {
+                            Some(tok) => match tok?.token_type.unwrap() {
                                 TokenType::TK_SELECT | TokenType::TK_VALUES => Ok(true),
                                 _ => Ok(false),
                             },
@@ -361,6 +367,29 @@ impl<'a> Parser<'a> {
                     };
 
                     if !can_be_columnkw {
+                        tok.token_type = Some(TokenType::TK_ID);
+                    }
+                }
+                TokenType::TK_GENERATED => {
+                    let can_be_generated = self.try_parse(|p| {
+                        match p.consume_lexer_without_whitespaces_or_comments() {
+                            None => return Ok(false),
+                            Some(tok) => match tok?.token_type.unwrap() {
+                                TokenType::TK_ALWAYS => {}
+                                _ => return Ok(false),
+                            },
+                        }
+
+                        match p.consume_lexer_without_whitespaces_or_comments() {
+                            None => return Ok(false),
+                            Some(tok) => match tok?.token_type.unwrap() {
+                                TokenType::TK_AS => Ok(true),
+                                _ => Ok(false),
+                            },
+                        }
+                    })?;
+
+                    if !can_be_generated {
                         tok.token_type = Some(TokenType::TK_ID);
                     }
                 }
@@ -1333,7 +1362,7 @@ impl<'a> Parser<'a> {
                     TokenType::TK_IGNORE => {
                         self.eat_assert(&[TokenType::TK_IGNORE]);
                         ResolveType::Ignore
-                    },
+                    }
                     _ => self.parse_raise_type()?,
                 };
 
@@ -1932,8 +1961,8 @@ impl<'a> Parser<'a> {
                         self.eat_assert(&[TokenType::TK_COMMA]);
                         result.push(self.parse_window_defn()?);
                     }
-                    _ => break
-                }
+                    _ => break,
+                },
                 _ => break,
             }
         }
@@ -2539,13 +2568,13 @@ impl<'a> Parser<'a> {
         self.eat_assert(&[TokenType::TK_ANALYZE]);
         let name = match self.peek()? {
             Some(tok) => match tok.token_type.unwrap().fallback_id_if_ok() {
-                TokenType::TK_ID |
-                TokenType::TK_STRING |
-                TokenType::TK_INDEXED |
-                TokenType::TK_JOIN_KW  => { Some(self.parse_fullname(false)?) }
+                TokenType::TK_ID
+                | TokenType::TK_STRING
+                | TokenType::TK_INDEXED
+                | TokenType::TK_JOIN_KW => Some(self.parse_fullname(false)?),
                 _ => None,
             },
-            _ => None
+            _ => None,
         };
 
         Ok(Stmt::Analyze { name: name })
@@ -2571,15 +2600,10 @@ impl<'a> Parser<'a> {
                 }
                 _ => None,
             },
-            _ => None
+            _ => None,
         };
 
-
-        Ok(Stmt::Attach {
-            expr,
-            db_name,
-            key,
-        })
+        Ok(Stmt::Attach { expr, db_name, key })
     }
 
     fn parse_detach(&mut self) -> Result<Stmt, Error> {
@@ -2591,22 +2615,28 @@ impl<'a> Parser<'a> {
             _ => {}
         }
 
-        Ok(Stmt::Detach { name: self.parse_expr(0)? })
+        Ok(Stmt::Detach {
+            name: self.parse_expr(0)?,
+        })
     }
 
     fn parse_pragma_value(&mut self) -> Result<PragmaValue, Error> {
         match self.peek_no_eof()?.token_type.unwrap().fallback_id_if_ok() {
             TokenType::TK_ON | TokenType::TK_DELETE | TokenType::TK_DEFAULT => {
-                let tok = self.eat_assert(&[TokenType::TK_ON, TokenType::TK_DELETE, TokenType::TK_DEFAULT]);
-                Ok(Box::new(Expr::Literal(Literal::Keyword(from_bytes(tok.value)))))
+                let tok = self.eat_assert(&[
+                    TokenType::TK_ON,
+                    TokenType::TK_DELETE,
+                    TokenType::TK_DEFAULT,
+                ]);
+                Ok(Box::new(Expr::Literal(Literal::Keyword(from_bytes(
+                    tok.value,
+                )))))
             }
-            TokenType::TK_ID |
-            TokenType::TK_STRING |
-            TokenType::TK_INDEXED |
-            TokenType::TK_JOIN_KW  => { Ok(Box::new(Expr::Name(self.parse_nm()))) }
-            _ => {
-                self.parse_signed()
-            }
+            TokenType::TK_ID
+            | TokenType::TK_STRING
+            | TokenType::TK_INDEXED
+            | TokenType::TK_JOIN_KW => Ok(Box::new(Expr::Name(self.parse_nm()))),
+            _ => self.parse_signed(),
         }
     }
 
@@ -2621,7 +2651,7 @@ impl<'a> Parser<'a> {
                         name: name,
                         body: Some(PragmaBody::Equals(self.parse_pragma_value()?)),
                     })
-                },
+                }
                 TokenType::TK_LP => {
                     self.eat_assert(&[TokenType::TK_LP]);
                     let value = self.parse_pragma_value()?;
@@ -2630,7 +2660,7 @@ impl<'a> Parser<'a> {
                         name: name,
                         body: Some(PragmaBody::Call(value)),
                     })
-                },
+                }
                 _ => Ok(Stmt::Pragma {
                     name: name,
                     body: None,
@@ -2648,9 +2678,10 @@ impl<'a> Parser<'a> {
 
         let name = match self.peek()? {
             Some(tok) => match tok.token_type.unwrap().fallback_id_if_ok() {
-                TokenType::TK_ID | TokenType::TK_STRING | TokenType::TK_INDEXED | TokenType::TK_JOIN_KW => {
-                    Some(self.parse_nm())
-                }
+                TokenType::TK_ID
+                | TokenType::TK_STRING
+                | TokenType::TK_INDEXED
+                | TokenType::TK_JOIN_KW => Some(self.parse_nm()),
                 _ => None,
             },
             _ => None,
@@ -2664,10 +2695,7 @@ impl<'a> Parser<'a> {
             _ => None,
         };
 
-        Ok(Stmt::Vacuum {
-            name,
-            into,
-        })
+        Ok(Stmt::Vacuum { name, into })
     }
 
     fn parse_term(&mut self) -> Result<Box<Expr>, Error> {
@@ -2683,29 +2711,35 @@ impl<'a> Parser<'a> {
         self.parse_expr_operand()
     }
 
-    fn parse_default_column_constraint(&mut self ) -> Result<ColumnConstraint, Error> {
+    fn parse_default_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
         self.eat_assert(&[TokenType::TK_DEFAULT]);
         match self.peek_no_eof()?.token_type.unwrap().fallback_id_if_ok() {
             TokenType::TK_LP => {
                 self.eat_assert(&[TokenType::TK_LP]);
                 let expr = self.parse_expr(0)?;
                 self.eat_expect(&[TokenType::TK_RP])?;
-                Ok(ColumnConstraint::Default(Box::new(Expr::Parenthesized(vec![expr]))))
+                Ok(ColumnConstraint::Default(Box::new(Expr::Parenthesized(
+                    vec![expr],
+                ))))
             }
             TokenType::TK_PLUS => {
                 self.eat_assert(&[TokenType::TK_PLUS]);
-                Ok(ColumnConstraint::Default(Box::new(Expr::Unary(UnaryOperator::Positive, self.parse_term()?))))
-            },
+                Ok(ColumnConstraint::Default(Box::new(Expr::Unary(
+                    UnaryOperator::Positive,
+                    self.parse_term()?,
+                ))))
+            }
             TokenType::TK_MINUS => {
-                self.eat_assert(&[TokenType::TK_PLUS]);
-                Ok(ColumnConstraint::Default(Box::new(Expr::Unary(UnaryOperator::Negative, self.parse_term()?))))
-            },
-            TokenType::TK_ID | TokenType::TK_INDEXED => {
-                Ok(ColumnConstraint::Default(Box::new(Expr::Id(self.parse_nm()))))
-            },
-            _ => {
-                Ok(ColumnConstraint::Default(self.parse_term()?))
-            },
+                self.eat_assert(&[TokenType::TK_MINUS]);
+                Ok(ColumnConstraint::Default(Box::new(Expr::Unary(
+                    UnaryOperator::Negative,
+                    self.parse_term()?,
+                ))))
+            }
+            TokenType::TK_ID | TokenType::TK_INDEXED => Ok(ColumnConstraint::Default(Box::new(
+                Expr::Id(self.parse_nm()),
+            ))),
+            _ => Ok(ColumnConstraint::Default(self.parse_term()?)),
         }
     }
 
@@ -2724,7 +2758,6 @@ impl<'a> Parser<'a> {
             },
         }
 
-
         match self.peek_no_eof()?.token_type.unwrap() {
             TokenType::TK_IGNORE => {
                 self.eat_assert(&[TokenType::TK_IGNORE]);
@@ -2734,7 +2767,7 @@ impl<'a> Parser<'a> {
                 self.eat_assert(&[TokenType::TK_REPLACE]);
                 Ok(Some(ResolveType::Replace))
             }
-            _ => Ok(Some(self.parse_raise_type()?))
+            _ => Ok(Some(self.parse_raise_type()?)),
         }
     }
 
@@ -2756,8 +2789,8 @@ impl<'a> Parser<'a> {
             TokenType::TK_NOT => {
                 self.eat_assert(&[TokenType::TK_NOT]);
                 true
-            },
-            _ => false
+            }
+            _ => false,
         };
 
         self.eat_expect(&[TokenType::TK_NULL])?;
@@ -2774,7 +2807,7 @@ impl<'a> Parser<'a> {
         let conflict_clause = self.parse_on_conflict()?;
         let autoincr = self.parse_auto_increment()?;
 
-        Ok(ColumnConstraint::PrimaryKey { 
+        Ok(ColumnConstraint::PrimaryKey {
             order: sort_order,
             conflict_clause,
             auto_increment: autoincr,
@@ -2810,13 +2843,13 @@ impl<'a> Parser<'a> {
                     TokenType::TK_DEFAULT => Ok(RefAct::SetDefault),
                     _ => unreachable!(),
                 }
-            },
+            }
             TokenType::TK_CASCADE => Ok(RefAct::Cascade),
             TokenType::TK_RESTRICT => Ok(RefAct::Restrict),
             TokenType::TK_NO => {
                 self.eat_expect(&[TokenType::TK_ACTION])?;
                 Ok(RefAct::NoAction)
-            },
+            }
             _ => unreachable!(),
         }
     }
@@ -2831,19 +2864,29 @@ impl<'a> Parser<'a> {
                         self.eat_assert(&[TokenType::TK_MATCH]);
                         self.peek_nm()?;
                         result.push(RefArg::Match(self.parse_nm()));
-                    },
+                    }
                     TokenType::TK_ON => {
                         self.eat_assert(&[TokenType::TK_ON]);
-                        let tok = self.eat_expect(&[TokenType::TK_INSERT, TokenType::TK_DELETE, TokenType::TK_UPDATE])?;
+                        let tok = self.eat_expect(&[
+                            TokenType::TK_INSERT,
+                            TokenType::TK_DELETE,
+                            TokenType::TK_UPDATE,
+                        ])?;
                         match tok.token_type.unwrap() {
-                            TokenType::TK_INSERT => result.push(RefArg::OnInsert(self.parse_ref_act()?)),
-                            TokenType::TK_DELETE => result.push(RefArg::OnDelete(self.parse_ref_act()?)),
-                            TokenType::TK_UPDATE => result.push(RefArg::OnUpdate(self.parse_ref_act()?)),
+                            TokenType::TK_INSERT => {
+                                result.push(RefArg::OnInsert(self.parse_ref_act()?))
+                            }
+                            TokenType::TK_DELETE => {
+                                result.push(RefArg::OnDelete(self.parse_ref_act()?))
+                            }
+                            TokenType::TK_UPDATE => {
+                                result.push(RefArg::OnUpdate(self.parse_ref_act()?))
+                            }
                             _ => unreachable!(),
                         }
-                    },
+                    }
                     _ => break,
-                }
+                },
                 _ => break,
             }
         }
@@ -2867,13 +2910,13 @@ impl<'a> Parser<'a> {
     fn parse_defer_subclause(&mut self) -> Result<Option<DeferSubclause>, Error> {
         let has_not = match self.peek()? {
             Some(tok) => match tok.token_type.unwrap() {
-                TokenType::TK_DEFERRABLE=> false,
+                TokenType::TK_DEFERRABLE => false,
                 TokenType::TK_NOT => {
                     self.eat_assert(&[TokenType::TK_NOT]);
                     true
-                },
+                }
                 _ => return Ok(None),
-            }
+            },
             _ => return Ok(None),
         };
 
@@ -2883,18 +2926,18 @@ impl<'a> Parser<'a> {
             Some(tok) => match tok.token_type.unwrap() {
                 TokenType::TK_INITIALLY => {
                     self.eat_assert(&[TokenType::TK_INITIALLY]);
-                    let tok = self.eat_expect(&[TokenType::TK_DEFERRED, TokenType::TK_IMMEDIATE])?;
+                    let tok =
+                        self.eat_expect(&[TokenType::TK_DEFERRED, TokenType::TK_IMMEDIATE])?;
                     match tok.token_type.unwrap() {
                         TokenType::TK_DEFERRED => Some(InitDeferredPred::InitiallyDeferred),
                         TokenType::TK_IMMEDIATE => Some(InitDeferredPred::InitiallyImmediate),
                         _ => unreachable!(),
                     }
-                },
+                }
                 _ => None,
             },
             _ => None,
         };
-
 
         Ok(Some(DeferSubclause {
             deferrable: !has_not,
@@ -2905,7 +2948,7 @@ impl<'a> Parser<'a> {
     fn parse_reference_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
         let clause = self.parse_foreign_key_clause()?;
         let deref_clause = self.parse_defer_subclause()?;
-        Ok(ColumnConstraint::ForeignKey{
+        Ok(ColumnConstraint::ForeignKey {
             clause,
             deref_clause,
         })
@@ -2937,10 +2980,7 @@ impl<'a> Parser<'a> {
             _ => None,
         };
 
-        Ok(ColumnConstraint::Generated {
-            expr,
-            typ,
-        })
+        Ok(ColumnConstraint::Generated { expr, typ })
     }
 
     fn parse_named_column_constraints(&mut self) -> Result<Vec<NamedColumnConstraint>, Error> {
@@ -2956,68 +2996,71 @@ impl<'a> Parser<'a> {
                     }
                     _ => None,
                 },
-                _ => None
+                _ => None,
             };
 
             match self.peek()? {
                 Some(tok) => match tok.token_type.unwrap() {
                     TokenType::TK_DEFAULT => {
-                        result.push(NamedColumnConstraint { 
-                            name, 
-                            constraint: self.parse_default_column_constraint()?
+                        result.push(NamedColumnConstraint {
+                            name,
+                            constraint: self.parse_default_column_constraint()?,
                         });
                     }
                     TokenType::TK_NOT | TokenType::TK_NULL => {
-                        result.push(NamedColumnConstraint { 
-                            name, 
-                            constraint: self.parse_not_null_column_constraint()?
+                        result.push(NamedColumnConstraint {
+                            name,
+                            constraint: self.parse_not_null_column_constraint()?,
                         });
                     }
                     TokenType::TK_PRIMARY => {
-                        result.push(NamedColumnConstraint { 
-                            name, 
-                            constraint: self.parse_primary_column_constraint()?
+                        result.push(NamedColumnConstraint {
+                            name,
+                            constraint: self.parse_primary_column_constraint()?,
                         });
                     }
                     TokenType::TK_UNIQUE => {
-                        result.push(NamedColumnConstraint { 
-                            name, 
-                            constraint: self.parse_unique_column_constraint()?
+                        result.push(NamedColumnConstraint {
+                            name,
+                            constraint: self.parse_unique_column_constraint()?,
                         });
                     }
                     TokenType::TK_CHECK => {
-                        result.push(NamedColumnConstraint { 
-                            name, 
-                            constraint: self.parse_check_column_constraint()?
+                        result.push(NamedColumnConstraint {
+                            name,
+                            constraint: self.parse_check_column_constraint()?,
                         });
                     }
                     TokenType::TK_REFERENCES => {
-                        result.push(NamedColumnConstraint { 
-                            name, 
-                            constraint: self.parse_reference_column_constraint()?
+                        result.push(NamedColumnConstraint {
+                            name,
+                            constraint: self.parse_reference_column_constraint()?,
                         });
                     }
                     TokenType::TK_COLLATE => {
-                        result.push(NamedColumnConstraint { 
-                            name, 
-                            constraint: ColumnConstraint::Collate{ collation_name: self.parse_collate()?.unwrap() }
+                        result.push(NamedColumnConstraint {
+                            name,
+                            constraint: ColumnConstraint::Collate {
+                                collation_name: self.parse_collate()?.unwrap(),
+                            },
                         });
                     }
                     TokenType::TK_GENERATED | TokenType::TK_AS => {
-                        result.push(NamedColumnConstraint { 
-                            name, 
-                            constraint: self.parse_generated_column_constraint()?
+                        result.push(NamedColumnConstraint {
+                            name,
+                            constraint: self.parse_generated_column_constraint()?,
                         });
                     }
                     _ => {
                         if name.is_some() {
                             return Err(Error::Custom(
-                                "Expected a column constraint name after CONSTRAINT keyword".to_owned(),
+                                "Expected a column constraint name after CONSTRAINT keyword"
+                                    .to_owned(),
                             ));
                         }
 
-                        break
-                    },
+                        break;
+                    }
                 },
                 _ => {
                     if name.is_some() {
@@ -3026,8 +3069,8 @@ impl<'a> Parser<'a> {
                         ));
                     }
 
-                    break
-                },
+                    break;
+                }
             }
         }
 
@@ -3038,11 +3081,8 @@ impl<'a> Parser<'a> {
         self.eat_assert(&[TokenType::TK_ALTER]);
         self.eat_expect(&[TokenType::TK_TABLE])?;
         let tbl_name = self.parse_fullname(false)?;
-        let tok = self.eat_expect(&[
-            TokenType::TK_ADD,
-            TokenType::TK_DROP,
-            TokenType::TK_RENAME,
-        ])?;
+        let tok =
+            self.eat_expect(&[TokenType::TK_ADD, TokenType::TK_DROP, TokenType::TK_RENAME])?;
 
         match tok.token_type.unwrap() {
             TokenType::TK_ADD => {
@@ -3050,20 +3090,20 @@ impl<'a> Parser<'a> {
                     TokenType::TK_COLUMNKW => {
                         self.eat_assert(&[TokenType::TK_COLUMNKW]);
                     }
-                    _ => {},
+                    _ => {}
                 }
 
                 self.peek_nm()?;
                 let col_name = self.parse_nm();
                 let col_type = self.parse_type()?;
                 let constraints = self.parse_named_column_constraints()?;
-                Ok(Stmt::AlterTable { 
+                Ok(Stmt::AlterTable {
                     name: tbl_name,
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name,
                         col_type,
                         constraints,
-                    })
+                    }),
                 })
             }
             TokenType::TK_DROP => {
@@ -3071,13 +3111,13 @@ impl<'a> Parser<'a> {
                     TokenType::TK_COLUMNKW => {
                         self.eat_assert(&[TokenType::TK_COLUMNKW]);
                     }
-                    _ => {},
+                    _ => {}
                 }
 
                 self.peek_nm()?;
-                Ok(Stmt::AlterTable { 
+                Ok(Stmt::AlterTable {
                     name: tbl_name,
-                    body: AlterTableBody::DropColumn(self.parse_nm())
+                    body: AlterTableBody::DropColumn(self.parse_nm()),
                 })
             }
             TokenType::TK_RENAME => {
@@ -3087,12 +3127,10 @@ impl<'a> Parser<'a> {
                         self.peek_nm()?;
                         Some(self.parse_nm())
                     }
-                    TokenType::TK_ID |
-                    TokenType::TK_STRING |
-                    TokenType::TK_INDEXED |
-                    TokenType::TK_JOIN_KW  => {
-                        Some(self.parse_nm())
-                    }
+                    TokenType::TK_ID
+                    | TokenType::TK_STRING
+                    | TokenType::TK_INDEXED
+                    | TokenType::TK_JOIN_KW => Some(self.parse_nm()),
                     _ => None,
                 };
 
@@ -3101,17 +3139,17 @@ impl<'a> Parser<'a> {
                 let to_name = self.parse_nm();
 
                 if col_name.is_some() {
-                    Ok(Stmt::AlterTable { 
+                    Ok(Stmt::AlterTable {
                         name: tbl_name,
                         body: AlterTableBody::RenameColumn {
                             old: col_name.unwrap(),
                             new: to_name,
-                        }
+                        },
                     })
                 } else {
-                    Ok(Stmt::AlterTable { 
+                    Ok(Stmt::AlterTable {
                         name: tbl_name,
-                        body: AlterTableBody::RenameTo(to_name)
+                        body: AlterTableBody::RenameTo(to_name),
                     })
                 }
             }
@@ -6432,7 +6470,7 @@ mod tests {
                         compounds: vec![],
                     },
                     order_by: vec![],
-                    limit: Some(Limit { 
+                    limit: Some(Limit {
                         expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
                         offset: None,
                     }),
@@ -6457,7 +6495,7 @@ mod tests {
                         compounds: vec![],
                     },
                     order_by: vec![],
-                    limit: Some(Limit { 
+                    limit: Some(Limit {
                         expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
                         offset: Some(Box::new(Expr::Literal(Literal::Numeric("2".to_owned())))),
                     }),
@@ -6482,7 +6520,7 @@ mod tests {
                         compounds: vec![],
                     },
                     order_by: vec![],
-                    limit: Some(Limit { 
+                    limit: Some(Limit {
                         expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
                         offset: Some(Box::new(Expr::Literal(Literal::Numeric("2".to_owned())))),
                     }),
@@ -6759,7 +6797,7 @@ mod tests {
                                     FromClause {
                                         select: Box::new(SelectTable::Table(
                                             QualifiedName { db_name: None, name: Name::Ident("tbl_name".to_owned()), alias: None },
-                                            None, 
+                                            None,
                                             None
                                         )),
                                         joins: vec![]
@@ -7945,6 +7983,931 @@ mod tests {
                 vec![Cmd::Stmt(Stmt::Vacuum {
                     name: Some(Name::Ident("foo".to_owned())),
                     into: Some(Box::new(Expr::Literal(Literal::String("'bar'".to_owned())))),
+                })],
+            ),
+            // parse alter
+            (
+                b"ALTER TABLE foo RENAME TO bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::RenameTo(Name::Ident("bar".to_owned())),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo RENAME baz TO bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::RenameColumn {
+                        old: Name::Ident("baz".to_owned()),
+                        new: Name::Ident("bar".to_owned())
+                    },
+                })],
+            ),
+            (
+                b"ALTER TABLE foo RENAME COLUMN baz TO bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::RenameColumn {
+                        old: Name::Ident("baz".to_owned()),
+                        new: Name::Ident("bar".to_owned())
+                    },
+                })],
+            ),
+            (
+                b"ALTER TABLE foo DROP baz".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::DropColumn(Name::Ident("baz".to_owned())),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo DROP COLUMN baz".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::DropColumn(Name::Ident("baz".to_owned())),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD baz".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: None,
+                        constraints: vec![],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::Default(
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned())))
+                                ),
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT (1)".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::Default(
+                                    Box::new(Expr::Parenthesized(vec![
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    ]))
+                                ),
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT +1".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::Default(
+                                    Box::new(Expr::Unary(
+                                        UnaryOperator::Positive,
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    ))
+                                ),
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT -1".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::Default(
+                                    Box::new(Expr::Unary(
+                                        UnaryOperator::Negative,
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    ))
+                                ),
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT hello".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::Default(
+                                    Box::new(Expr::Id(Name::Ident("hello".to_owned())))
+                                ),
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER NULL".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::NotNull {
+                                    nullable: true,
+                                    conflict_clause: None,
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER NOT NULL ON CONFLICT IGNORE".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::NotNull {
+                                    nullable: false,
+                                    conflict_clause: Some(ResolveType::Ignore),
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER NOT NULL ON CONFLICT REPLACE".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::NotNull {
+                                    nullable: false,
+                                    conflict_clause: Some(ResolveType::Replace),
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER NOT NULL ON CONFLICT ROLLBACK".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::NotNull {
+                                    nullable: false,
+                                    conflict_clause: Some(ResolveType::Rollback),
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER NOT NULL OR ROLLBACK".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::NotNull {
+                                    nullable: false,
+                                    conflict_clause: Some(ResolveType::Rollback),
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER PRIMARY KEY".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::PrimaryKey {
+                                    order: None,
+                                    conflict_clause: None,
+                                    auto_increment: false,
+                                }
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER PRIMARY KEY ASC OR ROLLBACK AUTOINCREMENT".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::PrimaryKey {
+                                    order: Some(SortOrder::Asc),
+                                    conflict_clause: Some(ResolveType::Rollback),
+                                    auto_increment: true,
+                                }
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER UNIQUE".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::Unique(None),
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER UNIQUE OR ROLLBACK".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::Unique(Some(ResolveType::Rollback)),
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER CHECK (1)".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::Check(
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                ),
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER CHECK (1)".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::Check(
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                ),
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::ForeignKey {
+                                    clause: ForeignKeyClause {
+                                        tbl_name: Name::Ident("bar".to_owned()),
+                                        columns: vec![],
+                                        args: vec![]
+                                    },
+                                    deref_clause: None
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON INSERT SET NULL".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::ForeignKey {
+                                    clause: ForeignKeyClause {
+                                        tbl_name: Name::Ident("bar".to_owned()),
+                                        columns: vec![
+                                            IndexedColumn {
+                                                col_name: Name::Ident("test".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                            IndexedColumn {
+                                                col_name: Name::Ident("test_2".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                        ],
+                                        args: vec![
+                                            RefArg::Match(Name::Ident("test_3".to_owned())),
+                                            RefArg::OnInsert(RefAct::SetNull),
+                                        ]
+                                    },
+                                    deref_clause: None
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON UPDATE SET NULL".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::ForeignKey {
+                                    clause: ForeignKeyClause {
+                                        tbl_name: Name::Ident("bar".to_owned()),
+                                        columns: vec![
+                                            IndexedColumn {
+                                                col_name: Name::Ident("test".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                            IndexedColumn {
+                                                col_name: Name::Ident("test_2".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                        ],
+                                        args: vec![
+                                            RefArg::Match(Name::Ident("test_3".to_owned())),
+                                            RefArg::OnUpdate(RefAct::SetNull),
+                                        ]
+                                    },
+                                    deref_clause: None
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE SET NULL".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::ForeignKey {
+                                    clause: ForeignKeyClause {
+                                        tbl_name: Name::Ident("bar".to_owned()),
+                                        columns: vec![
+                                            IndexedColumn {
+                                                col_name: Name::Ident("test".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                            IndexedColumn {
+                                                col_name: Name::Ident("test_2".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                        ],
+                                        args: vec![
+                                            RefArg::Match(Name::Ident("test_3".to_owned())),
+                                            RefArg::OnDelete(RefAct::SetNull),
+                                        ]
+                                    },
+                                    deref_clause: None
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE SET DEFAULT".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::ForeignKey {
+                                    clause: ForeignKeyClause {
+                                        tbl_name: Name::Ident("bar".to_owned()),
+                                        columns: vec![
+                                            IndexedColumn {
+                                                col_name: Name::Ident("test".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                            IndexedColumn {
+                                                col_name: Name::Ident("test_2".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                        ],
+                                        args: vec![
+                                            RefArg::Match(Name::Ident("test_3".to_owned())),
+                                            RefArg::OnDelete(RefAct::SetDefault),
+                                        ]
+                                    },
+                                    deref_clause: None
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE CASCADE".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::ForeignKey {
+                                    clause: ForeignKeyClause {
+                                        tbl_name: Name::Ident("bar".to_owned()),
+                                        columns: vec![
+                                            IndexedColumn {
+                                                col_name: Name::Ident("test".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                            IndexedColumn {
+                                                col_name: Name::Ident("test_2".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                        ],
+                                        args: vec![
+                                            RefArg::Match(Name::Ident("test_3".to_owned())),
+                                            RefArg::OnDelete(RefAct::Cascade),
+                                        ]
+                                    },
+                                    deref_clause: None
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE RESTRICT".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::ForeignKey {
+                                    clause: ForeignKeyClause {
+                                        tbl_name: Name::Ident("bar".to_owned()),
+                                        columns: vec![
+                                            IndexedColumn {
+                                                col_name: Name::Ident("test".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                            IndexedColumn {
+                                                col_name: Name::Ident("test_2".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                        ],
+                                        args: vec![
+                                            RefArg::Match(Name::Ident("test_3".to_owned())),
+                                            RefArg::OnDelete(RefAct::Restrict),
+                                        ]
+                                    },
+                                    deref_clause: None
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE NO ACTION".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::ForeignKey {
+                                    clause: ForeignKeyClause {
+                                        tbl_name: Name::Ident("bar".to_owned()),
+                                        columns: vec![
+                                            IndexedColumn {
+                                                col_name: Name::Ident("test".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                            IndexedColumn {
+                                                col_name: Name::Ident("test_2".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                        ],
+                                        args: vec![
+                                            RefArg::Match(Name::Ident("test_3".to_owned())),
+                                            RefArg::OnDelete(RefAct::NoAction),
+                                        ]
+                                    },
+                                    deref_clause: None
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar DEFERRABLE".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::ForeignKey {
+                                    clause: ForeignKeyClause {
+                                        tbl_name: Name::Ident("bar".to_owned()),
+                                        columns: vec![],
+                                        args: vec![]
+                                    },
+                                    deref_clause: Some(DeferSubclause {
+                                        deferrable: true,
+                                        init_deferred: None,
+                                    })
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar NOT DEFERRABLE INITIALLY IMMEDIATE".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::ForeignKey {
+                                    clause: ForeignKeyClause {
+                                        tbl_name: Name::Ident("bar".to_owned()),
+                                        columns: vec![],
+                                        args: vec![]
+                                    },
+                                    deref_clause: Some(DeferSubclause {
+                                        deferrable: false,
+                                        init_deferred: Some(InitDeferredPred::InitiallyImmediate),
+                                    })
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar NOT DEFERRABLE INITIALLY DEFERRED".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::ForeignKey {
+                                    clause: ForeignKeyClause {
+                                        tbl_name: Name::Ident("bar".to_owned()),
+                                        columns: vec![],
+                                        args: vec![]
+                                    },
+                                    deref_clause: Some(DeferSubclause {
+                                        deferrable: false,
+                                        init_deferred: Some(InitDeferredPred::InitiallyDeferred),
+                                    })
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar NOT DEFERRABLE INITIALLY DEFERRED".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::ForeignKey {
+                                    clause: ForeignKeyClause {
+                                        tbl_name: Name::Ident("bar".to_owned()),
+                                        columns: vec![],
+                                        args: vec![]
+                                    },
+                                    deref_clause: Some(DeferSubclause {
+                                        deferrable: false,
+                                        init_deferred: Some(InitDeferredPred::InitiallyDeferred),
+                                    })
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER COLLATE bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::Collate {
+                                    collation_name: Name::Ident("bar".to_owned()),
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER GENERATED ALWAYS AS (1)".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::Generated {
+                                    expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    typ: None,
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER AS (1)".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::Generated {
+                                    expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    typ: None,
+                                },
+                            },
+                        ],
+                    }),
+                })],
+            ),
+            (
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER AS (1) STORED".as_slice(),
+                vec![Cmd::Stmt(Stmt::AlterTable {
+                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
+                    body: AlterTableBody::AddColumn(ColumnDefinition {
+                        col_name: Name::Ident("baz".to_owned()),
+                        col_type: Some(Type {
+                            name: "INTEGER".to_owned(),
+                            size: None,
+                        }),
+                        constraints: vec![
+                            NamedColumnConstraint {
+                                name: None,
+                                constraint: ColumnConstraint::Generated {
+                                    expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    typ: Some(Name::Ident("STORED".to_owned())),
+                                },
+                            },
+                        ],
+                    }),
                 })],
             ),
         ];
