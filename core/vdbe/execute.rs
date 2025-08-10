@@ -5217,7 +5217,13 @@ pub fn op_delete(
     pager: &Rc<Pager>,
     mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    load_insn!(Delete { cursor_id }, insn);
+    load_insn!(
+        Delete {
+            cursor_id,
+            table_name: _
+        },
+        insn
+    );
     {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_btree_mut();
