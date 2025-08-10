@@ -1840,6 +1840,17 @@ impl Connection {
         self.pager.borrow().clone()
     }
 
+    /// Union of the virtual tables that have been loaded and not used
+    /// and the vitual tables that have been loaded and used
+    pub fn get_vtab_mods(&self) -> std::collections::HashSet<String> {
+        let syms_mods = self.get_syms_vtab_mods();
+        let used_mods = self.get_used_vtab_mods();
+
+        used_mods.union(&syms_mods).cloned().collect()
+    }
+
+    /// Creates a HashSet of modules that have been used, modules that have been
+    /// loaded but not used by any virtual table will NOT be listed here
     pub fn get_used_vtab_mods(&self) -> std::collections::HashSet<String> {
         let schema = self._db.schema.lock().unwrap();
 
@@ -1880,6 +1891,15 @@ impl Connection {
             .borrow_mut()
             .wal_checkpoint(disabled, CheckpointMode::Truncate)?;
         self.pager.borrow_mut().db_file.copy_to(&*io, file)
+    /// Creates a HashSet of modules that have been loaded, but not necessarily used
+    pub fn get_syms_vtab_mods(&self) -> std::collections::HashSet<String> {
+        self.syms
+            .try_borrow()
+            .unwrap()
+            .vtab_modules
+            .keys()
+            .cloned()
+            .collect()
     }
 }
 
