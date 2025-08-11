@@ -3,6 +3,10 @@ use pprof::criterion::{Output, PProfProfiler};
 use std::{sync::Arc, time::Instant};
 use turso_core::{Database, PlatformIO};
 
+#[cfg(not(target_family = "wasm"))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 fn rusqlite_open() -> rusqlite::Connection {
     let sqlite_conn = rusqlite::Connection::open("../testing/testing.db").unwrap();
     sqlite_conn
@@ -551,14 +555,18 @@ fn bench_insert_rows(criterion: &mut Criterion) {
             sqlite_conn
                 .pragma_update(None, "journal_mode", "WAL")
                 .unwrap();
+            sqlite_conn
+                .pragma_update(None, "locking_mode", "EXCLUSIVE")
+                .unwrap();
             let journal_mode = sqlite_conn
                 .pragma_query_value(None, "journal_mode", |row| row.get::<_, String>(0))
                 .unwrap();
             assert_eq!(journal_mode.to_lowercase(), "wal");
             let synchronous = sqlite_conn
-                .pragma_query_value(None, "synchronous", |row| row.get::<_, String>(0))
+                .pragma_query_value(None, "synchronous", |row| row.get::<_, usize>(0))
                 .unwrap();
-            assert_eq!(synchronous.to_lowercase(), "full");
+            const FULL: usize = 2;
+            assert_eq!(synchronous, FULL);
 
             // Create test table
             sqlite_conn
@@ -566,11 +574,6 @@ fn bench_insert_rows(criterion: &mut Criterion) {
                 .unwrap();
             sqlite_conn
                 .pragma_update(None, "locking_mode", "EXCLUSIVE")
-                .unwrap();
-
-            // Create test table
-            sqlite_conn
-                .execute("CREATE TABLE test (id INTEGER, value TEXT)", [])
                 .unwrap();
 
             group.bench_function(format!("sqlite_insert_{batch_size}_rows"), |b| {

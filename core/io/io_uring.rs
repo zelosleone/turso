@@ -5,6 +5,7 @@ use crate::io::clock::{Clock, Instant};
 use crate::storage::wal::CKPT_BATCH_PAGES;
 use crate::{turso_assert, LimboError, MemoryIO, Result};
 use rustix::fs::{self, FlockOperation, OFlags};
+use std::ptr::NonNull;
 use std::{
     cell::RefCell,
     collections::{HashMap, VecDeque},
@@ -32,13 +33,16 @@ const FILES: u32 = 8;
 const IOVEC_POOL_SIZE: usize = 64;
 
 /// Maximum number of iovec entries per writev operation.
-/// IOV_MAX is typically 1024, but we limit it to a smaller number
+/// IOV_MAX is typically 1024
 const MAX_IOVEC_ENTRIES: usize = CKPT_BATCH_PAGES;
 
 /// Maximum number of I/O operations to wait for in a single run,
 /// waiting for > 1 can reduce the amount of `io_uring_enter` syscalls we
 /// make, but can increase single operation latency.
 const MAX_WAIT: usize = 4;
+
+/// One memory arena for DB pages and another for WAL frames
+const ARENA_COUNT: usize = 2;
 
 pub struct UringIO {
     inner: Rc<RefCell<InnerUringIO>>,
@@ -57,6 +61,7 @@ struct WrappedIOUring {
 struct InnerUringIO {
     ring: WrappedIOUring,
     free_files: VecDeque<u32>,
+    free_arenas: [Option<(NonNull<u8>, usize)>; ARENA_COUNT],
 }
 
 /// preallocated vec of iovec arrays to avoid allocations during writev operations
@@ -108,7 +113,8 @@ impl UringIO {
         // RL_MEMLOCK cap is typically 8MB, the current design is to have one large arena
         // registered at startup and therefore we can simply use the zero index, falling back
         // to similar logic as the existing buffer pool for cases where it is over capacity.
-        ring.submitter().register_buffers_sparse(1)?;
+        ring.submitter()
+            .register_buffers_sparse(ARENA_COUNT as u32)?;
         let inner = InnerUringIO {
             ring: WrappedIOUring {
                 ring,
@@ -117,6 +123,7 @@ impl UringIO {
                 iov_pool: IovecPool::new(),
             },
             free_files: (0..FILES).collect(),
+            free_arenas: [const { None }; ARENA_COUNT],
         };
         debug!("Using IO backend 'io-uring'");
         Ok(Self {
@@ -263,6 +270,18 @@ impl InnerUringIO {
         self.free_files.push_back(id);
         Ok(())
     }
+
+    #[cfg(debug_assertions)]
+    fn debug_check_fixed(&self, idx: u32, ptr: *const u8, len: usize) {
+        let (base, blen) = self.free_arenas[idx as usize].expect("slot not registered");
+        let start = base.as_ptr() as usize;
+        let end = start + blen;
+        let p = ptr as usize;
+        turso_assert!(
+            p >= start && p + len <= end,
+            "Fixed operation, pointer out of registered range"
+        );
+    }
 }
 
 impl WrappedIOUring {
@@ -333,21 +352,34 @@ impl WrappedIOUring {
                 break;
             }
         }
+        // If we have coalesced everything into a single iovec, submit as a single`pwrite`
         if iov_count == 1 {
-            // If we have coalesced everything into a single iovec, submit as a single`pwrite`
             let entry = with_fd!(st.file_id, |fd| {
-                io_uring::opcode::Write::new(
-                    fd,
-                    iov_allocation[0].iov_base as *const u8,
-                    iov_allocation[0].iov_len as u32,
-                )
-                .offset(st.file_pos as u64)
-                .build()
-                .user_data(key)
+                if let Some(id) = st.bufs[st.current_buffer_idx].fixed_id() {
+                    io_uring::opcode::WriteFixed::new(
+                        fd,
+                        iov_allocation[0].iov_base as *const u8,
+                        iov_allocation[0].iov_len as u32,
+                        id as u16,
+                    )
+                    .offset(st.file_pos as u64)
+                    .build()
+                    .user_data(key)
+                } else {
+                    io_uring::opcode::Write::new(
+                        fd,
+                        iov_allocation[0].iov_base as *const u8,
+                        iov_allocation[0].iov_len as u32,
+                    )
+                    .offset(st.file_pos as u64)
+                    .build()
+                    .user_data(key)
+                }
             });
             self.submit_entry(&entry);
             return;
         }
+
         // Store the pointers and get the pointer to the iovec array that we pass
         // to the writev operation, and keep the array itself alive
         let ptr = iov_allocation.as_ptr() as *mut libc::iovec;
@@ -477,16 +509,20 @@ impl IO for UringIO {
         Arc::new(MemoryIO::new())
     }
 
-    fn register_fixed_buffer(&self, ptr: std::ptr::NonNull<u8>, len: usize) -> Result<()> {
+    fn register_fixed_buffer(&self, ptr: std::ptr::NonNull<u8>, len: usize) -> Result<u32> {
         turso_assert!(
             len % 512 == 0,
             "fixed buffer length must be logical block aligned"
         );
-        let inner = self.inner.borrow_mut();
-        let default_id = 0;
+        let mut inner = self.inner.borrow_mut();
+        let slot = inner
+            .free_arenas
+            .iter()
+            .position(|e| e.is_none())
+            .ok_or_else(|| LimboError::UringIOError("no free fixed buffer slots".into()))?;
         unsafe {
             inner.ring.ring.submitter().register_buffers_update(
-                default_id,
+                slot as u32,
                 &[libc::iovec {
                     iov_base: ptr.as_ptr() as *mut libc::c_void,
                     iov_len: len,
@@ -494,7 +530,8 @@ impl IO for UringIO {
                 None,
             )?
         };
-        Ok(())
+        inner.free_arenas[slot] = Some((ptr, len));
+        Ok(slot as u32)
     }
 }
 
@@ -540,7 +577,6 @@ impl UringFile {
         self.id
     }
 }
-
 unsafe impl Send for UringFile {}
 unsafe impl Sync for UringFile {}
 
@@ -584,17 +620,35 @@ impl File for UringFile {
 
     fn pread(&self, pos: usize, c: Completion) -> Result<Completion> {
         let r = c.as_read();
-        trace!("pread(pos = {}, length = {})", pos, r.buf().len());
         let mut io = self.io.borrow_mut();
         let read_e = {
             let buf = r.buf();
+            let ptr = buf.as_mut_ptr();
             let len = buf.len();
-            let buf = buf.as_mut_ptr();
             with_fd!(self, |fd| {
-                io_uring::opcode::Read::new(fd, buf, len as u32)
-                    .offset(pos as u64)
-                    .build()
-                    .user_data(get_key(c.clone()))
+                if let Some(idx) = buf.fixed_id() {
+                    trace!(
+                        "pread_fixed(pos = {}, length = {}, idx = {})",
+                        pos,
+                        len,
+                        idx
+                    );
+                    #[cfg(debug_assertions)]
+                    {
+                        io.debug_check_fixed(idx, ptr, len);
+                    }
+                    io_uring::opcode::ReadFixed::new(fd, ptr, len as u32, idx as u16)
+                        .offset(pos as u64)
+                        .build()
+                        .user_data(get_key(c.clone()))
+                } else {
+                    trace!("pread(pos = {}, length = {})", pos, len);
+                    // Use Read opcode if fixed buffer is not available
+                    io_uring::opcode::Read::new(fd, buf.as_mut_ptr(), len as u32)
+                        .offset(pos as u64)
+                        .build()
+                        .user_data(get_key(c.clone()))
+                }
             })
         };
         io.ring.submit_entry(&read_e);
@@ -604,12 +658,31 @@ impl File for UringFile {
     fn pwrite(&self, pos: usize, buffer: Arc<crate::Buffer>, c: Completion) -> Result<Completion> {
         let mut io = self.io.borrow_mut();
         let write = {
-            trace!("pwrite(pos = {}, length = {})", pos, buffer.len());
+            let ptr = buffer.as_ptr();
+            let len = buffer.len();
             with_fd!(self, |fd| {
-                io_uring::opcode::Write::new(fd, buffer.as_ptr(), buffer.len() as u32)
-                    .offset(pos as u64)
-                    .build()
-                    .user_data(get_key(c.clone()))
+                if let Some(idx) = buffer.fixed_id() {
+                    trace!(
+                        "pwrite_fixed(pos = {}, length = {}, idx= {})",
+                        pos,
+                        len,
+                        idx
+                    );
+                    #[cfg(debug_assertions)]
+                    {
+                        io.debug_check_fixed(idx, ptr, len);
+                    }
+                    io_uring::opcode::WriteFixed::new(fd, ptr, len as u32, idx as u16)
+                        .offset(pos as u64)
+                        .build()
+                        .user_data(get_key(c.clone()))
+                } else {
+                    trace!("pwrite(pos = {}, length = {})", pos, buffer.len());
+                    io_uring::opcode::Write::new(fd, ptr, len as u32)
+                        .offset(pos as u64)
+                        .build()
+                        .user_data(get_key(c.clone()))
+                }
             })
         };
         io.ring.submit_entry(&write);

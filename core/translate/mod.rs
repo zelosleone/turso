@@ -34,6 +34,7 @@ pub(crate) mod subquery;
 pub(crate) mod transaction;
 pub(crate) mod update;
 mod values;
+pub(crate) mod view;
 
 use crate::schema::Schema;
 use crate::storage::pager::Pager;
@@ -51,7 +52,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tracing::{instrument, Level};
 use transaction::{translate_tx_begin, translate_tx_commit};
-use turso_sqlite3_parser::ast::{self, Delete, Insert};
+use turso_sqlite3_parser::ast::{self, Delete, Indexed, Insert};
 use update::translate_update;
 
 #[instrument(skip_all, level = Level::DEBUG)]
@@ -127,10 +128,15 @@ pub fn translate_inner(
             | ast::Stmt::Delete(..)
             | ast::Stmt::DropIndex { .. }
             | ast::Stmt::DropTable { .. }
+            | ast::Stmt::DropView { .. }
             | ast::Stmt::Reindex { .. }
             | ast::Stmt::Update(..)
             | ast::Stmt::Insert(..)
     );
+
+    if is_write && connection.get_query_only() {
+        bail_parse_error!("Cannot execute write statement in query_only mode")
+    }
 
     let is_select = matches!(stmt, ast::Stmt::Select { .. });
 
@@ -152,16 +158,21 @@ pub fn translate_inner(
             idx_name,
             tbl_name,
             columns,
-            ..
-        } => translate_create_index(
-            (unique, if_not_exists),
-            idx_name.name.as_str(),
-            tbl_name.as_str(),
-            &columns,
-            schema,
-            syms,
-            program,
-        )?,
+            where_clause,
+        } => {
+            if where_clause.is_some() {
+                bail_parse_error!("Partial indexes are not supported");
+            }
+            translate_create_index(
+                (unique, if_not_exists),
+                idx_name.name.as_str(),
+                tbl_name.as_str(),
+                &columns,
+                schema,
+                syms,
+                program,
+            )?
+        }
         ast::Stmt::CreateTable {
             temporary,
             if_not_exists,
@@ -177,7 +188,16 @@ pub fn translate_inner(
             program,
         )?,
         ast::Stmt::CreateTrigger { .. } => bail_parse_error!("CREATE TRIGGER not supported yet"),
-        ast::Stmt::CreateView { .. } => bail_parse_error!("CREATE VIEW not supported yet"),
+        ast::Stmt::CreateView {
+            view_name, select, ..
+        } => view::translate_create_view(
+            schema,
+            view_name.name.as_str(),
+            &select,
+            connection.clone(),
+            syms,
+            program,
+        )?,
         ast::Stmt::CreateVirtualTable(vtab) => {
             translate_create_virtual_table(*vtab, schema, syms, program)?
         }
@@ -187,8 +207,19 @@ pub fn translate_inner(
                 where_clause,
                 limit,
                 returning,
-                ..
+                indexed,
+                order_by,
+                with,
             } = *delete;
+            if with.is_some() {
+                bail_parse_error!("WITH clause is not supported in DELETE");
+            }
+            if indexed.is_some_and(|i| matches!(i, Indexed::IndexedBy(_))) {
+                bail_parse_error!("INDEXED BY clause is not supported in DELETE");
+            }
+            if order_by.is_some() {
+                bail_parse_error!("ORDER BY clause is not supported in DELETE");
+            }
             translate_delete(
                 schema,
                 &tbl_name,
@@ -210,7 +241,16 @@ pub fn translate_inner(
             tbl_name,
         } => translate_drop_table(tbl_name, if_exists, schema, syms, program)?,
         ast::Stmt::DropTrigger { .. } => bail_parse_error!("DROP TRIGGER not supported yet"),
-        ast::Stmt::DropView { .. } => bail_parse_error!("DROP VIEW not supported yet"),
+        ast::Stmt::DropView {
+            if_exists,
+            view_name,
+        } => view::translate_drop_view(
+            schema,
+            view_name.name.as_str(),
+            if_exists,
+            connection.clone(),
+            program,
+        )?,
         ast::Stmt::Pragma(..) => {
             bail_parse_error!("PRAGMA statement cannot be evaluated in a nested context")
         }

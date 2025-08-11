@@ -1,10 +1,13 @@
-use crate::Result;
+use crate::storage::buffer_pool::ArenaBuffer;
+use crate::storage::sqlite3_ondisk::WAL_FRAME_HEADER_SIZE;
+use crate::{BufferPool, Result};
 use bitflags::bitflags;
 use cfg_block::cfg_block;
+use std::cell::RefCell;
 use std::fmt;
 use std::ptr::NonNull;
 use std::sync::Arc;
-use std::{cell::Cell, fmt::Debug, mem::ManuallyDrop, pin::Pin, rc::Rc};
+use std::{cell::Cell, fmt::Debug, pin::Pin};
 
 pub trait File: Send + Sync {
     fn lock_file(&self, exclusive: bool) -> Result<()>;
@@ -17,6 +20,9 @@ pub trait File: Send + Sync {
         if buffers.is_empty() {
             c.complete(0);
             return Ok(c);
+        }
+        if buffers.len() == 1 {
+            return self.pwrite(pos, buffers[0].clone(), c);
         }
         // naive default implementation can be overridden on backends where it makes sense to
         let mut pos = pos;
@@ -52,6 +58,43 @@ pub trait File: Send + Sync {
     }
     fn size(&self) -> Result<u64>;
     fn truncate(&self, len: usize, c: Completion) -> Result<Completion>;
+    fn copy_to(&self, io: &dyn IO, path: &str) -> Result<()> {
+        // Open or create the destination file
+        let dest_file = io.open_file(path, OpenFlags::Create, false)?;
+        // Get the size of the source file
+        let file_size = self.size()? as usize;
+        if file_size == 0 {
+            return Ok(());
+        }
+
+        // use 1MB chunk size
+        const BUFFER_SIZE: usize = 1024 * 1024;
+        let mut pos = 0;
+
+        while pos < file_size {
+            let chunk_size = (file_size - pos).min(BUFFER_SIZE);
+            // Read from source
+            let read_buffer = Arc::new(Buffer::new_temporary(chunk_size));
+            let read_completion = self.pread(
+                pos,
+                Completion::new_read(read_buffer.clone(), move |_, _| {}),
+            )?;
+
+            // Wait for read to complete
+            io.wait_for_completion(read_completion)?;
+
+            // Write to destination
+            let write_completion =
+                dest_file.pwrite(pos, read_buffer, Completion::new_write(|_| {}))?;
+            io.wait_for_completion(write_completion)?;
+
+            pos += chunk_size;
+        }
+        let sync_completion = dest_file.sync(Completion::new_sync(|_| {}))?;
+        io.wait_for_completion(sync_completion)?;
+
+        Ok(())
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -82,7 +125,7 @@ pub trait IO: Clock + Send + Sync {
 
     fn get_memory_io(&self) -> Arc<MemoryIO>;
 
-    fn register_fixed_buffer(&self, _ptr: NonNull<u8>, _len: usize) -> Result<()> {
+    fn register_fixed_buffer(&self, _ptr: NonNull<u8>, _len: usize) -> Result<u32> {
         Err(crate::LimboError::InternalError(
             "unsupported operation".to_string(),
         ))
@@ -253,62 +296,164 @@ impl TruncateCompletion {
     }
 }
 
-pub type BufferData = Pin<Vec<u8>>;
+pub type BufferData = Pin<Box<[u8]>>;
 
-pub type BufferDropFn = Rc<dyn Fn(BufferData)>;
-
-pub struct Buffer {
-    data: ManuallyDrop<BufferData>,
-    drop: BufferDropFn,
+pub enum Buffer {
+    Heap(BufferData),
+    Pooled(ArenaBuffer),
 }
 
 impl Debug for Buffer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{:?}", self.data)
+        match self {
+            Self::Pooled(p) => write!(f, "{p:?}"),
+            Self::Heap(buf) => write!(f, "{buf:?}: {}", buf.len()),
+        }
     }
 }
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        let data = unsafe { ManuallyDrop::take(&mut self.data) };
-        (self.drop)(data);
+        let len = self.len();
+        if let Self::Heap(buf) = self {
+            TEMP_BUFFER_CACHE.with(|cache| {
+                let mut cache = cache.borrow_mut();
+                // take ownership of the buffer by swapping it with a dummy
+                let buffer = std::mem::replace(buf, Pin::new(vec![].into_boxed_slice()));
+                cache.return_buffer(buffer, len);
+            });
+        }
     }
 }
 
 impl Buffer {
-    pub fn allocate(size: usize, drop: BufferDropFn) -> Self {
-        let data = ManuallyDrop::new(Pin::new(vec![0; size]));
-        Self { data, drop }
+    pub fn new(data: Vec<u8>) -> Self {
+        tracing::trace!("buffer::new({:?})", data);
+        Self::Heap(Pin::new(data.into_boxed_slice()))
     }
 
-    pub fn new(data: BufferData, drop: BufferDropFn) -> Self {
-        let data = ManuallyDrop::new(data);
-        Self { data, drop }
+    /// Returns the index of the underlying `Arena` if it was registered with
+    /// io_uring. Only for use with `UringIO` backend.
+    pub fn fixed_id(&self) -> Option<u32> {
+        match self {
+            Self::Heap { .. } => None,
+            Self::Pooled(buf) => buf.fixed_id(),
+        }
+    }
+
+    pub fn new_pooled(buf: ArenaBuffer) -> Self {
+        tracing::trace!("new_pooled({:?})", buf);
+        Self::Pooled(buf)
+    }
+
+    pub fn new_temporary(size: usize) -> Self {
+        TEMP_BUFFER_CACHE.with(|cache| {
+            if let Some(buffer) = cache.borrow_mut().get_buffer(size) {
+                Self::Heap(buffer)
+            } else {
+                Self::Heap(Pin::new(vec![0; size].into_boxed_slice()))
+            }
+        })
     }
 
     pub fn len(&self) -> usize {
-        self.data.len()
+        match self {
+            Self::Heap(buf) => buf.len(),
+            Self::Pooled(buf) => buf.logical_len(),
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.data.is_empty()
+        self.len() == 0
     }
 
     pub fn as_slice(&self) -> &[u8] {
-        &self.data
+        match self {
+            Self::Heap(buf) => {
+                // SAFETY: The buffer is guaranteed to be valid for the lifetime of the slice
+                unsafe { std::slice::from_raw_parts(buf.as_ptr(), buf.len()) }
+            }
+            Self::Pooled(buf) => buf,
+        }
     }
 
     #[allow(clippy::mut_from_ref)]
     pub fn as_mut_slice(&self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.as_mut_ptr(), self.data.len()) }
+        unsafe { std::slice::from_raw_parts_mut(self.as_mut_ptr(), self.len()) }
     }
-
+    #[inline]
     pub fn as_ptr(&self) -> *const u8 {
-        self.data.as_ptr()
+        match self {
+            Self::Heap(buf) => buf.as_ptr(),
+            Self::Pooled(buf) => buf.as_ptr(),
+        }
+    }
+    #[inline]
+    pub fn as_mut_ptr(&self) -> *mut u8 {
+        match self {
+            Self::Heap(buf) => buf.as_ptr() as *mut u8,
+            Self::Pooled(buf) => buf.as_ptr() as *mut u8,
+        }
+    }
+}
+
+thread_local! {
+    /// thread local cache to re-use temporary buffers to prevent churn when pool overflows
+    pub static TEMP_BUFFER_CACHE: RefCell<TempBufferCache> = RefCell::new(TempBufferCache::new());
+}
+
+/// A cache for temporary or any additional `Buffer` allocations beyond
+/// what the `BufferPool` has room for, or for use before the pool is
+/// fully initialized.
+pub(crate) struct TempBufferCache {
+    /// The `[Database::page_size]` at the time the cache is initiated.
+    page_size: usize,
+    /// Cache of buffers of size `self.page_size`.
+    page_buffers: Vec<BufferData>,
+    /// Cache of buffers of size `self.page_size` + WAL_FRAME_HEADER_SIZE.
+    wal_frame_buffers: Vec<BufferData>,
+    /// Maximum number of buffers that will live in each cache.
+    max_cached: usize,
+}
+
+impl TempBufferCache {
+    const DEFAULT_MAX_CACHE_SIZE: usize = 256;
+
+    fn new() -> Self {
+        Self {
+            page_size: BufferPool::DEFAULT_PAGE_SIZE,
+            page_buffers: Vec::with_capacity(8),
+            wal_frame_buffers: Vec::with_capacity(8),
+            max_cached: Self::DEFAULT_MAX_CACHE_SIZE,
+        }
     }
 
-    pub fn as_mut_ptr(&self) -> *mut u8 {
-        self.data.as_ptr() as *mut u8
+    /// If the `[Database::page_size]` is set, any temporary buffers that might
+    /// exist prior need to be cleared and new `page_size` needs to be saved.
+    pub fn reinit_cache(&mut self, page_size: usize) {
+        self.page_buffers.clear();
+        self.wal_frame_buffers.clear();
+        self.page_size = page_size;
+    }
+
+    fn get_buffer(&mut self, size: usize) -> Option<BufferData> {
+        match size {
+            sz if sz == self.page_size => self.page_buffers.pop(),
+            sz if sz == (self.page_size + WAL_FRAME_HEADER_SIZE) => self.wal_frame_buffers.pop(),
+            _ => None,
+        }
+    }
+
+    fn return_buffer(&mut self, buff: BufferData, len: usize) {
+        let sz = self.page_size;
+        let cache = match len {
+            n if n.eq(&sz) => &mut self.page_buffers,
+            n if n.eq(&(sz + WAL_FRAME_HEADER_SIZE)) => &mut self.wal_frame_buffers,
+            _ => return,
+        };
+        if self.max_cached > cache.len() {
+            cache.push(buff);
+        }
     }
 }
 

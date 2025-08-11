@@ -1804,6 +1804,8 @@ pub enum PragmaName {
     DatabaseList,
     /// Encoding - only support utf8
     Encoding,
+    /// Current free page count.
+    FreelistCount,
     /// Run integrity check on the database file
     IntegrityCheck,
     /// `journal_mode` pragma
@@ -1816,6 +1818,8 @@ pub enum PragmaName {
     PageCount,
     /// Return the page size of the database in bytes.
     PageSize,
+    /// make connection query only
+    QueryOnly,
     /// Returns schema version of the database file.
     SchemaVersion,
     /// returns information about the columns of a table

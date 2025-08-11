@@ -4,7 +4,7 @@
 use chrono::Datelike;
 use std::rc::Rc;
 use std::sync::Arc;
-use turso_sqlite3_parser::ast::{self, ColumnDefinition, Expr};
+use turso_sqlite3_parser::ast::{self, ColumnDefinition, Expr, Literal, Name};
 use turso_sqlite3_parser::ast::{PragmaName, QualifiedName};
 
 use crate::pragma::pragma_for;
@@ -292,6 +292,22 @@ fn update_pragma(
             Ok((program, TransactionMode::Write))
         }
         PragmaName::DatabaseList => unreachable!("database_list cannot be set"),
+        PragmaName::QueryOnly => query_pragma(
+            PragmaName::QueryOnly,
+            schema,
+            Some(value),
+            pager,
+            connection,
+            program,
+        ),
+        PragmaName::FreelistCount => query_pragma(
+            PragmaName::FreelistCount,
+            schema,
+            Some(value),
+            pager,
+            connection,
+            program,
+        ),
     }
 }
 
@@ -411,46 +427,19 @@ fn query_pragma(
             Ok((program, TransactionMode::Read))
         }
         PragmaName::TableInfo => {
-            let table = match value {
-                Some(ast::Expr::Name(name)) => {
-                    let tbl = normalize_ident(name.as_str());
-                    schema.get_table(&tbl)
-                }
+            let name = match value {
+                Some(ast::Expr::Name(name)) => Some(normalize_ident(name.as_str())),
                 _ => None,
             };
 
             let base_reg = register;
             program.alloc_registers(5);
-            if let Some(table) = table {
-                // According to the SQLite documentation: "The 'cid' column should not be taken to
-                // mean more than 'rank within the current result set'."
-                // Therefore, we enumerate only after filtering out hidden columns.
-                for (i, column) in table.columns().iter().filter(|col| !col.hidden).enumerate() {
-                    // cid
-                    program.emit_int(i as i64, base_reg);
-                    // name
-                    program.emit_string8(column.name.clone().unwrap_or_default(), base_reg + 1);
-
-                    // type
-                    program.emit_string8(column.ty_str.clone(), base_reg + 2);
-
-                    // notnull
-                    program.emit_bool(column.notnull, base_reg + 3);
-
-                    // dflt_value
-                    match &column.default {
-                        None => {
-                            program.emit_null(base_reg + 4, None);
-                        }
-                        Some(expr) => {
-                            program.emit_string8(expr.to_string(), base_reg + 4);
-                        }
-                    }
-
-                    // pk
-                    program.emit_bool(column.primary_key, base_reg + 5);
-
-                    program.emit_result_row(base_reg, 6);
+            if let Some(name) = name {
+                if let Some(table) = schema.get_table(&name) {
+                    emit_columns_for_table_info(&mut program, table.columns(), base_reg);
+                } else if let Some(view_mutex) = schema.get_view(&name) {
+                    let view = view_mutex.lock().unwrap();
+                    emit_columns_for_table_info(&mut program, &view.columns, base_reg);
                 }
             }
             let col_names = ["cid", "name", "type", "notnull", "dflt_value", "pk"];
@@ -527,6 +516,80 @@ fn query_pragma(
             program.add_pragma_result_column(pragma.columns[1].to_string());
             Ok((program, TransactionMode::Read))
         }
+        PragmaName::QueryOnly => {
+            if let Some(value_expr) = value {
+                let is_query_only = match value_expr {
+                    ast::Expr::Literal(Literal::Numeric(i)) => i.parse::<i64>().unwrap() != 0,
+                    ast::Expr::Literal(Literal::String(ref s))
+                    | ast::Expr::Name(Name::Ident(ref s)) => {
+                        let s = s.to_lowercase();
+                        s == "1" || s == "on" || s == "true"
+                    }
+                    _ => {
+                        return Err(LimboError::ParseError(format!(
+                            "Invalid value for PRAGMA query_only: {value_expr:?}"
+                        )));
+                    }
+                };
+                connection.set_query_only(is_query_only);
+                return Ok((program, TransactionMode::None));
+            };
+
+            let register = program.alloc_register();
+            let is_query_only = connection.get_query_only();
+            program.emit_int(is_query_only as i64, register);
+            program.emit_result_row(register, 1);
+            program.add_pragma_result_column(pragma.to_string());
+
+            Ok((program, TransactionMode::None))
+        }
+        PragmaName::FreelistCount => {
+            let value = pager.freepage_list();
+            let register = program.alloc_register();
+            program.emit_int(value as i64, register);
+            program.emit_result_row(register, 1);
+            program.add_pragma_result_column(pragma.to_string());
+            Ok((program, TransactionMode::None))
+        }
+    }
+}
+
+/// Helper function to emit column information for PRAGMA table_info
+/// Used by both tables and views since they now have the same column emission logic
+fn emit_columns_for_table_info(
+    program: &mut ProgramBuilder,
+    columns: &[crate::schema::Column],
+    base_reg: usize,
+) {
+    // According to the SQLite documentation: "The 'cid' column should not be taken to
+    // mean more than 'rank within the current result set'."
+    // Therefore, we enumerate only after filtering out hidden columns.
+    for (i, column) in columns.iter().filter(|col| !col.hidden).enumerate() {
+        // cid
+        program.emit_int(i as i64, base_reg);
+        // name
+        program.emit_string8(column.name.clone().unwrap_or_default(), base_reg + 1);
+
+        // type
+        program.emit_string8(column.ty_str.clone(), base_reg + 2);
+
+        // notnull
+        program.emit_bool(column.notnull, base_reg + 3);
+
+        // dflt_value
+        match &column.default {
+            None => {
+                program.emit_null(base_reg + 4, None);
+            }
+            Some(expr) => {
+                program.emit_string8(expr.to_string(), base_reg + 4);
+            }
+        }
+
+        // pk
+        program.emit_bool(column.primary_key, base_reg + 5);
+
+        program.emit_result_row(base_reg, 6);
     }
 }
 

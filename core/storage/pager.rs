@@ -1,15 +1,18 @@
 use crate::result::LimboResult;
-use crate::storage::btree::BTreePageInner;
-use crate::storage::buffer_pool::BufferPool;
-use crate::storage::database::DatabaseStorage;
-use crate::storage::sqlite3_ondisk::{
-    self, parse_wal_frame_header, DatabaseHeader, PageContent, PageSize, PageType,
+use crate::storage::{
+    btree::BTreePageInner,
+    buffer_pool::BufferPool,
+    database::DatabaseStorage,
+    sqlite3_ondisk::{
+        self, parse_wal_frame_header, DatabaseHeader, PageContent, PageSize, PageType,
+    },
+    wal::{CheckpointResult, Wal},
 };
-use crate::storage::wal::{CheckpointResult, Wal};
-use crate::types::{IOResult, WalFrameInfo};
 use crate::util::IOExt as _;
-use crate::{return_if_io, Completion, TransactionState};
-use crate::{turso_assert, Buffer, Connection, LimboError, Result};
+use crate::{
+    return_if_io, turso_assert, types::WalFrameInfo, Completion, Connection, IOResult, LimboError,
+    Result, TransactionState,
+};
 use parking_lot::RwLock;
 use std::cell::{Cell, OnceCell, RefCell, UnsafeCell};
 use std::collections::HashSet;
@@ -787,7 +790,7 @@ impl Pager {
                 )?;
 
                 turso_assert!(
-                    ptrmap_page.get().id == ptrmap_pg_no as usize,
+                    ptrmap_page.get().id == ptrmap_pg_no,
                     "ptrmap page has unexpected number"
                 );
                 self.add_dirty(&ptrmap_page);
@@ -1622,6 +1625,12 @@ impl Pager {
         Ok(checkpoint_result)
     }
 
+    pub fn freepage_list(&self) -> u32 {
+        self.io
+            .block(|| HeaderRefMut::from_pager(self))
+            .map(|header_ref| header_ref.borrow_mut().freelist_pages.into())
+            .unwrap_or(0)
+    }
     // Providing a page is optional, if provided it will be used to avoid reading the page from disk.
     // This is implemented in accordance with sqlite freepage2() function.
     #[instrument(skip_all, level = Level::DEBUG)]
@@ -1696,7 +1705,7 @@ impl Pager {
 
                     let trunk_page_contents = trunk_page.get().contents.as_ref().unwrap();
                     let number_of_leaf_pages =
-                        trunk_page_contents.read_u32(TRUNK_PAGE_LEAF_COUNT_OFFSET);
+                        trunk_page_contents.read_u32_no_offset(TRUNK_PAGE_LEAF_COUNT_OFFSET);
 
                     // Reserve 2 slots for the trunk page header which is 8 bytes or 2*LEAF_ENTRY_SIZE
                     let max_free_list_entries =
@@ -1709,9 +1718,11 @@ impl Pager {
                         );
                         self.add_dirty(trunk_page);
 
-                        trunk_page_contents
-                            .write_u32(TRUNK_PAGE_LEAF_COUNT_OFFSET, number_of_leaf_pages + 1);
-                        trunk_page_contents.write_u32(
+                        trunk_page_contents.write_u32_no_offset(
+                            TRUNK_PAGE_LEAF_COUNT_OFFSET,
+                            number_of_leaf_pages + 1,
+                        );
+                        trunk_page_contents.write_u32_no_offset(
                             TRUNK_PAGE_HEADER_SIZE
                                 + (number_of_leaf_pages as usize * LEAF_ENTRY_SIZE),
                             page_id as u32,
@@ -1733,9 +1744,9 @@ impl Pager {
 
                     let contents = page.get().contents.as_mut().unwrap();
                     // Point to previous trunk
-                    contents.write_u32(TRUNK_PAGE_NEXT_PAGE_OFFSET, trunk_page_id);
+                    contents.write_u32_no_offset(TRUNK_PAGE_NEXT_PAGE_OFFSET, trunk_page_id);
                     // Zero leaf count
-                    contents.write_u32(TRUNK_PAGE_LEAF_COUNT_OFFSET, 0);
+                    contents.write_u32_no_offset(TRUNK_PAGE_LEAF_COUNT_OFFSET, 0);
                     // Update page 1 to point to new trunk
                     header.freelist_trunk_page = (page_id as u32).into();
                     break;
@@ -1761,6 +1772,8 @@ impl Pager {
                 if let Some(size) = self.page_size.get() {
                     default_header.page_size = PageSize::new(size).expect("page size");
                 }
+                self.buffer_pool
+                    .finalize_with_page_size(default_header.page_size.get() as usize)?;
                 let page = allocate_new_page(1, &self.buffer_pool, 0);
 
                 let contents = page.get_contents();
@@ -1904,9 +1917,9 @@ impl Pager {
                     );
                     let page_contents = trunk_page.get().contents.as_ref().unwrap();
                     let next_trunk_page_id =
-                        page_contents.read_u32(FREELIST_TRUNK_OFFSET_NEXT_TRUNK);
+                        page_contents.read_u32_no_offset(FREELIST_TRUNK_OFFSET_NEXT_TRUNK);
                     let number_of_freelist_leaves =
-                        page_contents.read_u32(FREELIST_TRUNK_OFFSET_LEAF_COUNT);
+                        page_contents.read_u32_no_offset(FREELIST_TRUNK_OFFSET_LEAF_COUNT);
 
                     // There are leaf pointers on this trunk page, so we can reuse one of the pages
                     // for the allocation.
@@ -1968,7 +1981,7 @@ impl Pager {
                     );
                     let page_contents = trunk_page.get().contents.as_ref().unwrap();
                     let next_leaf_page_id =
-                        page_contents.read_u32(FREELIST_TRUNK_OFFSET_FIRST_LEAF);
+                        page_contents.read_u32_no_offset(FREELIST_TRUNK_OFFSET_FIRST_LEAF);
                     let (leaf_page, _c) = self.read_page(next_leaf_page_id as usize)?;
                     if leaf_page.is_locked() {
                         return Ok(IOResult::IO);
@@ -2007,7 +2020,7 @@ impl Pager {
                         );
                     }
                     // write the new leaf count
-                    page_contents.write_u32(
+                    page_contents.write_u32_no_offset(
                         FREELIST_TRUNK_OFFSET_LEAF_COUNT,
                         remaining_leaves_count as u32,
                     );
@@ -2149,12 +2162,8 @@ impl Pager {
 pub fn allocate_new_page(page_id: usize, buffer_pool: &Arc<BufferPool>, offset: usize) -> PageRef {
     let page = Arc::new(Page::new(page_id));
     {
-        let buffer = buffer_pool.get();
-        let bp = buffer_pool.clone();
-        let drop_fn = Rc::new(move |buf| {
-            bp.put(buf);
-        });
-        let buffer = Arc::new(Buffer::new(buffer, drop_fn));
+        let buffer = buffer_pool.get_page();
+        let buffer = Arc::new(buffer);
         page.set_loaded();
         page.get().contents = Some(PageContent::new(offset, buffer));
     }
@@ -2430,10 +2439,10 @@ mod ptrmap_tests {
         ));
 
         //  Construct interfaces for the pager
-        let buffer_pool = Arc::new(BufferPool::new(Some(page_size as usize)));
-        let page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(
-            (initial_db_pages + 10) as usize,
-        )));
+        let pages = initial_db_pages + 10;
+        let sz = std::cmp::max(std::cmp::min(pages, 64), pages);
+        let buffer_pool = BufferPool::begin_init(&io, (sz * page_size) as usize);
+        let page_cache = Arc::new(RwLock::new(DumbLruPageCache::new(sz as usize)));
 
         let wal = Rc::new(RefCell::new(WalFile::new(
             io.clone(),

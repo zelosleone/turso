@@ -5,7 +5,7 @@ use std::{
 
 use super::{execute, AggFunc, BranchOffset, CursorID, FuncCtx, InsnFunction, PageIdx};
 use crate::{
-    schema::{Affinity, BTreeTable, Index},
+    schema::{Affinity, BTreeTable, Column, Index},
     storage::{pager::CreateBTreeFlags, wal::CheckpointMode},
     translate::collate::CollationSeq,
     Value,
@@ -120,6 +120,11 @@ impl InsertFlags {
 
     pub fn require_seek(mut self) -> Self {
         self.0 |= InsertFlags::REQUIRE_SEEK;
+        self
+    }
+
+    pub fn update(mut self) -> Self {
+        self.0 |= InsertFlags::UPDATE;
         self
     }
 }
@@ -745,6 +750,7 @@ pub enum Insn {
 
     Delete {
         cursor_id: CursorID,
+        table_name: String,
     },
 
     /// If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching index entry
@@ -844,6 +850,12 @@ pub enum Insn {
         //  The name of the table being dropped
         table_name: String,
     },
+    DropView {
+        /// The database within which this view needs to be dropped
+        db: usize,
+        /// The name of the view being dropped
+        view_name: String,
+    },
     DropIndex {
         ///  The database within which this index needs to be dropped (P1).
         db: usize,
@@ -884,6 +896,9 @@ pub enum Insn {
         db: usize,
         where_clause: Option<String>,
     },
+
+    /// Populate all views after schema parsing
+    PopulateViews,
 
     /// Place the result of lhs >> rhs in dest register.
     ShiftRight {
@@ -1034,6 +1049,10 @@ pub enum Insn {
         table: String,
         column_index: usize,
     },
+    AddColumn {
+        table: String,
+        column: Column,
+    },
     /// Try to set the maximum page count for database P1 to the value in P3.
     /// Do not let the maximum page count fall below the current page count and
     /// do not change the maximum page count value if P3==0.
@@ -1156,10 +1175,12 @@ impl Insn {
             Insn::Destroy { .. } => execute::op_destroy,
 
             Insn::DropTable { .. } => execute::op_drop_table,
+            Insn::DropView { .. } => execute::op_drop_view,
             Insn::Close { .. } => execute::op_close,
             Insn::IsNull { .. } => execute::op_is_null,
             Insn::CollSeq { .. } => execute::op_coll_seq,
             Insn::ParseSchema { .. } => execute::op_parse_schema,
+            Insn::PopulateViews => execute::op_populate_views,
             Insn::ShiftRight { .. } => execute::op_shift_right,
             Insn::ShiftLeft { .. } => execute::op_shift_left,
             Insn::AddImm { .. } => execute::op_add_imm,
@@ -1182,6 +1203,7 @@ impl Insn {
             Insn::IntegrityCk { .. } => execute::op_integrity_check,
             Insn::RenameTable { .. } => execute::op_rename_table,
             Insn::DropColumn { .. } => execute::op_drop_column,
+            Insn::AddColumn { .. } => execute::op_add_column,
             Insn::MaxPgcnt { .. } => execute::op_max_pgcnt,
             Insn::JournalMode { .. } => execute::op_journal_mode,
         }

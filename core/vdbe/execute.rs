@@ -3,6 +3,7 @@ use crate::function::AlterTableFunc;
 use crate::numeric::{NullableInteger, Numeric};
 use crate::schema::Table;
 use crate::storage::btree::{integrity_check, IntegrityCheckError, IntegrityCheckState};
+use crate::storage::buffer_pool::BUFFER_POOL;
 use crate::storage::database::DatabaseFile;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::{AtomicDbState, CreateBTreeFlags, DbState};
@@ -62,9 +63,7 @@ use crate::{
     vector::{vector32, vector64, vector_distance_cos, vector_distance_l2, vector_extract},
 };
 
-use crate::{
-    info, turso_assert, BufferPool, OpenFlags, RefValue, Row, StepResult, TransactionState,
-};
+use crate::{info, turso_assert, OpenFlags, RefValue, Row, StepResult, TransactionState};
 
 use super::{
     insn::{Cookie, RegisterOrLiteral},
@@ -3728,7 +3727,7 @@ pub fn op_sorter_insert(
             Register::Record(record) => record,
             _ => unreachable!("SorterInsert on non-record register"),
         };
-        cursor.insert(record)?;
+        return_if_io!(cursor.insert(record));
     }
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
@@ -5121,7 +5120,7 @@ pub fn op_insert(
             key_reg,
             record_reg,
             flag,
-            table_name: _,
+            table_name,
         },
         insn
     );
@@ -5163,6 +5162,72 @@ pub fn op_insert(
             }
             Register::Aggregate(..) => unreachable!("Cannot insert an aggregate value."),
         };
+
+        // Update dependent views for incremental computation
+        let schema = program.connection.schema.borrow();
+        let dependent_views = schema.get_dependent_views(table_name);
+
+        if !dependent_views.is_empty() {
+            // If this is an UPDATE operation, first capture and delete the old row data
+            if flag.has(InsertFlags::UPDATE) {
+                // Get the old record before it's overwritten
+                let old_record_values = if let Some(old_record) = return_if_io!(cursor.record()) {
+                    let mut values = old_record
+                        .get_values()
+                        .into_iter()
+                        .map(|v| v.to_owned())
+                        .collect::<Vec<_>>();
+
+                    // Fix rowid alias columns: replace Null with actual rowid value
+                    let schema = program.connection.schema.borrow();
+                    if let Some(table) = schema.get_table(table_name) {
+                        for (i, col) in table.columns().iter().enumerate() {
+                            if col.is_rowid_alias && i < values.len() {
+                                values[i] = Value::Integer(key);
+                            }
+                        }
+                    }
+                    drop(schema);
+
+                    Some(values)
+                } else {
+                    None
+                };
+
+                // Add deletion of old row to view deltas
+                if let Some(old_values) = old_record_values {
+                    let mut tx_states = program.connection.view_transaction_states.borrow_mut();
+                    for view_name in &dependent_views {
+                        let tx_state = tx_states.entry(view_name.clone()).or_default();
+                        tx_state.delta.delete(key, old_values.clone());
+                    }
+                }
+            }
+
+            // Add insertion of new row to view deltas
+            let mut new_values = record
+                .get_values()
+                .into_iter()
+                .map(|v| v.to_owned())
+                .collect::<Vec<_>>();
+
+            // Fix rowid alias columns: replace Null with actual rowid value
+            let schema = program.connection.schema.borrow();
+            if let Some(table) = schema.get_table(table_name) {
+                for (i, col) in table.columns().iter().enumerate() {
+                    if col.is_rowid_alias && i < new_values.len() {
+                        new_values[i] = Value::Integer(key);
+                    }
+                }
+            }
+            drop(schema);
+
+            let mut tx_states = program.connection.view_transaction_states.borrow_mut();
+            for view_name in dependent_views {
+                let tx_state = tx_states.entry(view_name.clone()).or_default();
+                tx_state.delta.insert(key, new_values.clone());
+            }
+        }
 
         // In a table insert, if the caller does not pass InsertFlags::REQUIRE_SEEK, they must ensure that a seek has already happened to the correct location.
         // This typically happens by invoking either Insn::NewRowid or Insn::NotExists, because:
@@ -5217,11 +5282,66 @@ pub fn op_delete(
     pager: &Rc<Pager>,
     mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    load_insn!(Delete { cursor_id }, insn);
-    {
+    load_insn!(
+        Delete {
+            cursor_id,
+            table_name
+        },
+        insn
+    );
+
+    // Capture row data before deletion for view updates
+    let record_key_and_values = {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_btree_mut();
+
+        let schema = program.connection.schema.borrow();
+        let dependent_views = schema.get_dependent_views(table_name);
+        let result = if !dependent_views.is_empty() {
+            // Get the current key
+            let maybe_key = return_if_io!(cursor.rowid());
+            let key = maybe_key.ok_or_else(|| {
+                LimboError::InternalError("Cannot delete: no current row".to_string())
+            })?;
+            // Get the current record before deletion and extract values
+            if let Some(record) = return_if_io!(cursor.record()) {
+                let mut values = record
+                    .get_values()
+                    .into_iter()
+                    .map(|v| v.to_owned())
+                    .collect::<Vec<_>>();
+
+                // Fix rowid alias columns: replace Null with actual rowid value
+                if let Some(table) = schema.get_table(table_name) {
+                    for (i, col) in table.columns().iter().enumerate() {
+                        if col.is_rowid_alias && i < values.len() {
+                            values[i] = Value::Integer(key);
+                        }
+                    }
+                }
+                Some((key, values))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Now perform the deletion
         return_if_io!(cursor.delete());
+
+        result
+    };
+
+    // Update dependent views for incremental computation
+    if let Some((key, values)) = record_key_and_values {
+        let schema = program.connection.schema.borrow();
+        let dependent_views = schema.get_dependent_views(table_name);
+        let mut tx_states = program.connection.view_transaction_states.borrow_mut();
+        for view_name in dependent_views {
+            let tx_state = tx_states.entry(view_name).or_default();
+            tx_state.delta.delete(key, values.clone());
+        }
     }
     let prev_changes = program.n_change.get();
     program.n_change.set(prev_changes + 1);
@@ -6034,6 +6154,26 @@ pub fn op_drop_table(
     Ok(InsnFunctionStepResult::Step)
 }
 
+pub fn op_drop_view(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    _pager: &Rc<Pager>,
+    _mv_store: Option<&Arc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    load_insn!(DropView { db, view_name }, insn);
+    if *db > 0 {
+        todo!("temp databases not implemented yet");
+    }
+    let conn = program.connection.clone();
+    conn.with_schema_mut(|schema| {
+        schema.remove_view(view_name);
+        Ok::<(), crate::LimboError>(())
+    })?;
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
 pub fn op_close(
     program: &Program,
     state: &mut ProgramState,
@@ -6134,19 +6274,56 @@ pub fn op_parse_schema(
 
         conn.with_schema_mut(|schema| {
             // TODO: This function below is synchronous, make it async
-            parse_schema_rows(stmt, schema, &conn.syms.borrow(), state.mv_tx_id)
+            let existing_views = schema.views.clone();
+            parse_schema_rows(
+                stmt,
+                schema,
+                &conn.syms.borrow(),
+                state.mv_tx_id,
+                existing_views,
+            )
         })?;
     } else {
         let stmt = conn.prepare("SELECT * FROM sqlite_schema")?;
 
         conn.with_schema_mut(|schema| {
             // TODO: This function below is synchronous, make it async
-            parse_schema_rows(stmt, schema, &conn.syms.borrow(), state.mv_tx_id)
+            let existing_views = schema.views.clone();
+            parse_schema_rows(
+                stmt,
+                schema,
+                &conn.syms.borrow(),
+                state.mv_tx_id,
+                existing_views,
+            )
         })?;
     }
     conn.auto_commit.set(previous_auto_commit);
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_populate_views(
+    program: &Program,
+    state: &mut ProgramState,
+    _insn: &Insn,
+    _pager: &Rc<Pager>,
+    _mv_store: Option<&Arc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    let conn = program.connection.clone();
+    let schema = conn.schema.borrow();
+
+    match schema.populate_views(&conn)? {
+        IOResult::Done(()) => {
+            // All views populated, advance to next instruction
+            state.pc += 1;
+            Ok(InsnFunctionStepResult::Step)
+        }
+        IOResult::IO => {
+            // Need more IO, stay on this instruction
+            Ok(InsnFunctionStepResult::IO)
+        }
+    }
 }
 
 pub fn op_read_cookie(
@@ -6460,7 +6637,7 @@ pub fn op_open_ephemeral(
                 .block(|| pager.with_header(|header| header.page_size))?
                 .get();
 
-            let buffer_pool = Arc::new(BufferPool::new(Some(page_size as usize)));
+            let buffer_pool = BUFFER_POOL.get().expect("Buffer pool not initialized");
             let page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
 
             let pager = Rc::new(Pager::new(
@@ -6478,7 +6655,6 @@ pub fn op_open_ephemeral(
                 .block(|| pager.with_header(|header| header.page_size))
                 .unwrap_or_default()
                 .get() as usize;
-            buffer_pool.set_page_size(page_size);
 
             state.op_open_ephemeral_state = OpOpenEphemeralState::StartingTxn { pager };
         }
@@ -6871,13 +7047,13 @@ pub fn op_drop_column(
     pager: &Rc<Pager>,
     mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
-    let Insn::DropColumn {
-        table,
-        column_index,
-    } = insn
-    else {
-        unreachable!("unexpected Insn {:?}", insn)
-    };
+    load_insn!(
+        DropColumn {
+            table,
+            column_index
+        },
+        insn
+    );
 
     let conn = program.connection.clone();
 
@@ -6887,16 +7063,45 @@ pub fn op_drop_column(
             .get_mut(table)
             .expect("table being renamed should be in schema");
 
-        {
-            let table = Arc::make_mut(table);
+        let table = Arc::make_mut(table);
 
-            let Table::BTree(btree) = table else {
-                panic!("only btree tables can be renamed");
-            };
+        let Table::BTree(btree) = table else {
+            panic!("only btree tables can be renamed");
+        };
 
-            let btree = Arc::make_mut(btree);
-            btree.columns.remove(*column_index)
-        }
+        let btree = Arc::make_mut(btree);
+        btree.columns.remove(*column_index)
+    });
+
+    state.pc += 1;
+    Ok(InsnFunctionStepResult::Step)
+}
+
+pub fn op_add_column(
+    program: &Program,
+    state: &mut ProgramState,
+    insn: &Insn,
+    pager: &Rc<Pager>,
+    mv_store: Option<&Arc<MvStore>>,
+) -> Result<InsnFunctionStepResult> {
+    load_insn!(AddColumn { table, column }, insn);
+
+    let conn = program.connection.clone();
+
+    conn.with_schema_mut(|schema| {
+        let table = schema
+            .tables
+            .get_mut(table)
+            .expect("table being renamed should be in schema");
+
+        let table = Arc::make_mut(table);
+
+        let Table::BTree(btree) = table else {
+            panic!("only btree tables can be renamed");
+        };
+
+        let btree = Arc::make_mut(btree);
+        btree.columns.push(column.clone())
     });
 
     state.pc += 1;

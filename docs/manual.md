@@ -52,10 +52,16 @@ curl --proto '=https' --tlsv1.2 -LsSf \
   https://github.com/tursodatabase/turso/releases/latest/download/turso_cli-installer.sh | sh
 ```
 
+Or alternatively, on MacOS, you can use Homebrew:
+
+```
+brew install turso
+```
+
 When you have the software installed, you can start a SQL shell as follows:
 
 ```console
-$ turso
+$ tursodb
 Turso
 Enter ".help" for usage hints.
 Connected to a transient in-memory database.
@@ -322,13 +328,13 @@ Turso supports a JavaScript API, both with native and WebAssembly package option
 Installing the native package:
 
 ```console
-npm i @tursodatabase/turso
+npm i @tursodatabase/database
 ```
 
 Installing the WebAssembly package:
 
 ```console
-npm i @tursodatabase/turso --cpu wasm32
+npm i @tursodatabase/database --cpu wasm32
 ```
 
 ### API reference
@@ -337,11 +343,11 @@ See [JavaScript API reference](docs/javascript-api-reference.md) for more inform
 
 ### Getting Started
 
-To use Turso from JavaScript application, you need to import `Database` type from the `@tursodatabase/turso` package.
+To use Turso from JavaScript application, you need to import `Database` type from the `@tursodatabase/database` package.
 You can the prepare a statement with `Database.prepare` method and execute the SQL statement with `Statement.get()` method.
 
 ```
-import Database from '@tursodatabase/turso';
+import Database from '@tursodatabase/database';
 
 const db = new Database('turso.db');
 const row = db.prepare('SELECT 1').get();
