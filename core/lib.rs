@@ -1865,6 +1865,11 @@ impl Connection {
             .wal_checkpoint(disabled, CheckpointMode::Truncate)?;
         self.pager.borrow_mut().db_file.copy_to(&*io, file)
     }
+
+    /// Creates a HashSet of modules that have been loaded
+    pub fn get_syms_vtab_mods(&self) -> std::collections::HashSet<String> {
+        self.syms.borrow().vtab_modules.keys().cloned().collect()
+    }
 }
 
 pub struct Statement {
