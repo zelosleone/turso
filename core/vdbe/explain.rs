@@ -1109,12 +1109,12 @@ pub fn insn_to_str(
                 flag.0 as u16,
                 format!("intkey=r[{key_reg}] data=r[{record_reg}]"),
             ),
-            Insn::Delete { cursor_id } => (
+            Insn::Delete { cursor_id, table_name } => (
                 "Delete",
                 *cursor_id as i32,
                 0,
                 0,
-                Value::build_text(""),
+                Value::build_text(table_name),
                 0,
                 "".to_string(),
             ),
@@ -1280,6 +1280,15 @@ pub fn insn_to_str(
                 0,
                 format!("DROP TABLE {table_name}"),
             ),
+            Insn::DropView { db, view_name } => (
+                "DropView",
+                *db as i32,
+                0,
+                0,
+                Value::build_text(view_name),
+                0,
+                format!("DROP VIEW {view_name}"),
+            ),
             Insn::DropIndex { db: _, index } => (
                 "DropIndex",
                 0,
@@ -1327,6 +1336,15 @@ pub fn insn_to_str(
                 Value::build_text(where_clause.clone().unwrap_or("NULL".to_string())),
                 0,
                 where_clause.clone().unwrap_or("NULL".to_string()),
+            ),
+            Insn::PopulateViews => (
+                "PopulateViews",
+                0,
+                0,
+                0,
+                Value::Null,
+                0,
+                "".to_string(),
             ),
             Insn::Prev {
                 cursor_id,
