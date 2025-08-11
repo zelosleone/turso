@@ -26,7 +26,6 @@ members = [
     "testing/sqlite_test_ext",
     "tests",
     "vendored/sqlite3-parser/sqlparser_bench",
-    "packages/turso-sync",
     "packages/turso-sync-engine",
     "packages/turso-sync-js",
 ]
