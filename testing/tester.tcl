@@ -127,11 +127,8 @@ proc do_execsql_test_tolerance {test_name sql_statements expected_outputs tolera
 }
 # This procedure passes the test if the output contains error messages
 proc run_test_expecting_any_error {sqlite_exec db_name sql} {
-    # Execute the SQL command and capture output
-    set command [list $sqlite_exec $db_name $sql]
-
     # Use catch to handle both successful and error cases
-    catch {exec {*}$command} result options
+    catch {evaluate_sql $sqlite_exec $db_name $sql} result options
 
     # Check if the output contains error indicators (×, error, syntax error, etc.)
     if {[regexp {(error|ERROR|Error|×|syntax error|failed)} $result]} {
@@ -148,11 +145,8 @@ proc run_test_expecting_any_error {sqlite_exec db_name sql} {
 
 # This procedure passes if error matches a specific pattern
 proc run_test_expecting_error {sqlite_exec db_name sql expected_error_pattern} {
-    # Execute the SQL command and capture output
-    set command [list $sqlite_exec $db_name $sql]
-
     # Capture output whether command succeeds or fails
-    catch {exec {*}$command} result options
+    catch {evaluate_sql $sqlite_exec $db_name $sql} result options
 
     # Check if the output contains error indicators first
     if {![regexp {(error|ERROR|Error|×|syntax error|failed)} $result]} {
@@ -177,11 +171,8 @@ proc run_test_expecting_error {sqlite_exec db_name sql expected_error_pattern} {
 
 # This version accepts exact error text, ignoring formatting
 proc run_test_expecting_error_content {sqlite_exec db_name sql expected_error_text} {
-    # Execute the SQL command and capture output
-    set command [list $sqlite_exec $db_name $sql]
-
     # Capture output whether command succeeds or fails
-    catch {exec {*}$command} result options
+    catch {evaluate_sql $sqlite_exec $db_name $sql} result options
 
     # Check if the output contains error indicators first
     if {![regexp {(error|ERROR|Error|×|syntax error|failed)} $result]} {
