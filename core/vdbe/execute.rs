@@ -2090,6 +2090,11 @@ pub fn op_transaction(
             }
         }
 
+        // Transaction state should be updated before checking for Schema cookie so that the tx is ended properly on error
+        if updated {
+            conn.transaction_state.replace(new_transaction_state);
+        }
+
         // Check whether schema has changed if we are actually going to access the database.
         if !matches!(new_transaction_state, TransactionState::None) {
             let res = pager
@@ -2107,10 +2112,6 @@ pub fn op_transaction(
                     return Err(err);
                 }
             }
-        }
-
-        if updated {
-            conn.transaction_state.replace(new_transaction_state);
         }
     }
     state.pc += 1;
