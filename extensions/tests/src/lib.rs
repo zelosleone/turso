@@ -260,7 +260,7 @@ impl VTable for KVStoreTable {
     }
 
     fn destroy(&mut self) -> Result<(), Self::Error> {
-        println!("VDestroy called");
+        log::debug!("VDestroy called");
         Ok(())
     }
 }
