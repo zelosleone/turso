@@ -401,7 +401,7 @@ fn query_pragma(
             Ok((program, TransactionMode::None))
         }
         PragmaName::ModuleList => {
-            let modules = connection.get_vtab_mods();
+            let modules = connection.get_syms_vtab_mods();
             for module in modules {
                 program.emit_string8(module.to_string(), register);
                 program.emit_result_row(register, 1);
