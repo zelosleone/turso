@@ -721,8 +721,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_TABLE => self.parse_create_table(temp),
             TokenType::TK_VIRTUAL => todo!(),
             TokenType::TK_VIEW => todo!(),
-            TokenType::TK_INDEX => todo!(),
-            TokenType::TK_UNIQUE => todo!(),
+            TokenType::TK_INDEX | TokenType::TK_UNIQUE => self.parse_create_index(),
             TokenType::TK_TRIGGER => todo!(),
             _ => unreachable!(),
         }
@@ -2465,6 +2464,21 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_sort_list(&mut self) -> Result<Vec<SortedColumn>, Error> {
+        let mut columns = vec![self.parse_sorted_column()?];
+        loop {
+            match self.peek()? {
+                Some(tok) if tok.token_type == Some(TokenType::TK_COMMA) => {
+                    self.eat_assert(&[TokenType::TK_COMMA]);
+                    columns.push(self.parse_sorted_column()?);
+                }
+                _ => break,
+            }
+        }
+
+        Ok(columns)
+    }
+
     fn parse_order_by(&mut self) -> Result<Vec<SortedColumn>, Error> {
         if let Some(tok) = self.peek()? {
             if tok.token_type == Some(TokenType::TK_ORDER) {
@@ -2477,23 +2491,7 @@ impl<'a> Parser<'a> {
         }
 
         self.eat_expect(&[TokenType::TK_BY])?;
-        let mut columns = vec![self.parse_sorted_column()?];
-        if let Some(tok) = self.peek()? {
-            if tok.token_type == Some(TokenType::TK_COMMA) {
-                self.eat_assert(&[TokenType::TK_COMMA]);
-                loop {
-                    columns.push(self.parse_sorted_column()?);
-                    match self.peek_no_eof()?.token_type.unwrap() {
-                        TokenType::TK_COMMA => {
-                            self.eat_assert(&[TokenType::TK_COMMA]);
-                        }
-                        _ => break,
-                    };
-                }
-            }
-        }
-
-        Ok(columns)
+        Ok(self.parse_sort_list()?)
     }
 
     fn parse_limit(&mut self) -> Result<Option<Limit>, Error> {
@@ -3155,6 +3153,33 @@ impl<'a> Parser<'a> {
             }
             _ => unreachable!(),
         }
+    }
+
+    fn parse_create_index(&mut self) -> Result<Stmt, Error> {
+        let tok = self.eat_assert(&[TokenType::TK_INDEX, TokenType::TK_UNIQUE]);
+        let has_unique = tok.token_type == Some(TokenType::TK_UNIQUE);
+        if has_unique {
+            self.eat_expect(&[TokenType::TK_INDEX])?;
+        }
+
+        let if_not_exists = self.parse_if_not_exists()?;
+        let idx_name = self.parse_fullname(false)?;
+        self.eat_expect(&[TokenType::TK_ON])?;
+        self.peek_nm()?;
+        let tbl_name = self.parse_nm();
+        self.eat_expect(&[TokenType::TK_LP])?;
+        let columns = self.parse_sort_list()?;
+        self.eat_expect(&[TokenType::TK_RP])?;
+        let where_clause = self.parse_where()?;
+
+        Ok(Stmt::CreateIndex {
+            if_not_exists,
+            idx_name,
+            tbl_name,
+            columns,
+            where_clause,
+            unique: has_unique,
+        })
     }
 }
 
@@ -8908,6 +8933,47 @@ mod tests {
                             },
                         ],
                     }),
+                })],
+            ),
+            // parse create index
+            (
+                b"CREATE INDEX idx_foo ON foo (bar)".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateIndex {
+                    unique: false,
+                    if_not_exists: false,
+                    idx_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("idx_foo".to_owned()),
+                        alias: None,
+                    },
+                    tbl_name: Name::Ident("foo".to_owned()),
+                    columns: vec![SortedColumn {
+                        expr: Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
+                        order: None,
+                        nulls: None,
+                    }],
+                    where_clause: None,
+                })],
+            ),
+            (
+                b"CREATE UNIQUE INDEX IF NOT EXISTS idx_foo ON foo (bar) WHERE 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateIndex {
+                    unique: true,
+                    if_not_exists: true,
+                    idx_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("idx_foo".to_owned()),
+                        alias: None,
+                    },
+                    tbl_name: Name::Ident("foo".to_owned()),
+                    columns: vec![SortedColumn {
+                        expr: Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
+                        order: None,
+                        nulls: None,
+                    }],
+                    where_clause: Some(Box::new(
+                        Expr::Literal(Literal::Numeric("1".to_owned()))
+                      )),
                 })],
             ),
         ];
