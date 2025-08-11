@@ -1868,13 +1868,7 @@ impl Connection {
 
     /// Creates a HashSet of modules that have been loaded
     pub fn get_syms_vtab_mods(&self) -> std::collections::HashSet<String> {
-        self.syms
-            .try_borrow()
-            .unwrap()
-            .vtab_modules
-            .keys()
-            .cloned()
-            .collect()
+        self.syms.borrow().vtab_modules.keys().cloned().collect()
     }
 }
 
