@@ -371,11 +371,12 @@ impl TokenType {
             | TK_LIKE_KW | TK_MATCH | TK_NO | TK_PLAN | TK_QUERY | TK_KEY | TK_OF | TK_OFFSET
             | TK_PRAGMA | TK_RAISE | TK_RECURSIVE | TK_RELEASE | TK_REPLACE | TK_RESTRICT
             | TK_ROW | TK_ROWS | TK_ROLLBACK | TK_SAVEPOINT | TK_TEMP | TK_TRIGGER | TK_VACUUM
-            | TK_VIEW | TK_VIRTUAL | TK_WITH | TK_WITHOUT | TK_NULLS | TK_FIRST | TK_LAST
-            | TK_CURRENT | TK_FOLLOWING | TK_PARTITION | TK_PRECEDING | TK_RANGE | TK_UNBOUNDED
-            | TK_EXCLUDE | TK_GROUPS | TK_OTHERS | TK_TIES | TK_ALWAYS | TK_MATERIALIZED
-            | TK_REINDEX | TK_RENAME | TK_CTIME_KW | TK_IF => TK_ID,
-            // | TK_COLUMNKW | TK_UNION | TK_EXCEPT | TK_INTERSECT | TK_GENERATED see comments in `next_token` of parser
+            | TK_VIEW | TK_VIRTUAL | TK_WITH | TK_NULLS | TK_FIRST | TK_LAST | TK_CURRENT
+            | TK_FOLLOWING | TK_PARTITION | TK_PRECEDING | TK_RANGE | TK_UNBOUNDED | TK_EXCLUDE
+            | TK_GROUPS | TK_OTHERS | TK_TIES | TK_ALWAYS | TK_MATERIALIZED | TK_REINDEX
+            | TK_RENAME | TK_CTIME_KW | TK_IF => TK_ID,
+            // | TK_COLUMNKW | TK_UNION | TK_EXCEPT | TK_INTERSECT | TK_GENERATED | TK_WITHOUT
+            // see comments in `next_token` of parser
             _ => self,
         }
     }

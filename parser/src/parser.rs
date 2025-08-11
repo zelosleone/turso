@@ -3,10 +3,11 @@ use crate::ast::{
     CompoundSelect, CreateTableBody, DeferSubclause, Distinctness, Expr, ForeignKeyClause,
     FrameBound, FrameClause, FrameExclude, FrameMode, FromClause, FunctionTail, GroupBy, Indexed,
     IndexedColumn, InitDeferredPred, JoinConstraint, JoinOperator, JoinType, JoinedSelectTable,
-    LikeOperator, Limit, Literal, Materialized, Name, NamedColumnConstraint, NullsOrder, OneSelect,
-    Operator, Over, PragmaBody, PragmaValue, QualifiedName, RefAct, RefArg, ResolveType,
-    ResultColumn, Select, SelectBody, SelectTable, SortOrder, SortedColumn, Stmt, TransactionType,
-    Type, TypeSize, UnaryOperator, Window, WindowDef, With,
+    LikeOperator, Limit, Literal, Materialized, Name, NamedColumnConstraint, NamedTableConstraint,
+    NullsOrder, OneSelect, Operator, Over, PragmaBody, PragmaValue, QualifiedName, RefAct, RefArg,
+    ResolveType, ResultColumn, Select, SelectBody, SelectTable, SortOrder, SortedColumn, Stmt,
+    TableConstraint, TableOptions, TransactionType, Type, TypeSize, UnaryOperator, Window,
+    WindowDef, With,
 };
 use crate::error::Error;
 use crate::lexer::{Lexer, Token};
@@ -199,6 +200,7 @@ impl<'a> Parser<'a> {
                 | TokenType::TK_EXCEPT
                 | TokenType::TK_INTERSECT
                 | TokenType::TK_GENERATED
+                | TokenType::TK_WITHOUT
                 | TokenType::TK_COLUMNKW
                 | TokenType::TK_WINDOW
                 | TokenType::TK_FILTER
@@ -258,6 +260,11 @@ impl<'a> Parser<'a> {
              **
              **   * the next token is TK_ALWAYS.
              **   * the token after than one is TK_AS.
+             **
+             ** WITHOUT is a keyword if:
+             **
+             **   * the previous token is TK_RP|TK_COMMA.
+             **   * the next token is TK_ID.
              */
             match tok.token_type.unwrap() {
                 TokenType::TK_WINDOW => {
@@ -390,6 +397,25 @@ impl<'a> Parser<'a> {
                     })?;
 
                     if !can_be_generated {
+                        tok.token_type = Some(TokenType::TK_ID);
+                    }
+                }
+                TokenType::TK_WITHOUT => {
+                    let prev_tt = self.current_token.token_type.unwrap_or(TokenType::TK_EOF);
+                    let can_be_without = match prev_tt {
+                        TokenType::TK_RP | TokenType::TK_COMMA => self.try_parse(|p| {
+                            match p.consume_lexer_without_whitespaces_or_comments() {
+                                None => return Ok(false),
+                                Some(tok) => match get_token(tok?.token_type.unwrap()) {
+                                    TokenType::TK_ID => Ok(true),
+                                    _ => Ok(false),
+                                },
+                            }
+                        })?,
+                        _ => false,
+                    };
+
+                    if !can_be_without {
                         tok.token_type = Some(TokenType::TK_ID);
                     }
                 }
@@ -709,6 +735,7 @@ impl<'a> Parser<'a> {
         ])?;
         let mut temp = false;
         if first_tok.token_type == Some(TokenType::TK_TEMP) {
+            self.eat_assert(&[TokenType::TK_TEMP]);
             temp = true;
             first_tok = self.peek_expect(&[
                 TokenType::TK_TABLE,
@@ -1818,6 +1845,18 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn parse_eid(&mut self) -> Result<IndexedColumn, Error> {
+        self.peek_nm()?;
+        let nm = self.parse_nm();
+        let collate = self.parse_collate()?;
+        let sort_order = self.parse_sort_order()?;
+        Ok(IndexedColumn {
+            col_name: nm,
+            collation_name: collate,
+            order: sort_order,
+        })
+    }
+
     fn parse_eid_list(&mut self) -> Result<Vec<IndexedColumn>, Error> {
         if let Some(tok) = self.peek()? {
             if tok.token_type == Some(TokenType::TK_LP) {
@@ -1829,28 +1868,17 @@ impl<'a> Parser<'a> {
             return Ok(vec![]);
         }
 
-        let mut columns = vec![];
+        let mut columns = vec![self.parse_eid()?];
         loop {
-            if self.peek_no_eof()?.token_type == Some(TokenType::TK_RP) {
-                self.eat_assert(&[TokenType::TK_RP]);
-                break;
-            }
-
-            self.peek_nm()?;
-            let nm = self.parse_nm();
-            let collate = self.parse_collate()?;
-            let sort_order = self.parse_sort_order()?;
-            columns.push(IndexedColumn {
-                col_name: nm,
-                collation_name: collate,
-                order: sort_order,
-            });
-
-            let tok = self.eat_expect(&[TokenType::TK_COMMA, TokenType::TK_RP])?;
-            if tok.token_type == Some(TokenType::TK_RP) {
-                break;
+            match self.peek()? {
+                Some(tok) if tok.token_type == Some(TokenType::TK_COMMA) => {
+                    self.eat_assert(&[TokenType::TK_COMMA]);
+                    columns.push(self.parse_eid()?);
+                }
+                _ => break,
             }
         }
+        self.eat_expect(&[TokenType::TK_RP])?;
 
         Ok(columns)
     }
@@ -2540,11 +2568,207 @@ impl<'a> Parser<'a> {
         self.parse_select_without_cte(with)
     }
 
+    fn parse_primary_table_constraint(&mut self) -> Result<TableConstraint, Error> {
+        self.eat_assert(&[TokenType::TK_PRIMARY]);
+        self.eat_expect(&[TokenType::TK_KEY])?;
+        self.eat_expect(&[TokenType::TK_LP])?;
+        let columns = self.parse_sort_list()?;
+        let auto_increment = self.parse_auto_increment()?;
+        self.eat_expect(&[TokenType::TK_RP])?;
+        let conflict_clause = self.parse_on_conflict()?;
+        Ok(TableConstraint::PrimaryKey {
+            columns,
+            auto_increment,
+            conflict_clause,
+        })
+    }
+
+    fn parse_unique_table_constraint(&mut self) -> Result<TableConstraint, Error> {
+        self.eat_assert(&[TokenType::TK_UNIQUE]);
+        self.eat_expect(&[TokenType::TK_LP])?;
+        let columns = self.parse_sort_list()?;
+        self.eat_expect(&[TokenType::TK_RP])?;
+        let conflict_clause = self.parse_on_conflict()?;
+        Ok(TableConstraint::Unique {
+            columns,
+            conflict_clause,
+        })
+    }
+
+    fn parse_check_table_constraint(&mut self) -> Result<TableConstraint, Error> {
+        self.eat_assert(&[TokenType::TK_CHECK]);
+        self.eat_expect(&[TokenType::TK_LP])?;
+        let expr = self.parse_expr(0)?;
+        self.eat_expect(&[TokenType::TK_RP])?;
+        Ok(TableConstraint::Check(expr))
+    }
+
+    fn parse_foreign_key_table_constraint(&mut self) -> Result<TableConstraint, Error> {
+        self.eat_assert(&[TokenType::TK_FOREIGN]);
+        self.eat_expect(&[TokenType::TK_KEY])?;
+        self.peek_expect(&[TokenType::TK_LP])?; // make sure we have columns
+        let columns = self.parse_eid_list()?;
+        self.peek_expect(&[TokenType::TK_REFERENCES])?;
+        let clause = self.parse_foreign_key_clause()?;
+        let deref_clause = self.parse_defer_subclause()?;
+        Ok(TableConstraint::ForeignKey {
+            columns,
+            clause,
+            deref_clause,
+        })
+    }
+
+    fn parse_named_table_constraints(&mut self) -> Result<Vec<NamedTableConstraint>, Error> {
+        let mut result = vec![];
+
+        loop {
+            match self.peek()? {
+                Some(tok) => match tok.token_type.unwrap() {
+                    TokenType::TK_COMMA => {
+                        self.eat_assert(&[TokenType::TK_COMMA]);
+                    }
+                    TokenType::TK_CONSTRAINT
+                    | TokenType::TK_PRIMARY
+                    | TokenType::TK_UNIQUE
+                    | TokenType::TK_CHECK
+                    | TokenType::TK_FOREIGN => {}
+                    _ => break,
+                },
+                _ => break,
+            }
+
+            let name = match self.peek_no_eof()?.token_type.unwrap() {
+                TokenType::TK_CONSTRAINT => {
+                    self.eat_assert(&[TokenType::TK_CONSTRAINT]);
+                    self.peek_nm()?;
+                    Some(self.parse_nm())
+                }
+                _ => None,
+            };
+
+            let tok = self.peek_expect(&[
+                TokenType::TK_PRIMARY,
+                TokenType::TK_UNIQUE,
+                TokenType::TK_CHECK,
+                TokenType::TK_FOREIGN,
+            ])?;
+
+            match tok.token_type.unwrap() {
+                TokenType::TK_PRIMARY => {
+                    result.push(NamedTableConstraint {
+                        name,
+                        constraint: self.parse_primary_table_constraint()?,
+                    });
+                }
+                TokenType::TK_UNIQUE => {
+                    result.push(NamedTableConstraint {
+                        name,
+                        constraint: self.parse_unique_table_constraint()?,
+                    });
+                }
+                TokenType::TK_CHECK => {
+                    result.push(NamedTableConstraint {
+                        name,
+                        constraint: self.parse_check_table_constraint()?,
+                    });
+                }
+                TokenType::TK_FOREIGN => {
+                    result.push(NamedTableConstraint {
+                        name,
+                        constraint: self.parse_foreign_key_table_constraint()?,
+                    });
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn parse_table_option(&mut self) -> Result<TableOptions, Error> {
+        match self.peek()? {
+            Some(tok) => match tok.token_type.unwrap().fallback_id_if_ok() {
+                TokenType::TK_WITHOUT => {
+                    self.eat_assert(&[TokenType::TK_WITHOUT]);
+                    let tok = self.eat_expect(&[TokenType::TK_ID])?;
+                    if b"ROWID".eq_ignore_ascii_case(tok.value) {
+                        Ok(TableOptions::WITHOUT_ROWID)
+                    } else {
+                        Err(Error::Custom(format!(
+                            "unknown table option: {}",
+                            from_bytes(tok.value)
+                        )))
+                    }
+                }
+                TokenType::TK_ID => {
+                    let tok = self.eat_assert(&[TokenType::TK_ID]);
+                    if b"STRICT".eq_ignore_ascii_case(tok.value) {
+                        Ok(TableOptions::STRICT)
+                    } else {
+                        Err(Error::Custom(format!(
+                            "unknown table option: {}",
+                            from_bytes(tok.value)
+                        )))
+                    }
+                }
+                _ => Ok(TableOptions::NONE),
+            },
+            _ => Ok(TableOptions::NONE),
+        }
+    }
+
+    fn parse_table_options(&mut self) -> Result<TableOptions, Error> {
+        let mut result = self.parse_table_option()?;
+        loop {
+            match self.peek()? {
+                Some(tok) if tok.token_type == Some(TokenType::TK_COMMA) => {
+                    self.eat_assert(&[TokenType::TK_COMMA]);
+                    result = result | self.parse_table_option()?;
+                }
+                _ => break,
+            }
+        }
+
+        Ok(result)
+    }
+
     fn parse_create_table_args(&mut self) -> Result<CreateTableBody, Error> {
         let tok = self.eat_expect(&[TokenType::TK_LP, TokenType::TK_AS])?;
         match tok.token_type.unwrap() {
             TokenType::TK_AS => Ok(CreateTableBody::AsSelect(self.parse_select()?)),
-            TokenType::TK_LP => todo!(),
+            TokenType::TK_LP => {
+                let mut columns = vec![self.parse_column_definition()?];
+                let mut constraints = vec![];
+                loop {
+                    match self.peek()? {
+                        Some(tok) if tok.token_type == Some(TokenType::TK_COMMA) => {
+                            self.eat_assert(&[TokenType::TK_COMMA]);
+                            match self.peek_no_eof()?.token_type.unwrap() {
+                                TokenType::TK_CONSTRAINT
+                                | TokenType::TK_PRIMARY
+                                | TokenType::TK_UNIQUE
+                                | TokenType::TK_CHECK
+                                | TokenType::TK_FOREIGN => {
+                                    constraints = self.parse_named_table_constraints()?;
+                                    break;
+                                }
+                                _ => {
+                                    columns.push(self.parse_column_definition()?);
+                                }
+                            }
+                        }
+                        _ => break,
+                    }
+                }
+
+                self.eat_expect(&[TokenType::TK_RP])?;
+                let options = self.parse_table_options()?;
+                Ok(CreateTableBody::ColumnsAndConstraints {
+                    columns,
+                    constraints,
+                    options,
+                })
+            }
             _ => unreachable!(),
         }
     }
@@ -2997,6 +3221,21 @@ impl<'a> Parser<'a> {
                 _ => None,
             };
 
+            if name.is_some() {
+                self.peek_expect(&[
+                    TokenType::TK_DEFAULT,
+                    TokenType::TK_NOT,
+                    TokenType::TK_NULL,
+                    TokenType::TK_PRIMARY,
+                    TokenType::TK_UNIQUE,
+                    TokenType::TK_CHECK,
+                    TokenType::TK_REFERENCES,
+                    TokenType::TK_COLLATE,
+                    TokenType::TK_GENERATED,
+                    TokenType::TK_AS,
+                ])?;
+            }
+
             match self.peek()? {
                 Some(tok) => match tok.token_type.unwrap() {
                     TokenType::TK_DEFAULT => {
@@ -3049,30 +3288,25 @@ impl<'a> Parser<'a> {
                             constraint: self.parse_generated_column_constraint()?,
                         });
                     }
-                    _ => {
-                        if name.is_some() {
-                            return Err(Error::Custom(
-                                "Expected a column constraint name after CONSTRAINT keyword"
-                                    .to_owned(),
-                            ));
-                        }
-
-                        break;
-                    }
+                    _ => break,
                 },
-                _ => {
-                    if name.is_some() {
-                        return Err(Error::Custom(
-                            "Expected a column constraint name after CONSTRAINT keyword".to_owned(),
-                        ));
-                    }
-
-                    break;
-                }
+                _ => break,
             }
         }
 
         Ok(result)
+    }
+
+    fn parse_column_definition(&mut self) -> Result<ColumnDefinition, Error> {
+        self.peek_nm()?;
+        let col_name = self.parse_nm();
+        let col_type = self.parse_type()?;
+        let constraints = self.parse_named_column_constraints()?;
+        Ok(ColumnDefinition {
+            col_name,
+            col_type,
+            constraints,
+        })
     }
 
     fn parse_alter(&mut self) -> Result<Stmt, Error> {
@@ -3091,17 +3325,9 @@ impl<'a> Parser<'a> {
                     _ => {}
                 }
 
-                self.peek_nm()?;
-                let col_name = self.parse_nm();
-                let col_type = self.parse_type()?;
-                let constraints = self.parse_named_column_constraints()?;
                 Ok(Stmt::AlterTable {
                     name: tbl_name,
-                    body: AlterTableBody::AddColumn(ColumnDefinition {
-                        col_name,
-                        col_type,
-                        constraints,
-                    }),
+                    body: AlterTableBody::AddColumn(self.parse_column_definition()?),
                 })
             }
             TokenType::TK_DROP => {
@@ -8974,6 +9200,251 @@ mod tests {
                     where_clause: Some(Box::new(
                         Expr::Literal(Literal::Numeric("1".to_owned()))
                       )),
+                })],
+            ),
+            // parse create table
+            (
+                b"CREATE TABLE foo (column)".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateTable {
+                    temporary: false,
+                    if_not_exists: false,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    body: CreateTableBody::ColumnsAndConstraints {
+                        columns: vec![
+                            ColumnDefinition {
+                                col_name: Name::Ident("column".to_owned()),
+                                col_type: None,
+                                constraints: vec![],
+                            },
+                        ],
+                        constraints: vec![],
+                        options: TableOptions::NONE,
+                    },
+                })],
+            ),
+            (
+                b"CREATE TABLE foo AS SELECT 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateTable {
+                    temporary: false,
+                    if_not_exists: false,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    body: CreateTableBody::AsSelect(Select {
+                        with: None,
+                        body: SelectBody {
+                            select: OneSelect::Select {
+                                distinctness: None,
+                                columns: vec![
+                                    ResultColumn::Expr(Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))), None)
+                                ],
+                                from: None,
+                                where_clause: None,
+                                group_by: None,
+                                window_clause: vec![],
+                            },
+                            compounds: vec![]
+                        },
+                        order_by: vec![],
+                        limit: None,
+                    }),
+                })],
+            ),
+            (
+                b"CREATE TEMP TABLE IF NOT EXISTS foo (bar, baz INTEGER, CONSTRAINT tbl_cons PRIMARY KEY (bar AUTOINCREMENT) OR ROLLBACK) STRICT".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateTable {
+                    temporary: true,
+                    if_not_exists: true,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    body: CreateTableBody::ColumnsAndConstraints {
+                        columns: vec![
+                            ColumnDefinition {
+                                col_name: Name::Ident("bar".to_owned()),
+                                col_type: None,
+                                constraints: vec![],
+                            },
+                            ColumnDefinition {
+                                col_name: Name::Ident("baz".to_owned()),
+                                col_type: Some(Type {
+                                    name: "INTEGER".to_owned(),
+                                    size: None,
+                                }),
+                                constraints: vec![],
+                            },
+                        ],
+                        constraints: vec![
+                            NamedTableConstraint {
+                                name: Some(Name::Ident("tbl_cons".to_owned())),
+                                constraint: TableConstraint::PrimaryKey {
+                                    columns: vec![
+                                        SortedColumn {
+                                            expr: Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
+                                            order: None,
+                                            nulls: None,
+                                        },
+                                    ],
+                                    auto_increment: true,
+                                    conflict_clause:  Some(ResolveType::Rollback)
+                                }
+                            },
+                        ],
+                        options: TableOptions::STRICT,
+                    },
+                })],
+            ),
+            (
+                b"CREATE TEMP TABLE IF NOT EXISTS foo (bar, baz INTEGER, UNIQUE (bar) OR ROLLBACK) WITHOUT ROWID".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateTable {
+                    temporary: true,
+                    if_not_exists: true,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    body: CreateTableBody::ColumnsAndConstraints {
+                        columns: vec![
+                            ColumnDefinition {
+                                col_name: Name::Ident("bar".to_owned()),
+                                col_type: None,
+                                constraints: vec![],
+                            },
+                            ColumnDefinition {
+                                col_name: Name::Ident("baz".to_owned()),
+                                col_type: Some(Type {
+                                    name: "INTEGER".to_owned(),
+                                    size: None,
+                                }),
+                                constraints: vec![],
+                            },
+                        ],
+                        constraints: vec![
+                            NamedTableConstraint {
+                                name: None,
+                                constraint: TableConstraint::Unique {
+                                    columns: vec![
+                                        SortedColumn {
+                                            expr: Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
+                                            order: None,
+                                            nulls: None,
+                                        },
+                                    ],
+                                    conflict_clause:  Some(ResolveType::Rollback)
+                                }
+                            },
+                        ],
+                        options: TableOptions::WITHOUT_ROWID,
+                    },
+                })],
+            ),
+            (
+                b"CREATE TEMP TABLE IF NOT EXISTS foo (bar, baz INTEGER, CHECK (1))".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateTable {
+                    temporary: true,
+                    if_not_exists: true,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    body: CreateTableBody::ColumnsAndConstraints {
+                        columns: vec![
+                            ColumnDefinition {
+                                col_name: Name::Ident("bar".to_owned()),
+                                col_type: None,
+                                constraints: vec![],
+                            },
+                            ColumnDefinition {
+                                col_name: Name::Ident("baz".to_owned()),
+                                col_type: Some(Type {
+                                    name: "INTEGER".to_owned(),
+                                    size: None,
+                                }),
+                                constraints: vec![],
+                            },
+                        ],
+                        constraints: vec![
+                            NamedTableConstraint {
+                                name: None,
+                                constraint: TableConstraint::Check(Box::new(
+                                    Expr::Literal(Literal::Numeric("1".to_owned()))
+                                )),
+                            },
+                        ],
+                        options: TableOptions::NONE,
+                    },
+                })],
+            ),
+            (
+                b"CREATE TEMP TABLE IF NOT EXISTS foo (bar, baz INTEGER, FOREIGN KEY (bar) REFERENCES foo_2(bar_2), CHECK (1))".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateTable {
+                    temporary: true,
+                    if_not_exists: true,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    body: CreateTableBody::ColumnsAndConstraints {
+                        columns: vec![
+                            ColumnDefinition {
+                                col_name: Name::Ident("bar".to_owned()),
+                                col_type: None,
+                                constraints: vec![],
+                            },
+                            ColumnDefinition {
+                                col_name: Name::Ident("baz".to_owned()),
+                                col_type: Some(Type {
+                                    name: "INTEGER".to_owned(),
+                                    size: None,
+                                }),
+                                constraints: vec![],
+                            },
+                        ],
+                        constraints: vec![
+                            NamedTableConstraint {
+                                name: None,
+                                constraint: TableConstraint::ForeignKey {
+                                    columns: vec![
+                                        IndexedColumn {
+                                            col_name: Name::Ident("bar".to_owned()),
+                                            collation_name: None,
+                                            order: None,
+                                        },
+                                    ],
+                                    clause: ForeignKeyClause {
+                                        tbl_name: Name::Ident("foo_2".to_owned()),
+                                        columns: vec![
+                                            IndexedColumn {
+                                                col_name: Name::Ident("bar_2".to_owned()),
+                                                collation_name: None,
+                                                order: None,
+                                            },
+                                        ],
+                                        args: vec![],
+                                    },
+                                    deref_clause: None,
+                                },
+                            },
+                            NamedTableConstraint {
+                                name: None,
+                                constraint: TableConstraint::Check(Box::new(
+                                    Expr::Literal(Literal::Numeric("1".to_owned()))
+                                )),
+                            },
+                        ],
+                        options: TableOptions::NONE,
+                    },
                 })],
             ),
         ];
