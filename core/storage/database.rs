@@ -9,6 +9,7 @@ use tracing::{instrument, Level};
 /// the storage medium. A database can either be a file on disk, like in SQLite,
 /// or something like a remote page server service.
 pub trait DatabaseStorage: Send + Sync {
+    fn read_header(&self, c: Completion) -> Result<Completion>;
     fn read_page(&self, page_idx: usize, c: Completion) -> Result<Completion>;
     fn write_page(&self, page_idx: usize, buffer: Arc<Buffer>, c: Completion)
         -> Result<Completion>;
@@ -37,6 +38,16 @@ unsafe impl Sync for DatabaseFile {}
 
 #[cfg(feature = "fs")]
 impl DatabaseStorage for DatabaseFile {
+    #[instrument(skip_all, level = Level::DEBUG)]
+    fn read_header(&self, c: Completion) -> Result<Completion> {
+        let r = c.as_read();
+        let size = r.buf().len();
+        assert!(
+            size == 100,
+            "the size of the database header must be 100 bytes, got {size}"
+        );
+        self.file.pread(0, c)
+    }
     #[instrument(skip_all, level = Level::DEBUG)]
     fn read_page(&self, page_idx: usize, c: Completion) -> Result<Completion> {
         let r = c.as_read();
