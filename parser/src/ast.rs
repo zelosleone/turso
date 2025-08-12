@@ -1146,57 +1146,42 @@ pub enum TriggerEvent {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TriggerCmd {
     /// `UPDATE`
-    Update(TriggerCmdUpdate),
+    Update {
+        /// `OR`
+        or_conflict: Option<ResolveType>,
+        /// table name
+        tbl_name: Name,
+        /// `SET` assignments
+        sets: Vec<Set>,
+        /// `FROM`
+        from: Option<FromClause>,
+        /// `WHERE` clause
+        where_clause: Option<Box<Expr>>,
+    },
     /// `INSERT`
-    Insert(TriggerCmdInsert),
+    Insert {
+        /// `OR`
+        or_conflict: Option<ResolveType>,
+        /// table name
+        tbl_name: Name,
+        /// `COLUMNS`
+        col_names: Vec<Name>,
+        /// `SELECT` or `VALUES`
+        select: Select,
+        /// `ON CONFLICT` clause
+        upsert: Option<Box<Upsert>>,
+        /// `RETURNING`
+        returning: Vec<ResultColumn>,
+    },
     /// `DELETE`
-    Delete(TriggerCmdDelete),
+    Delete {
+        /// table name
+        tbl_name: Name,
+        /// `WHERE` clause
+        where_clause: Option<Box<Expr>>,
+    },
     /// `SELECT`
     Select(Select),
-}
-
-/// `UPDATE` trigger command
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TriggerCmdUpdate {
-    /// `OR`
-    pub or_conflict: Option<ResolveType>,
-    /// table name
-    pub tbl_name: Name,
-    /// `SET` assignments
-    pub sets: Vec<Set>,
-    /// `FROM`
-    pub from: Option<FromClause>,
-    /// `WHERE` clause
-    pub where_clause: Option<Box<Expr>>,
-}
-
-/// `INSERT` trigger command
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TriggerCmdInsert {
-    /// `OR`
-    pub or_conflict: Option<ResolveType>,
-    /// table name
-    pub tbl_name: Name,
-    /// `COLUMNS`
-    pub col_names: Vec<Name>,
-    /// `SELECT` or `VALUES`
-    pub select: Select,
-    /// `ON CONFLICT` clause
-    pub upsert: Option<Box<Upsert>>,
-    /// `RETURNING`
-    pub returning: Vec<ResultColumn>,
-}
-
-/// `DELETE` trigger command
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct TriggerCmdDelete {
-    /// table name
-    pub tbl_name: Name,
-    /// `WHERE` clause
-    pub where_clause: Option<Box<Expr>>,
 }
 
 /// Conflict resolution types

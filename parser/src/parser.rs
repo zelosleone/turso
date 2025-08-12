@@ -5,9 +5,9 @@ use crate::ast::{
     IndexedColumn, InitDeferredPred, JoinConstraint, JoinOperator, JoinType, JoinedSelectTable,
     LikeOperator, Limit, Literal, Materialized, Name, NamedColumnConstraint, NamedTableConstraint,
     NullsOrder, OneSelect, Operator, Over, PragmaBody, PragmaValue, QualifiedName, RefAct, RefArg,
-    ResolveType, ResultColumn, Select, SelectBody, SelectTable, SortOrder, SortedColumn, Stmt,
-    TableConstraint, TableOptions, TransactionType, Type, TypeSize, UnaryOperator, Window,
-    WindowDef, With,
+    ResolveType, ResultColumn, Select, SelectBody, SelectTable, Set, SortOrder, SortedColumn, Stmt,
+    TableConstraint, TableOptions, TransactionType, TriggerCmd, TriggerEvent, TriggerTime, Type,
+    TypeSize, UnaryOperator, Upsert, UpsertDo, UpsertIndex, Window, WindowDef, With,
 };
 use crate::error::Error;
 use crate::lexer::{Lexer, Token};
@@ -596,27 +596,18 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn peek_nm(&mut self) -> Result<Token<'a>, Error> {
-        self.peek_expect(&[
+    fn parse_nm(&mut self) -> Result<Name, Error> {
+        let tok = self.eat_expect(&[
             TokenType::TK_ID,
             TokenType::TK_STRING,
             TokenType::TK_INDEXED,
             TokenType::TK_JOIN_KW,
-        ])
-    }
-
-    fn parse_nm(&mut self) -> Name {
-        let tok = self.eat_assert(&[
-            TokenType::TK_ID,
-            TokenType::TK_STRING,
-            TokenType::TK_INDEXED,
-            TokenType::TK_JOIN_KW,
-        ]);
+        ])?;
 
         let first_char = tok.value[0]; // no need to check empty
         match first_char {
-            b'[' | b'\'' | b'`' | b'"' => Name::Quoted(from_bytes(tok.value)),
-            _ => Name::Ident(from_bytes(tok.value)),
+            b'[' | b'\'' | b'`' | b'"' => Ok(Name::Quoted(from_bytes(tok.value))),
+            _ => Ok(Name::Ident(from_bytes(tok.value))),
         }
     }
 
@@ -626,10 +617,15 @@ impl<'a> Parser<'a> {
             Some(tok) => match tok.token_type.unwrap() {
                 TokenType::TK_TRANSACTION => {
                     self.eat_assert(&[TokenType::TK_TRANSACTION]);
-                    if self.peek_nm().ok().is_some() {
-                        Ok(Some(self.parse_nm()))
-                    } else {
-                        Ok(None)
+                    match self.peek()? {
+                        Some(tok) => match tok.token_type.unwrap() {
+                            TokenType::TK_ID
+                            | TokenType::TK_STRING
+                            | TokenType::TK_INDEXED
+                            | TokenType::TK_JOIN_KW => Ok(Some(self.parse_nm()?)),
+                            _ => Ok(None),
+                        },
+                        _ => Ok(None),
                     }
                 }
                 _ => Ok(None),
@@ -687,8 +683,7 @@ impl<'a> Parser<'a> {
                         self.eat_assert(&[TokenType::TK_SAVEPOINT]);
                     }
 
-                    self.peek_nm()?;
-                    Some(self.parse_nm())
+                    Some(self.parse_nm()?)
                 } else {
                     None
                 }
@@ -703,9 +698,8 @@ impl<'a> Parser<'a> {
 
     fn parse_savepoint(&mut self) -> Result<Stmt, Error> {
         self.eat_assert(&[TokenType::TK_SAVEPOINT]);
-        self.peek_nm()?;
         Ok(Stmt::Savepoint {
-            name: self.parse_nm(),
+            name: self.parse_nm()?,
         })
     }
 
@@ -716,9 +710,8 @@ impl<'a> Parser<'a> {
             self.eat_assert(&[TokenType::TK_SAVEPOINT]);
         }
 
-        self.peek_nm()?;
         Ok(Stmt::Release {
-            name: self.parse_nm(),
+            name: self.parse_nm()?,
         })
     }
 
@@ -749,7 +742,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_VIRTUAL => todo!(),
             TokenType::TK_VIEW => todo!(),
             TokenType::TK_INDEX | TokenType::TK_UNIQUE => self.parse_create_index(),
-            TokenType::TK_TRIGGER => todo!(),
+            TokenType::TK_TRIGGER => self.parse_create_trigger(temp),
             _ => unreachable!(),
         }
     }
@@ -762,6 +755,8 @@ impl<'a> Parser<'a> {
             TokenType::TK_VALUES,
             TokenType::TK_UPDATE,
             TokenType::TK_DELETE,
+            TokenType::TK_INSERT,
+            TokenType::TK_REPLACE,
         ])?;
 
         match first_tok.token_type.unwrap() {
@@ -770,6 +765,8 @@ impl<'a> Parser<'a> {
             }
             TokenType::TK_UPDATE => todo!(),
             TokenType::TK_DELETE => todo!(),
+            TokenType::TK_INSERT => todo!(),
+            TokenType::TK_REPLACE => todo!(),
             _ => unreachable!(),
         }
     }
@@ -791,14 +788,12 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_fullname(&mut self, allow_alias: bool) -> Result<QualifiedName, Error> {
-        self.peek_nm()?;
-        let first_name = self.parse_nm();
+        let first_name = self.parse_nm()?;
 
         let secone_name = if let Some(tok) = self.peek()? {
             if tok.token_type == Some(TokenType::TK_DOT) {
                 self.eat_assert(&[TokenType::TK_DOT]);
-                self.peek_nm()?;
-                Some(self.parse_nm())
+                Some(self.parse_nm()?)
             } else {
                 None
             }
@@ -810,8 +805,7 @@ impl<'a> Parser<'a> {
             if let Some(tok) = self.peek()? {
                 if tok.token_type == Some(TokenType::TK_AS) {
                     self.eat_assert(&[TokenType::TK_AS]);
-                    self.peek_nm()?;
-                    Some(self.parse_nm())
+                    Some(self.parse_nm()?)
                 } else {
                     None
                 }
@@ -1136,7 +1130,7 @@ impl<'a> Parser<'a> {
                     TokenType::TK_ID
                     | TokenType::TK_STRING
                     | TokenType::TK_INDEXED
-                    | TokenType::TK_JOIN_KW => Some(self.parse_nm()),
+                    | TokenType::TK_JOIN_KW => Some(self.parse_nm()?),
                     _ => None,
                 },
             },
@@ -1186,10 +1180,7 @@ impl<'a> Parser<'a> {
                 self.eat_expect(&[TokenType::TK_RP])?;
                 Ok(Some(Over::Window(window)))
             }
-            _ => {
-                let name = self.parse_nm();
-                Ok(Some(Over::Name(name)))
-            }
+            _ => Ok(Some(Over::Name(self.parse_nm()?))),
         }
     }
 
@@ -1404,14 +1395,12 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 let can_be_lit_str = tok.token_type == Some(TokenType::TK_STRING);
-                debug_assert!(self.peek_nm().is_ok(), "Expected a name token");
-                let name = self.parse_nm();
+                let name = self.parse_nm()?;
 
                 let second_name = if let Some(tok) = self.peek()? {
                     if tok.token_type == Some(TokenType::TK_DOT) {
                         self.eat_assert(&[TokenType::TK_DOT]);
-                        self.peek_nm()?;
-                        Some(self.parse_nm())
+                        Some(self.parse_nm()?)
                     } else if tok.token_type == Some(TokenType::TK_LP) {
                         if can_be_lit_str {
                             return Err(Error::ParseUnexpectedToken {
@@ -1462,8 +1451,7 @@ impl<'a> Parser<'a> {
                     if tok.token_type == Some(TokenType::TK_DOT) {
                         debug_assert!(second_name.is_some());
                         self.eat_assert(&[TokenType::TK_DOT]);
-                        self.peek_nm()?;
-                        Some(self.parse_nm())
+                        Some(self.parse_nm()?)
                     } else {
                         None
                     }
@@ -1846,8 +1834,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_eid(&mut self) -> Result<IndexedColumn, Error> {
-        self.peek_nm()?;
-        let nm = self.parse_nm();
+        let nm = self.parse_nm()?;
         let collate = self.parse_collate()?;
         let sort_order = self.parse_sort_order()?;
         Ok(IndexedColumn {
@@ -1884,8 +1871,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_common_table_expr(&mut self) -> Result<CommonTableExpr, Error> {
-        self.peek_nm()?;
-        let nm = self.parse_nm();
+        let nm = self.parse_nm()?;
         let eid_list = self.parse_eid_list()?;
         self.eat_expect(&[TokenType::TK_AS])?;
         let wqas = match self.peek_no_eof()?.token_type.unwrap() {
@@ -1950,18 +1936,16 @@ impl<'a> Parser<'a> {
             Some(tok) => match tok.token_type.unwrap().fallback_id_if_ok() {
                 TokenType::TK_AS => {
                     self.eat_assert(&[TokenType::TK_AS]);
-                    self.peek_nm()?;
-                    Ok(Some(As::As(self.parse_nm())))
+                    Ok(Some(As::As(self.parse_nm()?)))
                 }
-                TokenType::TK_STRING | TokenType::TK_ID => Ok(Some(As::Elided(self.parse_nm()))),
+                TokenType::TK_STRING | TokenType::TK_ID => Ok(Some(As::Elided(self.parse_nm()?))),
                 _ => Ok(None),
             },
         }
     }
 
     fn parse_window_defn(&mut self) -> Result<WindowDef, Error> {
-        self.peek_nm()?;
-        let name = self.parse_nm();
+        let name = self.parse_nm()?;
         self.eat_expect(&[TokenType::TK_AS])?;
         self.eat_expect(&[TokenType::TK_LP])?;
         let window = self.parse_window()?;
@@ -2042,8 +2026,7 @@ impl<'a> Parser<'a> {
                 TokenType::TK_INDEXED => {
                     self.eat_assert(&[TokenType::TK_INDEXED]);
                     self.eat_expect(&[TokenType::TK_BY])?;
-                    self.peek_nm()?;
-                    Ok(Some(Indexed::IndexedBy(self.parse_nm())))
+                    Ok(Some(Indexed::IndexedBy(self.parse_nm()?)))
                 }
                 TokenType::TK_NOT => {
                     self.eat_assert(&[TokenType::TK_NOT]);
@@ -2056,21 +2039,32 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_nm_list(&mut self) -> Result<Vec<Name>, Error> {
-        self.peek_nm()?;
-        let mut names = vec![self.parse_nm()];
+        let mut names = vec![self.parse_nm()?];
 
         loop {
             match self.peek()? {
                 Some(tok) if tok.token_type == Some(TokenType::TK_COMMA) => {
                     self.eat_assert(&[TokenType::TK_COMMA]);
-                    self.peek_nm()?;
-                    names.push(self.parse_nm());
+                    names.push(self.parse_nm()?);
                 }
                 _ => break,
             }
         }
 
         Ok(names)
+    }
+
+    fn parse_nm_list_opt(&mut self) -> Result<Vec<Name>, Error> {
+        match self.peek()? {
+            Some(tok) if tok.token_type == Some(TokenType::TK_LP) => {
+                self.eat_assert(&[TokenType::TK_LP]);
+            }
+            _ => return Ok(vec![]),
+        }
+
+        let result = self.parse_nm_list()?;
+        self.eat_expect(&[TokenType::TK_RP])?;
+        Ok(result)
     }
 
     fn parse_on_using(&mut self) -> Result<Option<JoinConstraint>, Error> {
@@ -2330,7 +2324,7 @@ impl<'a> Parser<'a> {
                     || tt == TokenType::TK_JOIN_KW
                 {
                     if let Ok(res) = self.mark(|p| -> Result<ResultColumn, Error> {
-                        let name = p.parse_nm();
+                        let name = p.parse_nm()?;
                         p.eat_expect(&[TokenType::TK_DOT])?;
                         p.eat_expect(&[TokenType::TK_STAR])?;
                         Ok(ResultColumn::TableStar(name))
@@ -2640,8 +2634,7 @@ impl<'a> Parser<'a> {
             let name = match self.peek_no_eof()?.token_type.unwrap() {
                 TokenType::TK_CONSTRAINT => {
                     self.eat_assert(&[TokenType::TK_CONSTRAINT]);
-                    self.peek_nm()?;
-                    Some(self.parse_nm())
+                    Some(self.parse_nm()?)
                 }
                 _ => None,
             };
@@ -2857,7 +2850,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_ID
             | TokenType::TK_STRING
             | TokenType::TK_INDEXED
-            | TokenType::TK_JOIN_KW => Ok(Box::new(Expr::Name(self.parse_nm()))),
+            | TokenType::TK_JOIN_KW => Ok(Box::new(Expr::Name(self.parse_nm()?))),
             _ => self.parse_signed(),
         }
     }
@@ -2903,7 +2896,7 @@ impl<'a> Parser<'a> {
                 TokenType::TK_ID
                 | TokenType::TK_STRING
                 | TokenType::TK_INDEXED
-                | TokenType::TK_JOIN_KW => Some(self.parse_nm()),
+                | TokenType::TK_JOIN_KW => Some(self.parse_nm()?),
                 _ => None,
             },
             _ => None,
@@ -2959,9 +2952,23 @@ impl<'a> Parser<'a> {
                 ))))
             }
             TokenType::TK_ID | TokenType::TK_INDEXED => Ok(ColumnConstraint::Default(Box::new(
-                Expr::Id(self.parse_nm()),
+                Expr::Id(self.parse_nm()?),
             ))),
             _ => Ok(ColumnConstraint::Default(self.parse_term()?)),
+        }
+    }
+
+    fn parse_resolve_type(&mut self) -> Result<ResolveType, Error> {
+        match self.peek_no_eof()?.token_type.unwrap() {
+            TokenType::TK_IGNORE => {
+                self.eat_assert(&[TokenType::TK_IGNORE]);
+                Ok(ResolveType::Ignore)
+            }
+            TokenType::TK_REPLACE => {
+                self.eat_assert(&[TokenType::TK_REPLACE]);
+                Ok(ResolveType::Replace)
+            }
+            _ => Ok(self.parse_raise_type()?),
         }
     }
 
@@ -2973,6 +2980,17 @@ impl<'a> Parser<'a> {
                     self.eat_assert(&[TokenType::TK_ON]);
                     self.eat_expect(&[TokenType::TK_CONFLICT])?;
                 }
+                _ => return Ok(None),
+            },
+        }
+
+        Ok(Some(self.parse_resolve_type()?))
+    }
+
+    fn parse_or_conflict(&mut self) -> Result<Option<ResolveType>, Error> {
+        match self.peek()? {
+            None => return Ok(None),
+            Some(tok) => match tok.token_type.unwrap() {
                 TokenType::TK_OR => {
                     self.eat_assert(&[TokenType::TK_OR]);
                 }
@@ -2980,17 +2998,7 @@ impl<'a> Parser<'a> {
             },
         }
 
-        match self.peek_no_eof()?.token_type.unwrap() {
-            TokenType::TK_IGNORE => {
-                self.eat_assert(&[TokenType::TK_IGNORE]);
-                Ok(Some(ResolveType::Ignore))
-            }
-            TokenType::TK_REPLACE => {
-                self.eat_assert(&[TokenType::TK_REPLACE]);
-                Ok(Some(ResolveType::Replace))
-            }
-            _ => Ok(Some(self.parse_raise_type()?)),
-        }
+        Ok(Some(self.parse_resolve_type()?))
     }
 
     fn parse_auto_increment(&mut self) -> Result<bool, Error> {
@@ -3084,8 +3092,7 @@ impl<'a> Parser<'a> {
                 Some(tok) => match tok.token_type.unwrap() {
                     TokenType::TK_MATCH => {
                         self.eat_assert(&[TokenType::TK_MATCH]);
-                        self.peek_nm()?;
-                        result.push(RefArg::Match(self.parse_nm()));
+                        result.push(RefArg::Match(self.parse_nm()?));
                     }
                     TokenType::TK_ON => {
                         self.eat_assert(&[TokenType::TK_ON]);
@@ -3118,8 +3125,7 @@ impl<'a> Parser<'a> {
 
     fn parse_foreign_key_clause(&mut self) -> Result<ForeignKeyClause, Error> {
         self.eat_assert(&[TokenType::TK_REFERENCES]);
-        self.peek_nm()?;
-        let name = self.parse_nm();
+        let name = self.parse_nm()?;
         let eid_list = self.parse_eid_list()?;
         let ref_args = self.parse_ref_args()?;
         Ok(ForeignKeyClause {
@@ -3213,8 +3219,7 @@ impl<'a> Parser<'a> {
                 Some(tok) => match tok.token_type.unwrap() {
                     TokenType::TK_CONSTRAINT => {
                         self.eat_assert(&[TokenType::TK_CONSTRAINT]);
-                        self.peek_nm()?;
-                        Some(self.parse_nm())
+                        Some(self.parse_nm()?)
                     }
                     _ => None,
                 },
@@ -3298,8 +3303,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_column_definition(&mut self) -> Result<ColumnDefinition, Error> {
-        self.peek_nm()?;
-        let col_name = self.parse_nm();
+        let col_name = self.parse_nm()?;
         let col_type = self.parse_type()?;
         let constraints = self.parse_named_column_constraints()?;
         Ok(ColumnDefinition {
@@ -3338,29 +3342,26 @@ impl<'a> Parser<'a> {
                     _ => {}
                 }
 
-                self.peek_nm()?;
                 Ok(Stmt::AlterTable {
                     name: tbl_name,
-                    body: AlterTableBody::DropColumn(self.parse_nm()),
+                    body: AlterTableBody::DropColumn(self.parse_nm()?),
                 })
             }
             TokenType::TK_RENAME => {
                 let col_name = match self.peek_no_eof()?.token_type.unwrap().fallback_id_if_ok() {
                     TokenType::TK_COLUMNKW => {
                         self.eat_assert(&[TokenType::TK_COLUMNKW]);
-                        self.peek_nm()?;
-                        Some(self.parse_nm())
+                        Some(self.parse_nm()?)
                     }
                     TokenType::TK_ID
                     | TokenType::TK_STRING
                     | TokenType::TK_INDEXED
-                    | TokenType::TK_JOIN_KW => Some(self.parse_nm()),
+                    | TokenType::TK_JOIN_KW => Some(self.parse_nm()?),
                     _ => None,
                 };
 
                 self.eat_expect(&[TokenType::TK_TO])?;
-                self.peek_nm()?;
-                let to_name = self.parse_nm();
+                let to_name = self.parse_nm()?;
 
                 if col_name.is_some() {
                     Ok(Stmt::AlterTable {
@@ -3391,8 +3392,7 @@ impl<'a> Parser<'a> {
         let if_not_exists = self.parse_if_not_exists()?;
         let idx_name = self.parse_fullname(false)?;
         self.eat_expect(&[TokenType::TK_ON])?;
-        self.peek_nm()?;
-        let tbl_name = self.parse_nm();
+        let tbl_name = self.parse_nm()?;
         self.eat_expect(&[TokenType::TK_LP])?;
         let columns = self.parse_sort_list()?;
         self.eat_expect(&[TokenType::TK_RP])?;
@@ -3405,6 +3405,329 @@ impl<'a> Parser<'a> {
             columns,
             where_clause,
             unique: has_unique,
+        })
+    }
+
+    fn parse_set(&mut self) -> Result<Set, Error> {
+        let tok = self.peek_expect(&[
+            TokenType::TK_LP,
+            TokenType::TK_ID,
+            TokenType::TK_STRING,
+            TokenType::TK_JOIN_KW,
+            TokenType::TK_INDEXED,
+        ])?;
+
+        match tok.token_type.unwrap() {
+            TokenType::TK_LP => {
+                self.eat_assert(&[TokenType::TK_LP]);
+                let names = self.parse_nm_list()?;
+                self.eat_expect(&[TokenType::TK_RP])?;
+                self.eat_expect(&[TokenType::TK_EQ])?;
+                Ok(Set {
+                    col_names: names,
+                    expr: self.parse_expr(0)?,
+                })
+            }
+            _ => {
+                let name = self.parse_nm()?;
+                self.eat_expect(&[TokenType::TK_EQ])?;
+                Ok(Set {
+                    col_names: vec![name],
+                    expr: self.parse_expr(0)?,
+                })
+            }
+        }
+    }
+
+    fn parse_set_list(&mut self) -> Result<Vec<Set>, Error> {
+        let mut results = vec![self.parse_set()?];
+        loop {
+            match self.peek()? {
+                Some(tok) if tok.token_type == Some(TokenType::TK_COMMA) => {
+                    self.eat_assert(&[TokenType::TK_COMMA]);
+                    results.push(self.parse_set()?);
+                }
+                _ => break,
+            }
+        }
+
+        Ok(results)
+    }
+
+    fn parse_returning(&mut self) -> Result<Vec<ResultColumn>, Error> {
+        match self.peek()? {
+            Some(tok) if tok.token_type == Some(TokenType::TK_RETURNING) => {
+                self.eat_assert(&[TokenType::TK_RETURNING]);
+            }
+            _ => return Ok(vec![]),
+        }
+
+        self.parse_select_columns()
+    }
+
+    fn parse_upsert(&mut self) -> Result<(Option<Box<Upsert>>, Vec<ResultColumn>), Error> {
+        match self.peek()? {
+            Some(tok) => match tok.token_type.unwrap() {
+                TokenType::TK_ON => {
+                    self.eat_assert(&[TokenType::TK_ON]);
+                }
+                TokenType::TK_RETURNING => {
+                    return Ok((None, self.parse_returning()?));
+                }
+                _ => return Ok((None, vec![])),
+            },
+            _ => return Ok((None, vec![])),
+        }
+
+        self.eat_expect(&[TokenType::TK_CONFLICT])?;
+        let targets = match self.peek_no_eof()?.token_type.unwrap() {
+            TokenType::TK_LP => {
+                self.eat_assert(&[TokenType::TK_LP]);
+                let result = self.parse_sort_list()?;
+                self.eat_expect(&[TokenType::TK_RP])?;
+                result
+            }
+            _ => vec![],
+        };
+
+        let where_clause = if !targets.is_empty() {
+            self.parse_where()?
+        } else {
+            None
+        };
+
+        self.eat_expect(&[TokenType::TK_DO])?;
+        let tok = self.eat_expect(&[TokenType::TK_NOTHING, TokenType::TK_UPDATE])?;
+
+        match tok.token_type.unwrap() {
+            TokenType::TK_NOTHING => {
+                if !targets.is_empty() {
+                    let (next, returning) = self.parse_upsert()?;
+                    Ok((
+                        Some(Box::new(Upsert {
+                            index: Some(UpsertIndex {
+                                targets,
+                                where_clause,
+                            }),
+                            do_clause: UpsertDo::Nothing,
+                            next,
+                        })),
+                        returning,
+                    ))
+                } else {
+                    Ok((
+                        Some(Box::new(Upsert {
+                            index: None,
+                            do_clause: UpsertDo::Nothing,
+                            next: None,
+                        })),
+                        self.parse_returning()?,
+                    ))
+                }
+            }
+            TokenType::TK_UPDATE => {
+                self.eat_expect(&[TokenType::TK_SET])?;
+                let set_list = self.parse_set_list()?;
+                let update_where_clause = self.parse_where()?;
+                if !targets.is_empty() {
+                    let (next, returning) = self.parse_upsert()?;
+                    Ok((
+                        Some(Box::new(Upsert {
+                            index: Some(UpsertIndex {
+                                targets,
+                                where_clause,
+                            }),
+                            do_clause: UpsertDo::Set {
+                                sets: set_list,
+                                where_clause: update_where_clause,
+                            },
+                            next,
+                        })),
+                        returning,
+                    ))
+                } else {
+                    Ok((
+                        Some(Box::new(Upsert {
+                            index: None,
+                            do_clause: UpsertDo::Set {
+                                sets: set_list,
+                                where_clause: update_where_clause,
+                            },
+                            next: None,
+                        })),
+                        self.parse_returning()?,
+                    ))
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    fn parse_trigger_insert_cmd(&mut self) -> Result<TriggerCmd, Error> {
+        let tok = self.eat_assert(&[TokenType::TK_INSERT, TokenType::TK_REPLACE]);
+        let resolve_type = match tok.token_type.unwrap() {
+            TokenType::TK_INSERT => self.parse_or_conflict()?,
+            TokenType::TK_REPLACE => Some(ResolveType::Replace),
+            _ => unreachable!(),
+        };
+
+        self.eat_expect(&[TokenType::TK_INTO])?;
+        let tbl_name = self.parse_nm()?;
+        let col_names = self.parse_nm_list_opt()?;
+        let select = self.parse_select()?;
+        let (upsert, returning) = self.parse_upsert()?;
+        Ok(TriggerCmd::Insert {
+            or_conflict: resolve_type,
+            tbl_name,
+            col_names,
+            select,
+            upsert,
+            returning,
+        })
+    }
+
+    fn parse_trigger_update_cmd(&mut self) -> Result<TriggerCmd, Error> {
+        self.eat_assert(&[TokenType::TK_UPDATE]);
+        let or_conflict = self.parse_or_conflict()?;
+        let tbl_name = self.parse_nm()?;
+        self.eat_expect(&[TokenType::TK_SET])?;
+        let sets = self.parse_set_list()?;
+        let from = self.parse_from_clause_opt()?;
+        let where_clause = self.parse_where()?;
+        Ok(TriggerCmd::Update {
+            or_conflict,
+            tbl_name,
+            sets,
+            from,
+            where_clause,
+        })
+    }
+
+    fn parse_trigger_delete_cmd(&mut self) -> Result<TriggerCmd, Error> {
+        self.eat_assert(&[TokenType::TK_DELETE]);
+        self.eat_expect(&[TokenType::TK_FROM])?;
+        let tbl_name = self.parse_nm()?;
+        let where_clause = self.parse_where()?;
+        Ok(TriggerCmd::Delete {
+            tbl_name,
+            where_clause,
+        })
+    }
+
+    fn parse_trigger_cmd(&mut self) -> Result<TriggerCmd, Error> {
+        let tok = self.peek_expect(&[
+            TokenType::TK_INSERT,
+            TokenType::TK_REPLACE,
+            TokenType::TK_UPDATE,
+            TokenType::TK_DELETE,
+            TokenType::TK_WITH,
+            TokenType::TK_SELECT,
+            TokenType::TK_VALUES,
+        ])?;
+
+        match tok.token_type.unwrap() {
+            TokenType::TK_WITH | TokenType::TK_SELECT | TokenType::TK_VALUES => {
+                Ok(TriggerCmd::Select(self.parse_select()?))
+            }
+            TokenType::TK_INSERT | TokenType::TK_REPLACE => self.parse_trigger_insert_cmd(),
+            TokenType::TK_UPDATE => self.parse_trigger_update_cmd(),
+            TokenType::TK_DELETE => self.parse_trigger_delete_cmd(),
+            _ => unreachable!(),
+        }
+    }
+
+    fn parse_create_trigger(&mut self, temporary: bool) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_TRIGGER]);
+
+        let if_not_exists = self.parse_if_not_exists()?;
+        let trigger_name = self.parse_fullname(false)?;
+
+        let trigger_time = match self.peek_no_eof()?.token_type.unwrap() {
+            TokenType::TK_BEFORE => {
+                self.eat_assert(&[TokenType::TK_BEFORE]);
+                Some(TriggerTime::Before)
+            }
+            TokenType::TK_AFTER => {
+                self.eat_assert(&[TokenType::TK_AFTER]);
+                Some(TriggerTime::After)
+            }
+            TokenType::TK_INSTEAD => {
+                self.eat_assert(&[TokenType::TK_INSTEAD]);
+                self.eat_expect(&[TokenType::TK_OF])?;
+                Some(TriggerTime::InsteadOf)
+            }
+            _ => None,
+        };
+
+        let tok = self.eat_expect(&[
+            TokenType::TK_INSERT,
+            TokenType::TK_UPDATE,
+            TokenType::TK_DELETE,
+        ])?;
+        let trigger_event = match tok.token_type.unwrap() {
+            TokenType::TK_INSERT => TriggerEvent::Insert,
+            TokenType::TK_DELETE => TriggerEvent::Delete,
+            TokenType::TK_UPDATE => match self.peek_no_eof()?.token_type.unwrap() {
+                TokenType::TK_OF => {
+                    self.eat_assert(&[TokenType::TK_OF]);
+                    TriggerEvent::UpdateOf(self.parse_nm_list()?)
+                }
+                _ => TriggerEvent::Update,
+            },
+            _ => unreachable!(),
+        };
+
+        self.eat_expect(&[TokenType::TK_ON])?;
+        let tbl_name = self.parse_fullname(false)?;
+
+        let foreach_clause = match self.peek_no_eof()?.token_type.unwrap() {
+            TokenType::TK_FOR => {
+                self.eat_assert(&[TokenType::TK_FOR]);
+                self.eat_expect(&[TokenType::TK_EACH])?;
+                self.eat_expect(&[TokenType::TK_ROW])?;
+                true
+            }
+            _ => false,
+        };
+
+        let when_clause = match self.peek()? {
+            Some(tok) if tok.token_type == Some(TokenType::TK_WHEN) => {
+                self.eat_assert(&[TokenType::TK_WHEN]);
+                Some(self.parse_expr(0)?)
+            }
+            _ => None,
+        };
+
+        self.eat_expect(&[TokenType::TK_BEGIN])?;
+
+        let mut cmds = vec![self.parse_trigger_cmd()?];
+        loop {
+            match self.peek_no_eof()?.token_type.unwrap() {
+                TokenType::TK_UPDATE
+                | TokenType::TK_REPLACE
+                | TokenType::TK_INSERT
+                | TokenType::TK_DELETE
+                | TokenType::TK_WITH
+                | TokenType::TK_SELECT
+                | TokenType::TK_VALUES => {}
+                _ => break,
+            }
+
+            cmds.push(self.parse_trigger_cmd()?);
+        }
+
+        self.eat_expect(&[TokenType::TK_END])?;
+
+        Ok(Stmt::CreateTrigger {
+            temporary,
+            if_not_exists,
+            trigger_name,
+            time: trigger_time,
+            event: trigger_event,
+            tbl_name,
+            for_each_row: foreach_clause,
+            when_clause,
+            commands: cmds,
         })
     }
 }
@@ -8505,7 +8828,7 @@ mod tests {
                 })],
             ),
             (
-                b"ALTER TABLE foo ADD COLUMN baz INTEGER NOT NULL OR ROLLBACK".as_slice(),
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER NOT NULL ON CONFLICT ROLLBACK".as_slice(),
                 vec![Cmd::Stmt(Stmt::AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
@@ -8550,7 +8873,7 @@ mod tests {
                 })],
             ),
             (
-                b"ALTER TABLE foo ADD COLUMN baz INTEGER PRIMARY KEY ASC OR ROLLBACK AUTOINCREMENT".as_slice(),
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER PRIMARY KEY ASC ON CONFLICT ROLLBACK AUTOINCREMENT".as_slice(),
                 vec![Cmd::Stmt(Stmt::AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
@@ -8592,7 +8915,7 @@ mod tests {
                 })],
             ),
             (
-                b"ALTER TABLE foo ADD COLUMN baz INTEGER UNIQUE OR ROLLBACK".as_slice(),
+                b"ALTER TABLE foo ADD COLUMN baz INTEGER UNIQUE ON CONFLICT ROLLBACK".as_slice(),
                 vec![Cmd::Stmt(Stmt::AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
@@ -9257,7 +9580,7 @@ mod tests {
                 })],
             ),
             (
-                b"CREATE TEMP TABLE IF NOT EXISTS foo (bar, baz INTEGER, CONSTRAINT tbl_cons PRIMARY KEY (bar AUTOINCREMENT) OR ROLLBACK) STRICT".as_slice(),
+                b"CREATE TEMP TABLE IF NOT EXISTS foo (bar, baz INTEGER, CONSTRAINT tbl_cons PRIMARY KEY (bar AUTOINCREMENT) ON CONFLICT ROLLBACK) STRICT".as_slice(),
                 vec![Cmd::Stmt(Stmt::CreateTable {
                     temporary: true,
                     if_not_exists: true,
@@ -9303,7 +9626,7 @@ mod tests {
                 })],
             ),
             (
-                b"CREATE TEMP TABLE IF NOT EXISTS foo (bar, baz INTEGER, UNIQUE (bar) OR ROLLBACK) WITHOUT ROWID".as_slice(),
+                b"CREATE TEMP TABLE IF NOT EXISTS foo (bar, baz INTEGER, UNIQUE (bar) ON CONFLICT ROLLBACK) WITHOUT ROWID".as_slice(),
                 vec![Cmd::Stmt(Stmt::CreateTable {
                     temporary: true,
                     if_not_exists: true,
