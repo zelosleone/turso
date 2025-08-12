@@ -2030,6 +2030,7 @@ pub fn op_transaction(
             match pager.begin_write_tx()? {
                 IOResult::Done(r) => {
                     if let LimboResult::Busy = r {
+                        tracing::error!("connection is busy");
                         pager.end_read_tx()?;
                         conn.transaction_state.replace(TransactionState::None);
                         conn.auto_commit.replace(true);
@@ -2046,6 +2047,11 @@ pub fn op_transaction(
                     return Ok(InsnFunctionStepResult::IO);
                 }
             }
+        }
+
+        // Transaction state should be updated before checking for Schema cookie so that the tx is ended properly on error
+        if updated {
+            conn.transaction_state.replace(new_transaction_state);
         }
 
         // Check whether schema has changed if we are actually going to access the database.
@@ -2065,10 +2071,6 @@ pub fn op_transaction(
                     return Err(err);
                 }
             }
-        }
-
-        if updated {
-            conn.transaction_state.replace(new_transaction_state);
         }
     }
     state.pc += 1;
@@ -2095,17 +2097,11 @@ pub fn op_auto_commit(
             .commit_txn(pager.clone(), state, mv_store, *rollback)
             .map(Into::into);
     }
-    let schema_did_change =
-        if let TransactionState::Write { schema_did_change } = conn.transaction_state.get() {
-            schema_did_change
-        } else {
-            false
-        };
 
     if *auto_commit != conn.auto_commit.get() {
         if *rollback {
             // TODO(pere): add rollback I/O logic once we implement rollback journal
-            return_if_io!(pager.end_tx(true, schema_did_change, &conn, false));
+            return_if_io!(pager.end_tx(true, &conn, false));
             conn.transaction_state.replace(TransactionState::None);
             conn.auto_commit.replace(true);
         } else {
