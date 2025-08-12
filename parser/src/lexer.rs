@@ -25,7 +25,7 @@ pub struct Token<'a> {
 
 pub struct Lexer<'a> {
     pub(crate) offset: usize,
-    input: &'a [u8],
+    pub(crate) input: &'a [u8],
 }
 
 impl<'a> Iterator for Lexer<'a> {

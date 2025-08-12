@@ -732,6 +732,93 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_vtab_arg(&mut self) -> Result<String, Error> {
+        let tok = self.peek_no_eof()?;
+
+        // minus len() because lexer already consumed the token
+        let start_idx = self.lexer.offset - tok.value.len();
+
+        loop {
+            match self.peek_no_eof()?.token_type.unwrap() {
+                TokenType::TK_LP => {
+                    let mut lp_count: usize = 0;
+                    loop {
+                        let tok = self.eat_no_eof()?;
+                        match tok.token_type.unwrap() {
+                            TokenType::TK_LP => {
+                                lp_count += 1;
+                            }
+                            TokenType::TK_RP => {
+                                lp_count -= 1; // FIXME: no need to check underflow
+                                if lp_count == 0 {
+                                    break;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                TokenType::TK_COMMA | TokenType::TK_RP => break,
+                _ => {
+                    self.eat_no_eof()?;
+                }
+            }
+        }
+
+        // minus 1 because lexer already consumed TK_COMMA or TK_RP
+        let end_idx = self.lexer.offset - 1;
+        if start_idx == end_idx {
+            return Err(Error::Custom("unexpected COMMA in vtab args".to_owned()));
+        }
+
+        Ok(from_bytes(&self.lexer.input[start_idx..end_idx]))
+    }
+
+    fn parse_create_virtual(&mut self) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_VIRTUAL]);
+        self.eat_expect(&[TokenType::TK_TABLE])?;
+        let if_not_exists = self.parse_if_not_exists()?;
+        let tbl_name = self.parse_fullname(false)?;
+        self.eat_expect(&[TokenType::TK_USING])?;
+        let module_name = self.parse_nm()?;
+        let args = match self.peek()? {
+            Some(tok) => match tok.token_type.unwrap() {
+                TokenType::TK_LP => {
+                    self.eat_assert(&[TokenType::TK_LP]);
+                    let mut result = vec![];
+                    loop {
+                        match self.peek_no_eof()?.token_type.unwrap() {
+                            TokenType::TK_RP => break, // handle empty args case
+                            _ => {}
+                        }
+
+                        result.push(self.parse_vtab_arg()?);
+                        let tok = self.peek_expect(&[TokenType::TK_COMMA, TokenType::TK_RP])?;
+                        match tok.token_type.unwrap() {
+                            TokenType::TK_COMMA => {
+                                self.eat_assert(&[TokenType::TK_COMMA]);
+                            }
+                            TokenType::TK_RP => break,
+                            _ => unreachable!(),
+                        }
+                    }
+
+                    self.eat_assert(&[TokenType::TK_RP]);
+                    result
+                }
+                _ => vec![],
+            },
+            _ => vec![],
+        };
+
+        Ok(Stmt::CreateVirtualTable {
+            if_not_exists,
+            tbl_name,
+            module_name,
+            args,
+        })
+    }
+
     fn parse_create_stmt(&mut self) -> Result<Stmt, Error> {
         self.eat_assert(&[TokenType::TK_CREATE]);
         let mut first_tok = self.peek_expect(&[
@@ -756,7 +843,7 @@ impl<'a> Parser<'a> {
 
         match first_tok.token_type.unwrap() {
             TokenType::TK_TABLE => self.parse_create_table(temp),
-            TokenType::TK_VIRTUAL => todo!(),
+            TokenType::TK_VIRTUAL => self.parse_create_virtual(),
             TokenType::TK_VIEW => self.parse_create_view(temp),
             TokenType::TK_INDEX | TokenType::TK_UNIQUE => self.parse_create_index(),
             TokenType::TK_TRIGGER => self.parse_create_trigger(temp),
@@ -10505,6 +10592,66 @@ mod tests {
                         order_by: vec![],
                         limit: None,
                     },
+                })],
+            ),
+            // parse CREATE VIRTUAL TABLE
+            (
+                b"CREATE VIRTUAL TABLE foo USING bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateVirtualTable {
+                    if_not_exists: false,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    module_name: Name::Ident("bar".to_owned()),
+                    args: vec![],
+                })],
+            ),
+            (
+                b"CREATE VIRTUAL TABLE foo USING bar()".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateVirtualTable {
+                    if_not_exists: false,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    module_name: Name::Ident("bar".to_owned()),
+                    args: vec![],
+                })],
+            ),
+            (
+                b"CREATE VIRTUAL TABLE IF NOT EXISTS foo USING bar(1, 2, ('hello', (3.333), 'world', (1, 2)))".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateVirtualTable {
+                    if_not_exists: true,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    module_name: Name::Ident("bar".to_owned()),
+                    args: vec![
+                        "1".to_owned(),
+                        "2".to_owned(),
+                        "('hello', (3.333), 'world', (1, 2))".to_owned(),
+                    ],
+                })],
+            ),
+            (
+                b"CREATE VIRTUAL TABLE ft USING fts5(x, tokenize = '''porter'' ''ascii''')".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateVirtualTable {
+                    if_not_exists: false,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("ft".to_owned()),
+                        alias: None,
+                    },
+                    module_name: Name::Ident("fts5".to_owned()),
+                    args: vec![
+                        "x".to_owned(),
+                        "tokenize = '''porter'' ''ascii'''".to_owned(),
+                    ],
                 })],
             ),
         ];
