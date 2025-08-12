@@ -1,12 +1,12 @@
 use crate::turso_assert;
 
 #[derive(Debug)]
-/// Immutable-size bitmap for use in tracking allocated pages from an arena.
-pub(super) struct PageBitmap {
+/// Immutable-size bitmap for use in tracking allocated slots from an arena.
+pub(super) struct SlotBitmap {
     /// 1 = free, 0 = allocated
     words: Box<[u64]>,
-    /// total capacity of pages in the arena
-    n_pages: u32,
+    /// total capacity of slots in the arena
+    n_slots: u32,
     /// where single allocations search downward from
     scan_one_high: u32,
     /// where runs search upward from
@@ -20,24 +20,24 @@ pub(super) struct PageBitmap {
 ///        low ^ scan_run_low                   scan_one_high ^ high
 /// ```
 ///
-/// There are two hints or 'pointers' where we begin scanning for free pages,
+/// There are two hints or 'pointers' where we begin scanning for free slots,
 /// one on each end of the map. This strategy preserves contiguous free space
 /// at the low end of the arena, which is beneficial for allocating many contiguous
 /// buffers that can be coalesced into fewer I/O operations.
 ///
-/// Single-page allocations (`alloc_one`) start searching from `scan_one_high` and work
+/// Single-slot allocations (`alloc_one`) start searching from `scan_one_high` and work
 /// downward, preserving large contiguous runs at the low end. When the hint area is
 /// exhausted, the search wraps around to check from the top of the bitmap.
 ///
 /// Run allocations (`alloc_run`) scan upward from `scan_run_low`, making it likely
 /// that sequential allocations will be physically contiguous.
 ///
-/// After freeing pages, we update hints to encourage reuse:
-/// - If freed pages are below `scan_run_low`, we move it down to include them
-/// - If freed pages are above `scan_one_high`, we move it up to include them
+/// After freeing slots, we update hints to encourage reuse:
+/// - If freed slots are below `scan_run_low`, we move it down to include them
+/// - If freed slots are above `scan_one_high`, we move it up to include them
 ///
 ///```ignore
-/// let mut bitmap = PageBitmap::new(128);
+/// let mut bitmap = SlotBitmap::new(128);
 ///
 /// // Single allocations come from high end
 /// assert_eq!(bitmap.alloc_one(), Some(127));
@@ -51,8 +51,8 @@ pub(super) struct PageBitmap {
 /// bitmap.free_run(5, 3);
 /// assert_eq!(bitmap.alloc_run(3), Some(5)); // Reuses freed space
 /// ```
-impl PageBitmap {
-    /// 64 bits per word, so shift by 6 to get page index
+impl SlotBitmap {
+    /// 64 bits per word, so shift by 6 to get slot index
     const WORD_SHIFT: u32 = 6;
     const WORD_BITS: u32 = 64;
     const WORD_MASK: u32 = 63;
@@ -62,45 +62,45 @@ impl PageBitmap {
     const ALLOC: bool = false;
     const FREE: bool = true;
 
-    /// Creates a new `PageBitmap` capable of tracking `n_pages` pages.
+    /// Creates a new `SlotBitmap` capable of tracking `n_slots` slots.
     ///
-    /// If `n_pages` is not a multiple of 64, the trailing bits in the last
+    /// If `n_slots` is not a multiple of 64, the trailing bits in the last
     /// word are marked as allocated to prevent out-of-bounds allocations.
-    pub fn new(n_pages: u32) -> Self {
+    pub fn new(n_slots: u32) -> Self {
         turso_assert!(
-            n_pages % 64 == 0,
-            "number of pages in map must be a multiple of 64"
+            n_slots % 64 == 0,
+            "number of slots in map must be a multiple of 64"
         );
-        let n_words = (n_pages / Self::WORD_BITS) as usize;
+        let n_words = (n_slots / Self::WORD_BITS) as usize;
         let words = vec![Self::ALL_FREE; n_words].into_boxed_slice();
 
         Self {
             words,
-            n_pages,
+            n_slots,
             scan_run_low: 0,
-            scan_one_high: n_pages - 1,
+            scan_one_high: n_slots - 1,
         }
     }
 
     #[inline]
-    /// Convert word index and bit offset to page index
+    /// Convert word index and bit offset to slot index
     /// Example:
     /// word_idx: 1, bit: 10
-    /// shift the word index by WORD_SHIFT and OR with `bit` to get the page
-    /// Page number: 1 << 6 | 10   =  page index: 74
-    const fn word_and_bit_to_page(word_idx: usize, bit: u32) -> u32 {
+    /// shift the word index by WORD_SHIFT and OR with `bit` to get the slot
+    /// Slot number: 1 << 6 | 10   =  slot index: 74
+    const fn word_and_bit_to_slot(word_idx: usize, bit: u32) -> u32 {
         (word_idx as u32) << Self::WORD_SHIFT | bit
     }
 
     #[inline]
-    /// Convert page index to word index and bit offset
+    /// Convert slot index to word index and bit offset
     /// Example
-    /// Page number: 74
+    /// Slot number: 74
     /// (74 >> 6, 74 & 63) = (1, 10)
-    const fn page_to_word_and_bit(page_idx: u32) -> (usize, u32) {
+    const fn slot_to_word_and_bit(slot_idx: u32) -> (usize, u32) {
         (
-            (page_idx >> Self::WORD_SHIFT) as usize,
-            page_idx & Self::WORD_MASK,
+            (slot_idx >> Self::WORD_SHIFT) as usize,
+            slot_idx & Self::WORD_MASK,
         )
     }
 
@@ -129,21 +129,21 @@ impl PageBitmap {
         (!(word >> bit)).trailing_zeros()
     }
 
-    /// Allocates a single free page from the bitmap.
+    /// Allocates a single free slot from the bitmap.
     ///
     /// This method scans from high to low addresses to preserve contiguous
-    /// runs of free pages at the low end of the bitmap.
+    /// runs of free slots at the low end of the bitmap.
     pub fn alloc_one(&mut self) -> Option<u32> {
-        for start in [self.scan_one_high, self.n_pages - 1] {
-            let (mut word_idx, bit) = Self::page_to_word_and_bit(start);
+        for start in [self.scan_one_high, self.n_slots - 1] {
+            let (mut word_idx, bit) = Self::slot_to_word_and_bit(start);
             let mut word = self.words[word_idx] & Self::mask_through(bit);
             if word != Self::ALL_ALLOCATED {
                 // Fast path: pick highest set bit in this masked word
                 let bit = 63 - word.leading_zeros();
                 self.words[word_idx] &= !(1u64 << bit);
-                let page = Self::word_and_bit_to_page(word_idx, bit);
-                self.scan_one_high = page.saturating_sub(1);
-                return Some(page);
+                let slot = Self::word_and_bit_to_slot(word_idx, bit);
+                self.scan_one_high = slot.saturating_sub(1);
+                return Some(slot);
             }
             // Walk lower words
             while word_idx > 0 {
@@ -152,12 +152,12 @@ impl PageBitmap {
                 if word != Self::ALL_ALLOCATED {
                     let bits = 63 - word.leading_zeros();
                     self.words[word_idx] &= !(1u64 << bits);
-                    let page = Self::word_and_bit_to_page(word_idx, bits);
-                    self.scan_one_high = page.saturating_sub(1);
-                    return Some(page);
+                    let slot = Self::word_and_bit_to_slot(word_idx, bits);
+                    self.scan_one_high = slot.saturating_sub(1);
+                    return Some(slot);
                 }
             }
-            if self.scan_one_high == self.n_pages - 1 {
+            if self.scan_one_high == self.n_slots - 1 {
                 // dont try again if we already started there
                 return None;
             }
@@ -165,11 +165,11 @@ impl PageBitmap {
         None
     }
 
-    /// Allocates a contiguous run of `need` pages from the bitmap.
+    /// Allocates a contiguous run of `need` slots from the bitmap.
     /// This method scans from low to high addresses, starting from `scan_run_low`,
     /// next allocation continues from where we left off by updating the hint.
     pub fn alloc_run(&mut self, need: u32) -> Option<u32> {
-        if need == 0 || need > self.n_pages {
+        if need == 0 || need > self.n_slots {
             return None;
         }
         if need == 1 {
@@ -180,10 +180,10 @@ impl PageBitmap {
             if let Some(found) = self.find_free_run_up(start_pos, need) {
                 self.mark_run(found, need, Self::ALLOC);
                 self.scan_run_low = found + need;
-                // Update single-page hint if this run extends beyond it
-                let last_page = found + need - 1;
-                if last_page > self.scan_one_high {
-                    self.scan_one_high = last_page.min(self.n_pages - 1);
+                // Update single-slot hint if this run extends beyond it
+                let last_slot = found + need - 1;
+                if last_slot > self.scan_one_high {
+                    self.scan_one_high = last_slot.min(self.n_slots - 1);
                 }
                 return Some(found);
             }
@@ -195,10 +195,10 @@ impl PageBitmap {
         None
     }
 
-    /// Find an unallocated sequence of `need` pages, scanning *upward* from `start`
+    /// Find an unallocated sequence of `need` slots, scanning *upward* from `start`
     ///
     /// Overview:
-    /// Set limit = n_pages - (need - 1): as the most pages we could iterate through
+    /// Set limit = n_slots - (need - 1): as the most slots we could iterate through
     /// and iterate `pos` while `pos < limit`.
     ///
     /// Split pos into (word_idx, bit_offset) and compute to keep bits at/after `bit_offset`.
@@ -214,15 +214,15 @@ impl PageBitmap {
     /// bridge into the next word so we advance to the next.
     ///
     /// If the span reaches the boundary exactly, we try to extend across, consume subsequent words while
-    /// `is_full_free(word)` in 64-page chunks and return if `need` is satisfied.
+    /// `is_full_free(word)` in 64-slot chunks and return if `need` is satisfied.
     ///
     /// If still short, then check the tail in the next (partial) word and if tail >= remaining: return.
-    /// otherwise advance `pos = run_start + pages_found + 1`.
+    /// otherwise advance `pos = run_start + slots_found + 1`.
     fn find_free_run_up(&self, start: u32, need: u32) -> Option<u32> {
-        let limit = self.n_pages.saturating_sub(need - 1);
+        let limit = self.n_slots.saturating_sub(need - 1);
         let mut pos = start;
         while pos < limit {
-            let (word_idx, bit_offset) = Self::page_to_word_and_bit(pos);
+            let (word_idx, bit_offset) = Self::slot_to_word_and_bit(pos);
 
             // Current word from bit_offset onward
             let current_word = self.words[word_idx] & Self::mask_from(bit_offset);
@@ -249,30 +249,30 @@ impl PageBitmap {
             }
 
             // We exactly reached the boundary, extend across whole free words
-            let mut pages_found = free_in_cur;
+            let mut slots_found = free_in_cur;
             let mut wi = word_idx + 1;
 
-            while pages_found + Self::WORD_BITS <= need
+            while slots_found + Self::WORD_BITS <= need
                 && wi < self.words.len()
                 && self.words[wi] == Self::ALL_FREE
             {
-                pages_found += Self::WORD_BITS;
+                slots_found += Self::WORD_BITS;
                 wi += 1;
             }
-            if pages_found >= need {
+            if slots_found >= need {
                 return Some(run_start);
             }
 
             // Tail in the next partial word
             if wi < self.words.len() {
-                let remaining = need - pages_found;
+                let remaining = need - slots_found;
                 let w = self.words[wi];
                 let tail = (!w).trailing_zeros();
                 if tail >= remaining {
                     return Some(run_start);
                 }
                 // Run broken in this word: skip past the failure point to avoid checking again
-                pos = run_start + pages_found + 1;
+                pos = run_start + slots_found + 1;
                 continue;
             }
             // No space
@@ -281,17 +281,17 @@ impl PageBitmap {
         None
     }
 
-    /// Frees a contiguous run of pages, marking them as available for reallocation
+    /// Frees a contiguous run of slots, marking them as available for reallocation
     /// and update the scan hints to  allocations.
     pub fn free_run(&mut self, start: u32, count: u32) {
         if count == 0 {
             return;
         }
-        turso_assert!(start + count <= self.n_pages, "free_run out of bounds");
+        turso_assert!(start + count <= self.n_slots, "free_run out of bounds");
         self.mark_run(start, count, Self::FREE);
         // Update hints based on what we're freeing
 
-        // if this was a single page and higher than current hint, bump the high hint up
+        // if this was a single slot and higher than current hint, bump the high hint up
         if count == 1 && start > self.scan_one_high {
             self.scan_one_high = start;
             return;
@@ -301,24 +301,24 @@ impl PageBitmap {
             self.scan_run_low = start;
         }
         // Also update scan_one_high hint if the run extends beyond it
-        let last_page = (start + count - 1).min(self.n_pages - 1);
-        if last_page > self.scan_one_high {
-            self.scan_one_high = last_page;
+        let last_slot = (start + count - 1).min(self.n_slots - 1);
+        if last_slot > self.scan_one_high {
+            self.scan_one_high = last_slot;
         }
     }
 
-    /// Checks whether a contiguous run of pages is completely free.
+    /// Checks whether a contiguous run of slots is completely free.
     /// # Example
-    /// Checking pages 125-134 (10 pages starting at 125)
+    /// Checking slots 125-134 (10 slots starting at 125)
     /// This spans from word 1 (bit 61) to word 2 (bit 6)
     ///
     /// Word 1: ...11111111_11110000  (bits 60-63 must be checked)
     /// Word 2: 00000000_01111111...  (bits 0-6 must be checked)
     pub(super) fn check_run_free(&self, start: u32, len: u32) -> bool {
-        if start + len > self.n_pages {
+        if start + len > self.n_slots {
             return false;
         }
-        let (mut word_idx, bit_offset) = Self::page_to_word_and_bit(start);
+        let (mut word_idx, bit_offset) = Self::slot_to_word_and_bit(start);
         let mut remaining = len as usize;
         let mut pos_in_word = bit_offset as usize;
 
@@ -350,11 +350,11 @@ impl PageBitmap {
         true
     }
 
-    /// Marks a contiguous run of pages as either free or allocated.
+    /// Marks a contiguous run of slots as either free or allocated.
     pub fn mark_run(&mut self, start: u32, len: u32, free: bool) {
-        turso_assert!(start + len <= self.n_pages, "mark_run out of bounds");
+        turso_assert!(start + len <= self.n_slots, "mark_run out of bounds");
 
-        let (mut word_idx, mut bit_offset) = Self::page_to_word_and_bit(start);
+        let (mut word_idx, mut bit_offset) = Self::slot_to_word_and_bit(start);
         let mut remaining = len as usize;
         while remaining > 0 {
             let bits = (Self::WORD_BITS as usize) - bit_offset as usize;
@@ -381,11 +381,11 @@ pub mod tests {
     use super::*;
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
-    fn pb_free_vec(pb: &PageBitmap) -> Vec<bool> {
-        let mut v = vec![false; pb.n_pages as usize];
+    fn pb_free_vec(pb: &SlotBitmap) -> Vec<bool> {
+        let mut v = vec![false; pb.n_slots as usize];
         v.iter_mut()
             .enumerate()
-            .take(pb.n_pages as usize)
+            .take(pb.n_slots as usize)
             .map(|(i, v)| {
                 let w = pb.words[i >> 6];
                 let bit = i & 63;
@@ -414,20 +414,20 @@ pub mod tests {
     fn ref_mark_run(model: &mut [bool], start: u32, len: u32, free: bool) {
         let st = start as usize;
         let len = len as usize;
-        for page in &mut model[st..st + len] {
-            *page = free;
+        for slot in &mut model[st..st + len] {
+            *slot = free;
         }
     }
 
     /// Returns `true` if the bitmap's notion of free bits equals the reference model exactly.
-    fn assert_equivalent(pb: &PageBitmap, model: &[bool]) {
+    fn assert_equivalent(pb: &SlotBitmap, model: &[bool]) {
         let pv = pb_free_vec(pb);
         assert_eq!(pv, model, "bitmap bits disagree with reference model");
     }
 
     #[test]
     fn alloc_one_exhausts_all() {
-        let mut pb = PageBitmap::new(256);
+        let mut pb = SlotBitmap::new(256);
         let mut model = vec![true; 256];
 
         let mut count = 0;
@@ -436,14 +436,14 @@ pub mod tests {
             model[idx as usize] = false;
             count += 1;
         }
-        assert_eq!(count, 256, "should allocate all pages once");
-        assert!(pb.alloc_one().is_none(), "no pages left");
+        assert_eq!(count, 256, "should allocate all slots once");
+        assert!(pb.alloc_one().is_none(), "no slots left");
         assert_equivalent(&pb, &model);
     }
 
     #[test]
     fn alloc_run_basic_and_free() {
-        let mut pb = PageBitmap::new(128);
+        let mut pb = SlotBitmap::new(128);
         let mut model = vec![true; 128];
 
         let need = 70;
@@ -462,7 +462,7 @@ pub mod tests {
     #[test]
     fn alloc_run_none_when_only_smaller_gaps() {
         let n = 128u32;
-        let mut pb = PageBitmap::new(n);
+        let mut pb = SlotBitmap::new(n);
 
         // Allocate everything in one go.
         let start = pb.alloc_run(n).expect("whole arena should be free");
@@ -470,7 +470,7 @@ pub mod tests {
         let mut model = vec![false; n as usize];
         assert_equivalent(&pb, &model);
 
-        // Fragment: free exactly every other page (isolated 1-page holes)
+        // Fragment: free exactly every other slot (isolated 1-slot holes)
         for i in (0..n).step_by(2) {
             pb.free_run(i, 1);
             model[i as usize] = true;
@@ -487,7 +487,7 @@ pub mod tests {
 
     #[test]
     fn singles_from_tail_preserve_front_run() {
-        let mut pb = PageBitmap::new(512);
+        let mut pb = SlotBitmap::new(512);
         let mut model = vec![true; 512];
 
         for _ in 0..100 {
@@ -516,10 +516,10 @@ pub mod tests {
         ];
         for &seed in seeds {
             let mut rng = StdRng::seed_from_u64(seed);
-            let n_pages = rng.gen_range(1..10) * 64;
+            let n_slots = rng.gen_range(1..10) * 64;
 
-            let mut pb = PageBitmap::new(n_pages);
-            let mut model = vec![true; n_pages as usize];
+            let mut pb = SlotBitmap::new(n_slots);
+            let mut model = vec![true; n_slots as usize];
 
             let iters = 2000usize;
             for _ in 0..iters {
@@ -530,7 +530,7 @@ pub mod tests {
                         let before_free = ref_count_free(&model);
                         let got = pb.alloc_one();
                         if let Some(i) = got {
-                            assert!(i < n_pages, "index in range");
+                            assert!(i < n_slots, "index in range");
                             assert!(model[i as usize], "bit must be free");
                             model[i as usize] = false;
                             assert_eq!(ref_count_free(&model), before_free - 1);
@@ -541,15 +541,15 @@ pub mod tests {
                     50..=79 => {
                         // alloc_run with random length
                         let need =
-                            rng.gen_range(1..=std::cmp::max(1, (n_pages as usize).min(128))) as u32;
+                            rng.gen_range(1..=std::cmp::max(1, (n_slots as usize).min(128))) as u32;
                         let got = pb.alloc_run(need);
                         if let Some(start) = got {
-                            assert!(start + need <= n_pages, "within bounds");
+                            assert!(start + need <= n_slots, "within bounds");
                             assert!(ref_check_run_free(&model, start, need), "run must be free");
                             ref_mark_run(&mut model, start, need, false);
                         } else {
                             let mut exists = false;
-                            for s in 0..=(n_pages.saturating_sub(need)) {
+                            for s in 0..=(n_slots.saturating_sub(need)) {
                                 if ref_check_run_free(&model, s, need) {
                                     exists = true;
                                     break;
@@ -561,8 +561,8 @@ pub mod tests {
                     _ => {
                         // free_run on a random valid range
                         let len =
-                            rng.gen_range(1..=std::cmp::max(1, (n_pages as usize).min(128))) as u32;
-                        let max_start = n_pages.saturating_sub(len);
+                            rng.gen_range(1..=std::cmp::max(1, (n_slots as usize).min(128))) as u32;
+                        let max_start = n_slots.saturating_sub(len);
                         let start = if max_start == 0 {
                             0
                         } else {
@@ -581,7 +581,7 @@ pub mod tests {
 
     #[test]
     fn test_run_crossing_word_boundaries_and_edge_cases() {
-        let mut pb = PageBitmap::new(256);
+        let mut pb = SlotBitmap::new(256);
         let cases = [(60, 8), (62, 4), (120, 16), (0, 128), (32, 64)];
 
         for (start, len) in cases {
@@ -592,7 +592,7 @@ pub mod tests {
             assert!(pb.check_run_free(start, len));
         }
 
-        let mut pb = PageBitmap::new(128);
+        let mut pb = SlotBitmap::new(128);
         assert_eq!(pb.alloc_run(128), Some(0));
         pb.free_run(0, 128);
         assert_eq!(pb.alloc_run(129), None);
@@ -608,7 +608,7 @@ pub mod tests {
 
     #[test]
     fn test_reused_hints() {
-        let mut bitmap = PageBitmap::new(128);
+        let mut bitmap = SlotBitmap::new(128);
         // Single allocations come from high end
         assert_eq!(bitmap.alloc_one(), Some(127));
         assert_eq!(bitmap.alloc_one(), Some(126));

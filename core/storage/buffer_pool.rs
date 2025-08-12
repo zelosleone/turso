@@ -1,7 +1,6 @@
+use super::{slot_bitmap::SlotBitmap, sqlite3_ondisk::WAL_FRAME_HEADER_SIZE};
 use crate::fast_lock::SpinLock;
 use crate::io::TEMP_BUFFER_CACHE;
-use crate::storage::page_bitmap::PageBitmap;
-use crate::storage::sqlite3_ondisk::WAL_FRAME_HEADER_SIZE;
 use crate::{turso_assert, Buffer, LimboError, IO};
 use parking_lot::Mutex;
 use std::cell::UnsafeCell;
@@ -18,21 +17,21 @@ pub struct ArenaBuffer {
     ptr: NonNull<u8>,
     /// Identifier for the `[Arena]` the buffer came from
     arena_id: u32,
-    /// The index of the first page making up the buffer
-    page_idx: u32,
+    /// The index of the first slot making up the buffer
+    slot_idx: u32,
     /// The requested length of the allocation.
     /// The actual size of what is allocated for the
     /// buffer is `len` rounded up to the next multiple of
-    /// `[Arena::page_size]`
+    /// `[Arena::slot_size]`
     len: usize,
 }
 
 impl ArenaBuffer {
-    const fn new(ptr: NonNull<u8>, len: usize, arena_id: u32, page_idx: u32) -> Self {
+    const fn new(ptr: NonNull<u8>, len: usize, arena_id: u32, slot_idx: u32) -> Self {
         ArenaBuffer {
             ptr,
             arena_id,
-            page_idx,
+            slot_idx,
             len,
         }
     }
@@ -49,7 +48,7 @@ impl ArenaBuffer {
     }
 
     /// The requested size of the allocation, the actual size of the underlying buffer is rounded up to
-    /// the next multiple of the arena's page_size
+    /// the next multiple of the arena's slot_size
     pub const fn logical_len(&self) -> usize {
         self.len
     }
@@ -67,7 +66,7 @@ impl Drop for ArenaBuffer {
             .get()
             .expect("BufferPool not initialized, cannot free ArenaBuffer");
         let inner = pool.inner_mut();
-        inner.free(self.logical_len(), self.arena_id, self.page_idx);
+        inner.free(self.logical_len(), self.arena_id, self.slot_idx);
     }
 }
 
@@ -163,7 +162,7 @@ impl BufferPool {
     #[inline]
     pub fn get_page(&self) -> Buffer {
         let inner = self.inner_mut();
-        inner.get_page()
+        inner.get_db_page_buffer()
     }
 
     /// Request a `Buffer` for use with a WAL frame,
@@ -171,7 +170,7 @@ impl BufferPool {
     #[inline]
     pub fn get_wal_frame(&self) -> Buffer {
         let inner = self.inner_mut();
-        inner.get_frame()
+        inner.get_wal_frame_buffer()
     }
 
     #[inline]
@@ -253,7 +252,7 @@ impl PoolInner {
             .unwrap_or(Buffer::new_temporary(len))
     }
 
-    fn get_page(&mut self) -> Buffer {
+    fn get_db_page_buffer(&mut self) -> Buffer {
         let db_page_size = self.db_page_size.load(Ordering::Relaxed);
         self.page_arena
             .as_ref()
@@ -261,7 +260,7 @@ impl PoolInner {
             .unwrap_or(Buffer::new_temporary(db_page_size))
     }
 
-    fn get_frame(&mut self) -> Buffer {
+    fn get_wal_frame_buffer(&mut self) -> Buffer {
         let len = self.db_page_size.load(Ordering::Relaxed) + WAL_FRAME_HEADER_SIZE;
         self.wal_frame_arena
             .as_ref()
@@ -284,7 +283,7 @@ impl PoolInner {
         match Arena::new(db_page_size, arena_size, &io) {
             Ok(arena) => {
                 tracing::trace!(
-                    "added arena {} with size {} MB and page size {}",
+                    "added arena {} with size {} MB and slot size {}",
                     arena.id,
                     arena_size / (1024 * 1024),
                     db_page_size
@@ -304,7 +303,7 @@ impl PoolInner {
         match Arena::new(wal_frame_size, arena_size, &io) {
             Ok(arena) => {
                 tracing::trace!(
-                    "added WAL frame arena {} with size {} MB and page size {}",
+                    "added WAL frame arena {} with size {} MB and slot size {}",
                     arena.id,
                     arena_size / (1024 * 1024),
                     wal_frame_size
@@ -349,17 +348,14 @@ struct Arena {
     id: u32,
     /// Base pointer to the arena returned by `mmap`
     base: NonNull<u8>,
-    /// Total number of pages currently allocated/in use.
-    allocated_pages: AtomicUsize,
-    /// Currently free pages.
-    free_pages: SpinLock<PageBitmap>,
+    /// Total number of slots currently allocated/in use.
+    allocated_slots: AtomicUsize,
+    /// Currently free slots.
+    free_slots: SpinLock<SlotBitmap>,
     /// Total size of the arena in bytes
     arena_size: usize,
-    /// Page size the total arena is divided into.
-    /// Because most allocations are of size `[Database::page_size]`, with an
-    /// additional 24 byte wal frame header, we treat this as the `page_size` to reduce
-    /// fragmentation to 24 bytes for regular pages.
-    page_size: usize,
+    /// Slot size the total arena is divided into.
+    slot_size: usize,
 }
 
 impl Drop for Arena {
@@ -378,11 +374,11 @@ static NEXT_ID: AtomicU32 = AtomicU32::new(UNREGISTERED_START);
 
 impl Arena {
     /// Create a new arena with the given size and page size.
-    /// NOTE: Minimum arena size is page_size * 64
-    fn new(page_size: usize, arena_size: usize, io: &Arc<dyn IO>) -> Result<Self, String> {
-        let min_pages = arena_size.div_ceil(page_size);
-        let rounded_pages = (min_pages.max(64) + 63) & !63;
-        let rounded_bytes = rounded_pages * page_size;
+    /// NOTE: Minimum arena size is slot_size * 64
+    fn new(slot_size: usize, arena_size: usize, io: &Arc<dyn IO>) -> Result<Self, String> {
+        let min_slots = arena_size.div_ceil(slot_size);
+        let rounded_slots = (min_slots.max(64) + 63) & !63;
+        let rounded_bytes = rounded_slots * slot_size;
         // Guard against the global cap
         if rounded_bytes > BufferPool::MAX_ARENA_SIZE {
             return Err(format!(
@@ -401,50 +397,50 @@ impl Arena {
                 tracing::trace!("Allocating arena with id {}", next_id);
                 next_id
             });
-        let map = PageBitmap::new(rounded_pages as u32);
+        let map = SlotBitmap::new(rounded_slots as u32);
         Ok(Self {
             id,
             base,
-            free_pages: SpinLock::new(map),
-            allocated_pages: AtomicUsize::new(0),
-            page_size,
+            free_slots: SpinLock::new(map),
+            allocated_slots: AtomicUsize::new(0),
+            slot_size,
             arena_size: rounded_bytes,
         })
     }
 
     /// Allocate a `Buffer` large enough for logical length `size`.
-    /// May span multiple pages
+    /// May span multiple slots
     pub fn try_alloc(&self, size: usize) -> Option<Buffer> {
-        let pages = size.div_ceil(self.page_size) as u32;
-        let mut freemap = self.free_pages.lock();
+        let slots = size.div_ceil(self.slot_size) as u32;
+        let mut freemap = self.free_slots.lock();
 
-        let first_idx = if pages == 1 {
+        let first_idx = if slots == 1 {
             // use the optimized method for individual pages which attempts
             // to leave large contiguous areas free of fragmentation for
             // larger `runs`.
             freemap.alloc_one()?
         } else {
-            freemap.alloc_run(pages)?
+            freemap.alloc_run(slots)?
         };
-        self.allocated_pages
-            .fetch_add(pages as usize, Ordering::Relaxed);
-        let offset = first_idx as usize * self.page_size;
+        self.allocated_slots
+            .fetch_add(slots as usize, Ordering::Relaxed);
+        let offset = first_idx as usize * self.slot_size;
         let ptr = unsafe { NonNull::new_unchecked(self.base.as_ptr().add(offset)) };
         Some(Buffer::new_pooled(ArenaBuffer::new(
             ptr, size, self.id, first_idx,
         )))
     }
 
-    /// Mark all relevant pages that include `size` starting at `page_idx` as free.
-    pub fn free(&self, page_idx: u32, size: usize) {
-        let mut bm = self.free_pages.lock();
-        let count = size.div_ceil(self.page_size);
+    /// Mark all relevant slots that include `size` starting at `slot_idx` as free.
+    pub fn free(&self, slot_idx: u32, size: usize) {
+        let mut bm = self.free_slots.lock();
+        let count = size.div_ceil(self.slot_size);
         turso_assert!(
-            !bm.check_run_free(page_idx, count as u32),
+            !bm.check_run_free(slot_idx, count as u32),
             "must not already be marked free"
         );
-        bm.free_run(page_idx, count as u32);
-        self.allocated_pages.fetch_sub(count, Ordering::Relaxed);
+        bm.free_run(slot_idx, count as u32);
+        self.allocated_slots.fetch_sub(count, Ordering::Relaxed);
     }
 }
 
