@@ -391,8 +391,7 @@ impl Database {
         let page_size = pager
             .io
             .block(|| pager.with_header(|header| header.page_size))
-            .unwrap_or_default()
-            .get();
+            .unwrap_or_default();
 
         let default_cache_size = pager
             .io
@@ -784,7 +783,7 @@ pub struct Connection {
     cache_size: Cell<i32>,
     /// page size used for an uninitialized database or the next vacuum command.
     /// it's not always equal to the current page size of the database
-    page_size: Cell<u32>,
+    page_size: Cell<PageSize>,
     /// Disable automatic checkpoint behaviour when DB is shutted down or WAL reach certain size
     /// Client still can manually execute PRAGMA wal_checkpoint(...) commands
     wal_auto_checkpoint_disabled: Cell<bool>,
@@ -1439,7 +1438,7 @@ impl Connection {
     pub fn set_capture_data_changes(&self, opts: CaptureDataChangesMode) {
         self.capture_data_changes.replace(opts);
     }
-    pub fn get_page_size(&self) -> u32 {
+    pub fn get_page_size(&self) -> PageSize {
         self.page_size.get()
     }
 
@@ -1481,7 +1480,7 @@ impl Connection {
             return Ok(());
         };
 
-        self.page_size.set(size.get());
+        self.page_size.set(size);
         if self._db.db_state.get() != DbState::Uninitialized {
             return Ok(());
         }
