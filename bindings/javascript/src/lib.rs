@@ -561,6 +561,7 @@ impl turso_core::DatabaseStorage for DatabaseFile {
     fn read_page(
         &self,
         page_idx: usize,
+        #[cfg(feature = "encryption")] _key: Option<&turso_core::EncryptionKey>,
         c: turso_core::Completion,
     ) -> turso_core::Result<turso_core::Completion> {
         let r = c.as_read();
@@ -577,6 +578,7 @@ impl turso_core::DatabaseStorage for DatabaseFile {
         &self,
         page_idx: usize,
         buffer: Arc<turso_core::Buffer>,
+        #[cfg(feature = "encryption")] _key: Option<&turso_core::EncryptionKey>,
         c: turso_core::Completion,
     ) -> turso_core::Result<turso_core::Completion> {
         let size = buffer.len();
@@ -589,6 +591,7 @@ impl turso_core::DatabaseStorage for DatabaseFile {
         page_idx: usize,
         page_size: usize,
         buffers: Vec<Arc<turso_core::Buffer>>,
+        #[cfg(feature = "encryption")] _key: Option<&turso_core::EncryptionKey>,
         c: turso_core::Completion,
     ) -> turso_core::Result<turso_core::Completion> {
         let pos = page_idx.saturating_sub(1) * page_size;
