@@ -716,6 +716,22 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_create_view(&mut self, temporary: bool) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_VIEW]);
+        let if_not_exists = self.parse_if_not_exists()?;
+        let view_name = self.parse_fullname(false)?;
+        let columns = self.parse_eid_list()?;
+        self.eat_expect(&[TokenType::TK_AS])?;
+        let select = self.parse_select()?;
+        Ok(Stmt::CreateView {
+            temporary,
+            if_not_exists,
+            view_name,
+            columns,
+            select,
+        })
+    }
+
     fn parse_create_stmt(&mut self) -> Result<Stmt, Error> {
         self.eat_assert(&[TokenType::TK_CREATE]);
         let mut first_tok = self.peek_expect(&[
@@ -741,7 +757,7 @@ impl<'a> Parser<'a> {
         match first_tok.token_type.unwrap() {
             TokenType::TK_TABLE => self.parse_create_table(temp),
             TokenType::TK_VIRTUAL => todo!(),
-            TokenType::TK_VIEW => todo!(),
+            TokenType::TK_VIEW => self.parse_create_view(temp),
             TokenType::TK_INDEX | TokenType::TK_UNIQUE => self.parse_create_index(),
             TokenType::TK_TRIGGER => self.parse_create_trigger(temp),
             _ => unreachable!(),
@@ -10418,6 +10434,77 @@ mod tests {
                             limit: None,
                         })
                     ],
+                })],
+            ),
+            // parse create view
+            (
+                b"CREATE VIEW foo AS SELECT 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateView {
+                    temporary: false,
+                    if_not_exists: false,
+                    view_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    columns: vec![],
+                    select: Select {
+                        with: None,
+                        body: SelectBody {
+                            select: OneSelect::Select {
+                                distinctness: None,
+                                columns: vec![ResultColumn::Expr(
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    None,
+                                )],
+                                from: None,
+                                where_clause: None,
+                                group_by: None,
+                                window_clause: vec![],
+                            },
+                            compounds: vec![],
+                        },
+                        order_by: vec![],
+                        limit: None,
+                    },
+                })],
+            ),
+            (
+                b"CREATE TEMP VIEW IF NOT EXISTS foo(bar) AS SELECT 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateView {
+                    temporary: true,
+                    if_not_exists: true,
+                    view_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    columns: vec![
+                        IndexedColumn {
+                            col_name: Name::Ident("bar".to_owned()),
+                            collation_name: None,
+                            order: None,
+                        }
+                    ],
+                    select: Select {
+                        with: None,
+                        body: SelectBody {
+                            select: OneSelect::Select {
+                                distinctness: None,
+                                columns: vec![ResultColumn::Expr(
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    None,
+                                )],
+                                from: None,
+                                where_clause: None,
+                                group_by: None,
+                                window_clause: vec![],
+                            },
+                            compounds: vec![],
+                        },
+                        order_by: vec![],
+                        limit: None,
+                    },
                 })],
             ),
         ];
