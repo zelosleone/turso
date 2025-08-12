@@ -580,6 +580,7 @@ impl Limbo {
             }
             return Ok(());
         }
+        self.reset_line(line)?;
         if line.ends_with(';') {
             self.buffer_input(line);
             let buff = self.input_buff.clone();
@@ -588,7 +589,6 @@ impl Limbo {
             self.buffer_input(format!("{line}\n").as_str());
             self.set_multiline_prompt();
         }
-        self.reset_line(line)?;
         Ok(())
     }
 
