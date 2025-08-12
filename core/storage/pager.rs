@@ -20,7 +20,7 @@ use std::cell::{Cell, OnceCell, RefCell, UnsafeCell};
 use std::collections::HashSet;
 use std::hash;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{instrument, trace, Level};
 
@@ -116,6 +116,33 @@ pub struct PageInner {
     pub contents: Option<PageContent>,
     pub id: usize,
     pub pin_count: AtomicUsize,
+    /// The WAL frame number this page was loaded from (0 if loaded from main DB file)
+    /// This tracks which version of the page we have in memory
+    pub wal_tag: AtomicU64,
+}
+
+/// WAL tag not set
+pub const TAG_UNSET: u64 = u64::MAX;
+
+/// Bit layout:
+/// seq: 20
+/// frame: 44
+const EPOCH_BITS: u32 = 20;
+const FRAME_BITS: u32 = 64 - EPOCH_BITS;
+const SEQ_SHIFT: u32 = FRAME_BITS;
+const SEQ_MAX: u32 = (1u32 << EPOCH_BITS) - 1;
+const FRAME_MAX: u64 = (1u64 << FRAME_BITS) - 1;
+
+#[inline]
+pub fn pack_tag_pair(frame: u64, seq: u32) -> u64 {
+    ((seq as u64) << SEQ_SHIFT) | (frame & FRAME_MAX)
+}
+
+#[inline]
+pub fn unpack_tag_pair(tag: u64) -> (u64, u32) {
+    let seq = ((tag >> SEQ_SHIFT) & (SEQ_MAX as u64)) as u32;
+    let frame = tag & FRAME_MAX;
+    (frame, seq)
 }
 
 #[derive(Debug)]
@@ -142,6 +169,7 @@ impl Page {
                 contents: None,
                 id,
                 pin_count: AtomicUsize::new(0),
+                wal_tag: AtomicU64::new(TAG_UNSET),
             }),
         }
     }
@@ -234,6 +262,35 @@ impl Page {
 
     pub fn is_pinned(&self) -> bool {
         self.get().pin_count.load(Ordering::Acquire) > 0
+    }
+
+    #[inline]
+    /// Set the WAL tag from a (frame, seq) pair.
+    /// If inputs are invalid, stores TAG_UNSET, which will prevent
+    /// the cached page from being used during checkpoint.
+    pub fn set_wal_tag(&self, frame: u64, seq: u32) {
+        // use only first 20 bits for seq (max: 1048576)
+        let seq20 = seq & SEQ_MAX;
+        self.get()
+            .wal_tag
+            .store(pack_tag_pair(frame, seq20), Ordering::Release);
+    }
+
+    #[inline]
+    /// Load the (frame, seq) pair from the packed tag.
+    pub fn wal_tag_pair(&self) -> (u64, u32) {
+        unpack_tag_pair(self.get().wal_tag.load(Ordering::Acquire))
+    }
+
+    #[inline]
+    pub fn clear_wal_tag(&self) {
+        self.get().wal_tag.store(TAG_UNSET, Ordering::Release)
+    }
+
+    /// Check if this page is suitable for checkpointing
+    pub fn is_valid_for_checkpoint(&self, target_frame: u64, seq: u32) -> bool {
+        let (f, s) = self.wal_tag_pair();
+        f == target_frame && s == seq && !self.is_dirty()
     }
 }
 
@@ -857,6 +914,13 @@ impl Pager {
         _alloc_mode: BtreePageAllocMode,
     ) -> Result<IOResult<BTreePage>> {
         let page = return_if_io!(self.allocate_page());
+        if let Some(wal) = &self.wal {
+            let max_frame = wal.borrow().get_max_frame_in_wal();
+            // brand new page gets share max frame + 1
+            page.set_wal_frame(max_frame + 1);
+        } else {
+            page.set_wal_frame(0);
+        }
         let page = Arc::new(BTreePageInner {
             page: RefCell::new(page),
         });
@@ -1101,6 +1165,37 @@ impl Pager {
         page_cache.get(&page_key)
     }
 
+    /// Get a page from cache only if it matches the target frame
+    pub fn cache_get_for_checkpoint(
+        &self,
+        page_idx: usize,
+        target_frame: u64,
+        seq: u32,
+    ) -> Option<PageRef> {
+        let mut page_cache = self.page_cache.write();
+        let page_key = PageCacheKey::new(page_idx);
+        page_cache.get(&page_key).and_then(|page| {
+            if page.is_valid_for_checkpoint(target_frame, seq) {
+                tracing::trace!(
+                    "cache_get_for_checkpoint: page {} frame {} is valid",
+                    page_idx,
+                    target_frame
+                );
+                page.pin();
+                Some(page.clone())
+            } else {
+                tracing::trace!(
+                    "cache_get_for_checkpoint: page {} has frame/tag {:?}: (dirty={}), need frame {} and seq {seq}",
+                    page_idx,
+                    page.wal_tag_pair(),
+                    page.is_dirty(),
+                    target_frame
+                );
+                None
+            }
+        })
+    }
+
     /// Changes the size of the page cache.
     pub fn change_page_cache_size(&self, capacity: usize) -> Result<CacheResizeResult> {
         let mut page_cache = self.page_cache.write();
@@ -1322,6 +1417,7 @@ impl Pager {
                 page.get().id == header.page_number as usize,
                 "page has unexpected id"
             );
+            page.set_wal_frame(frame_no);
             self.add_dirty(&page);
         }
         if header.is_commit_frame() {
