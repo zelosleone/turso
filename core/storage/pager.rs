@@ -1147,7 +1147,11 @@ impl Pager {
                 );
                 page
             };
-            let c = wal.borrow_mut().append_frame(page.clone(), 0)?;
+            let c = wal.borrow_mut().append_frame(
+                page.clone(),
+                self.page_size.get().expect("page size not set"),
+                0,
+            )?;
             // TODO: invalidade previous completions if this one fails
             completions.push(c);
         }
@@ -1207,7 +1211,11 @@ impl Pager {
                         };
 
                         // TODO: invalidade previous completions on error here
-                        let c = wal.borrow_mut().append_frame(page.clone(), db_size)?;
+                        let c = wal.borrow_mut().append_frame(
+                            page.clone(),
+                            self.page_size.get().expect("page size not set"),
+                            db_size,
+                        )?;
                         completions.push(c);
                     }
                     self.dirty_pages.borrow_mut().clear();
@@ -2214,8 +2222,6 @@ mod ptrmap_tests {
         let wal = Rc::new(RefCell::new(WalFile::new(
             io.clone(),
             WalFileShared::new_shared(
-                page_size,
-                &io,
                 io.open_file("test.db-wal", OpenFlags::Create, false)
                     .unwrap(),
             )

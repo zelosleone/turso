@@ -6785,8 +6785,9 @@ pub fn op_open_ephemeral(
             let page_size = pager
                 .io
                 .block(|| pager.with_header(|header| header.page_size))
-                .unwrap_or_default()
-                .get() as usize;
+                .unwrap_or_default();
+
+            pager.page_size.set(Some(page_size));
 
             state.op_open_ephemeral_state = OpOpenEphemeralState::StartingTxn { pager };
         }

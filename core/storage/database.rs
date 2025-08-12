@@ -40,12 +40,6 @@ unsafe impl Sync for DatabaseFile {}
 impl DatabaseStorage for DatabaseFile {
     #[instrument(skip_all, level = Level::DEBUG)]
     fn read_header(&self, c: Completion) -> Result<Completion> {
-        let r = c.as_read();
-        let size = r.buf().len();
-        assert!(
-            size == 100,
-            "the size of the database header must be 100 bytes, got {size}"
-        );
         self.file.pread(0, c)
     }
     #[instrument(skip_all, level = Level::DEBUG)]

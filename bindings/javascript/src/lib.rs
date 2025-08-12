@@ -474,12 +474,6 @@ impl DatabaseFile {
 
 impl turso_core::DatabaseStorage for DatabaseFile {
     fn read_header(&self, c: turso_core::Completion) -> turso_core::Result<turso_core::Completion> {
-        let r = c.as_read();
-        let size = r.buf().len();
-        assert!(
-            size == 100,
-            "the size of the database header must be 100 bytes, got {size}"
-        );
         self.file.pread(0, c)
     }
     fn read_page(

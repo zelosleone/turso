@@ -388,10 +388,7 @@ impl Database {
     pub fn connect(self: &Arc<Database>) -> Result<Arc<Connection>> {
         let pager = self.init_pager(None)?;
 
-        let page_size = pager
-            .io
-            .block(|| pager.with_header(|header| header.page_size))
-            .unwrap_or_default();
+        let page_size = pager.page_size.get().expect("page size not set");
 
         let default_cache_size = pager
             .io
@@ -436,16 +433,67 @@ impl Database {
         self.open_flags.contains(OpenFlags::ReadOnly)
     }
 
-    fn init_pager(&self, page_size: Option<usize>) -> Result<Pager> {
+    /// If we do not have a physical WAL file, but we know the database file is initialized on disk,
+    /// we need to read the page_size from the database header.
+    fn read_page_size_from_db_header(&self) -> Result<PageSize> {
+        turso_assert!(
+            self.db_state.is_initialized(),
+            "read_page_size_from_db_header called on uninitialized database"
+        );
+        let buf = Arc::new(Buffer::new_temporary(PageSize::MIN as usize)); // this needs to be a block multiple for O_DIRECT
+        let c = Completion::new_read(buf.clone(), move |_buf, _| {});
+        let c = self.db_file.read_header(c)?;
+        self.io.wait_for_completion(c)?;
+        let page_size = u16::from_be_bytes(buf.as_slice()[16..18].try_into().unwrap());
+        Ok(PageSize::new(page_size as u32).unwrap_or_else(|| {
+            panic!("invalid page size in DB header: {page_size}");
+        }))
+    }
+
+    /// Read the page size in order of preference:
+    /// 1. From the WAL header if it exists and is initialized
+    /// 2. From the database header if the database is initialized
+    ///
+    /// Otherwise, fall back to, in order of preference:
+    /// 1. From the requested page size if it is provided
+    /// 2. PageSize::default(), i.e. 4096
+    fn determine_actual_page_size(
+        &self,
+        maybe_shared_wal: Option<&WalFileShared>,
+        requested_page_size: Option<usize>,
+    ) -> Result<PageSize> {
+        if let Some(shared_wal) = maybe_shared_wal {
+            let size_in_wal = shared_wal.page_size();
+            if size_in_wal != 0 {
+                return Ok(PageSize::new(size_in_wal).unwrap_or_else(|| {
+                    panic!("invalid page size in WAL: {size_in_wal}");
+                }));
+            }
+        }
+        if self.db_state.is_initialized() {
+            Ok(self.read_page_size_from_db_header()?)
+        } else {
+            let Some(size) = requested_page_size else {
+                return Ok(PageSize::default());
+            };
+            Ok(PageSize::new(size as u32).unwrap_or_else(|| {
+                panic!("invalid requested page size: {size}");
+            }))
+        }
+    }
+
+    fn init_pager(&self, requested_page_size: Option<usize>) -> Result<Pager> {
         // Open existing WAL file if present
         let mut maybe_shared_wal = self.maybe_shared_wal.write();
         if let Some(shared_wal) = maybe_shared_wal.clone() {
-            let size = match page_size {
-                None => unsafe { (*shared_wal.get()).page_size() as usize },
-                Some(size) => size,
-            };
+            let page_size = self.determine_actual_page_size(
+                Some(unsafe { &*shared_wal.get() }),
+                requested_page_size,
+            )?;
             let buffer_pool = self.buffer_pool.clone();
-            buffer_pool.finalize_with_page_size(size)?;
+            if self.db_state.is_initialized() {
+                buffer_pool.finalize_with_page_size(page_size.get() as usize)?;
+            }
 
             let db_state = self.db_state.clone();
             let wal = Rc::new(RefCell::new(WalFile::new(
@@ -462,9 +510,16 @@ impl Database {
                 db_state,
                 self.init_lock.clone(),
             )?;
+            pager.page_size.set(Some(page_size));
             return Ok(pager);
         }
         let buffer_pool = self.buffer_pool.clone();
+
+        let page_size = self.determine_actual_page_size(None, requested_page_size)?;
+
+        if self.db_state.is_initialized() {
+            buffer_pool.finalize_with_page_size(page_size.get() as usize)?;
+        }
 
         // No existing WAL; create one.
         let db_state = self.db_state.clone();
@@ -478,22 +533,10 @@ impl Database {
             Arc::new(Mutex::new(())),
         )?;
 
-        let size = match page_size {
-            Some(size) => PageSize::new(size as u32).unwrap_or_else(|| {
-                panic!("invalid page size: {size}");
-            }),
-            None => {
-                pager // if None is passed in, we know that we already initialized so we can safely call `with_header` here
-                    .io
-                    .block(|| pager.with_header(|header| header.page_size))
-                    .unwrap_or_default()
-            }
-        };
-
-        pager.page_size.set(Some(size));
+        pager.page_size.set(Some(page_size));
         let wal_path = format!("{}-wal", self.path);
         let file = self.io.open_file(&wal_path, OpenFlags::Create, false)?;
-        let real_shared_wal = WalFileShared::new_shared(size.get(), &self.io, file)?;
+        let real_shared_wal = WalFileShared::new_shared(file)?;
         // Modify Database::maybe_shared_wal to point to the new WAL file so that other connections
         // can open the existing WAL.
         *maybe_shared_wal = Some(real_shared_wal.clone());

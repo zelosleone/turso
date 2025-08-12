@@ -16,7 +16,7 @@ use crate::io::{File, IO};
 use crate::result::LimboResult;
 use crate::storage::sqlite3_ondisk::{
     begin_read_wal_frame, begin_read_wal_frame_raw, finish_read_page, prepare_wal_frame,
-    write_pages_vectored, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
+    write_pages_vectored, PageSize, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
 };
 use crate::types::{IOCompletions, IOResult};
 use crate::{turso_assert, Buffer, LimboError, Result};
@@ -257,7 +257,12 @@ pub trait Wal {
     /// db_size > 0    -> last frame written in transaction
     /// db_size == 0   -> non-last frame written in transaction
     /// write_counter is the counter we use to track when the I/O operation starts and completes
-    fn append_frame(&mut self, page: PageRef, db_size: u32) -> Result<Completion>;
+    fn append_frame(
+        &mut self,
+        page: PageRef,
+        page_size: PageSize,
+        db_size: u32,
+    ) -> Result<Completion>;
 
     /// Complete append of frames by updating shared wal state. Before this
     /// all changes were stored locally.
@@ -951,9 +956,9 @@ impl Wal for WalFile {
         db_size: u64,
         page: &[u8],
     ) -> Result<()> {
-        if self.get_max_frame_in_wal() == 0 {
-            self.ensure_header_if_needed()?;
-        }
+        self.ensure_header_if_needed(PageSize::new(page.len() as u32).unwrap_or_else(|| {
+            panic!("invalid page size: {}", page.len());
+        }))?;
         tracing::debug!("write_raw_frame({})", frame_id);
         if page.len() != self.page_size() as usize {
             return Err(LimboError::InvalidArgument(format!(
@@ -1031,11 +1036,20 @@ impl Wal for WalFile {
 
     /// Write a frame to the WAL.
     #[instrument(skip_all, level = Level::DEBUG)]
-    fn append_frame(&mut self, page: PageRef, db_size: u32) -> Result<Completion> {
+    fn append_frame(
+        &mut self,
+        page: PageRef,
+        page_size: PageSize,
+        db_size: u32,
+    ) -> Result<Completion> {
+        self.ensure_header_if_needed(page_size)?;
         let shared = self.get_shared();
-        if shared.max_frame.load(Ordering::Acquire).eq(&0) {
-            self.ensure_header_if_needed()?;
-        }
+        let shared_page_size = shared.wal_header.lock().page_size;
+        turso_assert!(
+            shared_page_size == page_size.get(),
+            "page size mismatch - tried to change page size after WAL header was already initialized: shared.page_size={shared_page_size}, page_size={}",
+            page_size.get()
+        );
         let page_id = page.get().id;
         let frame_id = self.max_frame + 1;
         let offset = self.frame_offset(frame_id);
@@ -1283,20 +1297,26 @@ impl WalFile {
 
     /// the WAL file has been truncated and we are writing the first
     /// frame since then. We need to ensure that the header is initialized.
-    fn ensure_header_if_needed(&mut self) -> Result<()> {
+    fn ensure_header_if_needed(&mut self, page_size: PageSize) -> Result<()> {
+        if self.get_shared().is_initialized()? {
+            return Ok(());
+        }
         tracing::debug!("ensure_header_if_needed");
         self.last_checksum = {
             let shared = self.get_shared();
-            if shared.max_frame.load(Ordering::Acquire) != 0 {
-                return Ok(());
-            }
-            if shared.file.size()? >= WAL_HEADER_SIZE as u64 {
-                return Ok(());
-            }
-
             let mut hdr = shared.wal_header.lock();
+            hdr.magic = if cfg!(target_endian = "big") {
+                WAL_MAGIC_BE
+            } else {
+                WAL_MAGIC_LE
+            };
             if hdr.page_size == 0 {
-                hdr.page_size = self.page_size();
+                hdr.page_size = page_size.get();
+            }
+            if hdr.salt_1 == 0 {
+                hdr.salt_1 = self.io.generate_random_number() as u32;
+                turso_assert!(hdr.salt_2 == 0, "salt_2 must be zero");
+                hdr.salt_2 = self.io.generate_random_number() as u32;
             }
 
             // recompute header checksum
@@ -1729,47 +1749,26 @@ impl WalFileShared {
         }
     }
 
-    pub fn new_shared(
-        page_size: u32,
-        io: &Arc<dyn IO>,
-        file: Arc<dyn File>,
-    ) -> Result<Arc<UnsafeCell<WalFileShared>>> {
+    pub fn is_initialized(&self) -> Result<bool> {
+        Ok(self.file.size()? >= WAL_HEADER_SIZE as u64)
+    }
+
+    pub fn new_shared(file: Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFileShared>>> {
         let magic = if cfg!(target_endian = "big") {
             WAL_MAGIC_BE
         } else {
             WAL_MAGIC_LE
         };
-        let mut wal_header = WalHeader {
+        let wal_header = WalHeader {
             magic,
             file_format: 3007000,
-            page_size,
+            page_size: 0, // Signifies WAL header that is not persistent on disk yet.
             checkpoint_seq: 0, // TODO implement sequence number
-            salt_1: io.generate_random_number() as u32,
-            salt_2: io.generate_random_number() as u32,
+            salt_1: 0,
+            salt_2: 0,
             checksum_1: 0,
             checksum_2: 0,
         };
-        let native = cfg!(target_endian = "big"); // if target_endian is
-                                                  // already big then we don't care but if isn't, header hasn't yet been
-                                                  // encoded to big endian, therefore we want to swap bytes to compute this
-                                                  // checksum.
-        let checksums = (0, 0);
-        let checksums = checksum_wal(
-            &wal_header.as_bytes()[..WAL_HEADER_SIZE - 2 * 4], // first 24 bytes
-            &wal_header,
-            checksums,
-            native, // this is false because we haven't encoded the wal header yet
-        );
-        wal_header.checksum_1 = checksums.0;
-        wal_header.checksum_2 = checksums.1;
-        let c = sqlite3_ondisk::begin_write_wal_header(&file, &wal_header)?;
-        let header = Arc::new(SpinLock::new(wal_header));
-        let checksum = {
-            let checksum = header.lock();
-            (checksum.checksum_1, checksum.checksum_2)
-        };
-        io.wait_for_completion(c)?;
-        tracing::debug!("new_shared(header={:?})", header);
         let read_locks = array::from_fn(|_| TursoRwLock::new());
         // slot zero is always zero as it signifies that reads can be done from the db file
         // directly, and slot 1 is the default read mark containing the max frame. in this case
@@ -1785,7 +1784,7 @@ impl WalFileShared {
             max_frame: AtomicU64::new(0),
             nbackfills: AtomicU64::new(0),
             frame_cache: Arc::new(SpinLock::new(HashMap::new())),
-            last_checksum: checksum,
+            last_checksum: (0, 0),
             file,
             pages_in_frames: Arc::new(SpinLock::new(Vec::new())),
             read_locks,
