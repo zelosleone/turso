@@ -480,20 +480,21 @@ impl Database {
         )?;
 
         let size = match page_size {
-            Some(size) => size as u32,
+            Some(size) => PageSize::new(size as u32).unwrap_or_else(|| {
+                panic!("invalid page size: {size}");
+            }),
             None => {
                 pager // if None is passed in, we know that we already initialized so we can safely call `with_header` here
                     .io
                     .block(|| pager.with_header(|header| header.page_size))
                     .unwrap_or_default()
-                    .get()
             }
         };
 
         pager.page_size.set(Some(size));
         let wal_path = format!("{}-wal", self.path);
         let file = self.io.open_file(&wal_path, OpenFlags::Create, false)?;
-        let real_shared_wal = WalFileShared::new_shared(size, &self.io, file)?;
+        let real_shared_wal = WalFileShared::new_shared(size.get(), &self.io, file)?;
         // Modify Database::maybe_shared_wal to point to the new WAL file so that other connections
         // can open the existing WAL.
         *maybe_shared_wal = Some(real_shared_wal.clone());
@@ -1476,18 +1477,18 @@ impl Connection {
     /// is first created, if it does not already exist when the page_size pragma is issued,
     /// or at the next VACUUM command that is run on the same database connection while not in WAL mode.
     pub fn reset_page_size(&self, size: u32) -> Result<()> {
-        if PageSize::new(size).is_none() {
+        let Some(size) = PageSize::new(size) else {
             return Ok(());
-        }
+        };
 
-        self.page_size.set(size);
+        self.page_size.set(size.get());
         if self._db.db_state.get() != DbState::Uninitialized {
             return Ok(());
         }
 
         *self._db.maybe_shared_wal.write() = None;
         self.pager.borrow_mut().clear_page_cache();
-        let pager = self._db.init_pager(Some(size as usize))?;
+        let pager = self._db.init_pager(Some(size.get() as usize))?;
         self.pager.replace(Rc::new(pager));
         self.pager.borrow().set_initial_page_size(size);
 

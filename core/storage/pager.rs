@@ -424,7 +424,7 @@ pub struct Pager {
     /// Cache page_size and reserved_space at Pager init and reuse for subsequent
     /// `usable_space` calls. TODO: Invalidate reserved_space when we add the functionality
     /// to change it.
-    pub(crate) page_size: Cell<Option<u32>>,
+    pub(crate) page_size: Cell<Option<PageSize>>,
     reserved_space: OnceCell<u8>,
     free_page_state: RefCell<FreePageState>,
     /// Maximum number of pages allowed in the database. Default is 1073741823 (SQLite default).
@@ -888,7 +888,6 @@ impl Pager {
             self.io
                 .block(|| self.with_header(|header| header.page_size))
                 .unwrap_or_default()
-                .get()
         });
 
         let reserved_space = *self.reserved_space.get_or_init(|| {
@@ -897,11 +896,11 @@ impl Pager {
                 .unwrap_or_default()
         });
 
-        (page_size as usize) - (reserved_space as usize)
+        (page_size.get() as usize) - (reserved_space as usize)
     }
 
     /// Set the initial page size for the database. Should only be called before the database is initialized
-    pub fn set_initial_page_size(&self, size: u32) {
+    pub fn set_initial_page_size(&self, size: PageSize) {
         assert_eq!(self.db_state.get(), DbState::Uninitialized);
         self.page_size.replace(Some(size));
     }
@@ -1390,8 +1389,8 @@ impl Pager {
                 .io
                 .block(|| self.with_header(|header| header.database_size))?
                 .get();
-            let page_size = self.page_size.get().unwrap_or(PageSize::DEFAULT as u32);
-            let expected = (db_size * page_size) as u64;
+            let page_size = self.page_size.get().unwrap_or_default();
+            let expected = (db_size * page_size.get()) as u64;
             if expected < self.db_file.size()? {
                 self.io.wait_for_completion(self.db_file.truncate(
                     expected as usize,
@@ -1559,7 +1558,7 @@ impl Pager {
                 default_header.database_size = 1.into();
 
                 if let Some(size) = self.page_size.get() {
-                    default_header.page_size = PageSize::new(size).expect("page size");
+                    default_header.page_size = size;
                 }
                 self.buffer_pool
                     .finalize_with_page_size(default_header.page_size.get() as usize)?;
