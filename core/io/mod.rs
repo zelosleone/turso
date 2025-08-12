@@ -280,6 +280,10 @@ impl ReadCompletion {
     pub fn callback(&self, bytes_read: Result<i32, CompletionError>) {
         (self.complete)(bytes_read.map(|b| (self.buf.clone(), b)));
     }
+
+    pub fn buf_arc(&self) -> Arc<Buffer> {
+        self.buf.clone()
+    }
 }
 
 pub struct WriteCompletion {
