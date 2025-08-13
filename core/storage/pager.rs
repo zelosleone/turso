@@ -961,7 +961,7 @@ impl Pager {
         &self,
         rollback: bool,
         connection: &Connection,
-        wal_checkpoint_disabled: bool,
+        wal_auto_checkpoint_disabled: bool,
     ) -> Result<IOResult<PagerCommitResult>> {
         tracing::trace!("end_tx(rollback={})", rollback);
         let Some(wal) = self.wal.as_ref() else {
@@ -980,7 +980,7 @@ impl Pager {
             self.rollback(schema_did_change, connection, is_write)?;
             return Ok(IOResult::Done(PagerCommitResult::Rollback));
         }
-        let commit_status = return_if_io!(self.commit_dirty_pages(wal_checkpoint_disabled));
+        let commit_status = return_if_io!(self.commit_dirty_pages(wal_auto_checkpoint_disabled));
         wal.borrow().end_write_tx();
         wal.borrow().end_read_tx();
 
@@ -1163,7 +1163,7 @@ impl Pager {
     #[instrument(skip_all, level = Level::DEBUG)]
     pub fn commit_dirty_pages(
         &self,
-        wal_checkpoint_disabled: bool,
+        wal_auto_checkpoint_disabled: bool,
     ) -> Result<IOResult<PagerCommitResult>> {
         let Some(wal) = self.wal.as_ref() else {
             return Err(LimboError::InternalError(
@@ -1226,7 +1226,7 @@ impl Pager {
                     return Ok(IOResult::IO(IOCompletions::Single(c)));
                 }
                 CommitState::AfterSyncWal => {
-                    if wal_checkpoint_disabled || !wal.borrow().should_checkpoint() {
+                    if wal_auto_checkpoint_disabled || !wal.borrow().should_checkpoint() {
                         self.commit_info.borrow_mut().state = CommitState::Start;
                         break PagerCommitResult::WalWritten;
                     }
@@ -1354,7 +1354,7 @@ impl Pager {
             .expect("Failed to clear page cache");
     }
 
-    pub fn checkpoint_shutdown(&self, wal_checkpoint_disabled: bool) -> Result<()> {
+    pub fn checkpoint_shutdown(&self, wal_auto_checkpoint_disabled: bool) -> Result<()> {
         let mut _attempts = 0;
         {
             let Some(wal) = self.wal.as_ref() else {
@@ -1369,7 +1369,7 @@ impl Pager {
             let c = wal.sync()?;
             self.io.wait_for_completion(c)?;
         }
-        if !wal_checkpoint_disabled {
+        if !wal_auto_checkpoint_disabled {
             self.wal_checkpoint(CheckpointMode::Passive)?;
         }
         Ok(())

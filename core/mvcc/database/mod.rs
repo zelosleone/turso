@@ -502,7 +502,7 @@ impl<Clock: LogicalClock> StateTransition for CommitStateMachine<Clock> {
                         .end_tx(
                             false, // rollback = false since we're committing
                             &self.connection,
-                            self.connection.wal_checkpoint_disabled.get(),
+                            self.connection.wal_auto_checkpoint_disabled.get(),
                         )
                         .map_err(|e| LimboError::InternalError(e.to_string()))
                         .unwrap();

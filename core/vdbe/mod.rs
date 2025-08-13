@@ -581,7 +581,7 @@ impl Program {
         let cacheflush_status = pager.end_tx(
             rollback,
             connection,
-            connection.wal_checkpoint_disabled.get(),
+            connection.wal_auto_checkpoint_disabled.get(),
         )?;
         match cacheflush_status {
             IOResult::Done(_) => {
