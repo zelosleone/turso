@@ -36,3 +36,23 @@ pub enum CountState {
     Loop,
     Finish,
 }
+
+#[derive(Debug, Clone, Copy)]
+pub enum SeekEndState {
+    Start,
+    ProcessPage,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum InsertState {
+    Start,
+    Seek,
+    Advance,
+    InsertIntoPage,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum MoveToState {
+    Start,
+    MoveToPage,
+}

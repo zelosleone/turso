@@ -10,8 +10,8 @@ use crate::{
             LEAF_PAGE_HEADER_SIZE_BYTES, LEFT_CHILD_PTR_SIZE_BYTES,
         },
         state_machines::{
-            AdvanceState, CountState, EmptyTableState, MoveToRightState, RewindState,
-            SeekToLastState,
+            AdvanceState, CountState, EmptyTableState, InsertState, MoveToRightState, MoveToState,
+            RewindState, SeekEndState, SeekToLastState,
         },
     },
     translate::plan::IterationDirection,
@@ -304,7 +304,7 @@ struct ReadPayloadOverflow {
 
 enum PayloadOverflowWithOffset {
     SkipOverflowPages {
-        next_page: u32,
+        next_page: BTreePage,
         pages_left_to_skip: u32,
         page_offset: u32,
         amount: u32,
@@ -312,7 +312,6 @@ enum PayloadOverflowWithOffset {
         is_write: bool,
     },
     ProcessPage {
-        next_page: u32,
         remaining_to_read: u32,
         page: BTreePage,
         current_offset: usize,
@@ -557,6 +556,12 @@ pub struct BTreeCursor {
     advance_state: AdvanceState,
     /// State machine for [BTreeCursor::count]
     count_state: CountState,
+    /// State machine for [BTreeCursor::seek_end]
+    seek_end_state: SeekEndState,
+    /// State machine for [BTreeCursor::insert]
+    insert_state: InsertState,
+    /// State machine for [BTreeCursor::move_to]
+    move_to_state: MoveToState,
 }
 
 /// We store the cell index and cell count for each page in the stack.
@@ -622,6 +627,9 @@ impl BTreeCursor {
             rewind_state: RewindState::Start,
             advance_state: AdvanceState::Start,
             count_state: CountState::Start,
+            seek_end_state: SeekEndState::Start,
+            insert_state: InsertState::Start,
+            move_to_state: MoveToState::Start,
         }
     }
 
@@ -691,6 +699,7 @@ impl BTreeCursor {
             EmptyTableState::ReadPage { page } => {
                 // TODO: Remove this line after we start awaiting for completions
                 return_if_locked!(page);
+                turso_assert!(page.is_loaded(), "page should be loaded");
                 let cell_count = page.get().contents.as_ref().unwrap().cell_count();
                 Ok(IOResult::Done(cell_count == 0))
             }
@@ -704,8 +713,8 @@ impl BTreeCursor {
         loop {
             let page = self.stack.top();
 
-            return_if_locked_maybe_load!(self.pager, page);
             let page = page.get();
+            return_if_locked!(page);
             let contents = page.get().contents.as_ref().unwrap();
             let page_type = contents.page_type();
             let is_index = page.is_index();
@@ -817,11 +826,10 @@ impl BTreeCursor {
             page: page_btree,
         } = read_overflow_state.as_mut().unwrap();
 
-        if page_btree.get().is_locked() {
-            return Ok(IOResult::IO);
-        }
-        tracing::debug!(next_page, remaining_to_read, "reading overflow page");
         let page = page_btree.get();
+        return_if_locked!(page);
+        turso_assert!(page.is_loaded(), "page should be loaded");
+        tracing::debug!(next_page, remaining_to_read, "reading overflow page");
         let contents = page.get_contents();
         // The first four bytes of each overflow page are a big-endian integer which is the page number of the next page in the chain, or zero for the final page in the chain.
         let next = contents.read_u32_no_offset(0);
@@ -934,9 +942,9 @@ impl BTreeCursor {
         }
 
         let page_btree = self.stack.top();
-        return_if_locked_maybe_load!(self.pager, page_btree);
 
         let page = page_btree.get();
+        return_if_locked!(page);
         let contents = page.get().contents.as_ref().unwrap();
         let cell_idx = self.stack.current_cell_index() as usize - 1;
 
@@ -1004,10 +1012,12 @@ impl BTreeCursor {
             let overflow_size = usable_size - 4;
             let pages_to_skip = offset / overflow_size as u32;
             let page_offset = offset % overflow_size as u32;
+            // Read page
+            let (page, _c) = self.read_page(first_overflow_page.unwrap() as usize)?;
 
             self.state =
                 CursorState::ReadWritePayload(PayloadOverflowWithOffset::SkipOverflowPages {
-                    next_page: first_overflow_page.unwrap(),
+                    next_page: page,
                     pages_left_to_skip: pages_to_skip,
                     page_offset,
                     amount,
@@ -1026,137 +1036,129 @@ impl BTreeCursor {
         buffer: &mut Vec<u8>,
         usable_space: usize,
     ) -> Result<IOResult<()>> {
-        let mut state = std::mem::replace(&mut self.state, CursorState::None);
+        loop {
+            let state = std::mem::replace(&mut self.state, CursorState::None);
+            match state {
+                CursorState::ReadWritePayload(PayloadOverflowWithOffset::SkipOverflowPages {
+                    next_page,
+                    mut pages_left_to_skip,
+                    page_offset,
+                    amount,
+                    buffer_offset,
+                    is_write,
+                }) => {
+                    let page = next_page.get();
+                    return_if_locked!(page);
+                    turso_assert!(page.is_loaded(), "page should be loaded");
 
-        match &mut state {
-            CursorState::ReadWritePayload(PayloadOverflowWithOffset::SkipOverflowPages {
-                next_page,
-                pages_left_to_skip,
-                page_offset,
-                amount,
-                buffer_offset,
-                is_write,
-            }) => {
-                if *pages_left_to_skip == 0 {
-                    let (page, _c) = self.read_page(*next_page as usize)?;
-                    return_if_locked_maybe_load!(self.pager, page);
-                    self.state =
-                        CursorState::ReadWritePayload(PayloadOverflowWithOffset::ProcessPage {
-                            next_page: *next_page,
-                            remaining_to_read: *amount,
-                            page,
-                            current_offset: *page_offset as usize,
-                            buffer_offset: *buffer_offset,
-                            is_write: *is_write,
-                        });
+                    if pages_left_to_skip == 0 {
+                        self.state =
+                            CursorState::ReadWritePayload(PayloadOverflowWithOffset::ProcessPage {
+                                remaining_to_read: amount,
+                                page: next_page.clone(),
+                                current_offset: page_offset as usize,
+                                buffer_offset,
+                                is_write,
+                            });
+                        continue;
+                    }
+
+                    let contents = page.get_contents();
+                    let next = contents.read_u32_no_offset(0);
+
+                    if next == 0 {
+                        return Err(LimboError::Corrupt(
+                            "Overflow chain ends prematurely".into(),
+                        ));
+                    }
+                    pages_left_to_skip -= 1;
+
+                    let (page, _c) = self.read_page(next as usize)?;
+
+                    self.state = CursorState::ReadWritePayload(
+                        PayloadOverflowWithOffset::SkipOverflowPages {
+                            next_page: page,
+                            pages_left_to_skip,
+                            page_offset,
+                            amount,
+                            buffer_offset,
+                            is_write,
+                        },
+                    );
 
                     return Ok(IOResult::IO);
                 }
+                CursorState::ReadWritePayload(PayloadOverflowWithOffset::ProcessPage {
+                    mut remaining_to_read,
+                    page: mut page_btree,
+                    mut current_offset,
+                    mut buffer_offset,
+                    is_write,
+                }) => {
+                    let page = page_btree.get();
+                    return_if_locked!(page);
+                    turso_assert!(page.is_loaded(), "page should be loaded");
 
-                let (page, _c) = self.read_page(*next_page as usize)?;
-                return_if_locked_maybe_load!(self.pager, page);
-                let page = page.get();
-                let contents = page.get_contents();
-                let next = contents.read_u32_no_offset(0);
+                    let contents = page.get_contents();
+                    let overflow_size = usable_space - 4;
 
-                if next == 0 {
-                    return Err(LimboError::Corrupt(
-                        "Overflow chain ends prematurely".into(),
-                    ));
-                }
-                *next_page = next;
-                *pages_left_to_skip -= 1;
+                    let page_offset = current_offset;
+                    let bytes_to_process =
+                        std::cmp::min(remaining_to_read, overflow_size as u32 - page_offset as u32);
 
-                self.state =
-                    CursorState::ReadWritePayload(PayloadOverflowWithOffset::SkipOverflowPages {
-                        next_page: next,
-                        pages_left_to_skip: *pages_left_to_skip,
-                        page_offset: *page_offset,
-                        amount: *amount,
-                        buffer_offset: *buffer_offset,
-                        is_write: *is_write,
-                    });
+                    let payload_offset = 4 + page_offset;
+                    let page_payload = contents.as_ptr();
+                    if is_write {
+                        self.write_payload_to_page(
+                            payload_offset as u32,
+                            bytes_to_process,
+                            page_payload,
+                            buffer,
+                            page_btree.clone(),
+                        );
+                    } else {
+                        self.read_payload_from_page(
+                            payload_offset as u32,
+                            bytes_to_process,
+                            page_payload,
+                            buffer,
+                        );
+                    }
+                    remaining_to_read -= bytes_to_process;
+                    buffer_offset += bytes_to_process as usize;
 
-                return Ok(IOResult::IO);
-            }
+                    if remaining_to_read == 0 {
+                        self.state = CursorState::None;
+                        return Ok(IOResult::Done(()));
+                    }
+                    let next = contents.read_u32_no_offset(0);
+                    if next == 0 {
+                        return Err(LimboError::Corrupt(
+                            "Overflow chain ends prematurely".into(),
+                        ));
+                    }
 
-            CursorState::ReadWritePayload(PayloadOverflowWithOffset::ProcessPage {
-                next_page,
-                remaining_to_read,
-                page: page_btree,
-                current_offset,
-                buffer_offset,
-                is_write,
-            }) => {
-                if page_btree.get().is_locked() {
+                    // Load next page
+                    current_offset = 0; // Reset offset for new page
+                    let (page, _c) = self.read_page(next as usize)?;
+                    page_btree = page;
+
                     self.state =
                         CursorState::ReadWritePayload(PayloadOverflowWithOffset::ProcessPage {
-                            next_page: *next_page,
-                            remaining_to_read: *remaining_to_read,
-                            page: page_btree.clone(),
-                            current_offset: *current_offset,
-                            buffer_offset: *buffer_offset,
-                            is_write: *is_write,
+                            remaining_to_read,
+                            page: page_btree,
+                            current_offset,
+                            buffer_offset,
+                            is_write,
                         });
-
+                    // Return IO to allow other operations
                     return Ok(IOResult::IO);
                 }
-
-                let page = page_btree.get();
-                let contents = page.get_contents();
-                let overflow_size = usable_space - 4;
-
-                let page_offset = *current_offset;
-                let bytes_to_process = std::cmp::min(
-                    *remaining_to_read,
-                    overflow_size as u32 - page_offset as u32,
-                );
-
-                let payload_offset = 4 + page_offset;
-                let page_payload = contents.as_ptr();
-                if *is_write {
-                    self.write_payload_to_page(
-                        payload_offset as u32,
-                        bytes_to_process,
-                        page_payload,
-                        buffer,
-                        page_btree.clone(),
-                    );
-                } else {
-                    self.read_payload_from_page(
-                        payload_offset as u32,
-                        bytes_to_process,
-                        page_payload,
-                        buffer,
-                    );
+                _ => {
+                    return Err(LimboError::InternalError(
+                        "Invalid state for continue_payload_overflow_with_offset".into(),
+                    ))
                 }
-                *remaining_to_read -= bytes_to_process;
-                *buffer_offset += bytes_to_process as usize;
-
-                if *remaining_to_read == 0 {
-                    self.state = CursorState::None;
-                    return Ok(IOResult::Done(()));
-                }
-                let next = contents.read_u32_no_offset(0);
-                if next == 0 {
-                    return Err(LimboError::Corrupt(
-                        "Overflow chain ends prematurely".into(),
-                    ));
-                }
-
-                // Load next page
-                *next_page = next;
-                *current_offset = 0; // Reset offset for new page
-                let (page, _c) = self.read_page(next as usize)?;
-                *page_btree = page;
-
-                // Return IO to allow other operations
-                return Ok(IOResult::IO);
-            }
-            _ => {
-                return Err(LimboError::InternalError(
-                    "Invalid state for continue_payload_overflow_with_offset".into(),
-                ))
             }
         }
     }
@@ -2117,16 +2119,26 @@ impl BTreeCursor {
         ) {
             self.seek_state = CursorSeekState::Start;
         }
-        if matches!(self.seek_state, CursorSeekState::Start) {
-            let _c = self.move_to_root()?;
+        loop {
+            match self.move_to_state {
+                MoveToState::Start => {
+                    self.move_to_state = MoveToState::MoveToPage;
+                    if matches!(self.seek_state, CursorSeekState::Start) {
+                        let _c = self.move_to_root()?;
+                        return Ok(IOResult::IO);
+                    }
+                }
+                MoveToState::MoveToPage => {
+                    let ret = match key {
+                        SeekKey::TableRowId(rowid_key) => self.tablebtree_move_to(rowid_key, cmp),
+                        SeekKey::IndexKey(index_key) => self.indexbtree_move_to(index_key, cmp),
+                    };
+                    return_if_io!(ret);
+                    self.move_to_state = MoveToState::Start;
+                    return Ok(IOResult::Done(()));
+                }
+            }
         }
-
-        let ret = match key {
-            SeekKey::TableRowId(rowid_key) => self.tablebtree_move_to(rowid_key, cmp),
-            SeekKey::IndexKey(index_key) => self.indexbtree_move_to(index_key, cmp),
-        };
-        return_if_io!(ret);
-        Ok(IOResult::Done(()))
     }
 
     /// Insert a record into the btree.
@@ -2573,18 +2585,15 @@ impl BTreeCursor {
                     // start loading right page first
                     let mut pgno: u32 = unsafe { right_pointer.cast::<u32>().read().swap_bytes() };
                     let current_sibling = sibling_pointer;
+                    let mut completions = Vec::with_capacity(current_sibling + 1);
                     for i in (0..=current_sibling).rev() {
-                        let (page, _c) = btree_read_page(&self.pager, pgno as usize)?;
+                        let (page, c) = btree_read_page(&self.pager, pgno as usize)?;
                         {
                             // mark as dirty
                             let sibling_page = page.get();
                             self.pager.add_dirty(&sibling_page);
                         }
-                        #[cfg(debug_assertions)]
-                        {
-                            return_if_locked!(page.get());
-                            debug_validate_cells!(&page.get().get_contents(), usable_space as u16);
-                        }
+                        completions.push(c);
                         pages_to_balance[i].replace(page);
                         if i == 0 {
                             break;
@@ -2641,23 +2650,6 @@ impl BTreeCursor {
                         }
                     }
 
-                    #[cfg(debug_assertions)]
-                    {
-                        let page_type_of_siblings = pages_to_balance[0]
-                            .as_ref()
-                            .unwrap()
-                            .get()
-                            .get_contents()
-                            .page_type();
-                        for page in pages_to_balance.iter().take(sibling_count) {
-                            return_if_locked_maybe_load!(self.pager, page.as_ref().unwrap());
-                            let page = page.as_ref().unwrap().get();
-                            let contents = page.get_contents();
-                            debug_validate_cells!(&contents, usable_space as u16);
-                            assert_eq!(contents.page_type(), page_type_of_siblings);
-                        }
-                    }
-
                     balance_info.borrow_mut().replace(BalanceInfo {
                         pages_to_balance,
                         rightmost_pointer: right_pointer,
@@ -2666,6 +2658,10 @@ impl BTreeCursor {
                         first_divider_cell: first_cell_divider,
                     });
                     *sub_state = BalanceSubState::NonRootDoBalancing;
+                    if !completions.is_empty() {
+                        // TODO: when tracking IO return all the completions here
+                        return Ok(IOResult::IO);
+                    }
                 }
                 BalanceSubState::NonRootDoBalancing => {
                     // Ensure all involved pages are in memory.
@@ -2677,7 +2673,23 @@ impl BTreeCursor {
                         .take(balance_info.sibling_count)
                     {
                         let page = page.as_ref().unwrap();
-                        return_if_locked_maybe_load!(self.pager, page);
+                        let page = page.get();
+                        return_if_locked!(page);
+
+                        #[cfg(debug_assertions)]
+                        let page_type_of_siblings = balance_info.pages_to_balance[0]
+                            .as_ref()
+                            .unwrap()
+                            .get()
+                            .get_contents()
+                            .page_type();
+
+                        #[cfg(debug_assertions)]
+                        {
+                            let contents = page.get_contents();
+                            debug_validate_cells!(&contents, usable_space as u16);
+                            assert_eq!(contents.page_type(), page_type_of_siblings);
+                        }
                     }
                     // Start balancing.
                     let parent_page_btree = self.stack.top();
@@ -4142,28 +4154,34 @@ impl BTreeCursor {
 
     pub fn seek_end(&mut self) -> Result<IOResult<()>> {
         assert!(self.mv_cursor.is_none()); // unsure about this -_-
-        let _c = self.move_to_root()?;
-        loop {
-            let mem_page = self.stack.top();
-            let page_id = mem_page.get().get().id;
-            let (page, _c) = self.read_page(page_id)?;
-            return_if_locked_maybe_load!(self.pager, page);
-
-            let page = page.get();
-            let contents = page.get().contents.as_ref().unwrap();
-            if contents.is_leaf() {
-                // set cursor just past the last cell to append
-                self.stack.set_cell_index(contents.cell_count() as i32);
-                return Ok(IOResult::Done(()));
+        match self.seek_end_state {
+            SeekEndState::Start => {
+                let _c = self.move_to_root()?;
+                self.seek_end_state = SeekEndState::ProcessPage;
+                Ok(IOResult::IO)
             }
-
-            match contents.rightmost_pointer() {
-                Some(right_most_pointer) => {
-                    self.stack.set_cell_index(contents.cell_count() as i32 + 1); // invalid on interior
-                    let (child, _c) = self.read_page(right_most_pointer as usize)?;
-                    self.stack.push(child);
+            SeekEndState::ProcessPage => {
+                let mem_page = self.stack.top();
+                let page = mem_page.get();
+                // TODO: remove this with IO Completion tracking
+                return_if_locked!(page);
+                let contents = page.get().contents.as_ref().unwrap();
+                if contents.is_leaf() {
+                    // set cursor just past the last cell to append
+                    self.stack.set_cell_index(contents.cell_count() as i32);
+                    self.seek_end_state = SeekEndState::Start;
+                    return Ok(IOResult::Done(()));
                 }
-                None => unreachable!("interior page must have rightmost pointer"),
+
+                match contents.rightmost_pointer() {
+                    Some(right_most_pointer) => {
+                        self.stack.set_cell_index(contents.cell_count() as i32 + 1); // invalid on interior
+                        let (child, _c) = self.read_page(right_most_pointer as usize)?;
+                        self.stack.push(child);
+                        Ok(IOResult::IO)
+                    }
+                    None => unreachable!("interior page must have rightmost pointer"),
+                }
             }
         }
     }
@@ -4442,61 +4460,87 @@ impl BTreeCursor {
                 None => todo!("Support mvcc inserts with index btrees"),
             },
             None => {
-                match (&self.valid_state, self.is_write_in_progress()) {
-                    (CursorValidState::Valid, _) => {
-                        // consider the current position valid unless the caller explicitly asks us to seek.
-                    }
-                    (CursorValidState::RequireSeek, false) => {
-                        // we must seek.
-                        moved_before = false;
-                    }
-                    (CursorValidState::RequireSeek, true) => {
-                        // illegal to seek during a write no matter what CursorValidState or caller says -- we might e.g. move to the wrong page during balancing
-                        moved_before = true;
-                    }
-                    (CursorValidState::RequireAdvance(direction), _) => {
-                        // FIXME: this is a hack to support the case where we need to advance the cursor after a seek.
-                        // We should have a proper state machine for this.
-                        return_if_io!(match direction {
-                            IterationDirection::Forwards => self.next(),
-                            IterationDirection::Backwards => self.prev(),
-                        });
-                        self.valid_state = CursorValidState::Valid;
-                        self.seek_state = CursorSeekState::Start;
-                        moved_before = true;
-                    }
-                };
-                if !moved_before {
-                    let seek_result = match key {
-                        BTreeKey::IndexKey(_) => {
-                            return_if_io!(self.seek(
-                                SeekKey::IndexKey(key.get_record().unwrap()),
-                                SeekOp::GE { eq_only: true }
-                            ))
+                loop {
+                    let state = self.insert_state;
+                    match state {
+                        InsertState::Start => {
+                            match (&self.valid_state, self.is_write_in_progress()) {
+                                (CursorValidState::Valid, _) => {
+                                    // consider the current position valid unless the caller explicitly asks us to seek.
+                                }
+                                (CursorValidState::RequireSeek, false) => {
+                                    // we must seek.
+                                    moved_before = false;
+                                }
+                                (CursorValidState::RequireSeek, true) => {
+                                    // illegal to seek during a write no matter what CursorValidState or caller says -- we might e.g. move to the wrong page during balancing
+                                    moved_before = true;
+                                }
+                                (CursorValidState::RequireAdvance(direction), _) => {
+                                    // FIXME: this is a hack to support the case where we need to advance the cursor after a seek.
+                                    // We should have a proper state machine for this.
+                                    return_if_io!(match direction {
+                                        IterationDirection::Forwards => self.next(),
+                                        IterationDirection::Backwards => self.prev(),
+                                    });
+                                    self.valid_state = CursorValidState::Valid;
+                                    self.seek_state = CursorSeekState::Start;
+                                    moved_before = true;
+                                }
+                            };
+                            if !moved_before {
+                                self.insert_state = InsertState::Seek;
+                            } else {
+                                self.insert_state = InsertState::InsertIntoPage;
+                            }
                         }
-                        BTreeKey::TableRowId(_) => {
-                            return_if_io!(self.seek(
-                                SeekKey::TableRowId(key.to_rowid()),
-                                SeekOp::GE { eq_only: true }
-                            ))
+                        InsertState::Seek => {
+                            let seek_result = match key {
+                                BTreeKey::IndexKey(_) => {
+                                    return_if_io!(self.seek(
+                                        SeekKey::IndexKey(key.get_record().unwrap()),
+                                        SeekOp::GE { eq_only: true }
+                                    ))
+                                }
+                                BTreeKey::TableRowId(_) => {
+                                    return_if_io!(self.seek(
+                                        SeekKey::TableRowId(key.to_rowid()),
+                                        SeekOp::GE { eq_only: true }
+                                    ))
+                                }
+                            };
+                            if SeekResult::TryAdvance == seek_result {
+                                self.valid_state =
+                                    CursorValidState::RequireAdvance(IterationDirection::Forwards);
+                                self.insert_state = InsertState::Advance;
+                            }
+                            self.context.take(); // we know where we wanted to move so if there was any saved context, discard it.
+                            self.valid_state = CursorValidState::Valid;
+                            tracing::debug!(
+                                "seeked to the right place, page is now {:?}",
+                                self.stack.top().get().get().id
+                            );
+                            self.insert_state = InsertState::InsertIntoPage;
                         }
-                    };
-                    if SeekResult::TryAdvance == seek_result {
-                        self.valid_state =
-                            CursorValidState::RequireAdvance(IterationDirection::Forwards);
-                        return_if_io!(self.next());
+                        InsertState::Advance => {
+                            return_if_io!(self.next());
+                            self.context.take(); // we know where we wanted to move so if there was any saved context, discard it.
+                            self.valid_state = CursorValidState::Valid;
+                            tracing::debug!(
+                                "seeked to the right place, page is now {:?}",
+                                self.stack.top().get().get().id
+                            );
+                            self.insert_state = InsertState::InsertIntoPage;
+                        }
+                        InsertState::InsertIntoPage => {
+                            return_if_io!(self.insert_into_page(key));
+                            if key.maybe_rowid().is_some() {
+                                self.has_record.replace(true);
+                            }
+                            self.insert_state = InsertState::Start;
+                            break;
+                        }
                     }
-                    self.context.take(); // we know where we wanted to move so if there was any saved context, discard it.
-                    self.valid_state = CursorValidState::Valid;
-                    self.seek_state = CursorSeekState::Start;
-                    tracing::debug!(
-                        "seeked to the right place, page is now {:?}",
-                        self.stack.top().get().get().id
-                    );
-                }
-                return_if_io!(self.insert_into_page(key));
-                if key.maybe_rowid().is_some() {
-                    self.has_record.replace(true);
                 }
             }
         };
