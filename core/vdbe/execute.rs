@@ -7888,14 +7888,6 @@ impl Value {
         Value::Float(result)
     }
 
-    fn exec_likely(&self) -> Value {
-        self.clone()
-    }
-
-    fn exec_likelihood(&self, _probability: &Value) -> Value {
-        self.clone()
-    }
-
     pub fn exec_add(&self, rhs: &Value) -> Value {
         (Numeric::from(self) + Numeric::from(rhs)).into()
     }
@@ -8041,10 +8033,6 @@ impl Value {
 
     pub fn exec_max<'a, T: Iterator<Item = &'a Value>>(regs: T) -> Value {
         regs.max().map(|v| v.to_owned()).unwrap_or(Value::Null)
-    }
-
-    fn exec_unlikely(&self) -> Value {
-        self.exec_likelihood(&Value::Float(0.0625))
     }
 }
 
