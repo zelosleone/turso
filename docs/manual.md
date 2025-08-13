@@ -7,6 +7,9 @@ Welcome to Turso database manual!
 * [Introduction](#introduction)
   * [Getting Started](#getting-started)
   * [Limitations](#limitations)
+* [The SQL shell](#the-sql-shell)
+  * [Shell commands](#shell-commands)
+  * [Command line options](#command-line-options)
 * [The SQL language](#the-sql-language)
   * [`ALTER TABLE` — change table definition](#alter-table--change-table-definition)
   * [`BEGIN TRANSACTION` — start a transaction](#begin-transaction--start-a-transaction)
@@ -23,9 +26,13 @@ Welcome to Turso database manual!
   * [`UPDATE` — update rows of a table](#update--update-rows-of-a-table)
 * [JavaScript API](#javascript-api)
 * [SQLite C API](#sqlite-c-api)
+  * [Basic operations](#basic-operations)
+    * [`sqlite_open`](#sqlite3_open)
+    * [`sqlite_prepare`](#sqlite3_prepare)
+    * [`sqlite_step`](#sqlite3_step)
+    * [`sqlite_column`](#sqlite3_column)
   * [WAL manipulation](#wal-manipulation)
     * [`libsql_wal_frame_count`](#libsql_wal_frame_count)
-* [SQL Commands](#sql-commands)
 * [Appendix A: Turso Internals](#appendix-a-turso-internals)
   * [Frontend](#frontend)
     * [Parser](#parser)
@@ -71,13 +78,12 @@ turso> SELECT 'hello, world';
 hello, world
 ```
 
-## Limitations
+### Limitations
 
 Turso aims towards full SQLite compatibility but has the following limitations:
 
 * No multi-process access
 * No multi-threading
-* No indexing
 * No savepoints
 * No triggers
 * No views
@@ -85,6 +91,45 @@ Turso aims towards full SQLite compatibility but has the following limitations:
 * UTF-8 is the only supported character encoding
 
 For more detailed list of SQLite compatibility, please refer to [COMPAT.md](../COMPAT.md).
+
+## The SQL shell
+
+The `tursodb` command provides an interactive SQL shell, similar to `sqlite3`. You can start it in in-memory mode as follows:
+
+```console
+$ tursodb
+Turso
+Enter ".help" for usage hints.
+Connected to a transient in-memory database.
+Use ".open FILENAME" to reopen on a persistent database
+turso> SELECT 'hello, world';
+hello, world
+```
+
+### Shell commands
+
+The shell supports commands in addition to SQL statements. The commands start with a dot (".") followed by the command. The supported commands are:
+
+| Command | Description |
+|---------|-------------|
+| `.schema` | Display the database schema |
+| `.dump` | Dump database contents as SQL statements |
+
+### Command line options
+
+The SQL shell supports the following command line options:
+
+| Option | Description |
+|--------|-------------|
+| `-m`, `--output-mode` `<mode>` | Configure output mode. Supported values for `<mode>`: <ul><li>`pretty` for pretty output (default)</li><li>`list` for minimal SQLite compatible format</li></ul>
+| `-q`, `--quiet` | Don't display program information at startup |
+| `-e`, `--echo` | Print commands before execution |
+| `--readonly` | Open database in read-only mode |
+| `-h`, `--help` | Print help |
+| `-V`, `--version` | Print version |
+| `--mcp` | Start a MCP server instead of the interactive shell |
+| `--experimental-mvcc` | Enable experimental MVCC feature. **Note:**  the feature is not production ready so do not use it for critical data right now. |
+| `--experimental-views` | Enable experimental views feature. **Note**: the feature is not production ready so do not use it for critical data right now. |
 
 ## The SQL language
 
@@ -324,6 +369,8 @@ turso> SELECT * FROM t;
 
 Turso supports a JavaScript API, both with native and WebAssembly package options.
 
+Please read the [JavaScript API reference](docs/javascript-api-reference.md) for more information.
+
 ### Installation
 
 Installing the native package:
@@ -338,26 +385,73 @@ Installing the WebAssembly package:
 npm i @tursodatabase/database --cpu wasm32
 ```
 
-### API reference
-
-See [JavaScript API reference](docs/javascript-api-reference.md) for more information.
-
 ### Getting Started
 
 To use Turso from JavaScript application, you need to import `Database` type from the `@tursodatabase/database` package.
 You can the prepare a statement with `Database.prepare` method and execute the SQL statement with `Statement.get()` method.
 
 ```
-import Database from '@tursodatabase/database';
+import { connect } from '@tursodatabase/database';
 
-const db = new Database('turso.db');
+const db = await connect('turso.db');
 const row = db.prepare('SELECT 1').get();
 console.log(row);
 ```
 
 ## SQLite C API
 
-Turso supports the SQLite C API, with libSQL extensions.
+Turso supports a subset of the SQLite C API, including libSQL extensions.
+
+### Basic operations
+
+#### `sqlite3_open` 
+
+Open a connection to a database.
+
+**Synopsis:**
+
+```c
+int sqlite3_open(const char *filename, sqlite3 **db_out);
+int sqlite3_open_v2(const char *filename, sqlite3 **db_out, int _flags, const char *_z_vfs);
+```
+
+#### `sqlite3_prepare`
+
+Prepare a SQL statement for execution.
+
+**Synopsis:**
+
+```c
+int sqlite3_prepare_v2(sqlite3 *db, const char *sql, int _len, sqlite3_stmt **out_stmt, const char **_tail);
+```
+
+#### `sqlite3_step`
+
+Evaluate a prepared statement until it yields the next row or completes.
+
+**Synopsis:**
+
+```c
+int sqlite3_step(sqlite3_stmt *stmt);
+```
+
+#### `sqlite3_column`
+
+Return the value of a column for the current row of a statement.
+
+**Synopsis:**
+
+```c
+int sqlite3_column_type(sqlite3_stmt *_stmt, int _idx);
+int sqlite3_column_count(sqlite3_stmt *_stmt);
+const char *sqlite3_column_decltype(sqlite3_stmt *_stmt, int _idx);
+const char *sqlite3_column_name(sqlite3_stmt *_stmt, int _idx);
+int64_t sqlite3_column_int64(sqlite3_stmt *_stmt, int _idx);
+double sqlite3_column_double(sqlite3_stmt *_stmt, int _idx);
+const void *sqlite3_column_blob(sqlite3_stmt *_stmt, int _idx);
+int sqlite3_column_bytes(sqlite3_stmt *_stmt, int _idx);
+const unsigned char *sqlite3_column_text(sqlite3_stmt *stmt, int idx);
+```
 
 ### WAL manipulation
 
@@ -389,8 +483,6 @@ in the `p_frame_count` parameter.
   connection.
 * The `p_frame_count` must be a valid pointer to a `u32` that will store the
 * number of frames in the WAL file.
-
-## SQL Commands
 
 ## Appendix A: Turso Internals
 
