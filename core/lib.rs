@@ -124,7 +124,7 @@ pub struct Database {
     schema: Mutex<Arc<Schema>>,
     db_file: Arc<dyn DatabaseStorage>,
     path: String,
-    io: Arc<dyn IO>,
+    pub io: Arc<dyn IO>,
     // Shared structures of a Database are the parts that are common to multiple threads that might
     // create DB connections.
     _shared_page_cache: Arc<RwLock<DumbLruPageCache>>,
@@ -1137,17 +1137,6 @@ impl Connection {
         Ok(())
     }
 
-    fn run_once(&self) -> Result<()> {
-        if self.closed.get() {
-            return Err(LimboError::InternalError("Connection closed".to_string()));
-        }
-        let res = self._db.io.run_once();
-        if let Err(ref e) = res {
-            vdbe::handle_program_error(&self.pager.borrow(), self, e)?;
-        }
-        res
-    }
-
     #[cfg(feature = "fs")]
     pub fn from_uri(
         uri: &str,
@@ -1380,7 +1369,7 @@ impl Connection {
     }
 
     /// Flush dirty pages to disk.
-    pub fn cacheflush(&self) -> Result<IOResult<()>> {
+    pub fn cacheflush(&self) -> Result<Vec<Completion>> {
         if self.closed.get() {
             return Err(LimboError::InternalError("Connection closed".to_string()));
         }

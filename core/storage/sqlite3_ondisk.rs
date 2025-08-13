@@ -51,7 +51,7 @@ use super::pager::PageRef;
 use super::wal::TursoRwLock;
 use crate::error::LimboError;
 use crate::fast_lock::SpinLock;
-use crate::io::{Buffer, Complete, Completion};
+use crate::io::{Buffer, Completion, ReadComplete};
 use crate::storage::btree::offset::{
     BTREE_CELL_CONTENT_AREA, BTREE_CELL_COUNT, BTREE_FIRST_FREEBLOCK, BTREE_FRAGMENTED_BYTES_COUNT,
     BTREE_PAGE_TYPE, BTREE_RIGHTMOST_PTR,
@@ -891,11 +891,7 @@ pub fn finish_read_page(page_idx: usize, buffer_ref: Arc<Buffer>, page: PageRef)
 }
 
 #[instrument(skip_all, level = Level::DEBUG)]
-pub fn begin_write_btree_page(
-    pager: &Pager,
-    page: &PageRef,
-    write_counter: Rc<RefCell<usize>>,
-) -> Result<Completion> {
+pub fn begin_write_btree_page(pager: &Pager, page: &PageRef) -> Result<Completion> {
     tracing::trace!("begin_write_btree_page(page={})", page.get().id);
     let page_source = &pager.db_file;
     let page_finish = page.clone();
@@ -908,15 +904,12 @@ pub fn begin_write_btree_page(
         contents.buffer.clone()
     };
 
-    *write_counter.borrow_mut() += 1;
-    let clone_counter = write_counter.clone();
     let write_complete = {
         let buf_copy = buffer.clone();
         Box::new(move |bytes_written: i32| {
             tracing::trace!("finish_write_btree_page");
             let buf_copy = buf_copy.clone();
             let buf_len = buf_copy.len();
-            *clone_counter.borrow_mut() -= 1;
 
             page_finish.clear_dirty();
             turso_assert!(
@@ -926,12 +919,7 @@ pub fn begin_write_btree_page(
         })
     };
     let c = Completion::new_write(write_complete);
-    let res = page_source.write_page(page_id, buffer.clone(), c);
-    if res.is_err() {
-        // Avoid infinite loop if write page fails
-        *write_counter.borrow_mut() -= 1;
-    }
-    res
+    page_source.write_page(page_id, buffer.clone(), c)
 }
 
 #[instrument(skip_all, level = Level::DEBUG)]
@@ -949,9 +937,9 @@ pub fn write_pages_vectored(
     pager: &Pager,
     batch: BTreeMap<usize, Arc<Buffer>>,
     flush: &PendingFlush,
-) -> Result<()> {
+) -> Result<Vec<Completion>> {
     if batch.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     // batch item array is already sorted by id, so we just need to find contiguous ranges of page_id's
@@ -989,6 +977,7 @@ pub fn write_pages_vectored(
     // Iterate through the batch
     let mut iter = batch.into_iter().peekable();
 
+    let mut completions = Vec::new();
     while let Some((id, item)) = iter.next() {
         // Track the start of the run
         if run_start_id.is_none() {
@@ -1016,23 +1005,28 @@ pub fn write_pages_vectored(
             });
 
             // Submit write operation for this run, decrementing the counter if we error
-            if let Err(e) = pager.db_file.write_pages(
+            match pager.db_file.write_pages(
                 start_id,
                 page_sz,
                 std::mem::replace(&mut run_bufs, Vec::with_capacity(EST_BUFF_CAPACITY)),
                 c,
             ) {
-                if runs_left.fetch_sub(1, Ordering::AcqRel) == 1 {
-                    done.store(true, Ordering::Release);
+                Ok(c) => {
+                    completions.push(c);
                 }
-                return Err(e);
+                Err(e) => {
+                    if runs_left.fetch_sub(1, Ordering::AcqRel) == 1 {
+                        done.store(true, Ordering::Release);
+                    }
+                    return Err(e);
+                }
             }
             run_start_id = None;
         }
     }
 
     tracing::debug!("write_pages_vectored: total runs={run_count}");
-    Ok(())
+    Ok(completions)
 }
 
 #[instrument(skip_all, level = Level::DEBUG)]
@@ -1572,7 +1566,7 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
     }));
     let wal_file_shared_for_completion = wal_file_shared_ret.clone();
 
-    let complete: Box<Complete> = Box::new(move |buf: Arc<Buffer>, bytes_read: i32| {
+    let complete: Box<ReadComplete> = Box::new(move |buf: Arc<Buffer>, bytes_read: i32| {
         let buf_slice = buf.as_slice();
         turso_assert!(
             bytes_read == buf_slice.len() as i32,
@@ -1755,7 +1749,7 @@ pub fn begin_read_wal_frame_raw(
     buffer_pool: &Arc<BufferPool>,
     io: &Arc<dyn File>,
     offset: usize,
-    complete: Box<Complete>,
+    complete: Box<ReadComplete>,
 ) -> Result<Completion> {
     tracing::trace!("begin_read_wal_frame_raw(offset={})", offset);
     let buf = Arc::new(buffer_pool.get_wal_frame());
@@ -1769,7 +1763,7 @@ pub fn begin_read_wal_frame(
     io: &Arc<dyn File>,
     offset: usize,
     buffer_pool: Arc<BufferPool>,
-    complete: Box<Complete>,
+    complete: Box<ReadComplete>,
 ) -> Result<Completion> {
     tracing::trace!("begin_read_wal_frame(offset={})", offset);
     let buf = buffer_pool.get_page();
