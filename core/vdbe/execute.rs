@@ -6314,7 +6314,7 @@ pub fn op_drop_view(
     }
     let conn = program.connection.clone();
     conn.with_schema_mut(|schema| {
-        schema.remove_view(view_name);
+        schema.remove_view(view_name)?;
         Ok::<(), crate::LimboError>(())
     })?;
     state.pc += 1;
