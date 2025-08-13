@@ -983,21 +983,8 @@ impl Connection {
                         input,
                     )?;
 
-                    let mut stmt =
-                        Statement::new(program, self._db.mv_store.clone(), pager.clone());
-
-                    loop {
-                        match stmt.step()? {
-                            vdbe::StepResult::Done => {
-                                break;
-                            }
-                            vdbe::StepResult::IO => stmt.run_once()?,
-                            vdbe::StepResult::Row => {}
-                            vdbe::StepResult::Interrupt | vdbe::StepResult::Busy => {
-                                return Err(LimboError::Busy)
-                            }
-                        }
-                    }
+                    Statement::new(program, self._db.mv_store.clone(), pager.clone())
+                        .run_ignore_rows()?;
                 }
                 _ => unreachable!(),
             }
@@ -1118,21 +1105,8 @@ impl Connection {
                         input,
                     )?;
 
-                    let mut stmt =
-                        Statement::new(program, self._db.mv_store.clone(), pager.clone());
-
-                    loop {
-                        match stmt.step()? {
-                            vdbe::StepResult::Done => {
-                                break;
-                            }
-                            vdbe::StepResult::IO => stmt.run_once()?,
-                            vdbe::StepResult::Row => {}
-                            vdbe::StepResult::Interrupt | vdbe::StepResult::Busy => {
-                                return Err(LimboError::Busy)
-                            }
-                        }
-                    }
+                    Statement::new(program, self._db.mv_store.clone(), pager.clone())
+                        .run_ignore_rows()?;
                 }
             }
         }
@@ -1968,6 +1942,19 @@ impl Statement {
         }
 
         res
+    }
+
+    pub(crate) fn run_ignore_rows(&mut self) -> Result<()> {
+        loop {
+            match self.step()? {
+                vdbe::StepResult::Done => return Ok(()),
+                vdbe::StepResult::IO => self.run_once()?,
+                vdbe::StepResult::Row => continue,
+                vdbe::StepResult::Interrupt | vdbe::StepResult::Busy => {
+                    return Err(LimboError::Busy)
+                }
+            }
+        }
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
