@@ -1921,13 +1921,38 @@ impl Connection {
     /// Because we are instead making a copy of the File, as a side-effect we are
     /// also having to checkpoint the database.
     pub fn copy_db(&self, file: &str) -> Result<()> {
-        // use a new PlatformIO instance here to allow for copying in-memory databases
-        let io: Arc<dyn IO> = Arc::new(PlatformIO::new()?);
-        // checkpoint so everything is in the DB file before copying
-        self.pager
-            .borrow_mut()
-            .wal_checkpoint(CheckpointMode::Truncate)?;
-        self.pager.borrow_mut().db_file.copy_to(&*io, file)
+        if !self.is_db_initialized() {
+            return Err(LimboError::Page1NotAlloc);
+        }
+        let pager = self.pager.borrow();
+        if let Some(wal) = pager.wal.as_ref() {
+            let checkpoint_result = self
+                ._db
+                .io
+                .block(|| wal.borrow_mut().checkpoint(&pager, CheckpointMode::Full))?;
+
+            if checkpoint_result.everything_backfilled() {
+                let c = Completion::new_sync(|_| {});
+                let c = pager.db_file.sync(c)?;
+                // sync the db file to ensure checkpointed frames were flushed.
+                self._db.io.wait_for_completion(c)?;
+
+                // CheckpointResult here still holds the checkpoint/writer lock until it goes out of scope,
+                // so it's safe to copy from file.
+
+                let src_io = self._db.io.clone();
+                // use a new PlatformIO instance as the dest_io when copying the file to account that src could be memory
+                let dest_io: Arc<dyn IO> = Arc::new(PlatformIO::new()?);
+                pager.db_file.copy_to(&*src_io, &*dest_io, file)?;
+                return Ok(());
+            } else {
+                // unable to backfill all frames to the db file, so we cannot support copying file
+                return Err(LimboError::Busy);
+            }
+        }
+        Err(LimboError::InternalError(
+            "not yet supported for DB's without WAL".into(),
+        ))
     }
 
     /// Creates a HashSet of modules that have been loaded
