@@ -1476,7 +1476,7 @@ pub unsafe extern "C" fn libsql_wal_disable_checkpoint(db: *mut sqlite3) -> ffi:
     }
     let db: &mut sqlite3 = &mut *db;
     let db = db.inner.lock().unwrap();
-    db.conn.wal_disable_checkpoint();
+    db.conn.wal_auto_checkpoint_disable();
     SQLITE_OK
 }
 

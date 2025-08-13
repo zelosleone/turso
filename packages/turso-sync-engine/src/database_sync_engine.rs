@@ -2,9 +2,11 @@ use std::sync::Arc;
 
 use crate::{
     database_sync_operations::{
-        checkpoint_wal_file, db_bootstrap, reset_wal_file, transfer_logical_changes,
-        transfer_physical_changes, wait_full_body, wal_pull, wal_push, WalPullResult,
+        checkpoint_wal_file, connect, connect_untracked, db_bootstrap, reset_wal_file,
+        transfer_logical_changes, transfer_physical_changes, wait_full_body, wal_pull, wal_push,
+        WalPullResult,
     },
+    database_tape::DatabaseTape,
     errors::Error,
     io_operations::IoOperations,
     protocol_io::ProtocolIO,
@@ -22,6 +24,7 @@ pub struct DatabaseSyncEngineOpts {
 pub struct DatabaseSyncEngine<P: ProtocolIO> {
     io: Arc<dyn turso_core::IO>,
     protocol: Arc<P>,
+    draft_tape: DatabaseTape,
     draft_path: String,
     synced_path: String,
     meta_path: String,
@@ -74,10 +77,13 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
         path: &str,
         opts: DatabaseSyncEngineOpts,
     ) -> Result<Self> {
+        let draft_path = format!("{path}-draft");
+        let draft_tape = io.open_tape(&draft_path, true)?;
         let mut db = Self {
             io,
             protocol,
-            draft_path: format!("{path}-draft"),
+            draft_tape,
+            draft_path,
             synced_path: format!("{path}-synced"),
             meta_path: format!("{path}-info"),
             opts,
@@ -90,8 +96,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
 
     /// Create database connection and appropriately configure it before use
     pub async fn connect(&self, coro: &Coro) -> Result<Arc<turso_core::Connection>> {
-        let db = self.io.open_tape(&self.draft_path, true)?;
-        db.connect(coro).await
+        connect(coro, &self.draft_tape).await
     }
 
     /// Sync all new changes from remote DB and apply them locally
@@ -114,13 +119,11 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
             {
                 // we will "replay" Synced WAL to the Draft WAL later without pushing it to the remote
                 // so, we pass 'capture: true' as we need to preserve all changes for future push of WAL
-                let draft = self.io.open_tape(&self.draft_path, true)?;
-                tracing::info!("opened draft");
                 let synced = self.io.open_tape(&self.synced_path, true)?;
                 tracing::info!("opened synced");
 
                 // we will start wal write session for Draft DB in order to hold write lock during transfer of changes
-                let mut draft_session = WalSession::new(draft.connect(coro).await?);
+                let mut draft_session = WalSession::new(connect(coro, &self.draft_tape).await?);
                 draft_session.begin()?;
 
                 // mark Synced as dirty as we will start transfer of logical changes there and if we will fail in the middle - we will need to cleanup Synced db
@@ -128,7 +131,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
 
                 // transfer logical changes to the Synced DB in order to later execute physical "rebase" operation
                 let client_id = &self.meta().client_unique_id;
-                transfer_logical_changes(coro, &draft, &synced, client_id, true).await?;
+                transfer_logical_changes(coro, &self.draft_tape, &synced, client_id, true).await?;
 
                 // now we are ready to do the rebase: let's transfer physical changes from Synced to Draft
                 let synced_wal_watermark = self.meta().synced_wal_match_watermark;
@@ -172,7 +175,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
             );
             {
                 let synced = self.io.open_tape(&self.synced_path, false)?;
-                checkpoint_wal_file(coro, &synced.connect_untracked()?).await?;
+                checkpoint_wal_file(coro, &connect_untracked(&synced)?).await?;
                 update_meta(
                     coro,
                     self.protocol.as_ref(),
@@ -209,14 +212,13 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
 
         // we will push Synced WAL to the remote
         // so, we pass 'capture: false' as we don't need to preserve changes made to Synced WAL in turso_cdc
-        let draft = self.io.open_tape(&self.draft_path, true)?;
         let synced = self.io.open_tape(&self.synced_path, false)?;
 
         // mark Synced as dirty as we will start transfer of logical changes there and if we will fail in the middle - we will need to cleanup Synced db
         self.synced_is_dirty = true;
 
         let client_id = &self.meta().client_unique_id;
-        transfer_logical_changes(coro, &draft, &synced, client_id, false).await?;
+        transfer_logical_changes(coro, &self.draft_tape, &synced, client_id, false).await?;
 
         self.push_synced_to_remote(coro).await?;
         Ok(())
@@ -287,7 +289,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
             self.synced_path,
         );
         let synced = self.io.open_tape(&self.synced_path, false)?;
-        let synced_conn = synced.connect(coro).await?;
+        let synced_conn = connect(coro, &synced).await?;
         let mut wal = WalSession::new(synced_conn);
 
         let generation = self.meta().synced_generation;
@@ -333,7 +335,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
             self.meta().client_unique_id
         );
         let synced = self.io.open_tape(&self.synced_path, false)?;
-        let synced_conn = synced.connect(coro).await?;
+        let synced_conn = connect(coro, &synced).await?;
 
         let mut wal = WalSession::new(synced_conn);
         wal.begin()?;
@@ -450,6 +452,7 @@ pub mod tests {
     use std::{collections::BTreeMap, sync::Arc};
 
     use rand::RngCore;
+    use tokio::join;
 
     use crate::{
         database_sync_engine::DatabaseSyncEngineOpts,
@@ -476,12 +479,12 @@ pub mod tests {
                 .await
                 .unwrap();
             let mut runner = TestRunner::new(ctx.clone(), io, protocol.clone());
-            let local_path = dir.path().join("local.db");
+            let local_path = dir.path().join("local.db").to_str().unwrap().to_string();
             let opts = DatabaseSyncEngineOpts {
                 client_name: "id-1".to_string(),
                 wal_pull_batch_size: 1,
             };
-            runner.init(local_path, opts).await.unwrap();
+            runner.init(&local_path, opts).await.unwrap();
 
             protocol
                 .server
@@ -589,6 +592,60 @@ pub mod tests {
     }
 
     #[test]
+    pub fn test_sync_single_db_update_sync_concurrent() {
+        deterministic_runtime(async || {
+            let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::MemoryIO::new());
+            let dir = tempfile::TempDir::new().unwrap();
+            let server_path = dir.path().join("server.db");
+            let ctx = Arc::new(TestContext::new(seed_u64()));
+            let protocol = TestProtocolIo::new(ctx.clone(), &server_path)
+                .await
+                .unwrap();
+            let mut runner = TestRunner::new(ctx.clone(), io, protocol.clone());
+            let opts = DatabaseSyncEngineOpts {
+                client_name: "id-1".to_string(),
+                wal_pull_batch_size: 1,
+            };
+
+            protocol
+                .server
+                .execute("CREATE TABLE t(x TEXT PRIMARY KEY, y)", ())
+                .await
+                .unwrap();
+            protocol
+                .server
+                .execute("INSERT INTO t VALUES ('hello', 'world')", ())
+                .await
+                .unwrap();
+
+            runner.init(":memory:", opts).await.unwrap();
+            let conn = runner.connect().await.unwrap();
+
+            let syncs = async move {
+                for i in 0..10 {
+                    tracing::info!("sync attempt #{i}");
+                    runner.sync().await.unwrap();
+                }
+            };
+
+            let updates = async move {
+                for i in 0..10 {
+                    tracing::info!("update attempt #{i}");
+                    let sql = format!("INSERT INTO t VALUES ('key-{i}', 'value-{i}')");
+                    match conn.execute(&sql, ()).await {
+                        Ok(_) => {}
+                        Err(err) if err.to_string().contains("database is locked") => {}
+                        Err(err) => panic!("update failed: {err}"),
+                    }
+                    ctx.random_sleep_n(50).await;
+                }
+            };
+
+            join!(updates, syncs);
+        });
+    }
+
+    #[test]
     pub fn test_sync_single_db_many_pulls_big_payloads() {
         deterministic_runtime(async || {
             let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
@@ -599,13 +656,13 @@ pub mod tests {
                 .await
                 .unwrap();
             let mut runner = TestRunner::new(ctx.clone(), io, protocol.clone());
-            let local_path = dir.path().join("local.db");
+            let local_path = dir.path().join("local.db").to_str().unwrap().to_string();
             let opts = DatabaseSyncEngineOpts {
                 client_name: "id-1".to_string(),
                 wal_pull_batch_size: 1,
             };
 
-            runner.init(local_path, opts).await.unwrap();
+            runner.init(&local_path, opts).await.unwrap();
 
             protocol
                 .server
@@ -659,12 +716,12 @@ pub mod tests {
                 .await
                 .unwrap();
             let mut runner = TestRunner::new(ctx.clone(), io, protocol.clone());
-            let local_path = dir.path().join("local.db");
+            let local_path = dir.path().join("local.db").to_str().unwrap().to_string();
             let opts = DatabaseSyncEngineOpts {
                 client_name: "id-1".to_string(),
                 wal_pull_batch_size: 1,
             };
-            runner.init(local_path, opts).await.unwrap();
+            runner.init(&local_path, opts).await.unwrap();
 
             protocol
                 .server
@@ -723,12 +780,12 @@ pub mod tests {
                 .await
                 .unwrap();
             let mut runner = TestRunner::new(ctx.clone(), io.clone(), server.clone());
-            let local_path = dir.path().join("local.db");
+            let local_path = dir.path().join("local.db").to_str().unwrap().to_string();
             let opts = DatabaseSyncEngineOpts {
                 client_name: "id-1".to_string(),
                 wal_pull_batch_size: 1,
             };
-            runner.init(local_path, opts).await.unwrap();
+            runner.init(&local_path, opts).await.unwrap();
 
             server
                 .server
@@ -794,12 +851,17 @@ pub mod tests {
             const CLIENTS: usize = 8;
             for i in 0..CLIENTS {
                 let mut runner = TestRunner::new(ctx.clone(), io.clone(), protocol.clone());
-                let local_path = dir.path().join(format!("local-{i}.db"));
+                let local_path = dir
+                    .path()
+                    .join(format!("local-{i}.db"))
+                    .to_str()
+                    .unwrap()
+                    .to_string();
                 let opts = DatabaseSyncEngineOpts {
                     client_name: format!("id-{i}"),
                     wal_pull_batch_size: 1,
                 };
-                runner.init(local_path, opts).await.unwrap();
+                runner.init(&local_path, opts).await.unwrap();
                 dbs.push(runner);
             }
 
@@ -877,12 +939,16 @@ pub mod tests {
                     let sync_lock = sync_lock.clone();
                     async move {
                         let mut runner = TestRunner::new(ctx.clone(), io.clone(), server.clone());
-                        let local_path = dir.join(format!("local-{i}.db"));
+                        let local_path = dir
+                            .join(format!("local-{i}.db"))
+                            .to_str()
+                            .unwrap()
+                            .to_string();
                         let opts = DatabaseSyncEngineOpts {
                             client_name: format!("id-{i}"),
                             wal_pull_batch_size: 1,
                         };
-                        runner.init(local_path, opts).await.unwrap();
+                        runner.init(&local_path, opts).await.unwrap();
                         runner.pull().await.unwrap();
                         let conn = runner.connect().await.unwrap();
                         for query in queries {
@@ -933,12 +999,17 @@ pub mod tests {
                 it += 1;
 
                 let mut runner = TestRunner::new(ctx.clone(), io.clone(), protocol.clone());
-                let local_path = dir.path().join(format!("local-{it}.db"));
+                let local_path = dir
+                    .path()
+                    .join(format!("local-{it}.db"))
+                    .to_str()
+                    .unwrap()
+                    .to_string();
                 let opts = DatabaseSyncEngineOpts {
                     client_name: format!("id-{it}"),
                     wal_pull_batch_size: 1,
                 };
-                runner.init(local_path, opts).await.unwrap();
+                runner.init(&local_path, opts).await.unwrap();
 
                 let has_fault = matches!(strategy, FaultInjectionStrategy::Enabled { .. });
 
@@ -1003,12 +1074,17 @@ pub mod tests {
                     .unwrap();
 
                 let mut runner = TestRunner::new(ctx.clone(), io.clone(), protocol.clone());
-                let local_path = dir.path().join(format!("local-{it}.db"));
+                let local_path = dir
+                    .path()
+                    .join(format!("local-{it}.db"))
+                    .to_str()
+                    .unwrap()
+                    .to_string();
                 let opts = DatabaseSyncEngineOpts {
                     client_name: format!("id-{it}"),
                     wal_pull_batch_size: 1,
                 };
-                runner.init(local_path, opts).await.unwrap();
+                runner.init(&local_path, opts).await.unwrap();
 
                 protocol
                     .server
@@ -1078,12 +1154,17 @@ pub mod tests {
                     .unwrap();
 
                 let mut runner = TestRunner::new(ctx.clone(), io.clone(), protocol.clone());
-                let local_path = dir.path().join(format!("local-{it}.db"));
+                let local_path = dir
+                    .path()
+                    .join(format!("local-{it}.db"))
+                    .to_str()
+                    .unwrap()
+                    .to_string();
                 let opts = DatabaseSyncEngineOpts {
                     client_name: format!("id-{it}"),
                     wal_pull_batch_size: 1,
                 };
-                runner.init(local_path, opts).await.unwrap();
+                runner.init(&local_path, opts).await.unwrap();
 
                 let conn = runner.connect().await.unwrap();
 
