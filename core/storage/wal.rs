@@ -2,7 +2,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::array;
-use std::cell::UnsafeCell;
+use std::cell::{RefCell, UnsafeCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use strum::EnumString;
 use tracing::{instrument, Level};
@@ -18,10 +18,7 @@ use super::sqlite3_ondisk::{self, WalHeader};
 use crate::fast_lock::SpinLock;
 use crate::io::{File, IO};
 use crate::result::LimboResult;
-#[cfg(feature = "encryption")]
-use crate::storage::encryption::EncryptionKey;
-#[cfg(feature = "encryption")]
-use crate::storage::encryption::{decrypt_page, encrypt_page};
+use crate::storage::encryption::{decrypt_page, encrypt_page, EncryptionKey};
 use crate::storage::sqlite3_ondisk::{
     begin_read_wal_frame, begin_read_wal_frame_raw, finish_read_page, prepare_wal_frame,
     write_pages_vectored, PageSize, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
@@ -289,7 +286,6 @@ pub trait Wal: Debug {
     /// Return unique set of pages changed **after** frame_watermark position and until current WAL session max_frame_no
     fn changed_pages_after(&self, frame_watermark: u64) -> Result<Vec<u32>>;
 
-    #[cfg(feature = "encryption")]
     fn set_encryption_key(&mut self, key: Option<EncryptionKey>);
 
     #[cfg(debug_assertions)]
@@ -452,7 +448,6 @@ pub struct WalFile {
     /// Manages locks needed for checkpointing
     checkpoint_guard: Option<CheckpointLocks>,
 
-    #[cfg(feature = "encryption")]
     encryption_key: RefCell<Option<EncryptionKey>>,
 }
 
@@ -921,34 +916,32 @@ impl Wal for WalFile {
         let offset = self.frame_offset(frame_id);
         page.set_locked();
         let frame = page.clone();
-        #[cfg(feature = "encryption")]
         let page_idx = page.get().id;
-        #[cfg(feature = "encryption")]
         let key = self.encryption_key.borrow().clone();
-        let complete = Box::new(move |buf: Arc<Buffer>, bytes_read: i32| {
+        let complete = Box::new(move |res: Result<(Arc<Buffer>, i32), CompletionError>| {
+            let Ok((buf, bytes_read)) = res else {
+                page.clear_locked();
+                return;
+            };
             let buf_len = buf.len();
             turso_assert!(
                 bytes_read == buf_len as i32,
                 "read({bytes_read}) less than expected({buf_len}): frame_id={frame_id}"
             );
             let frame = frame.clone();
-            #[cfg(feature = "encryption")]
-            {
-                if let Some(key) = key.clone() {
-                    match decrypt_page(buf.as_slice(), page_idx, &key) {
-                        Ok(decrypted_data) => {
-                            buf.as_mut_slice().copy_from_slice(&decrypted_data);
-                        }
-                        Err(_) => {
-                            tracing::error!("Failed to decrypt page data for frame_id={frame_id}");
-                            return;
-                        }
+            if let Some(key) = key.clone() {
+                match decrypt_page(buf.as_slice(), page_idx, &key) {
+                    Ok(decrypted_data) => {
+                        buf.as_mut_slice().copy_from_slice(&decrypted_data);
+                    }
+                    Err(_) => {
+                        tracing::error!("Failed to decrypt page data for frame_id={frame_id}");
+                        return;
                     }
                 }
             }
-            finish_read_page(page.get().id, buf, frame).unwrap();
+            finish_read_page(page.get().id, buf, frame);
         });
-
         begin_read_wal_frame(
             &self.get_shared().file,
             offset + WAL_FRAME_HEADER_SIZE,
@@ -1100,28 +1093,18 @@ impl Wal for WalFile {
             let page_content = page.get_contents();
             let page_buf = page_content.as_ptr();
 
-            #[cfg(feature = "encryption")]
+            let key = self.encryption_key.borrow();
             let encrypted_data = {
-                let key = self.encryption_key.borrow();
                 if let Some(key) = key.as_ref() {
                     Some(encrypt_page(page_buf, page_id, key)?)
                 } else {
                     None
                 }
             };
-            let data_to_write = {
-                #[cfg(feature = "encryption")]
-                {
-                    if let Some(ref data) = encrypted_data {
-                        data.as_slice()
-                    } else {
-                        page_buf
-                    }
-                }
-                #[cfg(not(feature = "encryption"))]
-                {
-                    page_buf
-                }
+            let data_to_write = if key.as_ref().is_some() {
+                encrypted_data.as_ref().unwrap().as_slice()
+            } else {
+                page_buf
             };
 
             let (frame_checksums, frame_bytes) = prepare_wal_frame(
@@ -1276,7 +1259,6 @@ impl Wal for WalFile {
         self
     }
 
-    #[cfg(feature = "encryption")]
     fn set_encryption_key(&mut self, key: Option<EncryptionKey>) {
         self.encryption_key.replace(key);
     }
@@ -1319,7 +1301,6 @@ impl WalFile {
             prev_checkpoint: CheckpointResult::default(),
             checkpoint_guard: None,
             header: *header,
-            #[cfg(feature = "encryption")]
             encryption_key: RefCell::new(None),
         }
     }
@@ -1535,7 +1516,6 @@ impl WalFile {
                         pager,
                         std::mem::take(&mut self.ongoing_checkpoint.batch),
                         &self.ongoing_checkpoint.pending_flush,
-                        #[cfg(feature = "encryption")]
                         self.encryption_key.borrow().as_ref(),
                     )?;
                     // batch is queued

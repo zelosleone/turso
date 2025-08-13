@@ -76,7 +76,6 @@ use std::{
 };
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
-#[cfg(feature = "encryption")]
 pub use storage::encryption::EncryptionKey;
 use storage::page_cache::DumbLruPageCache;
 use storage::pager::{AtomicDbState, DbState};
@@ -427,7 +426,6 @@ impl Database {
             view_transaction_states: RefCell::new(HashMap::new()),
             metrics: RefCell::new(ConnectionMetrics::new()),
             is_nested_stmt: Cell::new(false),
-            #[cfg(feature = "encryption")]
             encryption_key: RefCell::new(None),
         });
         let builtin_syms = self.builtin_syms.borrow();
@@ -856,7 +854,6 @@ pub struct Connection {
     /// Whether the connection is executing a statement initiated by another statement.
     /// Generally this is only true for ParseSchema.
     is_nested_stmt: Cell<bool>,
-    #[cfg(feature = "encryption")]
     encryption_key: RefCell<Option<EncryptionKey>>,
 }
 
@@ -1932,7 +1929,6 @@ impl Connection {
         self.syms.borrow().vtab_modules.keys().cloned().collect()
     }
 
-    #[cfg(feature = "encryption")]
     pub fn set_encryption_key(&self, key: Option<EncryptionKey>) {
         tracing::trace!("setting encryption key for connection");
         *self.encryption_key.borrow_mut() = key.clone();

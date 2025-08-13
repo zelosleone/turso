@@ -1,9 +1,6 @@
 use crate::error::LimboError;
-#[cfg(feature = "encryption")]
-use crate::storage::encryption::EncryptionKey;
-#[cfg(feature = "encryption")]
-use crate::storage::encryption::{decrypt_page, encrypt_page};
-use crate::{io::Completion, Buffer, Result};
+use crate::storage::encryption::{decrypt_page, encrypt_page, EncryptionKey};
+use crate::{io::Completion, Buffer, CompletionError, Result};
 use std::sync::Arc;
 use tracing::{instrument, Level};
 
@@ -18,14 +15,14 @@ pub trait DatabaseStorage: Send + Sync {
     fn read_page(
         &self,
         page_idx: usize,
-        #[cfg(feature = "encryption")] encryption_key: Option<&EncryptionKey>,
+        encryption_key: Option<&EncryptionKey>,
         c: Completion,
     ) -> Result<Completion>;
     fn write_page(
         &self,
         page_idx: usize,
         buffer: Arc<Buffer>,
-        #[cfg(feature = "encryption")] encryption_key: Option<&EncryptionKey>,
+        encryption_key: Option<&EncryptionKey>,
         c: Completion,
     ) -> Result<Completion>;
     fn write_pages(
@@ -33,7 +30,7 @@ pub trait DatabaseStorage: Send + Sync {
         first_page_idx: usize,
         page_size: usize,
         buffers: Vec<Arc<Buffer>>,
-        #[cfg(feature = "encryption")] encryption_key: Option<&EncryptionKey>,
+        encryption_key: Option<&EncryptionKey>,
         c: Completion,
     ) -> Result<Completion>;
     fn sync(&self, c: Completion) -> Result<Completion>;
@@ -57,11 +54,12 @@ impl DatabaseStorage for DatabaseFile {
     fn read_header(&self, c: Completion) -> Result<Completion> {
         self.file.pread(0, c)
     }
+
     #[instrument(skip_all, level = Level::DEBUG)]
     fn read_page(
         &self,
         page_idx: usize,
-        #[cfg(feature = "encryption")] encryption_key: Option<&EncryptionKey>,
+        encryption_key: Option<&EncryptionKey>,
         c: Completion,
     ) -> Result<Completion> {
         let r = c.as_read();
@@ -72,14 +70,16 @@ impl DatabaseStorage for DatabaseFile {
         }
         let pos = (page_idx - 1) * size;
 
-        #[cfg(feature = "encryption")]
-        {
-            if let Some(key) = encryption_key {
-                let key_clone = key.clone();
-                let read_buffer = r.buf_arc();
-                let original_c = c.clone();
+        if let Some(key) = encryption_key {
+            let key_clone = key.clone();
+            let read_buffer = r.buf_arc();
+            let original_c = c.clone();
 
-                let decrypt_complete = Box::new(move |buf: Arc<Buffer>, bytes_read: i32| {
+            let decrypt_complete =
+                Box::new(move |res: Result<(Arc<Buffer>, i32), CompletionError>| {
+                    let Ok((buf, bytes_read)) = res else {
+                        return;
+                    };
                     if bytes_read > 0 {
                         match decrypt_page(buf.as_slice(), page_idx, &key_clone) {
                             Ok(decrypted_data) => {
@@ -88,6 +88,9 @@ impl DatabaseStorage for DatabaseFile {
                                 original_c.complete(bytes_read);
                             }
                             Err(_) => {
+                                tracing::error!(
+                                    "Failed to decrypt page data for page_id={page_idx}"
+                                );
                                 original_c.complete(-1);
                             }
                         }
@@ -96,15 +99,9 @@ impl DatabaseStorage for DatabaseFile {
                     }
                 });
 
-                let new_completion = Completion::new_read(read_buffer, decrypt_complete);
-                self.file.pread(pos, new_completion)
-            } else {
-                self.file.pread(pos, c)
-            }
-        }
-
-        #[cfg(not(feature = "encryption"))]
-        {
+            let new_completion = Completion::new_read(read_buffer, decrypt_complete);
+            self.file.pread(pos, new_completion)
+        } else {
             self.file.pread(pos, c)
         }
     }
@@ -114,7 +111,7 @@ impl DatabaseStorage for DatabaseFile {
         &self,
         page_idx: usize,
         buffer: Arc<Buffer>,
-        #[cfg(feature = "encryption")] encryption_key: Option<&EncryptionKey>,
+        encryption_key: Option<&EncryptionKey>,
         c: Completion,
     ) -> Result<Completion> {
         let buffer_size = buffer.len();
@@ -124,16 +121,9 @@ impl DatabaseStorage for DatabaseFile {
         assert_eq!(buffer_size & (buffer_size - 1), 0);
         let pos = (page_idx - 1) * buffer_size;
         let buffer = {
-            #[cfg(feature = "encryption")]
-            {
-                if let Some(key) = encryption_key {
-                    encrypt_buffer(page_idx, buffer, key)
-                } else {
-                    buffer
-                }
-            }
-            #[cfg(not(feature = "encryption"))]
-            {
+            if let Some(key) = encryption_key {
+                encrypt_buffer(page_idx, buffer, key)
+            } else {
                 buffer
             }
         };
@@ -145,7 +135,7 @@ impl DatabaseStorage for DatabaseFile {
         first_page_idx: usize,
         page_size: usize,
         buffers: Vec<Arc<Buffer>>,
-        #[cfg(feature = "encryption")] encryption_key: Option<&EncryptionKey>,
+        encryption_key: Option<&EncryptionKey>,
         c: Completion,
     ) -> Result<Completion> {
         assert!(first_page_idx > 0);
@@ -154,22 +144,14 @@ impl DatabaseStorage for DatabaseFile {
         assert_eq!(page_size & (page_size - 1), 0);
 
         let pos = (first_page_idx - 1) * page_size;
-
         let buffers = {
-            #[cfg(feature = "encryption")]
-            {
-                if let Some(key) = encryption_key {
-                    buffers
-                        .into_iter()
-                        .enumerate()
-                        .map(|(i, buffer)| encrypt_buffer(first_page_idx + i, buffer, key))
-                        .collect::<Vec<_>>()
-                } else {
-                    buffers
-                }
-            }
-            #[cfg(not(feature = "encryption"))]
-            {
+            if let Some(key) = encryption_key {
+                buffers
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, buffer)| encrypt_buffer(first_page_idx + i, buffer, key))
+                    .collect::<Vec<_>>()
+            } else {
                 buffers
             }
         };
@@ -202,7 +184,6 @@ impl DatabaseFile {
     }
 }
 
-#[cfg(feature = "encryption")]
 fn encrypt_buffer(page_idx: usize, buffer: Arc<Buffer>, key: &EncryptionKey) -> Arc<Buffer> {
     let encrypted_data = encrypt_page(buffer.as_slice(), page_idx, key).unwrap();
     Arc::new(Buffer::new(encrypted_data.to_vec()))
