@@ -3,12 +3,12 @@ use crate::{error::Error, token::TokenType};
 include!(concat!(env!("OUT_DIR"), "/keywords.rs"));
 
 #[inline(always)]
-pub(crate) fn is_identifier_start(b: u8) -> bool {
+pub fn is_identifier_start(b: u8) -> bool {
     b.is_ascii_uppercase() || b == b'_' || b.is_ascii_lowercase() || b > b'\x7F'
 }
 
 #[inline(always)]
-pub(crate) fn is_identifier_continue(b: u8) -> bool {
+pub fn is_identifier_continue(b: u8) -> bool {
     b == b'$'
         || b.is_ascii_digit()
         || b.is_ascii_uppercase()
@@ -31,7 +31,7 @@ pub struct Lexer<'a> {
 impl<'a> Iterator for Lexer<'a> {
     type Item = Result<Token<'a>, Error>;
 
-    #[inline(always)]
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         match self.peek() {
             None => None, // End of file
@@ -39,21 +39,21 @@ impl<'a> Iterator for Lexer<'a> {
             // matching logic
             Some(b) => match b {
                 b'-' => Some(Ok(self.eat_minus_or_comment_or_ptr())),
-                b'(' => Some(Ok(self.eat_token(1, TokenType::TK_LP))),
-                b')' => Some(Ok(self.eat_token(1, TokenType::TK_RP))),
-                b';' => Some(Ok(self.eat_token(1, TokenType::TK_SEMI))),
-                b'+' => Some(Ok(self.eat_token(1, TokenType::TK_PLUS))),
-                b'*' => Some(Ok(self.eat_token(1, TokenType::TK_STAR))),
+                b'(' => Some(Ok(self.eat_one_token(TokenType::TK_LP))),
+                b')' => Some(Ok(self.eat_one_token(TokenType::TK_RP))),
+                b';' => Some(Ok(self.eat_one_token(TokenType::TK_SEMI))),
+                b'+' => Some(Ok(self.eat_one_token(TokenType::TK_PLUS))),
+                b'*' => Some(Ok(self.eat_one_token(TokenType::TK_STAR))),
                 b'/' => Some(self.mark(|l| l.eat_slash_or_comment())),
-                b'%' => Some(Ok(self.eat_token(1, TokenType::TK_REM))),
+                b'%' => Some(Ok(self.eat_one_token(TokenType::TK_REM))),
                 b'=' => Some(Ok(self.eat_eq())),
                 b'<' => Some(Ok(self.eat_le_or_ne_or_lshift_or_lt())),
                 b'>' => Some(Ok(self.eat_ge_or_gt_or_rshift())),
                 b'!' => Some(self.mark(|l| l.eat_ne())),
                 b'|' => Some(Ok(self.eat_concat_or_bitor())),
-                b',' => Some(Ok(self.eat_token(1, TokenType::TK_COMMA))),
-                b'&' => Some(Ok(self.eat_token(1, TokenType::TK_BITAND))),
-                b'~' => Some(Ok(self.eat_token(1, TokenType::TK_BITNOT))),
+                b',' => Some(Ok(self.eat_one_token(TokenType::TK_COMMA))),
+                b'&' => Some(Ok(self.eat_one_token(TokenType::TK_BITAND))),
+                b'~' => Some(Ok(self.eat_one_token(TokenType::TK_BITNOT))),
                 b'\'' | b'"' | b'`' => Some(self.mark(|l| l.eat_lit_or_id())),
                 b'.' => Some(self.mark(|l| l.eat_dot_or_frac())),
                 b'0'..=b'9' => Some(self.mark(|l| l.eat_number())),
@@ -77,7 +77,7 @@ impl<'a> Lexer<'a> {
         &self.input[self.offset..]
     }
 
-    #[inline(always)]
+    #[inline]
     pub fn mark<F, R>(&mut self, exc: F) -> Result<R, Error>
     where
         F: FnOnce(&mut Self) -> Result<R, Error>,
@@ -120,7 +120,7 @@ impl<'a> Lexer<'a> {
         debug_assert!(f(_value.unwrap()))
     }
 
-    #[inline(always)]
+    #[inline]
     fn eat_while<F>(&mut self, f: F)
     where
         F: Fn(Option<u8>) -> bool,
@@ -184,18 +184,19 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn eat_token(&mut self, size: usize, typ: TokenType) -> Token<'a> {
-        debug_assert!(size > 0);
-        debug_assert!(self.remaining().len() >= size);
+    #[inline]
+    fn eat_one_token(&mut self, typ: TokenType) -> Token<'a> {
+        debug_assert!(self.remaining().len() >= 1);
 
         let tok = Token {
-            value: &self.remaining()[..size],
+            value: &self.remaining()[..1],
             token_type: Some(typ),
         };
-        self.offset += size;
+        self.offset += 1;
         tok
     }
 
+    #[inline]
     fn eat_white_space(&mut self) -> Token<'a> {
         let start = self.offset;
         self.eat_and_assert(|b| b.is_ascii_whitespace());
@@ -492,7 +493,9 @@ impl<'a> Lexer<'a> {
                     self.eat_while_number_hexdigit()?;
 
                     if start_hex == self.offset {
-                        return Err(Error::MalformedHexInteger((self.offset, 1).into()));
+                        return Err(Error::MalformedHexInteger(
+                            (start, self.offset - start).into(),
+                        ));
                     }
 
                     if self.peek().is_some() && is_identifier_start(self.peek().unwrap()) {
@@ -586,6 +589,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    #[inline]
     fn eat_blob_or_id(&mut self) -> Result<Token<'a>, Error> {
         let start = self.offset;
         let start_char = self.eat().unwrap();
