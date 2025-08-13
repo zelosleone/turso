@@ -50,7 +50,7 @@ use crate::util::{OpenMode, OpenOptions};
 use crate::vdbe::metrics::ConnectionMetrics;
 use crate::vtab::VirtualTable;
 use core::str;
-pub use error::LimboError;
+pub use error::{CompletionError, LimboError};
 use fallible_iterator::FallibleIterator;
 pub use io::clock::{Clock, Instant};
 #[cfg(all(feature = "fs", target_family = "unix"))]
