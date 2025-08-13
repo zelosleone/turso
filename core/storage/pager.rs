@@ -287,7 +287,6 @@ impl Page {
         self.get().wal_tag.store(TAG_UNSET, Ordering::Release)
     }
 
-    /// Check if this page is suitable for checkpointing
     pub fn is_valid_for_checkpoint(&self, target_frame: u64, seq: u32) -> bool {
         let (f, s) = self.wal_tag_pair();
         f == target_frame && s == seq && !self.is_dirty()
@@ -916,10 +915,9 @@ impl Pager {
         let page = return_if_io!(self.allocate_page());
         if let Some(wal) = &self.wal {
             let max_frame = wal.borrow().get_max_frame_in_wal();
+            let seq = wal.borrow().checkpoint_seq();
             // brand new page gets share max frame + 1
-            page.set_wal_frame(max_frame + 1);
-        } else {
-            page.set_wal_frame(0);
+            page.set_wal_tag(max_frame + 1, seq);
         }
         let page = Arc::new(BTreePageInner {
             page: RefCell::new(page),
@@ -1417,7 +1415,8 @@ impl Pager {
                 page.get().id == header.page_number as usize,
                 "page has unexpected id"
             );
-            page.set_wal_frame(frame_no);
+            let seq = wal.checkpoint_seq();
+            page.set_wal_tag(frame_no, seq);
             self.add_dirty(&page);
         }
         if header.is_commit_frame() {
