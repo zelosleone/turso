@@ -576,6 +576,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_VACUUM,
             TokenType::TK_ALTER,
             TokenType::TK_DELETE,
+            TokenType::TK_DROP,
             // add more
         ])?;
 
@@ -595,6 +596,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_VACUUM => self.parse_vacuum(),
             TokenType::TK_ALTER => self.parse_alter(),
             TokenType::TK_DELETE => self.parse_delete(),
+            TokenType::TK_DROP => self.parse_drop_stmt(),
             _ => unreachable!(),
         }
     }
@@ -3837,6 +3839,67 @@ impl<'a> Parser<'a> {
     fn parse_delete(&mut self) -> Result<Stmt, Error> {
         let with = self.parse_with()?;
         self.parse_delete_without_cte(with)
+    }
+
+    fn parse_if_exists(&mut self) -> Result<bool, Error> {
+        match self.peek()? {
+            Some(tok) if tok.token_type == Some(TokenType::TK_IF) => {
+                self.eat_assert(&[TokenType::TK_IF]);
+                self.eat_expect(&[TokenType::TK_EXISTS])?;
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    fn parse_drop_stmt(&mut self) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_DROP]);
+        let tok = self.peek_expect(&[
+            TokenType::TK_TABLE,
+            TokenType::TK_INDEX,
+            TokenType::TK_TRIGGER,
+            TokenType::TK_VIEW,
+        ])?;
+
+        match tok.token_type.unwrap() {
+            TokenType::TK_TABLE => {
+                self.eat_expect(&[TokenType::TK_TABLE])?;
+                let if_exists = self.parse_if_exists()?;
+                let tbl_name = self.parse_fullname(false)?;
+                Ok(Stmt::DropTable {
+                    if_exists,
+                    tbl_name,
+                })
+            }
+            TokenType::TK_INDEX => {
+                self.eat_expect(&[TokenType::TK_INDEX])?;
+                let if_exists = self.parse_if_exists()?;
+                let idx_name = self.parse_fullname(false)?;
+                Ok(Stmt::DropIndex {
+                    if_exists,
+                    idx_name,
+                })
+            }
+            TokenType::TK_TRIGGER => {
+                self.eat_expect(&[TokenType::TK_TRIGGER])?;
+                let if_exists = self.parse_if_exists()?;
+                let trigger_name = self.parse_fullname(false)?;
+                Ok(Stmt::DropTrigger {
+                    if_exists,
+                    trigger_name,
+                })
+            }
+            TokenType::TK_VIEW => {
+                self.eat_expect(&[TokenType::TK_VIEW])?;
+                let if_exists = self.parse_if_exists()?;
+                let view_name = self.parse_fullname(false)?;
+                Ok(Stmt::DropView {
+                    if_exists,
+                    view_name,
+                })
+            }
+            _ => unreachable!(),
+        }
     }
 }
 
@@ -10753,6 +10816,98 @@ mod tests {
                         expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
                         offset: None,
                     }),
+                })],
+            ),
+            // parse drop index
+            (
+                b"DROP INDEX foo".as_slice(),
+                vec![Cmd::Stmt(Stmt::DropIndex {
+                    if_exists: false,
+                    idx_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                })],
+            ),
+            (
+                b"DROP INDEX IF EXISTS foo".as_slice(),
+                vec![Cmd::Stmt(Stmt::DropIndex {
+                    if_exists: true,
+                    idx_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                })],
+            ),
+            // parse drop table
+            (
+                b"DROP TABLE foo".as_slice(),
+                vec![Cmd::Stmt(Stmt::DropTable {
+                    if_exists: false,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                })],
+            ),
+            (
+                b"DROP TABLE IF EXISTS foo".as_slice(),
+                vec![Cmd::Stmt(Stmt::DropTable {
+                    if_exists: true,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                })],
+            ),
+            // parse drop trigger
+            (
+                b"DROP TRIGGER foo".as_slice(),
+                vec![Cmd::Stmt(Stmt::DropTrigger {
+                    if_exists: false,
+                    trigger_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                })],
+            ),
+            (
+                b"DROP TRIGGER IF EXISTS foo".as_slice(),
+                vec![Cmd::Stmt(Stmt::DropTrigger {
+                    if_exists: true,
+                    trigger_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                })],
+            ),
+            // parse drop view
+            (
+                b"DROP VIEW foo".as_slice(),
+                vec![Cmd::Stmt(Stmt::DropView {
+                    if_exists: false,
+                    view_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                })],
+            ),
+            (
+                b"DROP VIEW IF EXISTS foo".as_slice(),
+                vec![Cmd::Stmt(Stmt::DropView {
+                    if_exists: true,
+                    view_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
                 })],
             ),
         ];
