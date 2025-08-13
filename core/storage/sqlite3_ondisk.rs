@@ -85,11 +85,15 @@ pub const LEFT_CHILD_PTR_SIZE_BYTES: usize = 4;
 pub struct PageSize(U16BE);
 
 impl PageSize {
+    pub const ALIAS_64K: u32 = 1;
     pub const MIN: u32 = 512;
     pub const MAX: u32 = 65536;
     pub const DEFAULT: u16 = 4096;
 
     pub const fn new(size: u32) -> Option<Self> {
+        if size == Self::ALIAS_64K {
+            return Some(Self(U16BE::new(1)));
+        }
         if size < PageSize::MIN || size > PageSize::MAX {
             return None;
         }
