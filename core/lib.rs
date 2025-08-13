@@ -1385,9 +1385,7 @@ impl Connection {
         if self.closed.get() {
             return Err(LimboError::InternalError("Connection closed".to_string()));
         }
-        self.pager
-            .borrow()
-            .wal_checkpoint(self.wal_checkpoint_disabled.get(), mode)
+        self.pager.borrow().wal_checkpoint(mode)
     }
 
     /// Close a connection and checkpoint.
@@ -1895,11 +1893,10 @@ impl Connection {
     pub fn copy_db(&self, file: &str) -> Result<()> {
         // use a new PlatformIO instance here to allow for copying in-memory databases
         let io: Arc<dyn IO> = Arc::new(PlatformIO::new()?);
-        let disabled = false;
         // checkpoint so everything is in the DB file before copying
         self.pager
             .borrow_mut()
-            .wal_checkpoint(disabled, CheckpointMode::Truncate)?;
+            .wal_checkpoint(CheckpointMode::Truncate)?;
         self.pager.borrow_mut().db_file.copy_to(&*io, file)
     }
 

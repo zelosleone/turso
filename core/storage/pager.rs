@@ -1369,24 +1369,19 @@ impl Pager {
             let c = wal.sync()?;
             self.io.wait_for_completion(c)?;
         }
-        self.wal_checkpoint(wal_checkpoint_disabled, CheckpointMode::Passive)?;
+        if !wal_checkpoint_disabled {
+            self.wal_checkpoint(CheckpointMode::Passive)?;
+        }
         Ok(())
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
-    pub fn wal_checkpoint(
-        &self,
-        wal_checkpoint_disabled: bool,
-        mode: CheckpointMode,
-    ) -> Result<CheckpointResult> {
+    pub fn wal_checkpoint(&self, mode: CheckpointMode) -> Result<CheckpointResult> {
         let Some(wal) = self.wal.as_ref() else {
             return Err(LimboError::InternalError(
                 "wal_checkpoint() called on database without WAL".to_string(),
             ));
         };
-        if wal_checkpoint_disabled {
-            return Ok(CheckpointResult::default());
-        }
 
         let mut checkpoint_result = self.io.block(|| wal.borrow_mut().checkpoint(self, mode))?;
 
