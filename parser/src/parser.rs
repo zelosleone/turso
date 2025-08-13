@@ -575,6 +575,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_PRAGMA,
             TokenType::TK_VACUUM,
             TokenType::TK_ALTER,
+            TokenType::TK_DELETE,
             // add more
         ])?;
 
@@ -593,6 +594,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_PRAGMA => self.parse_pragma(),
             TokenType::TK_VACUUM => self.parse_vacuum(),
             TokenType::TK_ALTER => self.parse_alter(),
+            TokenType::TK_DELETE => self.parse_delete(),
             _ => unreachable!(),
         }
     }
@@ -843,10 +845,10 @@ impl<'a> Parser<'a> {
 
         match first_tok.token_type.unwrap() {
             TokenType::TK_TABLE => self.parse_create_table(temp),
-            TokenType::TK_VIRTUAL => self.parse_create_virtual(),
             TokenType::TK_VIEW => self.parse_create_view(temp),
-            TokenType::TK_INDEX | TokenType::TK_UNIQUE => self.parse_create_index(),
             TokenType::TK_TRIGGER => self.parse_create_trigger(temp),
+            TokenType::TK_VIRTUAL => self.parse_create_virtual(),
+            TokenType::TK_INDEX | TokenType::TK_UNIQUE => self.parse_create_index(),
             _ => unreachable!(),
         }
     }
@@ -868,9 +870,8 @@ impl<'a> Parser<'a> {
                 Ok(Stmt::Select(self.parse_select_without_cte(with)?))
             }
             TokenType::TK_UPDATE => todo!(),
-            TokenType::TK_DELETE => todo!(),
-            TokenType::TK_INSERT => todo!(),
-            TokenType::TK_REPLACE => todo!(),
+            TokenType::TK_DELETE => self.parse_delete_without_cte(with),
+            TokenType::TK_INSERT | TokenType::TK_REPLACE => todo!(),
             _ => unreachable!(),
         }
     }
@@ -3811,6 +3812,31 @@ impl<'a> Parser<'a> {
             when_clause,
             commands: cmds,
         })
+    }
+
+    fn parse_delete_without_cte(&mut self, with: Option<With>) -> Result<Stmt, Error> {
+        self.eat_assert(&[TokenType::TK_DELETE]);
+        self.eat_expect(&[TokenType::TK_FROM])?;
+        let tbl_name = self.parse_fullname(true)?;
+        let indexed = self.parse_indexed()?;
+        let where_clause = self.parse_where()?;
+        let returning = self.parse_returning()?;
+        let order_by = self.parse_order_by()?;
+        let limit = self.parse_limit()?;
+        Ok(Stmt::Delete {
+            with,
+            tbl_name,
+            indexed,
+            where_clause,
+            returning,
+            order_by,
+            limit,
+        })
+    }
+
+    fn parse_delete(&mut self) -> Result<Stmt, Error> {
+        let with = self.parse_with()?;
+        self.parse_delete_without_cte(with)
     }
 }
 
@@ -10652,6 +10678,81 @@ mod tests {
                         "x".to_owned(),
                         "tokenize = '''porter'' ''ascii'''".to_owned(),
                     ],
+                })],
+            ),
+            // parse delete
+            (
+                b"DELETE FROM foo".as_slice(),
+                vec![Cmd::Stmt(Stmt::Delete {
+                    with: None,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None
+                    },
+                    indexed: None,
+                    where_clause: None,
+                    returning: vec![],
+                    order_by: vec![],
+                    limit: None,
+                })],
+            ),
+            (
+                b"WITH test AS (SELECT 1) DELETE FROM foo NOT INDEXED WHERE 1 RETURNING bar ORDER BY bar LIMIT 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Delete {
+                    with: Some(With {
+                        recursive: false,
+                        ctes: vec![
+                            CommonTableExpr {
+                                tbl_name: Name::Ident("test".to_owned()),
+                                columns: vec![],
+                                materialized: Materialized::Any,
+                                select: Select {
+                                    with: None,
+                                    body: SelectBody {
+                                        select: OneSelect::Select {
+                                            distinctness: None,
+                                            columns: vec![ResultColumn::Expr(
+                                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                None,
+                                            )],
+                                            from: None,
+                                            where_clause: None,
+                                            group_by: None,
+                                            window_clause: vec![],
+                                        },
+                                        compounds: vec![],
+                                    },
+                                    order_by: vec![],
+                                    limit: None,
+                                },
+                            }
+                        ],
+                    }),
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None
+                    },
+                    indexed: Some(Indexed::NotIndexed),
+                    where_clause: Some(Box::new(Expr::Literal(Literal::Numeric("1".to_owned())))),
+                    returning: vec![
+                        ResultColumn::Expr(
+                            Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
+                            None,
+                        ),
+                    ],
+                    order_by: vec![
+                        SortedColumn {
+                            expr: Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
+                            order: None,
+                            nulls: None,
+                        }
+                    ],
+                    limit: Some(Limit {
+                        expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                        offset: None,
+                    }),
                 })],
             ),
         ];
