@@ -125,6 +125,7 @@ pub struct Database {
     db_file: Arc<dyn DatabaseStorage>,
     path: String,
     pub io: Arc<dyn IO>,
+    buffer_pool: Arc<BufferPool>,
     // Shared structures of a Database are the parts that are common to multiple threads that might
     // create DB connections.
     _shared_page_cache: Arc<RwLock<DumbLruPageCache>>,
@@ -323,6 +324,11 @@ impl Database {
 
         let shared_page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
         let syms = SymbolTable::new();
+        let arena_size = if std::env::var("TESTING").is_ok_and(|v| v.eq_ignore_ascii_case("true")) {
+            BufferPool::TEST_ARENA_SIZE
+        } else {
+            BufferPool::DEFAULT_ARENA_SIZE
+        };
         let db = Arc::new(Database {
             mv_store,
             path: path.to_string(),
@@ -336,6 +342,7 @@ impl Database {
             db_state: Arc::new(AtomicDbState::new(db_state)),
             init_lock: Arc::new(Mutex::new(())),
             experimental_views: enable_views,
+            buffer_pool: BufferPool::begin_init(&io, arena_size),
         });
         db.register_global_builtin_extensions()
             .expect("unable to register global extensions");
@@ -431,11 +438,6 @@ impl Database {
     }
 
     fn init_pager(&self, page_size: Option<usize>) -> Result<Pager> {
-        let arena_size = if std::env::var("TESTING").is_ok_and(|v| v.eq_ignore_ascii_case("true")) {
-            BufferPool::TEST_ARENA_SIZE
-        } else {
-            BufferPool::DEFAULT_ARENA_SIZE
-        };
         // Open existing WAL file if present
         let mut maybe_shared_wal = self.maybe_shared_wal.write();
         if let Some(shared_wal) = maybe_shared_wal.clone() {
@@ -443,8 +445,8 @@ impl Database {
                 None => unsafe { (*shared_wal.get()).page_size() as usize },
                 Some(size) => size,
             };
-            let buffer_pool =
-                BufferPool::begin_init(&self.io, arena_size).finalize_with_page_size(size)?;
+            let buffer_pool = self.buffer_pool.clone();
+            buffer_pool.finalize_with_page_size(size)?;
 
             let db_state = self.db_state.clone();
             let wal = Rc::new(RefCell::new(WalFile::new(
@@ -463,7 +465,7 @@ impl Database {
             )?;
             return Ok(pager);
         }
-        let buffer_pool = BufferPool::begin_init(&self.io, arena_size);
+        let buffer_pool = self.buffer_pool.clone();
 
         // No existing WAL; create one.
         let db_state = self.db_state.clone();

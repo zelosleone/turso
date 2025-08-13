@@ -3,7 +3,6 @@ use crate::function::AlterTableFunc;
 use crate::numeric::{NullableInteger, Numeric};
 use crate::schema::Table;
 use crate::storage::btree::{integrity_check, IntegrityCheckError, IntegrityCheckState};
-use crate::storage::buffer_pool::BUFFER_POOL;
 use crate::storage::database::DatabaseFile;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::{AtomicDbState, CreateBTreeFlags, DbState};
@@ -6779,7 +6778,7 @@ pub fn op_open_ephemeral(
                 .block(|| pager.with_header(|header| header.page_size))?
                 .get();
 
-            let buffer_pool = BUFFER_POOL.get().expect("Buffer pool not initialized");
+            let buffer_pool = program.connection._db.buffer_pool.clone();
             let page_cache = Arc::new(RwLock::new(DumbLruPageCache::default()));
 
             let pager = Rc::new(Pager::new(

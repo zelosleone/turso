@@ -326,7 +326,7 @@ pub enum Buffer {
 impl Debug for Buffer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Pooled(p) => write!(f, "{p:?}"),
+            Self::Pooled(p) => write!(f, "Pooled(len={})", p.logical_len()),
             Self::Heap(buf) => write!(f, "{buf:?}: {}", buf.len()),
         }
     }
@@ -362,7 +362,6 @@ impl Buffer {
     }
 
     pub fn new_pooled(buf: ArenaBuffer) -> Self {
-        tracing::trace!("new_pooled({:?})", buf);
         Self::Pooled(buf)
     }
 

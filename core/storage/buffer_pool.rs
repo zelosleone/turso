@@ -6,13 +6,13 @@ use parking_lot::Mutex;
 use std::cell::UnsafeCell;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
-
-pub static BUFFER_POOL: OnceLock<Arc<BufferPool>> = OnceLock::new();
+use std::sync::{Arc, Weak};
 
 #[derive(Debug)]
 /// A buffer allocated from an arena from `[BufferPool]`
 pub struct ArenaBuffer {
+    /// The `Arena` the buffer came from
+    arena: Weak<Arena>,
     /// Pointer to the start of the buffer
     ptr: NonNull<u8>,
     /// Identifier for the `[Arena]` the buffer came from
@@ -27,8 +27,15 @@ pub struct ArenaBuffer {
 }
 
 impl ArenaBuffer {
-    const fn new(ptr: NonNull<u8>, len: usize, arena_id: u32, slot_idx: u32) -> Self {
+    const fn new(
+        arena: Weak<Arena>,
+        ptr: NonNull<u8>,
+        len: usize,
+        arena_id: u32,
+        slot_idx: u32,
+    ) -> Self {
         ArenaBuffer {
+            arena,
             ptr,
             arena_id,
             slot_idx,
@@ -62,11 +69,9 @@ impl ArenaBuffer {
 
 impl Drop for ArenaBuffer {
     fn drop(&mut self) {
-        let pool = BUFFER_POOL
-            .get()
-            .expect("BufferPool not initialized, cannot free ArenaBuffer");
-        let inner = pool.inner_mut();
-        inner.free(self.logical_len(), self.arena_id, self.slot_idx);
+        if let Some(arena) = self.arena.upgrade() {
+            arena.free(self.slot_idx, self.logical_len());
+        }
     }
 }
 
@@ -96,11 +101,11 @@ struct PoolInner {
     /// Arena's with io_uring.
     io: Option<Arc<dyn IO>>,
     /// An Arena which returns `ArenaBuffer`s of size `db_page_size`.
-    page_arena: Option<Arena>,
+    page_arena: Option<Arc<Arena>>,
     /// An Arena which returns `ArenaBuffer`s of size `db_page_size`
     /// plus 24 byte `WAL_FRAME_HEADER_SIZE`, preventing the fragmentation
     /// or complex book-keeping needed to use the same arena for both sizes.
-    wal_frame_arena: Option<Arena>,
+    wal_frame_arena: Option<Arc<Arena>>,
     /// A lock preventing concurrent initialization.
     init_lock: Mutex<()>,
     /// The size of each `Arena`, in bytes.
@@ -153,9 +158,8 @@ impl BufferPool {
 
     /// Request a `Buffer` of size `len`
     #[inline]
-    pub fn allocate(len: usize) -> Buffer {
-        let pool = BUFFER_POOL.get().expect("BufferPool must be initialized");
-        pool.inner().allocate(len)
+    pub fn allocate(&self, len: usize) -> Buffer {
+        self.inner().allocate(len)
     }
 
     /// Request a `Buffer` the size of the `db_page_size` the `BufferPool` was initialized with.
@@ -189,21 +193,20 @@ impl BufferPool {
     /// and the pool will temporarily return temporary buffers to prevent reallocation of the
     /// arena if the page size is set to something other than the default value.
     pub fn begin_init(io: &Arc<dyn IO>, arena_size: usize) -> Arc<Self> {
-        let pool = BUFFER_POOL.get_or_init(|| Arc::new(BufferPool::new(arena_size)));
+        let pool = Arc::new(BufferPool::new(arena_size));
         let inner = pool.inner_mut();
         // Just store the IO handle, don't create arena yet
         if inner.io.is_none() {
             inner.io = Some(Arc::clone(io));
         }
-        pool.clone()
+        pool
     }
 
     /// Call when `[Database::db_state]` is initialized, providing the `page_size` to allocate
     /// an arena for the pool. Before this call, the pool will use temporary buffers which are
     /// cached in thread local storage.
-    pub fn finalize_with_page_size(&self, page_size: usize) -> crate::Result<Arc<Self>> {
-        let pool = BUFFER_POOL.get().expect("BufferPool must be initialized");
-        let inner = pool.inner_mut();
+    pub fn finalize_with_page_size(&self, page_size: usize) -> crate::Result<()> {
+        let inner = self.inner_mut();
         tracing::trace!("finalize page size called with size {page_size}");
         if page_size != BufferPool::DEFAULT_PAGE_SIZE {
             // so far we have handed out some temporary buffers, since the page size is not
@@ -213,18 +216,11 @@ impl BufferPool {
             });
         }
         if inner.page_arena.is_some() {
-            return Ok(pool.clone());
+            return Ok(());
         }
         inner.db_page_size.store(page_size, Ordering::Relaxed);
         inner.init_arenas()?;
-        Ok(pool.clone())
-    }
-
-    #[inline]
-    /// Marks the underlying pages for an `ArenaBuffer` on `Drop` as free and
-    /// available for use by another allocation.
-    pub fn free(&self, size: usize, arena_id: u32, page_id: u32) {
-        self.inner_mut().free(size, arena_id, page_id);
+        Ok(())
     }
 }
 
@@ -242,13 +238,13 @@ impl PoolInner {
             return self
                 .wal_frame_arena
                 .as_ref()
-                .and_then(|wal_arena| wal_arena.try_alloc(len))
+                .and_then(|wal_arena| Arena::try_alloc(wal_arena, len))
                 .unwrap_or(Buffer::new_temporary(len));
         }
         // For all other sizes, use regular arena
         self.page_arena
             .as_ref()
-            .and_then(|arena| arena.try_alloc(len))
+            .and_then(|arena| Arena::try_alloc(arena, len))
             .unwrap_or(Buffer::new_temporary(len))
     }
 
@@ -256,7 +252,7 @@ impl PoolInner {
         let db_page_size = self.db_page_size.load(Ordering::Relaxed);
         self.page_arena
             .as_ref()
-            .and_then(|arena| arena.try_alloc(db_page_size))
+            .and_then(|arena| Arena::try_alloc(arena, db_page_size))
             .unwrap_or(Buffer::new_temporary(db_page_size))
     }
 
@@ -264,7 +260,7 @@ impl PoolInner {
         let len = self.db_page_size.load(Ordering::Relaxed) + WAL_FRAME_HEADER_SIZE;
         self.wal_frame_arena
             .as_ref()
-            .and_then(|wal_arena| wal_arena.try_alloc(len))
+            .and_then(|wal_arena| Arena::try_alloc(wal_arena, len))
             .unwrap_or(Buffer::new_temporary(len))
     }
 
@@ -288,7 +284,7 @@ impl PoolInner {
                     arena_size / (1024 * 1024),
                     db_page_size
                 );
-                self.page_arena = Some(arena);
+                self.page_arena = Some(Arc::new(arena));
             }
             Err(e) => {
                 tracing::error!("Failed to create arena: {:?}", e);
@@ -308,7 +304,7 @@ impl PoolInner {
                     arena_size / (1024 * 1024),
                     wal_frame_size
                 );
-                self.wal_frame_arena = Some(arena);
+                self.wal_frame_arena = Some(Arc::new(arena));
             }
             Err(e) => {
                 tracing::error!("Failed to create WAL frame arena: {:?}", e);
@@ -319,24 +315,6 @@ impl PoolInner {
         }
 
         Ok(())
-    }
-
-    fn free(&self, size: usize, arena_id: u32, page_idx: u32) {
-        // allocations of size `page_size` are more common, so we check that arena first.
-        if let Some(arena) = self.page_arena.as_ref() {
-            if arena_id == arena.id {
-                arena.free(page_idx, size);
-                return;
-            }
-        }
-        // check WAL frame arena
-        if let Some(wal_arena) = self.wal_frame_arena.as_ref() {
-            if arena_id == wal_arena.id {
-                wal_arena.free(page_idx, size);
-                return;
-            }
-        }
-        panic!("ArenaBuffer freed with no available parent Arena");
     }
 }
 
@@ -410,9 +388,9 @@ impl Arena {
 
     /// Allocate a `Buffer` large enough for logical length `size`.
     /// May span multiple slots
-    pub fn try_alloc(&self, size: usize) -> Option<Buffer> {
-        let slots = size.div_ceil(self.slot_size) as u32;
-        let mut freemap = self.free_slots.lock();
+    pub fn try_alloc(arena: &Arc<Arena>, size: usize) -> Option<Buffer> {
+        let slots = size.div_ceil(arena.slot_size) as u32;
+        let mut freemap = arena.free_slots.lock();
 
         let first_idx = if slots == 1 {
             // use the optimized method for individual pages which attempts
@@ -422,12 +400,17 @@ impl Arena {
         } else {
             freemap.alloc_run(slots)?
         };
-        self.allocated_slots
+        arena
+            .allocated_slots
             .fetch_add(slots as usize, Ordering::Relaxed);
-        let offset = first_idx as usize * self.slot_size;
-        let ptr = unsafe { NonNull::new_unchecked(self.base.as_ptr().add(offset)) };
+        let offset = first_idx as usize * arena.slot_size;
+        let ptr = unsafe { NonNull::new_unchecked(arena.base.as_ptr().add(offset)) };
         Some(Buffer::new_pooled(ArenaBuffer::new(
-            ptr, size, self.id, first_idx,
+            Arc::downgrade(arena),
+            ptr,
+            size,
+            arena.id,
+            first_idx,
         )))
     }
 
