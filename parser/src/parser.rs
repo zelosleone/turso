@@ -2,12 +2,13 @@ use crate::ast::{
     AlterTableBody, As, Cmd, ColumnConstraint, ColumnDefinition, CommonTableExpr, CompoundOperator,
     CompoundSelect, CreateTableBody, DeferSubclause, Distinctness, Expr, ForeignKeyClause,
     FrameBound, FrameClause, FrameExclude, FrameMode, FromClause, FunctionTail, GroupBy, Indexed,
-    IndexedColumn, InitDeferredPred, JoinConstraint, JoinOperator, JoinType, JoinedSelectTable,
-    LikeOperator, Limit, Literal, Materialized, Name, NamedColumnConstraint, NamedTableConstraint,
-    NullsOrder, OneSelect, Operator, Over, PragmaBody, PragmaValue, QualifiedName, RefAct, RefArg,
-    ResolveType, ResultColumn, Select, SelectBody, SelectTable, Set, SortOrder, SortedColumn, Stmt,
-    TableConstraint, TableOptions, TransactionType, TriggerCmd, TriggerEvent, TriggerTime, Type,
-    TypeSize, UnaryOperator, Upsert, UpsertDo, UpsertIndex, Window, WindowDef, With,
+    IndexedColumn, InitDeferredPred, InsertBody, JoinConstraint, JoinOperator, JoinType,
+    JoinedSelectTable, LikeOperator, Limit, Literal, Materialized, Name, NamedColumnConstraint,
+    NamedTableConstraint, NullsOrder, OneSelect, Operator, Over, PragmaBody, PragmaValue,
+    QualifiedName, RefAct, RefArg, ResolveType, ResultColumn, Select, SelectBody, SelectTable, Set,
+    SortOrder, SortedColumn, Stmt, TableConstraint, TableOptions, TransactionType, TriggerCmd,
+    TriggerEvent, TriggerTime, Type, TypeSize, UnaryOperator, Upsert, UpsertDo, UpsertIndex,
+    Window, WindowDef, With,
 };
 use crate::error::Error;
 use crate::lexer::{Lexer, Token};
@@ -577,6 +578,8 @@ impl<'a> Parser<'a> {
             TokenType::TK_ALTER,
             TokenType::TK_DELETE,
             TokenType::TK_DROP,
+            TokenType::TK_INSERT,
+            TokenType::TK_REPLACE,
             // add more
         ])?;
 
@@ -597,6 +600,7 @@ impl<'a> Parser<'a> {
             TokenType::TK_ALTER => self.parse_alter(),
             TokenType::TK_DELETE => self.parse_delete(),
             TokenType::TK_DROP => self.parse_drop_stmt(),
+            TokenType::TK_INSERT | TokenType::TK_REPLACE => self.parse_insert(),
             _ => unreachable!(),
         }
     }
@@ -873,7 +877,7 @@ impl<'a> Parser<'a> {
             }
             TokenType::TK_UPDATE => todo!(),
             TokenType::TK_DELETE => self.parse_delete_without_cte(with),
-            TokenType::TK_INSERT | TokenType::TK_REPLACE => todo!(),
+            TokenType::TK_INSERT | TokenType::TK_REPLACE => self.parse_insert_without_cte(with),
             _ => unreachable!(),
         }
     }
@@ -3900,6 +3904,45 @@ impl<'a> Parser<'a> {
             }
             _ => unreachable!(),
         }
+    }
+
+    fn parse_insert_without_cte(&mut self, with: Option<With>) -> Result<Stmt, Error> {
+        let tok = self.eat_assert(&[TokenType::TK_INSERT, TokenType::TK_REPLACE]);
+        let resolve_type = match tok.token_type.unwrap() {
+            TokenType::TK_INSERT => self.parse_or_conflict()?,
+            TokenType::TK_REPLACE => Some(ResolveType::Replace),
+            _ => unreachable!(),
+        };
+
+        self.eat_expect(&[TokenType::TK_INTO])?;
+        let tbl_name = self.parse_fullname(true)?;
+        let columns = self.parse_nm_list_opt()?;
+        let (body, returning) = match self.peek_no_eof()?.token_type.unwrap() {
+            TokenType::TK_DEFAULT => {
+                self.eat_assert(&[TokenType::TK_DEFAULT]);
+                self.eat_expect(&[TokenType::TK_VALUES])?;
+                (InsertBody::DefaultValues, self.parse_returning()?)
+            }
+            _ => {
+                let select = self.parse_select()?;
+                let (upsert, returning) = self.parse_upsert()?;
+                (InsertBody::Select(select, upsert), returning)
+            }
+        };
+
+        Ok(Stmt::Insert {
+            with,
+            or_conflict: resolve_type,
+            tbl_name,
+            columns,
+            body,
+            returning,
+        })
+    }
+
+    fn parse_insert(&mut self) -> Result<Stmt, Error> {
+        let with = self.parse_with()?;
+        self.parse_insert_without_cte(with)
     }
 }
 
@@ -10908,6 +10951,165 @@ mod tests {
                         name: Name::Ident("foo".to_owned()),
                         alias: None,
                     },
+                })],
+            ),
+            // parse insert
+            (
+                b"INSERT INTO foo VALUES (1, 2)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Insert {
+                    with: None,
+                    or_conflict: None,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    columns: vec![],
+                    body: InsertBody::Select(Select {
+                        with: None,
+                        body: SelectBody {
+                            select: OneSelect::Values(vec![
+                                vec![
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                ],
+                            ]),
+                            compounds: vec![],
+                        },
+                        order_by: vec![],
+                        limit: None,
+                    }, None),
+                    returning: vec![],
+                })],
+            ),
+            (
+                b"REPLACE INTO foo VALUES (1, 2)".as_slice(),
+                vec![Cmd::Stmt(Stmt::Insert {
+                    with: None,
+                    or_conflict: Some(ResolveType::Replace),
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    columns: vec![],
+                    body: InsertBody::Select(Select {
+                        with: None,
+                        body: SelectBody {
+                            select: OneSelect::Values(vec![
+                                vec![
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                ],
+                            ]),
+                            compounds: vec![],
+                        },
+                        order_by: vec![],
+                        limit: None,
+                    }, None),
+                    returning: vec![],
+                })],
+            ),
+            (
+                b"WITH test AS (SELECT 1) INSERT INTO foo(bar, baz) DEFAULT VALUES RETURNING bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Insert {
+                    with: Some(With {
+                        recursive: false,
+                        ctes: vec![
+                            CommonTableExpr {
+                                tbl_name: Name::Ident("test".to_owned()),
+                                columns: vec![],
+                                materialized: Materialized::Any,
+                                select: Select {
+                                    with: None,
+                                    body: SelectBody {
+                                        select: OneSelect::Select {
+                                            distinctness: None,
+                                            columns: vec![ResultColumn::Expr(
+                                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                None,
+                                            )],
+                                            from: None,
+                                            where_clause: None,
+                                            group_by: None,
+                                            window_clause: vec![],
+                                        },
+                                        compounds: vec![],
+                                    },
+                                    order_by: vec![],
+                                    limit: None,
+                                },
+                            }
+                        ],
+                    }),
+                    or_conflict: None,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    columns: vec![
+                        Name::Ident("bar".to_owned()),
+                        Name::Ident("baz".to_owned()),
+                    ],
+                    body: InsertBody::DefaultValues,
+                    returning: vec![
+                        ResultColumn::Expr(
+                            Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
+                            None,
+                        ),
+                    ],
+                })],
+            ),
+            (
+                b"WITH test AS (SELECT 1) REPLACE INTO foo(bar, baz) DEFAULT VALUES RETURNING bar".as_slice(),
+                vec![Cmd::Stmt(Stmt::Insert {
+                    with: Some(With {
+                        recursive: false,
+                        ctes: vec![
+                            CommonTableExpr {
+                                tbl_name: Name::Ident("test".to_owned()),
+                                columns: vec![],
+                                materialized: Materialized::Any,
+                                select: Select {
+                                    with: None,
+                                    body: SelectBody {
+                                        select: OneSelect::Select {
+                                            distinctness: None,
+                                            columns: vec![ResultColumn::Expr(
+                                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                None,
+                                            )],
+                                            from: None,
+                                            where_clause: None,
+                                            group_by: None,
+                                            window_clause: vec![],
+                                        },
+                                        compounds: vec![],
+                                    },
+                                    order_by: vec![],
+                                    limit: None,
+                                },
+                            }
+                        ],
+                    }),
+                    or_conflict: Some(ResolveType::Replace),
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Ident("foo".to_owned()),
+                        alias: None,
+                    },
+                    columns: vec![
+                        Name::Ident("bar".to_owned()),
+                        Name::Ident("baz".to_owned()),
+                    ],
+                    body: InsertBody::DefaultValues,
+                    returning: vec![
+                        ResultColumn::Expr(
+                            Box::new(Expr::Id(Name::Ident("bar".to_owned()))),
+                            None,
+                        ),
+                    ],
                 })],
             ),
         ];
