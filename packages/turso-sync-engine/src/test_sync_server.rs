@@ -1,4 +1,8 @@
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use tokio::sync::Mutex;
 
@@ -33,6 +37,7 @@ struct TestSyncServerState {
 
 #[derive(Clone)]
 pub struct TestSyncServer {
+    path: PathBuf,
     ctx: Arc<TestContext>,
     db: turso::Database,
     state: Arc<Mutex<TestSyncServerState>>,
@@ -49,6 +54,7 @@ impl TestSyncServer {
             },
         );
         Ok(Self {
+            path: path.to_path_buf(),
             ctx,
             db: turso::Builder::new_local(path.to_str().unwrap())
                 .build()
@@ -179,9 +185,25 @@ impl TestSyncServer {
         let mut session = {
             let mut state = self.state.lock().await;
             if state.generation != generation_id {
-                return Err(Error::DatabaseSyncEngineError(
-                    "generation id mismatch".to_string(),
-                ));
+                let generation = state.generations.get(&state.generation).unwrap();
+                let max_frame_no = generation.frames.len();
+                let status = DbSyncStatus {
+                    baton: None,
+                    status: "checkpoint_needed".to_string(),
+                    generation: state.generation,
+                    max_frame_no: max_frame_no as u64,
+                };
+
+                let status = serde_json::to_vec(&status)?;
+
+                completion.set_status(200);
+                self.ctx.faulty_call("wal_push_status").await?;
+
+                completion.push_data(status);
+                self.ctx.faulty_call("wal_push_push").await?;
+
+                completion.set_done();
+                return Ok(());
             }
             let baton_str = baton.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             let session = match state.sessions.get(&baton_str) {
@@ -263,6 +285,31 @@ impl TestSyncServer {
     pub fn db(&self) -> turso::Database {
         self.db.clone()
     }
+    pub async fn checkpoint(&self) -> Result<()> {
+        tracing::debug!("checkpoint sync-server db");
+        let conn = self.db.connect()?;
+        let mut rows = conn.query("PRAGMA wal_checkpoint(TRUNCATE)", ()).await?;
+        let Some(_) = rows.next().await? else {
+            return Err(Error::DatabaseSyncEngineError(
+                "checkpoint must return single row".to_string(),
+            ));
+        };
+        let mut state = self.state.lock().await;
+        let generation = state.generation + 1;
+        state.generation = generation;
+        state.generations.insert(
+            generation,
+            Generation {
+                snapshot: std::fs::read(&self.path).map_err(|e| {
+                    Error::DatabaseSyncEngineError(format!(
+                        "failed to create generation snapshot: {e}"
+                    ))
+                })?,
+                frames: Vec::new(),
+            },
+        );
+        Ok(())
+    }
     pub async fn execute(&self, sql: &str, params: impl turso::IntoParams) -> Result<()> {
         let conn = self.db.connect()?;
         conn.execute(sql, params).await?;
@@ -278,8 +325,8 @@ impl TestSyncServer {
         let wal_frame_count = conn.wal_frame_count()?;
         tracing::debug!("conn frames count: {}", wal_frame_count);
         for frame_no in last_frame..=wal_frame_count as usize {
-            conn.wal_get_frame(frame_no as u64, &mut frame)?;
-            tracing::debug!("push local frame {}", frame_no);
+            let frame_info = conn.wal_get_frame(frame_no as u64, &mut frame)?;
+            tracing::debug!("push local frame {}, info={:?}", frame_no, frame_info);
             generation.frames.push(frame.to_vec());
         }
         Ok(())
