@@ -127,17 +127,6 @@ pub fn translate_insert(
                         }
                         _ => {}
                     }
-                    /*
-                    if let Expr::Id(name) = expr {
-                        println!("Expression was ID");
-                        if name.is_double_quoted() {
-                            *expr = Expr::Literal(ast::Literal::String(format!("{name}")));
-                        } else {
-                            // an INSERT INTO ... VALUES (...) cannot reference columns
-                            crate::bail_parse_error!("no such column: {name}");
-                        }
-                    } else {}
-                     */
                     rewrite_expr(expr, &mut param_idx)?;
                 }
                 values = values_expr.pop();
