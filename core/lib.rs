@@ -470,9 +470,10 @@ impl Database {
         if let Some(shared_wal) = maybe_shared_wal {
             let size_in_wal = shared_wal.page_size();
             if size_in_wal != 0 {
-                return Ok(PageSize::new(size_in_wal).unwrap_or_else(|| {
-                    panic!("invalid page size in WAL: {size_in_wal}");
-                }));
+                let Some(page_size) = PageSize::new(size_in_wal) else {
+                    bail_corrupt_error!("invalid page size in WAL: {size_in_wal}");
+                };
+                return Ok(page_size);
             }
         }
         if self.db_state.is_initialized() {
@@ -481,9 +482,10 @@ impl Database {
             let Some(size) = requested_page_size else {
                 return Ok(PageSize::default());
             };
-            Ok(PageSize::new(size as u32).unwrap_or_else(|| {
-                panic!("invalid requested page size: {size}");
-            }))
+            let Some(page_size) = PageSize::new(size as u32) else {
+                bail_corrupt_error!("invalid requested page size: {size}");
+            };
+            Ok(page_size)
         }
     }
 

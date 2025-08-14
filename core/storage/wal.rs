@@ -19,7 +19,7 @@ use crate::storage::sqlite3_ondisk::{
     write_pages_vectored, PageSize, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
 };
 use crate::types::{IOCompletions, IOResult};
-use crate::{turso_assert, Buffer, LimboError, Result};
+use crate::{bail_corrupt_error, turso_assert, Buffer, LimboError, Result};
 use crate::{Completion, Page};
 
 use self::sqlite3_ondisk::{checksum_wal, PageContent, WAL_MAGIC_BE, WAL_MAGIC_LE};
@@ -956,9 +956,10 @@ impl Wal for WalFile {
         db_size: u64,
         page: &[u8],
     ) -> Result<()> {
-        self.ensure_header_if_needed(PageSize::new(page.len() as u32).unwrap_or_else(|| {
-            panic!("invalid page size: {}", page.len());
-        }))?;
+        let Some(page_size) = PageSize::new(page.len() as u32) else {
+            bail_corrupt_error!("invalid page size: {}", page.len());
+        };
+        self.ensure_header_if_needed(page_size)?;
         tracing::debug!("write_raw_frame({})", frame_id);
         if page.len() != self.page_size() as usize {
             return Err(LimboError::InvalidArgument(format!(
