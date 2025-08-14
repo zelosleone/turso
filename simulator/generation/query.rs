@@ -26,9 +26,9 @@ impl Arbitrary for Create {
 impl ArbitraryFrom<&Vec<Table>> for FromClause {
     fn arbitrary_from<R: Rng>(rng: &mut R, tables: &Vec<Table>) -> Self {
         let num_joins = match rng.gen_range(0..=100) {
-            0..=80 => 0,
-            81..=95 => 1,
-            96..=100 => 2,
+            0..=90 => 0,
+            91..=97 => 1,
+            98..=100 => 2,
             _ => unreachable!(),
         };
 
