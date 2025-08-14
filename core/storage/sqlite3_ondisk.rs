@@ -62,7 +62,7 @@ use crate::storage::database::DatabaseStorage;
 use crate::storage::pager::Pager;
 use crate::storage::wal::{PendingFlush, READMARK_NOT_USED};
 use crate::types::{RawSlice, RefValue, SerialType, SerialTypeKind, TextRef, TextSubtype};
-use crate::{turso_assert, File, Result, WalFileShared};
+use crate::{bail_corrupt_error, turso_assert, File, Result, WalFileShared};
 use std::cell::{RefCell, UnsafeCell};
 use std::collections::{BTreeMap, HashMap};
 use std::mem::MaybeUninit;
@@ -85,15 +85,12 @@ pub const LEFT_CHILD_PTR_SIZE_BYTES: usize = 4;
 pub struct PageSize(U16BE);
 
 impl PageSize {
-    pub const ALIAS_64K: u32 = 1;
     pub const MIN: u32 = 512;
     pub const MAX: u32 = 65536;
     pub const DEFAULT: u16 = 4096;
 
+    /// Interpret a user-provided u32 as either a valid page size or None.
     pub const fn new(size: u32) -> Option<Self> {
-        if size == Self::ALIAS_64K {
-            return Some(Self(U16BE::new(1)));
-        }
         if size < PageSize::MIN || size > PageSize::MAX {
             return None;
         }
@@ -104,10 +101,26 @@ impl PageSize {
         }
 
         if size == PageSize::MAX {
+            // Internally, the value 1 represents 65536, since the on-disk value of the page size in the DB header is 2 bytes.
             return Some(Self(U16BE::new(1)));
         }
 
         Some(Self(U16BE::new(size as u16)))
+    }
+
+    /// Interpret a u16 on disk (DB file header) as either a valid page size or
+    /// return a corrupt error.
+    pub fn new_from_header_u16(value: u16) -> Result<Self> {
+        match value {
+            1 => Ok(Self(U16BE::new(1))),
+            n => {
+                let Some(size) = Self::new(n as u32) else {
+                    bail_corrupt_error!("invalid page size in database header: {n}");
+                };
+
+                Ok(size)
+            }
+        }
     }
 
     pub const fn get(self) -> u32 {

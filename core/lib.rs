@@ -449,9 +449,7 @@ impl Database {
         let c = self.db_file.read_header(c)?;
         self.io.wait_for_completion(c)?;
         let page_size = u16::from_be_bytes(buf.as_slice()[16..18].try_into().unwrap());
-        let Some(page_size) = PageSize::new(page_size as u32) else {
-            bail_corrupt_error!("invalid page size in DB header: {page_size}");
-        };
+        let page_size = PageSize::new_from_header_u16(page_size)?;
         Ok(page_size)
     }
 
