@@ -81,7 +81,7 @@ impl BufferRef {
     ///
     /// # Safety
     /// The caller must ensure that the pointer is valid and the buffer is not deallocated.
-    /// should only be called on ptr to core's Buffer type
+    /// This function should only be called with a pointer to a buffer allocated by the `Buffer` type defined in the `core` module.
     pub unsafe fn new(ptr: *mut u8, len: usize) -> Self {
         Self {
             _ptr: NonNull::new(ptr).expect("Received null buffer pointer"),
