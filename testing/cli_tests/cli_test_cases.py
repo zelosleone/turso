@@ -318,13 +318,13 @@ def test_copy_db_file():
         os.unlink(Path(testpath))
         time.sleep(0.2)  # make sure closed
     time.sleep(0.3)
-    turso = TestTursoShell(init_commands="", flags=f" {testpath}")
+    turso = TestTursoShell(init_commands="")
     turso.execute_dot("create table testing(a,b,c);")
     turso.run_test_fn(".schema", lambda x: "CREATE TABLE testing (a, b, c)" in x, "test-database-has-expected-schema")
     for i in range(100):
         turso.execute_dot(f"insert into testing (a,b,c) values ({i},{i + 1}, {i + 2});")
     turso.run_test_fn("SELECT COUNT(*) FROM testing;", lambda x: "100" == x, "test-database-has-expected-count")
-    turso.execute_dot(f".clone {testpath}")
+    turso.run_test_fn(f".clone {testpath}", lambda res: "testing... done" in res)
 
     turso.execute_dot(f".open {testpath}")
     turso.run_test_fn(".schema", lambda x: "CREATE TABLE testing" in x, "test-copied-database-has-expected-schema")
@@ -342,7 +342,7 @@ def test_copy_memory_db_to_file():
     turso.execute_dot("create table testing(a,b,c);")
     for i in range(100):
         turso.execute_dot(f"insert into testing (a, b, c) values ({i},{i + 1}, {i + 2});")
-    turso.execute_dot(f".clone {testpath}")
+    turso.run_test_fn(f".clone {testpath}", lambda res: "testing... done" in res)
     turso.quit()
     time.sleep(0.3)
     sqlite = TestTursoShell(exec_name="sqlite3", flags=f" {testpath}")
