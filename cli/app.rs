@@ -6,7 +6,10 @@ use crate::{
     },
     config::Config,
     helper::LimboHelper,
-    input::{get_io, get_writer, DbLocation, OutputMode, Settings},
+    input::{
+        get_io, get_writer, ApplyWriter, DbLocation, NoopProgress, OutputMode, ProgressSink,
+        Settings, StderrProgress,
+    },
     opcodes_dictionary::OPCODE_DESCRIPTIONS,
     HISTORY_FILE,
 };
@@ -15,7 +18,6 @@ use clap::Parser;
 use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Row, Table};
 use rustyline::{error::ReadlineError, history::DefaultHistory, Editor};
 use std::{
-    fmt,
     io::{self, BufRead as _, IsTerminal, Write},
     path::PathBuf,
     sync::{
@@ -75,7 +77,7 @@ const PROMPT: &str = "turso> ";
 pub struct Limbo {
     pub prompt: String,
     io: Arc<dyn turso_core::IO>,
-    writer: Box<dyn Write>,
+    writer: Option<Box<dyn Write>>,
     conn: Arc<turso_core::Connection>,
     pub interrupt_count: Arc<AtomicUsize>,
     input_buff: String,
@@ -87,31 +89,6 @@ pub struct Limbo {
 struct QueryStatistics {
     io_time_elapsed_samples: Vec<Duration>,
     execute_time_elapsed_samples: Vec<Duration>,
-}
-
-macro_rules! query_internal {
-    ($self:expr, $query:expr, $body:expr) => {{
-        let rows = $self.conn.query($query)?;
-        if let Some(mut rows) = rows {
-            loop {
-                match rows.step()? {
-                    StepResult::Row => {
-                        let row = rows.row().unwrap();
-                        $body(row)?;
-                    }
-                    StepResult::IO => {
-                        rows.run_once()?;
-                    }
-                    StepResult::Interrupt => break,
-                    StepResult::Done => break,
-                    StepResult::Busy => {
-                        Err(LimboError::InternalError("database is busy".into()))?;
-                    }
-                }
-            }
-        }
-        Ok::<(), LimboError>(())
-    }};
 }
 
 impl Limbo {
@@ -170,7 +147,7 @@ impl Limbo {
         let mut app = Self {
             prompt: PROMPT.to_string(),
             io,
-            writer: get_writer(&opts.output),
+            writer: Some(get_writer(&opts.output)),
             conn,
             interrupt_count,
             input_buff: String::new(),
@@ -249,104 +226,6 @@ impl Limbo {
             .map_err(|e| e.to_string())
     }
 
-    fn dump_table(&mut self, name: &str) -> Result<(), LimboError> {
-        let query = format!("pragma table_info={name}");
-        let mut cols = vec![];
-        let mut value_types = vec![];
-        query_internal!(
-            self,
-            query,
-            |row: &turso_core::Row| -> Result<(), LimboError> {
-                let name: &str = row.get::<&str>(1)?;
-                cols.push(name.to_string());
-                let value_type: &str = row.get::<&str>(2)?;
-                value_types.push(value_type.to_string());
-                Ok(())
-            }
-        )?;
-        // FIXME: sqlite has logic to check rowid and optionally preserve
-        // it, but it requires pragma index_list, and it seems to be relevant
-        // only for indexes.
-        let cols_str = cols.join(", ");
-        let select = format!("select {cols_str} from {name}");
-        query_internal!(
-            self,
-            select,
-            |row: &turso_core::Row| -> Result<(), LimboError> {
-                let values = row
-                    .get_values()
-                    .zip(value_types.iter())
-                    .map(|(value, value_type)| {
-                        // If the type affinity is TEXT, replace each single
-                        // quotation mark with two single quotation marks, and
-                        // wrap it with single quotation marks.
-                        if value_type.contains("CHAR")
-                            || value_type.contains("CLOB")
-                            || value_type.contains("TEXT")
-                        {
-                            format!("'{}'", value.to_string().replace("'", "''"))
-                        } else if value_type.contains("BLOB") {
-                            let blob = value.to_blob().unwrap_or(&[]);
-                            let hex_string: String =
-                                blob.iter().fold(String::new(), |mut output, b| {
-                                    let _ =
-                                        fmt::Write::write_fmt(&mut output, format_args!("{b:02x}"));
-                                    output
-                                });
-                            format!("X'{hex_string}'")
-                        } else {
-                            value.to_string()
-                        }
-                    })
-                    .collect::<Vec<_>>()
-                    .join(",");
-                self.write_fmt(format_args!("INSERT INTO {name} VALUES({values});"))?;
-                Ok(())
-            }
-        )?;
-        Ok(())
-    }
-
-    fn dump_database(&mut self) -> anyhow::Result<()> {
-        self.writeln("PRAGMA foreign_keys=OFF;")?;
-        self.writeln("BEGIN TRANSACTION;")?;
-        // FIXME: At this point, SQLite executes the following:
-        // sqlite3_exec(p->db, "SAVEPOINT dump; PRAGMA writable_schema=ON", 0, 0, 0);
-        // we don't have those yet, so don't.
-        let query = r#"
-    SELECT name, type, sql
-    FROM sqlite_schema AS o
-    WHERE type == 'table'
-        AND sql NOT NULL
-    ORDER BY tbl_name = 'sqlite_sequence', rowid"#;
-
-        let res = query_internal!(
-            self,
-            query,
-            |row: &turso_core::Row| -> Result<(), LimboError> {
-                let sql: &str = row.get::<&str>(2)?;
-                let name: &str = row.get::<&str>(0)?;
-                self.write_fmt(format_args!("{sql};"))?;
-                self.dump_table(name)
-            }
-        );
-
-        match res {
-            Ok(_) => Ok(()),
-            Err(LimboError::Corrupt(x)) => {
-                // FIXME: SQLite at this point retry the query with a different
-                // order by, but for simplicity we are just ignoring for now
-                self.writeln("/****** CORRUPTION ERROR *******/")?;
-                Err(LimboError::Corrupt(x))
-            }
-            Err(x) => Err(x),
-        }?;
-
-        self.conn.close()?;
-        self.writeln("COMMIT;")?;
-        Ok(())
-    }
-
     fn display_in_memory(&mut self) -> io::Result<()> {
         if self.opts.db_file == ":memory:" {
             self.writeln("Connected to a transient in-memory database.")?;
@@ -417,7 +296,7 @@ impl Limbo {
         }
         match std::fs::File::create(path) {
             Ok(file) => {
-                self.writer = Box::new(file);
+                self.writer = Some(Box::new(file));
                 self.opts.is_stdout = false;
                 self.opts.output_mode = OutputMode::List;
                 self.opts.output_filename = path.to_string();
@@ -428,8 +307,8 @@ impl Limbo {
     }
 
     fn set_output_stdout(&mut self) {
-        let _ = self.writer.flush();
-        self.writer = Box::new(io::stdout());
+        let _ = self.writer.as_mut().unwrap().flush();
+        self.writer = Some(Box::new(io::stdout()));
         self.opts.is_stdout = true;
     }
 
@@ -443,13 +322,17 @@ impl Limbo {
     }
 
     fn write_fmt(&mut self, fmt: std::fmt::Arguments) -> io::Result<()> {
-        let _ = self.writer.write_fmt(fmt);
-        self.writer.write_all(b"\n")
+        let _ = self.writer.as_mut().unwrap().write_fmt(fmt);
+        self.writer.as_mut().unwrap().write_all(b"\n")
+    }
+
+    fn write<D: AsRef<[u8]>>(&mut self, data: D) -> io::Result<()> {
+        self.writer.as_mut().unwrap().write_all(data.as_ref())
     }
 
     fn writeln<D: AsRef<[u8]>>(&mut self, data: D) -> io::Result<()> {
-        self.writer.write_all(data.as_ref())?;
-        self.writer.write_all(b"\n")
+        self.writer.as_mut().unwrap().write_all(data.as_ref())?;
+        self.writer.as_mut().unwrap().write_all(b"\n")
     }
 
     fn buffer_input(&mut self, line: &str) {
@@ -681,7 +564,8 @@ impl Limbo {
                     let _ = self.show_info();
                 }
                 Command::Import(args) => {
-                    let mut import_file = ImportFile::new(self.conn.clone(), &mut self.writer);
+                    let w = self.writer.as_mut().unwrap();
+                    let mut import_file = ImportFile::new(self.conn.clone(), w);
                     import_file.import(args)
                 }
                 Command::LoadExtension(args) => {
@@ -722,7 +606,7 @@ impl Limbo {
                     };
                 }
                 Command::Clone(args) => {
-                    if let Err(e) = self.conn.copy_db(&args.output_file) {
+                    if let Err(e) = self.clone_database(&args.output_file) {
                         let _ = self.writeln(e.to_string());
                     }
                 }
@@ -758,10 +642,9 @@ impl Limbo {
                                 if self.opts.headers && !headers_printed {
                                     for i in 0..rows.num_columns() {
                                         if i > 0 {
-                                            let _ = self.writer.write(b"|");
+                                            let _ = self.write(b"|");
                                         }
-                                        let _ =
-                                            self.writer.write(rows.get_column_name(i).as_bytes());
+                                        let _ = self.write(rows.get_column_name(i).as_bytes());
                                     }
                                     let _ = self.writeln("");
                                     headers_printed = true;
@@ -770,13 +653,13 @@ impl Limbo {
                                 let row = rows.row().unwrap();
                                 for (i, value) in row.get_values().enumerate() {
                                     if i > 0 {
-                                        let _ = self.writer.write(b"|");
+                                        let _ = self.write(b"|");
                                     }
                                     if matches!(value, Value::Null) {
-                                        let _ =
-                                            self.writer.write(self.opts.null_value.as_bytes())?;
+                                        let bytes = self.opts.null_value.clone();
+                                        self.write(bytes.as_bytes())?;
                                     } else {
-                                        let _ = self.writer.write(format!("{value}").as_bytes())?;
+                                        self.write(format!("{value}").as_bytes())?;
                                     }
                                 }
                                 let _ = self.writeln("");
@@ -1385,11 +1268,270 @@ impl Limbo {
         }
     }
 
+    pub fn dump_database_from_conn<W: Write, P: ProgressSink>(
+        conn: Arc<Connection>,
+        out: &mut W,
+        mut progress: P,
+    ) -> anyhow::Result<()> {
+        // Snapshot for consistency
+        Self::exec_all_conn(&conn, "BEGIN")?;
+        writeln!(out, "BEGIN TRANSACTION;")?;
+
+        let q_tables = r#"
+        SELECT name, sql
+        FROM sqlite_schema
+        WHERE type='table' AND sql NOT NULL
+        ORDER BY tbl_name = 'sqlite_sequence', rowid
+    "#;
+        if let Some(mut rows) = conn.query(q_tables)? {
+            loop {
+                match rows.step()? {
+                    StepResult::Row => {
+                        let row = rows.row().unwrap();
+                        let name: &str = row.get::<&str>(0)?;
+                        let ddl: &str = row.get::<&str>(1)?;
+                        writeln!(out, "{ddl};")?;
+                        Self::dump_table_from_conn(&conn, out, name, &mut progress)?;
+                        progress.on(name);
+                    }
+                    StepResult::IO => rows.run_once()?,
+                    StepResult::Done | StepResult::Interrupt => break,
+                    StepResult::Busy => anyhow::bail!("database is busy"),
+                }
+            }
+        }
+        Self::dump_sqlite_sequence(&conn, out)?;
+        Self::dump_schema_objects(&conn, out, &mut progress)?;
+        Self::exec_all_conn(&conn, "COMMIT")?;
+        writeln!(out, "COMMIT;")?;
+        Ok(())
+    }
+
+    fn exec_all_conn(conn: &Arc<Connection>, sql: &str) -> anyhow::Result<()> {
+        if let Some(mut rows) = conn.query(sql)? {
+            loop {
+                match rows.step()? {
+                    StepResult::IO => rows.run_once()?,
+                    StepResult::Done | StepResult::Interrupt => break,
+                    StepResult::Busy => anyhow::bail!("database is busy"),
+                    StepResult::Row => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn dump_table_from_conn<W: Write, P: ProgressSink>(
+        conn: &Arc<Connection>,
+        out: &mut W,
+        table_name: &str,
+        progress: &mut P,
+    ) -> anyhow::Result<()> {
+        let pragma = format!("PRAGMA table_info({})", quote_ident(table_name));
+        let (mut cols, mut types) = (Vec::new(), Vec::new());
+
+        if let Some(mut rows) = conn.query(pragma)? {
+            loop {
+                match rows.step()? {
+                    StepResult::Row => {
+                        let row = rows.row().unwrap();
+                        let ty = row.get::<&str>(2)?.to_string();
+                        let name = row.get::<&str>(1)?.to_string();
+                        match ty.as_str() {
+                            "index" => progress.on(&name),
+                            "view" => progress.on(&name),
+                            "trigger" => progress.on(&name),
+                            _ => {}
+                        }
+                        cols.push(name);
+                        types.push(ty);
+                    }
+                    StepResult::IO => rows.run_once()?,
+                    StepResult::Done | StepResult::Interrupt => break,
+                    StepResult::Busy => anyhow::bail!("database is busy"),
+                }
+            }
+        }
+        // quoted select list and table name
+        let cols_str = cols
+            .iter()
+            .map(|c| quote_ident(c))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let select = format!("SELECT {cols_str} FROM {}", quote_ident(table_name));
+        // FIXME: sqlite has logic to check rowid and optionally preserve it, but it requires
+        // pragma index_list, and it seems to be relevant only for indexes.
+        if let Some(mut rows) = conn.query(select)? {
+            loop {
+                match rows.step()? {
+                    StepResult::Row => {
+                        let row = rows.row().unwrap();
+                        let mut vals = Vec::with_capacity(types.len());
+                        for (i, t) in types.iter().enumerate() {
+                            let v = row.get::<&Value>(i)?;
+                            let s =
+                                if t.contains("CHAR") || t.contains("CLOB") || t.contains("TEXT") {
+                                    let mut s = String::new();
+                                    s.push('\'');
+                                    s.push_str(&v.to_string().replace('\'', "''"));
+                                    s.push('\'');
+                                    s
+                                } else if t.contains("BLOB") {
+                                    match v {
+                                        Value::Blob(b) => {
+                                            let mut s = String::with_capacity(2 + b.len() * 2);
+                                            s.push_str("X'");
+                                            for byte in b {
+                                                use std::fmt::Write as _;
+                                                let _ = write!(&mut s, "{byte:02x}");
+                                            }
+                                            s.push('\'');
+                                            s
+                                        }
+                                        _ => "X''".to_string(),
+                                    }
+                                } else {
+                                    v.to_string()
+                                };
+                            vals.push(s);
+                        }
+                        writeln!(
+                            out,
+                            "INSERT INTO {} VALUES({});",
+                            quote_ident(table_name),
+                            vals.join(",")
+                        )?;
+                    }
+                    StepResult::IO => rows.run_once()?,
+                    StepResult::Done | StepResult::Interrupt => break,
+                    StepResult::Busy => anyhow::bail!("database is busy"),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn dump_sqlite_sequence<W: Write>(conn: &Arc<Connection>, out: &mut W) -> anyhow::Result<()> {
+        let mut has_seq = false;
+        if let Some(mut rows) =
+            conn.query("SELECT 1 FROM sqlite_schema WHERE name='sqlite_sequence' AND type='table'")?
+        {
+            loop {
+                match rows.step()? {
+                    StepResult::Row => {
+                        has_seq = true;
+                    }
+                    StepResult::IO => rows.run_once()?,
+                    StepResult::Done | StepResult::Interrupt => break,
+                    StepResult::Busy => anyhow::bail!("database is busy"),
+                }
+            }
+        }
+        if !has_seq {
+            return Ok(());
+        }
+
+        writeln!(out, "DELETE FROM sqlite_sequence;")?;
+        if let Some(mut rows) = conn.query("SELECT name, seq FROM sqlite_sequence")? {
+            loop {
+                match rows.step()? {
+                    StepResult::Row => {
+                        let r = rows.row().unwrap();
+                        let name = r.get::<&str>(0)?;
+                        let seq = r.get::<i64>(1)?;
+                        writeln!(
+                            out,
+                            "INSERT INTO sqlite_sequence(name,seq) VALUES({},{});",
+                            quote_ident(name),
+                            seq
+                        )?;
+                    }
+                    StepResult::IO => rows.run_once()?,
+                    StepResult::Done | StepResult::Interrupt => break,
+                    StepResult::Busy => anyhow::bail!("database is busy"),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn dump_schema_objects<W: Write, P: ProgressSink>(
+        conn: &Arc<Connection>,
+        out: &mut W,
+        progress: &mut P,
+    ) -> anyhow::Result<()> {
+        // SQLite’s shell usually emits views after tables.
+        // Emit only user objects: sql NOT NULL and name NOT LIKE 'sqlite_%'
+        let sql = r#"
+            SELECT name, sql FROM sqlite_schema
+            WHERE sql NOT NULL
+              AND name NOT LIKE 'sqlite_%'
+              AND type IN ('index','trigger','view')
+            ORDER BY CASE type WHEN 'view' THEN 1 WHEN 'index' THEN 2 WHEN 'trigger' THEN 3 END, rowid
+        "#;
+        if let Some(mut rows) = conn.query(sql)? {
+            loop {
+                match rows.step()? {
+                    StepResult::Row => {
+                        let row = rows.row().unwrap();
+                        let ddl: &str = row.get::<&str>(1)?;
+                        let name: &str = row.get::<&str>(0)?;
+                        progress.on(name);
+                        writeln!(out, "{ddl};")?;
+                    }
+                    StepResult::IO => rows.run_once()?,
+                    StepResult::Done | StepResult::Interrupt => break,
+                    StepResult::Busy => anyhow::bail!("database is busy"),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn dump_database(&mut self) -> anyhow::Result<()> {
+        // Move writer out so we don’t hold a field-borrow of self during the call.
+        let mut out = std::mem::take(&mut self.writer).unwrap();
+        let conn = self.conn.clone();
+        // dont print progress because it would interfere with piping output of .dump
+        let res = Self::dump_database_from_conn(conn, &mut out, NoopProgress);
+        // Put writer back
+        self.writer = Some(out);
+        res
+    }
+
+    fn clone_database(&mut self, output_file: &str) -> anyhow::Result<()> {
+        use std::path::Path;
+        if Path::new(output_file).exists() {
+            anyhow::bail!("Refusing to overwrite existing file: {output_file}");
+        }
+        let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new()?);
+        let db = Database::open_file(io.clone(), output_file, false, true)?;
+        let target = db.connect()?;
+
+        let mut applier = ApplyWriter::new(&target);
+        Self::dump_database_from_conn(self.conn.clone(), &mut applier, StderrProgress)?;
+        applier.finish()?;
+        Ok(())
+    }
+
     fn save_history(&mut self) {
         if let Some(rl) = &mut self.rl {
             let _ = rl.save_history(HISTORY_FILE.as_path());
         }
     }
+}
+
+fn quote_ident(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for ch in s.chars() {
+        if ch == '"' {
+            out.push('"');
+        }
+        out.push(ch);
+    }
+    out.push('"');
+    out
 }
 
 impl Drop for Limbo {

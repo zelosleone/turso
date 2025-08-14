@@ -5,6 +5,7 @@ use std::{
     io::{self, Write},
     sync::Arc,
 };
+use turso_core::{LimboError, StepResult};
 
 #[derive(Copy, Clone)]
 pub enum DbLocation {
@@ -178,6 +179,95 @@ pub fn get_io(db_location: DbLocation, io_choice: &str) -> anyhow::Result<Arc<dy
             }
         }
     })
+}
+
+pub struct ApplyWriter<'a> {
+    target: &'a Arc<turso_core::Connection>,
+    // accumulates until we see a statement terminator
+    buf: String,
+}
+
+impl<'a> ApplyWriter<'a> {
+    pub fn new(target: &'a Arc<turso_core::Connection>) -> Self {
+        Self {
+            target,
+            buf: String::new(),
+        }
+    }
+
+    pub fn flush_complete_statements(&mut self) -> io::Result<()> {
+        // We emit statements with ";\n". Split conservatively on that
+        while let Some(idx) = self.buf.find(";\n") {
+            let stmt = self.buf[..idx + 1].to_string();
+            self.exec_stmt(&stmt)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+            self.buf.drain(..idx + 2);
+        }
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> io::Result<()> {
+        // Handle a trailing statement missing the final newline
+        if let Some(idx) = self.buf.rfind(';') {
+            if self.buf[idx..].starts_with(';') && self.buf[idx + 1..].trim().is_empty() {
+                let stmt = self.buf[..idx + 1].to_string();
+                self.exec_stmt(&stmt)
+                    .map_err(|e| io::Error::other(e.to_string()))?;
+                self.buf.clear();
+            }
+        }
+        Ok(())
+    }
+
+    fn exec_stmt(&self, sql: &str) -> Result<(), LimboError> {
+        match self.target.query(sql) {
+            Ok(Some(mut rows)) => loop {
+                match rows.step()? {
+                    StepResult::Row => {}
+                    StepResult::IO => {
+                        rows.run_once()?;
+                    }
+                    StepResult::Done => break,
+                    StepResult::Interrupt => break,
+                    StepResult::Busy => {
+                        return Err(LimboError::InternalError("target database is busy".into()))
+                    }
+                }
+            },
+            Ok(None) => {}
+            Err(e) => return Err(e),
+        }
+        Ok(())
+    }
+}
+
+pub trait ProgressSink {
+    fn on<S: Display>(&mut self, _p: S) {}
+}
+
+pub struct NoopProgress;
+impl ProgressSink for NoopProgress {}
+
+pub struct StderrProgress;
+
+impl ProgressSink for StderrProgress {
+    fn on<S: Display>(&mut self, s: S) {
+        eprintln!("{s}... done");
+    }
+}
+
+impl<'a> Write for ApplyWriter<'a> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        // TODO: for now .dump only writes valid UTF-8
+        self.buf.push_str(
+            std::str::from_utf8(data).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
+        );
+        self.flush_complete_statements()?;
+        Ok(data.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.flush_complete_statements()
+    }
 }
 
 pub const BEFORE_HELP_MSG: &str = r#"
