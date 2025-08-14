@@ -156,54 +156,54 @@ impl Page {
     }
 
     pub fn is_locked(&self) -> bool {
-        self.get().flags.load(Ordering::SeqCst) & PAGE_LOCKED != 0
+        self.get().flags.load(Ordering::Acquire) & PAGE_LOCKED != 0
     }
 
     pub fn set_locked(&self) {
-        self.get().flags.fetch_or(PAGE_LOCKED, Ordering::SeqCst);
+        self.get().flags.fetch_or(PAGE_LOCKED, Ordering::Acquire);
     }
 
     pub fn clear_locked(&self) {
-        self.get().flags.fetch_and(!PAGE_LOCKED, Ordering::SeqCst);
+        self.get().flags.fetch_and(!PAGE_LOCKED, Ordering::Release);
     }
 
     pub fn is_error(&self) -> bool {
-        self.get().flags.load(Ordering::SeqCst) & PAGE_ERROR != 0
+        self.get().flags.load(Ordering::Relaxed) & PAGE_ERROR != 0
     }
 
     pub fn set_error(&self) {
-        self.get().flags.fetch_or(PAGE_ERROR, Ordering::SeqCst);
+        self.get().flags.fetch_or(PAGE_ERROR, Ordering::Release);
     }
 
     pub fn clear_error(&self) {
-        self.get().flags.fetch_and(!PAGE_ERROR, Ordering::SeqCst);
+        self.get().flags.fetch_and(!PAGE_ERROR, Ordering::Release);
     }
 
     pub fn is_dirty(&self) -> bool {
-        self.get().flags.load(Ordering::SeqCst) & PAGE_DIRTY != 0
+        self.get().flags.load(Ordering::Acquire) & PAGE_DIRTY != 0
     }
 
     pub fn set_dirty(&self) {
         tracing::debug!("set_dirty(page={})", self.get().id);
-        self.get().flags.fetch_or(PAGE_DIRTY, Ordering::SeqCst);
+        self.get().flags.fetch_or(PAGE_DIRTY, Ordering::Release);
     }
 
     pub fn clear_dirty(&self) {
         tracing::debug!("clear_dirty(page={})", self.get().id);
-        self.get().flags.fetch_and(!PAGE_DIRTY, Ordering::SeqCst);
+        self.get().flags.fetch_and(!PAGE_DIRTY, Ordering::Release);
     }
 
     pub fn is_loaded(&self) -> bool {
-        self.get().flags.load(Ordering::SeqCst) & PAGE_LOADED != 0
+        self.get().flags.load(Ordering::Acquire) & PAGE_LOADED != 0
     }
 
     pub fn set_loaded(&self) {
-        self.get().flags.fetch_or(PAGE_LOADED, Ordering::SeqCst);
+        self.get().flags.fetch_or(PAGE_LOADED, Ordering::Release);
     }
 
     pub fn clear_loaded(&self) {
         tracing::debug!("clear loaded {}", self.get().id);
-        self.get().flags.fetch_and(!PAGE_LOADED, Ordering::SeqCst);
+        self.get().flags.fetch_and(!PAGE_LOADED, Ordering::Release);
     }
 
     pub fn is_index(&self) -> bool {
@@ -234,7 +234,7 @@ impl Page {
     pub fn try_unpin(&self) -> bool {
         self.get()
             .pin_count
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            .fetch_update(Ordering::Release, Ordering::Relaxed, |current| {
                 if current == 0 {
                     None
                 } else {
@@ -245,7 +245,7 @@ impl Page {
     }
 
     pub fn is_pinned(&self) -> bool {
-        self.get().pin_count.load(Ordering::SeqCst) > 0
+        self.get().pin_count.load(Ordering::Acquire) > 0
     }
 }
 
@@ -336,12 +336,12 @@ impl AtomicDbState {
 
     #[inline]
     pub fn set(&self, state: DbState) {
-        self.0.store(state as usize, Ordering::SeqCst);
+        self.0.store(state as usize, Ordering::Release);
     }
 
     #[inline]
     pub fn get(&self) -> DbState {
-        let v = self.0.load(Ordering::SeqCst);
+        let v = self.0.load(Ordering::Acquire);
         match v {
             DbState::UNINITIALIZED => DbState::Uninitialized,
             DbState::INITIALIZING => DbState::Initializing,
@@ -1010,13 +1010,13 @@ impl Pager {
     ) -> Result<(PageRef, Completion)> {
         tracing::trace!("read_page_no_cache(page_idx = {})", page_idx);
         let page = Arc::new(Page::new(page_idx));
-        page.set_locked();
 
         let Some(wal) = self.wal.as_ref() else {
             turso_assert!(
                 matches!(frame_watermark, Some(0) | None),
                 "frame_watermark must be either None or Some(0) because DB has no WAL and read with other watermark is invalid"
             );
+            page.set_locked();
             let c = self.begin_read_disk_page(page_idx, page.clone(), allow_empty_read)?;
             return Ok((page, c));
         };
