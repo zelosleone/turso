@@ -1450,7 +1450,7 @@ impl Limbo {
                         writeln!(
                             out,
                             "INSERT INTO sqlite_sequence(name,seq) VALUES({},{});",
-                            quote_ident(name),
+                            sql_quote_string(name),
                             seq
                         )?;
                     }
@@ -1542,6 +1542,18 @@ fn quote_ident(s: &str) -> String {
     out
 }
 
+fn sql_quote_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('\'');
+    for ch in s.chars() {
+        if ch == '\'' {
+            out.push('\'');
+        } // escape as ''
+        out.push(ch);
+    }
+    out.push('\'');
+    out
+}
 impl Drop for Limbo {
     fn drop(&mut self) {
         self.save_history()
