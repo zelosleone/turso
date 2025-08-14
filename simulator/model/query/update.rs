@@ -13,6 +13,12 @@ pub(crate) struct Update {
     pub(crate) predicate: Predicate,
 }
 
+impl Update {
+    pub fn table(&self) -> &str {
+        &self.table
+    }
+}
+
 impl Shadow for Update {
     type Result = anyhow::Result<Vec<Vec<SimValue>>>;
 

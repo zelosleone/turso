@@ -58,6 +58,19 @@ pub(crate) enum Property {
         /// Interactive query information if any
         interactive: Option<InteractiveQueryInfo>,
     },
+    /// ReadYourUpdatesBack is a property in which the updated rows
+    /// must be in the resulting rows of a select query that has a
+    /// where clause that matches the updated row.
+    /// The execution of the property is as follows
+    ///     UPDATE <t> SET <set_cols=set_vals> WHERE <predicate>
+    ///     SELECT <set_cols> FROM <t> WHERE <predicate>
+    /// These interactions are executed in immediate succession
+    /// just to verify the property that our updates did what they
+    /// were supposed to do.
+    ReadYourUpdatesBack {
+        update: Update,
+        select: Select,
+    },
     /// Double Create Failure is a property in which creating
     /// the same table twice leads to an error.
     /// The execution of the property is as follows
@@ -182,6 +195,7 @@ impl Property {
     pub(crate) fn name(&self) -> &str {
         match self {
             Property::InsertValuesSelect { .. } => "Insert-Values-Select",
+            Property::ReadYourUpdatesBack { .. } => "Read-Your-Updates-Back",
             Property::DoubleCreateFailure { .. } => "Double-Create-Failure",
             Property::SelectLimit { .. } => "Select-Limit",
             Property::DeleteSelect { .. } => "Delete-Select",
@@ -198,6 +212,56 @@ impl Property {
     /// and `interaction` cannot be serialized directly.
     pub(crate) fn interactions(&self) -> Vec<Interaction> {
         match self {
+            Property::ReadYourUpdatesBack { update, select } => {
+                let table = update.table().to_string();
+                let assumption = Interaction::Assumption(Assertion {
+                    name: format!("table {} exists", table.clone()),
+                    func: Box::new(move |_: &Vec<ResultSet>, env: &mut SimulatorEnv| {
+                        if env.tables.iter().any(|t| t.name == table.clone()) {
+                            Ok(Ok(()))
+                        } else {
+                            Ok(Err(format!("table {} does not exist", table.clone())))
+                        }
+                    }),
+                });
+
+                let update_interaction = Interaction::Query(Query::Update(update.clone()));
+                let select_interaction = Interaction::Query(Query::Select(select.clone()));
+
+                let update = update.clone();
+
+                let table = update.table().to_string();
+
+                let assertion = Interaction::Assertion(Assertion {
+                    name: format!(
+                        "updated rows should be found and have the updated values for table {}",
+                        table.clone()
+                    ),
+                    func: Box::new(move |stack: &Vec<ResultSet>, _| {
+                        let rows = stack.last().unwrap();
+                        match rows {
+                            Ok(rows) => {
+                                for row in rows {
+                                    for (i, (col, val)) in update.set_values.iter().enumerate() {
+                                        if &row[i] != val {
+                                            return Ok(Err(format!("updated row {} has incorrect value for column {col}: expected {val}, got {}", i, row[i])));
+                                        }
+                                    }
+                                }
+                                Ok(Ok(()))
+                            }
+                            Err(err) => Err(LimboError::InternalError(err.to_string())),
+                        }
+                    }),
+                });
+
+                vec![
+                    assumption,
+                    update_interaction,
+                    select_interaction,
+                    assertion,
+                ]
+            }
             Property::InsertValuesSelect {
                 insert,
                 row_index,
@@ -1037,6 +1101,24 @@ fn property_insert_values_select<R: rand::Rng>(
     }
 }
 
+fn property_read_your_updates_back<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Property {
+    // e.g. UPDATE t SET a=1, b=2 WHERE c=1;
+    let update = Update::arbitrary_from(rng, env);
+    // e.g. SELECT a, b FROM t WHERE c=1;
+    let select = Select::single(
+        update.table().to_string(),
+        update
+            .set_values
+            .iter()
+            .map(|(col, _)| ResultColumn::Column(col.clone()))
+            .collect(),
+        update.predicate.clone(),
+        None,
+        Distinctness::All,
+    );
+
+    Property::ReadYourUpdatesBack { update, select }
+}
 fn property_select_limit<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Property {
     // Get a random table
     let table = pick(&env.tables, rng);
@@ -1273,6 +1355,10 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
                         0.0
                     },
                     Box::new(|rng: &mut R| property_insert_values_select(rng, env, &remaining_)),
+                ),
+                (
+                    f64::min(remaining_.read, remaining_.write),
+                    Box::new(|rng: &mut R| property_read_your_updates_back(rng, env)),
                 ),
                 (
                     if !env.opts.disable_double_create_failure {

@@ -78,6 +78,7 @@ impl InteractionPlan {
                             | Property::WhereTrueFalseNull { .. }
                             | Property::UNIONAllPreservesCardinality { .. }
                             | Property::FsyncNoWait { .. }
+                            | Property::ReadYourUpdatesBack { .. }
                             | Property::FaultyQuery { .. } => {}
                         }
                     }
@@ -199,7 +200,8 @@ impl InteractionPlan {
                     | Property::SelectLimit { .. }
                     | Property::SelectSelectOptimizer { .. }
                     | Property::FaultyQuery { .. }
-                    | Property::FsyncNoWait { .. } => {}
+                    | Property::FsyncNoWait { .. }
+                    | Property::ReadYourUpdatesBack { .. } => {}
                 }
             }
         }
