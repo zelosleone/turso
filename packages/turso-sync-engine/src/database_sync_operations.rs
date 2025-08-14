@@ -122,7 +122,7 @@ pub async fn wal_pull<'a, C: ProtocolIO, U: AsyncFnMut(&'a Coro, u64) -> Result<
     end_frame: u64,
     mut update: U,
 ) -> Result<WalPullResult> {
-    tracing::debug!(
+    tracing::info!(
         "wal_pull: generation={}, start_frame={}, end_frame={}",
         generation,
         start_frame,
@@ -209,7 +209,7 @@ pub async fn wal_push<C: ProtocolIO>(
     end_frame: u64,
 ) -> Result<WalPushResult> {
     assert!(wal_session.in_txn());
-    tracing::debug!("wal_push: baton={baton:?}, generation={generation}, start_frame={start_frame}, end_frame={end_frame}");
+    tracing::info!("wal_push: baton={baton:?}, generation={generation}, start_frame={start_frame}, end_frame={end_frame}");
 
     if start_frame == end_frame {
         return Ok(WalPushResult::Ok { baton: None });
@@ -254,7 +254,8 @@ pub async fn wal_push<C: ProtocolIO>(
     }
 }
 
-const TURSO_SYNC_META_TABLE: &str =
+const TURSO_SYNC_TABLE_NAME: &str = "turso_sync_last_change_id";
+const TURSO_SYNC_CREATE_TABLE: &str =
     "CREATE TABLE IF NOT EXISTS turso_sync_last_change_id (client_id TEXT PRIMARY KEY, pull_gen INTEGER, change_id INTEGER)";
 const TURSO_SYNC_SELECT_LAST_CHANGE_ID: &str =
     "SELECT pull_gen, change_id FROM turso_sync_last_change_id WHERE client_id = ?";
@@ -272,7 +273,7 @@ pub async fn transfer_logical_changes(
     client_id: &str,
     bump_pull_gen: bool,
 ) -> Result<()> {
-    tracing::debug!("transfer_logical_changes: client_id={client_id}");
+    tracing::info!("transfer_logical_changes: client_id={client_id}");
     let source_conn = connect_untracked(source)?;
     let target_conn = connect_untracked(target)?;
 
@@ -293,17 +294,17 @@ pub async fn transfer_logical_changes(
                 Error::DatabaseSyncEngineError("unexpected source pull_gen type".to_string())
             })?,
             None => {
-                tracing::debug!("transfer_logical_changes: client_id={client_id}, turso_sync_last_change_id table is not found");
+                tracing::info!("transfer_logical_changes: client_id={client_id}, turso_sync_last_change_id table is not found");
                 0
             }
         }
     };
-    tracing::debug!(
+    tracing::info!(
         "transfer_logical_changes: client_id={client_id}, source_pull_gen={source_pull_gen}"
     );
 
     // fetch last_change_id from the target DB in order to guarantee atomic replay of changes and avoid conflicts in case of failure
-    let mut schema_stmt = target_conn.prepare(TURSO_SYNC_META_TABLE)?;
+    let mut schema_stmt = target_conn.prepare(TURSO_SYNC_CREATE_TABLE)?;
     exec_stmt(coro, &mut schema_stmt).await?;
 
     let mut select_last_change_id_stmt = target_conn.prepare(TURSO_SYNC_SELECT_LAST_CHANGE_ID)?;
@@ -361,17 +362,19 @@ pub async fn transfer_logical_changes(
     };
     let mut rows_changed = 0;
     let mut changes = source.iterate_changes(iterate_opts)?;
-    let mut updated = false;
     while let Some(operation) = changes.next(coro).await? {
         match &operation {
             DatabaseTapeOperation::RowChange(change) => {
-                rows_changed += 1;
                 assert!(
                     last_change_id.is_none() || last_change_id.unwrap() < change.change_id,
                     "change id must be strictly increasing: last_change_id={:?}, change.change_id={}",
                     last_change_id,
                     change.change_id
                 );
+                if change.table_name == TURSO_SYNC_TABLE_NAME {
+                    continue;
+                }
+                rows_changed += 1;
                 // we give user full control over CDC table - so let's not emit assert here for now
                 if last_change_id.is_some() && last_change_id.unwrap() + 1 != change.change_id {
                     tracing::warn!(
@@ -381,10 +384,9 @@ pub async fn transfer_logical_changes(
                     );
                 }
                 last_change_id = Some(change.change_id);
-                updated = true;
             }
-            DatabaseTapeOperation::Commit if updated || bump_pull_gen => {
-                tracing::debug!("prepare update stmt for turso_sync_last_change_id table with client_id={} and last_change_id={:?}", client_id, last_change_id);
+            DatabaseTapeOperation::Commit if rows_changed > 0 || bump_pull_gen => {
+                tracing::info!("prepare update stmt for turso_sync_last_change_id table with client_id={} and last_change_id={:?}", client_id, last_change_id);
                 // update turso_sync_last_change_id table with new value before commit
                 let mut set_last_change_id_stmt =
                     session.conn().prepare(TURSO_SYNC_UPDATE_LAST_CHANGE_ID)?;
@@ -393,7 +395,7 @@ pub async fn transfer_logical_changes(
                 } else {
                     (source_pull_gen, last_change_id.unwrap_or(0))
                 };
-                tracing::debug!("transfer_logical_changes: client_id={client_id}, set pull_gen={next_pull_gen}, change_id={next_change_id}");
+                tracing::info!("transfer_logical_changes: client_id={client_id}, set pull_gen={next_pull_gen}, change_id={next_change_id}, rows_changed={rows_changed}");
                 set_last_change_id_stmt
                     .bind_at(1.try_into().unwrap(), Value::Integer(next_pull_gen));
                 set_last_change_id_stmt
@@ -401,7 +403,6 @@ pub async fn transfer_logical_changes(
                 set_last_change_id_stmt
                     .bind_at(3.try_into().unwrap(), Value::Text(Text::new(client_id)));
                 exec_stmt(coro, &mut set_last_change_id_stmt).await?;
-
                 let session_schema_cookie = session.conn().read_schema_version()?;
                 if session_schema_cookie <= source_schema_cookie {
                     session
@@ -414,7 +415,7 @@ pub async fn transfer_logical_changes(
         session.replay(coro, operation).await?;
     }
 
-    tracing::debug!("transfer_logical_changes: rows_changed={:?}", rows_changed);
+    tracing::info!("transfer_logical_changes: rows_changed={:?}", rows_changed);
     Ok(())
 }
 
@@ -428,7 +429,7 @@ pub async fn transfer_physical_changes(
     source_sync_watermark: u64,
     target_wal_match_watermark: u64,
 ) -> Result<u64> {
-    tracing::debug!("transfer_physical_changes: source_wal_match_watermark={source_wal_match_watermark}, source_sync_watermark={source_sync_watermark}, target_wal_match_watermark={target_wal_match_watermark}");
+    tracing::info!("transfer_physical_changes: source_wal_match_watermark={source_wal_match_watermark}, source_sync_watermark={source_sync_watermark}, target_wal_match_watermark={target_wal_match_watermark}");
 
     let source_conn = connect(coro, source).await?;
     let mut source_session = WalSession::new(source_conn.clone());
@@ -454,7 +455,7 @@ pub async fn transfer_physical_changes(
         let mut last_frame_info = None;
         let mut frame = vec![0u8; WAL_FRAME_SIZE];
         let mut target_sync_watermark = target_session.frames_count()?;
-        tracing::debug!(
+        tracing::info!(
             "transfer_physical_changes: start={}, end={}",
             source_wal_match_watermark + 1,
             source_frames_count
@@ -465,7 +466,7 @@ pub async fn transfer_physical_changes(
             target_session.append_page(frame_info.page_no, &frame[WAL_FRAME_HEADER..])?;
             if source_frame_no == source_sync_watermark {
                 target_sync_watermark = target_session.frames_count()? + 1; // +1 because page will be actually commited on next iteration
-                tracing::debug!("set target_sync_watermark to {}", target_sync_watermark);
+                tracing::info!("set target_sync_watermark to {}", target_sync_watermark);
             }
             last_frame_info = Some(frame_info);
         }
@@ -653,12 +654,16 @@ pub mod tests {
 
         let mut gen = genawaiter::sync::Gen::new(|coro| async move {
             let conn1 = db1.connect(&coro).await?;
-            conn1.execute("CREATE TABLE t(x, y)")?;
-            conn1.execute("INSERT INTO t VALUES (1, 2), (3, 4), (5, 6)")?;
+            conn1.execute("CREATE TABLE t(x, y)").unwrap();
+            conn1
+                .execute("INSERT INTO t VALUES (1, 2), (3, 4), (5, 6)")
+                .unwrap();
 
-            let conn2 = db2.connect(&coro).await?;
+            let conn2 = db2.connect(&coro).await.unwrap();
 
-            transfer_logical_changes(&coro, &db1, &db2, "id-1", false).await?;
+            transfer_logical_changes(&coro, &db1, &db2, "id-1", false)
+                .await
+                .unwrap();
 
             let mut rows = Vec::new();
             let mut stmt = conn2.prepare("SELECT x, y FROM t").unwrap();
@@ -674,8 +679,10 @@ pub mod tests {
                 ]
             );
 
-            conn1.execute("INSERT INTO t VALUES (7, 8)")?;
-            transfer_logical_changes(&coro, &db1, &db2, "id-1", false).await?;
+            conn1.execute("INSERT INTO t VALUES (7, 8)").unwrap();
+            transfer_logical_changes(&coro, &db1, &db2, "id-1", false)
+                .await
+                .unwrap();
 
             let mut rows = Vec::new();
             let mut stmt = conn2.prepare("SELECT x, y FROM t").unwrap();

@@ -45,7 +45,7 @@ async fn update_meta<IO: ProtocolIO>(
 ) -> Result<()> {
     let mut meta = orig.as_ref().unwrap().clone();
     update(&mut meta);
-    tracing::debug!("update_meta: {meta:?}");
+    tracing::info!("update_meta: {meta:?}");
     let completion = io.full_write(meta_path, meta.dump()?)?;
     // todo: what happen if we will actually update the metadata on disk but fail and so in memory state will not be updated
     wait_full_body(coro, &completion).await?;
@@ -60,7 +60,7 @@ async fn set_meta<IO: ProtocolIO>(
     orig: &mut Option<DatabaseMetadata>,
     meta: DatabaseMetadata,
 ) -> Result<()> {
-    tracing::debug!("set_meta: {meta:?}");
+    tracing::info!("set_meta: {meta:?}");
     let completion = io.full_write(meta_path, meta.dump()?)?;
     // todo: what happen if we will actually update the metadata on disk but fail and so in memory state will not be updated
     wait_full_body(coro, &completion).await?;
@@ -103,7 +103,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
     /// This method will **not** send local changed to the remote
     /// This method will block writes for the period of pull
     pub async fn pull(&mut self, coro: &Coro) -> Result<()> {
-        tracing::debug!(
+        tracing::info!(
             "pull: draft={}, synced={}",
             self.draft_path,
             self.synced_path
@@ -120,7 +120,6 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
                 // we will "replay" Synced WAL to the Draft WAL later without pushing it to the remote
                 // so, we pass 'capture: true' as we need to preserve all changes for future push of WAL
                 let synced = self.io.open_tape(&self.synced_path, true)?;
-                tracing::info!("opened synced");
 
                 // we will start wal write session for Draft DB in order to hold write lock during transfer of changes
                 let mut draft_session = WalSession::new(connect(coro, &self.draft_tape).await?);
@@ -168,7 +167,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
             let WalPullResult::NeedCheckpoint = pull_result else {
                 break;
             };
-            tracing::debug!(
+            tracing::info!(
                 "ready to checkpoint synced db file at {:?}, generation={}",
                 self.synced_path,
                 self.meta().synced_generation
@@ -198,7 +197,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
     /// This method will **not** pull remote changes to the local DB
     /// This method will **not** block writes for the period of sync
     pub async fn push(&mut self, coro: &Coro) -> Result<()> {
-        tracing::debug!(
+        tracing::info!(
             "push: draft={}, synced={}",
             self.draft_path,
             self.synced_path
@@ -221,6 +220,8 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
         transfer_logical_changes(coro, &self.draft_tape, &synced, client_id, false).await?;
 
         self.push_synced_to_remote(coro).await?;
+
+        self.reset_synced_if_dirty(coro).await?;
         Ok(())
     }
 
@@ -235,7 +236,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
     }
 
     async fn init(&mut self, coro: &Coro) -> Result<()> {
-        tracing::debug!(
+        tracing::info!(
             "initialize sync engine: draft={}, synced={}, opts={:?}",
             self.draft_path,
             self.synced_path,
@@ -256,7 +257,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
             }
             None => {
                 let meta = self.bootstrap_db_files(coro).await?;
-                tracing::debug!("write meta after successful bootstrap: meta={meta:?}");
+                tracing::info!("write meta after successful bootstrap: meta={meta:?}");
                 set_meta(
                     coro,
                     self.protocol.as_ref(),
@@ -283,7 +284,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
     }
 
     async fn pull_synced_from_remote(&mut self, coro: &Coro) -> Result<WalPullResult> {
-        tracing::debug!(
+        tracing::info!(
             "pull_synced_from_remote: draft={:?}, synced={:?}",
             self.draft_path,
             self.synced_path,
@@ -328,7 +329,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
     }
 
     async fn push_synced_to_remote(&mut self, coro: &Coro) -> Result<()> {
-        tracing::debug!(
+        tracing::info!(
             "push_synced_to_remote: draft={}, synced={}, id={}",
             self.draft_path,
             self.synced_path,
@@ -379,7 +380,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
             self.meta.is_none(),
             "bootstrap_db_files must be called only when meta is not set"
         );
-        tracing::debug!(
+        tracing::info!(
             "bootstrap_db_files: draft={}, synced={}",
             self.draft_path,
             self.synced_path,
@@ -408,7 +409,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
         let db_info = db_bootstrap(coro, self.protocol.as_ref(), files).await?;
 
         let elapsed = std::time::Instant::now().duration_since(start_time);
-        tracing::debug!(
+        tracing::info!(
             "bootstrap_db_files: finished draft={:?}, synced={:?}: elapsed={:?}",
             self.draft_path,
             self.synced_path,
@@ -426,7 +427,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
 
     /// Reset WAL of Synced database which potentially can have some local changes
     async fn reset_synced_if_dirty(&mut self, coro: &Coro) -> Result<()> {
-        tracing::debug!(
+        tracing::info!(
             "reset_synced: synced_path={:?}, synced_is_dirty={}",
             self.synced_path,
             self.synced_is_dirty
@@ -457,7 +458,7 @@ pub mod tests {
     use crate::{
         database_sync_engine::DatabaseSyncEngineOpts,
         errors::Error,
-        test_context::{FaultInjectionStrategy, TestContext},
+        test_context::{FaultInjectionPlan, FaultInjectionStrategy, TestContext},
         test_protocol_io::TestProtocolIo,
         test_sync_server::convert_rows,
         tests::{deterministic_runtime, seed_u64, TestRunner},
@@ -587,6 +588,105 @@ pub mod tests {
                     vec![turso::Value::Integer(2)],
                     vec![turso::Value::Integer(3)],
                     vec![turso::Value::Integer(4)],
+                ]
+            );
+        });
+    }
+
+    #[test]
+    pub fn test_sync_single_db_no_changes_no_push() {
+        deterministic_runtime(async || {
+            let io: Arc<dyn turso_core::IO> = Arc::new(turso_core::PlatformIO::new().unwrap());
+            let dir = tempfile::TempDir::new().unwrap();
+            let server_path = dir.path().join("server.db");
+            let ctx = Arc::new(TestContext::new(seed_u64()));
+            let protocol = TestProtocolIo::new(ctx.clone(), &server_path)
+                .await
+                .unwrap();
+            let mut runner = TestRunner::new(ctx.clone(), io, protocol.clone());
+            let local_path = dir.path().join("local.db").to_str().unwrap().to_string();
+            let opts = DatabaseSyncEngineOpts {
+                client_name: "id-1".to_string(),
+                wal_pull_batch_size: 1,
+            };
+            runner.init(&local_path, opts).await.unwrap();
+
+            protocol
+                .server
+                .execute("CREATE TABLE t(x INTEGER PRIMARY KEY)", ())
+                .await
+                .unwrap();
+            protocol
+                .server
+                .execute("INSERT INTO t VALUES (1)", ())
+                .await
+                .unwrap();
+
+            let conn = runner.connect().await.unwrap();
+
+            runner.sync().await.unwrap();
+            assert_eq!(
+                query_rows(&conn, "SELECT * FROM t").await.unwrap(),
+                vec![vec![turso::Value::Integer(1)]]
+            );
+
+            conn.execute("INSERT INTO t VALUES (100)", ())
+                .await
+                .unwrap();
+
+            protocol
+                .server
+                .execute("INSERT INTO t VALUES (2)", ())
+                .await
+                .unwrap();
+
+            runner.sync().await.unwrap();
+            assert_eq!(
+                query_rows(&conn, "SELECT * FROM t").await.unwrap(),
+                vec![
+                    vec![turso::Value::Integer(1)],
+                    vec![turso::Value::Integer(2)],
+                    vec![turso::Value::Integer(100)],
+                ]
+            );
+
+            protocol
+                .server
+                .execute("INSERT INTO t VALUES (3)", ())
+                .await
+                .unwrap();
+            runner.sync().await.unwrap();
+            assert_eq!(
+                query_rows(&conn, "SELECT * FROM t").await.unwrap(),
+                vec![
+                    vec![turso::Value::Integer(1)],
+                    vec![turso::Value::Integer(2)],
+                    vec![turso::Value::Integer(3)],
+                    vec![turso::Value::Integer(100)],
+                ]
+            );
+
+            ctx.switch_mode(FaultInjectionStrategy::Enabled {
+                plan: FaultInjectionPlan {
+                    is_fault: Box::new(|name, _| Box::pin(async move { name == "wal_push_start" })),
+                },
+            })
+            .await;
+
+            protocol
+                .server
+                .execute("INSERT INTO t VALUES (4)", ())
+                .await
+                .unwrap();
+            runner.sync().await.unwrap();
+            assert_eq!(
+                query_rows(&conn, "SELECT * FROM t").await.unwrap(),
+                vec![
+                    vec![turso::Value::Integer(1)],
+                    vec![turso::Value::Integer(2)],
+                    vec![turso::Value::Integer(3)],
+                    vec![turso::Value::Integer(4)],
+                    vec![turso::Value::Integer(100)],
                 ]
             );
         });
@@ -772,7 +872,7 @@ pub mod tests {
                 .await
                 .unwrap();
 
-            runner.pull().await.unwrap();
+            runner.sync().await.unwrap();
 
             // create connection in outer scope in order to prevent Database from being dropped in between of pull operations
             let conn = runner.connect().await.unwrap();
@@ -791,7 +891,7 @@ pub mod tests {
                 }
 
                 tracing::info!("pull attempt={}", attempt);
-                runner.pull().await.unwrap();
+                runner.sync().await.unwrap();
 
                 let expected = expected
                     .iter()
