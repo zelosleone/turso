@@ -1017,7 +1017,11 @@ pub fn write_pages_vectored(
             let runs_left_cl = runs_left.clone();
             let done_cl = done.clone();
 
-            let c = Completion::new_write(move |_| {
+            let total_sz = (page_sz * run_bufs.len()) as i32;
+            let c = Completion::new_write(move |res| {
+                // writev calls can sometimes return partial writes, but our `pwritev`
+                // implementation aggregates any partial writes and calls completion with total
+                turso_assert!(total_sz == res, "failed to write expected size");
                 if runs_left_cl.fetch_sub(1, Ordering::AcqRel) == 1 {
                     done_cl.store(true, Ordering::Release);
                 }
