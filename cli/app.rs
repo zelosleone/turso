@@ -1269,14 +1269,22 @@ impl Limbo {
     }
 
     pub fn dump_database_from_conn<W: Write, P: ProgressSink>(
+        fk: bool,
         conn: Arc<Connection>,
         out: &mut W,
         mut progress: P,
     ) -> anyhow::Result<()> {
         // Snapshot for consistency
         Self::exec_all_conn(&conn, "BEGIN")?;
+        // FIXME: we don't yet support PRAGMA foreign_keys=OFF internally,
+        // so for now this hacky boolean that decides not to emit it when cloning
+        if fk {
+            writeln!(out, "PRAGMA foreign_keys=OFF")?;
+        }
         writeln!(out, "BEGIN TRANSACTION;")?;
-
+        // FIXME: At this point, SQLite executes the following:
+        // sqlite3_exec(p->db, "SAVEPOINT dump; PRAGMA writable_schema=ON", 0, 0, 0);
+        // we don't have those yet, so don't.
         let q_tables = r#"
         SELECT name, sql
         FROM sqlite_schema
@@ -1493,7 +1501,7 @@ impl Limbo {
         let mut out = std::mem::take(&mut self.writer).unwrap();
         let conn = self.conn.clone();
         // dont print progress because it would interfere with piping output of .dump
-        let res = Self::dump_database_from_conn(conn, &mut out, NoopProgress);
+        let res = Self::dump_database_from_conn(true, conn, &mut out, NoopProgress);
         // Put writer back
         self.writer = Some(out);
         res
@@ -1509,7 +1517,7 @@ impl Limbo {
         let target = db.connect()?;
 
         let mut applier = ApplyWriter::new(&target);
-        Self::dump_database_from_conn(self.conn.clone(), &mut applier, StderrProgress)?;
+        Self::dump_database_from_conn(false, self.conn.clone(), &mut applier, StderrProgress)?;
         applier.finish()?;
         Ok(())
     }
