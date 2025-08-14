@@ -25,7 +25,12 @@ impl Arbitrary for Create {
 
 impl ArbitraryFrom<&Vec<Table>> for FromClause {
     fn arbitrary_from<R: Rng>(rng: &mut R, tables: &Vec<Table>) -> Self {
-        let query_size = (rng.gen_range(0.0..=15.0_f32).log2().ceil() as usize).saturating_sub(2);
+        let num_joins = match rng.gen_range(0..=100) {
+            0..=80 => 0,
+            81..=95 => 1,
+            96..=100 => 2,
+            _ => unreachable!(),
+        };
 
         let mut tables = tables.clone();
         let mut table = pick(&tables, rng).clone();
@@ -34,7 +39,7 @@ impl ArbitraryFrom<&Vec<Table>> for FromClause {
 
         let name = table.name.clone();
 
-        let joins: Vec<_> = (0..query_size)
+        let joins: Vec<_> = (0..num_joins)
             .filter_map(|_| {
                 if tables.is_empty() {
                     return None;
@@ -172,22 +177,25 @@ impl ArbitraryFrom<&SimulatorEnv> for SelectFree {
 
 impl ArbitraryFrom<&SimulatorEnv> for Select {
     fn arbitrary_from<R: Rng>(rng: &mut R, env: &SimulatorEnv) -> Self {
-        let query_size = (rng.gen_range(0.0..=15.0_f32).log2().ceil() as usize).saturating_sub(2);
-
         let table = pick(&env.tables, rng);
 
         // Generate a number of selects based on the query size
         // If experimental indexes are enabled, we can have selects with compounds
         // Otherwise, we just have a single select with no compounds
-        let num_selects = if env.opts.experimental_indexes {
-            rng.gen_range(0..=query_size)
+        let num_compound_selects = if env.opts.experimental_indexes {
+            match rng.gen_range(0..=100) {
+                0..=90 => 0,
+                91..=97 => 1,
+                98..=100 => 2,
+                _ => unreachable!(),
+            }
         } else {
             0
         };
 
         let first = SelectInner::arbitrary_from(rng, env);
 
-        let rest: Vec<SelectInner> = (0..num_selects)
+        let rest: Vec<SelectInner> = (0..num_compound_selects)
             .map(|_| {
                 let mut select = first.clone();
                 select.where_clause = Predicate::arbitrary_from(rng, table);
