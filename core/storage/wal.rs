@@ -1313,9 +1313,8 @@ impl WalFile {
             if hdr.page_size == 0 {
                 hdr.page_size = page_size.get();
             }
-            if hdr.salt_1 == 0 {
+            if hdr.salt_1 == 0 && hdr.salt_2 == 0 {
                 hdr.salt_1 = self.io.generate_random_number() as u32;
-                turso_assert!(hdr.salt_2 == 0, "salt_2 must be zero");
                 hdr.salt_2 = self.io.generate_random_number() as u32;
             }
 
