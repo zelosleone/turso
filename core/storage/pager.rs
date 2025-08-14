@@ -1415,6 +1415,9 @@ impl Pager {
                     }))?)?;
             }
             checkpoint_result.release_guard();
+        } else if checkpoint_result.num_backfilled != 0 {
+            self.io
+                .wait_for_completion(self.db_file.sync(Completion::new_sync(move |_| {}))?)?;
         }
 
         // TODO: only clear cache of things that are really invalidated
