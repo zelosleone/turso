@@ -58,44 +58,6 @@ pub trait File: Send + Sync {
     }
     fn size(&self) -> Result<u64>;
     fn truncate(&self, len: usize, c: Completion) -> Result<Completion>;
-    fn copy_to(&self, src_io: &dyn IO, dest_io: &dyn IO, path: &str) -> Result<()> {
-        // Open or create the destination file
-        let dest_file = dest_io.open_file(path, OpenFlags::Create, false)?;
-        // Get the size of the source file
-        let file_size = self.size()? as usize;
-        if file_size == 0 {
-            return Ok(());
-        }
-
-        // use 1MB chunk size
-        const BUFFER_SIZE: usize = 1024 * 1024;
-        let mut pos = 0;
-
-        while pos < file_size {
-            let chunk_size = (file_size - pos).min(BUFFER_SIZE);
-            // Read from source
-            let read_buffer = Arc::new(Buffer::new_temporary(chunk_size));
-            let read_completion = self.pread(
-                pos,
-                Completion::new_read(read_buffer.clone(), move |_, _| {}),
-            )?;
-
-            // Wait for read to complete
-            src_io.wait_for_completion(read_completion)?;
-
-            // Write to destination
-            let write_completion =
-                dest_file.pwrite(pos, read_buffer, Completion::new_write(|_| {}))?;
-            dest_io.wait_for_completion(write_completion)?;
-
-            pos += chunk_size;
-        }
-        let sync_completion = dest_file.sync(Completion::new_sync(|_| {}))?;
-
-        dest_io.wait_for_completion(sync_completion)?;
-
-        Ok(())
-    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

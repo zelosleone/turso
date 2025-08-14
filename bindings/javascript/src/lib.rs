@@ -530,12 +530,4 @@ impl turso_core::DatabaseStorage for DatabaseFile {
         let c = self.file.truncate(len, c)?;
         Ok(c)
     }
-    fn copy_to(
-        &self,
-        src_io: &dyn turso_core::IO,
-        dest_io: &dyn turso_core::IO,
-        path: &str,
-    ) -> turso_core::Result<()> {
-        self.file.copy_to(src_io, dest_io, path)
-    }
 }
