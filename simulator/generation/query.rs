@@ -184,9 +184,9 @@ impl ArbitraryFrom<&SimulatorEnv> for Select {
         // Otherwise, we just have a single select with no compounds
         let num_compound_selects = if env.opts.experimental_indexes {
             match rng.gen_range(0..=100) {
-                0..=90 => 0,
-                91..=97 => 1,
-                98..=100 => 2,
+                0..=95 => 0,
+                96..=99 => 1,
+                100 => 2,
                 _ => unreachable!(),
             }
         } else {
