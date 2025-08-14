@@ -473,6 +473,9 @@ impl DatabaseFile {
 }
 
 impl turso_core::DatabaseStorage for DatabaseFile {
+    fn read_header(&self, c: turso_core::Completion) -> turso_core::Result<turso_core::Completion> {
+        self.file.pread(0, c)
+    }
     fn read_page(
         &self,
         page_idx: usize,
