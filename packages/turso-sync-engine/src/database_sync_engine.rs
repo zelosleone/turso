@@ -15,7 +15,7 @@ use crate::{
     Result,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DatabaseSyncEngineOpts {
     pub client_name: String,
     pub wal_pull_batch_size: u64,
