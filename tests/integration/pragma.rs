@@ -110,6 +110,9 @@ fn test_pragma_page_sizes_with_writes_persists() {
                     .unwrap();
                 conn.execute("INSERT INTO test (id, value) VALUES (1, 'test data')")
                     .unwrap();
+                // Insert a big blob just as a small smoke test that our btree handles this well with different page sizes.
+                conn.execute("INSERT INTO test (id, value) VALUES (2, randomblob(1024*1024))")
+                    .unwrap();
                 let mut page_size = conn.pragma_query("page_size").unwrap();
                 let mut page_size = page_size.pop().unwrap();
                 let page_size = page_size.pop().unwrap();
