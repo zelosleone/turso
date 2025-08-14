@@ -4473,20 +4473,6 @@ pub fn op_function(
                 let result = exec_printf(&state.registers[*start_reg..*start_reg + arg_count])?;
                 state.registers[*dest] = Register::Value(result);
             }
-            ScalarFunc::Likely => {
-                let value = &state.registers[*start_reg].borrow_mut();
-                let result = value.get_owned_value().exec_likely();
-                state.registers[*dest] = Register::Value(result);
-            }
-            ScalarFunc::Likelihood => {
-                assert_eq!(arg_count, 2);
-                let value = &state.registers[*start_reg];
-                let probability = &state.registers[*start_reg + 1];
-                let result = value
-                    .get_owned_value()
-                    .exec_likelihood(probability.get_owned_value());
-                state.registers[*dest] = Register::Value(result);
-            }
             ScalarFunc::TableColumnsJsonArray => {
                 assert_eq!(arg_count, 1);
                 #[cfg(not(feature = "json"))]
@@ -4651,6 +4637,11 @@ pub fn op_function(
 
                 // Set result to NULL (detach doesn't return a value)
                 state.registers[*dest] = Register::Value(Value::Null);
+            }
+            ScalarFunc::Unlikely | ScalarFunc::Likely | ScalarFunc::Likelihood => {
+                panic!(
+                    "{scalar_func:?} should be stripped during expression translation and never reach VDBE",
+                );
             }
         },
         crate::function::Func::Vector(vector_func) => match vector_func {
@@ -7989,14 +7980,6 @@ impl Value {
         Value::Float(result)
     }
 
-    fn exec_likely(&self) -> Value {
-        self.clone()
-    }
-
-    fn exec_likelihood(&self, _probability: &Value) -> Value {
-        self.clone()
-    }
-
     pub fn exec_add(&self, rhs: &Value) -> Value {
         (Numeric::from(self) + Numeric::from(rhs)).into()
     }
@@ -10065,62 +10048,6 @@ mod tests {
             Value::exec_replace(&input_str, &pattern_str, &replace_str),
             expected_str
         );
-    }
-
-    #[test]
-    fn test_likely() {
-        let input = Value::build_text("limbo");
-        let expected = Value::build_text("limbo");
-        assert_eq!(input.exec_likely(), expected);
-
-        let input = Value::Integer(100);
-        let expected = Value::Integer(100);
-        assert_eq!(input.exec_likely(), expected);
-
-        let input = Value::Float(12.34);
-        let expected = Value::Float(12.34);
-        assert_eq!(input.exec_likely(), expected);
-
-        let input = Value::Null;
-        let expected = Value::Null;
-        assert_eq!(input.exec_likely(), expected);
-
-        let input = Value::Blob(vec![1, 2, 3, 4]);
-        let expected = Value::Blob(vec![1, 2, 3, 4]);
-        assert_eq!(input.exec_likely(), expected);
-    }
-
-    #[test]
-    fn test_likelihood() {
-        let value = Value::build_text("limbo");
-        let prob = Value::Float(0.5);
-        assert_eq!(value.exec_likelihood(&prob), value);
-
-        let value = Value::build_text("database");
-        let prob = Value::Float(0.9375);
-        assert_eq!(value.exec_likelihood(&prob), value);
-
-        let value = Value::Integer(100);
-        let prob = Value::Float(1.0);
-        assert_eq!(value.exec_likelihood(&prob), value);
-
-        let value = Value::Float(12.34);
-        let prob = Value::Float(0.5);
-        assert_eq!(value.exec_likelihood(&prob), value);
-
-        let value = Value::Null;
-        let prob = Value::Float(0.5);
-        assert_eq!(value.exec_likelihood(&prob), value);
-
-        let value = Value::Blob(vec![1, 2, 3, 4]);
-        let prob = Value::Float(0.5);
-        assert_eq!(value.exec_likelihood(&prob), value);
-
-        let prob = Value::build_text("0.5");
-        assert_eq!(value.exec_likelihood(&prob), value);
-
-        let prob = Value::Null;
-        assert_eq!(value.exec_likelihood(&prob), value);
     }
 
     #[test]

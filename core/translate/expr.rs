@@ -1710,20 +1710,13 @@ pub fn translate_expr(
                             } else {
                                 crate::bail_parse_error!("likely function with no arguments",);
                             };
-                            let start_reg = program.alloc_register();
                             translate_expr(
                                 program,
                                 referenced_tables,
                                 &args[0],
-                                start_reg,
+                                target_register,
                                 resolver,
                             )?;
-                            program.emit_insn(Insn::Function {
-                                constant_mask: 0,
-                                start_reg,
-                                dest: target_register,
-                                func: func_ctx,
-                            });
                             Ok(target_register)
                         }
                         ScalarFunc::Likelihood => {
@@ -1760,20 +1753,13 @@ pub fn translate_expr(
                                     "second argument of likelihood() must be a numeric literal",
                                 );
                             }
-
-                            let start_reg = program.alloc_register();
                             translate_expr(
                                 program,
                                 referenced_tables,
                                 &args[0],
-                                start_reg,
+                                target_register,
                                 resolver,
                             )?;
-                            program.emit_insn(Insn::Copy {
-                                src_reg: start_reg,
-                                dst_reg: target_register,
-                                extra_amount: 0,
-                            });
                             Ok(target_register)
                         }
                         ScalarFunc::TableColumnsJsonArray => {
@@ -1840,6 +1826,27 @@ pub fn translate_expr(
                             crate::bail_parse_error!(
                                 "DETACH should be handled at statement level, not as expression"
                             );
+                        }
+                        ScalarFunc::Unlikely => {
+                            let args = if let Some(args) = args {
+                                if args.len() != 1 {
+                                    crate::bail_parse_error!(
+                                        "Unlikely function must have exactly 1 argument",
+                                    );
+                                }
+                                args
+                            } else {
+                                crate::bail_parse_error!("Unlikely function with no arguments",);
+                            };
+                            translate_expr(
+                                program,
+                                referenced_tables,
+                                &args[0],
+                                target_register,
+                                resolver,
+                            )?;
+
+                            Ok(target_register)
                         }
                     }
                 }
