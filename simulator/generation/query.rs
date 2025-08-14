@@ -300,13 +300,32 @@ impl ArbitraryFrom<(&SimulatorEnv, &Remaining)> for Query {
     }
 }
 
+fn pick_unique<T: ToOwned + PartialEq>(
+    items: &[T],
+    count: usize,
+    rng: &mut impl rand::Rng,
+) -> Vec<T::Owned>
+where
+    <T as ToOwned>::Owned: PartialEq,
+{
+    let mut picked: Vec<T::Owned> = Vec::new();
+    while picked.len() < count {
+        let item = pick(items, rng);
+        if !picked.contains(&item.to_owned()) {
+            picked.push(item.to_owned());
+        }
+    }
+    picked
+}
+
 impl ArbitraryFrom<&SimulatorEnv> for Update {
     fn arbitrary_from<R: Rng>(rng: &mut R, env: &SimulatorEnv) -> Self {
         let table = pick(&env.tables, rng);
         let num_cols = rng.gen_range(1..=table.columns.len());
-        let set_values: Vec<(String, SimValue)> = (0..num_cols)
-            .map(|_| {
-                let column = pick(&table.columns, rng);
+        let columns = pick_unique(&table.columns, num_cols, rng);
+        let set_values: Vec<(String, SimValue)> = columns
+            .iter()
+            .map(|column| {
                 (
                     column.name.clone(),
                     SimValue::arbitrary_from(rng, &column.column_type),
