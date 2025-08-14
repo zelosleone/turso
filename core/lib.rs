@@ -440,14 +440,19 @@ impl Database {
             self.db_state.is_initialized(),
             "read_page_size_from_db_header called on uninitialized database"
         );
-        let buf = Arc::new(Buffer::new_temporary(PageSize::MIN as usize)); // this needs to be a block multiple for O_DIRECT
+        turso_assert!(
+            PageSize::MIN % 512 == 0,
+            "header read must be a multiple of 512 for O_DIRECT"
+        );
+        let buf = Arc::new(Buffer::new_temporary(PageSize::MIN as usize));
         let c = Completion::new_read(buf.clone(), move |_buf, _| {});
         let c = self.db_file.read_header(c)?;
         self.io.wait_for_completion(c)?;
         let page_size = u16::from_be_bytes(buf.as_slice()[16..18].try_into().unwrap());
-        Ok(PageSize::new(page_size as u32).unwrap_or_else(|| {
-            panic!("invalid page size in DB header: {page_size}");
-        }))
+        let Some(page_size) = PageSize::new(page_size as u32) else {
+            bail_corrupt_error!("invalid page size in DB header: {page_size}");
+        };
+        Ok(page_size)
     }
 
     /// Read the page size in order of preference:
