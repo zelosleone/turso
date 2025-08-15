@@ -152,6 +152,71 @@ cat << 'EOF' | tursodb mydb.db --mcp
 {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "list_tables", "arguments": {}}}
 EOF
 ```
+
+#### Using with Claude Code
+
+If you're using [Claude Code](https://claude.ai/code), you can easily connect to your Turso MCP server using the built-in MCP management commands:
+
+##### Quick Setup
+
+1. **Add the MCP server** to Claude Code:
+   ```bash
+   claude mcp add my-database -- tursodb ./path/to/your/database.db --mcp
+   ```
+
+2. **Restart Claude Code** to activate the connection
+
+3. **Start querying** your database through natural language!
+
+##### Command Breakdown
+
+```bash
+claude mcp add my-database -- tursodb ./path/to/your/database.db --mcp
+#              ↑            ↑       ↑                           ↑
+#              |            |       |                           |
+#              Name         |       Database path               MCP flag
+#                          Separator
+```
+
+- **`my-database`** - Choose any name for your MCP server
+- **`--`** - Required separator between Claude options and your command
+- **`tursodb`** - The Turso database CLI
+- **`./path/to/your/database.db`** - Path to your SQLite database file
+- **`--mcp`** - Enables MCP server mode
+
+##### Example Usage
+
+```bash
+# For a local project database
+cd /your/project
+claude mcp add my-project-db -- tursodb ./data/app.db --mcp
+
+# For an absolute path
+claude mcp add analytics-db -- tursodb /Users/you/databases/analytics.db --mcp
+
+# For a specific project (local scope)
+claude mcp add project-db --local -- tursodb ./database.db --mcp
+```
+
+##### Managing MCP Servers
+
+```bash
+# List all configured MCP servers
+claude mcp list
+
+# Get details about a specific server
+claude mcp get my-database
+
+# Remove an MCP server
+claude mcp remove my-database
+```
+
+Once configured, you can ask Claude Code to:
+- "Show me all tables in the database"
+- "What's the schema for the users table?"
+- "Find all posts with more than 100 upvotes"
+- "Insert a new user with name 'Alice' and email 'alice@example.com'"
+
 </details>
 
 <details>
