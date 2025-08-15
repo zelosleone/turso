@@ -185,7 +185,6 @@ pub fn order_by_sorter_insert(
         )?;
     }
     let mut cur_reg = start_reg + order_by_len;
-    let mut translated_result_col_count = 0;
     for (i, rc) in result_columns.iter().enumerate() {
         // If the result column is an exact duplicate of a sort key, we skip it.
         if sort_metadata
@@ -203,15 +202,71 @@ pub fn order_by_sorter_insert(
             cur_reg,
             resolver,
         )?;
-        translated_result_col_count += 1;
         cur_reg += 1;
     }
 
     // Handle SELECT DISTINCT deduplication
     if let Distinctness::Distinct { ctx } = &plan.distinctness {
         let distinct_ctx = ctx.as_ref().expect("distinct context must exist");
-        let num_regs = order_by_len + translated_result_col_count;
-        distinct_ctx.emit_deduplication_insns(program, num_regs, start_reg);
+
+        // For distinctness checking with Insn::Found, we need a contiguous run of registers containing all the result columns.
+        // The emitted columns are in the ORDER BY sorter order, which may be different from the SELECT order, and obviously the
+        // ORDER BY clause may not have all the result columns.
+        // Hence, we need to allocate new registers and Copy from the existing ones to make a contiguous run of registers.
+        let mut needs_reordering = false;
+
+        // Check if result columns in sorter are in SELECT order
+        let mut prev = None;
+        for (select_idx, _rc) in result_columns.iter().enumerate() {
+            let sorter_idx = sort_metadata
+                .remappings
+                .get(select_idx)
+                .expect("remapping must exist for all result columns")
+                .orderby_sorter_idx;
+
+            if prev.is_some_and(|p| sorter_idx != p + 1) {
+                needs_reordering = true;
+                break;
+            }
+            prev = Some(sorter_idx);
+        }
+
+        if needs_reordering {
+            // Allocate registers for reordered result columns.
+            // TODO: it may be possible to optimize this to minimize the number of Insn::Copy we do, but for now
+            // we will just allocate a new reg for every result column.
+            let reordered_start_reg = program.alloc_registers(result_columns.len());
+
+            for (select_idx, _rc) in result_columns.iter().enumerate() {
+                let src_reg = sort_metadata
+                    .remappings
+                    .get(select_idx)
+                    .map(|r| start_reg + r.orderby_sorter_idx)
+                    .expect("remapping must exist for all result columns");
+
+                let dst_reg = reordered_start_reg + select_idx;
+
+                program.emit_insn(Insn::Copy {
+                    src_reg,
+                    dst_reg,
+                    extra_amount: 0,
+                });
+            }
+
+            distinct_ctx.emit_deduplication_insns(
+                program,
+                result_columns.len(),
+                reordered_start_reg,
+            );
+        } else {
+            // Result columns are already in SELECT order, use them directly
+            let start_reg = sort_metadata
+                .remappings
+                .first()
+                .map(|r| start_reg + r.orderby_sorter_idx)
+                .expect("remapping must exist for all result columns");
+            distinct_ctx.emit_deduplication_insns(program, result_columns.len(), start_reg);
+        }
     }
 
     let SortMetadata {

@@ -211,3 +211,10 @@ do_execsql_test orderby_desc_regression_verify_order {
 } {99
 98
 97}
+
+do_execsql_test_on_specific_db {:memory:} distinct_orderby_regression {
+  CREATE TABLE t (a,b,c,d);
+  INSERT INTO t VALUES (1,2,3,4),(2,3,4,5);
+  SELECT DISTINCT c,b FROM t ORDER BY d,b;
+} {3|2
+4|3}
