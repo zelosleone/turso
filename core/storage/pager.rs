@@ -1392,31 +1392,40 @@ impl Pager {
 
         let mut checkpoint_result = self.io.block(|| wal.borrow_mut().checkpoint(self, mode))?;
 
-        if checkpoint_result.everything_backfilled() && checkpoint_result.num_backfilled != 0 {
-            let db_size = self
-                .io
-                .block(|| self.with_header(|header| header.database_size))?
-                .get();
-            let page_size = self.page_size.get().unwrap_or_default();
-            let expected = (db_size * page_size.get()) as u64;
-            if expected < self.db_file.size()? {
-                self.io.wait_for_completion(self.db_file.truncate(
-                    expected as usize,
-                    Completion::new_trunc(move |_| {
-                        tracing::trace!(
-                            "Database file truncated to expected size: {} bytes",
-                            expected
-                        );
-                    }),
-                )?)?;
+        'ensure_sync: {
+            if checkpoint_result.num_backfilled != 0 {
+                if checkpoint_result.everything_backfilled() {
+                    let db_size = self
+                        .io
+                        .block(|| self.with_header(|header| header.database_size))?
+                        .get();
+                    let page_size = self.page_size.get().unwrap_or_default();
+                    let expected = (db_size * page_size.get()) as u64;
+                    if expected < self.db_file.size()? {
+                        self.io.wait_for_completion(self.db_file.truncate(
+                            expected as usize,
+                            Completion::new_trunc(move |_| {
+                                tracing::trace!(
+                                    "Database file truncated to expected size: {} bytes",
+                                    expected
+                                );
+                            }),
+                        )?)?;
+                        self.io
+                            .wait_for_completion(self.db_file.sync(Completion::new_sync(
+                                move |_| {
+                                    tracing::trace!("Database file syncd after truncation");
+                                },
+                            ))?)?;
+                        break 'ensure_sync;
+                    }
+                }
+                // if we backfilled at all, we have to sync the db-file here
                 self.io
-                    .wait_for_completion(self.db_file.sync(Completion::new_sync(move |_| {
-                        tracing::trace!("Database file syncd after truncation");
-                    }))?)?;
+                    .wait_for_completion(self.db_file.sync(Completion::new_sync(move |_| {}))?)?;
             }
-            checkpoint_result.release_guard();
         }
-
+        checkpoint_result.release_guard();
         // TODO: only clear cache of things that are really invalidated
         self.page_cache
             .write()
