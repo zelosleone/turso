@@ -1,4 +1,4 @@
-use turso_sqlite3_parser::ast::{Expr, Operator};
+use turso_parser::ast::{Expr, Operator};
 
 use crate::{
     translate::{expr::unwrap_parens_owned, plan::WhereTerm},
@@ -189,7 +189,7 @@ fn rebuild_or_expr_from_list(mut operands: Vec<Expr>) -> Expr {
 mod tests {
     use super::*;
     use crate::translate::plan::WhereTerm;
-    use turso_sqlite3_parser::ast::{self, Expr, Literal, Operator, TableInternalId};
+    use turso_parser::ast::{self, Expr, Literal, Operator, TableInternalId};
 
     #[test]
     fn test_lift_common_subexpressions() -> Result<()> {

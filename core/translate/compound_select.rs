@@ -7,7 +7,7 @@ use crate::vdbe::BranchOffset;
 use crate::SymbolTable;
 use std::sync::Arc;
 use tracing::instrument;
-use turso_sqlite3_parser::ast::{CompoundOperator, SortOrder};
+use turso_parser::ast::{CompoundOperator, SortOrder};
 
 use tracing::Level;
 

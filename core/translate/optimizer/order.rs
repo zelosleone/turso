@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use turso_sqlite3_parser::ast::{self, SortOrder, TableInternalId};
+use turso_parser::ast::{self, SortOrder, TableInternalId};
 
 use crate::{
     translate::optimizer::access_method::AccessMethodParams,

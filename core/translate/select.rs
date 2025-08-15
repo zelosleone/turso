@@ -17,8 +17,8 @@ use crate::vdbe::insn::Insn;
 use crate::{schema::Schema, vdbe::builder::ProgramBuilder, Result};
 use crate::{Connection, SymbolTable};
 use std::sync::Arc;
-use turso_sqlite3_parser::ast::{self, CompoundSelect, Expr, SortOrder};
-use turso_sqlite3_parser::ast::{ResultColumn, SelectInner};
+use turso_parser::ast::{self, CompoundSelect, Expr, SortOrder};
+use turso_parser::ast::ResultColumn;
 
 pub struct TranslateSelectResult {
     pub program: ProgramBuilder,

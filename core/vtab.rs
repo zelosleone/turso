@@ -8,7 +8,7 @@ use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use turso_ext::{ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabKind, VTabModuleImpl};
-use turso_sqlite3_parser::{ast, lexer::sql::Parser};
+use turso_parser::{ast, parser::Parser};
 
 #[derive(Debug, Clone)]
 pub(crate) enum VirtualTableType {

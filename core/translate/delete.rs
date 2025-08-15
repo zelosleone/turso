@@ -7,7 +7,7 @@ use crate::util::normalize_ident;
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, TableRefIdCounter};
 use crate::{schema::Schema, Result, SymbolTable};
 use std::sync::Arc;
-use turso_sqlite3_parser::ast::{Expr, Limit, QualifiedName, ResultColumn};
+use turso_parser::ast::{Expr, Limit, QualifiedName, ResultColumn};
 
 use super::plan::{ColumnUsedMask, JoinedTable, TableReferences};
 

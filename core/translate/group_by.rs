@@ -1,4 +1,4 @@
-use turso_sqlite3_parser::ast;
+use turso_parser::ast;
 
 use crate::translate::expr::{walk_expr, WalkControl};
 use crate::translate::plan::ResultSetColumn;

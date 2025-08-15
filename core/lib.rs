@@ -89,7 +89,7 @@ pub use storage::{
 };
 use tracing::{instrument, Level};
 use translate::select::prepare_select_plan;
-use turso_sqlite3_parser::{ast, ast::Cmd, lexer::sql::Parser};
+use turso_parser::{ast, ast::Cmd, parser::Parser};
 use types::IOResult;
 pub use types::RefValue;
 pub use types::Value;

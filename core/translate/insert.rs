@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use turso_sqlite3_parser::ast::{
-    self, DistinctNames, Expr, InsertBody, OneSelect, QualifiedName, ResolveType, ResultColumn,
+use turso_parser::ast::{
+    self, Expr, InsertBody, OneSelect, QualifiedName, ResolveType, ResultColumn,
     With,
 };
 

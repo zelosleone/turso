@@ -11,9 +11,9 @@ use fallible_iterator::FallibleIterator;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
-use turso_sqlite3_parser::{
+use turso_parser::{
     ast::{Cmd, Stmt},
-    lexer::sql::Parser,
+    parser::Parser,
 };
 
 /// State machine for populating a view from its source table
@@ -73,7 +73,7 @@ pub struct IncrementalView {
     // WHERE clause predicate for filtering (kept for compatibility)
     pub where_predicate: FilterPredicate,
     // The SELECT statement that defines how to transform input data
-    pub select_stmt: Box<turso_sqlite3_parser::ast::Select>,
+    pub select_stmt: Box<turso_parser::ast::Select>,
 
     // Internal filter operator for predicate evaluation
     filter_operator: Option<FilterOperator>,
@@ -97,7 +97,7 @@ impl IncrementalView {
     /// Validate that a CREATE MATERIALIZED VIEW statement can be handled by IncrementalView
     /// This should be called early, before updating sqlite_master
     pub fn can_create_view(
-        select: &turso_sqlite3_parser::ast::Select,
+        select: &turso_parser::ast::Select,
         schema: &Schema,
     ) -> Result<()> {
         // Check for aggregations
@@ -153,7 +153,7 @@ impl IncrementalView {
             Parser::new(sql.as_bytes()).next()
         {
             // Compare the SELECT statements as SQL strings
-            use turso_sqlite3_parser::ast::fmt::ToTokens;
+            use turso_parser::ast::fmt::ToTokens;
 
             // Format both SELECT statements and compare
             if let (Ok(current_sql), Ok(provided_sql)) =
@@ -191,8 +191,8 @@ impl IncrementalView {
     }
 
     pub fn from_stmt(
-        view_name: turso_sqlite3_parser::ast::QualifiedName,
-        select: Box<turso_sqlite3_parser::ast::Select>,
+        view_name: turso_parser::ast::QualifiedName,
+        select: Box<turso_parser::ast::Select>,
         schema: &Schema,
     ) -> Result<Self> {
         let name = view_name.name.as_str().to_string();
@@ -253,7 +253,7 @@ impl IncrementalView {
         name: String,
         initial_data: Vec<(i64, Vec<Value>)>,
         where_predicate: FilterPredicate,
-        select_stmt: Box<turso_sqlite3_parser::ast::Select>,
+        select_stmt: Box<turso_parser::ast::Select>,
         base_table: Arc<BTreeTable>,
         base_table_column_names: Vec<String>,
         columns: Vec<Column>,
@@ -353,17 +353,17 @@ impl IncrementalView {
     /// Validate that view columns are a strict subset of the base table columns
     /// No duplicates, no complex expressions, only simple column references
     fn validate_view_columns(
-        select: &turso_sqlite3_parser::ast::Select,
+        select: &turso_parser::ast::Select,
         base_table_column_names: &[String],
     ) -> Result<()> {
-        if let turso_sqlite3_parser::ast::OneSelect::Select(ref select_stmt) = &*select.body.select
+        if let turso_parser::ast::OneSelect::Select(ref select_stmt) = &*select.body.select
         {
             let mut seen_columns = std::collections::HashSet::new();
 
             for result_col in &select_stmt.columns {
                 match result_col {
-                    turso_sqlite3_parser::ast::ResultColumn::Expr(
-                        turso_sqlite3_parser::ast::Expr::Id(name),
+                    turso_parser::ast::ResultColumn::Expr(
+                        turso_parser::ast::Expr::Id(name),
                         _,
                     ) => {
                         let col_name = name.as_str();
@@ -382,7 +382,7 @@ impl IncrementalView {
                             )));
                         }
                     }
-                    turso_sqlite3_parser::ast::ResultColumn::Star => {
+                    turso_parser::ast::ResultColumn::Star => {
                         // SELECT * is allowed - it's the full set
                     }
                     _ => {
@@ -396,12 +396,12 @@ impl IncrementalView {
     }
 
     /// Extract the base table name from a SELECT statement (for non-join cases)
-    fn extract_base_table(select: &turso_sqlite3_parser::ast::Select) -> Option<String> {
-        if let turso_sqlite3_parser::ast::OneSelect::Select(ref select_stmt) = &*select.body.select
+    fn extract_base_table(select: &turso_parser::ast::Select) -> Option<String> {
+        if let turso_parser::ast::OneSelect::Select(ref select_stmt) = &*select.body.select
         {
             if let Some(ref from) = &select_stmt.from {
                 if let Some(ref select_table) = &from.select {
-                    if let turso_sqlite3_parser::ast::SelectTable::Table(name, _, _) =
+                    if let turso_parser::ast::SelectTable::Table(name, _, _) =
                         &**select_table
                     {
                         return Some(name.name.as_str().to_string());
@@ -625,9 +625,9 @@ impl IncrementalView {
 
     /// Extract GROUP BY columns and aggregate functions from SELECT statement
     fn extract_aggregation_info(
-        select: &turso_sqlite3_parser::ast::Select,
+        select: &turso_parser::ast::Select,
     ) -> (Vec<String>, Vec<AggregateFunction>, Vec<String>) {
-        use turso_sqlite3_parser::ast::*;
+        use turso_parser::ast::*;
 
         let mut group_by_columns = Vec::new();
         let mut aggregate_functions = Vec::new();
@@ -685,11 +685,11 @@ impl IncrementalView {
 
     /// Recursively extract aggregate functions from an expression
     fn extract_aggregates_from_expr(
-        expr: &turso_sqlite3_parser::ast::Expr,
+        expr: &turso_parser::ast::Expr,
         aggregate_functions: &mut Vec<AggregateFunction>,
     ) {
         use crate::function::Func;
-        use turso_sqlite3_parser::ast::*;
+        use turso_parser::ast::*;
 
         match expr {
             // Handle COUNT(*) and similar aggregate functions with *
@@ -737,9 +737,9 @@ impl IncrementalView {
     /// Extract JOIN information from SELECT statement
     #[allow(clippy::type_complexity)]
     pub fn extract_join_info(
-        select: &turso_sqlite3_parser::ast::Select,
+        select: &turso_parser::ast::Select,
     ) -> (Option<(String, String)>, Option<(String, String)>) {
-        use turso_sqlite3_parser::ast::*;
+        use turso_parser::ast::*;
 
         if let OneSelect::Select(ref select_stmt) = &*select.body.select {
             if let Some(ref from) = &select_stmt.from {
@@ -794,9 +794,9 @@ impl IncrementalView {
 
     /// Extract join column names from a join condition expression
     fn extract_join_columns_from_expr(
-        expr: &turso_sqlite3_parser::ast::Expr,
+        expr: &turso_parser::ast::Expr,
     ) -> Option<(String, String)> {
-        use turso_sqlite3_parser::ast::*;
+        use turso_parser::ast::*;
 
         // Look for expressions like: t1.col = t2.col
         if let Expr::Binary(left, op, right) = expr {
@@ -825,10 +825,10 @@ impl IncrementalView {
 
     /// Extract projection columns from SELECT statement
     fn extract_project_columns(
-        select: &turso_sqlite3_parser::ast::Select,
+        select: &turso_parser::ast::Select,
         column_names: &[String],
     ) -> Option<Vec<ProjectColumn>> {
-        use turso_sqlite3_parser::ast::*;
+        use turso_parser::ast::*;
 
         if let OneSelect::Select(ref select_stmt) = &*select.body.select {
             let mut columns = Vec::new();

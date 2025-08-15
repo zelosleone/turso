@@ -1,6 +1,6 @@
 use fallible_iterator::FallibleIterator as _;
 use std::sync::Arc;
-use turso_sqlite3_parser::{ast, lexer::sql::Parser};
+use turso_parser::{ast, parser::Parser};
 
 use crate::{
     function::{AlterTableFunc, Func},

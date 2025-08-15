@@ -1,4 +1,4 @@
-use turso_sqlite3_parser::ast::SortOrder;
+use turso_parser::ast::SortOrder;
 
 use std::sync::Arc;
 

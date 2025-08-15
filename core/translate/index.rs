@@ -14,7 +14,7 @@ use crate::{
         insn::{IdxInsertFlags, Insn, RegisterOrLiteral},
     },
 };
-use turso_sqlite3_parser::ast::{self, Expr, SortOrder, SortedColumn};
+use turso_parser::ast::{self, Expr, SortOrder, SortedColumn};
 
 use super::schema::{emit_schema_entry, SchemaEntryType, SQLITE_TABLEID};
 

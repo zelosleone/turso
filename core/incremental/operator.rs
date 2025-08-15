@@ -237,8 +237,8 @@ pub enum FilterPredicate {
 impl FilterPredicate {
     /// Parse a SQL AST expression into a FilterPredicate
     /// This centralizes all SQL-to-predicate parsing logic
-    pub fn from_sql_expr(expr: &turso_sqlite3_parser::ast::Expr) -> crate::Result<Self> {
-        use turso_sqlite3_parser::ast::*;
+    pub fn from_sql_expr(expr: &turso_parser::ast::Expr) -> crate::Result<Self> {
+        use turso_parser::ast::*;
 
         let Expr::Binary(lhs, op, rhs) = expr else {
             return Err(crate::LimboError::ParseError(
@@ -320,8 +320,8 @@ impl FilterPredicate {
     }
 
     /// Parse a WHERE clause from a SELECT statement
-    pub fn from_select(select: &turso_sqlite3_parser::ast::Select) -> crate::Result<Self> {
-        use turso_sqlite3_parser::ast::*;
+    pub fn from_select(select: &turso_parser::ast::Select) -> crate::Result<Self> {
+        use turso_parser::ast::*;
 
         if let OneSelect::Select(select_stmt) = &*select.body.select {
             if let Some(where_clause) = &select_stmt.where_clause {
@@ -344,7 +344,7 @@ pub enum ProjectColumn {
     Column(String),
     /// Computed expression
     Expression {
-        expr: turso_sqlite3_parser::ast::Expr,
+        expr: turso_parser::ast::Expr,
         alias: Option<String>,
     },
 }
@@ -645,10 +645,10 @@ impl ProjectOperator {
 
     fn evaluate_expression(
         &self,
-        expr: &turso_sqlite3_parser::ast::Expr,
+        expr: &turso_parser::ast::Expr,
         values: &[Value],
     ) -> Value {
-        use turso_sqlite3_parser::ast::*;
+        use turso_parser::ast::*;
 
         match expr {
             Expr::Id(name) => {

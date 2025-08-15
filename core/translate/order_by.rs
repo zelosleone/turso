@@ -1,4 +1,4 @@
-use turso_sqlite3_parser::ast::{self, SortOrder};
+use turso_parser::ast::{self, SortOrder};
 
 use crate::{
     schema::PseudoCursorType,

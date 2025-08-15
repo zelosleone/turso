@@ -1,5 +1,5 @@
 use std::{cmp::Ordering, sync::Arc};
-use turso_sqlite3_parser::ast::{self, SortOrder};
+use turso_parser::ast::{self, SortOrder};
 
 use crate::{
     function::AggFunc,
@@ -13,7 +13,7 @@ use crate::{
 };
 use crate::{schema::Type, types::SeekOp};
 
-use turso_sqlite3_parser::ast::TableInternalId;
+use turso_parser::ast::TableInternalId;
 
 use super::{emitter::OperationMode, planner::determine_where_to_eval_term};
 
@@ -342,15 +342,15 @@ impl SelectPlan {
             return false;
         }
 
-        let count = turso_sqlite3_parser::ast::Expr::FunctionCall {
-            name: turso_sqlite3_parser::ast::Name::Ident("count".to_string()),
+        let count = turso_parser::ast::Expr::FunctionCall {
+            name: turso_parser::ast::Name::Ident("count".to_string()),
             distinctness: None,
             args: None,
             order_by: None,
             filter_over: None,
         };
-        let count_star = turso_sqlite3_parser::ast::Expr::FunctionCallStar {
-            name: turso_sqlite3_parser::ast::Name::Ident("count".to_string()),
+        let count_star = turso_parser::ast::Expr::FunctionCallStar {
+            name: turso_parser::ast::Name::Ident("count".to_string()),
             filter_over: None,
         };
         let result_col_expr = &self.result_columns.first().unwrap().expr;
@@ -453,7 +453,7 @@ pub struct JoinInfo {
     /// Whether this is an OUTER JOIN.
     pub outer: bool,
     /// The USING clause for the join, if any. NATURAL JOIN is transformed into USING (col1, col2, ...).
-    pub using: Option<ast::DistinctNames>,
+    pub using: Vec<ast::Name>,
 }
 
 /// A joined table in the query plan.

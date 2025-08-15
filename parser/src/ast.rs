@@ -1,3 +1,6 @@
+
+pub mod fmt;
+
 use strum_macros::{EnumIter, EnumString};
 
 /// `?` or `$` Prepared statement arg placeholder(s)
@@ -726,6 +729,14 @@ pub enum Name {
     Ident(String),
     /// Quoted values
     Quoted(String),
+}
+
+impl Name {
+    pub fn as_str(&self) -> &str {
+        match self {
+            Name::Ident(s) | Name::Quoted(s) => s.as_str(),
+        }
+    }
 }
 
 /// Qualified name

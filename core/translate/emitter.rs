@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use tracing::{instrument, Level};
-use turso_sqlite3_parser::ast::{self, Expr};
+use turso_parser::ast::{self, Expr};
 
 use super::aggregation::emit_ungrouped_aggregation;
 use super::expr::translate_expr;

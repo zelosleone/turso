@@ -12,7 +12,7 @@ use crate::{
     vdbe::builder::{ProgramBuilder, ProgramBuilderOpts},
     SymbolTable,
 };
-use turso_sqlite3_parser::ast::{Expr, Indexed, SortOrder, Update};
+use turso_parser::ast::{Expr, Indexed, SortOrder};
 
 use super::emitter::emit_program;
 use super::expr::process_returning_clause;

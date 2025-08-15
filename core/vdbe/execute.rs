@@ -71,9 +71,9 @@ use super::{
 use fallible_iterator::FallibleIterator;
 use parking_lot::RwLock;
 use rand::{thread_rng, Rng};
-use turso_sqlite3_parser::ast;
-use turso_sqlite3_parser::ast::fmt::ToTokens;
-use turso_sqlite3_parser::lexer::sql::Parser;
+use turso_parser::ast;
+use turso_parser::ast::fmt::ToTokens;
+use turso_parser::parser::Parser;
 
 use super::{
     likeop::{construct_like_escape_arg, exec_glob, exec_like_with_escape},

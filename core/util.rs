@@ -13,10 +13,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tracing::{instrument, Level};
-use turso_sqlite3_parser::ast::{
+use turso_parser::ast::{
     self, fmt::ToTokens, Cmd, CreateTableBody, Expr, FunctionTail, Literal, Stmt, UnaryOperator,
 };
-use turso_sqlite3_parser::lexer::sql::Parser;
+use turso_parser::parser::Parser;
 
 #[macro_export]
 macro_rules! io_yield_one {
@@ -166,8 +166,8 @@ pub fn parse_schema_rows(
                         use crate::incremental::view::IncrementalView;
                         use crate::schema::View;
                         use fallible_iterator::FallibleIterator;
-                        use turso_sqlite3_parser::ast::{Cmd, Stmt};
-                        use turso_sqlite3_parser::lexer::sql::Parser;
+                        use turso_parser::ast::{Cmd, Stmt};
+                        use turso_parser::parser::Parser;
 
                         let name: &str = row.get::<&str>(1)?;
                         let sql: &str = row.get::<&str>(4)?;
@@ -627,12 +627,16 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
     }
 }
 
-pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Result<Vec<Column>> {
+pub fn columns_from_create_table_body(
+    body: &turso_parser::ast::CreateTableBody,
+) -> crate::Result<Vec<Column>> {
     let CreateTableBody::ColumnsAndConstraints { columns, .. } = body else {
         return Err(crate::LimboError::ParseError(
             "CREATE TABLE body must contain columns and constraints".to_string(),
         ));
     };
+
+    use turso_parser::ast;
 
     Ok(columns
         .into_iter()
@@ -667,35 +671,27 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
                     .constraints
                     .iter()
                     .find_map(|c| match &c.constraint {
-                        turso_sqlite3_parser::ast::ColumnConstraint::Default(val) => {
-                            Some(val.clone())
-                        }
+                        ast::ColumnConstraint::Default(val) => Some(val.clone()),
                         _ => None,
                     }),
-                notnull: column_def.constraints.iter().any(|c| {
-                    matches!(
-                        c.constraint,
-                        turso_sqlite3_parser::ast::ColumnConstraint::NotNull { .. }
-                    )
-                }),
+                notnull: column_def
+                    .constraints
+                    .iter()
+                    .any(|c| matches!(c.constraint, ast::ColumnConstraint::NotNull { .. })),
                 ty_str: column_def
                     .col_type
                     .clone()
                     .map(|t| t.name.to_string())
                     .unwrap_or_default(),
-                primary_key: column_def.constraints.iter().any(|c| {
-                    matches!(
-                        c.constraint,
-                        turso_sqlite3_parser::ast::ColumnConstraint::PrimaryKey { .. }
-                    )
-                }),
+                primary_key: column_def
+                    .constraints
+                    .iter()
+                    .any(|c| matches!(c.constraint, ast::ColumnConstraint::PrimaryKey { .. })),
                 is_rowid_alias: false,
-                unique: column_def.constraints.iter().any(|c| {
-                    matches!(
-                        c.constraint,
-                        turso_sqlite3_parser::ast::ColumnConstraint::Unique(..)
-                    )
-                }),
+                unique: column_def
+                    .constraints
+                    .iter()
+                    .any(|c| matches!(c.constraint, ast::ColumnConstraint::Unique(..))),
                 collation: column_def
                     .constraints
                     .iter()
@@ -705,13 +701,10 @@ pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Res
                         // But in the future, when a user defines a collation sequence, creates a table with it,
                         // then closes the db and opens it again. This may panic here if the collation seq is not registered
                         // before reading the columns
-                        turso_sqlite3_parser::ast::ColumnConstraint::Collate { collation_name } => {
-                            Some(
-                                CollationSeq::new(collation_name.as_str()).expect(
-                                    "collation should have been set correctly in create table",
-                                ),
-                            )
-                        }
+                        ast::ColumnConstraint::Collate { collation_name } => Some(
+                            CollationSeq::new(collation_name.as_str())
+                                .expect("collation should have been set correctly in create table"),
+                        ),
                         _ => None,
                     }),
                 hidden: column_def
@@ -1370,7 +1363,7 @@ pub fn extract_view_columns(select_stmt: &ast::Select, schema: &Schema) -> Vec<C
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use turso_sqlite3_parser::ast::{self, Expr, Literal, Name, Operator::*, Type};
+    use turso_parser::ast::{self, Expr, Literal, Name, Operator::*, Type};
 
     #[test]
     fn test_normalize_ident() {

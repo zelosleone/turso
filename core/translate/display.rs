@@ -1,13 +1,12 @@
 use core::fmt;
 use std::fmt::{Display, Formatter};
-use turso_sqlite3_parser::{
+use turso_parser::{
     ast::{
         self,
-        fmt::{ToTokens, TokenStream},
+        fmt::{ToSqlContext, ToTokens, TokenStream},
         SortOrder, TableInternalId,
     },
-    dialect::TokenType,
-    to_sql_string::ToSqlContext,
+    token::TokenType,
 };
 
 use crate::{schema::Table, translate::plan::TableReferences};

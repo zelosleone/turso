@@ -19,8 +19,8 @@ use crate::{
     vdbe::{builder::TableRefIdCounter, BranchOffset},
     Result,
 };
-use turso_sqlite3_parser::ast::Literal::Null;
-use turso_sqlite3_parser::ast::{
+use turso_parser::ast::Literal::Null;
+use turso_parser::ast::{
     self, As, Expr, FromClause, JoinType, Limit, Literal, Materialized, QualifiedName,
     TableInternalId, UnaryOperator, With,
 };

@@ -33,10 +33,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tracing::trace;
-use turso_sqlite3_parser::ast::{self, ColumnDefinition, Expr, Literal, SortOrder, TableOptions};
-use turso_sqlite3_parser::{
+use turso_parser::ast::{self, ColumnDefinition, Expr, Literal, SortOrder, TableOptions};
+use turso_parser::{
     ast::{Cmd, CreateTableBody, QualifiedName, ResultColumn, Stmt},
-    lexer::sql::Parser,
+    parser::Parser,
 };
 
 const SCHEMA_TABLE_NAME: &str = "sqlite_schema";

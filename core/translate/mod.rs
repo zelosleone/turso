@@ -52,7 +52,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tracing::{instrument, Level};
 use transaction::{translate_tx_begin, translate_tx_commit};
-use turso_sqlite3_parser::ast::{self, Delete, Indexed, Insert};
+use turso_parser::ast::{self, Indexed};
 use update::translate_update;
 
 #[instrument(skip_all, level = Level::DEBUG)]

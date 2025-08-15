@@ -4,8 +4,8 @@
 use chrono::Datelike;
 use std::rc::Rc;
 use std::sync::Arc;
-use turso_sqlite3_parser::ast::{self, ColumnDefinition, Expr, Literal, Name};
-use turso_sqlite3_parser::ast::{PragmaName, QualifiedName};
+use turso_parser::ast::{self, ColumnDefinition, Expr, Literal, Name};
+use turso_parser::ast::{PragmaName, QualifiedName};
 
 use super::integrity_check::translate_integrity_check;
 use crate::pragma::pragma_for;

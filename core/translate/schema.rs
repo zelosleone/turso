@@ -28,7 +28,7 @@ use crate::SymbolTable;
 use crate::{bail_parse_error, Result};
 
 use turso_ext::VTabKind;
-use turso_sqlite3_parser::ast::{fmt::ToTokens, CreateVirtualTable};
+use turso_parser::ast::fmt::ToTokens;
 
 pub fn translate_create_table(
     tbl_name: ast::QualifiedName,
@@ -383,7 +383,7 @@ fn check_automatic_pk_index_required(
                         let col_names = unique_columns
                             .iter()
                             .map(|column| match &column.expr {
-                                turso_sqlite3_parser::ast::Expr::Id(id) => {
+                                turso_parser::ast::Expr::Id(id) => {
                                     if !columns.iter().any(|(k, _)| k.as_str() == id.as_str()) {
                                         bail_parse_error!("No such column: {}", id.as_str());
                                     }
