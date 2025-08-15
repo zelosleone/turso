@@ -17,6 +17,7 @@ COPY simulator ./simulator/
 COPY bindings ./bindings/
 COPY extensions ./extensions/
 COPY macros ./macros/
+COPY parser ./parser/
 COPY vendored ./vendored/
 COPY cli ./cli/
 COPY sqlite3 ./sqlite3/
@@ -38,6 +39,7 @@ COPY --from=planner /app/core ./core/
 COPY --from=planner /app/vendored ./vendored/
 COPY --from=planner /app/extensions ./extensions/
 COPY --from=planner /app/macros ./macros/
+COPY --from=planner /app/parser ./parser/
 COPY --from=planner /app/simulator ./simulator/
 COPY --from=planner /app/packages ./packages/
 
