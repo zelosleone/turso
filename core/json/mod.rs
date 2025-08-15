@@ -72,6 +72,8 @@ pub fn get_json(json_value: &Value, indent: Option<&str>) -> crate::Result<Value
     }
 }
 
+/// Converts a value to `Jsonb`, using the provided cache, and returns a `Value::Blob` containing
+/// the jsonb.
 pub fn jsonb(json_value: &Value, cache: &JsonCacheCell) -> crate::Result<Value> {
     let json_conv_fn = curry_convert_dbtype_to_jsonb(Conv::Strict);
 
@@ -420,6 +422,17 @@ fn jsonb_extract_internal(value: Jsonb, paths: &[Register]) -> crate::Result<(Js
     Ok((result, ElementType::ARRAY))
 }
 
+/// converts a `Jsonb` value to a db Value
+///
+/// # Arguments
+///
+/// - `jsonb` – the value to convert
+/// - `element_type` – the element type of the jsonb
+/// - `flag` – how the result should be formatted.
+///   - If the flag is `OutputVariant::Binary`, the result is a `Value::Blob`.
+///   - If it is `OutputVariant::ElementType` and the `element_type` is text, the result has a subtype of `TestSubtype::Text`, with the outer quotes removed.
+///   - If it is `OutputVariant::String` and the `element_type` is text, the result has a subtype of `TextSubtype::Text`.
+///   - If the `element_type` is not text, the flag is ignored.
 pub fn json_string_to_db_type(
     json: Jsonb,
     element_type: ElementType,
@@ -606,6 +619,8 @@ pub fn jsonb_object(values: &[Register]) -> crate::Result<Value> {
     json_string_to_db_type(json, ElementType::OBJECT, OutputVariant::Binary)
 }
 
+/// Tries to convert the value to jsonb. Returns Value::Integer(1) if it the conversion
+/// succeeded, and Value::Integer(0) if it didn't.
 pub fn is_json_valid(json_value: &Value) -> Value {
     if matches!(json_value, Value::Null) {
         return Value::Null;
