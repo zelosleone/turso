@@ -1360,55 +1360,28 @@ impl Limbo {
                 }
             }
         }
-        // quoted select list and table name
+        // FIXME: sqlite has logic to check rowid and optionally preserve it, but it requires
+        // pragma index_list, and it seems to be relevant only for indexes.
         let cols_str = cols
             .iter()
             .map(|c| quote_ident(c))
             .collect::<Vec<_>>()
             .join(", ");
         let select = format!("SELECT {cols_str} FROM {}", quote_ident(table_name));
-        // FIXME: sqlite has logic to check rowid and optionally preserve it, but it requires
-        // pragma index_list, and it seems to be relevant only for indexes.
         if let Some(mut rows) = conn.query(select)? {
             loop {
                 match rows.step()? {
                     StepResult::Row => {
                         let row = rows.row().unwrap();
-                        let mut vals = Vec::with_capacity(types.len());
-                        for (i, t) in types.iter().enumerate() {
+                        write!(out, "INSERT INTO {} VALUES(", quote_ident(table_name))?;
+                        for i in 0..cols.len() {
+                            if i > 0 {
+                                out.write_all(b",")?;
+                            }
                             let v = row.get::<&Value>(i)?;
-                            let s =
-                                if t.contains("CHAR") || t.contains("CLOB") || t.contains("TEXT") {
-                                    let mut s = String::new();
-                                    s.push('\'');
-                                    s.push_str(&v.to_string().replace('\'', "''"));
-                                    s.push('\'');
-                                    s
-                                } else if t.contains("BLOB") {
-                                    match v {
-                                        Value::Blob(b) => {
-                                            let mut s = String::with_capacity(2 + b.len() * 2);
-                                            s.push_str("X'");
-                                            for byte in b {
-                                                use std::fmt::Write as _;
-                                                let _ = write!(&mut s, "{byte:02x}");
-                                            }
-                                            s.push('\'');
-                                            s
-                                        }
-                                        _ => "X''".to_string(),
-                                    }
-                                } else {
-                                    v.to_string()
-                                };
-                            vals.push(s);
+                            Self::write_sql_value_from_value(out, v)?;
                         }
-                        writeln!(
-                            out,
-                            "INSERT INTO {} VALUES({});",
-                            quote_ident(table_name),
-                            vals.join(",")
-                        )?;
+                        out.write_all(b");\n")?;
                     }
                     StepResult::IO => rows.run_once()?,
                     StepResult::Done | StepResult::Interrupt => break,
@@ -1494,6 +1467,37 @@ impl Limbo {
             }
         }
         Ok(())
+    }
+
+    fn write_sql_value_from_value<W: Write>(out: &mut W, v: &Value) -> io::Result<()> {
+        match v {
+            Value::Null => out.write_all(b"NULL"),
+            Value::Integer(i) => out.write_all(format!("{i}").as_bytes()),
+            Value::Float(f) => write!(out, "{f}").map(|_| ()),
+            Value::Text(s) => {
+                out.write_all(b"'")?;
+                let bytes = &s.value;
+                let mut i = 0;
+                while i < bytes.len() {
+                    let b = bytes[i];
+                    if b == b'\'' {
+                        out.write_all(b"''")?;
+                    } else {
+                        out.write_all(&[b])?;
+                    }
+                    i += 1;
+                }
+                out.write_all(b"'")
+            }
+            Value::Blob(b) => {
+                out.write_all(b"X'")?;
+                const HEX: &[u8; 16] = b"0123456789abcdef";
+                for &byte in b {
+                    out.write_all(&[HEX[(byte >> 4) as usize], HEX[(byte & 0x0F) as usize]])?;
+                }
+                out.write_all(b"'")
+            }
+        }
     }
 
     fn dump_database(&mut self) -> anyhow::Result<()> {

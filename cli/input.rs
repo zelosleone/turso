@@ -183,40 +183,74 @@ pub fn get_io(db_location: DbLocation, io_choice: &str) -> anyhow::Result<Arc<dy
 
 pub struct ApplyWriter<'a> {
     target: &'a Arc<turso_core::Connection>,
-    // accumulates until we see a statement terminator
-    buf: String,
+    // accumulate raw bytes to support non-utf8 BLOB types
+    buf: Vec<u8>,
 }
 
 impl<'a> ApplyWriter<'a> {
     pub fn new(target: &'a Arc<turso_core::Connection>) -> Self {
         Self {
             target,
-            buf: String::new(),
+            buf: Vec::new(),
         }
+    }
+
+    // Find the next statement terminator ;\n or ;\r\n in a byte buffer.
+    // Returns (end_idx_inclusive, drain_len), where drain_len includes the newline(s).
+    fn find_stmt_end(buf: &[u8]) -> Option<(usize, usize)> {
+        let mut i = 0;
+        while i < buf.len() {
+            // Look for ';'
+            if buf[i] == b';' {
+                // Accept ;\n
+                if i + 1 < buf.len() && buf[i + 1] == b'\n' {
+                    return Some((i, 2));
+                }
+                // Accept ;\r\n
+                if i + 2 < buf.len() && buf[i + 1] == b'\r' && buf[i + 2] == b'\n' {
+                    return Some((i, 3));
+                }
+            }
+            i += 1;
+        }
+        None
     }
 
     pub fn flush_complete_statements(&mut self) -> io::Result<()> {
-        // We emit statements with ";\n". Split conservatively on that
-        while let Some(idx) = self.buf.find(";\n") {
-            let stmt = self.buf[..idx + 1].to_string();
-            self.exec_stmt(&stmt)
-                .map_err(|e| io::Error::other(e.to_string()))?;
-            self.buf.drain(..idx + 2);
+        while let Some((end_inclusive, drain_len)) = Self::find_stmt_end(&self.buf) {
+            // Copy stmt bytes [0..=end_inclusive]
+            let stmt_bytes = self.buf[..=end_inclusive].to_vec();
+            // Drain including the trailing newline(s)
+            self.buf.drain(..end_inclusive + drain_len);
+            self.exec_stmt_bytes(&stmt_bytes)?;
         }
         Ok(())
     }
 
+    // Handle final trailing statement that ends with ';' followed only by ASCII whitespace.
     pub fn finish(mut self) -> io::Result<()> {
-        // Handle a trailing statement missing the final newline
-        if let Some(idx) = self.buf.rfind(';') {
-            if self.buf[idx..].starts_with(';') && self.buf[idx + 1..].trim().is_empty() {
-                let stmt = self.buf[..idx + 1].to_string();
-                self.exec_stmt(&stmt)
-                    .map_err(|e| io::Error::other(e.to_string()))?;
+        // Skip if buffer empty or no ';'
+        if let Some(semicolon_pos) = self.buf.iter().rposition(|&b| b == b';') {
+            // Are all bytes after ';' ASCII whitespace?
+            if self.buf[semicolon_pos + 1..]
+                .iter()
+                .all(|&b| matches!(b, b' ' | b'\t' | b'\r' | b'\n'))
+            {
+                let stmt_bytes = self.buf[..=semicolon_pos].to_vec();
                 self.buf.clear();
+                self.exec_stmt_bytes(&stmt_bytes)?;
             }
         }
         Ok(())
+    }
+
+    fn exec_stmt_bytes(&self, stmt_bytes: &[u8]) -> io::Result<()> {
+        // SQL must be UTF-8. If not, surface a clear error.
+        let sql = std::str::from_utf8(stmt_bytes).map_err(|e| {
+            io::Error::new(io::ErrorKind::InvalidData, format!("non-UTF8 SQL: {e}"))
+        })?;
+        self.exec_stmt(sql)
+            .map_err(|e| io::Error::other(e.to_string()))
     }
 
     fn exec_stmt(&self, sql: &str) -> Result<(), LimboError> {
@@ -224,11 +258,8 @@ impl<'a> ApplyWriter<'a> {
             Ok(Some(mut rows)) => loop {
                 match rows.step()? {
                     StepResult::Row => {}
-                    StepResult::IO => {
-                        rows.run_once()?;
-                    }
-                    StepResult::Done => break,
-                    StepResult::Interrupt => break,
+                    StepResult::IO => rows.run_once()?,
+                    StepResult::Done | StepResult::Interrupt => break,
                     StepResult::Busy => {
                         return Err(LimboError::InternalError("target database is busy".into()))
                     }
@@ -238,6 +269,17 @@ impl<'a> ApplyWriter<'a> {
             Err(e) => return Err(e),
         }
         Ok(())
+    }
+}
+
+impl<'a> Write for ApplyWriter<'a> {
+    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+        self.buf.extend_from_slice(data);
+        self.flush_complete_statements()?;
+        Ok(data.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.flush_complete_statements()
     }
 }
 
@@ -253,20 +295,6 @@ pub struct StderrProgress;
 impl ProgressSink for StderrProgress {
     fn on<S: Display>(&mut self, s: S) {
         eprintln!("{s}... done");
-    }
-}
-
-impl<'a> Write for ApplyWriter<'a> {
-    fn write(&mut self, data: &[u8]) -> io::Result<usize> {
-        // TODO: for now .dump only writes valid UTF-8
-        self.buf.push_str(
-            std::str::from_utf8(data).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?,
-        );
-        self.flush_complete_statements()?;
-        Ok(data.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        self.flush_complete_statements()
     }
 }
 
