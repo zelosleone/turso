@@ -717,6 +717,7 @@ fn reopen_database(env: &mut SimulatorEnv) {
             }
         }
         SimulationType::Default | SimulationType::Doublecheck => {
+            env.db = None;
             let db = match turso_core::Database::open_file(
                 env.io.clone(),
                 env.get_db_path().to_str().expect("path should be 'to_str'"),
@@ -734,11 +735,12 @@ fn reopen_database(env: &mut SimulatorEnv) {
                 }
             };
 
-            env.db = db;
+            env.db = Some(db);
 
             for _ in 0..num_conns {
-                env.connections
-                    .push(SimConnection::LimboConnection(env.db.connect().unwrap()));
+                env.connections.push(SimConnection::LimboConnection(
+                    env.db.as_ref().expect("db to be Some").connect().unwrap(),
+                ));
             }
         }
     };

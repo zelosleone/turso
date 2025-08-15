@@ -62,7 +62,7 @@ pub(crate) struct SimulatorEnv {
     pub(crate) opts: SimulatorOpts,
     pub(crate) connections: Vec<SimConnection>,
     pub(crate) io: Arc<SimulatorIO>,
-    pub(crate) db: Arc<Database>,
+    pub(crate) db: Option<Arc<Database>>,
     pub(crate) rng: ChaCha8Rng,
     pub(crate) paths: Paths,
     pub(crate) type_: SimulationType,
@@ -115,6 +115,7 @@ impl SimulatorEnv {
         if wal_path.exists() {
             std::fs::remove_file(&wal_path).unwrap();
         }
+        self.db = None;
 
         let db = match Database::open_file(
             io.clone(),
@@ -129,7 +130,7 @@ impl SimulatorEnv {
             }
         };
         self.io = io;
-        self.db = db;
+        self.db = Some(db);
     }
 
     pub(crate) fn get_db_path(&self) -> PathBuf {
@@ -298,7 +299,7 @@ impl SimulatorEnv {
             paths,
             rng,
             io,
-            db,
+            db: Some(db),
             type_: simulation_type,
             phase: SimulationPhase::Test,
         }
@@ -320,6 +321,8 @@ impl SimulatorEnv {
             SimulationType::Default | SimulationType::Doublecheck => {
                 self.connections[connection_index] = SimConnection::LimboConnection(
                     self.db
+                        .as_ref()
+                        .expect("db to be Some")
                         .connect()
                         .expect("Failed to connect to Limbo database"),
                 );
