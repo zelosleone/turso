@@ -336,9 +336,23 @@ checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 
 [[package]]
 name = "bytemuck"
-version = "1.22.0"
+version = "1.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6b1fc10dbac614ebc03540c9dbd60e83887fda27794998c6528f1782047d540"
+checksum = "5c76a5792e44e4abe34d3abf15636779261d45a7450612059293d1d2cfc63422"
+dependencies = [
+ "bytemuck_derive",
+]
+
+[[package]]
+name = "bytemuck_derive"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ecc273b49b3205b83d648f0690daa588925572cc5063745bfe547fe7ec8e1a1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.100",
+]
 
 [[package]]
 name = "byteorder"
@@ -524,12 +538,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "comma"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55b672471b4e9f9e95499ea597ff64941a309b2cdbffcc46f2cc5e2d971fd335"
-
-[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -571,20 +579,21 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "core_tester"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "anyhow",
  "assert_cmd",
  "env_logger 0.10.2",
  "log",
- "rand 0.9.0",
+ "rand 0.9.2",
  "rand_chacha 0.9.0",
- "rexpect",
  "rusqlite",
  "tempfile",
  "test-log",
+ "tokio",
  "tracing",
  "tracing-subscriber",
+ "turso",
  "turso_core",
  "zerocopy 0.8.26",
 ]
@@ -1279,6 +1288,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "genawaiter"
+version = "0.99.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c86bd0361bcbde39b13475e6e36cb24c329964aa2611be285289d1e4b751c1a0"
+dependencies = [
+ "genawaiter-macro",
+]
+
+[[package]]
+name = "genawaiter-macro"
+version = "0.99.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b32dfe1fdfc0bbde1f22a5da25355514b5e450c33a6af6770884c8750aedfbc"
+
+[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1403,6 +1427,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589533453244b0995c858700322199b2becb13b627df2851f64a2775d024abcf"
 dependencies = [
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "http"
+version = "1.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4a85d31aea989eead29a3aaf9e1115a180df8282431156e533de47660892565"
+dependencies = [
+ "bytes",
+ "fnv",
+ "itoa",
 ]
 
 [[package]]
@@ -1855,9 +1890,9 @@ checksum = "8355be11b20d696c8f18f6cc018c4e372165b1fa8126cef092399c9951984ffa"
 
 [[package]]
 name = "libmimalloc-sys"
-version = "0.1.42"
+version = "0.1.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec9d6fac27761dabcd4ee73571cdb06b7022dc99089acbe5435691edffaac0f4"
+checksum = "bf88cd67e9de251c1781dbe2f641a1a3ad66eaae831b8a2c38fbdc5ddae16d4d"
 dependencies = [
  "cc",
  "libc",
@@ -1876,9 +1911,9 @@ dependencies = [
 
 [[package]]
 name = "libsqlite3-sys"
-version = "0.32.0"
+version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fbb8270bb4060bd76c6e96f20c52d80620f1d82a3470885694e41e0f81ef6fe7"
+checksum = "133c182a6a2c87864fe97778797e46c7e999672690dc9fa3ee8e241aa4a9c13f"
 dependencies = [
  "cc",
  "pkg-config",
@@ -1899,14 +1934,14 @@ dependencies = [
 
 [[package]]
 name = "limbo-go"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "turso_core",
 ]
 
 [[package]]
 name = "limbo_completion"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "mimalloc",
  "turso_ext",
@@ -1914,7 +1949,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_crypto"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "blake3",
  "data-encoding",
@@ -1927,7 +1962,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_csv"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "csv",
  "mimalloc",
@@ -1937,7 +1972,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_ipaddr"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "ipnetwork",
  "mimalloc",
@@ -1946,7 +1981,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_percentile"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "mimalloc",
  "turso_ext",
@@ -1954,7 +1989,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_regexp"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "mimalloc",
  "regex",
@@ -1963,7 +1998,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_sim"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "anarchist-readable-name-generator-lib",
  "anyhow",
@@ -1989,21 +2024,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "limbo_sqlite3"
-version = "0.1.3"
-dependencies = [
- "env_logger 0.11.7",
- "libc",
- "tempfile",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "turso_core",
-]
-
-[[package]]
 name = "limbo_sqlite_test_ext"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "cc",
 ]
@@ -2168,9 +2190,9 @@ dependencies = [
 
 [[package]]
 name = "mimalloc"
-version = "0.1.46"
+version = "0.1.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "995942f432bbb4822a7e9c3faa87a695185b0d09273ba85f097b54f4e458f2af"
+checksum = "b1791cbe101e95af5764f06f20f6760521f7158f69dbf9d6baf941ee1bf6bc40"
 dependencies = [
  "libmimalloc-sys",
 ]
@@ -2198,9 +2220,9 @@ dependencies = [
 
 [[package]]
 name = "napi"
-version = "3.1.3"
+version = "3.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "afaf586c21f260e9dc327ae3585fc6efcbb24a416d5151da38bbd35a1f2663c8"
+checksum = "96671d5c84cee3ae4cab96386b9f953b22569ece9677b9fdd1492550a165eca5"
 dependencies = [
  "bitflags 2.9.0",
  "ctor",
@@ -2268,17 +2290,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b"
 dependencies = [
  "bitflags 1.3.2",
- "cfg-if",
- "libc",
-]
-
-[[package]]
-name = "nix"
-version = "0.27.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2eb04e9c688eff1c89d72b407f168cf79bb9e867a9d3323ed6c01519eb9cc053"
-dependencies = [
- "bitflags 2.9.0",
  "cfg-if",
  "libc",
 ]
@@ -2452,6 +2463,15 @@ name = "owo-colors"
 version = "4.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1036865bb9422d3300cf723f657c2851d0e9ab12567854b1f4eba3d77decf564"
+
+[[package]]
+name = "pack1"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d6e7cd9bd638dc2c831519a0caa1c006cab771a92b1303403a8322773c5b72d6"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "parking_lot"
@@ -2675,7 +2695,7 @@ dependencies = [
 
 [[package]]
 name = "py-turso"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "anyhow",
  "pyo3",
@@ -2824,13 +2844,12 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.0"
+version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3779b94aeb87e8bd4e834cee3650289ee9e0d5677f976ecdb6d219e5f4f6cd94"
+checksum = "6db2770f06117d490610c7488547d543617b21bfa07796d7a12f6f1bd53850d1"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.3",
- "zerocopy 0.8.26",
 ]
 
 [[package]]
@@ -2973,19 +2992,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
 
 [[package]]
-name = "rexpect"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c020234fb542618dc3e3d43724e9d93f87e1db74040a76a8c4e830220fb9b20d"
-dependencies = [
- "comma",
- "nix 0.27.1",
- "regex",
- "tempfile",
- "thiserror 1.0.69",
-]
-
-[[package]]
 name = "rgb"
 version = "0.8.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3039,9 +3045,9 @@ dependencies = [
 
 [[package]]
 name = "rusqlite"
-version = "0.34.0"
+version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37e34486da88d8e051c7c0e23c3f15fd806ea8546260aa2fec247e97242ec143"
+checksum = "165ca6e57b20e1351573e3729b958bc62f0e48025386970b6e4d29e7a7e71f3f"
 dependencies = [
  "bitflags 2.9.0",
  "fallible-iterator",
@@ -3788,8 +3794,10 @@ dependencies = [
 
 [[package]]
 name = "turso"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
+ "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
@@ -3798,7 +3806,7 @@ dependencies = [
 
 [[package]]
 name = "turso-java"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "jni",
  "thiserror 2.0.12",
@@ -3806,22 +3814,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "turso-sync"
-version = "0.1.3"
-dependencies = [
- "ctor",
- "tempfile",
- "thiserror 2.0.12",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "turso",
- "turso_core",
-]
-
-[[package]]
 name = "turso_cli"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -3835,6 +3829,7 @@ dependencies = [
  "libc",
  "limbo_completion",
  "miette",
+ "mimalloc",
  "nu-ansi-term 0.50.1",
  "rustyline",
  "schemars",
@@ -3853,11 +3848,12 @@ dependencies = [
 
 [[package]]
 name = "turso_core"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "antithesis_sdk",
  "bitflags 2.9.0",
  "built",
+ "bytemuck",
  "cfg_block",
  "chrono",
  "criterion",
@@ -3875,6 +3871,7 @@ dependencies = [
  "memory-stats",
  "miette",
  "mimalloc",
+ "pack1",
  "parking_lot",
  "paste",
  "polling",
@@ -3906,7 +3903,7 @@ dependencies = [
 
 [[package]]
 name = "turso_dart"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "flutter_rust_bridge",
  "turso_core",
@@ -3914,7 +3911,7 @@ dependencies = [
 
 [[package]]
 name = "turso_ext"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "chrono",
  "getrandom 0.3.2",
@@ -3923,7 +3920,7 @@ dependencies = [
 
 [[package]]
 name = "turso_ext_tests"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "env_logger 0.11.7",
  "lazy_static",
@@ -3934,7 +3931,7 @@ dependencies = [
 
 [[package]]
 name = "turso_macros"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3943,7 +3940,7 @@ dependencies = [
 
 [[package]]
 name = "turso_node"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "napi",
  "napi-build",
@@ -3954,7 +3951,7 @@ dependencies = [
 
 [[package]]
 name = "turso_parser"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "bitflags 2.9.0",
  "criterion",
@@ -3968,8 +3965,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "turso_sqlite3"
+version = "0.1.4-pre.8"
+dependencies = [
+ "env_logger 0.11.7",
+ "libc",
+ "tempfile",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "turso_core",
+]
+
+[[package]]
 name = "turso_sqlite3_parser"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "bitflags 2.9.0",
  "cc",
@@ -3987,7 +3997,7 @@ dependencies = [
 
 [[package]]
 name = "turso_stress"
-version = "0.1.3"
+version = "0.1.4-pre.8"
 dependencies = [
  "anarchist-readable-name-generator-lib",
  "antithesis_sdk",
@@ -3999,6 +4009,44 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "turso",
+]
+
+[[package]]
+name = "turso_sync_engine"
+version = "0.1.4-pre.8"
+dependencies = [
+ "bytes",
+ "ctor",
+ "futures",
+ "genawaiter",
+ "http",
+ "rand 0.9.2",
+ "rand_chacha 0.9.0",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "turso",
+ "turso_core",
+ "uuid",
+]
+
+[[package]]
+name = "turso_sync_js"
+version = "0.1.4-pre.8"
+dependencies = [
+ "genawaiter",
+ "http",
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "tracing-subscriber",
+ "turso_core",
+ "turso_node",
+ "turso_sync_engine",
 ]
 
 [[package]]

@@ -5,7 +5,7 @@ use std::{
 
 use super::{execute, AggFunc, BranchOffset, CursorID, FuncCtx, InsnFunction, PageIdx};
 use crate::{
-    schema::{Affinity, BTreeTable, Index},
+    schema::{Affinity, BTreeTable, Column, Index},
     storage::{pager::CreateBTreeFlags, wal::CheckpointMode},
     translate::collate::CollationSeq,
     Value,
@@ -107,7 +107,7 @@ impl IdxInsertFlags {
 pub struct InsertFlags(pub u8);
 
 impl InsertFlags {
-    pub const UPDATE: u8 = 0x01; // Flag indicating this is part of an UPDATE statement
+    pub const UPDATE_ROWID_CHANGE: u8 = 0x01; // Flag indicating this is part of an UPDATE statement where the row's rowid is changed
     pub const REQUIRE_SEEK: u8 = 0x02; // Flag indicating that a seek is required to insert the row
 
     pub fn new() -> Self {
@@ -120,6 +120,11 @@ impl InsertFlags {
 
     pub fn require_seek(mut self) -> Self {
         self.0 |= InsertFlags::REQUIRE_SEEK;
+        self
+    }
+
+    pub fn update_rowid_change(mut self) -> Self {
+        self.0 |= InsertFlags::UPDATE_ROWID_CHANGE;
         self
     }
 }
@@ -459,8 +464,9 @@ pub enum Insn {
 
     /// Start a transaction.
     Transaction {
-        db: usize,   // p1
-        write: bool, // p2
+        db: usize,          // p1
+        write: bool,        // p2
+        schema_cookie: u32, // p3
     },
 
     /// Set database auto-commit mode and potentially rollback.
@@ -706,6 +712,12 @@ pub enum Insn {
         func: FuncCtx,      // P4
     },
 
+    /// Cast register P1 to affinity P2 and store in register P1
+    Cast {
+        reg: usize,
+        affinity: Affinity,
+    },
+
     InitCoroutine {
         yield_reg: usize,
         jump_on_definition: BranchOffset,
@@ -738,6 +750,7 @@ pub enum Insn {
 
     Delete {
         cursor_id: CursorID,
+        table_name: String,
     },
 
     /// If P5 is not zero, then raise an SQLITE_CORRUPT_INDEX error if no matching index entry
@@ -765,11 +778,16 @@ pub enum Insn {
         reg: usize,
     },
 
-    /// If P4==0 then register P3 holds a blob constructed by [MakeRecord](https://sqlite.org/opcode.html#MakeRecord). If P4>0 then register P3 is the first of P4 registers that form an unpacked record.\
+    /// If P4==0 then register P3 holds a blob constructed by [MakeRecord](https://sqlite.org/opcode.html#MakeRecord).
+    /// If P4>0 then register P3 is the first of P4 registers that form an unpacked record.
     ///
-    /// Cursor P1 is on an index btree. If the record identified by P3 and P4 contains any NULL value, jump immediately to P2. If all terms of the record are not-NULL then a check is done to determine if any row in the P1 index btree has a matching key prefix. If there are no matches, jump immediately to P2. If there is a match, fall through and leave the P1 cursor pointing to the matching row.\
+    /// Cursor P1 is on an index btree. If the record identified by P3 and P4 contains any NULL value, jump immediately
+    /// to P2. If all terms of the record are not-NULL then a check is done to determine if any row in the P1 index
+    /// btree has a matching key prefix. If there are no matches, jump immediately to P2. If there is a match, fall
+    /// through and leave the P1 cursor pointing to the matching row.\
     ///
-    /// This opcode is similar to [NotFound](https://sqlite.org/opcode.html#NotFound) with the exceptions that the branch is always taken if any part of the search key input is NULL.
+    /// This opcode is similar to [NotFound](https://sqlite.org/opcode.html#NotFound) with the exceptions that the
+    /// branch is always taken if any part of the search key input is NULL.
     NoConflict {
         cursor_id: CursorID,     // P1 index cursor
         target_pc: BranchOffset, // P2 jump target
@@ -832,6 +850,12 @@ pub enum Insn {
         //  The name of the table being dropped
         table_name: String,
     },
+    DropView {
+        /// The database within which this view needs to be dropped
+        db: usize,
+        /// The name of the view being dropped
+        view_name: String,
+    },
     DropIndex {
         ///  The database within which this index needs to be dropped (P1).
         db: usize,
@@ -852,10 +876,29 @@ pub enum Insn {
         /// Jump to this PC if the register is null (P2).
         target_pc: BranchOffset,
     },
+
+    /// Set the collation sequence for the next function call.
+    /// P4 is a pointer to a CollationSeq. If the next call to a user function
+    /// or aggregate calls sqlite3GetFuncCollSeq(), this collation sequence will
+    /// be returned. This is used by the built-in min(), max() and nullif()
+    /// functions.
+    ///
+    /// If P1 is not zero, then it is a register that a subsequent min() or
+    /// max() aggregate will set to 1 if the current row is not the minimum or
+    /// maximum.  The P1 register is initialized to 0 by this instruction.
+    CollSeq {
+        /// Optional register to initialize to 0 (P1).
+        reg: Option<usize>,
+        /// The collation sequence to set (P4).
+        collation: CollationSeq,
+    },
     ParseSchema {
         db: usize,
         where_clause: Option<String>,
     },
+
+    /// Populate all materialized views after schema parsing
+    PopulateMaterializedViews,
 
     /// Place the result of lhs >> rhs in dest register.
     ShiftRight {
@@ -869,6 +912,14 @@ pub enum Insn {
         lhs: usize,
         rhs: usize,
         dest: usize,
+    },
+
+    /// Add immediate value to register and force integer conversion.
+    /// Add the constant P2 to the value in register P1. The result is always an integer.
+    /// To force any register to be an integer, just add 0.
+    AddImm {
+        register: usize, // P1: target register
+        value: i64,      // P2: immediate value to add
     },
 
     /// Get parameter variable.
@@ -990,6 +1041,40 @@ pub enum Insn {
         roots: Vec<usize>,
         message_register: usize,
     },
+    RenameTable {
+        from: String,
+        to: String,
+    },
+    DropColumn {
+        table: String,
+        column_index: usize,
+    },
+    AddColumn {
+        table: String,
+        column: Column,
+    },
+    RenameColumn {
+        table: String,
+        column_index: usize,
+        name: String,
+    },
+    /// Try to set the maximum page count for database P1 to the value in P3.
+    /// Do not let the maximum page count fall below the current page count and
+    /// do not change the maximum page count value if P3==0.
+    /// Store the maximum page count after the change in register P2.
+    MaxPgcnt {
+        db: usize,      // P1: database index
+        dest: usize,    // P2: output register
+        new_max: usize, // P3: new maximum page count (0 = just return current)
+    },
+    /// Get or set the journal mode for database P1.
+    /// If P3 is not null, it contains the new journal mode string.
+    /// Store the resulting journal mode in register P2.
+    JournalMode {
+        db: usize,                // P1: database index
+        dest: usize,              // P2: output register for result
+        new_mode: Option<String>, // P3: new journal mode (if setting)
+    },
 }
 
 impl Insn {
@@ -1075,6 +1160,7 @@ impl Insn {
             Insn::SorterData { .. } => execute::op_sorter_data,
             Insn::SorterNext { .. } => execute::op_sorter_next,
             Insn::Function { .. } => execute::op_function,
+            Insn::Cast { .. } => execute::op_cast,
             Insn::InitCoroutine { .. } => execute::op_init_coroutine,
             Insn::EndCoroutine { .. } => execute::op_end_coroutine,
             Insn::Yield { .. } => execute::op_yield,
@@ -1094,11 +1180,15 @@ impl Insn {
             Insn::Destroy { .. } => execute::op_destroy,
 
             Insn::DropTable { .. } => execute::op_drop_table,
+            Insn::DropView { .. } => execute::op_drop_view,
             Insn::Close { .. } => execute::op_close,
             Insn::IsNull { .. } => execute::op_is_null,
+            Insn::CollSeq { .. } => execute::op_coll_seq,
             Insn::ParseSchema { .. } => execute::op_parse_schema,
+            Insn::PopulateMaterializedViews => execute::op_populate_materialized_views,
             Insn::ShiftRight { .. } => execute::op_shift_right,
             Insn::ShiftLeft { .. } => execute::op_shift_left,
+            Insn::AddImm { .. } => execute::op_add_imm,
             Insn::Variable { .. } => execute::op_variable,
             Insn::ZeroOrNull { .. } => execute::op_zero_or_null,
             Insn::Not { .. } => execute::op_not,
@@ -1116,6 +1206,12 @@ impl Insn {
             Insn::IdxDelete { .. } => execute::op_idx_delete,
             Insn::Count { .. } => execute::op_count,
             Insn::IntegrityCk { .. } => execute::op_integrity_check,
+            Insn::RenameTable { .. } => execute::op_rename_table,
+            Insn::DropColumn { .. } => execute::op_drop_column,
+            Insn::AddColumn { .. } => execute::op_add_column,
+            Insn::RenameColumn { .. } => execute::op_rename_column,
+            Insn::MaxPgcnt { .. } => execute::op_max_pgcnt,
+            Insn::JournalMode { .. } => execute::op_journal_mode,
         }
     }
 }

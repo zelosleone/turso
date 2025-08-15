@@ -8,7 +8,7 @@ use crate::{schema::Schema, Result, SymbolTable};
 use std::sync::Arc;
 use turso_sqlite3_parser::ast::{Expr, Limit, QualifiedName, ResultColumn};
 
-use super::plan::{ColumnUsedMask, IterationDirection, JoinedTable, TableReferences};
+use super::plan::{ColumnUsedMask, JoinedTable, TableReferences};
 
 #[allow(clippy::too_many_arguments)]
 pub fn translate_delete(
@@ -25,7 +25,7 @@ pub fn translate_delete(
         // Let's disable altering a table with indices altogether instead of checking column by
         // column to be extra safe.
         crate::bail_parse_error!(
-            "DELETE for table with indexes is disabled by default. Run with `--experimental-indexes` to enable this feature."
+            "DELETE for table with indexes is disabled. Omit the `--experimental-indexes=false` flag to enable this feature."
         );
     }
 
@@ -84,13 +84,10 @@ pub fn prepare_delete_plan(
     let name = tbl_name.name.as_str().to_string();
     let indexes = schema.get_indices(table.get_name()).to_vec();
     let joined_tables = vec![JoinedTable {
+        op: Operation::default_scan_for(&table),
         table,
         identifier: name,
         internal_id: table_ref_counter.next(),
-        op: Operation::Scan {
-            iter_dir: IterationDirection::Forwards,
-            index: None,
-        },
         join_info: None,
         col_used_mask: ColumnUsedMask::default(),
         database_id: 0,

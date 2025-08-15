@@ -2,7 +2,6 @@ use super::{Buffer, Completion, File, MemoryIO, OpenFlags, IO};
 use crate::ext::VfsMod;
 use crate::io::clock::{Clock, Instant};
 use crate::{LimboError, Result};
-use std::cell::RefCell;
 use std::ffi::{c_void, CString};
 use std::sync::Arc;
 use turso_ext::{VfsFileImpl, VfsImpl};
@@ -44,7 +43,8 @@ impl IO for VfsMod {
     }
 
     fn wait_for_completion(&self, _c: Completion) -> Result<()> {
-        todo!();
+        // for the moment anyway, this is currently a sync api
+        Ok(())
     }
 
     fn generate_random_number(&self) -> i64 {
@@ -100,7 +100,7 @@ impl File for VfsFileImpl {
     fn pread(&self, pos: usize, c: Completion) -> Result<Completion> {
         let r = c.as_read();
         let result = {
-            let mut buf = r.buf_mut();
+            let buf = r.buf();
             let count = buf.len();
             let vfs = unsafe { &*self.vfs };
             unsafe { (vfs.read)(self.file, buf.as_mut_ptr(), count, pos as i64) }
@@ -113,26 +113,14 @@ impl File for VfsFileImpl {
         }
     }
 
-    fn pwrite(
-        &self,
-        pos: usize,
-        buffer: Arc<RefCell<Buffer>>,
-        c: Completion,
-    ) -> Result<Completion> {
-        let buf = buffer.borrow();
-        let count = buf.as_slice().len();
+    fn pwrite(&self, pos: usize, buffer: Arc<Buffer>, c: Completion) -> Result<Completion> {
+        let count = buffer.as_slice().len();
         if self.vfs.is_null() {
             return Err(LimboError::ExtensionError("VFS is null".to_string()));
         }
         let vfs = unsafe { &*self.vfs };
-        let result = unsafe {
-            (vfs.write)(
-                self.file,
-                buf.as_slice().as_ptr() as *mut u8,
-                count,
-                pos as i64,
-            )
-        };
+        let result =
+            unsafe { (vfs.write)(self.file, buffer.as_ptr() as *mut u8, count, pos as i64) };
 
         if result < 0 {
             Err(LimboError::ExtensionError("pwrite failed".to_string()))
@@ -160,6 +148,20 @@ impl File for VfsFileImpl {
             Err(LimboError::ExtensionError("size failed".to_string()))
         } else {
             Ok(result as u64)
+        }
+    }
+
+    fn truncate(&self, len: usize, c: Completion) -> Result<Completion> {
+        if self.vfs.is_null() {
+            return Err(LimboError::ExtensionError("VFS is null".to_string()));
+        }
+        let vfs = unsafe { &*self.vfs };
+        let result = unsafe { (vfs.truncate)(self.file, len as i64) };
+        if result.is_error() {
+            Err(LimboError::ExtensionError("truncate failed".to_string()))
+        } else {
+            c.complete(0);
+            Ok(c)
         }
     }
 }

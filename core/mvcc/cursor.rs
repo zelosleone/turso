@@ -1,7 +1,12 @@
 use crate::mvcc::clock::LogicalClock;
-use crate::mvcc::database::{MvStore, Result, Row, RowID};
+use crate::mvcc::database::{MvStore, Row, RowID};
+use crate::types::{IOResult, SeekKey, SeekOp, SeekResult};
+use crate::Result;
+use crate::{Pager, Value};
 use std::fmt::Debug;
+use std::ops::Bound;
 use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Debug, Copy, Clone)]
 enum CursorPosition {
@@ -14,20 +19,27 @@ enum CursorPosition {
 }
 #[derive(Debug)]
 pub struct MvccLazyCursor<Clock: LogicalClock> {
-    pub db: Rc<MvStore<Clock>>,
+    pub db: Arc<MvStore<Clock>>,
     current_pos: CursorPosition,
     table_id: u64,
     tx_id: u64,
 }
 
 impl<Clock: LogicalClock> MvccLazyCursor<Clock> {
-    pub fn new(db: Rc<MvStore<Clock>>, tx_id: u64, table_id: u64) -> Result<MvccLazyCursor<Clock>> {
-        Ok(Self {
+    pub fn new(
+        db: Arc<MvStore<Clock>>,
+        tx_id: u64,
+        table_id: u64,
+        pager: Rc<Pager>,
+    ) -> Result<MvccLazyCursor<Clock>> {
+        db.maybe_initialize_table(table_id, pager)?;
+        let cursor = Self {
             db,
             tx_id,
             current_pos: CursorPosition::BeforeFirst,
             table_id,
-        })
+        };
+        Ok(cursor)
     }
 
     /// Insert a row into the table.
@@ -40,18 +52,37 @@ impl<Clock: LogicalClock> MvccLazyCursor<Clock> {
         Ok(())
     }
 
-    pub fn current_row_id(&self) -> Option<RowID> {
+    pub fn current_row_id(&mut self) -> Option<RowID> {
         match self.current_pos {
             CursorPosition::Loaded(id) => Some(id),
-            CursorPosition::BeforeFirst => None,
+            CursorPosition::BeforeFirst => {
+                // If we are before first, we need to try and find the first row.
+                let maybe_rowid = self.db.get_next_row_id_for_table(self.table_id, i64::MIN);
+                if let Some(id) = maybe_rowid {
+                    self.current_pos = CursorPosition::Loaded(id);
+                    Some(id)
+                } else {
+                    self.current_pos = CursorPosition::BeforeFirst;
+                    None
+                }
+            }
             CursorPosition::End => None,
         }
     }
 
-    pub fn current_row(&self) -> Result<Option<Row>> {
+    pub fn current_row(&mut self) -> Result<Option<Row>> {
         match self.current_pos {
             CursorPosition::Loaded(id) => self.db.read(self.tx_id, id),
-            CursorPosition::BeforeFirst => Ok(None),
+            CursorPosition::BeforeFirst => {
+                // If we are before first, we need to try and find the first row.
+                let maybe_rowid = self.db.get_next_row_id_for_table(self.table_id, i64::MIN);
+                if let Some(id) = maybe_rowid {
+                    self.current_pos = CursorPosition::Loaded(id);
+                    self.db.read(self.tx_id, id)
+                } else {
+                    Ok(None)
+                }
+            }
             CursorPosition::End => Ok(None),
         }
     }
@@ -65,7 +96,8 @@ impl<Clock: LogicalClock> MvccLazyCursor<Clock> {
         let before_first = matches!(self.current_pos, CursorPosition::BeforeFirst);
         let min_id = match self.current_pos {
             CursorPosition::Loaded(id) => id.row_id + 1,
-            CursorPosition::BeforeFirst => i64::MIN, // we need to find first row, so we look from the first id
+            // TODO: do we need to forward twice?
+            CursorPosition::BeforeFirst => i64::MIN, // we need to find first row, so we look from the first id,
             CursorPosition::End => {
                 // let's keep same state, we reached the end so no point in moving forward.
                 return false;
@@ -99,5 +131,94 @@ impl<Clock: LogicalClock> MvccLazyCursor<Clock> {
 
     pub fn rewind(&mut self) {
         self.current_pos = CursorPosition::BeforeFirst;
+    }
+
+    pub fn last(&mut self) {
+        let last_rowid = self.db.get_last_rowid(self.table_id);
+        if let Some(last_rowid) = last_rowid {
+            self.current_pos = CursorPosition::Loaded(RowID {
+                table_id: self.table_id,
+                row_id: last_rowid,
+            });
+        } else {
+            self.current_pos = CursorPosition::BeforeFirst;
+        }
+    }
+
+    pub fn get_next_rowid(&mut self) -> i64 {
+        self.last();
+        match self.current_pos {
+            CursorPosition::Loaded(id) => id.row_id + 1,
+            CursorPosition::BeforeFirst => i64::MIN,
+            CursorPosition::End => i64::MAX,
+        }
+    }
+
+    pub fn seek(&mut self, seek_key: SeekKey<'_>, op: SeekOp) -> Result<IOResult<SeekResult>> {
+        let row_id = match seek_key {
+            SeekKey::TableRowId(row_id) => row_id,
+            SeekKey::IndexKey(_) => {
+                todo!();
+            }
+        };
+        // gt -> lower_bound bound excluded, we want first row after row_id
+        // ge -> lower_bound bound included, we want first row equal to row_id or first row after row_id
+        // lt -> upper_bound bound excluded, we want last row before row_id
+        // le -> upper_bound bound included, we want last row equal to row_id or first row before row_id
+        let rowid = RowID {
+            table_id: self.table_id,
+            row_id,
+        };
+        let (bound, lower_bound) = match op {
+            SeekOp::GT => (Bound::Excluded(&rowid), true),
+            SeekOp::GE { eq_only: _ } => (Bound::Included(&rowid), true),
+            SeekOp::LT => (Bound::Excluded(&rowid), false),
+            SeekOp::LE { eq_only: _ } => (Bound::Included(&rowid), false),
+        };
+        let rowid = self.db.seek_rowid(bound, lower_bound);
+        if let Some(rowid) = rowid {
+            self.current_pos = CursorPosition::Loaded(rowid);
+            if op.eq_only() {
+                if rowid.row_id == row_id {
+                    Ok(IOResult::Done(SeekResult::Found))
+                } else {
+                    Ok(IOResult::Done(SeekResult::NotFound))
+                }
+            } else {
+                Ok(IOResult::Done(SeekResult::Found))
+            }
+        } else {
+            let forwards = matches!(op, SeekOp::GE { eq_only: _ } | SeekOp::GT);
+            if forwards {
+                self.last();
+            } else {
+                self.rewind();
+            }
+            Ok(IOResult::Done(SeekResult::NotFound))
+        }
+    }
+
+    pub fn exists(&mut self, key: &Value) -> Result<IOResult<bool>> {
+        let int_key = match key {
+            Value::Integer(i) => i,
+            _ => unreachable!("btree tables are indexed by integers!"),
+        };
+        let exists = self
+            .db
+            .seek_rowid(
+                Bound::Included(&RowID {
+                    table_id: self.table_id,
+                    row_id: *int_key,
+                }),
+                true,
+            )
+            .is_some();
+        if exists {
+            self.current_pos = CursorPosition::Loaded(RowID {
+                table_id: self.table_id,
+                row_id: *int_key,
+            });
+        }
+        Ok(IOResult::Done(exists))
     }
 }

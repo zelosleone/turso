@@ -91,7 +91,7 @@ impl File for GenericFile {
         file.seek(std::io::SeekFrom::Start(pos as u64))?;
         {
             let r = c.as_read();
-            let mut buf = r.buf_mut();
+            let mut buf = r.buf();
             let buf = buf.as_mut_slice();
             file.read_exact(buf)?;
         }
@@ -99,16 +99,10 @@ impl File for GenericFile {
         Ok(c)
     }
 
-    fn pwrite(
-        &self,
-        pos: usize,
-        buffer: Arc<RefCell<crate::Buffer>>,
-        c: Completion,
-    ) -> Result<Completion> {
+    fn pwrite(&self, pos: usize, buffer: Arc<crate::Buffer>, c: Completion) -> Result<Completion> {
         let mut file = self.file.borrow_mut();
         file.seek(std::io::SeekFrom::Start(pos as u64))?;
-        let buf = buffer.borrow();
-        let buf = buf.as_slice();
+        let buf = buffer.as_slice();
         file.write_all(buf)?;
         c.complete(buf.len() as i32);
         Ok(c)
@@ -117,6 +111,14 @@ impl File for GenericFile {
     fn sync(&self, c: Completion) -> Result<Completion> {
         let mut file = self.file.borrow_mut();
         file.sync_all().map_err(|err| LimboError::IOError(err))?;
+        c.complete(0);
+        Ok(c)
+    }
+
+    fn truncate(&self, len: usize, c: Completion) -> Result<Completion> {
+        let mut file = self.file.borrow_mut();
+        file.set_len(len as u64)
+            .map_err(|err| LimboError::IOError(err))?;
         c.complete(0);
         Ok(c)
     }

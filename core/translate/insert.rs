@@ -1,12 +1,15 @@
 use std::sync::Arc;
 
 use turso_sqlite3_parser::ast::{
-    DistinctNames, Expr, InsertBody, OneSelect, QualifiedName, ResolveType, ResultColumn, With,
+    self, DistinctNames, Expr, InsertBody, OneSelect, QualifiedName, ResolveType, ResultColumn,
+    With,
 };
 
 use crate::error::{SQLITE_CONSTRAINT_NOTNULL, SQLITE_CONSTRAINT_PRIMARYKEY};
 use crate::schema::{self, IndexColumn, Table};
-use crate::translate::emitter::{emit_cdc_insns, emit_cdc_patch_record, OperationMode};
+use crate::translate::emitter::{
+    emit_cdc_insns, emit_cdc_patch_record, prepare_cdc_if_necessary, OperationMode,
+};
 use crate::translate::expr::{
     emit_returning_results, process_returning_clause, ReturningValueRegisters,
 };
@@ -67,7 +70,7 @@ pub fn translate_insert(
         // Let's disable altering a table with indices altogether instead of checking column by
         // column to be extra safe.
         crate::bail_parse_error!(
-            "INSERT to table with indexes is disabled by default. Run with `--experimental-indexes` to enable this feature."
+            "INSERT to table with indexes is disabled. Omit the `--experimental-indexes=false` flag to enable this feature."
         );
     }
     let table_name = &tbl_name.name;
@@ -87,7 +90,6 @@ pub fn translate_insert(
             on_conflict,
             &resolver,
         )?;
-        program.epilogue(super::emitter::TransactionMode::Write);
         return Ok(program);
     }
 
@@ -110,6 +112,14 @@ pub fn translate_insert(
                 }
                 let mut param_idx = 1;
                 for expr in values_expr.iter_mut().flat_map(|v| v.iter_mut()) {
+                    if let Expr::Id(name) = expr {
+                        if name.is_double_quoted() {
+                            *expr = Expr::Literal(ast::Literal::String(format!("{name}")));
+                        } else {
+                            // an INSERT INTO ... VALUES (...) cannot reference columns
+                            crate::bail_parse_error!("no such column: {name}");
+                        }
+                    }
                     rewrite_expr(expr, &mut param_idx)?;
                 }
                 values = values_expr.pop();
@@ -123,25 +133,7 @@ pub fn translate_insert(
     let halt_label = program.allocate_label();
     let loop_start_label = program.allocate_label();
 
-    let cdc_table = program.capture_data_changes_mode().table();
-    let cdc_table = if let Some(cdc_table) = cdc_table {
-        if table.get_name() != cdc_table {
-            let Some(turso_cdc_table) = schema.get_table(cdc_table) else {
-                crate::bail_parse_error!("no such table: {}", cdc_table);
-            };
-            let Some(cdc_btree) = turso_cdc_table.btree().clone() else {
-                crate::bail_parse_error!("no such table: {}", cdc_table);
-            };
-            Some((
-                program.alloc_cursor_id(CursorType::BTreeTable(cdc_btree.clone())),
-                cdc_btree,
-            ))
-        } else {
-            None
-        }
-    } else {
-        None
-    };
+    let cdc_table = prepare_cdc_if_necessary(&mut program, schema, table.get_name())?;
 
     // Process RETURNING clause using shared module
     let (result_columns, _) = if let Some(returning) = &mut returning {
@@ -366,14 +358,6 @@ pub fn translate_insert(
             &resolver,
         )?;
     }
-    // Open turso_cdc table btree for writing if necessary
-    if let Some((cdc_cursor_id, cdc_btree)) = &cdc_table {
-        program.emit_insn(Insn::OpenWrite {
-            cursor_id: *cdc_cursor_id,
-            root_page: cdc_btree.root_page.into(),
-            db: 0,
-        });
-    }
 
     // Open all the index btrees for writing
     for idx_cursor in idx_cursors.iter() {
@@ -596,6 +580,7 @@ pub fn translate_insert(
             rowid_and_columns_start_register,
             None,
             after_record_reg,
+            None,
             table_name.as_str(),
         )?;
     }
@@ -631,7 +616,6 @@ pub fn translate_insert(
     }
 
     program.resolve_label(halt_label, program.offset());
-    program.epilogue(super::emitter::TransactionMode::Write);
 
     Ok(program)
 }

@@ -16,13 +16,13 @@ use super::main_loop::{
 };
 use super::order_by::{emit_order_by, init_order_by, SortMetadata};
 use super::plan::{
-    Distinctness, JoinOrderMember, Operation, SelectPlan, TableReferences, UpdatePlan,
+    Distinctness, JoinOrderMember, Operation, Scan, SelectPlan, TableReferences, UpdatePlan,
 };
 use super::select::emit_simple_count;
 use super::subquery::emit_subqueries;
 use crate::error::SQLITE_CONSTRAINT_PRIMARYKEY;
 use crate::function::Func;
-use crate::schema::{Schema, Table};
+use crate::schema::{BTreeTable, Column, Schema, Table};
 use crate::translate::compound_select::emit_program_for_compound_select;
 use crate::translate::expr::{emit_returning_results, ReturningValueRegisters};
 use crate::translate::plan::{DeletePlan, Plan, QueryDestination, Search};
@@ -194,6 +194,7 @@ pub enum OperationMode {
 }
 
 #[derive(Clone, Copy, Debug)]
+/// Sqlite always considers Read transactions implicit
 pub enum TransactionMode {
     None,
     Read,
@@ -238,7 +239,6 @@ fn emit_program_for_select(
     // Trivial exit on LIMIT 0
     if let Some(limit) = plan.limit {
         if limit == 0 {
-            program.epilogue(TransactionMode::Read);
             program.result_columns = plan.result_columns;
             program.table_references.extend(plan.table_references);
             return Ok(());
@@ -246,13 +246,6 @@ fn emit_program_for_select(
     }
     // Emit main parts of query
     emit_query(program, &mut plan, &mut t_ctx)?;
-
-    // Finalize program
-    if plan.table_references.joined_tables().is_empty() {
-        program.epilogue(TransactionMode::None);
-    } else {
-        program.epilogue(TransactionMode::Read);
-    }
 
     program.result_columns = plan.result_columns;
     program.table_references.extend(plan.table_references);
@@ -266,7 +259,7 @@ pub fn emit_query<'a>(
     t_ctx: &mut TranslateCtx<'a>,
 ) -> Result<usize> {
     if !plan.values.is_empty() {
-        let reg_result_cols_start = emit_values(program, plan, &t_ctx.resolver)?;
+        let reg_result_cols_start = emit_values(program, plan, t_ctx)?;
         return Ok(reg_result_cols_start);
     }
 
@@ -416,7 +409,6 @@ fn emit_program_for_delete(
 
     // exit early if LIMIT 0
     if let Some(0) = plan.limit {
-        program.epilogue(TransactionMode::Write);
         program.result_columns = plan.result_columns;
         program.table_references.extend(plan.table_references);
         return Ok(());
@@ -472,7 +464,6 @@ fn emit_program_for_delete(
     program.preassign_label_to_next_insn(after_main_loop_label);
 
     // Finalize program
-    program.epilogue(TransactionMode::Write);
     program.result_columns = plan.result_columns;
     program.table_references.extend(plan.table_references);
     Ok(())
@@ -595,7 +586,7 @@ fn emit_delete_insns(
             let before_record_reg = if cdc_has_before {
                 Some(emit_cdc_full_record(
                     program,
-                    &table_reference.table,
+                    table_reference.table.columns(),
                     main_table_cursor_id,
                     rowid_reg,
                 ))
@@ -609,6 +600,7 @@ fn emit_delete_insns(
                 cdc_cursor_id,
                 rowid_reg,
                 before_record_reg,
+                None,
                 None,
                 table_reference.table.get_name(),
             )?;
@@ -643,6 +635,7 @@ fn emit_delete_insns(
 
         program.emit_insn(Insn::Delete {
             cursor_id: main_table_cursor_id,
+            table_name: table_reference.table.get_name().to_string(),
         });
     }
     if let Some(limit_ctx) = t_ctx.limit_ctx {
@@ -673,7 +666,6 @@ fn emit_program_for_update(
 
     // Exit on LIMIT 0
     if let Some(0) = plan.limit {
-        program.epilogue(TransactionMode::None);
         program.result_columns = plan.returning.unwrap_or_default();
         program.table_references.extend(plan.table_references);
         return Ok(());
@@ -767,8 +759,6 @@ fn emit_program_for_update(
 
     after(program);
 
-    // Finalize program
-    program.epilogue(TransactionMode::Write);
     program.result_columns = plan.returning.unwrap_or_default();
     program.table_references.extend(plan.table_references);
     Ok(())
@@ -786,7 +776,7 @@ fn emit_update_insns(
     let loop_labels = t_ctx.labels_main_loop.first().unwrap();
     let cursor_id = program.resolve_cursor_id(&CursorKey::table(table_ref.internal_id));
     let (index, is_virtual) = match &table_ref.op {
-        Operation::Scan { index, .. } => (
+        Operation::Scan(Scan::BTreeTable { index, .. }) => (
             index.as_ref().map(|index| {
                 (
                     index.clone(),
@@ -794,8 +784,9 @@ fn emit_update_insns(
                         .resolve_cursor_id(&CursorKey::index(table_ref.internal_id, index.clone())),
                 )
             }),
-            table_ref.virtual_table().is_some(),
+            false,
         ),
+        Operation::Scan(_) => (None, table_ref.virtual_table().is_some()),
         Operation::Search(search) => match search {
             &Search::RowidEq { .. } | Search::Seek { index: None, .. } => (None, false),
             Search::Seek {
@@ -825,7 +816,6 @@ fn emit_update_insns(
     });
 
     // Check if rowid was provided (through INTEGER PRIMARY KEY as a rowid alias)
-
     let rowid_alias_index = table_ref.columns().iter().position(|c| c.is_rowid_alias);
 
     let has_user_provided_rowid = if let Some(index) = rowid_alias_index {
@@ -879,6 +869,15 @@ fn emit_update_insns(
 
     // we scan a column at a time, loading either the column's values, or the new value
     // from the Set expression, into registers so we can emit a MakeRecord and update the row.
+
+    // we allocate 2C registers for "updates" as the structure of this column for CDC table is following:
+    // [C boolean values where true set for changed columns] [C values with updates where NULL is set for not-changed columns]
+    let cdc_updates_register = if program.capture_data_changes_mode().has_updates() {
+        Some(program.alloc_registers(2 * table_ref.columns().len()))
+    } else {
+        None
+    };
+
     let start = if is_virtual { beg + 2 } else { beg + 1 };
     for (idx, table_column) in table_ref.columns().iter().enumerate() {
         let target_reg = start + idx;
@@ -925,6 +924,27 @@ fn emit_update_insns(
                     });
                 }
             }
+
+            if let Some(cdc_updates_register) = cdc_updates_register {
+                let change_reg = cdc_updates_register + idx;
+                let value_reg = cdc_updates_register + table_ref.columns().len() + idx;
+                program.emit_bool(true, change_reg);
+                program.mark_last_insn_constant();
+                let mut updated = false;
+                if let Some(ddl_query_for_cdc_update) = &plan.cdc_update_alter_statement {
+                    if table_column.name.as_deref() == Some("sql") {
+                        program.emit_string8(ddl_query_for_cdc_update.clone(), value_reg);
+                        updated = true;
+                    }
+                }
+                if !updated {
+                    program.emit_insn(Insn::Copy {
+                        src_reg: target_reg,
+                        dst_reg: value_reg,
+                        extra_amount: 0,
+                    });
+                }
+            }
         } else {
             let column_idx_in_index = index.as_ref().and_then(|(idx, _)| {
                 idx.columns
@@ -954,6 +974,15 @@ fn emit_update_insns(
                     })
                     .unwrap_or(&cursor_id);
                 program.emit_column(cursor_id, column_idx_in_index.unwrap_or(idx), target_reg);
+            }
+
+            if let Some(cdc_updates_register) = cdc_updates_register {
+                let change_bit_reg = cdc_updates_register + idx;
+                let value_reg = cdc_updates_register + table_ref.columns().len() + idx;
+                program.emit_bool(false, change_bit_reg);
+                program.mark_last_insn_constant();
+                program.emit_null(value_reg, None);
+                program.mark_last_insn_constant();
             }
         }
     }
@@ -1175,7 +1204,7 @@ fn emit_update_insns(
         let cdc_before_reg = if program.capture_data_changes_mode().has_before() {
             Some(emit_cdc_full_record(
                 program,
-                &table_ref.table,
+                table_ref.table.columns(),
                 cursor_id,
                 cdc_rowid_before_reg.expect("cdc_rowid_before_reg must be set"),
             ))
@@ -1187,7 +1216,10 @@ fn emit_update_insns(
         // Insert instruction to update the cell. We need to first delete the current cell
         // and later insert the updated record
         if has_user_provided_rowid {
-            program.emit_insn(Insn::Delete { cursor_id });
+            program.emit_insn(Insn::Delete {
+                cursor_id,
+                table_name: table_ref.table.get_name().to_string(),
+            });
         }
 
         program.emit_insn(Insn::Insert {
@@ -1197,7 +1229,7 @@ fn emit_update_insns(
             flag: if has_user_provided_rowid {
                 // The previous Insn::NotExists and Insn::Delete seek to the old rowid,
                 // so to insert a new user-provided rowid, we need to seek to the correct place.
-                InsertFlags::new().require_seek()
+                InsertFlags::new().require_seek().update_rowid_change()
             } else {
                 InsertFlags::new()
             },
@@ -1230,6 +1262,19 @@ fn emit_update_insns(
             None
         };
 
+        let cdc_updates_record = if let Some(cdc_updates_register) = cdc_updates_register {
+            let record_reg = program.alloc_register();
+            program.emit_insn(Insn::MakeRecord {
+                start_reg: cdc_updates_register,
+                count: 2 * table_ref.columns().len(),
+                dest_reg: record_reg,
+                index_name: None,
+            });
+            Some(record_reg)
+        } else {
+            None
+        };
+
         // emit actual CDC instructions for write to the CDC table
         if let Some(cdc_cursor_id) = t_ctx.cdc_cursor_id {
             let cdc_rowid_before_reg =
@@ -1243,6 +1288,7 @@ fn emit_update_insns(
                     cdc_rowid_before_reg,
                     cdc_before_reg,
                     None,
+                    None,
                     table_ref.table.get_name(),
                 )?;
                 emit_cdc_insns(
@@ -1252,6 +1298,7 @@ fn emit_update_insns(
                     cdc_cursor_id,
                     cdc_rowid_after_reg,
                     cdc_after_reg,
+                    None,
                     None,
                     table_ref.table.get_name(),
                 )?;
@@ -1264,6 +1311,7 @@ fn emit_update_insns(
                     cdc_rowid_before_reg,
                     cdc_before_reg,
                     cdc_after_reg,
+                    cdc_updates_record,
                     table_ref.table.get_name(),
                 )?;
             }
@@ -1291,6 +1339,34 @@ fn emit_update_insns(
     }
 
     Ok(())
+}
+
+pub fn prepare_cdc_if_necessary(
+    program: &mut ProgramBuilder,
+    schema: &Schema,
+    changed_table_name: &str,
+) -> Result<Option<(usize, Arc<BTreeTable>)>> {
+    let mode = program.capture_data_changes_mode();
+    let cdc_table = mode.table();
+    let Some(cdc_table) = cdc_table else {
+        return Ok(None);
+    };
+    if changed_table_name == cdc_table {
+        return Ok(None);
+    }
+    let Some(turso_cdc_table) = schema.get_table(cdc_table) else {
+        crate::bail_parse_error!("no such table: {}", cdc_table);
+    };
+    let Some(cdc_btree) = turso_cdc_table.btree().clone() else {
+        crate::bail_parse_error!("no such table: {}", cdc_table);
+    };
+    let cursor_id = program.alloc_cursor_id(CursorType::BTreeTable(cdc_btree.clone()));
+    program.emit_insn(Insn::OpenWrite {
+        cursor_id,
+        root_page: cdc_btree.root_page.into(),
+        db: 0, // todo(sivukhin): fix DB number when write will be supported for ATTACH
+    });
+    Ok(Some((cursor_id, cdc_btree)))
 }
 
 pub fn emit_cdc_patch_record(
@@ -1323,11 +1399,10 @@ pub fn emit_cdc_patch_record(
 
 pub fn emit_cdc_full_record(
     program: &mut ProgramBuilder,
-    table: &Table,
+    columns: &[Column],
     table_cursor_id: usize,
     rowid_reg: usize,
 ) -> usize {
-    let columns = table.columns();
     let columns_reg = program.alloc_registers(columns.len() + 1);
     for (i, column) in columns.iter().enumerate() {
         if column.is_rowid_alias {
@@ -1358,10 +1433,11 @@ pub fn emit_cdc_insns(
     rowid_reg: usize,
     before_record_reg: Option<usize>,
     after_record_reg: Option<usize>,
+    updates_record_reg: Option<usize>,
     table_name: &str,
 ) -> Result<()> {
-    // (change_id INTEGER PRIMARY KEY AUTOINCREMENT, change_time INTEGER, change_type INTEGER, table_name TEXT, id, before BLOB, after BLOB)
-    let turso_cdc_registers = program.alloc_registers(7);
+    // (change_id INTEGER PRIMARY KEY AUTOINCREMENT, change_time INTEGER, change_type INTEGER, table_name TEXT, id, before BLOB, after BLOB, updates BLOB)
+    let turso_cdc_registers = program.alloc_registers(8);
     program.emit_insn(Insn::Null {
         dest: turso_cdc_registers,
         dest_end: None,
@@ -1422,6 +1498,17 @@ pub fn emit_cdc_insns(
         program.mark_last_insn_constant();
     }
 
+    if let Some(updates_record_reg) = updates_record_reg {
+        program.emit_insn(Insn::Copy {
+            src_reg: updates_record_reg,
+            dst_reg: turso_cdc_registers + 7,
+            extra_amount: 0,
+        });
+    } else {
+        program.emit_null(turso_cdc_registers + 7, None);
+        program.mark_last_insn_constant();
+    }
+
     let rowid_reg = program.alloc_register();
     program.emit_insn(Insn::NewRowid {
         cursor: cdc_cursor_id,
@@ -1432,7 +1519,7 @@ pub fn emit_cdc_insns(
     let record_reg = program.alloc_register();
     program.emit_insn(Insn::MakeRecord {
         start_reg: turso_cdc_registers,
-        count: 7,
+        count: 8,
         dest_reg: record_reg,
         index_name: None,
     });

@@ -14,7 +14,7 @@ use crate::translate::plan::IterationDirection;
 use crate::vdbe::sorter::Sorter;
 use crate::vdbe::Register;
 use crate::vtab::VirtualTableCursor;
-use crate::{turso_assert, Result};
+use crate::{turso_assert, Completion, Result, IO};
 use std::fmt::{Debug, Display};
 
 const MAX_REAL_SIZE: u8 = 15;
@@ -100,6 +100,7 @@ pub trait Extendable<T> {
 }
 
 impl<T: AnyText> Extendable<T> for Text {
+    #[inline(always)]
     fn do_extend(&mut self, other: &T) {
         self.value.clear();
         self.value.extend_from_slice(other.as_ref().as_bytes());
@@ -108,6 +109,7 @@ impl<T: AnyText> Extendable<T> for Text {
 }
 
 impl<T: AnyBlob> Extendable<T> for Vec<u8> {
+    #[inline(always)]
     fn do_extend(&mut self, other: &T) {
         self.clear();
         self.extend_from_slice(other.as_slice());
@@ -136,6 +138,12 @@ impl AnyText for TextRef {
     }
 }
 
+impl AnyText for &str {
+    fn subtype(&self) -> TextSubtype {
+        TextSubtype::Text
+    }
+}
+
 pub trait AnyBlob {
     fn as_slice(&self) -> &[u8];
 }
@@ -149,6 +157,12 @@ impl AnyBlob for RawSlice {
 impl AnyBlob for Vec<u8> {
     fn as_slice(&self) -> &[u8] {
         self.as_slice()
+    }
+}
+
+impl AnyBlob for &[u8] {
+    fn as_slice(&self) -> &[u8] {
+        self
     }
 }
 
@@ -326,6 +340,13 @@ impl Value {
             Value::Float(f) => *f,
             Value::Integer(i) => *i as f64,
             _ => panic!("as_float must be called only for Value::Float or Value::Integer"),
+        }
+    }
+
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            Value::Integer(i) => Some(*i),
+            _ => None,
         }
     }
 
@@ -563,6 +584,118 @@ impl Value {
         res
     }
 }
+
+/// Convert a `Value` into the implementors type.
+pub trait FromValue: Sealed {
+    fn from_sql(val: Value) -> Result<Self>
+    where
+        Self: Sized;
+}
+
+impl FromValue for Value {
+    fn from_sql(val: Value) -> Result<Self> {
+        Ok(val)
+    }
+}
+impl Sealed for crate::Value {}
+
+macro_rules! impl_int_from_value {
+    ($ty:ty, $cast:expr) => {
+        impl FromValue for $ty {
+            fn from_sql(val: Value) -> Result<Self> {
+                match val {
+                    Value::Null => Err(LimboError::NullValue),
+                    Value::Integer(i) => Ok($cast(i)),
+                    _ => unreachable!("invalid value type"),
+                }
+            }
+        }
+
+        impl Sealed for $ty {}
+    };
+}
+
+impl_int_from_value!(i32, |i| i as i32);
+impl_int_from_value!(u32, |i| i as u32);
+impl_int_from_value!(i64, |i| i);
+impl_int_from_value!(u64, |i| i as u64);
+
+impl FromValue for f64 {
+    fn from_sql(val: Value) -> Result<Self> {
+        match val {
+            Value::Null => Err(LimboError::NullValue),
+            Value::Float(f) => Ok(f),
+            _ => unreachable!("invalid value type"),
+        }
+    }
+}
+impl Sealed for f64 {}
+
+impl FromValue for Vec<u8> {
+    fn from_sql(val: Value) -> Result<Self> {
+        match val {
+            Value::Null => Err(LimboError::NullValue),
+            Value::Blob(blob) => Ok(blob),
+            _ => unreachable!("invalid value type"),
+        }
+    }
+}
+impl Sealed for Vec<u8> {}
+
+impl<const N: usize> FromValue for [u8; N] {
+    fn from_sql(val: Value) -> Result<Self> {
+        match val {
+            Value::Null => Err(LimboError::NullValue),
+            Value::Blob(blob) => blob.try_into().map_err(|_| LimboError::InvalidBlobSize(N)),
+            _ => unreachable!("invalid value type"),
+        }
+    }
+}
+impl<const N: usize> Sealed for [u8; N] {}
+
+impl FromValue for String {
+    fn from_sql(val: Value) -> Result<Self> {
+        match val {
+            Value::Null => Err(LimboError::NullValue),
+            Value::Text(s) => Ok(s.to_string()),
+            _ => unreachable!("invalid value type"),
+        }
+    }
+}
+impl Sealed for String {}
+
+impl FromValue for bool {
+    fn from_sql(val: Value) -> Result<Self> {
+        match val {
+            Value::Null => Err(LimboError::NullValue),
+            Value::Integer(i) => match i {
+                0 => Ok(false),
+                1 => Ok(true),
+                _ => Err(LimboError::InvalidColumnType),
+            },
+            _ => unreachable!("invalid value type"),
+        }
+    }
+}
+impl Sealed for bool {}
+
+impl<T> FromValue for Option<T>
+where
+    T: FromValue,
+{
+    fn from_sql(val: Value) -> Result<Self> {
+        match val {
+            Value::Null => Ok(None),
+            _ => T::from_sql(val).map(Some),
+        }
+    }
+}
+impl<T> Sealed for Option<T> {}
+
+mod sealed {
+    pub trait Sealed {}
+}
+use sealed::Sealed;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SumAggState {
@@ -882,12 +1015,6 @@ impl std::fmt::Debug for ImmutableRecord {
     }
 }
 
-#[derive(PartialEq)]
-pub enum ParseRecordState {
-    Init,
-    Parsing { payload: Vec<u8> },
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Record {
     values: Vec<Value>,
@@ -1148,6 +1275,12 @@ impl ImmutableRecord {
             }
             Err(_) => None,
         }
+    }
+
+    pub fn column_count(&self) -> usize {
+        let mut cursor = RecordCursor::new();
+        cursor.parse_full_header(self).unwrap();
+        cursor.offsets.len()
     }
 }
 
@@ -2336,9 +2469,44 @@ impl Cursor {
 
 #[derive(Debug)]
 #[must_use]
+pub enum IOCompletions {
+    Single(Completion),
+    Many(Vec<Completion>),
+}
+
+impl IOCompletions {
+    /// Wais for the Completions to complete
+    pub fn wait<I: ?Sized + IO>(self, io: &I) -> Result<()> {
+        match self {
+            IOCompletions::Single(c) => io.wait_for_completion(c),
+            IOCompletions::Many(completions) => {
+                for c in completions {
+                    io.wait_for_completion(c)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    pub fn completed(&self) -> bool {
+        match self {
+            IOCompletions::Single(c) => c.is_completed(),
+            IOCompletions::Many(completions) => completions.iter().all(|c| c.is_completed()),
+        }
+    }
+}
+
+#[derive(Debug)]
+#[must_use]
 pub enum IOResult<T> {
     Done(T),
-    IO,
+    IO(IOCompletions),
+}
+
+impl<T> IOResult<T> {
+    pub fn is_io(&self) -> bool {
+        matches!(self, IOResult::IO(..))
+    }
 }
 
 /// Evaluate a Result<IOResult<T>>, if IO return IO.
@@ -2347,7 +2515,7 @@ macro_rules! return_if_io {
     ($expr:expr) => {
         match $expr? {
             IOResult::Done(v) => v,
-            IOResult::IO => return Ok(IOResult::IO),
+            IOResult::IO(io) => return Ok(IOResult::IO(io)),
         }
     };
 }
@@ -2465,9 +2633,19 @@ pub struct DatabaseChange {
 }
 
 #[derive(Debug)]
-pub struct WalInsertInfo {
-    pub page_no: usize,
-    pub is_commit: bool,
+pub struct WalFrameInfo {
+    pub page_no: u32,
+    pub db_size: u32,
+}
+
+impl WalFrameInfo {
+    pub fn is_commit_frame(&self) -> bool {
+        self.db_size > 0
+    }
+    pub fn put_to_frame_header(&self, frame: &mut [u8]) {
+        frame[0..4].copy_from_slice(&self.page_no.to_be_bytes());
+        frame[4..8].copy_from_slice(&self.db_size.to_be_bytes());
+    }
 }
 
 #[cfg(test)]

@@ -103,6 +103,18 @@ def test_regexp():
         "select regexp_replace('the year is 2021', '([0-9]+)', '$1 or 2050') = 'the year is 2021 or 2050';",
         true,
     )
+    limbo.run_test_fn(
+        "select regexp_capture('the year is 2021', '([0-9]+)') = '2021';",
+        true,
+    )
+    limbo.run_test_fn(
+        "select regexp_capture('abc 123 def', '([a-z]+) ([0-9]+) ([a-z]+)', 2) = '123';",
+        true,
+    )
+    limbo.run_test_fn(
+        "select regexp_capture('no digits here', '([0-9]+)');",
+        null,
+    )
     limbo.quit()
 
 
@@ -321,6 +333,15 @@ def _test_series(limbo: TestTursoShell):
         lambda res: res == "1\n2\n3\n4\n5\n6\n7\n8\n9\n10",
     )
     limbo.run_test_fn(
+        "SELECT * FROM generate_series WHERE 1 = start AND 10 = stop;",
+        lambda res: res == "1\n2\n3\n4\n5\n6\n7\n8\n9\n10",
+        "Constraint with column on RHS used as TVF arg",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series WHERE stop = 10 AND start = 1;",
+        lambda res: res == "1\n2\n3\n4\n5\n6\n7\n8\n9\n10",
+    )
+    limbo.run_test_fn(
         "SELECT * FROM generate_series(1, 10) WHERE value < 5;",
         lambda res: res == "1\n2\n3\n4",
     )
@@ -371,6 +392,56 @@ def _test_series(limbo: TestTursoShell):
     limbo.run_test_fn(
         "SELECT * FROM target;",
         lambda res: res == "1\n2\n3\n4\n5",
+    )
+    limbo.run_test_fn(
+        "SELECT t.id, series.value FROM target t, generate_series(t.id, 3) series;",
+        lambda res: res == "1|1\n1|2\n1|3\n2|2\n2|3\n3|3",
+        "Column reference from table on the left used as generate_series argument",
+    )
+    limbo.run_test_fn(
+        "SELECT t.id, series.value FROM generate_series(t.id, 3) series, target t;",
+        lambda res: res == "1|1\n1|2\n1|3\n2|2\n2|3\n3|3",
+        "Column reference from table on the right used as generate_series argument",
+    )
+    limbo.run_test_fn(
+        "SELECT one.value, series.value FROM (SELECT 1 AS value) one, generate_series(one.value, 3) series;",
+        lambda res: res == "1|1\n1|2\n1|3",
+        "Column reference from scalar subquery (left side)",
+    )
+    limbo.run_test_fn(
+        "SELECT one.value, series.value FROM generate_series(one.value, 3) series, (SELECT 1 AS value) one;",
+        lambda res: res == "1|1\n1|2\n1|3",
+        "Column reference from scalar subquery (right side)",
+    )
+    limbo.run_test_fn(
+        "SELECT "
+        "   * "
+        "FROM "
+        "   generate_series(a.start, a.stop) series "
+        "NATURAL JOIN "
+        "   (SELECT 1 AS start, 3 AS stop, 2 AS value) a;",
+        lambda res: res == "2|1|3",
+        "Natural join where TVF arguments come from column references",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series(a.start, a.stop) JOIN (SELECT 1 AS start, 3 AS stop) a USING (start, stop);",
+        lambda res: res == "1\n2\n3",
+        "Join USING where TVF arguments come from column references",
+    )
+    limbo.run_test_fn(
+        "SELECT a.value, b.value FROM generate_series(b.value, b.value+1) a JOIN generate_series(1, 2) b;",
+        lambda res: res == "1|1\n2|1\n2|2\n3|2",
+        "TVF arguments come from another TVF",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series(a.start, a.stop) b, generate_series(b.start, b.stop) a;",
+        lambda res: "No valid query plan found" in res or "no query solution" in res,
+        "circular column references between two generate_series",
+    )
+    limbo.run_test_fn(
+        "SELECT * FROM generate_series(b.start, b.stop) b;",
+        lambda res: "Invalid Argument" in res or 'first argument to "generate_series()" missing or unusable' in res,
+        "self-reference in generate_series arguments",
     )
     limbo.quit()
 
@@ -630,7 +701,7 @@ def test_create_virtual_table():
     ext_path = "target/debug/libturso_ext_tests"
 
     limbo = TestTursoShell()
-    limbo.execute_dot(f".load {ext_path}")
+    test_module_list(limbo, ext_path, "kv_store")
 
     limbo.run_debug("CREATE VIRTUAL TABLE t1 USING kv_store;")
     limbo.run_test_fn(
@@ -667,9 +738,10 @@ def test_create_virtual_table():
 
 
 def test_csv():
-    limbo = TestTursoShell()
-    ext_path = "./target/debug/liblimbo_csv"
-    limbo.execute_dot(f".load {ext_path}")
+    # open new empty connection explicitly to test whether we can load an extension
+    # with brand new connection/uninitialized database.
+    limbo = TestTursoShell(init_commands="")
+    test_module_list(limbo, "target/debug/liblimbo_csv", "csv")
 
     limbo.run_test_fn(
         "CREATE VIRTUAL TABLE temp.csv USING csv(filename=./testing/test_files/test.csv);",
@@ -755,6 +827,7 @@ def cleanup():
 def test_tablestats():
     ext_path = "target/debug/libturso_ext_tests"
     limbo = TestTursoShell(use_testing_db=True)
+    test_module_list(limbo, ext_path=ext_path, module_name="tablestats")
     limbo.execute_dot("CREATE TABLE people(id INTEGER PRIMARY KEY, name TEXT);")
     limbo.execute_dot("INSERT INTO people(name) VALUES ('Ada'), ('Grace'), ('Linus');")
 
@@ -772,8 +845,6 @@ def test_tablestats():
         lambda res: res == "1",
         "one logs rowverify logs count",
     )
-    # load extension
-    limbo.execute_dot(f".load {ext_path}")
     limbo.execute_dot("CREATE VIRTUAL TABLE stats USING tablestats;")
 
     def _split(res):
@@ -997,6 +1068,25 @@ def _test_hidden_columns(exec_name, ext_path):
     )
 
     limbo.quit()
+
+
+def test_module_list(turso_shell, ext_path, module_name):
+    """loads the extension at the provided path and asserts that 'PRAGMA module_list;' displays 'module_name'"""
+    console.info(f"Running test_module_list for {ext_path}")
+
+    turso_shell.run_test_fn(
+        "PRAGMA module_list;",
+        lambda res: "generate_series" in res and module_name not in res,
+        "lists built in modules but doesn't contain the module name yet",
+    )
+
+    turso_shell.run_test_fn("PRAGMA module_list;", lambda res: module_name not in res, "does not include module list")
+    turso_shell.execute_dot(f".load {ext_path}")
+    turso_shell.run_test_fn(
+        "PRAGMA module_list;",
+        lambda res: module_name in res,
+        f"includes {module_name} after loading extension",
+    )
 
 
 def main():

@@ -621,12 +621,13 @@ impl PageHashMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::io::{Buffer, BufferData};
     use crate::storage::page_cache::CacheError;
     use crate::storage::pager::{Page, PageRef};
     use crate::storage::sqlite3_ondisk::PageContent;
+    use crate::{BufferPool, IO};
     use std::ptr::NonNull;
-    use std::{cell::RefCell, num::NonZeroUsize, pin::Pin, rc::Rc, sync::Arc};
+    use std::sync::OnceLock;
+    use std::{num::NonZeroUsize, sync::Arc};
 
     use lru::LruCache;
     use rand_chacha::{
@@ -638,15 +639,19 @@ mod tests {
         PageCacheKey::new(id)
     }
 
+    static TEST_BUFFER_POOL: OnceLock<Arc<BufferPool>> = OnceLock::new();
+
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn page_with_content(page_id: usize) -> PageRef {
         let page = Arc::new(Page::new(page_id));
         {
-            let buffer_drop_fn = Rc::new(|_data: BufferData| {});
-            let buffer = Buffer::new(Pin::new(vec![0; 4096]), buffer_drop_fn);
+            let mock_io = Arc::new(crate::PlatformIO::new().unwrap()) as Arc<dyn IO>;
+            let pool = TEST_BUFFER_POOL
+                .get_or_init(|| BufferPool::begin_init(&mock_io, BufferPool::TEST_ARENA_SIZE));
+            let buffer = pool.allocate(4096);
             let page_content = PageContent {
                 offset: 0,
-                buffer: Arc::new(RefCell::new(buffer)),
+                buffer: Arc::new(buffer),
                 overflow_cells: Vec::new(),
             };
             page.get().contents = Some(page_content);

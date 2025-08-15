@@ -27,11 +27,15 @@ pub mod sorter;
 use crate::{
     error::LimboError,
     function::{AggFunc, FuncCtx},
-    storage::{pager, sqlite3_ondisk::SmallVec},
-    translate::plan::TableReferences,
-    types::{IOResult, RawSlice, TextRef},
-    vdbe::execute::{OpIdxInsertState, OpInsertState, OpNewRowidState, OpSeekState},
-    RefValue,
+    state_machine::StateTransition,
+    storage::sqlite3_ondisk::SmallVec,
+    translate::{collate::CollationSeq, plan::TableReferences},
+    types::{IOCompletions, IOResult, RawSlice, TextRef},
+    vdbe::execute::{
+        OpColumnState, OpDeleteState, OpDeleteSubState, OpIdxInsertState, OpInsertState,
+        OpInsertSubState, OpNewRowidState, OpNoConflictState, OpRowIdState, OpSeekState,
+    },
+    IOExt, RefValue,
 };
 
 use crate::{
@@ -233,6 +237,7 @@ pub struct Row {
 
 /// The program state describes the environment in which the program executes.
 pub struct ProgramState {
+    pub io_completions: Option<IOCompletions>,
     pub pc: InsnReference,
     cursors: RefCell<Vec<Option<Cursor>>>,
     registers: Vec<Register>,
@@ -245,17 +250,23 @@ pub struct ProgramState {
     regex_cache: RegexCache,
     pub(crate) mv_tx_id: Option<crate::mvcc::database::TxID>,
     interrupted: bool,
-    parameters: HashMap<NonZero<usize>, Value>,
+    pub parameters: HashMap<NonZero<usize>, Value>,
     commit_state: CommitState,
     #[cfg(feature = "json")]
     json_cache: JsonCacheCell,
+    op_delete_state: OpDeleteState,
     op_idx_delete_state: Option<OpIdxDeleteState>,
     op_integrity_check_state: OpIntegrityCheckState,
     op_open_ephemeral_state: OpOpenEphemeralState,
     op_new_rowid_state: OpNewRowidState,
     op_idx_insert_state: OpIdxInsertState,
     op_insert_state: OpInsertState,
+    op_no_conflict_state: OpNoConflictState,
     seek_state: OpSeekState,
+    /// Current collation sequence set by OP_CollSeq instruction
+    current_collation: Option<CollationSeq>,
+    op_column_state: OpColumnState,
+    op_row_id_state: OpRowIdState,
 }
 
 impl ProgramState {
@@ -264,6 +275,7 @@ impl ProgramState {
             RefCell::new((0..max_cursors).map(|_| None).collect());
         let registers = vec![Register::Value(Value::Null); max_registers];
         Self {
+            io_completions: None,
             pc: 0,
             cursors,
             registers,
@@ -279,13 +291,24 @@ impl ProgramState {
             commit_state: CommitState::Ready,
             #[cfg(feature = "json")]
             json_cache: JsonCacheCell::new(),
+            op_delete_state: OpDeleteState {
+                sub_state: OpDeleteSubState::MaybeCaptureRecord,
+                deleted_record: None,
+            },
             op_idx_delete_state: None,
             op_integrity_check_state: OpIntegrityCheckState::Start,
             op_open_ephemeral_state: OpOpenEphemeralState::Start,
             op_new_rowid_state: OpNewRowidState::Start,
             op_idx_insert_state: OpIdxInsertState::SeekIfUnique,
-            op_insert_state: OpInsertState::Insert,
+            op_insert_state: OpInsertState {
+                sub_state: OpInsertSubState::MaybeCaptureRecord,
+                old_record: None,
+            },
+            op_no_conflict_state: OpNoConflictState::Start,
             seek_state: OpSeekState::Start,
+            current_collation: None,
+            op_column_state: OpColumnState::Start,
+            op_row_id_state: OpRowIdState::Start,
         }
     }
 
@@ -325,6 +348,7 @@ impl ProgramState {
         self.regex_cache.like.clear();
         self.interrupted = false;
         self.parameters.clear();
+        self.current_collation = None;
         #[cfg(feature = "json")]
         self.json_cache.clear()
     }
@@ -379,6 +403,11 @@ pub struct Program {
     pub change_cnt_on: bool,
     pub result_columns: Vec<ResultSetColumn>,
     pub table_references: TableReferences,
+    pub sql: String,
+    /// Whether the program accesses the database.
+    /// Used to determine whether we need to check for schema changes when
+    /// starting a transaction.
+    pub accesses_db: bool,
 }
 
 impl Program {
@@ -390,20 +419,28 @@ impl Program {
     pub fn step(
         &self,
         state: &mut ProgramState,
-        mv_store: Option<Rc<MvStore>>,
+        mv_store: Option<Arc<MvStore>>,
         pager: Rc<Pager>,
     ) -> Result<StepResult> {
         loop {
             if self.connection.closed.get() {
                 // Connection is closed for whatever reason, rollback the transaction.
                 let state = self.connection.transaction_state.get();
-                if let TransactionState::Write { schema_did_change } = state {
-                    pager.rollback(schema_did_change, &self.connection)?
+                if let TransactionState::Write { .. } = state {
+                    pager
+                        .io
+                        .block(|| pager.end_tx(true, &self.connection, false))?;
                 }
                 return Err(LimboError::InternalError("Connection closed".to_string()));
             }
             if state.is_interrupted() {
                 return Ok(StepResult::Interrupt);
+            }
+            if let Some(io) = &state.io_completions {
+                if !io.completed() {
+                    return Ok(StepResult::IO);
+                }
+                state.io_completions = None;
             }
             // invalidate row
             let _ = state.result_row.take();
@@ -412,7 +449,10 @@ impl Program {
             match insn_function(self, state, insn, &pager, mv_store.as_ref()) {
                 Ok(InsnFunctionStepResult::Step) => {}
                 Ok(InsnFunctionStepResult::Done) => return Ok(StepResult::Done),
-                Ok(InsnFunctionStepResult::IO) => return Ok(StepResult::IO),
+                Ok(InsnFunctionStepResult::IO(io)) => {
+                    state.io_completions = Some(io);
+                    return Ok(StepResult::IO);
+                }
                 Ok(InsnFunctionStepResult::Row) => return Ok(StepResult::Row),
                 Ok(InsnFunctionStepResult::Interrupt) => return Ok(StepResult::Interrupt),
                 Ok(InsnFunctionStepResult::Busy) => return Ok(StepResult::Busy),
@@ -425,24 +465,64 @@ impl Program {
     }
 
     #[instrument(skip_all, level = Level::DEBUG)]
+    fn apply_view_deltas(&self, rollback: bool) {
+        if self.connection.view_transaction_states.borrow().is_empty() {
+            return;
+        }
+
+        let tx_states = self.connection.view_transaction_states.take();
+
+        if !rollback {
+            let schema = self.connection.schema.borrow();
+
+            for (view_name, tx_state) in tx_states.iter() {
+                if let Some(view_mutex) = schema.get_materialized_view(view_name) {
+                    let mut view = view_mutex.lock().unwrap();
+                    view.merge_delta(&tx_state.delta);
+                }
+            }
+        }
+    }
+
     pub fn commit_txn(
         &self,
         pager: Rc<Pager>,
         program_state: &mut ProgramState,
-        mv_store: Option<&Rc<MvStore>>,
+        mv_store: Option<&Arc<MvStore>>,
         rollback: bool,
-    ) -> Result<StepResult> {
+    ) -> Result<IOResult<()>> {
+        self.apply_view_deltas(rollback);
+
+        if self.connection.transaction_state.get() == TransactionState::None && mv_store.is_none() {
+            // No need to do any work here if not in tx. Current MVCC logic doesn't work with this assumption,
+            // hence the mv_store.is_none() check.
+            return Ok(IOResult::Done(()));
+        }
         if let Some(mv_store) = mv_store {
             let conn = self.connection.clone();
             let auto_commit = conn.auto_commit.get();
             if auto_commit {
+                // FIXME: we don't want to commit stuff from other programs.
                 let mut mv_transactions = conn.mv_transactions.borrow_mut();
                 for tx_id in mv_transactions.iter() {
-                    mv_store.commit_tx(*tx_id).unwrap();
+                    let mut state_machine =
+                        mv_store.commit_tx(*tx_id, pager.clone(), &conn).unwrap();
+                    // TODO: sync IO hack
+                    loop {
+                        let res = state_machine.step(mv_store)?;
+                        match res {
+                            crate::state_machine::TransitionResult::Io(io) => {
+                                io.wait(conn._db.io.as_ref())?;
+                            }
+                            crate::state_machine::TransitionResult::Continue => continue,
+                            crate::state_machine::TransitionResult::Done(_) => break,
+                        }
+                    }
+                    assert!(state_machine.is_finalized());
                 }
                 mv_transactions.clear();
             }
-            Ok(StepResult::Done)
+            Ok(IOResult::Done(()))
         } else {
             let connection = self.connection.clone();
             let auto_commit = connection.auto_commit.get();
@@ -452,9 +532,7 @@ impl Program {
                 program_state.commit_state
             );
             if program_state.commit_state == CommitState::Committing {
-                let TransactionState::Write { schema_did_change } =
-                    connection.transaction_state.get()
-                else {
+                let TransactionState::Write { .. } = connection.transaction_state.get() else {
                     unreachable!("invalid state for write commit step")
                 };
                 self.step_end_write_txn(
@@ -462,31 +540,32 @@ impl Program {
                     &mut program_state.commit_state,
                     &connection,
                     rollback,
-                    schema_did_change,
                 )
             } else if auto_commit {
                 let current_state = connection.transaction_state.get();
                 tracing::trace!("Auto-commit state: {:?}", current_state);
                 match current_state {
-                    TransactionState::Write { schema_did_change } => self.step_end_write_txn(
+                    TransactionState::Write { .. } => self.step_end_write_txn(
                         &pager,
                         &mut program_state.commit_state,
                         &connection,
                         rollback,
-                        schema_did_change,
                     ),
                     TransactionState::Read => {
                         connection.transaction_state.replace(TransactionState::None);
                         pager.end_read_tx()?;
-                        Ok(StepResult::Done)
+                        Ok(IOResult::Done(()))
                     }
-                    TransactionState::None => Ok(StepResult::Done),
+                    TransactionState::None => Ok(IOResult::Done(())),
+                    TransactionState::PendingUpgrade => {
+                        panic!("Unexpected transaction state: {current_state:?} during auto-commit",)
+                    }
                 }
             } else {
                 if self.change_cnt_on {
                     self.connection.set_changes(self.n_change.get());
                 }
-                Ok(StepResult::Done)
+                Ok(IOResult::Done(()))
             }
         }
     }
@@ -498,32 +577,27 @@ impl Program {
         commit_state: &mut CommitState,
         connection: &Connection,
         rollback: bool,
-        schema_did_change: bool,
-    ) -> Result<StepResult> {
+    ) -> Result<IOResult<()>> {
         let cacheflush_status = pager.end_tx(
             rollback,
-            schema_did_change,
             connection,
-            connection.wal_checkpoint_disabled.get(),
+            connection.wal_auto_checkpoint_disabled.get(),
         )?;
         match cacheflush_status {
-            IOResult::Done(status) => {
+            IOResult::Done(_) => {
                 if self.change_cnt_on {
                     self.connection.set_changes(self.n_change.get());
-                }
-                if matches!(status, pager::PagerCommitResult::Rollback) {
-                    pager.rollback(schema_did_change, connection)?;
                 }
                 connection.transaction_state.replace(TransactionState::None);
                 *commit_state = CommitState::Ready;
             }
-            IOResult::IO => {
+            IOResult::IO(io) => {
                 tracing::trace!("Cacheflush IO");
                 *commit_state = CommitState::Committing;
-                return Ok(StepResult::IO);
+                return Ok(IOResult::IO(io));
             }
         }
-        Ok(StepResult::Done)
+        Ok(IOResult::Done(()))
     }
 
     #[rustfmt::skip]
@@ -754,19 +828,17 @@ pub fn handle_program_error(
     err: &LimboError,
 ) -> Result<()> {
     match err {
+        // Transaction errors, e.g. trying to start a nested transaction, do not cause a rollback.
         LimboError::TxError(_) => {}
+        // Table locked errors, e.g. trying to checkpoint in an interactive transaction, do not cause a rollback.
+        LimboError::TableLocked => {}
         _ => {
-            let state = connection.transaction_state.get();
-            if let TransactionState::Write { schema_did_change } = state {
-                if let Err(e) = pager.rollback(schema_did_change, connection) {
-                    tracing::error!("rollback failed: {e}");
-                }
-                if let Err(e) = pager.end_tx(false, schema_did_change, connection, false) {
+            pager
+                .io
+                .block(|| pager.end_tx(true, connection, false))
+                .inspect_err(|e| {
                     tracing::error!("end_tx failed: {e}");
-                }
-            } else if let Err(e) = pager.end_read_tx() {
-                tracing::error!("end_read_tx failed: {e}");
-            }
+                })?;
             connection.transaction_state.replace(TransactionState::None);
         }
     }

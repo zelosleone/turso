@@ -2,8 +2,9 @@
 #![allow(non_camel_case_types)]
 
 use std::ffi::{self, CStr, CString};
+use std::num::{NonZero, NonZeroUsize};
 use tracing::trace;
-use turso_core::{LimboError, Value};
+use turso_core::{CheckpointMode, LimboError, Value};
 
 use std::sync::{Arc, Mutex};
 
@@ -22,6 +23,7 @@ pub const SQLITE_INTERRUPT: ffi::c_int = 9;
 pub const SQLITE_NOTFOUND: ffi::c_int = 12;
 pub const SQLITE_CANTOPEN: ffi::c_int = 14;
 pub const SQLITE_MISUSE: ffi::c_int = 21;
+pub const SQLITE_RANGE: ffi::c_int = 25;
 pub const SQLITE_ROW: ffi::c_int = 100;
 pub const SQLITE_DONE: ffi::c_int = 101;
 pub const SQLITE_ABORT_ROLLBACK: ffi::c_int = SQLITE_ABORT | (2 << 8);
@@ -74,11 +76,20 @@ impl sqlite3 {
 pub struct sqlite3_stmt {
     pub(crate) db: *mut sqlite3,
     pub(crate) stmt: turso_core::Statement,
+    pub(crate) destructors: Vec<(
+        usize,
+        Option<unsafe extern "C" fn(*mut ffi::c_void)>,
+        *mut ffi::c_void,
+    )>,
 }
 
 impl sqlite3_stmt {
     pub fn new(db: *mut sqlite3, stmt: turso_core::Statement) -> Self {
-        Self { db, stmt }
+        Self {
+            db,
+            stmt,
+            destructors: Vec::new(),
+        }
     }
 }
 
@@ -244,6 +255,14 @@ pub unsafe extern "C" fn sqlite3_finalize(stmt: *mut sqlite3_stmt) -> ffi::c_int
     if stmt.is_null() {
         return SQLITE_MISUSE;
     }
+    let stmt_ref = &mut *stmt;
+
+    for (_idx, destructor_opt, ptr) in stmt_ref.destructors.drain(..) {
+        if let Some(destructor_fn) = destructor_opt {
+            destructor_fn(ptr);
+        }
+    }
+
     let _ = Box::from_raw(stmt);
     SQLITE_OK
 }
@@ -313,8 +332,10 @@ pub unsafe extern "C" fn sqlite3_reset(stmt: *mut sqlite3_stmt) -> ffi::c_int {
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_changes(_db: *mut sqlite3) -> ffi::c_int {
-    stub!();
+pub unsafe extern "C" fn sqlite3_changes(db: *mut sqlite3) -> ffi::c_int {
+    let db: &mut sqlite3 = &mut *db;
+    let inner = db.inner.lock().unwrap();
+    inner.conn.changes() as ffi::c_int
 }
 
 #[no_mangle]
@@ -355,13 +376,17 @@ pub unsafe extern "C" fn sqlite3_get_autocommit(_db: *mut sqlite3) -> ffi::c_int
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_total_changes(_db: *mut sqlite3) -> ffi::c_int {
-    stub!();
+pub unsafe extern "C" fn sqlite3_total_changes(db: *mut sqlite3) -> ffi::c_int {
+    let db: &mut sqlite3 = &mut *db;
+    let inner = db.inner.lock().unwrap();
+    inner.conn.total_changes() as ffi::c_int
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_last_insert_rowid(_db: *mut sqlite3) -> i64 {
-    stub!();
+pub unsafe extern "C" fn sqlite3_last_insert_rowid(db: *mut sqlite3) -> ffi::c_int {
+    let db: &mut sqlite3 = &mut *db;
+    let inner = db.inner.lock().unwrap();
+    inner.conn.last_insert_rowid() as ffi::c_int
 }
 
 #[no_mangle]
@@ -476,64 +501,198 @@ pub unsafe extern "C" fn sqlite3_data_count(stmt: *mut sqlite3_stmt) -> ffi::c_i
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_bind_parameter_count(_stmt: *mut sqlite3_stmt) -> ffi::c_int {
-    stub!();
+pub unsafe extern "C" fn sqlite3_bind_parameter_count(stmt: *mut sqlite3_stmt) -> ffi::c_int {
+    let stmt = &*stmt;
+    stmt.stmt.parameters_count() as ffi::c_int
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_bind_parameter_name(
-    _stmt: *mut sqlite3_stmt,
-    _idx: ffi::c_int,
+    stmt: *mut sqlite3_stmt,
+    idx: ffi::c_int,
 ) -> *const ffi::c_char {
-    stub!();
+    let stmt = &*stmt;
+    let index = NonZero::new_unchecked(idx as usize);
+
+    if let Some(val) = stmt.stmt.parameters().name(index) {
+        let c_string = CString::new(val).expect("CString::new failed");
+        c_string.into_raw()
+    } else {
+        std::ptr::null()
+    }
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_bind_null(
-    _stmt: *mut sqlite3_stmt,
-    _idx: ffi::c_int,
+pub unsafe extern "C" fn sqlite3_bind_null(stmt: *mut sqlite3_stmt, idx: ffi::c_int) -> ffi::c_int {
+    if stmt.is_null() {
+        return SQLITE_MISUSE;
+    }
+
+    if idx <= 0 {
+        return SQLITE_RANGE;
+    }
+    let stmt = &mut *stmt;
+
+    stmt.stmt
+        .bind_at(NonZero::new_unchecked(idx as usize), Value::Null);
+    SQLITE_OK
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sqlite3_bind_int(
+    stmt: *mut sqlite3_stmt,
+    idx: ffi::c_int,
+    val: i64,
 ) -> ffi::c_int {
-    stub!();
+    sqlite3_bind_int64(stmt, idx, val)
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_bind_int64(
-    _stmt: *mut sqlite3_stmt,
-    _idx: ffi::c_int,
-    _val: i64,
+    stmt: *mut sqlite3_stmt,
+    idx: ffi::c_int,
+    val: i64,
 ) -> ffi::c_int {
-    stub!();
+    if stmt.is_null() {
+        return SQLITE_MISUSE;
+    }
+    if idx <= 0 {
+        return SQLITE_RANGE;
+    }
+    let stmt = &mut *stmt;
+
+    stmt.stmt
+        .bind_at(NonZero::new_unchecked(idx as usize), Value::Integer(val));
+
+    SQLITE_OK
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_bind_double(
-    _stmt: *mut sqlite3_stmt,
-    _idx: ffi::c_int,
-    _val: f64,
+    stmt: *mut sqlite3_stmt,
+    idx: ffi::c_int,
+    val: f64,
 ) -> ffi::c_int {
-    stub!();
+    println!("Bind Double Rust");
+    if stmt.is_null() {
+        return SQLITE_MISUSE;
+    }
+    if idx <= 0 {
+        return SQLITE_RANGE;
+    }
+    let stmt = &mut *stmt;
+
+    stmt.stmt
+        .bind_at(NonZero::new_unchecked(idx as usize), Value::Float(val));
+
+    SQLITE_OK
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_bind_text(
-    _stmt: *mut sqlite3_stmt,
-    _idx: ffi::c_int,
-    _text: *const ffi::c_char,
-    _len: ffi::c_int,
-    _destroy: *mut ffi::c_void,
+    stmt: *mut sqlite3_stmt,
+    idx: ffi::c_int,
+    text: *const ffi::c_char,
+    len: ffi::c_int,
+    destructor: Option<unsafe extern "C" fn(*mut ffi::c_void)>,
 ) -> ffi::c_int {
-    stub!();
+    if stmt.is_null() {
+        return SQLITE_MISUSE;
+    }
+    if idx <= 0 {
+        return SQLITE_RANGE;
+    }
+    if text.is_null() {
+        return sqlite3_bind_null(stmt, idx);
+    }
+
+    let stmt_ref = &mut *stmt;
+
+    let static_ptr = std::ptr::null();
+    let transient_ptr = -1isize as usize as *const ffi::c_void;
+    let ptr_val = destructor
+        .map(|f| f as *const ffi::c_void)
+        .unwrap_or(static_ptr);
+
+    let str_value = if len < 0 {
+        match CStr::from_ptr(text).to_str() {
+            Ok(s) => s.to_owned(),
+            Err(_) => return SQLITE_ERROR,
+        }
+    } else {
+        let slice = std::slice::from_raw_parts(text as *const u8, len as usize);
+        match std::str::from_utf8(slice) {
+            Ok(s) => s.to_owned(),
+            Err(_) => return SQLITE_ERROR,
+        }
+    };
+
+    if ptr_val == transient_ptr {
+        let val = Value::from_text(&str_value);
+        stmt_ref
+            .stmt
+            .bind_at(NonZero::new_unchecked(idx as usize), val);
+    } else if ptr_val == static_ptr {
+        let slice = std::slice::from_raw_parts(text as *const u8, str_value.len());
+        let val = Value::from_text(std::str::from_utf8(slice).unwrap());
+        stmt_ref
+            .stmt
+            .bind_at(NonZero::new_unchecked(idx as usize), val);
+    } else {
+        let slice = std::slice::from_raw_parts(text as *const u8, str_value.len());
+        let val = Value::from_text(std::str::from_utf8(slice).unwrap());
+        stmt_ref
+            .stmt
+            .bind_at(NonZero::new_unchecked(idx as usize), val);
+
+        stmt_ref
+            .destructors
+            .push((idx as usize, destructor, text as *mut ffi::c_void));
+    }
+
+    SQLITE_OK
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_bind_blob(
-    _stmt: *mut sqlite3_stmt,
-    _idx: ffi::c_int,
-    _blob: *const ffi::c_void,
-    _len: ffi::c_int,
-    _destroy: *mut ffi::c_void,
+    stmt: *mut sqlite3_stmt,
+    idx: ffi::c_int,
+    blob: *const ffi::c_void,
+    len: ffi::c_int,
+    destructor: Option<unsafe extern "C" fn(*mut ffi::c_void)>,
 ) -> ffi::c_int {
-    stub!();
+    if stmt.is_null() {
+        return SQLITE_MISUSE;
+    }
+    if idx <= 0 {
+        return SQLITE_RANGE;
+    }
+    if blob.is_null() {
+        return sqlite3_bind_null(stmt, idx);
+    }
+
+    let slice_blob = std::slice::from_raw_parts(blob as *const u8, len as usize).to_vec();
+
+    let stmt_ref = &mut *stmt;
+    let val_blob = Value::from_blob(slice_blob);
+
+    if let Some(nz_idx) = NonZeroUsize::new(idx as usize) {
+        stmt_ref.stmt.bind_at(nz_idx, val_blob);
+    } else {
+        return SQLITE_RANGE;
+    }
+
+    if let Some(destructor_fn) = destructor {
+        let ptr_val = destructor_fn as *const ffi::c_void;
+        let static_ptr = std::ptr::null();
+        let transient_ptr = usize::MAX as *const ffi::c_void;
+
+        if ptr_val != static_ptr && ptr_val != transient_ptr {
+            destructor_fn(blob as *mut _);
+        }
+    }
+
+    SQLITE_OK
 }
 
 #[no_mangle]
@@ -545,8 +704,9 @@ pub unsafe extern "C" fn sqlite3_column_type(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_column_count(_stmt: *mut sqlite3_stmt) -> ffi::c_int {
-    stub!();
+pub unsafe extern "C" fn sqlite3_column_count(stmt: *mut sqlite3_stmt) -> ffi::c_int {
+    let stmt = &mut *stmt;
+    stmt.stmt.num_columns() as ffi::c_int
 }
 
 #[no_mangle]
@@ -559,10 +719,21 @@ pub unsafe extern "C" fn sqlite3_column_decltype(
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_column_name(
-    _stmt: *mut sqlite3_stmt,
-    _idx: ffi::c_int,
+    stmt: *mut sqlite3_stmt,
+    idx: ffi::c_int,
 ) -> *const ffi::c_char {
-    stub!();
+    let idx = idx.try_into().unwrap();
+    let stmt = &mut *stmt;
+
+    let binding = stmt.stmt.get_column_name(idx).into_owned();
+    let val = binding.as_str();
+
+    if val.is_empty() {
+        return std::ptr::null();
+    }
+
+    let c_string = CString::new(val).expect("CString::new failed");
+    c_string.into_raw()
 }
 
 #[no_mangle]
@@ -578,24 +749,54 @@ pub unsafe extern "C" fn sqlite3_column_int64(stmt: *mut sqlite3_stmt, idx: ffi:
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_column_double(_stmt: *mut sqlite3_stmt, _idx: ffi::c_int) -> f64 {
-    stub!();
+pub unsafe extern "C" fn sqlite3_column_int(stmt: *mut sqlite3_stmt, idx: ffi::c_int) -> i64 {
+    sqlite3_column_int64(stmt, idx)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sqlite3_column_double(stmt: *mut sqlite3_stmt, idx: ffi::c_int) -> f64 {
+    let idx = idx.try_into().unwrap();
+    let stmt = &mut *stmt;
+    let row = stmt
+        .stmt
+        .row()
+        .expect("Function should only be called after `SQLITE_ROW`");
+    row.get(idx).unwrap()
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_column_blob(
-    _stmt: *mut sqlite3_stmt,
-    _idx: ffi::c_int,
+    stmt: *mut sqlite3_stmt,
+    idx: ffi::c_int,
 ) -> *const ffi::c_void {
-    stub!();
+    let stmt = &mut *stmt;
+    let row = stmt.stmt.row();
+    let row = match row.as_ref() {
+        Some(row) => row,
+        None => return std::ptr::null(),
+    };
+    match row.get::<&Value>(idx as usize) {
+        Ok(turso_core::Value::Blob(blob)) => blob.as_ptr() as *const ffi::c_void,
+        _ => std::ptr::null(),
+    }
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_column_bytes(
-    _stmt: *mut sqlite3_stmt,
-    _idx: ffi::c_int,
+    stmt: *mut sqlite3_stmt,
+    idx: ffi::c_int,
 ) -> ffi::c_int {
-    stub!();
+    let stmt = &mut *stmt;
+    let row = stmt.stmt.row();
+    let row = match row.as_ref() {
+        Some(row) => row,
+        None => return 0,
+    };
+    match row.get::<&Value>(idx as usize) {
+        Ok(turso_core::Value::Text(text)) => text.as_str().len() as ffi::c_int,
+        Ok(turso_core::Value::Blob(blob)) => blob.len() as ffi::c_int,
+        _ => 0,
+    }
 }
 
 #[no_mangle]
@@ -1108,20 +1309,41 @@ pub unsafe extern "C" fn sqlite3_wal_checkpoint(
 pub unsafe extern "C" fn sqlite3_wal_checkpoint_v2(
     db: *mut sqlite3,
     _db_name: *const ffi::c_char,
-    _mode: ffi::c_int,
-    _log_size: *mut ffi::c_int,
-    _checkpoint_count: *mut ffi::c_int,
+    mode: ffi::c_int,
+    log_size: *mut ffi::c_int,
+    checkpoint_count: *mut ffi::c_int,
 ) -> ffi::c_int {
     if db.is_null() {
         return SQLITE_MISUSE;
     }
     let db: &mut sqlite3 = &mut *db;
     let db = db.inner.lock().unwrap();
-    // TODO: Checkpointing modes and reporting back log size and checkpoint count to caller.
-    if db.conn.checkpoint().is_err() {
-        return SQLITE_ERROR;
+    let chkptmode = match mode {
+        SQLITE_CHECKPOINT_PASSIVE => CheckpointMode::Passive,
+        SQLITE_CHECKPOINT_RESTART => CheckpointMode::Restart,
+        SQLITE_CHECKPOINT_TRUNCATE => CheckpointMode::Truncate,
+        SQLITE_CHECKPOINT_FULL => CheckpointMode::Full,
+        _ => return SQLITE_MISUSE, // Unsupported mode
+    };
+    match db.conn.checkpoint(chkptmode) {
+        Ok(res) => {
+            if !log_size.is_null() {
+                (*log_size) = res.num_attempted as ffi::c_int;
+            }
+            if !checkpoint_count.is_null() {
+                (*checkpoint_count) = res.num_backfilled as ffi::c_int;
+            }
+            SQLITE_OK
+        }
+        Err(e) => {
+            println!("Checkpoint error: {e}");
+            if matches!(e, turso_core::LimboError::Busy) {
+                SQLITE_BUSY
+            } else {
+                SQLITE_ERROR
+            }
+        }
     }
-    SQLITE_OK
 }
 
 /// Get the number of frames in the WAL.
@@ -1192,8 +1414,8 @@ pub unsafe extern "C" fn libsql_wal_get_frame(
     let db: &mut sqlite3 = &mut *db;
     let db = db.inner.lock().unwrap();
     let frame = std::slice::from_raw_parts_mut(p_frame, frame_len as usize);
-    match db.conn.wal_get_frame(frame_no, frame) {
-        Ok(()) => SQLITE_OK,
+    match db.conn.wal_get_frame(frame_no as u64, frame) {
+        Ok(..) => SQLITE_OK,
         Err(_) => SQLITE_ERROR,
     }
 }
@@ -1229,7 +1451,7 @@ pub unsafe extern "C" fn libsql_wal_insert_frame(
     let db: &mut sqlite3 = &mut *db;
     let db = db.inner.lock().unwrap();
     let frame = std::slice::from_raw_parts(p_frame, frame_len as usize);
-    match db.conn.wal_insert_frame(frame_no, frame) {
+    match db.conn.wal_insert_frame(frame_no as u64, frame) {
         Ok(_) => SQLITE_OK,
         Err(LimboError::Conflict(..)) => {
             if !p_conflict.is_null() {
@@ -1254,7 +1476,7 @@ pub unsafe extern "C" fn libsql_wal_disable_checkpoint(db: *mut sqlite3) -> ffi:
     }
     let db: &mut sqlite3 = &mut *db;
     let db = db.inner.lock().unwrap();
-    db.conn.wal_disable_checkpoint();
+    db.conn.wal_auto_checkpoint_disable();
     SQLITE_OK
 }
 

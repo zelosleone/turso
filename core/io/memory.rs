@@ -1,15 +1,17 @@
 use super::{Buffer, Clock, Completion, File, OpenFlags, IO};
-use crate::Result;
+use crate::{LimboError, Result};
 
 use crate::io::clock::Instant;
 use std::{
-    cell::{Cell, RefCell, UnsafeCell},
-    collections::BTreeMap,
-    sync::Arc,
+    cell::{Cell, UnsafeCell},
+    collections::{BTreeMap, HashMap},
+    sync::{Arc, Mutex},
 };
 use tracing::debug;
 
-pub struct MemoryIO {}
+pub struct MemoryIO {
+    files: Arc<Mutex<HashMap<String, Arc<MemoryFile>>>>,
+}
 unsafe impl Send for MemoryIO {}
 
 // TODO: page size flag
@@ -20,7 +22,9 @@ impl MemoryIO {
     #[allow(clippy::arc_with_non_send_sync)]
     pub fn new() -> Self {
         debug!("Using IO backend 'memory'");
-        Self {}
+        Self {
+            files: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 }
 
@@ -41,11 +45,25 @@ impl Clock for MemoryIO {
 }
 
 impl IO for MemoryIO {
-    fn open_file(&self, _path: &str, _flags: OpenFlags, _direct: bool) -> Result<Arc<dyn File>> {
-        Ok(Arc::new(MemoryFile {
-            pages: BTreeMap::new().into(),
-            size: 0.into(),
-        }))
+    fn open_file(&self, path: &str, flags: OpenFlags, _direct: bool) -> Result<Arc<dyn File>> {
+        let mut files = self.files.lock().unwrap();
+        if !files.contains_key(path) && !flags.contains(OpenFlags::Create) {
+            return Err(LimboError::IOError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "file not found",
+            )));
+        }
+        if !files.contains_key(path) {
+            files.insert(
+                path.to_string(),
+                Arc::new(MemoryFile {
+                    path: path.to_string(),
+                    pages: BTreeMap::new().into(),
+                    size: 0.into(),
+                }),
+            );
+        }
+        Ok(files.get(path).unwrap().clone())
     }
 
     fn run_once(&self) -> Result<()> {
@@ -53,8 +71,11 @@ impl IO for MemoryIO {
         Ok(())
     }
 
-    fn wait_for_completion(&self, _c: Completion) -> Result<()> {
-        todo!();
+    fn wait_for_completion(&self, c: Completion) -> Result<()> {
+        while !c.is_completed() {
+            self.run_once()?;
+        }
+        Ok(())
     }
 
     fn generate_random_number(&self) -> i64 {
@@ -69,6 +90,7 @@ impl IO for MemoryIO {
 }
 
 pub struct MemoryFile {
+    path: String,
     pages: UnsafeCell<BTreeMap<usize, MemPage>>,
     size: Cell<usize>,
 }
@@ -84,6 +106,7 @@ impl File for MemoryFile {
     }
 
     fn pread(&self, pos: usize, c: Completion) -> Result<Completion> {
+        tracing::debug!("pread(path={}): pos={}", self.path, pos);
         let r = c.as_read();
         let buf_len = r.buf().len();
         if buf_len == 0 {
@@ -99,7 +122,7 @@ impl File for MemoryFile {
 
         let read_len = buf_len.min(file_size - pos);
         {
-            let mut read_buf = r.buf_mut();
+            let read_buf = r.buf();
             let mut offset = pos;
             let mut remaining = read_len;
             let mut buf_offset = 0;
@@ -124,14 +147,14 @@ impl File for MemoryFile {
         Ok(c)
     }
 
-    fn pwrite(
-        &self,
-        pos: usize,
-        buffer: Arc<RefCell<Buffer>>,
-        c: Completion,
-    ) -> Result<Completion> {
-        let buf = buffer.borrow();
-        let buf_len = buf.len();
+    fn pwrite(&self, pos: usize, buffer: Arc<Buffer>, c: Completion) -> Result<Completion> {
+        tracing::debug!(
+            "pwrite(path={}): pos={}, size={}",
+            self.path,
+            pos,
+            buffer.len()
+        );
+        let buf_len = buffer.len();
         if buf_len == 0 {
             c.complete(0);
             return Ok(c);
@@ -140,7 +163,7 @@ impl File for MemoryFile {
         let mut offset = pos;
         let mut remaining = buf_len;
         let mut buf_offset = 0;
-        let data = &buf.as_slice();
+        let data = &buffer.as_slice();
 
         while remaining > 0 {
             let page_no = offset / PAGE_SIZE;
@@ -166,19 +189,72 @@ impl File for MemoryFile {
     }
 
     fn sync(&self, c: Completion) -> Result<Completion> {
+        tracing::debug!("sync(path={})", self.path);
         // no-op
         c.complete(0);
         Ok(c)
     }
 
-    fn size(&self) -> Result<u64> {
-        Ok(self.size.get() as u64)
+    fn truncate(&self, len: usize, c: Completion) -> Result<Completion> {
+        tracing::debug!("truncate(path={}): len={}", self.path, len);
+        if len < self.size.get() {
+            // Truncate pages
+            unsafe {
+                let pages = &mut *self.pages.get();
+                pages.retain(|&k, _| k * PAGE_SIZE < len);
+            }
+        }
+        self.size.set(len);
+        c.complete(0);
+        Ok(c)
     }
-}
 
-impl Drop for MemoryFile {
-    fn drop(&mut self) {
-        // no-op
+    fn pwritev(&self, pos: usize, buffers: Vec<Arc<Buffer>>, c: Completion) -> Result<Completion> {
+        tracing::debug!(
+            "pwritev(path={}): pos={}, buffers={:?}",
+            self.path,
+            pos,
+            buffers.iter().map(|x| x.len()).collect::<Vec<_>>()
+        );
+        let mut offset = pos;
+        let mut total_written = 0;
+
+        for buffer in buffers {
+            let buf_len = buffer.len();
+            if buf_len == 0 {
+                continue;
+            }
+
+            let mut remaining = buf_len;
+            let mut buf_offset = 0;
+            let data = &buffer.as_slice();
+
+            while remaining > 0 {
+                let page_no = offset / PAGE_SIZE;
+                let page_offset = offset % PAGE_SIZE;
+                let bytes_to_write = remaining.min(PAGE_SIZE - page_offset);
+
+                {
+                    let page = self.get_or_allocate_page(page_no);
+                    page[page_offset..page_offset + bytes_to_write]
+                        .copy_from_slice(&data[buf_offset..buf_offset + bytes_to_write]);
+                }
+
+                offset += bytes_to_write;
+                buf_offset += bytes_to_write;
+                remaining -= bytes_to_write;
+            }
+            total_written += buf_len;
+        }
+        c.complete(total_written as i32);
+        self.size
+            .set(core::cmp::max(pos + total_written, self.size.get()));
+        Ok(c)
+    }
+
+    fn size(&self) -> Result<u64> {
+        tracing::debug!("size(path={}): {}", self.path, self.size.get());
+        Ok(self.size.get() as u64)
     }
 }
 

@@ -49,7 +49,7 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
             }
 
             #[no_mangle]
-            unsafe extern "C" fn #open_fn_name(table: *const ::std::ffi::c_void, conn: *mut ::turso_ext::Conn) -> *const ::std::ffi::c_void {
+            unsafe extern "C" fn #open_fn_name(table: *const ::std::ffi::c_void, conn: *const ::turso_ext::Conn) -> *const ::std::ffi::c_void {
                 if table.is_null() {
                     return ::std::ptr::null();
                 }
@@ -221,7 +221,10 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
             ) -> ::turso_ext::ExtIndexInfo {
                 let constraints = if n_constraints > 0 { std::slice::from_raw_parts(constraints, n_constraints as usize) } else { &[] };
                 let order_by = if n_order_by > 0 { std::slice::from_raw_parts(order_by, n_order_by as usize) } else { &[] };
-                <#struct_name as ::turso_ext::VTabModule>::Table::best_index(constraints, order_by).to_ffi()
+                match <#struct_name as ::turso_ext::VTabModule>::Table::best_index(constraints, order_by) {
+                    Ok(index_info) => index_info.to_ffi(),
+                    Err(e) => ::turso_ext::ExtIndexInfo::error(e),
+                }
             }
 
             #[no_mangle]

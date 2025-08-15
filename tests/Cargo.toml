@@ -17,8 +17,10 @@ path = "integration/mod.rs"
 [dependencies]
 anyhow.workspace = true
 env_logger = "0.10.1"
-turso_core = { path = "../core" }
-rusqlite = { version = "0.34", features = ["bundled"] }
+turso_core = { path = "../core", features = ["conn_raw_api"] }
+turso = { path = "../bindings/rust", features = ["conn_raw_api"] }
+tokio = { version = "1.47", features = ["full"] }
+rusqlite.workspace = true
 tempfile = "3.0.7"
 log = "0.4.22"
 assert_cmd = "^2"
@@ -30,7 +32,3 @@ zerocopy = "0.8.26"
 test-log = { version = "0.2.17", features = ["trace"] }
 tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tracing = "0.1.41"
-
-# rexpect does not support windows.
-[target.'cfg(not(windows))'.dependencies]
-rexpect = "0.6.0"

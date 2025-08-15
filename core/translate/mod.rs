@@ -34,6 +34,7 @@ pub(crate) mod subquery;
 pub(crate) mod transaction;
 pub(crate) mod update;
 mod values;
+pub(crate) mod view;
 
 use crate::schema::Schema;
 use crate::storage::pager::Pager;
@@ -51,7 +52,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tracing::{instrument, Level};
 use transaction::{translate_tx_begin, translate_tx_commit};
-use turso_sqlite3_parser::ast::{self, Delete, Insert};
+use turso_sqlite3_parser::ast::{self, Delete, Indexed, Insert};
 use update::translate_update;
 
 #[instrument(skip_all, level = Level::DEBUG)]
@@ -63,9 +64,9 @@ pub fn translate(
     connection: Arc<Connection>,
     syms: &SymbolTable,
     query_mode: QueryMode,
-    _input: &str, // TODO: going to be used for CREATE VIEW
+    input: &str,
 ) -> Result<Program> {
-    tracing::trace!("querying {}", _input);
+    tracing::trace!("querying {}", input);
     let change_cnt_on = matches!(
         stmt,
         ast::Stmt::CreateIndex { .. }
@@ -91,18 +92,19 @@ pub fn translate(
         // There can be no nesting with pragma, so lift it up here
         ast::Stmt::Pragma(name, body) => pragma::translate_pragma(
             schema,
+            syms,
             &name,
             body.map(|b| *b),
             pager,
             connection.clone(),
             program,
         )?,
-        stmt => translate_inner(schema, stmt, syms, program, &connection)?,
+        stmt => translate_inner(schema, stmt, syms, program, &connection, input)?,
     };
 
-    // TODO: bring epilogue here when I can sort out what instructions correspond to a Write or a Read transaction
+    program.epilogue(schema);
 
-    Ok(program.build(connection, change_cnt_on))
+    Ok(program.build(connection, change_cnt_on, input))
 }
 
 // TODO: for now leaving the return value as a Program. But ideally to support nested parsing of arbitraty
@@ -114,16 +116,43 @@ pub fn translate_inner(
     syms: &SymbolTable,
     program: ProgramBuilder,
     connection: &Arc<Connection>,
+    input: &str,
 ) -> Result<ProgramBuilder> {
-    let program = match stmt {
+    let is_write = matches!(
+        stmt,
+        ast::Stmt::AlterTable(..)
+            | ast::Stmt::CreateIndex { .. }
+            | ast::Stmt::CreateTable { .. }
+            | ast::Stmt::CreateTrigger { .. }
+            | ast::Stmt::CreateView { .. }
+            | ast::Stmt::CreateMaterializedView { .. }
+            | ast::Stmt::CreateVirtualTable(..)
+            | ast::Stmt::Delete(..)
+            | ast::Stmt::DropIndex { .. }
+            | ast::Stmt::DropTable { .. }
+            | ast::Stmt::DropView { .. }
+            | ast::Stmt::Reindex { .. }
+            | ast::Stmt::Update(..)
+            | ast::Stmt::Insert(..)
+    );
+
+    if is_write && connection.get_query_only() {
+        bail_parse_error!("Cannot execute write statement in query_only mode")
+    }
+
+    let is_select = matches!(stmt, ast::Stmt::Select { .. });
+
+    let mut program = match stmt {
         ast::Stmt::AlterTable(alter) => {
-            translate_alter_table(*alter, syms, schema, program, connection)?
+            translate_alter_table(*alter, syms, schema, program, connection, input)?
         }
         ast::Stmt::Analyze(_) => bail_parse_error!("ANALYZE not supported yet"),
         ast::Stmt::Attach { expr, db_name, key } => {
             attach::translate_attach(&expr, &db_name, &key, schema, syms, program)?
         }
-        ast::Stmt::Begin(tx_type, tx_name) => translate_tx_begin(tx_type, tx_name, program)?,
+        ast::Stmt::Begin(tx_type, tx_name) => {
+            translate_tx_begin(tx_type, tx_name, schema, program)?
+        }
         ast::Stmt::Commit(tx_name) => translate_tx_commit(tx_name, program)?,
         ast::Stmt::CreateIndex {
             unique,
@@ -131,23 +160,60 @@ pub fn translate_inner(
             idx_name,
             tbl_name,
             columns,
-            ..
-        } => translate_create_index(
-            (unique, if_not_exists),
-            idx_name.name.as_str(),
-            tbl_name.as_str(),
-            &columns,
-            schema,
-            program,
-        )?,
+            where_clause,
+        } => {
+            if where_clause.is_some() {
+                bail_parse_error!("Partial indexes are not supported");
+            }
+            translate_create_index(
+                (unique, if_not_exists),
+                idx_name.name.as_str(),
+                tbl_name.as_str(),
+                &columns,
+                schema,
+                syms,
+                program,
+            )?
+        }
         ast::Stmt::CreateTable {
             temporary,
             if_not_exists,
             tbl_name,
             body,
-        } => translate_create_table(tbl_name, temporary, *body, if_not_exists, schema, program)?,
+        } => translate_create_table(
+            tbl_name,
+            temporary,
+            *body,
+            if_not_exists,
+            schema,
+            syms,
+            program,
+        )?,
         ast::Stmt::CreateTrigger { .. } => bail_parse_error!("CREATE TRIGGER not supported yet"),
-        ast::Stmt::CreateView { .. } => bail_parse_error!("CREATE VIEW not supported yet"),
+        ast::Stmt::CreateView {
+            view_name,
+            select,
+            columns,
+            ..
+        } => view::translate_create_view(
+            schema,
+            view_name.name.as_str(),
+            &select,
+            columns.as_ref(),
+            connection.clone(),
+            syms,
+            program,
+        )?,
+        ast::Stmt::CreateMaterializedView {
+            view_name, select, ..
+        } => view::translate_create_materialized_view(
+            schema,
+            view_name.name.as_str(),
+            &select,
+            connection.clone(),
+            syms,
+            program,
+        )?,
         ast::Stmt::CreateVirtualTable(vtab) => {
             translate_create_virtual_table(*vtab, schema, syms, program)?
         }
@@ -157,8 +223,19 @@ pub fn translate_inner(
                 where_clause,
                 limit,
                 returning,
-                ..
+                indexed,
+                order_by,
+                with,
             } = *delete;
+            if with.is_some() {
+                bail_parse_error!("WITH clause is not supported in DELETE");
+            }
+            if indexed.is_some_and(|i| matches!(i, Indexed::IndexedBy(_))) {
+                bail_parse_error!("INDEXED BY clause is not supported in DELETE");
+            }
+            if order_by.is_some() {
+                bail_parse_error!("ORDER BY clause is not supported in DELETE");
+            }
             translate_delete(
                 schema,
                 &tbl_name,
@@ -174,13 +251,16 @@ pub fn translate_inner(
         ast::Stmt::DropIndex {
             if_exists,
             idx_name,
-        } => translate_drop_index(idx_name.name.as_str(), if_exists, schema, program)?,
+        } => translate_drop_index(idx_name.name.as_str(), if_exists, schema, syms, program)?,
         ast::Stmt::DropTable {
             if_exists,
             tbl_name,
-        } => translate_drop_table(tbl_name, if_exists, schema, program)?,
+        } => translate_drop_table(tbl_name, if_exists, schema, syms, program)?,
         ast::Stmt::DropTrigger { .. } => bail_parse_error!("DROP TRIGGER not supported yet"),
-        ast::Stmt::DropView { .. } => bail_parse_error!("DROP VIEW not supported yet"),
+        ast::Stmt::DropView {
+            if_exists,
+            view_name,
+        } => view::translate_drop_view(schema, view_name.name.as_str(), if_exists, program)?,
         ast::Stmt::Pragma(..) => {
             bail_parse_error!("PRAGMA statement cannot be evaluated in a nested context")
         }
@@ -229,6 +309,16 @@ pub fn translate_inner(
             )?
         }
     };
+
+    // Indicate write operations so that in the epilogue we can emit the correct type of transaction
+    if is_write {
+        program.begin_write_operation();
+    }
+
+    // Indicate read operations so that in the epilogue we can emit the correct type of transaction
+    if is_select && !program.table_references.is_empty() {
+        program.begin_read_operation();
+    }
 
     Ok(program)
 }

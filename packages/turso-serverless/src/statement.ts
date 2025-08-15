@@ -17,16 +17,36 @@ import { DatabaseError } from './error.js';
 export class Statement {
   private session: Session;
   private sql: string;
+  private presentationMode: 'expanded' | 'raw' | 'pluck' = 'expanded';
 
   constructor(sessionConfig: SessionConfig, sql: string) {
     this.session = new Session(sessionConfig);
     this.sql = sql;
   }
 
+
+  /**
+   * Enable raw mode to return arrays instead of objects.
+   * 
+   * @param raw Enable or disable raw mode. If you don't pass the parameter, raw mode is enabled.
+   * @returns This statement instance for chaining
+   * 
+   * @example
+   * ```typescript
+   * const stmt = client.prepare("SELECT * FROM users WHERE id = ?");
+   * const row = await stmt.raw().get([1]);
+   * console.log(row); // [1, "Alice", "alice@example.org"]
+   * ```
+   */
+  raw(raw?: boolean): Statement {
+    this.presentationMode = raw === false ? 'expanded' : 'raw';
+    return this;
+  }
+
   /**
    * Executes the prepared statement.
    * 
-   * @param args - Optional array of parameter values for the SQL statement
+   * @param args - Optional array of parameter values or object with named parameters
    * @returns Promise resolving to the result of the statement
    * 
    * @example
@@ -36,16 +56,17 @@ export class Statement {
    * console.log(`Inserted user with ID ${result.lastInsertRowid}`);
    * ```
    */
-  async run(args: any[] = []): Promise<any> {
-    const result = await this.session.execute(this.sql, args);
+  async run(args?: any): Promise<any> {
+    const normalizedArgs = this.normalizeArgs(args);
+    const result = await this.session.execute(this.sql, normalizedArgs);
     return { changes: result.rowsAffected, lastInsertRowid: result.lastInsertRowid };
   }
 
   /**
    * Execute the statement and return the first row.
    * 
-   * @param args - Optional array of parameter values for the SQL statement
-   * @returns Promise resolving to the first row or null if no results
+   * @param args - Optional array of parameter values or object with named parameters
+   * @returns Promise resolving to the first row or undefined if no results
    * 
    * @example
    * ```typescript
@@ -56,15 +77,27 @@ export class Statement {
    * }
    * ```
    */
-  async get(args: any[] = []): Promise<any> {
-    const result = await this.session.execute(this.sql, args);
-    return result.rows[0] || null;
+  async get(args?: any): Promise<any> {
+    const normalizedArgs = this.normalizeArgs(args);
+    const result = await this.session.execute(this.sql, normalizedArgs);
+    const row = result.rows[0];
+    if (!row) {
+      return undefined;
+    }
+    
+    if (this.presentationMode === 'raw') {
+      // In raw mode, return the row as a plain array (it already is one)
+      // The row object is already an array with column properties added
+      return [...row];
+    }
+    
+    return row;
   }
 
   /**
    * Execute the statement and return all rows.
    * 
-   * @param args - Optional array of parameter values for the SQL statement
+   * @param args - Optional array of parameter values or object with named parameters
    * @returns Promise resolving to an array of all result rows
    * 
    * @example
@@ -74,9 +107,20 @@ export class Statement {
    * console.log(`Found ${activeUsers.length} active users`);
    * ```
    */
-  async all(args: any[] = []): Promise<any[]> {
-    const result = await this.session.execute(this.sql, args);
-    return result.rows;
+  async all(args?: any): Promise<any[]> {
+    const normalizedArgs = this.normalizeArgs(args);
+    const result = await this.session.execute(this.sql, normalizedArgs);
+    
+    if (this.presentationMode === 'raw') {
+      return result.rows.map((row: any) => [...row]);
+    }
+    return result.rows.map((row: any) => {
+      const obj: any = {};
+      result.columns.forEach((col: string, i: number) => {
+        obj[col] = row[i];
+      });
+      return obj;
+    });
   }
 
   /**
@@ -85,7 +129,7 @@ export class Statement {
    * This method provides memory-efficient processing of large result sets
    * by streaming rows one at a time instead of loading everything into memory.
    * 
-   * @param args - Optional array of parameter values for the SQL statement
+   * @param args - Optional array of parameter values or object with named parameters
    * @returns AsyncGenerator that yields individual rows
    * 
    * @example
@@ -97,8 +141,9 @@ export class Statement {
    * }
    * ```
    */
-  async *iterate(args: any[] = []): AsyncGenerator<any> {
-    const { response, entries } = await this.session.executeRaw(this.sql, args);
+  async *iterate(args?: any): AsyncGenerator<any> {
+    const normalizedArgs = this.normalizeArgs(args);
+    const { response, entries } = await this.session.executeRaw(this.sql, normalizedArgs);
     
     let columns: string[] = [];
     
@@ -112,8 +157,13 @@ export class Statement {
         case 'row':
           if (entry.row) {
             const decodedRow = entry.row.map(decodeValue);
-            const rowObject = this.session.createRowObject(decodedRow, columns);
-            yield rowObject;
+            if (this.presentationMode === 'raw') {
+              // In raw mode, yield arrays of values
+              yield decodedRow;
+            } else {
+              const rowObject = this.session.createRowObject(decodedRow, columns);
+              yield rowObject;
+            }
           }
           break;
         case 'step_error':
@@ -123,4 +173,27 @@ export class Statement {
     }
   }
 
+  /**
+   * Normalize arguments to handle both single values and arrays.
+   * Matches the behavior of the native bindings.
+   */
+  private normalizeArgs(args: any): any[] | Record<string, any> {
+    // No arguments provided
+    if (args === undefined) {
+      return [];
+    }
+    
+    // If it's an array, return as-is
+    if (Array.isArray(args)) {
+      return args;
+    }
+    
+    // Check if it's a plain object (for named parameters)
+    if (args !== null && typeof args === 'object' && args.constructor === Object) {
+      return args;
+    }
+    
+    // Single value - wrap in array
+    return [args];
+  }
 }

@@ -4,14 +4,14 @@
 </p>
 
 <p align="center">
-  <i>Turso Database</i> is an in-process SQL database, compatible with SQLite.
+  An in-process SQL database, compatible with SQLite.
 </p>
 
 <p align="center">
   <a title="Build Status" target="_blank" href="https://github.com/tursodatabase/turso/actions/workflows/rust.yml"><img src="https://img.shields.io/github/actions/workflow/status/tursodatabase/turso/rust.yml?style=flat-square"></a>
   <a title="Releases" target="_blank" href="https://github.com/tursodatabase/turso/releases"><img src="https://img.shields.io/github/release/tursodatabase/turso?style=flat-square&color=9CF"></a>
   <a title="Rust" target="_blank" href="https://crates.io/crates/turso"><img alt="PyPI" src="https://img.shields.io/crates/v/turso"></a>
-  <a title="JavaScript" target="_blank" href="https://www.npmjs.com/package/@tursodatabase/turso"><img alt="PyPI" src="https://img.shields.io/npm/v/@tursodatabase/turso"></a>
+  <a title="JavaScript" target="_blank" href="https://www.npmjs.com/package/@tursodatabase/database"><img alt="PyPI" src="https://img.shields.io/npm/v/@tursodatabase/database"></a>
   <a title="Python" target="_blank" href="https://pypi.org/project/pyturso/"><img alt="PyPI" src="https://img.shields.io/pypi/v/pyturso"></a>
   <a title="MIT" target="_blank" href="https://github.com/tursodatabase/turso/blob/main/LICENSE.md"><img src="http://img.shields.io/badge/license-MIT-orange.svg?style=flat-square"></a>
   <br>
@@ -28,9 +28,13 @@
 
 ---
 
-## Features
+## About
 
-Turso Database is a _work-in-progress_, in-process OLTP database engine library written in Rust that has:
+Turso Database is an in-process SQL database written in Rust, compatible with SQLite.
+
+> **⚠️ Warning:** This software is ALPHA, only use for development, testing, and experimentation. We are working to make it production ready, but do not use it for critical data right now.
+> 
+## Features and Roadmap
 
 * **SQLite compatibility** for SQL dialect, file formats, and the C API [see [document](COMPAT.md) for details]
 * **Change data capture (CDC)** for real-time tracking of database changes.
@@ -42,15 +46,17 @@ Turso Database is a _work-in-progress_, in-process OLTP database engine library 
   * [Rust](bindings/rust)
   * [WebAssembly](bindings/javascript)
 * **Asynchronous I/O** support on Linux with `io_uring`
-* **OS support** for Linux, macOS, and Windows
+* **Cross-platform** support for Linux, macOS, Windows and browsers (through WebAssembly)
+* **Vector support** support including exact search and vector manipulation
+* **Improved schema management** including extended `ALTER` support and faster schema changes.
 
-### Roadmap
+The database has the following experimental features:
+
+* **`BEGIN CONCURRENT`** for improved write throughput using multi-version concurrency control (MVCC).
+* **Incremental computation** using DBSP for incremental view mainatenance and query subscriptions.
 
 The following features are on our current roadmap:
 
-* **`BEGIN CONCURRENT`** for improved write throughput using multi-version concurrency control (MVCC).
-* **Better schema management**, including extended `ALTER` support, faster schema changes, and strict column types by default.
-* **Incremental computation** using DBSP to implement query subscriptions, incremental view maintenance, and triggers.
 * **Vector indexing** for fast approximate vector search, similar to [libSQL vector search](https://turso.tech/vector).
 
 ## Getting Started
@@ -67,7 +73,13 @@ curl --proto '=https' --tlsv1.2 -LsSf \
   https://github.com/tursodatabase/turso/releases/latest/download/turso_cli-installer.sh | sh
 ```
 
-Then launch the shell to execute SQL statements:
+Then launch the interactive shell:
+
+```shell
+$ tursodb
+```
+
+This will start the Turso interactive shell where you can execute SQL statements:
 
 ```console
 Turso
@@ -86,6 +98,13 @@ You can also build and run the latest development version with:
 
 ```shell
 cargo run
+```
+
+If you like docker, we got you covered. Simply run this in the root folder:
+
+```bash
+make docker-cli-build && \
+make docker-cli-run
 ```
 
 ### MCP Server Mode
@@ -158,15 +177,15 @@ let res = conn.query("SELECT * FROM users", ()).await?;
 <br>
 
 ```console
-npm i @tursodatabase/turso
+npm i @tursodatabase/database
 ```
 
 Example usage:
 
 ```js
-import { Database } from '@tursodatabase/turso';
+import { connect } from '@tursodatabase/database';
 
-const db = new Database('sqlite.db');
+const db = await connect('sqlite.db');
 const stmt = db.prepare('SELECT * FROM users');
 const users = stmt.all();
 console.log(users);

@@ -55,7 +55,7 @@ uv-sync-test:
 	uv sync --all-extras --dev --package turso_test
 .PHONE: uv-sync
 
-test: limbo uv-sync-test test-compat test-vector test-sqlite3 test-shell test-memory test-write test-update test-constraint test-collate test-extensions test-mvcc
+test: limbo uv-sync-test test-compat test-vector test-sqlite3 test-shell test-memory test-write test-update test-constraint test-collate test-extensions test-mvcc test-matviews
 .PHONY: test
 
 test-extensions: limbo uv-sync-test
@@ -78,14 +78,18 @@ test-time:
 	RUST_LOG=$(RUST_LOG) SQLITE_EXEC=$(SQLITE_EXEC) ./testing/time.test
 .PHONY: test-time
 
+test-matviews:
+	RUST_LOG=$(RUST_LOG) SQLITE_EXEC=$(SQLITE_EXEC) ./testing/materialized_views.test
+.PHONY: test-matviews
+
 reset-db:
 	./scripts/clone_test_db.sh
 .PHONY: reset-db
 
 test-sqlite3: reset-db
-	cargo test -p limbo_sqlite3 --test compat
+	cargo test -p turso_sqlite3 --test compat
 	./scripts/clone_test_db.sh
-	cargo test -p limbo_sqlite3 --test compat --features sqlite3
+	cargo test -p turso_sqlite3 --test compat --features sqlite3
 .PHONY: test-sqlite3
 
 test-json:
@@ -150,3 +154,46 @@ bench-exclude-tpc-h:
 		cargo bench $$benchmarks; \
 	fi
 .PHONY: bench-exclude-tpc-h
+
+docker-cli-build:
+	docker build -f Dockerfile.cli -t turso-cli .
+
+docker-cli-run:
+	docker run -it -v ./:/app turso-cli
+
+merge-pr:
+ifndef PR
+	$(error PR is required. Usage: make merge-pr PR=123)
+endif
+	@echo "Setting up environment for PR merge..."
+	@if [ -z "$(GITHUB_REPOSITORY)" ]; then \
+		REPO=$$(git remote get-url origin | sed -E 's|.*github\.com[:/]([^/]+/[^/]+?)(\.git)?$$|\1|'); \
+		if [ -z "$$REPO" ]; then \
+			echo "Error: Could not detect repository from git remote"; \
+			exit 1; \
+		fi; \
+		export GITHUB_REPOSITORY="$$REPO"; \
+	else \
+		export GITHUB_REPOSITORY="$(GITHUB_REPOSITORY)"; \
+	fi; \
+	echo "Repository: $$REPO"; \
+	AUTH=$$(gh auth status); \
+	if [ -z "$$AUTH" ]; then \
+		echo "auth: $$AUTH"; \
+		echo "GitHub CLI not authenticated. Starting login process..."; \
+		gh auth login --scopes repo,workflow; \
+	else \
+		if ! echo "$$AUTH" | grep -q "workflow"; then \
+			echo "Warning: 'workflow' scope not detected. You may need to re-authenticate if merging PRs with workflow changes."; \
+			echo "Run: gh auth refresh -s repo,workflow"; \
+		fi; \
+	fi; \
+	if [ "$(LOCAL)" = "1" ]; then \
+	    echo "merging PR #$(PR) locally"; \
+		uv run scripts/merge-pr.py $(PR) --local; \
+	else \
+	    echo "merging PR #$(PR) on GitHub"; \
+		uv run scripts/merge-pr.py $(PR); \
+	fi
+
+.PHONY: merge-pr

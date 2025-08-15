@@ -60,8 +60,10 @@ pub struct Opts {
     pub readonly: bool,
     #[clap(long, help = "Enable experimental MVCC feature")]
     pub experimental_mvcc: bool,
+    #[clap(long, help = "Enable experimental views feature")]
+    pub experimental_views: bool,
     #[clap(long, help = "Enable experimental indexing feature")]
-    pub experimental_indexes: bool,
+    pub experimental_indexes: Option<bool>,
     #[clap(short = 't', long, help = "specify output file for log traces")]
     pub tracing_output: Option<String>,
     #[clap(long, help = "Start MCP server instead of interactive shell")]
@@ -119,8 +121,14 @@ impl Limbo {
             .database
             .as_ref()
             .map_or(":memory:".to_string(), |p| p.to_string_lossy().to_string());
+        let indexes_enabled = opts.experimental_indexes.unwrap_or(true);
         let (io, conn) = if db_file.contains([':', '?', '&', '#']) {
-            Connection::from_uri(&db_file, opts.experimental_indexes, opts.experimental_mvcc)?
+            Connection::from_uri(
+                &db_file,
+                indexes_enabled,
+                opts.experimental_mvcc,
+                opts.experimental_views,
+            )?
         } else {
             let flags = if opts.readonly {
                 OpenFlags::ReadOnly
@@ -131,8 +139,9 @@ impl Limbo {
                 &db_file,
                 opts.vfs.as_ref(),
                 flags,
-                opts.experimental_indexes,
+                indexes_enabled,
                 opts.experimental_mvcc,
+                opts.experimental_views,
             )?;
             let conn = db.connect()?;
             (io, conn)
@@ -151,7 +160,7 @@ impl Limbo {
             let interrupt_count: Arc<AtomicUsize> = Arc::clone(&interrupt_count);
             ctrlc::set_handler(move || {
                 // Increment the interrupt count on Ctrl-C
-                interrupt_count.fetch_add(1, Ordering::SeqCst);
+                interrupt_count.fetch_add(1, Ordering::Release);
             })
             .expect("Error setting Ctrl-C handler");
         }
@@ -537,7 +546,7 @@ impl Limbo {
     fn reset_line(&mut self, _line: &str) -> rustyline::Result<()> {
         // Entry is auto added to history
         // self.rl.add_history_entry(line.to_owned())?;
-        self.interrupt_count.store(0, Ordering::SeqCst);
+        self.interrupt_count.store(0, Ordering::Release);
         Ok(())
     }
 
@@ -579,6 +588,7 @@ impl Limbo {
             }
             return Ok(());
         }
+        self.reset_line(line)?;
         if line.ends_with(';') {
             self.buffer_input(line);
             let buff = self.input_buff.clone();
@@ -587,7 +597,6 @@ impl Limbo {
             self.buffer_input(format!("{line}\n").as_str());
             self.set_multiline_prompt();
         }
-        self.reset_line(line)?;
         Ok(())
     }
 
@@ -613,8 +622,8 @@ impl Limbo {
                     std::process::exit(0)
                 }
                 Command::Open(args) => {
-                    if self.open_db(&args.path, args.vfs_name.as_deref()).is_err() {
-                        let _ = self.writeln("Error: Unable to open database file.");
+                    if let Err(e) = self.open_db(&args.path, args.vfs_name.as_deref()) {
+                        let _ = self.writeln(e.to_string());
                     }
                 }
                 Command::Schema(args) => {
@@ -712,6 +721,11 @@ impl Limbo {
                         HeadersMode::Off => false,
                     };
                 }
+                Command::Clone(args) => {
+                    if let Err(e) = self.conn.copy_db(&args.output_file) {
+                        let _ = self.writeln(e.to_string());
+                    }
+                }
             },
         }
     }
@@ -727,7 +741,7 @@ impl Limbo {
                 OutputMode::List => {
                     let mut headers_printed = false;
                     loop {
-                        if self.interrupt_count.load(Ordering::SeqCst) > 0 {
+                        if self.interrupt_count.load(Ordering::Acquire) > 0 {
                             println!("Query interrupted.");
                             return Ok(());
                         }
@@ -801,7 +815,7 @@ impl Limbo {
                     }
                 }
                 OutputMode::Pretty => {
-                    if self.interrupt_count.load(Ordering::SeqCst) > 0 {
+                    if self.interrupt_count.load(Ordering::Acquire) > 0 {
                         println!("Query interrupted.");
                         return Ok(());
                     }
@@ -945,7 +959,11 @@ impl Limbo {
     }
 
     fn print_schema_entry(&mut self, db_display_name: &str, row: &turso_core::Row) -> bool {
-        if let Ok(Value::Text(schema)) = row.get::<&Value>(0) {
+        if let (Ok(Value::Text(schema)), Ok(Value::Text(obj_type)), Ok(Value::Text(obj_name))) = (
+            row.get::<&Value>(0),
+            row.get::<&Value>(1),
+            row.get::<&Value>(2),
+        ) {
             let modified_schema = if db_display_name == "main" {
                 schema.as_str().to_string()
             } else {
@@ -976,9 +994,61 @@ impl Limbo {
                 }
             };
             let _ = self.write_fmt(format_args!("{modified_schema};"));
+            // For views, add the column comment like SQLite does
+            if obj_type.as_str() == "view" {
+                let columns = self
+                    .get_view_columns(obj_name.as_str())
+                    .unwrap_or_else(|_| "x".to_string());
+                let _ = self.write_fmt(format_args!("/* {}({}) */", obj_name.as_str(), columns));
+            }
             true
         } else {
             false
+        }
+    }
+
+    /// Get column names for a view to generate the SQLite-compatible comment
+    fn get_view_columns(&mut self, view_name: &str) -> anyhow::Result<String> {
+        // Get column information using PRAGMA table_info
+        let pragma_sql = format!("PRAGMA table_info({view_name})");
+
+        match self.conn.query(&pragma_sql) {
+            Ok(Some(ref mut rows)) => {
+                let mut columns = Vec::new();
+                loop {
+                    match rows.step()? {
+                        StepResult::Row => {
+                            let row = rows.row().unwrap();
+                            // Column name is in the second column (index 1) of PRAGMA table_info
+                            if let Ok(Value::Text(col_name)) = row.get::<&Value>(1) {
+                                columns.push(col_name.as_str().to_string());
+                            }
+                        }
+                        StepResult::IO => {
+                            rows.run_once()?;
+                        }
+                        StepResult::Done => break,
+                        StepResult::Interrupt => break,
+                        StepResult::Busy => break,
+                    }
+                }
+
+                if columns.is_empty() {
+                    anyhow::bail!("PRAGMA table_info returned no columns for view '{}'. The view may be corrupted or the database schema is invalid.", view_name);
+                }
+
+                Ok(columns.join(","))
+            }
+            Ok(None) => {
+                anyhow::bail!("PRAGMA table_info('{}') returned no results. The view may not exist or the database schema is invalid.", view_name);
+            }
+            Err(e) => {
+                anyhow::bail!(
+                    "Failed to execute PRAGMA table_info for view '{}': {}",
+                    view_name,
+                    e
+                );
+            }
         }
     }
 
@@ -989,7 +1059,7 @@ impl Limbo {
         table_name: &str,
     ) -> anyhow::Result<bool> {
         let sql = format!(
-            "SELECT sql FROM {db_prefix}.sqlite_schema WHERE type IN ('table', 'index') AND tbl_name = '{table_name}' AND name NOT LIKE 'sqlite_%'"
+            "SELECT sql, type, name FROM {db_prefix}.sqlite_schema WHERE type IN ('table', 'index', 'view') AND (tbl_name = '{table_name}' OR name = '{table_name}') AND name NOT LIKE 'sqlite_%' ORDER BY CASE type WHEN 'table' THEN 1 WHEN 'view' THEN 2 WHEN 'index' THEN 3 END, rowid"
         );
 
         let mut found = false;
@@ -1022,9 +1092,7 @@ impl Limbo {
         db_prefix: &str,
         db_display_name: &str,
     ) -> anyhow::Result<()> {
-        let sql = format!(
-            "SELECT sql FROM {db_prefix}.sqlite_schema WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%'"
-        );
+        let sql = format!("SELECT sql, type, name FROM {db_prefix}.sqlite_schema WHERE type IN ('table', 'index', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY CASE type WHEN 'table' THEN 1 WHEN 'view' THEN 2 WHEN 'index' THEN 3 END, rowid");
 
         match self.conn.query(&sql) {
             Ok(Some(ref mut rows)) => loop {
@@ -1058,15 +1126,6 @@ impl Limbo {
     }
 
     fn display_schema(&mut self, table: Option<&str>) -> anyhow::Result<()> {
-        if !self.conn.is_db_initialized() {
-            if let Some(table_name) = table {
-                self.write_fmt(format_args!("-- Error: Table '{table_name}' not found."))?;
-            } else {
-                self.writeln("-- No tables or indexes found in the database.")?;
-            }
-            return Ok(());
-        }
-
         match table {
             Some(table_spec) => {
                 // Parse table name to handle database prefixes (e.g., "db.table")
@@ -1120,15 +1179,6 @@ impl Limbo {
     }
 
     fn display_indexes(&mut self, maybe_table: Option<String>) -> anyhow::Result<()> {
-        if !self.conn.is_db_initialized() {
-            if let Some(tbl_name) = &maybe_table {
-                self.write_fmt(format_args!("-- Error: Table '{tbl_name}' not found."))?;
-            } else {
-                self.writeln("-- No indexes found in the database.")?;
-            }
-            return Ok(());
-        }
-
         let sql = match maybe_table {
             Some(ref tbl_name) => format!(
                 "SELECT name FROM sqlite_schema WHERE type='index' AND tbl_name = '{tbl_name}' ORDER BY 1"
@@ -1177,17 +1227,6 @@ impl Limbo {
     }
 
     fn display_tables(&mut self, pattern: Option<&str>) -> anyhow::Result<()> {
-        if !self.conn.is_db_initialized() {
-            if let Some(pattern) = pattern {
-                self.write_fmt(format_args!(
-                    "-- Error: Tables with pattern '{pattern}' not found."
-                ))?;
-            } else {
-                self.writeln("-- No tables found in the database.")?;
-            }
-            return Ok(());
-        }
-
         let sql = match pattern {
             Some(pattern) => format!(
                 "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name LIKE '{pattern}' ORDER BY 1"

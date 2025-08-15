@@ -158,6 +158,8 @@ pub enum VectorFunc {
     VectorExtract,
     VectorDistanceCos,
     VectorDistanceEuclidean,
+    VectorConcat,
+    VectorSlice,
 }
 
 impl VectorFunc {
@@ -176,6 +178,8 @@ impl Display for VectorFunc {
             Self::VectorDistanceCos => "vector_distance_cos".to_string(),
             // We use `distance_l2` to reduce user input
             Self::VectorDistanceEuclidean => "vector_distance_l2".to_string(),
+            Self::VectorConcat => "vector_concat".to_string(),
+            Self::VectorSlice => "vector_slice".to_string(),
         };
         write!(f, "{str}")
     }
@@ -327,6 +331,7 @@ pub enum ScalarFunc {
     BinRecordJsonObject,
     Attach,
     Detach,
+    Unlikely,
 }
 
 impl ScalarFunc {
@@ -389,6 +394,7 @@ impl ScalarFunc {
             ScalarFunc::BinRecordJsonObject => true,
             ScalarFunc::Attach => false, // changes database state
             ScalarFunc::Detach => false, // changes database state
+            ScalarFunc::Unlikely => true,
         }
     }
 }
@@ -453,6 +459,7 @@ impl Display for ScalarFunc {
             Self::BinRecordJsonObject => "bin_record_json_object".to_string(),
             Self::Attach => "attach".to_string(),
             Self::Detach => "detach".to_string(),
+            Self::Unlikely => "unlikely".to_string(),
         };
         write!(f, "{str}")
     }
@@ -744,6 +751,7 @@ impl Func {
             "replace" => Ok(Self::Scalar(ScalarFunc::Replace)),
             "likely" => Ok(Self::Scalar(ScalarFunc::Likely)),
             "likelihood" => Ok(Self::Scalar(ScalarFunc::Likelihood)),
+            "unlikely" => Ok(Self::Scalar(ScalarFunc::Unlikely)),
             #[cfg(feature = "json")]
             "json" => Ok(Self::Json(JsonFunc::Json)),
             #[cfg(feature = "json")]
@@ -838,6 +846,8 @@ impl Func {
             "vector_extract" => Ok(Self::Vector(VectorFunc::VectorExtract)),
             "vector_distance_cos" => Ok(Self::Vector(VectorFunc::VectorDistanceCos)),
             "vector_distance_l2" => Ok(Self::Vector(VectorFunc::VectorDistanceEuclidean)),
+            "vector_concat" => Ok(Self::Vector(VectorFunc::VectorConcat)),
+            "vector_slice" => Ok(Self::Vector(VectorFunc::VectorSlice)),
             _ => crate::bail_parse_error!("no such function: {}", name),
         }
     }

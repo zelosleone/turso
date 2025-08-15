@@ -1,5 +1,4 @@
-use std::{cell::Cell, cmp::Ordering, sync::Arc};
-use turso_ext::{ConstraintInfo, ConstraintOp};
+use std::{cmp::Ordering, sync::Arc};
 use turso_sqlite3_parser::ast::{self, SortOrder};
 
 use crate::{
@@ -12,7 +11,7 @@ use crate::{
     },
     Result, VirtualTable,
 };
-use crate::{schema::Type, types::SeekOp, util::can_pushdown_predicate};
+use crate::{schema::Type, types::SeekOp};
 
 use turso_sqlite3_parser::ast::TableInternalId;
 
@@ -85,16 +84,12 @@ pub struct WhereTerm {
     /// A term may have been consumed e.g. if:
     /// - it has been converted into a constraint in a seek key
     /// - it has been removed due to being trivially true or false
-    ///
-    /// FIXME: this can be made into a simple `bool` once we move the virtual table constraint resolution
-    /// code out of `init_loop()`, because that's the only place that requires a mutable reference to the where clause
-    /// that causes problems to other code that needs immutable references to the where clause.
-    pub consumed: Cell<bool>,
+    pub consumed: bool,
 }
 
 impl WhereTerm {
     pub fn should_eval_before_loop(&self, join_order: &[JoinOrderMember]) -> bool {
-        if self.consumed.get() {
+        if self.consumed {
             return false;
         }
         let Ok(eval_at) = self.eval_at(join_order) else {
@@ -104,7 +99,7 @@ impl WhereTerm {
     }
 
     pub fn should_eval_at_loop(&self, loop_idx: usize, join_order: &[JoinOrderMember]) -> bool {
-        if self.consumed.get() {
+        if self.consumed {
             return false;
         }
         let Ok(eval_at) = self.eval_at(join_order) else {
@@ -118,142 +113,8 @@ impl WhereTerm {
     }
 }
 
-use crate::ast::{Expr, Operator};
+use crate::ast::Expr;
 
-// This function takes an operator and returns the operator you would obtain if the operands were swapped.
-// e.g. "literal < column"
-// which is not the canonical order for constraint pushdown.
-// This function will return > so that the expression can be treated as if it were written "column > literal"
-fn reverse_operator(op: &Operator) -> Option<Operator> {
-    match op {
-        Operator::Equals => Some(Operator::Equals),
-        Operator::Less => Some(Operator::Greater),
-        Operator::LessEquals => Some(Operator::GreaterEquals),
-        Operator::Greater => Some(Operator::Less),
-        Operator::GreaterEquals => Some(Operator::LessEquals),
-        Operator::NotEquals => Some(Operator::NotEquals),
-        Operator::Is => Some(Operator::Is),
-        Operator::IsNot => Some(Operator::IsNot),
-        _ => None,
-    }
-}
-
-fn to_ext_constraint_op(op: &Operator) -> Option<ConstraintOp> {
-    match op {
-        Operator::Equals => Some(ConstraintOp::Eq),
-        Operator::Less => Some(ConstraintOp::Lt),
-        Operator::LessEquals => Some(ConstraintOp::Le),
-        Operator::Greater => Some(ConstraintOp::Gt),
-        Operator::GreaterEquals => Some(ConstraintOp::Ge),
-        Operator::NotEquals => Some(ConstraintOp::Ne),
-        _ => None,
-    }
-}
-
-/// This function takes a WhereTerm for a select involving a VTab at index 'table_index'.
-/// It determines whether or not it involves the given table and whether or not it can
-/// be converted into a ConstraintInfo which can be passed to the vtab module's xBestIndex
-/// method, which will possibly calculate some information to improve the query plan, that we can send
-/// back to it as arguments for the VFilter operation.
-/// is going to be filtered against: e.g:
-/// 'SELECT key, value FROM vtab WHERE key = 'some_key';
-/// we need to send the Value('some_key') as an argument to VFilter, and possibly omit it from
-/// the filtration in the vdbe layer.
-pub fn convert_where_to_vtab_constraint(
-    term: &WhereTerm,
-    table_idx: usize,
-    pred_idx: usize,
-    join_order: &[JoinOrderMember],
-) -> Result<Option<ConstraintInfo>> {
-    if term.from_outer_join.is_some() {
-        return Ok(None);
-    }
-    let Expr::Binary(lhs, op, rhs) = &term.expr else {
-        return Ok(None);
-    };
-    let expr_is_ready =
-        |e: &Expr| -> Result<bool> { can_pushdown_predicate(e, table_idx, join_order) };
-    let (vcol_idx, op_for_vtab, usable, is_rhs) = match (&**lhs, &**rhs) {
-        (
-            Expr::Column {
-                table: tbl_l,
-                column: col_l,
-                ..
-            },
-            Expr::Column {
-                table: tbl_r,
-                column: col_r,
-                ..
-            },
-        ) => {
-            // one side must be the virtual table
-            let tbl_l_idx = join_order
-                .iter()
-                .position(|j| j.table_id == *tbl_l)
-                .unwrap();
-            let tbl_r_idx = join_order
-                .iter()
-                .position(|j| j.table_id == *tbl_r)
-                .unwrap();
-            let vtab_on_l = tbl_l_idx == table_idx;
-            let vtab_on_r = tbl_r_idx == table_idx;
-            if vtab_on_l == vtab_on_r {
-                return Ok(None); // either both or none -> not convertible
-            }
-
-            if vtab_on_l {
-                // vtab on left side: operator unchanged
-                let usable = tbl_r_idx < table_idx; // usable if the other table is already positioned
-                (col_l, op, usable, false)
-            } else {
-                // vtab on right side of the expr: reverse operator
-                let usable = tbl_l_idx < table_idx;
-                (col_r, &reverse_operator(op).unwrap_or(*op), usable, true)
-            }
-        }
-        (Expr::Column { table, column, .. }, other)
-            if join_order
-                .iter()
-                .position(|j| j.table_id == *table)
-                .unwrap()
-                == table_idx =>
-        {
-            (
-                column,
-                op,
-                expr_is_ready(other)?, // literal / earlier‑table / deterministic func ?
-                false,
-            )
-        }
-        (other, Expr::Column { table, column, .. })
-            if join_order
-                .iter()
-                .position(|j| j.table_id == *table)
-                .unwrap()
-                == table_idx =>
-        {
-            (
-                column,
-                &reverse_operator(op).unwrap_or(*op),
-                expr_is_ready(other)?,
-                true,
-            )
-        }
-
-        _ => return Ok(None), // does not involve the virtual table at all
-    };
-
-    let Some(op) = to_ext_constraint_op(op_for_vtab) else {
-        return Ok(None);
-    };
-
-    Ok(Some(ConstraintInfo {
-        column_index: *vcol_idx as u32,
-        op,
-        usable,
-        plan_info: ConstraintInfo::pack_plan_info(pred_idx as u32, is_rhs),
-    }))
-}
 /// The loop index where to evaluate the condition.
 /// For example, in `SELECT * FROM u JOIN p WHERE u.id = 5`, the condition can already be evaluated at the first loop (idx 0),
 /// because that is the rightmost table that it references.
@@ -536,6 +397,9 @@ pub struct UpdatePlan {
     pub indexes_to_update: Vec<Arc<Index>>,
     // If the table's rowid alias is used, gather all the target rowids into an ephemeral table, and then use that table as the single JoinedTable for the actual UPDATE loop.
     pub ephemeral_plan: Option<SelectPlan>,
+    // For ALTER TABLE turso-db emits appropriate DDL statement in the "updates" cell of CDC table
+    // This field is present only for update plan created for ALTER TABLE when CDC mode has "updates" values
+    pub cdc_update_alter_statement: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -686,6 +550,10 @@ impl TableReferences {
             joined_tables,
             outer_query_refs,
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.joined_tables.is_empty() && self.outer_query_refs.is_empty()
     }
 
     /// Add a new [JoinedTable] to the query plan.
@@ -863,12 +731,7 @@ impl ColumnUsedMask {
 pub enum Operation {
     // Scan operation
     // This operation is used to scan a table.
-    // The iter_dir is used to indicate the direction of the iterator.
-    Scan {
-        iter_dir: IterationDirection,
-        /// The index that we are using to scan the table, if any.
-        index: Option<Arc<Index>>,
-    },
+    Scan(Scan),
     // Search operation
     // This operation is used to search for a row in a table using an index
     // (i.e. a primary key or a secondary index)
@@ -876,9 +739,25 @@ pub enum Operation {
 }
 
 impl Operation {
+    pub fn default_scan_for(table: &Table) -> Self {
+        match table {
+            Table::BTree(_) => Operation::Scan(Scan::BTreeTable {
+                iter_dir: IterationDirection::Forwards,
+                index: None,
+            }),
+            Table::Virtual(_) => Operation::Scan(Scan::VirtualTable {
+                idx_num: -1,
+                idx_str: None,
+                constraints: Vec::new(),
+            }),
+            Table::FromClauseSubquery(_) => Operation::Scan(Scan::Subquery),
+        }
+    }
+
     pub fn index(&self) -> Option<&Arc<Index>> {
         match self {
-            Operation::Scan { index, .. } => index.as_ref(),
+            Operation::Scan(Scan::BTreeTable { index, .. }) => index.as_ref(),
+            Operation::Scan(_) => None,
             Operation::Search(Search::RowidEq { .. }) => None,
             Operation::Search(Search::Seek { index, .. }) => index.as_ref(),
         }
@@ -931,10 +810,7 @@ impl JoinedTable {
             result_columns_start_reg: None,
         });
         Self {
-            op: Operation::Scan {
-                iter_dir: IterationDirection::Forwards,
-                index: None,
-            },
+            op: Operation::default_scan_for(&table),
             table,
             identifier,
             internal_id,
@@ -1108,6 +984,30 @@ pub struct TerminationKey {
     pub null_pad: bool,
     /// The comparison operator to use when terminating the scan that follows the seek.
     pub op: SeekOp,
+}
+
+/// Represents the type of table scan performed during query execution.
+#[derive(Clone, Debug)]
+pub enum Scan {
+    /// A scan of a B-tree–backed table, optionally using an index, and with an iteration direction.
+    BTreeTable {
+        /// The iter_dir is used to indicate the direction of the iterator.
+        iter_dir: IterationDirection,
+        /// The index that we are using to scan the table, if any.
+        index: Option<Arc<Index>>,
+    },
+    /// A scan of a virtual table, delegated to the table’s `filter` and related methods.
+    VirtualTable {
+        /// Index identifier returned by the table's `best_index` method.
+        idx_num: i32,
+        /// Optional index name returned by the table’s `best_index` method.
+        idx_str: Option<String>,
+        /// Constraining expressions to be passed to the table’s `filter` method.
+        /// The order of expressions matches the argument order expected by the virtual table.
+        constraints: Vec<Expr>,
+    },
+    /// A scan of a subquery in the `FROM` clause.
+    Subquery,
 }
 
 /// An enum that represents a search operation that can be used to search for a row in a table using an index

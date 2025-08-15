@@ -121,7 +121,7 @@ impl SimulatorFile {
             if queued_io[i].time <= now {
                 let io = queued_io.remove(i);
                 // your code here
-                let c = (io.op)(self)?;
+                let _c = (io.op)(self)?;
             } else {
                 i += 1;
             }
@@ -173,7 +173,7 @@ impl File for SimulatorFile {
     fn pwrite(
         &self,
         pos: usize,
-        buffer: Arc<RefCell<turso_core::Buffer>>,
+        buffer: Arc<turso_core::Buffer>,
         c: turso_core::Completion,
     ) -> Result<turso_core::Completion> {
         self.nr_pwrite_calls.set(self.nr_pwrite_calls.get() + 1);
@@ -222,8 +222,55 @@ impl File for SimulatorFile {
         Ok(c)
     }
 
+    fn pwritev(
+        &self,
+        pos: usize,
+        buffers: Vec<Arc<turso_core::Buffer>>,
+        c: turso_core::Completion,
+    ) -> Result<turso_core::Completion> {
+        self.nr_pwrite_calls.set(self.nr_pwrite_calls.get() + 1);
+        if self.fault.get() {
+            tracing::debug!("pwritev fault");
+            self.nr_pwrite_faults.set(self.nr_pwrite_faults.get() + 1);
+            return Err(turso_core::LimboError::InternalError(
+                FAULT_ERROR_MSG.into(),
+            ));
+        }
+        if let Some(latency) = self.generate_latency_duration() {
+            let cloned_c = c.clone();
+            let op =
+                Box::new(move |file: &SimulatorFile| file.inner.pwritev(pos, buffers, cloned_c));
+            self.queued_io
+                .borrow_mut()
+                .push(DelayedIo { time: latency, op });
+            Ok(c)
+        } else {
+            let c = self.inner.pwritev(pos, buffers, c)?;
+            Ok(c)
+        }
+    }
+
     fn size(&self) -> Result<u64> {
         self.inner.size()
+    }
+
+    fn truncate(&self, len: usize, c: turso_core::Completion) -> Result<turso_core::Completion> {
+        if self.fault.get() {
+            return Err(turso_core::LimboError::InternalError(
+                FAULT_ERROR_MSG.into(),
+            ));
+        }
+        let c = if let Some(latency) = self.generate_latency_duration() {
+            let cloned_c = c.clone();
+            let op = Box::new(move |file: &SimulatorFile| file.inner.truncate(len, cloned_c));
+            self.queued_io
+                .borrow_mut()
+                .push(DelayedIo { time: latency, op });
+            c
+        } else {
+            self.inner.truncate(len, c)?
+        };
+        Ok(c)
     }
 }
 

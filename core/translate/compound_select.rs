@@ -1,5 +1,5 @@
 use crate::schema::{Index, IndexColumn, Schema};
-use crate::translate::emitter::{emit_query, LimitCtx, TransactionMode, TranslateCtx};
+use crate::translate::emitter::{emit_query, LimitCtx, TranslateCtx};
 use crate::translate::plan::{Plan, QueryDestination, SelectPlan};
 use crate::vdbe::builder::{CursorType, ProgramBuilder};
 use crate::vdbe::insn::Insn;
@@ -22,6 +22,7 @@ pub fn emit_program_for_compound_select(
         left: _left,
         right_most,
         limit,
+        offset,
         ..
     } = &plan
     else {
@@ -32,15 +33,14 @@ pub fn emit_program_for_compound_select(
     // Trivial exit on LIMIT 0
     if let Some(limit) = limit {
         if *limit == 0 {
-            program.epilogue(TransactionMode::Read);
             program.result_columns = right_plan.result_columns;
             program.table_references.extend(right_plan.table_references);
             return Ok(());
         }
     }
 
-    // Each subselect shares the same limit_ctx, because the LIMIT applies to the entire compound select,
-    // not just a single subselect.
+    // Each subselect shares the same limit_ctx and offset, because the LIMIT, OFFSET applies to
+    // the entire compound select, not just a single subselect.
     let limit_ctx = limit.map(|limit| {
         let reg = program.alloc_register();
         program.emit_insn(Insn::Integer {
@@ -48,6 +48,22 @@ pub fn emit_program_for_compound_select(
             dest: reg,
         });
         LimitCtx::new_shared(reg)
+    });
+    let offset_reg = offset.map(|offset| {
+        let reg = program.alloc_register();
+        program.emit_insn(Insn::Integer {
+            value: offset as i64,
+            dest: reg,
+        });
+
+        let combined_reg = program.alloc_register();
+        program.emit_insn(Insn::OffsetLimit {
+            offset_reg: reg,
+            combined_reg,
+            limit_reg: limit_ctx.unwrap().reg_limit,
+        });
+
+        reg
     });
 
     // When a compound SELECT is part of a query that yields results to a coroutine (e.g. within an INSERT clause),
@@ -67,11 +83,11 @@ pub fn emit_program_for_compound_select(
         schema,
         syms,
         limit_ctx,
+        offset_reg,
         yield_reg,
         reg_result_cols_start,
     )?;
 
-    program.epilogue(TransactionMode::Read);
     program.result_columns = right_plan.result_columns;
     program.table_references.extend(right_plan.table_references);
 
@@ -80,12 +96,14 @@ pub fn emit_program_for_compound_select(
 
 // Emits bytecode for a compound SELECT statement. This function processes the rightmost part of
 // the compound SELECT and handles the left parts recursively based on the compound operator type.
+#[allow(clippy::too_many_arguments)]
 fn emit_compound_select(
     program: &mut ProgramBuilder,
     plan: Plan,
     schema: &Schema,
     syms: &SymbolTable,
     limit_ctx: Option<LimitCtx>,
+    offset_reg: Option<usize>,
     yield_reg: Option<usize>,
     reg_result_cols_start: Option<usize>,
 ) -> crate::Result<()> {
@@ -130,6 +148,7 @@ fn emit_compound_select(
                     schema,
                     syms,
                     limit_ctx,
+                    offset_reg,
                     yield_reg,
                     reg_result_cols_start,
                 )?;
@@ -143,6 +162,10 @@ fn emit_compound_select(
                     });
                     right_most.limit = limit;
                     right_most_ctx.limit_ctx = Some(limit_ctx);
+                }
+                if offset_reg.is_some() {
+                    right_most.offset = offset;
+                    right_most_ctx.reg_offset = offset_reg;
                 }
                 emit_query(program, &mut right_most, &mut right_most_ctx)?;
                 program.preassign_label_to_next_insn(label_next_select);
@@ -176,6 +199,7 @@ fn emit_compound_select(
                     schema,
                     syms,
                     None,
+                    None,
                     yield_reg,
                     reg_result_cols_start,
                 )?;
@@ -193,6 +217,7 @@ fn emit_compound_select(
                         dedupe_index.0,
                         dedupe_index.1.as_ref(),
                         limit_ctx,
+                        offset_reg,
                         yield_reg,
                     );
                 }
@@ -225,6 +250,7 @@ fn emit_compound_select(
                     schema,
                     syms,
                     None,
+                    None,
                     yield_reg,
                     reg_result_cols_start,
                 )?;
@@ -244,6 +270,7 @@ fn emit_compound_select(
                     right_cursor_id,
                     target_cursor_id,
                     limit_ctx,
+                    offset_reg,
                     yield_reg,
                 );
             }
@@ -276,6 +303,7 @@ fn emit_compound_select(
                     schema,
                     syms,
                     None,
+                    None,
                     yield_reg,
                     reg_result_cols_start,
                 )?;
@@ -287,7 +315,7 @@ fn emit_compound_select(
                 emit_query(program, &mut right_most, &mut right_most_ctx)?;
                 if new_index {
                     read_deduplicated_union_or_except_rows(
-                        program, cursor_id, &index, limit_ctx, yield_reg,
+                        program, cursor_id, &index, limit_ctx, offset_reg, yield_reg,
                     );
                 }
             }
@@ -296,6 +324,10 @@ fn emit_compound_select(
             if let Some(limit_ctx) = limit_ctx {
                 right_most_ctx.limit_ctx = Some(limit_ctx);
                 right_most.limit = limit;
+            }
+            if offset_reg.is_some() {
+                right_most.offset = offset;
+                right_most_ctx.reg_offset = offset_reg;
             }
             emit_query(program, &mut right_most, &mut right_most_ctx)?;
         }
@@ -311,7 +343,7 @@ fn create_dedupe_index(
     schema: &Schema,
 ) -> crate::Result<(usize, Arc<Index>)> {
     if !schema.indexes_enabled {
-        crate::bail_parse_error!("UNION OR INTERSECT is not supported without indexes");
+        crate::bail_parse_error!("UNION OR INTERSECT or EXCEPT is not supported without indexes");
     }
 
     let dedupe_index = Arc::new(Index {
@@ -351,6 +383,7 @@ fn read_deduplicated_union_or_except_rows(
     dedupe_cursor_id: usize,
     dedupe_index: &Index,
     limit_ctx: Option<LimitCtx>,
+    offset_reg: Option<usize>,
     yield_reg: Option<usize>,
 ) {
     let label_close = program.allocate_label();
@@ -362,6 +395,13 @@ fn read_deduplicated_union_or_except_rows(
         pc_if_empty: label_dedupe_next,
     });
     program.preassign_label_to_next_insn(label_dedupe_loop_start);
+    if let Some(reg) = offset_reg {
+        program.emit_insn(Insn::IfPos {
+            reg,
+            target_pc: label_dedupe_next,
+            decrement_by: 1,
+        });
+    }
     for col_idx in 0..dedupe_index.columns.len() {
         let start_reg = if let Some(yield_reg) = yield_reg {
             // Need to reuse the yield_reg for the column being emitted
@@ -406,6 +446,7 @@ fn read_deduplicated_union_or_except_rows(
 }
 
 // Emits the bytecode for Reading rows from the intersection of two cursors.
+#[allow(clippy::too_many_arguments)]
 fn read_intersect_rows(
     program: &mut ProgramBuilder,
     left_cursor_id: usize,
@@ -413,6 +454,7 @@ fn read_intersect_rows(
     right_cursor_id: usize,
     target_cursor: Option<usize>,
     limit_ctx: Option<LimitCtx>,
+    offset_reg: Option<usize>,
     yield_reg: Option<usize>,
 ) {
     let label_close = program.allocate_label();
@@ -435,6 +477,13 @@ fn read_intersect_rows(
         record_reg: row_content_reg,
         num_regs: 0,
     });
+    if let Some(reg) = offset_reg {
+        program.emit_insn(Insn::IfPos {
+            reg,
+            target_pc: label_next,
+            decrement_by: 1,
+        });
+    }
     let column_count = index.columns.len();
     let cols_start_reg = if let Some(yield_reg) = yield_reg {
         yield_reg + 1

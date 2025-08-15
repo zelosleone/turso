@@ -23,7 +23,8 @@ dist/
 **/*.db-wal
 **/*.db-shm
 **/*-wal
-
+# perf
+/Mobibench
 # OS
 .DS_Store
 
@@ -38,3 +39,5 @@ testing/*.log
 limbostress.log
 simulator.log
 **/*.txt
+profile.json.gz
+simulator-output/

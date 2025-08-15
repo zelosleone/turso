@@ -7,15 +7,13 @@ use crate::{
     schema::{Column, Schema},
     util::normalize_ident,
     vdbe::{
-        builder::ProgramBuilder,
+        builder::{CursorType, ProgramBuilder},
         insn::{Cookie, Insn, RegisterOrLiteral},
     },
     LimboError, Result, SymbolTable,
 };
 
-use super::{
-    emitter::TransactionMode, schema::SQLITE_TABLEID, update::translate_update_with_after,
-};
+use super::{schema::SQLITE_TABLEID, update::translate_update_for_schema_change};
 
 pub fn translate_alter_table(
     alter: (ast::QualifiedName, ast::AlterTableBody),
@@ -23,14 +21,16 @@ pub fn translate_alter_table(
     schema: &Schema,
     mut program: ProgramBuilder,
     connection: &Arc<crate::Connection>,
+    input: &str,
 ) -> Result<ProgramBuilder> {
+    program.begin_write_operation();
     let (table_name, alter_table) = alter;
     let table_name = table_name.name.as_str();
     if schema.table_has_indexes(table_name) && !schema.indexes_enabled() {
         // Let's disable altering a table with indices altogether instead of checking column by
         // column to be extra safe.
         crate::bail_parse_error!(
-            "ALTER TABLE for table with indexes is disabled by default. Run with `--experimental-indexes` to enable this feature."
+            "ALTER TABLE for table with indexes is disabled. Omit the `--experimental-indexes=false` flag to enable this feature."
         );
     }
 
@@ -80,7 +80,7 @@ pub fn translate_alter_table(
 
             btree.columns.remove(dropped_index);
 
-            let sql = btree.to_sql();
+            let sql = btree.to_sql().replace('\'', "''");
 
             let stmt = format!(
                 r#"
@@ -95,20 +95,19 @@ pub fn translate_alter_table(
                 unreachable!();
             };
 
-            translate_update_with_after(
+            translate_update_for_schema_change(
                 schema,
                 &mut update,
                 syms,
                 program,
                 connection,
+                input,
                 |program| {
                     let column_count = btree.columns.len();
                     let root_page = btree.root_page;
                     let table_name = btree.name.clone();
 
-                    let cursor_id = program.alloc_cursor_id(
-                        crate::vdbe::builder::CursorType::BTreeTable(original_btree),
-                    );
+                    let cursor_id = program.alloc_cursor_id(CursorType::BTreeTable(original_btree));
 
                     program.emit_insn(Insn::OpenWrite {
                         cursor_id,
@@ -139,12 +138,6 @@ pub fn translate_alter_table(
                             dest_reg: record,
                             index_name: None,
                         });
-                        program.emit_insn(Insn::SetCookie {
-                            db: 0,
-                            cookie: Cookie::SchemaVersion,
-                            value: schema.schema_version as i32 + 1,
-                            p5: 0,
-                        });
 
                         program.emit_insn(Insn::Insert {
                             cursor: cursor_id,
@@ -155,9 +148,16 @@ pub fn translate_alter_table(
                         });
                     });
 
-                    program.emit_insn(Insn::ParseSchema {
-                        db: usize::MAX, // TODO: This value is unused, change when we do something with it
-                        where_clause: None,
+                    program.emit_insn(Insn::SetCookie {
+                        db: 0,
+                        cookie: Cookie::SchemaVersion,
+                        value: schema.schema_version as i32 + 1,
+                        p5: 0,
+                    });
+
+                    program.emit_insn(Insn::DropColumn {
+                        table: table_name,
+                        column_index: dropped_index,
                     })
                 },
             )?
@@ -183,7 +183,7 @@ pub fn translate_alter_table(
                 }
             }
 
-            btree.columns.push(column);
+            btree.columns.push(column.clone());
 
             let sql = btree.to_sql();
             let mut escaped = String::with_capacity(sql.len());
@@ -208,12 +208,13 @@ pub fn translate_alter_table(
                 unreachable!();
             };
 
-            translate_update_with_after(
+            translate_update_for_schema_change(
                 schema,
                 &mut update,
                 syms,
                 program,
                 connection,
+                input,
                 |program| {
                     program.emit_insn(Insn::SetCookie {
                         db: 0,
@@ -221,9 +222,9 @@ pub fn translate_alter_table(
                         value: schema.schema_version as i32 + 1,
                         p5: 0,
                     });
-                    program.emit_insn(Insn::ParseSchema {
-                        db: usize::MAX, // TODO: This value is unused, change when we do something with it
-                        where_clause: None,
+                    program.emit_insn(Insn::AddColumn {
+                        table: table_name.to_owned(),
+                        column,
                     });
                 },
             )?
@@ -232,7 +233,7 @@ pub fn translate_alter_table(
             let rename_from = old.as_str();
             let rename_to = new.as_str();
 
-            if btree.get_column(rename_from).is_none() {
+            let Some((column_index, _)) = btree.get_column(rename_from) else {
                 return Err(LimboError::ParseError(format!(
                     "no such column: \"{rename_from}\""
                 )));
@@ -248,9 +249,7 @@ pub fn translate_alter_table(
                 .get_btree_table(SQLITE_TABLEID)
                 .expect("sqlite_schema should be on schema");
 
-            let cursor_id = program.alloc_cursor_id(crate::vdbe::builder::CursorType::BTreeTable(
-                sqlite_schema.clone(),
-            ));
+            let cursor_id = program.alloc_cursor_id(CursorType::BTreeTable(sqlite_schema.clone()));
 
             program.emit_insn(Insn::OpenWrite {
                 cursor_id,
@@ -313,19 +312,24 @@ pub fn translate_alter_table(
                 value: schema.schema_version as i32 + 1,
                 p5: 0,
             });
-            program.emit_insn(Insn::ParseSchema {
-                db: usize::MAX, // TODO: This value is unused, change when we do something with it
-                where_clause: None,
+            program.emit_insn(Insn::RenameColumn {
+                table: table_name.to_owned(),
+                column_index,
+                name: rename_to.to_owned(),
             });
-
-            program.epilogue(TransactionMode::Write);
 
             program
         }
         ast::AlterTableBody::RenameTo(new_name) => {
             let new_name = new_name.as_str();
 
-            if schema.get_table(new_name).is_some() {
+            if schema.get_table(new_name).is_some()
+                || schema
+                    .indexes
+                    .values()
+                    .flatten()
+                    .any(|index| index.name == normalize_ident(new_name))
+            {
                 return Err(LimboError::ParseError(format!(
                     "there is already another table or index with this name: {new_name}"
                 )));
@@ -335,9 +339,7 @@ pub fn translate_alter_table(
                 .get_btree_table(SQLITE_TABLEID)
                 .expect("sqlite_schema should be on schema");
 
-            let cursor_id = program.alloc_cursor_id(crate::vdbe::builder::CursorType::BTreeTable(
-                sqlite_schema.clone(),
-            ));
+            let cursor_id = program.alloc_cursor_id(CursorType::BTreeTable(sqlite_schema.clone()));
 
             program.emit_insn(Insn::OpenWrite {
                 cursor_id,
@@ -398,12 +400,10 @@ pub fn translate_alter_table(
                 p5: 0,
             });
 
-            program.emit_insn(Insn::ParseSchema {
-                db: usize::MAX, // TODO: This value is unused, change when we do something with it
-                where_clause: None,
+            program.emit_insn(Insn::RenameTable {
+                from: table_name.to_owned(),
+                to: new_name.to_owned(),
             });
-
-            program.epilogue(TransactionMode::Write);
 
             program
         }

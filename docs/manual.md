@@ -4,36 +4,49 @@ Welcome to Turso database manual!
 
 ## Table of contents
 
-* [Introduction](#introduction)
-  * [Getting Started](#getting-started)
-  * [Limitations](#limitations)
-* [The SQL language](#the-sql-language)
-  * [`ALTER TABLE` — change table definition](#alter-table--change-table-definition)
-  * [`BEGIN TRANSACTION` — start a transaction](#begin-transaction--start-a-transaction)
-  * [`COMMIT TRANSACTION` — commit the current transaction](#commit-transaction--commit-the-current-transaction)
-  * [`CREATE INDEX` — define a new index](#create-index--define-a-new-index)
-  * [`CREATE TABLE` — define a new table](#create-table--define-a-new-table)
-  * [`DELETE` - delete rows from a table](#delete---delete-rows-from-a-table)
-  * [`DROP INDEX` - remove an index](#drop-index---remove-an-index)
-  * [`DROP TABLE` — remove a table](#drop-table--remove-a-table)
-  * [`END TRANSACTION` — commit the current transaction](#end-transaction--commit-the-current-transaction)
-  * [`INSERT` — create new rows in a table](#insert--create-new-rows-in-a-table)
-  * [`ROLLBACK TRANSACTION` — abort the current transaction](#rollback-transaction--abort-the-current-transaction)
-  * [`SELECT` — retrieve rows from a table](#select--retrieve-rows-from-a-table)
-  * [`UPDATE` — update rows of a table](#update--update-rows-of-a-table)
-* [JavaScript API](#javascript-api)
-* [SQLite C API](#sqlite-c-api)
-  * [WAL manipulation](#wal-manipulation)
-    * [`libsql_wal_frame_count`](#libsql_wal_frame_count)
-* [SQL Commands](#sql-commands)
-* [Appendix A: Turso Internals](#appendix-a-turso-internals)
-  * [Frontend](#frontend)
-    * [Parser](#parser)
-    * [Code generator](#code-generator)
-    * [Query optimizer](#query-optimizer)
-  * [Virtual Machine](#virtual-machine)
-  * [Pager](#pager)
-  * [I/O](#io)
+- [Turso Database Manual](#turso-database-manual)
+  - [Table of contents](#table-of-contents)
+  - [Introduction](#introduction)
+    - [Getting Started](#getting-started)
+    - [Limitations](#limitations)
+  - [The SQL shell](#the-sql-shell)
+    - [Shell commands](#shell-commands)
+    - [Command line options](#command-line-options)
+  - [The SQL language](#the-sql-language)
+    - [`ALTER TABLE` — change table definition](#alter-table--change-table-definition)
+    - [`BEGIN TRANSACTION` — start a transaction](#begin-transaction--start-a-transaction)
+    - [`COMMIT TRANSACTION` — commit the current transaction](#commit-transaction--commit-the-current-transaction)
+    - [`CREATE INDEX` — define a new index](#create-index--define-a-new-index)
+    - [`CREATE TABLE` — define a new table](#create-table--define-a-new-table)
+    - [`DELETE` - delete rows from a table](#delete---delete-rows-from-a-table)
+    - [`DROP INDEX` - remove an index](#drop-index---remove-an-index)
+    - [`DROP TABLE` — remove a table](#drop-table--remove-a-table)
+    - [`END TRANSACTION` — commit the current transaction](#end-transaction--commit-the-current-transaction)
+    - [`INSERT` — create new rows in a table](#insert--create-new-rows-in-a-table)
+    - [`ROLLBACK TRANSACTION` — abort the current transaction](#rollback-transaction--abort-the-current-transaction)
+    - [`SELECT` — retrieve rows from a table](#select--retrieve-rows-from-a-table)
+    - [`UPDATE` — update rows of a table](#update--update-rows-of-a-table)
+  - [JavaScript API](#javascript-api)
+    - [Installation](#installation)
+    - [Getting Started](#getting-started-1)
+  - [SQLite C API](#sqlite-c-api)
+    - [Basic operations](#basic-operations)
+      - [`sqlite3_open`](#sqlite3_open)
+      - [`sqlite3_prepare`](#sqlite3_prepare)
+      - [`sqlite3_step`](#sqlite3_step)
+      - [`sqlite3_column`](#sqlite3_column)
+    - [WAL manipulation](#wal-manipulation)
+      - [`libsql_wal_frame_count`](#libsql_wal_frame_count)
+  - [Appendix A: Turso Internals](#appendix-a-turso-internals)
+    - [Frontend](#frontend)
+      - [Parser](#parser)
+      - [Code generator](#code-generator)
+      - [Query optimizer](#query-optimizer)
+    - [Virtual Machine](#virtual-machine)
+    - [MVCC](#mvcc)
+    - [Pager](#pager)
+    - [I/O](#io)
+    - [References](#references)
 
 ## Introduction
 
@@ -52,10 +65,16 @@ curl --proto '=https' --tlsv1.2 -LsSf \
   https://github.com/tursodatabase/turso/releases/latest/download/turso_cli-installer.sh | sh
 ```
 
+Or alternatively, on MacOS, you can use Homebrew:
+
+```
+brew install turso
+```
+
 When you have the software installed, you can start a SQL shell as follows:
 
 ```console
-$ turso
+$ tursodb
 Turso
 Enter ".help" for usage hints.
 Connected to a transient in-memory database.
@@ -64,13 +83,12 @@ turso> SELECT 'hello, world';
 hello, world
 ```
 
-## Limitations
+### Limitations
 
 Turso aims towards full SQLite compatibility but has the following limitations:
 
 * No multi-process access
 * No multi-threading
-* No indexing
 * No savepoints
 * No triggers
 * No views
@@ -78,6 +96,45 @@ Turso aims towards full SQLite compatibility but has the following limitations:
 * UTF-8 is the only supported character encoding
 
 For more detailed list of SQLite compatibility, please refer to [COMPAT.md](../COMPAT.md).
+
+## The SQL shell
+
+The `tursodb` command provides an interactive SQL shell, similar to `sqlite3`. You can start it in in-memory mode as follows:
+
+```console
+$ tursodb
+Turso
+Enter ".help" for usage hints.
+Connected to a transient in-memory database.
+Use ".open FILENAME" to reopen on a persistent database
+turso> SELECT 'hello, world';
+hello, world
+```
+
+### Shell commands
+
+The shell supports commands in addition to SQL statements. The commands start with a dot (".") followed by the command. The supported commands are:
+
+| Command | Description |
+|---------|-------------|
+| `.schema` | Display the database schema |
+| `.dump` | Dump database contents as SQL statements |
+
+### Command line options
+
+The SQL shell supports the following command line options:
+
+| Option | Description |
+|--------|-------------|
+| `-m`, `--output-mode` `<mode>` | Configure output mode. Supported values for `<mode>`: <ul><li>`pretty` for pretty output (default)</li><li>`list` for minimal SQLite compatible format</li></ul>
+| `-q`, `--quiet` | Don't display program information at startup |
+| `-e`, `--echo` | Print commands before execution |
+| `--readonly` | Open database in read-only mode |
+| `-h`, `--help` | Print help |
+| `-V`, `--version` | Print version |
+| `--mcp` | Start a MCP server instead of the interactive shell |
+| `--experimental-mvcc` | Enable experimental MVCC feature. **Note:**  the feature is not production ready so do not use it for critical data right now. |
+| `--experimental-views` | Enable experimental views feature. **Note**: the feature is not production ready so do not use it for critical data right now. |
 
 ## The SQL language
 
@@ -317,36 +374,89 @@ turso> SELECT * FROM t;
 
 Turso supports a JavaScript API, both with native and WebAssembly package options.
 
+Please read the [JavaScript API reference](docs/javascript-api-reference.md) for more information.
+
 ### Installation
 
 Installing the native package:
 
 ```console
-npm i @tursodatabase/turso
+npm i @tursodatabase/database
 ```
 
 Installing the WebAssembly package:
 
 ```console
-npm i @tursodatabase/turso --cpu wasm32
+npm i @tursodatabase/database --cpu wasm32
 ```
 
 ### Getting Started
 
-To use Turso from JavaScript application, you need to import `Database` type from the `@tursodatabase/turso` package.
+To use Turso from JavaScript application, you need to import `Database` type from the `@tursodatabase/database` package.
 You can the prepare a statement with `Database.prepare` method and execute the SQL statement with `Statement.get()` method.
 
 ```
-import Database from '@tursodatabase/turso';
+import { connect } from '@tursodatabase/database';
 
-const db = new Database('turso.db');
+const db = await connect('turso.db');
 const row = db.prepare('SELECT 1').get();
 console.log(row);
 ```
 
 ## SQLite C API
 
-Turso supports the SQLite C API, with libSQL extensions.
+Turso supports a subset of the SQLite C API, including libSQL extensions.
+
+### Basic operations
+
+#### `sqlite3_open` 
+
+Open a connection to a database.
+
+**Synopsis:**
+
+```c
+int sqlite3_open(const char *filename, sqlite3 **db_out);
+int sqlite3_open_v2(const char *filename, sqlite3 **db_out, int _flags, const char *_z_vfs);
+```
+
+#### `sqlite3_prepare`
+
+Prepare a SQL statement for execution.
+
+**Synopsis:**
+
+```c
+int sqlite3_prepare_v2(sqlite3 *db, const char *sql, int _len, sqlite3_stmt **out_stmt, const char **_tail);
+```
+
+#### `sqlite3_step`
+
+Evaluate a prepared statement until it yields the next row or completes.
+
+**Synopsis:**
+
+```c
+int sqlite3_step(sqlite3_stmt *stmt);
+```
+
+#### `sqlite3_column`
+
+Return the value of a column for the current row of a statement.
+
+**Synopsis:**
+
+```c
+int sqlite3_column_type(sqlite3_stmt *_stmt, int _idx);
+int sqlite3_column_count(sqlite3_stmt *_stmt);
+const char *sqlite3_column_decltype(sqlite3_stmt *_stmt, int _idx);
+const char *sqlite3_column_name(sqlite3_stmt *_stmt, int _idx);
+int64_t sqlite3_column_int64(sqlite3_stmt *_stmt, int _idx);
+double sqlite3_column_double(sqlite3_stmt *_stmt, int _idx);
+const void *sqlite3_column_blob(sqlite3_stmt *_stmt, int _idx);
+int sqlite3_column_bytes(sqlite3_stmt *_stmt, int _idx);
+const unsigned char *sqlite3_column_text(sqlite3_stmt *stmt, int idx);
+```
 
 ### WAL manipulation
 
@@ -378,8 +488,6 @@ in the `p_frame_count` parameter.
   connection.
 * The `p_frame_count` must be a valid pointer to a `u32` that will store the
 * number of frames in the WAL file.
-
-## SQL Commands
 
 ## Appendix A: Turso Internals
 
@@ -495,7 +603,25 @@ The code generator module takes AST as input and produces virtual machine progra
   
 #### Query optimizer
 
+TODO
+
 ### Virtual Machine
+
+TODO
+
+### MVCC
+
+The database implements a multi-version concurrency control (MVCC) using a hybrid architecture that combines an in-memory index with persistent storage through WAL (Write-Ahead Logging) and SQLite database files. The implementation draws from the Hekaton approach documented in Larson et al. (2011), with key modifications for durability handling.
+
+The database maintains a centralized in-memory MVCC index that serves as the primary coordination point for all database connections. This index provides shared access across all active connections and stores the most recent versions of modified data. It implements version visibility rules for concurrent transactions following the Hekaton MVCC design. The architecture employs a three-tier storage hierarchy consisting of the MVCC index in memory as the primary read/write target for active transactions, a page cache in memory serving as an intermediate buffer for data retrieved from persistent storage, and persistent storage comprising WAL files and SQLite database files on disk.
+
+_Read operations_ follow a lazy loading strategy with a specific precedence order. The database first queries the in-memory MVCC index to check if the requested row exists and is visible to the current transaction. If the row is not found in the MVCC index, the system performs a lazy read from the page cache. When necessary, the page cache retrieves data from both the WAL and the underlying SQLite database file.
+
+_Write operations_ are handled entirely within the in-memory MVCC index during transaction execution. This design provides high-performance writes with minimal latency, immediate visibility of changes within the transaction scope, and isolation from other concurrent transactions until the transaction is committed.
+
+_Commit operation_ ensures durability through a two-phase approach: first, the system writes the complete transaction write set from the MVCC index to the page cache, then the page cache contents are flushed to the WAL, ensuring durable storage of the committed transaction. This commit protocol guarantees that once a transaction commits successfully, all changes are persisted to durable storage and will survive system failures.
+
+While the implementation follows Hekaton's core MVCC principles, it differs in one significant aspect regarding logical change tracking. Unlike Hekaton, this system does not maintain a record of logical changes after flushing data to the WAL. This design choice simplifies compatibility with the SQLite database file format.
 
 ### Pager
 
@@ -503,6 +629,39 @@ TODO
 
 ### I/O
 
-TODO
+Every I/O operation shall be tracked by a corresponding `Completion`. A `Completion` is just an object that tracks a particular I/O operation. The database `IO` will call it's complete callback to signal that the operation was complete, thus ensuring that every tracker can be poll to see if the operation succeeded.
+
+
+To advance the Program State Machines, you must first wait for the tracked completions to complete. This can be done either by busy polling (`io.wait_for_completion`) or polling once and then yielding - e.g
+
+  ```rust
+  if !completion.is_completed {
+    return StepResult::IO;
+  }
+  ```
+
+This allows us to be flexible in places where we do not have the state machines in place to correctly return the Completion. Thus, we can block in certain places to avoid bigger refactorings, which opens up the opportunity for such refactorings in separate PRs.
+
+To know if a function does any sort of I/O we just have to look at the function signature. If it returns `Completion`, `Vec<Completion>` or `IOResult`, then it does I/O.
+
+The `IOResult` struct looks as follows:
+  ```rust
+  pub enum IOCompletions {
+    Single(Arc<Completion>),
+    Many(Vec<Arc<Completion>>),
+  }
+
+  #[must_use]
+  pub enum IOResult<T> {
+    Done(T),
+    IO(IOCompletions),
+  }
+  ```
+
+This implies that when a function returns an `IOResult`, it must be called again until it returns an `IOResult::Done` variant. This works similarly to how `Future`s are polled in rust. When you receive a `Poll::Ready(None)`, it means that the future stopped it's execution. In a similar vein, if we receive `IOResult::Done`, the function/state machine has reached the end of it's execution. `IOCompletions` is here to signal that, if we are executing any I/O operation, that we need to propagate the completions that are generated from it. This design forces us to handle the fact that a function is asynchronous in nature. This is essentially [function coloring](https://www.tedinski.com/2018/11/13/function-coloring.html), but done at the application level instead of the compiler level.
+
+### References
+
+Per-Åke Larson et al. "High-Performance Concurrency Control Mechanisms for Main-Memory Databases." In _VLDB '11_
 
 [SQLite]: https://www.sqlite.org/

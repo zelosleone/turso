@@ -11,6 +11,11 @@ use crate::schema::Schema;
 use crate::schema::Table;
 use crate::schema::Type;
 use crate::storage::pager::CreateBTreeFlags;
+use crate::translate::emitter::emit_cdc_full_record;
+use crate::translate::emitter::emit_cdc_insns;
+use crate::translate::emitter::prepare_cdc_if_necessary;
+use crate::translate::emitter::OperationMode;
+use crate::translate::emitter::Resolver;
 use crate::translate::ProgramBuilder;
 use crate::translate::ProgramBuilderOpts;
 use crate::util::normalize_ident;
@@ -31,6 +36,7 @@ pub fn translate_create_table(
     body: ast::CreateTableBody,
     if_not_exists: bool,
     schema: &Schema,
+    syms: &SymbolTable,
     mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     if temporary {
@@ -45,8 +51,6 @@ pub fn translate_create_table(
     let normalized_tbl_name = normalize_ident(tbl_name.name.as_str());
     if schema.get_table(&normalized_tbl_name).is_some() {
         if if_not_exists {
-            program.epilogue(crate::translate::emitter::TransactionMode::Write);
-
             return Ok(program);
         }
         bail_parse_error!("Table {} already exists", normalized_tbl_name);
@@ -115,16 +119,20 @@ pub fn translate_create_table(
         db: 0,
     });
 
+    let cdc_table = prepare_cdc_if_necessary(&mut program, schema, SQLITE_TABLEID)?;
+    let resolver = Resolver::new(schema, syms);
     // Add the table entry to sqlite_schema
     emit_schema_entry(
         &mut program,
+        &resolver,
         sqlite_schema_cursor_id,
+        cdc_table.map(|x| x.0),
         SchemaEntryType::Table,
         &normalized_tbl_name,
         &normalized_tbl_name,
         table_root_reg,
         Some(sql),
-    );
+    )?;
 
     // If we need an automatic index, add its entry to sqlite_schema
     if let Some(index_regs) = index_regs {
@@ -137,13 +145,15 @@ pub fn translate_create_table(
             );
             emit_schema_entry(
                 &mut program,
+                &resolver,
                 sqlite_schema_cursor_id,
+                None,
                 SchemaEntryType::Index,
                 &index_name,
                 &normalized_tbl_name,
                 index_reg,
                 None,
-            );
+            )?;
         }
     }
 
@@ -164,7 +174,6 @@ pub fn translate_create_table(
     });
 
     // TODO: SqlExec
-    program.epilogue(super::emitter::TransactionMode::Write);
 
     Ok(program)
 }
@@ -173,6 +182,7 @@ pub fn translate_create_table(
 pub enum SchemaEntryType {
     Table,
     Index,
+    View,
 }
 
 impl SchemaEntryType {
@@ -180,20 +190,24 @@ impl SchemaEntryType {
         match self {
             SchemaEntryType::Table => "table",
             SchemaEntryType::Index => "index",
+            SchemaEntryType::View => "view",
         }
     }
 }
 pub const SQLITE_TABLEID: &str = "sqlite_schema";
 
+#[allow(clippy::too_many_arguments)]
 pub fn emit_schema_entry(
     program: &mut ProgramBuilder,
+    resolver: &Resolver,
     sqlite_schema_cursor_id: usize,
+    cdc_table_cursor_id: Option<usize>,
     entry_type: SchemaEntryType,
     name: &str,
     tbl_name: &str,
     root_page_reg: usize,
     sql: Option<String>,
-) {
+) -> Result<()> {
     let rowid_reg = program.alloc_register();
     program.emit_insn(Insn::NewRowid {
         cursor: sqlite_schema_cursor_id,
@@ -241,6 +255,26 @@ pub fn emit_schema_entry(
         flag: InsertFlags::new(),
         table_name: tbl_name.to_string(),
     });
+
+    if let Some(cdc_table_cursor_id) = cdc_table_cursor_id {
+        let after_record_reg = if program.capture_data_changes_mode().has_after() {
+            Some(record_reg)
+        } else {
+            None
+        };
+        emit_cdc_insns(
+            program,
+            resolver,
+            OperationMode::INSERT,
+            cdc_table_cursor_id,
+            rowid_reg,
+            None,
+            after_record_reg,
+            None,
+            SQLITE_TABLEID,
+        )?;
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -542,7 +576,6 @@ pub fn translate_create_virtual_table(
     };
     if schema.get_table(&table_name).is_some() {
         if *if_not_exists {
-            program.epilogue(crate::translate::emitter::TransactionMode::Write);
             return Ok(program);
         }
         bail_parse_error!("Table {} already exists", tbl_name);
@@ -590,16 +623,20 @@ pub fn translate_create_virtual_table(
         db: 0,
     });
 
+    let cdc_table = prepare_cdc_if_necessary(&mut program, schema, SQLITE_TABLEID)?;
     let sql = create_vtable_body_to_str(&vtab, vtab_module.clone());
+    let resolver = Resolver::new(schema, syms);
     emit_schema_entry(
         &mut program,
+        &resolver,
         sqlite_schema_cursor_id,
+        cdc_table.map(|x| x.0),
         SchemaEntryType::Table,
         tbl_name.name.as_str(),
         tbl_name.name.as_str(),
         0, // virtual tables dont have a root page
         Some(sql),
-    );
+    )?;
 
     program.emit_insn(Insn::SetCookie {
         db: 0,
@@ -613,8 +650,6 @@ pub fn translate_create_virtual_table(
         where_clause: Some(parse_schema_where_clause),
     });
 
-    program.epilogue(super::emitter::TransactionMode::Write);
-
     Ok(program)
 }
 
@@ -622,11 +657,12 @@ pub fn translate_drop_table(
     tbl_name: ast::QualifiedName,
     if_exists: bool,
     schema: &Schema,
+    syms: &SymbolTable,
     mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     if !schema.indexes_enabled() && schema.table_has_indexes(&tbl_name.name.to_string()) {
         bail_parse_error!(
-            "DROP TABLE with indexes on the table is disabled by default. Run with `--experimental-indexes` to enable this feature."
+            "DROP TABLE with indexes on the table is disabled by default. Omit the `--experimental-indexes=false` flag to enable this feature."
         );
     }
     let opts = ProgramBuilderOpts {
@@ -638,14 +674,13 @@ pub fn translate_drop_table(
     let table = schema.get_table(tbl_name.name.as_str());
     if table.is_none() {
         if if_exists {
-            program.epilogue(crate::translate::emitter::TransactionMode::Write);
-
             return Ok(program);
         }
         bail_parse_error!("No such table: {}", tbl_name.name.as_str());
     }
 
     let table = table.unwrap(); // safe since we just checked for None
+    let cdc_table = prepare_cdc_if_necessary(&mut program, schema, SQLITE_TABLEID)?;
 
     let null_reg = program.alloc_register(); //  r1
     program.emit_null(null_reg, None);
@@ -707,8 +742,48 @@ pub fn translate_drop_table(
         cursor_id: sqlite_schema_cursor_id_0,
         dest: row_id_reg,
     });
+    if let Some((cdc_cursor_id, _)) = cdc_table {
+        let table_type = program.emit_string8_new_reg("table".to_string()); //  r4
+        program.mark_last_insn_constant();
+
+        let skip_cdc_label = program.allocate_label();
+
+        let entry_type_reg = program.alloc_register();
+        program.emit_column(sqlite_schema_cursor_id_0, 0, entry_type_reg);
+        program.emit_insn(Insn::Ne {
+            lhs: entry_type_reg,
+            rhs: table_type,
+            target_pc: skip_cdc_label,
+            flags: CmpInsFlags::default(),
+            collation: None,
+        });
+        let before_record_reg = if program.capture_data_changes_mode().has_before() {
+            Some(emit_cdc_full_record(
+                &mut program,
+                &schema_table.columns,
+                sqlite_schema_cursor_id_0,
+                row_id_reg,
+            ))
+        } else {
+            None
+        };
+        let resolver = Resolver::new(schema, syms);
+        emit_cdc_insns(
+            &mut program,
+            &resolver,
+            OperationMode::DELETE,
+            cdc_cursor_id,
+            row_id_reg,
+            before_record_reg,
+            None,
+            None,
+            SQLITE_TABLEID,
+        )?;
+        program.resolve_label(skip_cdc_label, program.offset());
+    }
     program.emit_insn(Insn::Delete {
         cursor_id: sqlite_schema_cursor_id_0,
+        table_name: SQLITE_TABLEID.to_string(),
     });
 
     program.resolve_label(next_label, program.offset());
@@ -908,6 +983,7 @@ pub fn translate_drop_table(
         });
         program.emit_insn(Insn::Delete {
             cursor_id: sqlite_schema_cursor_id_1,
+            table_name: SQLITE_TABLEID.to_string(),
         });
         program.emit_insn(Insn::Insert {
             cursor: sqlite_schema_cursor_id_1,
@@ -940,9 +1016,6 @@ pub fn translate_drop_table(
         value: schema.schema_version as i32 + 1,
         p5: 0,
     });
-
-    //  end of the program
-    program.epilogue(super::emitter::TransactionMode::Write);
 
     Ok(program)
 }

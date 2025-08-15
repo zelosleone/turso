@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tempfile::TempDir;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
-use turso_core::{types::IOResult, Connection, Database, IO};
+use turso_core::{Connection, Database, IO};
 
 #[allow(dead_code)]
 pub struct TempDatabase {
@@ -31,6 +31,7 @@ impl TempDatabase {
             turso_core::OpenFlags::default(),
             false,
             enable_indexes,
+            false,
         )
         .unwrap();
         Self { path, io, db }
@@ -56,6 +57,7 @@ impl TempDatabase {
             flags,
             false,
             enable_indexes,
+            false,
         )
         .unwrap();
         Self {
@@ -85,6 +87,7 @@ impl TempDatabase {
             turso_core::OpenFlags::default(),
             false,
             enable_indexes,
+            false,
         )
         .unwrap();
 
@@ -112,15 +115,9 @@ impl TempDatabase {
 }
 
 pub(crate) fn do_flush(conn: &Arc<Connection>, tmp_db: &TempDatabase) -> anyhow::Result<()> {
-    loop {
-        match conn.cacheflush()? {
-            IOResult::Done(_) => {
-                break;
-            }
-            IOResult::IO => {
-                tmp_db.io.run_once()?;
-            }
-        }
+    let completions = conn.cacheflush()?;
+    for c in completions {
+        tmp_db.io.wait_for_completion(c)?;
     }
     Ok(())
 }
@@ -150,7 +147,7 @@ pub fn maybe_setup_tracing() {
     let _ = tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
-                .with_ansi(false)
+                .with_ansi(true)
                 .with_line_number(true)
                 .with_thread_ids(true),
         )
@@ -252,7 +249,9 @@ pub(crate) fn rng_from_time() -> (ChaCha8Rng, u64) {
 mod tests {
     use std::{sync::Arc, vec};
     use tempfile::{NamedTempFile, TempDir};
-    use turso_core::{types::IOResult, Database, StepResult, IO};
+    use turso_core::{Database, StepResult, IO};
+
+    use crate::common::do_flush;
 
     use super::{limbo_exec_rows, limbo_exec_rows_error, TempDatabase};
     use rusqlite::types::Value;
@@ -414,9 +413,7 @@ mod tests {
         // Begin transaction on first connection and insert a value
         let _ = limbo_exec_rows(&db, &conn1, "BEGIN");
         let _ = limbo_exec_rows(&db, &conn1, "INSERT INTO t VALUES (42)");
-        while matches!(conn1.cacheflush().unwrap(), IOResult::IO) {
-            db.io.run_once().unwrap();
-        }
+        do_flush(&conn1, &db)?;
 
         // Second connection should not see uncommitted changes
         let conn2 = db.connect_limbo();
@@ -483,9 +480,7 @@ mod tests {
         // Begin transaction on first connection and insert a value
         let _ = limbo_exec_rows(&db, &conn, "BEGIN");
         let _ = limbo_exec_rows(&db, &conn, "INSERT INTO t VALUES (42)");
-        while matches!(conn.cacheflush().unwrap(), IOResult::IO) {
-            db.io.run_once().unwrap();
-        }
+        do_flush(&conn, &db)?;
 
         // Rollback the transaction
         let _ = limbo_exec_rows(&db, &conn, "ROLLBACK");
@@ -527,9 +522,7 @@ mod tests {
         let _ = limbo_exec_rows(&db, &conn, "INSERT INTO t VALUES (42)");
 
         // Flush to WAL but don't commit
-        while matches!(conn.cacheflush().unwrap(), IOResult::IO) {
-            db.io.run_once().unwrap();
-        }
+        do_flush(&conn, &db)?;
 
         // Reopen the database without committing
         let db = TempDatabase::new_with_existent(&path, true);

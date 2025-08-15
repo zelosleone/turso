@@ -43,13 +43,15 @@
 
 #![allow(clippy::arc_with_non_send_sync)]
 
+use bytemuck::{Pod, Zeroable};
+use pack1::{I32BE, U16BE, U32BE};
 use tracing::{instrument, Level};
 
 use super::pager::PageRef;
-use super::wal::LimboRwLock;
+use super::wal::TursoRwLock;
 use crate::error::LimboError;
 use crate::fast_lock::SpinLock;
-use crate::io::{Buffer, Complete, Completion};
+use crate::io::{Buffer, Completion, ReadComplete};
 use crate::storage::btree::offset::{
     BTREE_CELL_CONTENT_AREA, BTREE_CELL_COUNT, BTREE_FIRST_FREEBLOCK, BTREE_FRAGMENTED_BYTES_COUNT,
     BTREE_PAGE_TYPE, BTREE_RIGHTMOST_PTR,
@@ -58,35 +60,16 @@ use crate::storage::btree::{payload_overflow_threshold_max, payload_overflow_thr
 use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
 use crate::storage::pager::Pager;
+use crate::storage::wal::{PendingFlush, READMARK_NOT_USED};
 use crate::types::{RawSlice, RefValue, SerialType, SerialTypeKind, TextRef, TextSubtype};
 use crate::{turso_assert, File, Result, WalFileShared};
 use std::cell::{RefCell, UnsafeCell};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::mem::MaybeUninit;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
-
-/// The size of the database header in bytes.
-pub const DATABASE_HEADER_SIZE: usize = 100;
-// DEFAULT_CACHE_SIZE negative values mean that we store the amount of pages a XKiB of memory can hold.
-// We can calculate "real" cache size by diving by page size.
-pub const DEFAULT_CACHE_SIZE: i32 = -2000;
-
-// Minimum number of pages that cache can hold.
-pub const MIN_PAGE_CACHE_SIZE: usize = 10;
-
-/// The minimum page size in bytes.
-pub const MIN_PAGE_SIZE: u32 = 512;
-
-/// The maximum page size in bytes.
-pub const MAX_PAGE_SIZE: u32 = 65536;
-
-/// The default page size in bytes.
-pub const DEFAULT_PAGE_SIZE: u32 = 4096;
-
-pub const DATABASE_HEADER_PAGE_ID: usize = 1;
 
 /// The minimum size of a cell in bytes.
 pub const MINIMUM_CELL_SIZE: usize = 4;
@@ -96,116 +79,238 @@ pub const INTERIOR_PAGE_HEADER_SIZE_BYTES: usize = 12;
 pub const LEAF_PAGE_HEADER_SIZE_BYTES: usize = 8;
 pub const LEFT_CHILD_PTR_SIZE_BYTES: usize = 4;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum DatabaseEncoding {
-    Utf8 = 1,
-    Utf16Le = 2,
-    Utf16Be = 3,
-}
+#[derive(PartialEq, Eq, Zeroable, Pod, Clone, Copy, Debug)]
+#[repr(transparent)]
+/// Read/Write file format version.
+pub struct PageSize(U16BE);
 
-impl TryFrom<u32> for DatabaseEncoding {
-    type Error = LimboError;
+impl PageSize {
+    pub const MIN: u32 = 512;
+    pub const MAX: u32 = 65536;
+    pub const DEFAULT: u16 = 4096;
 
-    fn try_from(value: u32) -> Result<Self> {
-        match value {
-            1 => Ok(Self::Utf8),
-            2 => Ok(Self::Utf16Le),
-            3 => Ok(Self::Utf16Be),
-            _ => Err(LimboError::Corrupt(format!("Invalid encoding: {value}"))),
+    pub const fn new(size: u32) -> Option<Self> {
+        if size < PageSize::MIN || size > PageSize::MAX {
+            return None;
+        }
+
+        // Page size must be a power of two.
+        if size.count_ones() != 1 {
+            return None;
+        }
+
+        if size == PageSize::MAX {
+            return Some(Self(U16BE::new(1)));
+        }
+
+        Some(Self(U16BE::new(size as u16)))
+    }
+
+    pub const fn get(self) -> u32 {
+        match self.0.get() {
+            1 => Self::MAX,
+            v => v as u32,
         }
     }
 }
 
-impl From<DatabaseEncoding> for &'static str {
-    fn from(encoding: DatabaseEncoding) -> Self {
-        match encoding {
-            DatabaseEncoding::Utf8 => "UTF-8",
-            DatabaseEncoding::Utf16Le => "UTF-16le",
-            DatabaseEncoding::Utf16Be => "UTF-16be",
+impl Default for PageSize {
+    fn default() -> Self {
+        Self(U16BE::new(Self::DEFAULT))
+    }
+}
+
+#[derive(PartialEq, Eq, Zeroable, Pod, Clone, Copy, Debug)]
+#[repr(transparent)]
+/// Read/Write file format version.
+pub struct CacheSize(I32BE);
+
+impl CacheSize {
+    // The negative value means that we store the amount of pages a XKiB of memory can hold.
+    // We can calculate "real" cache size by diving by page size.
+    pub const DEFAULT: i32 = -2000;
+
+    // Minimum number of pages that cache can hold.
+    pub const MIN: i64 = 10;
+
+    // SQLite uses this value as threshold for maximum cache size
+    pub const MAX_SAFE: i64 = 2147450880;
+
+    pub const fn new(size: i32) -> Self {
+        match size {
+            Self::DEFAULT => Self(I32BE::new(0)),
+            v => Self(I32BE::new(v)),
+        }
+    }
+
+    pub const fn get(self) -> i32 {
+        match self.0.get() {
+            0 => Self::DEFAULT,
+            v => v,
         }
     }
 }
 
-/// The database header.
-/// The first 100 bytes of the database file comprise the database file header.
-/// The database file header is divided into fields as shown by the table below.
-/// All multibyte fields in the database file header are stored with the most significant byte first (big-endian).
-#[derive(Debug, Clone)]
+impl Default for CacheSize {
+    fn default() -> Self {
+        Self(I32BE::new(Self::DEFAULT))
+    }
+}
+
+#[derive(PartialEq, Eq, Zeroable, Pod, Clone, Copy)]
+#[repr(transparent)]
+/// Read/Write file format version.
+pub struct Version(u8);
+
+impl Version {
+    #![allow(non_upper_case_globals)]
+    const Legacy: Self = Self(1);
+    const Wal: Self = Self(2);
+}
+
+impl std::fmt::Debug for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::Legacy => f.write_str("Version::Legacy"),
+            Self::Wal => f.write_str("Version::Wal"),
+            Self(v) => write!(f, "Version::Invalid({v})"),
+        }
+    }
+}
+
+#[derive(PartialEq, Eq, Zeroable, Pod, Clone, Copy)]
+#[repr(transparent)]
+/// Text encoding.
+pub struct TextEncoding(U32BE);
+
+impl TextEncoding {
+    #![allow(non_upper_case_globals)]
+    pub const Utf8: Self = Self(U32BE::new(1));
+    pub const Utf16Le: Self = Self(U32BE::new(2));
+    pub const Utf16Be: Self = Self(U32BE::new(3));
+}
+
+impl std::fmt::Display for TextEncoding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::Utf8 => f.write_str("UTF-8"),
+            Self::Utf16Le => f.write_str("UTF-16le"),
+            Self::Utf16Be => f.write_str("UTF-16be"),
+            Self(v) => write!(f, "TextEncoding::Invalid({})", v.get()),
+        }
+    }
+}
+
+impl std::fmt::Debug for TextEncoding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::Utf8 => f.write_str("TextEncoding::Utf8"),
+            Self::Utf16Le => f.write_str("TextEncoding::Utf16Le"),
+            Self::Utf16Be => f.write_str("TextEncoding::Utf16Be"),
+            Self(v) => write!(f, "TextEncoding::Invalid({})", v.get()),
+        }
+    }
+}
+
+impl Default for TextEncoding {
+    fn default() -> Self {
+        Self::Utf8
+    }
+}
+
+#[derive(Pod, Zeroable, Clone, Copy, Debug)]
+#[repr(C, packed)]
+/// Database Header Format
 pub struct DatabaseHeader {
-    /// The header string: "SQLite format 3\0"
+    /// b"SQLite format 3\0"
     pub magic: [u8; 16],
-
-    /// The database page size in bytes. Must be a power of two between 512 and 32768 inclusive,
-    /// or the value 1 representing a page size of 65536.
-    pub page_size: u16,
-
+    /// Page size in bytes. Must be a power of two between 512 and 32768 inclusive, or the value 1 representing a page size of 65536.
+    pub page_size: PageSize,
     /// File format write version. 1 for legacy; 2 for WAL.
-    pub write_version: u8,
-
+    pub write_version: Version,
     /// File format read version. 1 for legacy; 2 for WAL.
-    pub read_version: u8,
-
+    pub read_version: Version,
     /// Bytes of unused "reserved" space at the end of each page. Usually 0.
-    /// SQLite has the ability to set aside a small number of extra bytes at the end of every page for use by extensions.
-    /// These extra bytes are used, for example, by the SQLite Encryption Extension to store a nonce and/or
-    /// cryptographic checksum associated with each page.
     pub reserved_space: u8,
-
     /// Maximum embedded payload fraction. Must be 64.
     pub max_embed_frac: u8,
-
     /// Minimum embedded payload fraction. Must be 32.
     pub min_embed_frac: u8,
-
     /// Leaf payload fraction. Must be 32.
-    pub min_leaf_frac: u8,
-
-    /// File change counter, incremented when database is modified.
-    pub change_counter: u32,
-
+    pub leaf_frac: u8,
+    /// File change counter.
+    pub change_counter: U32BE,
     /// Size of the database file in pages. The "in-header database size".
-    pub database_size: u32,
-
+    pub database_size: U32BE,
     /// Page number of the first freelist trunk page.
-    pub freelist_trunk_page: u32,
-
+    pub freelist_trunk_page: U32BE,
     /// Total number of freelist pages.
-    pub freelist_pages: u32,
-
-    /// The schema cookie. Incremented when the database schema changes.
-    pub schema_cookie: u32,
-
-    /// The schema format number. Supported formats are 1, 2, 3, and 4.
-    pub schema_format: u32,
-
+    pub freelist_pages: U32BE,
+    /// The schema cookie.
+    pub schema_cookie: U32BE,
+    /// The schema format number. Supported schema formats are 1, 2, 3, and 4.
+    pub schema_format: U32BE,
     /// Default page cache size.
-    pub default_page_cache_size: i32,
-
-    /// The page number of the largest root b-tree page when in auto-vacuum or
-    /// incremental-vacuum modes, or zero otherwise.
-    pub vacuum_mode_largest_root_page: u32,
-
-    /// The database text encoding. 1=UTF-8, 2=UTF-16le, 3=UTF-16be.
-    pub text_encoding: u32,
-
+    pub default_page_cache_size: CacheSize,
+    /// The page number of the largest root b-tree page when in auto-vacuum or incremental-vacuum modes, or zero otherwise.
+    pub vacuum_mode_largest_root_page: U32BE,
+    /// Text encoding.
+    pub text_encoding: TextEncoding,
     /// The "user version" as read and set by the user_version pragma.
-    pub user_version: i32,
-
+    pub user_version: I32BE,
     /// True (non-zero) for incremental-vacuum mode. False (zero) otherwise.
-    pub incremental_vacuum_enabled: u32,
-
+    pub incremental_vacuum_enabled: U32BE,
     /// The "Application ID" set by PRAGMA application_id.
-    pub application_id: u32,
-
+    pub application_id: I32BE,
     /// Reserved for expansion. Must be zero.
-    pub reserved_for_expansion: [u8; 20],
-
+    _padding: [u8; 20],
     /// The version-valid-for number.
-    pub version_valid_for: u32,
-
+    pub version_valid_for: U32BE,
     /// SQLITE_VERSION_NUMBER
-    pub version_number: u32,
+    pub version_number: U32BE,
+}
+
+impl DatabaseHeader {
+    pub const PAGE_ID: usize = 1;
+    pub const SIZE: usize = size_of::<Self>();
+
+    const _CHECK: () = {
+        assert!(Self::SIZE == 100);
+    };
+
+    pub fn usable_space(self) -> usize {
+        (self.page_size.get() as usize) - (self.reserved_space as usize)
+    }
+}
+
+impl Default for DatabaseHeader {
+    fn default() -> Self {
+        Self {
+            magic: *b"SQLite format 3\0",
+            page_size: Default::default(),
+            write_version: Version::Wal,
+            read_version: Version::Wal,
+            reserved_space: 0,
+            max_embed_frac: 64,
+            min_embed_frac: 32,
+            leaf_frac: 32,
+            change_counter: U32BE::new(1),
+            database_size: U32BE::new(0),
+            freelist_trunk_page: U32BE::new(0),
+            freelist_pages: U32BE::new(0),
+            schema_cookie: U32BE::new(0),
+            schema_format: U32BE::new(4), // latest format, new sqlite3 databases use this format
+            default_page_cache_size: Default::default(),
+            vacuum_mode_largest_root_page: U32BE::new(0),
+            text_encoding: TextEncoding::Utf8,
+            user_version: I32BE::new(0),
+            incremental_vacuum_enabled: U32BE::new(0),
+            application_id: I32BE::new(0),
+            _padding: [0; 20],
+            version_valid_for: U32BE::new(3047000),
+            version_number: U32BE::new(3047000),
+        }
+    }
 }
 
 pub const WAL_HEADER_SIZE: usize = 32;
@@ -282,90 +387,6 @@ impl WalFrameHeader {
     }
 }
 
-impl Default for DatabaseHeader {
-    fn default() -> Self {
-        Self {
-            magic: *b"SQLite format 3\0",
-            page_size: DEFAULT_PAGE_SIZE as u16,
-            write_version: 2,
-            read_version: 2,
-            reserved_space: 0,
-            max_embed_frac: 64,
-            min_embed_frac: 32,
-            min_leaf_frac: 32,
-            change_counter: 1,
-            database_size: 0,
-            freelist_trunk_page: 0,
-            freelist_pages: 0,
-            schema_cookie: 0,
-            schema_format: 4, // latest format, new sqlite3 databases use this format
-            default_page_cache_size: DEFAULT_CACHE_SIZE,
-            vacuum_mode_largest_root_page: 0,
-            text_encoding: 1, // utf-8
-            user_version: 0,
-            incremental_vacuum_enabled: 0,
-            application_id: 0,
-            reserved_for_expansion: [0; 20],
-            version_valid_for: 3047000,
-            version_number: 3047000,
-        }
-    }
-}
-
-impl DatabaseHeader {
-    pub fn update_page_size(&mut self, size: u32) {
-        if !is_valid_page_size(size) {
-            return;
-        }
-
-        self.page_size = if size == MAX_PAGE_SIZE {
-            1u16
-        } else {
-            size as u16
-        };
-    }
-
-    pub fn get_page_size(&self) -> u32 {
-        if self.page_size == 1 {
-            MAX_PAGE_SIZE
-        } else {
-            self.page_size as u32
-        }
-    }
-}
-
-pub fn is_valid_page_size(size: u32) -> bool {
-    (MIN_PAGE_SIZE..=MAX_PAGE_SIZE).contains(&size) && (size & (size - 1)) == 0
-}
-
-pub fn write_header_to_buf(buf: &mut [u8], header: &DatabaseHeader) {
-    buf[0..16].copy_from_slice(&header.magic);
-    buf[16..18].copy_from_slice(&header.page_size.to_be_bytes());
-    buf[18] = header.write_version;
-    buf[19] = header.read_version;
-    buf[20] = header.reserved_space;
-    buf[21] = header.max_embed_frac;
-    buf[22] = header.min_embed_frac;
-    buf[23] = header.min_leaf_frac;
-    buf[24..28].copy_from_slice(&header.change_counter.to_be_bytes());
-    buf[28..32].copy_from_slice(&header.database_size.to_be_bytes());
-    buf[32..36].copy_from_slice(&header.freelist_trunk_page.to_be_bytes());
-    buf[36..40].copy_from_slice(&header.freelist_pages.to_be_bytes());
-    buf[40..44].copy_from_slice(&header.schema_cookie.to_be_bytes());
-    buf[44..48].copy_from_slice(&header.schema_format.to_be_bytes());
-    buf[48..52].copy_from_slice(&header.default_page_cache_size.to_be_bytes());
-
-    buf[52..56].copy_from_slice(&header.vacuum_mode_largest_root_page.to_be_bytes());
-    buf[56..60].copy_from_slice(&header.text_encoding.to_be_bytes());
-    buf[60..64].copy_from_slice(&header.user_version.to_be_bytes());
-    buf[64..68].copy_from_slice(&header.incremental_vacuum_enabled.to_be_bytes());
-
-    buf[68..72].copy_from_slice(&header.application_id.to_be_bytes());
-    buf[72..92].copy_from_slice(&header.reserved_for_expansion);
-    buf[92..96].copy_from_slice(&header.version_valid_for.to_be_bytes());
-    buf[96..100].copy_from_slice(&header.version_number.to_be_bytes());
-}
-
 #[repr(u8)]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum PageType {
@@ -409,23 +430,12 @@ pub struct PageContent {
     /// the position where page content starts. it's 100 for page 1(database file header is 100 bytes),
     /// 0 for all other pages.
     pub offset: usize,
-    pub buffer: Arc<RefCell<Buffer>>,
+    pub buffer: Arc<Buffer>,
     pub overflow_cells: Vec<OverflowCell>,
 }
 
-impl Clone for PageContent {
-    fn clone(&self) -> Self {
-        #[allow(clippy::arc_with_non_send_sync)]
-        Self {
-            offset: self.offset,
-            buffer: Arc::new(RefCell::new((*self.buffer.borrow()).clone())),
-            overflow_cells: self.overflow_cells.clone(),
-        }
-    }
-}
-
 impl PageContent {
-    pub fn new(offset: usize, buffer: Arc<RefCell<Buffer>>) -> Self {
+    pub fn new(offset: usize, buffer: Arc<Buffer>) -> Self {
         Self {
             offset,
             buffer,
@@ -443,61 +453,118 @@ impl PageContent {
 
     #[allow(clippy::mut_from_ref)]
     pub fn as_ptr(&self) -> &mut [u8] {
-        unsafe {
-            // unsafe trick to borrow twice
-            let buf_pointer = &self.buffer.as_ptr();
-            let buf = (*buf_pointer).as_mut().unwrap().as_mut_slice();
-            buf
-        }
+        self.buffer.as_mut_slice()
     }
 
-    pub fn read_u8(&self, pos: usize) -> u8 {
+    /// Read a u8 from the page content at the given offset, taking account the possible db header on page 1 (self.offset).
+    /// Do not make this method public.
+    fn read_u8(&self, pos: usize) -> u8 {
         let buf = self.as_ptr();
         buf[self.offset + pos]
     }
 
-    pub fn read_u16(&self, pos: usize) -> u16 {
+    /// Read a u16 from the page content at the given offset, taking account the possible db header on page 1 (self.offset).
+    /// Do not make this method public.
+    fn read_u16(&self, pos: usize) -> u16 {
         let buf = self.as_ptr();
         u16::from_be_bytes([buf[self.offset + pos], buf[self.offset + pos + 1]])
     }
 
-    pub fn read_u16_no_offset(&self, pos: usize) -> u16 {
-        let buf = self.as_ptr();
-        u16::from_be_bytes([buf[pos], buf[pos + 1]])
-    }
-
-    pub fn read_u32_no_offset(&self, pos: usize) -> u32 {
-        let buf = self.as_ptr();
-        u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]])
-    }
-
-    pub fn read_u32(&self, pos: usize) -> u32 {
+    /// Read a u32 from the page content at the given offset, taking account the possible db header on page 1 (self.offset).
+    /// Do not make this method public.
+    fn read_u32(&self, pos: usize) -> u32 {
         let buf = self.as_ptr();
         read_u32(buf, self.offset + pos)
     }
 
-    pub fn write_u8(&self, pos: usize, value: u8) {
+    /// Write a u8 to the page content at the given offset, taking account the possible db header on page 1 (self.offset).
+    /// Do not make this method public.
+    fn write_u8(&self, pos: usize, value: u8) {
         tracing::trace!("write_u8(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[self.offset + pos] = value;
     }
 
-    pub fn write_u16(&self, pos: usize, value: u16) {
+    /// Write a u16 to the page content at the given offset, taking account the possible db header on page 1 (self.offset).
+    /// Do not make this method public.
+    fn write_u16(&self, pos: usize, value: u16) {
         tracing::trace!("write_u16(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[self.offset + pos..self.offset + pos + 2].copy_from_slice(&value.to_be_bytes());
     }
 
+    /// Write a u32 to the page content at the given offset, taking account the possible db header on page 1 (self.offset).
+    /// Do not make this method public.
+    fn write_u32(&self, pos: usize, value: u32) {
+        tracing::trace!("write_u32(pos={}, value={})", pos, value);
+        let buf = self.as_ptr();
+        buf[self.offset + pos..self.offset + pos + 4].copy_from_slice(&value.to_be_bytes());
+    }
+
+    /// Read a u16 from the page content at the given absolute offset, i.e. NOT taking account the possible db header on page 1 (self.offset).
+    /// This is useful when you want to read a location that you read from another location on the page, or when writing a field of an overflow
+    /// or freelist page, for example.
+    pub fn read_u16_no_offset(&self, pos: usize) -> u16 {
+        let buf = self.as_ptr();
+        u16::from_be_bytes([buf[pos], buf[pos + 1]])
+    }
+
+    /// Read a u32 from the page content at the given absolute offset, i.e. NOT taking account the possible db header on page 1 (self.offset).
+    /// This is useful when you want to read a location that you read from another location on the page, or when writing a field of an overflow
+    /// or freelist page, for example.
+    pub fn read_u32_no_offset(&self, pos: usize) -> u32 {
+        let buf = self.as_ptr();
+        u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]])
+    }
+
+    /// Write a u16 to the page content at the given absolute offset, i.e. NOT taking account the possible db header on page 1 (self.offset).
+    /// This is useful when you want to write a location that you read from another location on the page, or when writing a field of an overflow
+    /// or freelist page, for example.
     pub fn write_u16_no_offset(&self, pos: usize, value: u16) {
         tracing::trace!("write_u16(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
         buf[pos..pos + 2].copy_from_slice(&value.to_be_bytes());
     }
 
-    pub fn write_u32(&self, pos: usize, value: u32) {
+    /// Write a u32 to the page content at the given absolute offset, i.e. NOT taking account the possible db header on page 1 (self.offset).
+    /// This is useful when you want to write a location that you read from another location on the page, or when writing a field of an overflow
+    /// or freelist page, for example.
+    pub fn write_u32_no_offset(&self, pos: usize, value: u32) {
         tracing::trace!("write_u32(pos={}, value={})", pos, value);
         let buf = self.as_ptr();
-        buf[self.offset + pos..self.offset + pos + 4].copy_from_slice(&value.to_be_bytes());
+        buf[pos..pos + 4].copy_from_slice(&value.to_be_bytes());
+    }
+
+    /// Assign a new page type to this page.
+    pub fn write_page_type(&self, value: u8) {
+        self.write_u8(BTREE_PAGE_TYPE, value);
+    }
+
+    /// Assign a new rightmost pointer to this page.
+    pub fn write_rightmost_ptr(&self, value: u32) {
+        self.write_u32(BTREE_RIGHTMOST_PTR, value);
+    }
+
+    /// Write the location (byte offset) of the first freeblock on this page, or zero if there are no freeblocks on the page.
+    pub fn write_first_freeblock(&self, value: u16) {
+        self.write_u16(BTREE_FIRST_FREEBLOCK, value);
+    }
+
+    /// Write the number of cells on this page.
+    pub fn write_cell_count(&self, value: u16) {
+        self.write_u16(BTREE_CELL_COUNT, value);
+    }
+
+    /// Write the beginning of the cell content area on this page.
+    pub fn write_cell_content_area(&self, value: usize) {
+        debug_assert!(value <= PageSize::MAX as usize);
+        let value = value as u16; // deliberate cast to u16 because 0 is interpreted as 65536
+        self.write_u16(BTREE_CELL_CONTENT_AREA, value);
+    }
+
+    /// Write the number of fragmented bytes on this page.
+    pub fn write_fragmented_bytes_count(&self, value: u8) {
+        self.write_u8(BTREE_FRAGMENTED_BYTES_COUNT, value);
     }
 
     /// The offset of the first freeblock, or zero if there are no freeblocks on the page.
@@ -531,7 +598,7 @@ impl PageContent {
     pub fn cell_content_area(&self) -> u32 {
         let offset = self.read_u16(BTREE_CELL_CONTENT_AREA);
         if offset == 0 {
-            MAX_PAGE_SIZE
+            PageSize::MAX
         } else {
             offset as u32
         }
@@ -645,32 +712,60 @@ impl PageContent {
     /// - left-most cell (the cell with the smallest key) first and
     /// - the right-most cell (the cell with the largest key) last.
     pub fn cell_pointer_array_offset_and_size(&self) -> (usize, usize) {
-        let header_size = self.header_size();
-        (self.offset + header_size, self.cell_pointer_array_size())
+        (
+            self.cell_pointer_array_offset(),
+            self.cell_pointer_array_size(),
+        )
+    }
+
+    pub fn cell_pointer_array_offset(&self) -> usize {
+        self.offset + self.header_size()
+    }
+
+    /// Get the start offset of a cell's payload, not taking into account the 100-byte offset that is present on page 1.
+    pub fn cell_get_raw_start_offset(&self, idx: usize) -> usize {
+        let cell_pointer_array_start = self.cell_pointer_array_offset();
+        let cell_pointer = cell_pointer_array_start + (idx * CELL_PTR_SIZE_BYTES);
+        self.read_u16_no_offset(cell_pointer) as usize
     }
 
     /// Get region(start end length) of a cell's payload
+    /// FIXME: make all usages of [cell_get_raw_region] to use the _faster version in cases where the method is called
+    /// repeatedly, since page_type, max_local, min_local are the same for all cells on the page. Also consider whether
+    /// max_local and min_local should be static properties of the page.
     pub fn cell_get_raw_region(&self, idx: usize, usable_size: usize) -> (usize, usize) {
+        let page_type = self.page_type();
+        let max_local = payload_overflow_threshold_max(page_type, usable_size);
+        let min_local = payload_overflow_threshold_min(page_type, usable_size);
+        let cell_count = self.cell_count();
+        self._cell_get_raw_region_faster(
+            idx,
+            usable_size,
+            cell_count,
+            max_local,
+            min_local,
+            page_type,
+        )
+    }
+
+    /// Get region(start end length) of a cell's payload
+    pub fn _cell_get_raw_region_faster(
+        &self,
+        idx: usize,
+        usable_size: usize,
+        cell_count: usize,
+        max_local: usize,
+        min_local: usize,
+        page_type: PageType,
+    ) -> (usize, usize) {
         let buf = self.as_ptr();
-        let ncells = self.cell_count();
-        let (cell_pointer_array_start, _) = self.cell_pointer_array_offset_and_size();
-        assert!(idx < ncells, "cell_get: idx out of bounds");
-        let cell_pointer = cell_pointer_array_start + (idx * CELL_PTR_SIZE_BYTES);
-        let cell_pointer = self.read_u16_no_offset(cell_pointer) as usize;
-        let start = cell_pointer;
-        let payload_overflow_threshold_max =
-            payload_overflow_threshold_max(self.page_type(), usable_size);
-        let payload_overflow_threshold_min =
-            payload_overflow_threshold_min(self.page_type(), usable_size);
-        let len = match self.page_type() {
+        assert!(idx < cell_count, "cell_get: idx out of bounds");
+        let start = self.cell_get_raw_start_offset(idx);
+        let len = match page_type {
             PageType::IndexInterior => {
-                let (len_payload, n_payload) = read_varint(&buf[cell_pointer + 4..]).unwrap();
-                let (overflows, to_read) = payload_overflows(
-                    len_payload as usize,
-                    payload_overflow_threshold_max,
-                    payload_overflow_threshold_min,
-                    usable_size,
-                );
+                let (len_payload, n_payload) = read_varint(&buf[start + 4..]).unwrap();
+                let (overflows, to_read) =
+                    payload_overflows(len_payload as usize, max_local, min_local, usable_size);
                 if overflows {
                     4 + to_read + n_payload
                 } else {
@@ -678,17 +773,13 @@ impl PageContent {
                 }
             }
             PageType::TableInterior => {
-                let (_, n_rowid) = read_varint(&buf[cell_pointer + 4..]).unwrap();
+                let (_, n_rowid) = read_varint(&buf[start + 4..]).unwrap();
                 4 + n_rowid
             }
             PageType::IndexLeaf => {
-                let (len_payload, n_payload) = read_varint(&buf[cell_pointer..]).unwrap();
-                let (overflows, to_read) = payload_overflows(
-                    len_payload as usize,
-                    payload_overflow_threshold_max,
-                    payload_overflow_threshold_min,
-                    usable_size,
-                );
+                let (len_payload, n_payload) = read_varint(&buf[start..]).unwrap();
+                let (overflows, to_read) =
+                    payload_overflows(len_payload as usize, max_local, min_local, usable_size);
                 if overflows {
                     to_read + n_payload
                 } else {
@@ -700,14 +791,10 @@ impl PageContent {
                 }
             }
             PageType::TableLeaf => {
-                let (len_payload, n_payload) = read_varint(&buf[cell_pointer..]).unwrap();
-                let (_, n_rowid) = read_varint(&buf[cell_pointer + n_payload..]).unwrap();
-                let (overflows, to_read) = payload_overflows(
-                    len_payload as usize,
-                    payload_overflow_threshold_max,
-                    payload_overflow_threshold_min,
-                    usable_size,
-                );
+                let (len_payload, n_payload) = read_varint(&buf[start..]).unwrap();
+                let (_, n_rowid) = read_varint(&buf[start + n_payload..]).unwrap();
+                let (overflows, to_read) =
+                    payload_overflows(len_payload as usize, max_local, min_local, usable_size);
                 if overflows {
                     to_read + n_payload + n_rowid
                 } else {
@@ -733,10 +820,10 @@ impl PageContent {
 
     pub fn write_database_header(&self, header: &DatabaseHeader) {
         let buf = self.as_ptr();
-        write_header_to_buf(buf, header);
+        buf[0..DatabaseHeader::SIZE].copy_from_slice(bytemuck::bytes_of(header));
     }
 
-    pub fn debug_print_freelist(&self, usable_space: u16) {
+    pub fn debug_print_freelist(&self, usable_space: usize) {
         let mut pc = self.first_freeblock() as usize;
         let mut block_num = 0;
         println!("---- Free List Blocks ----");
@@ -744,7 +831,7 @@ impl PageContent {
         println!("cell content area: {}", self.cell_content_area());
         println!("fragmented bytes: {}", self.num_frag_free_bytes());
 
-        while pc != 0 && pc <= usable_space as usize {
+        while pc != 0 && pc <= usable_space {
             let next = self.read_u16_no_offset(pc);
             let size = self.read_u16_no_offset(pc + 2);
 
@@ -756,28 +843,30 @@ impl PageContent {
     }
 }
 
+/// Send read request for DB page read to the IO
+/// if allow_empty_read is set, than empty read will be raise error for the page, but will not panic
 #[instrument(skip_all, level = Level::DEBUG)]
 pub fn begin_read_page(
     db_file: Arc<dyn DatabaseStorage>,
     buffer_pool: Arc<BufferPool>,
     page: PageRef,
     page_idx: usize,
+    allow_empty_read: bool,
 ) -> Result<Completion> {
     tracing::trace!("begin_read_btree_page(page_idx = {})", page_idx);
-    let buf = buffer_pool.get();
-    let drop_fn = Rc::new(move |buf| {
-        let buffer_pool = buffer_pool.clone();
-        buffer_pool.put(buf);
-    });
+    let buf = buffer_pool.get_page();
     #[allow(clippy::arc_with_non_send_sync)]
-    let buf = Arc::new(RefCell::new(Buffer::new(buf, drop_fn)));
-    let complete = Box::new(move |buf: Arc<RefCell<Buffer>>, bytes_read: i32| {
-        let buf_len = buf.borrow().len();
+    let buf = Arc::new(buf);
+    let complete = Box::new(move |mut buf: Arc<Buffer>, bytes_read: i32| {
+        let buf_len = buf.len();
         turso_assert!(
-            bytes_read == buf_len as i32,
+            (allow_empty_read && bytes_read == 0) || bytes_read == buf_len as i32,
             "read({bytes_read}) != expected({buf_len})"
         );
         let page = page.clone();
+        if bytes_read == 0 {
+            buf = Arc::new(Buffer::new_temporary(0));
+        }
         if finish_read_page(page_idx, buf, page.clone()).is_err() {
             page.set_error();
         }
@@ -787,21 +876,16 @@ pub fn begin_read_page(
 }
 
 #[instrument(skip_all, level = Level::INFO)]
-pub fn finish_read_page(
-    page_idx: usize,
-    buffer_ref: Arc<RefCell<Buffer>>,
-    page: PageRef,
-) -> Result<()> {
+pub fn finish_read_page(page_idx: usize, buffer_ref: Arc<Buffer>, page: PageRef) -> Result<()> {
     tracing::trace!(page_idx);
-    let pos = if page_idx == DATABASE_HEADER_PAGE_ID {
-        DATABASE_HEADER_SIZE
+    let pos = if page_idx == DatabaseHeader::PAGE_ID {
+        DatabaseHeader::SIZE
     } else {
         0
     };
     let inner = PageContent::new(pos, buffer_ref.clone());
     {
         page.get().contents.replace(inner);
-        page.set_uptodate();
         page.clear_locked();
         page.set_loaded();
     }
@@ -809,11 +893,7 @@ pub fn finish_read_page(
 }
 
 #[instrument(skip_all, level = Level::DEBUG)]
-pub fn begin_write_btree_page(
-    pager: &Pager,
-    page: &PageRef,
-    write_counter: Rc<RefCell<usize>>,
-) -> Result<Completion> {
+pub fn begin_write_btree_page(pager: &Pager, page: &PageRef) -> Result<Completion> {
     tracing::trace!("begin_write_btree_page(page={})", page.get().id);
     let page_source = &pager.db_file;
     let page_finish = page.clone();
@@ -826,15 +906,12 @@ pub fn begin_write_btree_page(
         contents.buffer.clone()
     };
 
-    *write_counter.borrow_mut() += 1;
-    let clone_counter = write_counter.clone();
     let write_complete = {
         let buf_copy = buffer.clone();
         Box::new(move |bytes_written: i32| {
             tracing::trace!("finish_write_btree_page");
             let buf_copy = buf_copy.clone();
-            let buf_len = buf_copy.borrow().len();
-            *clone_counter.borrow_mut() -= 1;
+            let buf_len = buf_copy.len();
 
             page_finish.clear_dirty();
             turso_assert!(
@@ -844,24 +921,128 @@ pub fn begin_write_btree_page(
         })
     };
     let c = Completion::new_write(write_complete);
-    let res = page_source.write_page(page_id, buffer.clone(), c);
-    if res.is_err() {
-        // Avoid infinite loop if write page fails
-        *write_counter.borrow_mut() -= 1;
-    }
-    res
+    page_source.write_page(page_id, buffer.clone(), c)
 }
 
 #[instrument(skip_all, level = Level::DEBUG)]
-pub fn begin_sync(db_file: Arc<dyn DatabaseStorage>, syncing: Rc<RefCell<bool>>) -> Result<()> {
+/// Write a batch of pages to the database file.
+///
+/// we have a batch of pages to write, lets say the following:
+/// (they are already sorted by id thanks to BTreeMap)
+/// [1,2,3,6,7,9,10,11,12]
+//
+/// we want to collect this into runs of:
+/// [1,2,3], [6,7], [9,10,11,12]
+/// and submit each run as a `writev` call,
+/// for 3 total syscalls instead of 9.
+pub fn write_pages_vectored(
+    pager: &Pager,
+    batch: BTreeMap<usize, Arc<Buffer>>,
+    flush: &PendingFlush,
+) -> Result<Vec<Completion>> {
+    if batch.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // batch item array is already sorted by id, so we just need to find contiguous ranges of page_id's
+    // to submit as `writev`/write_pages calls.
+
+    let page_sz = pager.page_size.get().unwrap_or(PageSize::DEFAULT as u32) as usize;
+
+    // Count expected number of runs to create the atomic counter we need to track each batch
+    let mut run_count = 0;
+    let mut prev_id = None;
+    for &id in batch.keys() {
+        if let Some(prev) = prev_id {
+            if id != prev + 1 {
+                run_count += 1;
+            }
+        } else {
+            run_count = 1; // First run
+        }
+        prev_id = Some(id);
+    }
+
+    // Create the atomic counters
+    let runs_left = Arc::new(AtomicUsize::new(run_count));
+    flush.new_flush();
+    let done = flush.done.clone();
+    // we know how many runs, but we don't know how many buffers per run, so we can only give an
+    // estimate of the capacity
+    const EST_BUFF_CAPACITY: usize = 32;
+
+    // Iterate through the batch, submitting each run as soon as it ends
+    // We can reuse this across runs without reallocating
+    let mut run_bufs = Vec::with_capacity(EST_BUFF_CAPACITY);
+    let mut run_start_id: Option<usize> = None;
+
+    // Iterate through the batch
+    let mut iter = batch.into_iter().peekable();
+
+    let mut completions = Vec::new();
+    while let Some((id, item)) = iter.next() {
+        // Track the start of the run
+        if run_start_id.is_none() {
+            run_start_id = Some(id);
+        }
+
+        // Add this page to the current run
+        run_bufs.push(item);
+
+        // Check if this is the end of a run
+        let is_end_of_run = match iter.peek() {
+            Some(&(next_id, _)) => next_id != id + 1,
+            None => true,
+        };
+
+        if is_end_of_run {
+            let start_id = run_start_id.expect("should have a start id");
+            let runs_left_cl = runs_left.clone();
+            let done_cl = done.clone();
+
+            let c = Completion::new_write(move |_| {
+                if runs_left_cl.fetch_sub(1, Ordering::AcqRel) == 1 {
+                    done_cl.store(true, Ordering::Release);
+                }
+            });
+
+            // Submit write operation for this run, decrementing the counter if we error
+            match pager.db_file.write_pages(
+                start_id,
+                page_sz,
+                std::mem::replace(&mut run_bufs, Vec::with_capacity(EST_BUFF_CAPACITY)),
+                c,
+            ) {
+                Ok(c) => {
+                    completions.push(c);
+                }
+                Err(e) => {
+                    if runs_left.fetch_sub(1, Ordering::AcqRel) == 1 {
+                        done.store(true, Ordering::Release);
+                    }
+                    return Err(e);
+                }
+            }
+            run_start_id = None;
+        }
+    }
+
+    tracing::debug!("write_pages_vectored: total runs={run_count}");
+    Ok(completions)
+}
+
+#[instrument(skip_all, level = Level::DEBUG)]
+pub fn begin_sync(
+    db_file: Arc<dyn DatabaseStorage>,
+    syncing: Rc<RefCell<bool>>,
+) -> Result<Completion> {
     assert!(!*syncing.borrow());
     *syncing.borrow_mut() = true;
     let completion = Completion::new_sync(move |_| {
         *syncing.borrow_mut() = false;
     });
     #[allow(clippy::arc_with_non_send_sync)]
-    let c = db_file.sync(completion)?;
-    Ok(())
+    db_file.sync(completion)
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -1360,11 +1541,16 @@ pub fn write_varint_to_vec(value: u64, payload: &mut Vec<u8>) {
 
 /// We need to read the WAL file on open to reconstruct the WAL frame cache.
 pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFileShared>>> {
-    let drop_fn = Rc::new(|_buf| {});
     let size = file.size()?;
     #[allow(clippy::arc_with_non_send_sync)]
-    let buf_for_pread = Arc::new(RefCell::new(Buffer::allocate(size as usize, drop_fn)));
+    let buf_for_pread = Arc::new(Buffer::new_temporary(size as usize));
     let header = Arc::new(SpinLock::new(WalHeader::default()));
+    let read_locks = std::array::from_fn(|_| TursoRwLock::new());
+    for (i, l) in read_locks.iter().enumerate() {
+        l.write();
+        l.set_value_exclusive(if i < 2 { 0 } else { READMARK_NOT_USED });
+        l.unlock();
+    }
     #[allow(clippy::arc_with_non_send_sync)]
     let wal_file_shared_ret = Arc::new(UnsafeCell::new(WalFileShared {
         wal_header: header.clone(),
@@ -1375,21 +1561,14 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
         pages_in_frames: Arc::new(SpinLock::new(Vec::new())),
         last_checksum: (0, 0),
         file: file.clone(),
-        read_locks: [
-            LimboRwLock::new(),
-            LimboRwLock::new(),
-            LimboRwLock::new(),
-            LimboRwLock::new(),
-            LimboRwLock::new(),
-        ],
-        write_lock: LimboRwLock::new(),
+        read_locks,
+        write_lock: TursoRwLock::new(),
         loaded: AtomicBool::new(false),
-        checkpoint_lock: LimboRwLock::new(),
+        checkpoint_lock: TursoRwLock::new(),
     }));
     let wal_file_shared_for_completion = wal_file_shared_ret.clone();
 
-    let complete: Box<Complete> = Box::new(move |buf: Arc<RefCell<Buffer>>, bytes_read: i32| {
-        let buf = buf.borrow();
+    let complete: Box<ReadComplete> = Box::new(move |buf: Arc<Buffer>, bytes_read: i32| {
         let buf_slice = buf.as_slice();
         turso_assert!(
             bytes_read == buf_slice.len() as i32,
@@ -1451,9 +1630,7 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
         let mut cumulative_checksum = (header_locked.checksum_1, header_locked.checksum_2);
         let page_size_u32 = header_locked.page_size;
 
-        if !(MIN_PAGE_SIZE..=MAX_PAGE_SIZE).contains(&page_size_u32)
-            || page_size_u32.count_ones() != 1
-        {
+        if PageSize::new(page_size_u32).is_none() {
             panic!("Invalid page size in WAL header: {page_size_u32}");
         }
         let page_size = page_size_u32 as usize;
@@ -1565,23 +1742,19 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
         wfs_data.loaded.store(true, Ordering::SeqCst);
     });
     let c = Completion::new_read(buf_for_pread, complete);
-    let c = file.pread(0, c)?;
+    let _c = file.pread(0, c)?;
 
     Ok(wal_file_shared_ret)
 }
 
 pub fn begin_read_wal_frame_raw(
+    buffer_pool: &Arc<BufferPool>,
     io: &Arc<dyn File>,
     offset: usize,
-    page_size: u32,
-    complete: Box<dyn Fn(Arc<RefCell<Buffer>>, i32)>,
+    complete: Box<ReadComplete>,
 ) -> Result<Completion> {
     tracing::trace!("begin_read_wal_frame_raw(offset={})", offset);
-    let drop_fn = Rc::new(|_buf| {});
-    let buf = Arc::new(RefCell::new(Buffer::allocate(
-        page_size as usize + WAL_FRAME_HEADER_SIZE,
-        drop_fn,
-    )));
+    let buf = Arc::new(buffer_pool.get_wal_frame());
     #[allow(clippy::arc_with_non_send_sync)]
     let c = Completion::new_read(buf, complete);
     let c = io.pread(offset, c)?;
@@ -1592,15 +1765,11 @@ pub fn begin_read_wal_frame(
     io: &Arc<dyn File>,
     offset: usize,
     buffer_pool: Arc<BufferPool>,
-    complete: Box<dyn Fn(Arc<RefCell<Buffer>>, i32)>,
+    complete: Box<ReadComplete>,
 ) -> Result<Completion> {
     tracing::trace!("begin_read_wal_frame(offset={})", offset);
-    let buf = buffer_pool.get();
-    let drop_fn = Rc::new(move |buf| {
-        let buffer_pool = buffer_pool.clone();
-        buffer_pool.put(buf);
-    });
-    let buf = Arc::new(RefCell::new(Buffer::new(buf, drop_fn)));
+    let buf = buffer_pool.get_page();
+    let buf = Arc::new(buf);
     #[allow(clippy::arc_with_non_send_sync)]
     let c = Completion::new_read(buf, complete);
     let c = io.pread(offset, c)?;
@@ -1627,17 +1796,17 @@ pub fn parse_wal_frame_header(frame: &[u8]) -> (WalFrameHeader, &[u8]) {
 }
 
 pub fn prepare_wal_frame(
+    buffer_pool: &Arc<BufferPool>,
     wal_header: &WalHeader,
     prev_checksums: (u32, u32),
     page_size: u32,
     page_number: u32,
     db_size: u32,
     page: &[u8],
-) -> ((u32, u32), Arc<RefCell<Buffer>>) {
+) -> ((u32, u32), Arc<Buffer>) {
     tracing::trace!(page_number);
 
-    let drop_fn = Rc::new(|_buf| {});
-    let mut buffer = Buffer::allocate(page_size as usize + WAL_FRAME_HEADER_SIZE, drop_fn);
+    let buffer = buffer_pool.get_wal_frame();
     let frame = buffer.as_mut_slice();
     frame[WAL_FRAME_HEADER_SIZE..].copy_from_slice(page);
 
@@ -1658,15 +1827,13 @@ pub fn prepare_wal_frame(
     frame[16..20].copy_from_slice(&final_checksum.0.to_be_bytes());
     frame[20..24].copy_from_slice(&final_checksum.1.to_be_bytes());
 
-    (final_checksum, Arc::new(RefCell::new(buffer)))
+    (final_checksum, Arc::new(buffer))
 }
 
-pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<()> {
+pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<Completion> {
     tracing::trace!("begin_write_wal_header");
     let buffer = {
-        let drop_fn = Rc::new(|_buf| {});
-
-        let mut buffer = Buffer::allocate(WAL_HEADER_SIZE, drop_fn);
+        let buffer = Buffer::new_temporary(WAL_HEADER_SIZE);
         let buf = buffer.as_mut_slice();
 
         buf[0..4].copy_from_slice(&header.magic.to_be_bytes());
@@ -1679,13 +1846,13 @@ pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<
         buf[28..32].copy_from_slice(&header.checksum_2.to_be_bytes());
 
         #[allow(clippy::arc_with_non_send_sync)]
-        Arc::new(RefCell::new(buffer))
+        Arc::new(buffer)
     };
 
     let cloned = buffer.clone();
     let write_complete = move |bytes_written: i32| {
         // make sure to reference buffer so it's alive for async IO
-        let _buf = cloned.borrow();
+        let _buf = cloned.clone();
         turso_assert!(
             bytes_written == WAL_HEADER_SIZE as i32,
             "wal header wrote({bytes_written}) != expected({WAL_HEADER_SIZE})"
@@ -1693,8 +1860,8 @@ pub fn begin_write_wal_header(io: &Arc<dyn File>, header: &WalHeader) -> Result<
     };
     #[allow(clippy::arc_with_non_send_sync)]
     let c = Completion::new_write(write_complete);
-    let c = io.pwrite(0, buffer.clone(), c)?;
-    Ok(())
+    let c = io.pwrite(0, buffer.clone(), c.clone())?;
+    Ok(c)
 }
 
 /// Checks if payload will overflow a cell based on the maximum allowed size.

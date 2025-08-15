@@ -130,6 +130,17 @@ pub enum Stmt {
         /// query
         select: Box<Select>,
     },
+    /// `CREATE MATERIALIZED VIEW`
+    CreateMaterializedView {
+        /// `IF NOT EXISTS`
+        if_not_exists: bool,
+        /// view name
+        view_name: QualifiedName,
+        /// columns
+        columns: Option<Vec<IndexedColumn>>,
+        /// query
+        select: Box<Select>,
+    },
     /// `CREATE VIRTUAL TABLE`
     CreateVirtualTable(Box<CreateVirtualTable>),
     /// `DELETE`
@@ -1178,6 +1189,14 @@ impl Name {
             _ => Name::Ident(s.to_string()),
         }
     }
+
+    /// Checks if a name represents a double-quoted string that should get fallback behavior
+    pub fn is_double_quoted(&self) -> bool {
+        if let Self::Quoted(ident) = self {
+            return ident.starts_with("\"");
+        }
+        false
+    }
 }
 
 struct QuotedIterator<'s>(Bytes<'s>, u8);
@@ -1292,6 +1311,39 @@ impl QualifiedName {
     }
 }
 
+/// Ordered set of column names
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Names(Vec<Name>);
+
+impl Names {
+    /// Initialize
+    pub fn new(name: Name) -> Self {
+        let mut dn = Self(Vec::new());
+        dn.0.push(name);
+        dn
+    }
+    /// Single column name
+    pub fn single(name: Name) -> Self {
+        let mut dn = Self(Vec::with_capacity(1));
+        dn.0.push(name);
+        dn
+    }
+    /// Push name
+    pub fn insert(&mut self, name: Name) -> Result<(), ParserError> {
+        self.0.push(name);
+        Ok(())
+    }
+}
+
+impl Deref for Names {
+    type Target = Vec<Name>;
+
+    fn deref(&self) -> &Vec<Name> {
+        &self.0
+    }
+}
+
 /// Ordered set of distinct column names
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -1319,6 +1371,7 @@ impl DistinctNames {
         Ok(())
     }
 }
+
 impl Deref for DistinctNames {
     type Target = IndexSet<Name>;
 
@@ -1735,7 +1788,7 @@ pub enum InsertBody {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Set {
     /// column name(s)
-    pub col_names: DistinctNames,
+    pub col_names: Names,
     /// expression
     pub expr: Expr,
 }
@@ -1770,16 +1823,25 @@ pub enum PragmaName {
     DatabaseList,
     /// Encoding - only support utf8
     Encoding,
+    /// Current free page count.
+    FreelistCount,
     /// Run integrity check on the database file
     IntegrityCheck,
     /// `journal_mode` pragma
     JournalMode,
     /// Noop as per SQLite docs
     LegacyFileFormat,
+    /// Set or get the maximum number of pages in the database file.
+    MaxPageCount,
+    /// `module_list` praagma
+    /// `module_list` lists modules used by virtual tables.
+    ModuleList,
     /// Return the total number of pages in the database file.
     PageCount,
     /// Return the page size of the database in bytes.
     PageSize,
+    /// make connection query only
+    QueryOnly,
     /// Returns schema version of the database file.
     SchemaVersion,
     /// returns information about the columns of a table

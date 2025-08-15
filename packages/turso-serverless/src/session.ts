@@ -7,7 +7,10 @@ import {
   type CursorResponse,
   type CursorEntry,
   type PipelineRequest,
-  type SequenceRequest
+  type SequenceRequest,
+  type CloseRequest,
+  type NamedArg,
+  type Value
 } from './protocol.js';
 import { DatabaseError } from './error.js';
 
@@ -49,10 +52,10 @@ export class Session {
    * Execute a SQL statement and return all results.
    * 
    * @param sql - The SQL statement to execute
-   * @param args - Optional array of parameter values
+   * @param args - Optional array of parameter values or object with named parameters
    * @returns Promise resolving to the complete result set
    */
-  async execute(sql: string, args: any[] = []): Promise<any> {
+  async execute(sql: string, args: any[] | Record<string, any> = []): Promise<any> {
     const { response, entries } = await this.executeRaw(sql, args);
     const result = await this.processCursorEntries(entries);
     return result;
@@ -62,17 +65,56 @@ export class Session {
    * Execute a SQL statement and return the raw response and entries.
    * 
    * @param sql - The SQL statement to execute
-   * @param args - Optional array of parameter values
+   * @param args - Optional array of parameter values or object with named parameters
    * @returns Promise resolving to the raw response and cursor entries
    */
-  async executeRaw(sql: string, args: any[] = []): Promise<{ response: CursorResponse; entries: AsyncGenerator<CursorEntry> }> {
+  async executeRaw(sql: string, args: any[] | Record<string, any> = []): Promise<{ response: CursorResponse; entries: AsyncGenerator<CursorEntry> }> {
+    let positionalArgs: Value[] = [];
+    let namedArgs: NamedArg[] = [];
+
+    if (Array.isArray(args)) {
+      positionalArgs = args.map(encodeValue);
+    } else {
+      // Check if this is an object with numeric keys (for ?1, ?2 style parameters)
+      const keys = Object.keys(args);
+      const isNumericKeys = keys.length > 0 && keys.every(key => /^\d+$/.test(key));
+      
+      if (isNumericKeys) {
+        // Convert numeric-keyed object to positional args
+        // Sort keys numerically to ensure correct order
+        const sortedKeys = keys.sort((a, b) => parseInt(a) - parseInt(b));
+        const maxIndex = parseInt(sortedKeys[sortedKeys.length - 1]);
+        
+        // Create array with undefined for missing indices
+        positionalArgs = new Array(maxIndex);
+        for (const key of sortedKeys) {
+          const index = parseInt(key) - 1; // Convert to 0-based index
+          positionalArgs[index] = encodeValue(args[key]);
+        }
+        
+        // Fill any undefined values with null
+        for (let i = 0; i < positionalArgs.length; i++) {
+          if (positionalArgs[i] === undefined) {
+            positionalArgs[i] = { type: 'null' };
+          }
+        }
+      } else {
+        // Convert object with named parameters to NamedArg array
+        namedArgs = Object.entries(args).map(([name, value]) => ({
+          name,
+          value: encodeValue(value)
+        }));
+      }
+    }
+
     const request: CursorRequest = {
       baton: this.baton,
       batch: {
         steps: [{
           stmt: {
             sql,
-            args: args.map(encodeValue),
+            args: positionalArgs,
+            named_args: namedArgs,
             want_rows: true
           }
         }]
@@ -180,6 +222,7 @@ export class Session {
           stmt: {
             sql,
             args: [],
+            named_args: [],
             want_rows: false
           }
         }))
@@ -247,5 +290,34 @@ export class Session {
         throw new DatabaseError(result.error?.message || 'Sequence execution failed');
       }
     }
+  }
+
+  /**
+   * Close the session.
+   * 
+   * This sends a close request to the server to properly clean up the stream
+   * before resetting the local state.
+   */
+  async close(): Promise<void> {
+    // Only send close request if we have an active baton
+    if (this.baton) {
+      try {
+        const request: PipelineRequest = {
+          baton: this.baton,
+          requests: [{
+            type: "close"
+          } as CloseRequest]
+        };
+
+        await executePipeline(this.baseUrl, this.config.authToken, request);
+      } catch (error) {
+        // Ignore errors during close, as the connection might already be closed
+        console.error('Error closing session:', error);
+      }
+    }
+
+    // Reset local state
+    this.baton = null;
+    this.baseUrl = '';
   }
 }

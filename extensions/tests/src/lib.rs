@@ -167,45 +167,60 @@ impl VTable for KVStoreTable {
         })
     }
 
-    fn best_index(constraints: &[ConstraintInfo], _order_by: &[OrderByInfo]) -> IndexInfo {
+    fn best_index(
+        constraints: &[ConstraintInfo],
+        _order_by: &[OrderByInfo],
+    ) -> Result<IndexInfo, ResultCode> {
+        let mut constraint_usages = Vec::with_capacity(constraints.len());
+        let mut idx_num = -1;
+        let mut idx_str = None;
+        let mut estimated_cost = 1000.0;
+        let mut estimated_rows = u32::MAX;
+
         // Look for: key = ?
         for constraint in constraints.iter() {
             if constraint.usable
                 && constraint.op == ConstraintOp::Eq
                 && constraint.column_index == 1
+                && idx_num == -1
+            // Only use the first usable key = ? constraint
             {
-                // this extension wouldn't support order by but for testing purposes,
-                // we will consume it if we find an ASC order by clause on the value column
-                let mut consumed = false;
-                if let Some(order) = _order_by.first() {
-                    if order.column_index == 2 && !order.desc {
-                        consumed = true;
-                    }
-                }
+                constraint_usages.push(ConstraintUsage {
+                    omit: true,
+                    argv_index: Some(1),
+                });
+                idx_num = 1;
+                idx_str = Some("key_eq".to_string());
+                estimated_cost = 10.0;
+                estimated_rows = 4;
                 log::debug!("xBestIndex: constraint found for 'key = ?'");
-                return IndexInfo {
-                    idx_num: 1,
-                    idx_str: Some("key_eq".to_string()),
-                    order_by_consumed: consumed,
-                    estimated_cost: 10.0,
-                    estimated_rows: 4,
-                    constraint_usages: vec![ConstraintUsage {
-                        omit: true,
-                        argv_index: Some(1),
-                    }],
-                };
+            } else {
+                constraint_usages.push(ConstraintUsage {
+                    omit: false,
+                    argv_index: None,
+                });
             }
         }
 
-        // fallback: full scan
-        log::debug!("No usable constraints found, using full scan");
-        IndexInfo {
-            idx_num: -1,
-            idx_str: None,
-            order_by_consumed: false,
-            estimated_cost: 1000.0,
-            ..Default::default()
+        // this extension wouldn't support order by but for testing purposes,
+        // we will consume it if we find an ASC order by clause on the value column
+        let order_by_consumed = idx_num == 1
+            && _order_by
+                .first()
+                .is_some_and(|order| order.column_index == 2 && !order.desc);
+
+        if idx_num == -1 {
+            log::debug!("No usable constraints found, using full scan");
         }
+
+        Ok(IndexInfo {
+            idx_num,
+            idx_str,
+            order_by_consumed,
+            estimated_cost,
+            estimated_rows,
+            constraint_usages,
+        })
     }
 
     fn insert(&mut self, values: &[Value]) -> Result<i64, Self::Error> {
@@ -312,6 +327,11 @@ impl VfsFile for TestFile {
     fn sync(&self) -> ExtResult<()> {
         log::debug!("syncing file with testing VFS");
         self.file.sync_all().map_err(|_| ResultCode::Error)
+    }
+
+    fn truncate(&self, len: i64) -> ExtResult<()> {
+        log::debug!("truncating file with testing VFS to length: {len}");
+        self.file.set_len(len as u64).map_err(|_| ResultCode::Error)
     }
 
     fn size(&self) -> i64 {

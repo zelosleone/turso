@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use crate::schema::{BTreeTable, Column, Type};
 use crate::translate::optimizer::optimize_select_plan;
-use crate::translate::plan::{Operation, QueryDestination, Search, SelectPlan};
+use crate::translate::plan::{Operation, QueryDestination, Scan, Search, SelectPlan};
 use crate::vdbe::builder::CursorType;
 use crate::{
     bail_parse_error,
@@ -12,7 +12,7 @@ use crate::{
     vdbe::builder::{ProgramBuilder, ProgramBuilderOpts},
     SymbolTable,
 };
-use turso_sqlite3_parser::ast::{Expr, SortOrder, Update};
+use turso_sqlite3_parser::ast::{Expr, Indexed, SortOrder, Update};
 
 use super::emitter::emit_program;
 use super::expr::process_returning_clause;
@@ -72,15 +72,23 @@ pub fn translate_update(
     Ok(program)
 }
 
-pub fn translate_update_with_after(
+pub fn translate_update_for_schema_change(
     schema: &Schema,
     body: &mut Update,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
     connection: &Arc<crate::Connection>,
+    ddl_query: &str,
     after: impl FnOnce(&mut ProgramBuilder),
 ) -> crate::Result<ProgramBuilder> {
     let mut plan = prepare_update_plan(&mut program, schema, body, connection)?;
+
+    if let Plan::Update(plan) = &mut plan {
+        if program.capture_data_changes_mode().has_updates() {
+            plan.cdc_update_alter_statement = Some(ddl_query.to_string());
+        }
+    }
+
     optimize_plan(&mut plan, schema)?;
     // TODO: freestyling these numbers
     let opts = ProgramBuilderOpts {
@@ -100,17 +108,24 @@ pub fn prepare_update_plan(
     connection: &Arc<crate::Connection>,
 ) -> crate::Result<Plan> {
     if body.with.is_some() {
-        bail_parse_error!("WITH clause is not supported");
+        bail_parse_error!("WITH clause is not supported in UPDATE");
     }
     if body.or_conflict.is_some() {
-        bail_parse_error!("ON CONFLICT clause is not supported");
+        bail_parse_error!("ON CONFLICT clause is not supported in UPDATE");
+    }
+    if body
+        .indexed
+        .as_ref()
+        .is_some_and(|i| matches!(i, Indexed::IndexedBy(_)))
+    {
+        bail_parse_error!("INDEXED BY clause is not supported in UPDATE");
     }
     let table_name = &body.tbl_name.name;
     if schema.table_has_indexes(&table_name.to_string()) && !schema.indexes_enabled() {
         // Let's disable altering a table with indices altogether instead of checking column by
         // column to be extra safe.
         bail_parse_error!(
-            "UPDATE table disabled for table with indexes is disabled by default. Run with `--experimental-indexes` to enable this feature."
+            "UPDATE table disabled for table with indexes is disabled. Omit the `--experimental-indexes=false` flag to enable this feature."
         );
     }
     let table = match schema.get_table(table_name.as_str()) {
@@ -138,10 +153,7 @@ pub fn prepare_update_plan(
         },
         identifier: table_name.as_str().to_string(),
         internal_id: program.table_reference_counter.next(),
-        op: Operation::Scan {
-            iter_dir,
-            index: None,
-        },
+        op: build_scan_op(&table, iter_dir),
         join_info: None,
         col_used_mask: ColumnUsedMask::default(),
         database_id: 0,
@@ -156,18 +168,38 @@ pub fn prepare_update_plan(
         .collect();
 
     let mut set_clauses = Vec::with_capacity(body.sets.len());
-    for set in &mut body.sets {
-        let ident = normalize_ident(set.col_names[0].as_str());
-        let Some(col_index) = column_lookup.get(&ident) else {
-            bail_parse_error!("no such column: {}", ident);
-        };
 
+    // Process each SET assignment and map column names to expressions
+    // e.g the statement `SET x = 1, y = 2, z = 3` has 3 set assigments
+    for set in &mut body.sets {
         bind_column_references(&mut set.expr, &mut table_references, None, connection)?;
 
-        if let Some(idx) = set_clauses.iter().position(|(idx, _)| *idx == *col_index) {
-            set_clauses[idx].1 = set.expr.clone();
-        } else {
-            set_clauses.push((*col_index, set.expr.clone()));
+        let values = match &set.expr {
+            Expr::Parenthesized(vals) => vals.clone(),
+            expr => vec![expr.clone()],
+        };
+
+        if set.col_names.len() != values.len() {
+            bail_parse_error!(
+                "{} columns assigned {} values",
+                set.col_names.len(),
+                values.len()
+            );
+        }
+
+        // Map each column to its corresponding expression
+        for (col_name, expr) in set.col_names.iter().zip(values.iter()) {
+            let ident = normalize_ident(col_name.as_str());
+            let col_index = match column_lookup.get(&ident) {
+                Some(idx) => idx,
+                None => bail_parse_error!("no such column: {}", ident),
+            };
+
+            // Update existing entry or add new one
+            match set_clauses.iter_mut().find(|(idx, _)| idx == col_index) {
+                Some((_, existing_expr)) => *existing_expr = expr.clone(),
+                None => set_clauses.push((*col_index, expr.clone())),
+            }
         }
     }
 
@@ -215,10 +247,7 @@ pub fn prepare_update_plan(
             },
             identifier: table_name.as_str().to_string(),
             internal_id,
-            op: Operation::Scan {
-                iter_dir,
-                index: None,
-            },
+            op: build_scan_op(&table, iter_dir),
             join_info: None,
             col_used_mask: ColumnUsedMask::default(),
             database_id: 0,
@@ -347,5 +376,17 @@ pub fn prepare_update_plan(
         contains_constant_false_condition: false,
         indexes_to_update,
         ephemeral_plan,
+        cdc_update_alter_statement: None,
     }))
+}
+
+fn build_scan_op(table: &Table, iter_dir: IterationDirection) -> Operation {
+    match table {
+        Table::BTree(_) => Operation::Scan(Scan::BTreeTable {
+            iter_dir,
+            index: None,
+        }),
+        Table::Virtual(_) => Operation::default_scan_for(table),
+        _ => unreachable!(),
+    }
 }

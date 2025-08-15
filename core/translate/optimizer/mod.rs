@@ -7,14 +7,18 @@ use cost::Cost;
 use join::{compute_best_join_order, BestJoinOrderResult};
 use lift_common_subexpressions::lift_common_subexpressions_from_binary_or_terms;
 use order::{compute_order_target, plan_satisfies_order_target, EliminatesSortBy};
+use turso_ext::{ConstraintInfo, ConstraintUsage};
 use turso_sqlite3_parser::ast::{self, fmt::ToTokens as _, Expr, SortOrder};
 
 use crate::{
     parameters::PARAM_PREFIX,
     schema::{Index, IndexColumn, Schema, Table},
-    translate::{expr::is_double_quoted_identifier, expr::walk_expr_mut, plan::TerminationKey},
+    translate::{
+        expr::walk_expr_mut, optimizer::access_method::AccessMethodParams,
+        optimizer::constraints::TableConstraints, plan::Scan, plan::TerminationKey,
+    },
     types::SeekOp,
-    Result,
+    LimboError, Result,
 };
 
 use super::{
@@ -240,123 +244,213 @@ fn optimize_table_access(
     for (i, join_order_member) in best_join_order.iter().enumerate() {
         let table_idx = join_order_member.original_idx;
         let access_method = &access_methods_arena.borrow()[best_access_methods[i]];
-        if access_method.is_scan() {
-            let try_to_build_ephemeral_index = if schema.indexes_enabled() {
-                let is_leftmost_table = i == 0;
-                let uses_index = access_method.index.is_some();
-                let source_table_does_not_support_search = matches!(
-                    &joined_tables[table_idx].table,
-                    Table::FromClauseSubquery(_) | Table::Virtual(_)
-                );
-                !is_leftmost_table && !uses_index && !source_table_does_not_support_search
-            } else {
-                false
-            };
 
-            if !try_to_build_ephemeral_index {
-                joined_tables[table_idx].op = Operation::Scan {
-                    iter_dir: access_method.iter_dir,
-                    index: access_method.index.clone(),
-                };
-                continue;
+        match &access_method.params {
+            AccessMethodParams::BTreeTable {
+                iter_dir,
+                index,
+                constraint_refs,
+            } => {
+                if constraint_refs.is_empty() {
+                    let try_to_build_ephemeral_index = if schema.indexes_enabled() {
+                        let is_leftmost_table = i == 0;
+                        let uses_index = index.is_some();
+                        !is_leftmost_table && !uses_index
+                    } else {
+                        false
+                    };
+
+                    if !try_to_build_ephemeral_index {
+                        joined_tables[table_idx].op = Operation::Scan(Scan::BTreeTable {
+                            iter_dir: *iter_dir,
+                            index: index.clone(),
+                        });
+                        continue;
+                    }
+                    // This branch means we have a full table scan for a non-outermost table.
+                    // Try to construct an ephemeral index since it's going to be better than a scan.
+                    let table_constraints = constraints_per_table
+                        .iter()
+                        .find(|c| c.table_id == join_order_member.table_id);
+                    let Some(table_constraints) = table_constraints else {
+                        joined_tables[table_idx].op = Operation::Scan(Scan::BTreeTable {
+                            iter_dir: *iter_dir,
+                            index: index.clone(),
+                        });
+                        continue;
+                    };
+                    let temp_constraint_refs = (0..table_constraints.constraints.len())
+                        .map(|i| ConstraintRef {
+                            constraint_vec_pos: i,
+                            index_col_pos: table_constraints.constraints[i].table_col_pos,
+                            sort_order: SortOrder::Asc,
+                        })
+                        .collect::<Vec<_>>();
+                    let usable_constraint_refs = usable_constraints_for_join_order(
+                        &table_constraints.constraints,
+                        &temp_constraint_refs,
+                        &best_join_order[..=i],
+                    );
+                    if usable_constraint_refs.is_empty() {
+                        joined_tables[table_idx].op = Operation::Scan(Scan::BTreeTable {
+                            iter_dir: *iter_dir,
+                            index: index.clone(),
+                        });
+                        continue;
+                    }
+                    let ephemeral_index = ephemeral_index_build(
+                        &joined_tables[table_idx],
+                        &table_constraints.constraints,
+                        usable_constraint_refs,
+                    );
+                    let ephemeral_index = Arc::new(ephemeral_index);
+                    joined_tables[table_idx].op = Operation::Search(Search::Seek {
+                        index: Some(ephemeral_index),
+                        seek_def: build_seek_def_from_constraints(
+                            &table_constraints.constraints,
+                            usable_constraint_refs,
+                            *iter_dir,
+                            where_clause,
+                        )?,
+                    });
+                } else {
+                    for cref in constraint_refs.iter() {
+                        let constraint =
+                            &constraints_per_table[table_idx].constraints[cref.constraint_vec_pos];
+                        assert!(
+                            !where_clause[constraint.where_clause_pos.0].consumed,
+                            "trying to consume a where clause term twice: {:?}",
+                            where_clause[constraint.where_clause_pos.0]
+                        );
+                        where_clause[constraint.where_clause_pos.0].consumed = true;
+                    }
+                    if let Some(index) = &index {
+                        joined_tables[table_idx].op = Operation::Search(Search::Seek {
+                            index: Some(index.clone()),
+                            seek_def: build_seek_def_from_constraints(
+                                &constraints_per_table[table_idx].constraints,
+                                constraint_refs,
+                                *iter_dir,
+                                where_clause,
+                            )?,
+                        });
+                        continue;
+                    }
+                    assert!(
+                        constraint_refs.len() == 1,
+                        "expected exactly one constraint for rowid seek, got {constraint_refs:?}"
+                    );
+                    let constraint = &constraints_per_table[table_idx].constraints
+                        [constraint_refs[0].constraint_vec_pos];
+                    joined_tables[table_idx].op = match constraint.operator {
+                        ast::Operator::Equals => Operation::Search(Search::RowidEq {
+                            cmp_expr: constraint.get_constraining_expr(where_clause),
+                        }),
+                        _ => Operation::Search(Search::Seek {
+                            index: None,
+                            seek_def: build_seek_def_from_constraints(
+                                &constraints_per_table[table_idx].constraints,
+                                constraint_refs,
+                                *iter_dir,
+                                where_clause,
+                            )?,
+                        }),
+                    };
+                }
             }
-            // This branch means we have a full table scan for a non-outermost table.
-            // Try to construct an ephemeral index since it's going to be better than a scan.
-            let table_constraints = constraints_per_table
-                .iter()
-                .find(|c| c.table_id == join_order_member.table_id);
-            let Some(table_constraints) = table_constraints else {
-                joined_tables[table_idx].op = Operation::Scan {
-                    iter_dir: access_method.iter_dir,
-                    index: access_method.index.clone(),
-                };
-                continue;
-            };
-            let temp_constraint_refs = (0..table_constraints.constraints.len())
-                .map(|i| ConstraintRef {
-                    constraint_vec_pos: i,
-                    index_col_pos: table_constraints.constraints[i].table_col_pos,
-                    sort_order: SortOrder::Asc,
-                })
-                .collect::<Vec<_>>();
-            let usable_constraint_refs = usable_constraints_for_join_order(
-                &table_constraints.constraints,
-                &temp_constraint_refs,
-                &best_join_order[..=i],
-            );
-            if usable_constraint_refs.is_empty() {
-                joined_tables[table_idx].op = Operation::Scan {
-                    iter_dir: access_method.iter_dir,
-                    index: access_method.index.clone(),
-                };
-                continue;
-            }
-            let ephemeral_index = ephemeral_index_build(
-                &joined_tables[table_idx],
-                &table_constraints.constraints,
-                usable_constraint_refs,
-            );
-            let ephemeral_index = Arc::new(ephemeral_index);
-            joined_tables[table_idx].op = Operation::Search(Search::Seek {
-                index: Some(ephemeral_index),
-                seek_def: build_seek_def_from_constraints(
-                    &table_constraints.constraints,
-                    usable_constraint_refs,
-                    access_method.iter_dir,
+            AccessMethodParams::VirtualTable {
+                idx_num,
+                idx_str,
+                constraints,
+                constraint_usages,
+            } => {
+                joined_tables[table_idx].op = build_vtab_scan_op(
                     where_clause,
-                )?,
-            });
-        } else {
-            let constraint_refs = access_method.constraint_refs;
-            assert!(!constraint_refs.is_empty());
-            for cref in constraint_refs.iter() {
-                let constraint =
-                    &constraints_per_table[table_idx].constraints[cref.constraint_vec_pos];
-                assert!(
-                    !where_clause[constraint.where_clause_pos.0].consumed.get(),
-                    "trying to consume a where clause term twice: {:?}",
-                    where_clause[constraint.where_clause_pos.0]
-                );
-                where_clause[constraint.where_clause_pos.0]
-                    .consumed
-                    .set(true);
+                    &constraints_per_table[table_idx],
+                    idx_num,
+                    idx_str,
+                    constraints,
+                    constraint_usages,
+                )?;
             }
-            if let Some(index) = &access_method.index {
-                joined_tables[table_idx].op = Operation::Search(Search::Seek {
-                    index: Some(index.clone()),
-                    seek_def: build_seek_def_from_constraints(
-                        &constraints_per_table[table_idx].constraints,
-                        constraint_refs,
-                        access_method.iter_dir,
-                        where_clause,
-                    )?,
-                });
-                continue;
+            AccessMethodParams::Subquery => {
+                joined_tables[table_idx].op = Operation::Scan(Scan::Subquery);
             }
-            assert!(
-                constraint_refs.len() == 1,
-                "expected exactly one constraint for rowid seek, got {constraint_refs:?}"
-            );
-            let constraint = &constraints_per_table[table_idx].constraints
-                [constraint_refs[0].constraint_vec_pos];
-            joined_tables[table_idx].op = match constraint.operator {
-                ast::Operator::Equals => Operation::Search(Search::RowidEq {
-                    cmp_expr: constraint.get_constraining_expr(where_clause),
-                }),
-                _ => Operation::Search(Search::Seek {
-                    index: None,
-                    seek_def: build_seek_def_from_constraints(
-                        &constraints_per_table[table_idx].constraints,
-                        constraint_refs,
-                        access_method.iter_dir,
-                        where_clause,
-                    )?,
-                }),
-            };
         }
     }
 
     Ok(Some(best_join_order))
+}
+
+fn build_vtab_scan_op(
+    where_clause: &mut [WhereTerm],
+    table_constraints: &TableConstraints,
+    idx_num: &i32,
+    idx_str: &Option<String>,
+    vtab_constraints: &[ConstraintInfo],
+    constraint_usages: &[ConstraintUsage],
+) -> Result<Operation> {
+    if constraint_usages.len() != vtab_constraints.len() {
+        return Err(LimboError::ExtensionError(format!(
+            "Constraint usage count mismatch (expected {}, got {})",
+            vtab_constraints.len(),
+            constraint_usages.len()
+        )));
+    }
+
+    let mut constraints = vec![None; constraint_usages.len()];
+    let mut arg_count = 0;
+
+    for (i, vtab_constraint) in vtab_constraints.iter().enumerate() {
+        let usage = constraint_usages[i];
+        let argv_index = match usage.argv_index {
+            Some(idx) if idx >= 1 && (idx as usize) <= constraint_usages.len() => idx,
+            Some(idx) => {
+                return Err(LimboError::ExtensionError(format!(
+                    "argv_index {} is out of valid range [1..{}]",
+                    idx,
+                    constraint_usages.len()
+                )));
+            }
+            None => continue,
+        };
+
+        let zero_based_argv_index = (argv_index - 1) as usize;
+        if constraints[zero_based_argv_index].is_some() {
+            return Err(LimboError::ExtensionError(format!(
+                "duplicate argv_index {argv_index}"
+            )));
+        }
+
+        let constraint = &table_constraints.constraints[vtab_constraint.index];
+        if usage.omit {
+            where_clause[constraint.where_clause_pos.0].consumed = true;
+        }
+        let expr = constraint.get_constraining_expr(where_clause);
+        constraints[zero_based_argv_index] = Some(expr);
+        arg_count += 1;
+    }
+
+    // Verify that used indices form a contiguous sequence starting from 1
+    let constraints = constraints
+        .into_iter()
+        .take(arg_count)
+        .enumerate()
+        .map(|(i, c)| {
+            c.ok_or_else(|| {
+                LimboError::ExtensionError(format!(
+                    "argv_index values must form contiguous sequence starting from 1, missing index {}", 
+                    i + 1
+                ))
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(Operation::Scan(Scan::VirtualTable {
+        idx_num: *idx_num,
+        idx_str: idx_str.clone(),
+        constraints,
+    }))
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -376,7 +470,7 @@ fn eliminate_constant_conditions(
         let predicate = &where_clause[i];
         if predicate.expr.is_always_true()? {
             // true predicates can be removed since they don't affect the result
-            where_clause[i].consumed.set(true);
+            where_clause[i].consumed = true;
             i += 1;
         } else if predicate.expr.is_always_false()? {
             // any false predicate in a list of conjuncts (AND-ed predicates) will make the whole list false,
@@ -387,7 +481,7 @@ fn eliminate_constant_conditions(
             }
             where_clause
                 .iter_mut()
-                .for_each(|term| term.consumed.set(true));
+                .for_each(|term| term.consumed = true);
             return Ok(ConstantConditionEliminationResult::ImpossibleCondition);
         } else {
             i += 1;
@@ -606,7 +700,7 @@ impl Optimizable for ast::Expr {
             Expr::FunctionCallStar { .. } => false,
             Expr::Id(id) => {
                 // If we got here with an id, this has to be double-quotes identifier
-                assert!(is_double_quoted_identifier(id.as_str()));
+                assert!(id.is_double_quoted());
                 true
             }
             Expr::Column { .. } => false,

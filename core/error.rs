@@ -55,12 +55,34 @@ pub enum LimboError {
     IntegerOverflow,
     #[error("Schema is locked for write")]
     SchemaLocked,
+    #[error("Runtime error: database table is locked")]
+    TableLocked,
     #[error("Error: Resource is read-only")]
     ReadOnly,
     #[error("Database is busy")]
     Busy,
     #[error("Conflict: {0}")]
     Conflict(String),
+    #[error("Database schema changed")]
+    SchemaUpdated,
+    #[error(
+        "Database is empty, header does not exist - page 1 should've been allocated before this"
+    )]
+    Page1NotAlloc,
+    #[error("Transaction terminated")]
+    TxTerminated,
+    #[error("Write-write conflict")]
+    WriteWriteConflict,
+    #[error("No such transaction ID: {0}")]
+    NoSuchTransactionID(String),
+    #[error("Null value")]
+    NullValue,
+    #[error("invalid column type")]
+    InvalidColumnType,
+    #[error("Invalid blob size, expected {0}")]
+    InvalidBlobSize(usize),
+    #[error("Planning error: {0}")]
+    PlanningError(String),
 }
 
 #[macro_export]

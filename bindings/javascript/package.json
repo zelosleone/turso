@@ -1,22 +1,22 @@
 {
-  "name": "@tursodatabase/turso",
-  "version": "0.1.3",
+  "name": "@tursodatabase/database",
+  "version": "0.1.4-pre.8",
   "repository": {
     "type": "git",
     "url": "https://github.com/tursodatabase/turso"
   },
   "description": "The Turso database library",
-  "main": "promise.js",
+  "module": "./dist/promise.js",
+  "main": "./dist/promise.js",
+  "type": "module",
   "exports": {
-    ".": "./promise.js",
-    "./sync": "./sync.js"
+    ".": "./dist/promise.js",
+    "./sync": "./dist/sync.js"
   },
   "files": [
     "browser.js",
     "index.js",
-    "promise.js",
-    "sqlite-error.js",
-    "sync.js"
+    "dist/**"
   ],
   "types": "index.d.ts",
   "napi": {
@@ -33,7 +33,8 @@
     "@napi-rs/cli": "^3.0.4",
     "@napi-rs/wasm-runtime": "^1.0.1",
     "ava": "^6.0.1",
-    "better-sqlite3": "^11.9.1"
+    "better-sqlite3": "^11.9.1",
+    "typescript": "^5.9.2"
   },
   "ava": {
     "timeout": "3m"
@@ -43,12 +44,19 @@
   },
   "scripts": {
     "artifacts": "napi artifacts",
-    "build": "napi build --platform --release",
-    "build:debug": "napi build --platform",
-    "prepublishOnly": "napi prepublish -t npm",
-    "test": "ava -s",
+    "build": "npm exec tsc && napi build --platform --release --esm",
+    "build:debug": "npm exec tsc && napi build --platform",
+    "prepublishOnly": "npm exec tsc && napi prepublish -t npm",
+    "test": "true",
     "universal": "napi universalize",
     "version": "napi version"
   },
-  "packageManager": "yarn@4.9.2"
+  "packageManager": "yarn@4.9.2",
+  "imports": {
+    "#entry-point": {
+      "types": "./index.d.ts",
+      "browser": "./browser.js",
+      "node": "./index.js"
+    }
+  }
 }

@@ -43,7 +43,6 @@ Turso aims to be fully compatible with SQLite, with opt-in features not supporte
 * ⛔️ Concurrent access from multiple processes is not supported.
 * ⛔️ Savepoints are not supported.
 * ⛔️ Triggers are not supported.
-* ⛔️ Views are not supported.
 * ⛔️ Vacuum is not supported.
 
 ## SQLite query language
@@ -61,14 +60,14 @@ Turso aims to be fully compatible with SQLite, with opt-in features not supporte
 | CREATE TABLE              | Partial |                                                                                   |
 | CREATE TABLE ... STRICT   | Yes     |                                                                                   |
 | CREATE TRIGGER            | No      |                                                                                   |
-| CREATE VIEW               | No      |                                                                                   |
+| CREATE VIEW               | Yes     |                                                                                   |
 | CREATE VIRTUAL TABLE      | Yes     |                                                                                   |
 | DELETE                    | Yes     |                                                                                   |
 | DETACH DATABASE           | Yes     |                                                                                   |
 | DROP INDEX                | Partial | Disabled by default.                                                              |
 | DROP TABLE                | Yes     |                                                                                   |
 | DROP TRIGGER              | No      |                                                                                   |
-| DROP VIEW                 | No      |                                                                                   |
+| DROP VIEW                 | Yes     |                                                                                   |
 | END TRANSACTION           | Partial | Alias for `COMMIT TRANSACTION`                                                    |
 | EXPLAIN                   | Yes     |                                                                                   |
 | INDEXED BY                | No      |                                                                                   |
@@ -126,7 +125,7 @@ Turso aims to be fully compatible with SQLite, with opt-in features not supporte
 | PRAGMA foreign_key_check         | No         |                                              |
 | PRAGMA foreign_key_list          | No         |                                              |
 | PRAGMA foreign_keys              | No         |                                              |
-| PRAGMA freelist_count            | No         |                                              |
+| PRAGMA freelist_count            | Yes        |                                              |
 | PRAGMA full_column_names         | Not Needed | deprecated in SQLite                         |
 | PRAGMA fullsync                  | No         |                                              |
 | PRAGMA function_list             | No         |                                              |
@@ -140,9 +139,9 @@ Turso aims to be fully compatible with SQLite, with opt-in features not supporte
 | PRAGMA journal_mode              | Yes        |                                              |
 | PRAGMA journal_size_limit        | No         |                                              |
 | PRAGMA legacy_alter_table        | No         |                                              |
-| PRAGMA legacy_file_format         | Yes        |                                              |
+| PRAGMA legacy_file_format        | Yes        |                                              |
 | PRAGMA locking_mode              | No         |                                              |
-| PRAGMA max_page_count            | No         |                                              |
+| PRAGMA max_page_count            | Yes        |                                              |
 | PRAGMA mmap_size                 | No         |                                              |
 | PRAGMA module_list               | No         |                                              |
 | PRAGMA optimize                  | No         |                                              |
@@ -150,7 +149,7 @@ Turso aims to be fully compatible with SQLite, with opt-in features not supporte
 | PRAGMA page_size                 | Yes        |                                              |
 | PRAGMA parser_trace              | No         |                                              |
 | PRAGMA pragma_list               | Yes        |                                              |
-| PRAGMA query_only                | No         |                                              |
+| PRAGMA query_only                | Yes        |                                              |
 | PRAGMA quick_check               | No         |                                              |
 | PRAGMA read_uncommitted          | No         |                                              |
 | PRAGMA recursive_triggers        | No         |                                              |
@@ -265,7 +264,7 @@ Feature support of [sqlite expr syntax](https://www.sqlite.org/lang_expr.html).
 | unhex(X)                     | Yes     |                                                      |
 | unhex(X,Y)                   | Yes     |                                                      |
 | unicode(X)                   | Yes     |                                                      |
-| unlikely(X)                  | No      |                                                      |
+| unlikely(X)                  | Yes     |                                                      |
 | upper(X)                     | Yes     |                                                      |
 | zeroblob(N)                  | Yes     |                                                      |
 
@@ -415,8 +414,8 @@ Modifiers:
 | Opcode         | Status | Comment |
 |----------------|--------|---------|
 | Add            | Yes    |         |
-| AddImm         | No     |         |
-| Affinity       | No     |         |
+| AddImm         | Yes    |         |
+| Affinity       | Yes    |         |
 | AggFinal       | Yes    |         |
 | AggStep        | Yes    |         |
 | AggStep        | Yes    |         |
@@ -427,10 +426,11 @@ Modifiers:
 | BitOr          | Yes    |         |
 | Blob           | Yes    |         |
 | BeginSubrtn    | Yes    |         |
+| Cast           | Yes    |         |
 | Checkpoint     | Yes    |         |
 | Clear          | No     |         |
 | Close          | Yes    |         |
-| CollSeq        | No     |         |
+| CollSeq        | Yes    |         |
 | Column         | Yes    |         |
 | Compare        | Yes    |         |
 | Concat         | Yes    |         |
@@ -473,20 +473,19 @@ Modifiers:
 | Init           | Yes    |         |
 | InitCoroutine  | Yes    |         |
 | Insert         | Yes    |         |
-| InsertInt      | No     |         |
 | Int64          | Yes    |         |
 | Integer        | Yes    |         |
 | IntegrityCk    | Yes    |         |
 | IsNull         | Yes    |         |
 | IsUnique       | No     |         |
-| JournalMode    | No     |         |
+| JournalMode    | Yes    |         |
 | Jump           | Yes    |         |
 | Last           | Yes    |         |
 | Le             | Yes    |         |
 | LoadAnalysis   | No     |         |
 | Lt             | Yes    |         |
 | MakeRecord     | Yes    |         |
-| MaxPgcnt       | No     |         |
+| MaxPgcnt       | Yes    |         |
 | MemMax         | No     |         |
 | Move           | Yes    |         |
 | Multiply       | Yes    |         |
@@ -550,15 +549,10 @@ Modifiers:
 | SorterNext     | Yes    |         |
 | SorterOpen     | Yes    |         |
 | SorterSort     | Yes    |         |
-| String         | No     |         |
+| String         | NotNeeded | SQLite uses String for sized strings and String8 for null-terminated. All our strings are sized |
 | String8        | Yes    |         |
 | Subtract       | Yes    |         |
 | TableLock      | No     |         |
-| ToBlob         | No     |         |
-| ToInt          | No     |         |
-| ToNumeric      | No     |         |
-| ToReal         | No     |         |
-| ToText         | No     |         |
 | Trace          | No     |         |
 | Transaction    | Yes    |         |
 | VBegin         | No     |         |
@@ -572,7 +566,6 @@ Modifiers:
 | VUpdate        | Yes    |         |
 | Vacuum         | No     |         |
 | Variable       | Yes    |         |
-| VerifyCookie   | No     |         |
 | Yield          | Yes    |         |
 | ZeroOrNull     | Yes    |         |
 
@@ -616,8 +609,8 @@ The `regexp` extension is compatible with [sqlean-regexp](https://github.com/nal
 | regexp(pattern, source)                        | Yes    |         |
 | regexp_like(source, pattern)                   | Yes    |         |
 | regexp_substr(source, pattern)                 | Yes    |         |
-| regexp_capture(source, pattern[, n])           | No     |         |
-| regexp_replace(source, pattern, replacement)   | No     |         |
+| regexp_capture(source, pattern[, n])           | Yes    |         |
+| regexp_replace(source, pattern, replacement)   | Yes    |         |
 
 ### Vector
 
@@ -631,6 +624,8 @@ The `vector` extension is compatible with libSQL native vector search.
 | vector_extract(x)                              | Yes    |         |
 | vector_distance_cos(x, y)                      | Yes    |         |
 | vector_distance_l2(x, y)                              | Yes    |Euclidean distance|
+| vector_concat(x, y)                            | Yes    |         |
+| vector_slice(x, start_index, end_index)        | Yes    |         |
 
 ### Time
 
