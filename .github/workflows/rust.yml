@@ -86,5 +86,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - uses: "./.github/shared/install_sqlite"
+      - name: build SQLite test extensions
+        run: cargo build --package limbo_sqlite_test_ext
       - name: Test
         run: SQLITE_EXEC="sqlite3" make test-compat
