@@ -267,7 +267,9 @@ impl<'a> Lexer<'a> {
                             }
                         }
                         None => {
-                            return Err(Error::UnterminatedBlockComment((start, self.offset - start).into()))
+                            return Err(Error::UnterminatedBlockComment(
+                                (start, self.offset - start).into(),
+                            ))
                         }
                         _ => unreachable!(), // We should not reach here
                     }
@@ -362,7 +364,11 @@ impl<'a> Lexer<'a> {
             Some(b'=') => {
                 self.eat_and_assert(|b| b == b'=');
             }
-            _ => return Err(Error::ExpectedEqualsSign((start, self.offset - start).into())),
+            _ => {
+                return Err(Error::ExpectedEqualsSign(
+                    (start, self.offset - start).into(),
+                ))
+            }
         }
 
         Ok(Token {
@@ -411,7 +417,11 @@ impl<'a> Lexer<'a> {
                         _ => break,
                     }
                 }
-                None => return Err(Error::UnterminatedLiteral((start, self.offset - start).into())),
+                None => {
+                    return Err(Error::UnterminatedLiteral(
+                        (start, self.offset - start).into(),
+                    ))
+                }
                 _ => unreachable!(),
             };
         }
@@ -437,9 +447,9 @@ impl<'a> Lexer<'a> {
                             token_type: Some(TokenType::TK_FLOAT),
                         })
                     }
-                    Some(b) if is_identifier_start(b) => {
-                        Err(Error::BadFractionalPart((start, self.offset - start).into()))
-                    }
+                    Some(b) if is_identifier_start(b) => Err(Error::BadFractionalPart(
+                        (start, self.offset - start).into(),
+                    )),
                     _ => Ok(Token {
                         value: &self.input[start..self.offset],
                         token_type: Some(TokenType::TK_FLOAT),
@@ -527,7 +537,9 @@ impl<'a> Lexer<'a> {
                     token_type: Some(TokenType::TK_FLOAT),
                 })
             }
-            Some(b) if is_identifier_start(b) => Err(Error::BadNumber((start, self.offset - start).into())),
+            Some(b) if is_identifier_start(b) => {
+                Err(Error::BadNumber((start, self.offset - start).into()))
+            }
             _ => Ok(Token {
                 value: &self.input[start..self.offset],
                 token_type: Some(TokenType::TK_INTEGER),
@@ -547,7 +559,9 @@ impl<'a> Lexer<'a> {
                     token_type: Some(TokenType::TK_ID),
                 })
             }
-            None => Err(Error::UnterminatedBracket((start, self.offset - start).into())),
+            None => Err(Error::UnterminatedBracket(
+                (start, self.offset - start).into(),
+            )),
             _ => unreachable!(), // We should not reach here
         }
     }
@@ -608,7 +622,9 @@ impl<'a> Lexer<'a> {
                         self.eat_and_assert(|b| b == b'\'');
 
                         if (end_hex - start_hex) % 2 != 0 {
-                            return Err(Error::UnrecognizedToken((start, self.offset - start).into()));
+                            return Err(Error::UnrecognizedToken(
+                                (start, self.offset - start).into(),
+                            ));
                         }
 
                         Ok(Token {
@@ -616,7 +632,9 @@ impl<'a> Lexer<'a> {
                             token_type: Some(TokenType::TK_BLOB),
                         })
                     }
-                    _ => Err(Error::UnterminatedLiteral((start, self.offset - start).into())),
+                    _ => Err(Error::UnterminatedLiteral(
+                        (start, self.offset - start).into(),
+                    )),
                 }
             }
             _ => {
