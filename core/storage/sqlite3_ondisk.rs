@@ -1771,7 +1771,7 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
             while !cached.is_empty() && *cached.last().unwrap() > max_frame {
                 cached.pop();
             }
-            tracing::debug!("remove page {page} from the in-memory WAL index because it was past the last commited frame");
+            tracing::debug!("remove page {page} from the in-memory WAL index because it was written after the last commited frame");
         }
         pages_in_frames.truncate(max_frame as usize);
 
