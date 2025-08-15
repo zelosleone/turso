@@ -28,7 +28,7 @@ pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
                 result.push('%');
                 continue;
             }
-            Some('d') => {
+            Some('d') | Some('i') => {
                 if args_index >= values.len() {
                     return Err(LimboError::InvalidArgument("not enough arguments".into()));
                 }
@@ -152,6 +152,7 @@ mod tests {
                 vec![text("Number: %d"), text("not a number")],
                 text("Number: 0"),
             ),
+            (vec![text("Number: %i"), integer(42)], text("Number: 42")),
         ];
         for (input, output) in test_cases {
             assert_eq!(exec_printf(&input).unwrap(), *output.get_owned_value())
