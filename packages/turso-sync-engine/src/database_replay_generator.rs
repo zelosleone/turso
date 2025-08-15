@@ -119,7 +119,7 @@ impl DatabaseReplayGenerator {
                         pk_column_indices: None,
                         is_ddl_replay: true,
                     };
-                    return Ok(vec![delete]);
+                    Ok(vec![delete])
                 }
                 DatabaseTapeRowChangeType::Insert { after } => {
                     assert!(after.len() == 5);
@@ -135,7 +135,7 @@ impl DatabaseReplayGenerator {
                         pk_column_indices: None,
                         is_ddl_replay: true,
                     };
-                    return Ok(vec![insert]);
+                    Ok(vec![insert])
                 }
                 DatabaseTapeRowChangeType::Update { updates, .. } => {
                     let Some(updates) = updates else {
@@ -157,7 +157,7 @@ impl DatabaseReplayGenerator {
                         pk_column_indices: None,
                         is_ddl_replay: true,
                     };
-                    return Ok(vec![update]);
+                    Ok(vec![update])
                 }
             }
         } else {
