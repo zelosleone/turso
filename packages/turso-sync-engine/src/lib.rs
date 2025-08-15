@@ -7,6 +7,7 @@ pub mod io_operations;
 pub mod protocol_io;
 pub mod types;
 pub mod wal_session;
+pub mod server_proto;
 
 #[cfg(test)]
 pub mod test_context;

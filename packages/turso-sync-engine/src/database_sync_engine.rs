@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use crate::{
     database_sync_operations::{
-        checkpoint_wal_file, connect, connect_untracked, db_bootstrap, reset_wal_file,
-        transfer_logical_changes, transfer_physical_changes, wait_full_body, wal_pull, wal_push,
-        WalPullResult,
+        checkpoint_wal_file, connect, connect_untracked, db_bootstrap, push_logical_changes,
+        reset_wal_file, transfer_logical_changes, transfer_physical_changes, wait_full_body,
+        wal_pull, wal_push, WalPullResult,
     },
     database_tape::DatabaseTape,
     errors::Error,
@@ -213,15 +213,19 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
         // so, we pass 'capture: false' as we don't need to preserve changes made to Synced WAL in turso_cdc
         let synced = self.io.open_tape(&self.synced_path, false)?;
 
-        // mark Synced as dirty as we will start transfer of logical changes there and if we will fail in the middle - we will need to cleanup Synced db
         self.synced_is_dirty = true;
-
         let client_id = &self.meta().client_unique_id;
-        transfer_logical_changes(coro, &self.draft_tape, &synced, client_id, false).await?;
-
-        self.push_synced_to_remote(coro).await?;
+        push_logical_changes(
+            coro,
+            self.protocol.as_ref(),
+            &self.draft_tape,
+            &synced,
+            client_id,
+        )
+        .await?;
 
         self.reset_synced_if_dirty(coro).await?;
+
         Ok(())
     }
 

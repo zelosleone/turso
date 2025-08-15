@@ -21,6 +21,9 @@ pub struct ReplayInfo {
 
 const SQLITE_SCHEMA_TABLE: &str = "sqlite_schema";
 impl DatabaseReplayGenerator {
+    pub fn new(conn: Arc<turso_core::Connection>, opts: DatabaseReplaySessionOpts) -> Self {
+        Self { conn, opts }
+    }
     pub fn replay_values(
         &self,
         info: &ReplayInfo,

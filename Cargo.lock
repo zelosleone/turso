@@ -4000,6 +4000,7 @@ dependencies = [
 name = "turso_sync_engine"
 version = "0.1.4-pre.8"
 dependencies = [
+ "base64",
  "bytes",
  "ctor",
  "futures",
