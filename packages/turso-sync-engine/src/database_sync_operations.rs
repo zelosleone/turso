@@ -12,8 +12,8 @@ use crate::{
     protocol_io::{DataCompletion, DataPollResult, ProtocolIO},
     server_proto::{self, ExecuteStreamReq, Stmt, StreamRequest},
     types::{
-        Coro, DatabaseTapeOperation, DatabaseTapeRowChange, DatabaseTapeRowChangeType, DbSyncInfo,
-        DbSyncStatus, ProtocolCommand,
+        Coro, DatabaseTapeOperation, DatabaseTapeRowChangeType, DbSyncInfo, DbSyncStatus,
+        ProtocolCommand,
     },
     wal_session::WalSession,
     Result,
