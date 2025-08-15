@@ -25,12 +25,17 @@ pub struct SortMetadata {
     pub sort_cursor: usize,
     // register where the sorter data is inserted and later retrieved from
     pub reg_sorter_data: usize,
+    // We need to emit result columns in the order they are present in the SELECT, but they may not be in the same order in the ORDER BY sorter.
+    // This vector holds the indexes of the result columns in the ORDER BY sorter.
+    // This vector must be the same length as the result columns.
+    pub remappings: Vec<OrderByRemapping>,
 }
 
 /// Initialize resources needed for ORDER BY processing
 pub fn init_order_by(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx,
+    result_columns: &[ResultSetColumn],
     order_by: &[(ast::Expr, SortOrder)],
     referenced_tables: &TableReferences,
 ) -> Result<()> {
@@ -38,6 +43,7 @@ pub fn init_order_by(
     t_ctx.meta_sort = Some(SortMetadata {
         sort_cursor,
         reg_sorter_data: program.alloc_register(),
+        remappings: order_by_deduplicate_result_columns(order_by, result_columns),
     });
 
     /*
@@ -85,21 +91,17 @@ pub fn emit_order_by(
     let sort_loop_start_label = program.allocate_label();
     let sort_loop_next_label = program.allocate_label();
     let sort_loop_end_label = program.allocate_label();
-
-    let sorter_column_count = order_by.len() + result_columns.len()
-        - t_ctx
-            .result_columns_to_skip_in_orderby_sorter
-            .as_ref()
-            .map(|v| v.len())
-            .unwrap_or(0);
+    let SortMetadata {
+        sort_cursor,
+        reg_sorter_data,
+        ref remappings,
+    } = *t_ctx.meta_sort.as_ref().unwrap();
+    let sorter_column_count =
+        order_by.len() + remappings.iter().filter(|r| !r.deduplicated).count();
 
     let pseudo_cursor = program.alloc_cursor_id(CursorType::Pseudo(PseudoCursorType {
         column_count: sorter_column_count,
     }));
-    let SortMetadata {
-        sort_cursor,
-        reg_sorter_data,
-    } = *t_ctx.meta_sort.as_mut().unwrap();
 
     program.emit_insn(Insn::OpenPseudo {
         cursor_id: pseudo_cursor,
@@ -122,16 +124,16 @@ pub fn emit_order_by(
     });
 
     // We emit the columns in SELECT order, not sorter order (sorter always has the sort keys first).
-    // This is tracked in m.result_column_indexes_in_orderby_sorter.
+    // This is tracked in sort_metadata.remappings.
     let cursor_id = pseudo_cursor;
     let start_reg = t_ctx.reg_result_cols_start.unwrap();
     for i in 0..result_columns.len() {
         let reg = start_reg + i;
-        program.emit_column(
-            cursor_id,
-            t_ctx.result_column_indexes_in_orderby_sorter[i],
-            reg,
-        );
+        let column_idx = remappings
+            .get(i)
+            .expect("remapping must exist for all result columns")
+            .orderby_sorter_idx;
+        program.emit_column(cursor_id, column_idx, reg);
     }
 
     emit_result_row_and_limit(
@@ -157,18 +159,16 @@ pub fn order_by_sorter_insert(
     program: &mut ProgramBuilder,
     resolver: &Resolver,
     sort_metadata: &SortMetadata,
-    res_col_indexes_in_orderby_sorter: &mut Vec<usize>,
     plan: &SelectPlan,
 ) -> Result<()> {
     let order_by = plan.order_by.as_ref().unwrap();
     let order_by_len = order_by.len();
     let result_columns = &plan.result_columns;
-    // If any result columns can be skipped due to being an exact duplicate of a sort key, we need to know which ones and their new index in the ORDER BY sorter.
-    let result_columns_to_skip = order_by_deduplicate_result_columns(order_by, result_columns);
-    let result_columns_to_skip_len = result_columns_to_skip
-        .as_ref()
-        .map(|v| v.len())
-        .unwrap_or(0);
+    let result_columns_to_skip_len = sort_metadata
+        .remappings
+        .iter()
+        .filter(|r| r.deduplicated)
+        .count();
 
     // The ORDER BY sorter has the sort keys first, then the result columns.
     let orderby_sorter_column_count =
@@ -185,16 +185,15 @@ pub fn order_by_sorter_insert(
         )?;
     }
     let mut cur_reg = start_reg + order_by_len;
-    let mut cur_idx_in_orderby_sorter = order_by_len;
-    let mut translated_result_col_count = 0;
     for (i, rc) in result_columns.iter().enumerate() {
-        if let Some(ref v) = result_columns_to_skip {
-            let found = v.iter().find(|(skipped_idx, _)| *skipped_idx == i);
-            // If the result column is in the list of columns to skip, we need to know its new index in the ORDER BY sorter.
-            if let Some((_, result_column_idx)) = found {
-                res_col_indexes_in_orderby_sorter.insert(i, *result_column_idx);
-                continue;
-            }
+        // If the result column is an exact duplicate of a sort key, we skip it.
+        if sort_metadata
+            .remappings
+            .get(i)
+            .expect("remapping must exist for all result columns")
+            .deduplicated
+        {
+            continue;
         }
         translate_expr(
             program,
@@ -203,22 +202,77 @@ pub fn order_by_sorter_insert(
             cur_reg,
             resolver,
         )?;
-        translated_result_col_count += 1;
-        res_col_indexes_in_orderby_sorter.insert(i, cur_idx_in_orderby_sorter);
-        cur_idx_in_orderby_sorter += 1;
         cur_reg += 1;
     }
 
     // Handle SELECT DISTINCT deduplication
     if let Distinctness::Distinct { ctx } = &plan.distinctness {
         let distinct_ctx = ctx.as_ref().expect("distinct context must exist");
-        let num_regs = order_by_len + translated_result_col_count;
-        distinct_ctx.emit_deduplication_insns(program, num_regs, start_reg);
+
+        // For distinctness checking with Insn::Found, we need a contiguous run of registers containing all the result columns.
+        // The emitted columns are in the ORDER BY sorter order, which may be different from the SELECT order, and obviously the
+        // ORDER BY clause may not have all the result columns.
+        // Hence, we need to allocate new registers and Copy from the existing ones to make a contiguous run of registers.
+        let mut needs_reordering = false;
+
+        // Check if result columns in sorter are in SELECT order
+        let mut prev = None;
+        for (select_idx, _rc) in result_columns.iter().enumerate() {
+            let sorter_idx = sort_metadata
+                .remappings
+                .get(select_idx)
+                .expect("remapping must exist for all result columns")
+                .orderby_sorter_idx;
+
+            if prev.is_some_and(|p| sorter_idx != p + 1) {
+                needs_reordering = true;
+                break;
+            }
+            prev = Some(sorter_idx);
+        }
+
+        if needs_reordering {
+            // Allocate registers for reordered result columns.
+            // TODO: it may be possible to optimize this to minimize the number of Insn::Copy we do, but for now
+            // we will just allocate a new reg for every result column.
+            let reordered_start_reg = program.alloc_registers(result_columns.len());
+
+            for (select_idx, _rc) in result_columns.iter().enumerate() {
+                let src_reg = sort_metadata
+                    .remappings
+                    .get(select_idx)
+                    .map(|r| start_reg + r.orderby_sorter_idx)
+                    .expect("remapping must exist for all result columns");
+
+                let dst_reg = reordered_start_reg + select_idx;
+
+                program.emit_insn(Insn::Copy {
+                    src_reg,
+                    dst_reg,
+                    extra_amount: 0,
+                });
+            }
+
+            distinct_ctx.emit_deduplication_insns(
+                program,
+                result_columns.len(),
+                reordered_start_reg,
+            );
+        } else {
+            // Result columns are already in SELECT order, use them directly
+            let start_reg = sort_metadata
+                .remappings
+                .first()
+                .map(|r| start_reg + r.orderby_sorter_idx)
+                .expect("remapping must exist for all result columns");
+            distinct_ctx.emit_deduplication_insns(program, result_columns.len(), start_reg);
+        }
     }
 
     let SortMetadata {
         sort_cursor,
         reg_sorter_data,
+        ..
     } = sort_metadata;
 
     sorter_insert(
@@ -252,6 +306,16 @@ pub fn sorter_insert(
     });
 }
 
+#[derive(Debug)]
+/// A mapping between a result column and its index in the ORDER BY sorter.
+/// ORDER BY columns are emitted first, then the result columns.
+/// If a result column is an exact duplicate of a sort key, we skip it.
+/// If we skip a result column, we need to keep track which ORDER BY column it matches.
+pub struct OrderByRemapping {
+    pub orderby_sorter_idx: usize,
+    pub deduplicated: bool,
+}
+
 /// In case any of the ORDER BY sort keys are exactly equal to a result column, we can skip emitting that result column.
 /// If we skip a result column, we need to keep track what index in the ORDER BY sorter the result columns have,
 /// because the result columns should be emitted in the SELECT clause order, not the ORDER BY clause order.
@@ -260,19 +324,27 @@ pub fn sorter_insert(
 pub fn order_by_deduplicate_result_columns(
     order_by: &[(ast::Expr, SortOrder)],
     result_columns: &[ResultSetColumn],
-) -> Option<Vec<(usize, usize)>> {
-    let mut result_column_remapping: Option<Vec<(usize, usize)>> = None;
+) -> Vec<OrderByRemapping> {
+    let mut result_column_remapping: Vec<OrderByRemapping> = Vec::new();
+    let mut independent_order_by_cols_on_the_left = order_by.len();
+
     for (i, rc) in result_columns.iter().enumerate() {
         let found = order_by
             .iter()
             .enumerate()
             .find(|(_, (expr, _))| exprs_are_equivalent(expr, &rc.expr));
         if let Some((j, _)) = found {
-            if let Some(ref mut v) = result_column_remapping {
-                v.push((i, j));
-            } else {
-                result_column_remapping = Some(vec![(i, j)]);
-            }
+            result_column_remapping.push(OrderByRemapping {
+                orderby_sorter_idx: j,
+                deduplicated: true,
+            });
+            independent_order_by_cols_on_the_left =
+                independent_order_by_cols_on_the_left.saturating_sub(1);
+        } else {
+            result_column_remapping.push(OrderByRemapping {
+                orderby_sorter_idx: i + independent_order_by_cols_on_the_left,
+                deduplicated: false,
+            });
         }
     }
 

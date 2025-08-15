@@ -123,7 +123,6 @@ fn emit_compound_select(
         schema,
         syms,
         right_most.table_references.joined_tables().len(),
-        right_most.result_columns.len(),
     );
     right_most_ctx.reg_result_cols_start = reg_result_cols_start;
     match left.pop() {

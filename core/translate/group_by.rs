@@ -843,7 +843,6 @@ pub fn group_by_emit_row_phase<'a>(
                     .meta_sort
                     .as_ref()
                     .expect("sort metadata must exist for ORDER BY"),
-                &mut t_ctx.result_column_indexes_in_orderby_sorter,
                 plan,
             )?;
         }

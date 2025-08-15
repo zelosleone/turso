@@ -1721,6 +1721,72 @@ mod tests {
     }
 
     #[test]
+    pub fn fuzz_distinct() {
+        let db = TempDatabase::new_empty(true);
+        let limbo_conn = db.connect_limbo();
+        let sqlite_conn = rusqlite::Connection::open_in_memory().unwrap();
+
+        let (mut rng, seed) = rng_from_time_or_env();
+        tracing::info!("fuzz_distinct seed: {}", seed);
+
+        let columns = ["a", "b", "c", "d", "e"];
+
+        // Create table with 3 integer columns
+        let create_table = format!("CREATE TABLE t ({})", columns.join(", "));
+        limbo_exec_rows(&db, &limbo_conn, &create_table);
+        sqlite_exec_rows(&sqlite_conn, &create_table);
+
+        // Insert some random data
+        for _ in 0..1000 {
+            let values = (0..columns.len())
+                .map(|_| rng.random_range(1..3)) // intentionally narrow range
+                .collect::<Vec<_>>();
+            let query = format!(
+                "INSERT INTO t VALUES ({})",
+                values
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            limbo_exec_rows(&db, &limbo_conn, &query);
+            sqlite_exec_rows(&sqlite_conn, &query);
+        }
+
+        // Test different DISTINCT + ORDER BY combinations
+        for _ in 0..300 {
+            // Randomly select columns for DISTINCT
+            let num_distinct_cols = rng.random_range(1..=columns.len());
+            let mut available_cols = columns.to_vec();
+            let mut distinct_cols = Vec::with_capacity(num_distinct_cols);
+
+            for _ in 0..num_distinct_cols {
+                let idx = rng.random_range(0..available_cols.len());
+                distinct_cols.push(available_cols.remove(idx));
+            }
+            let distinct_cols = distinct_cols.join(", ");
+
+            // Randomly select columns for ORDER BY
+            let num_order_cols = rng.random_range(1..=columns.len());
+            let mut available_cols = columns.to_vec();
+            let mut order_cols = Vec::with_capacity(num_order_cols);
+
+            for _ in 0..num_order_cols {
+                let idx = rng.random_range(0..available_cols.len());
+                order_cols.push(available_cols.remove(idx));
+            }
+            let order_cols = order_cols.join(", ");
+
+            let query = format!("SELECT DISTINCT {distinct_cols} FROM t ORDER BY {order_cols}");
+
+            let limbo = limbo_exec_rows(&db, &limbo_conn, &query);
+            let sqlite = sqlite_exec_rows(&sqlite_conn, &query);
+
+            assert_eq!(limbo, sqlite, "seed: {seed}, query: {query}");
+        }
+    }
+
+    #[test]
     #[ignore]
     pub fn fuzz_long_create_table_drop_table_alter_table() {
         let db = TempDatabase::new_empty(true);

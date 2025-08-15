@@ -132,12 +132,6 @@ pub struct TranslateCtx<'a> {
     /// mapping between table loop index and associated metadata (for left joins only)
     /// this metadata exists for the right table in a given left join
     pub meta_left_joins: Vec<Option<LeftJoinMetadata>>,
-    // We need to emit result columns in the order they are present in the SELECT, but they may not be in the same order in the ORDER BY sorter.
-    // This vector holds the indexes of the result columns in the ORDER BY sorter.
-    pub result_column_indexes_in_orderby_sorter: Vec<usize>,
-    // We might skip adding a SELECT result column into the ORDER BY sorter if it is an exact match in the ORDER BY keys.
-    // This vector holds the indexes of the result columns that we need to skip.
-    pub result_columns_to_skip_in_orderby_sorter: Option<Vec<usize>>,
     pub resolver: Resolver<'a>,
     /// A list of expressions that are not aggregates, along with a flag indicating
     /// whether the expression should be included in the output for each group.
@@ -160,7 +154,6 @@ impl<'a> TranslateCtx<'a> {
         schema: &'a Schema,
         syms: &'a SymbolTable,
         table_count: usize,
-        result_column_count: usize,
     ) -> Self {
         TranslateCtx {
             labels_main_loop: (0..table_count).map(|_| LoopLabels::new(program)).collect(),
@@ -174,8 +167,6 @@ impl<'a> TranslateCtx<'a> {
             meta_group_by: None,
             meta_left_joins: (0..table_count).map(|_| None).collect(),
             meta_sort: None,
-            result_column_indexes_in_orderby_sorter: (0..result_column_count).collect(),
-            result_columns_to_skip_in_orderby_sorter: None,
             resolver: Resolver::new(schema, syms),
             non_aggregate_expressions: Vec::new(),
             cdc_cursor_id: None,
@@ -233,7 +224,6 @@ fn emit_program_for_select(
         schema,
         syms,
         plan.table_references.joined_tables().len(),
-        plan.result_columns.len(),
     );
 
     // Trivial exit on LIMIT 0
@@ -298,7 +288,13 @@ pub fn emit_query<'a>(
 
     // Initialize cursors and other resources needed for query execution
     if let Some(ref mut order_by) = plan.order_by {
-        init_order_by(program, t_ctx, order_by, &plan.table_references)?;
+        init_order_by(
+            program,
+            t_ctx,
+            &plan.result_columns,
+            order_by,
+            &plan.table_references,
+        )?;
     }
 
     if let Some(ref group_by) = plan.group_by {
@@ -404,7 +400,6 @@ fn emit_program_for_delete(
         schema,
         syms,
         plan.table_references.joined_tables().len(),
-        plan.result_columns.len(),
     );
 
     // exit early if LIMIT 0
@@ -661,7 +656,6 @@ fn emit_program_for_update(
         schema,
         syms,
         plan.table_references.joined_tables().len(),
-        plan.returning.as_ref().map_or(0, |r| r.len()),
     );
 
     // Exit on LIMIT 0
