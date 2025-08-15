@@ -1758,7 +1758,23 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
             }
         }
 
-        wfs_data.last_checksum = cumulative_checksum;
+        let max_frame = wfs_data.max_frame.load(Ordering::SeqCst);
+
+        // cleanup in-memory index from tail frames which was written after the last commited frame
+        let mut pages_in_frames = wfs_data.pages_in_frames.lock();
+        let mut frame_cache = wfs_data.frame_cache.lock();
+        for i in max_frame as usize..pages_in_frames.len() {
+            let page = pages_in_frames[i];
+            let Some(cached) = frame_cache.get_mut(&page) else {
+                panic!("page from pages_in_frames must be in the frame_cache");
+            };
+            while !cached.is_empty() && *cached.last().unwrap() > max_frame {
+                cached.pop();
+            }
+            tracing::debug!("remove page {page} from the in-memory WAL index because it was written after the last commited frame");
+        }
+        pages_in_frames.truncate(max_frame as usize);
+
         wfs_data.nbackfills.store(0, Ordering::SeqCst);
         wfs_data.loaded.store(true, Ordering::SeqCst);
     });

@@ -94,6 +94,8 @@ struct QueryStatistics {
 impl Limbo {
     pub fn new() -> anyhow::Result<(Self, WorkerGuard)> {
         let opts = Opts::parse();
+        let guard = Self::init_tracing(&opts)?;
+
         let db_file = opts
             .database
             .as_ref()
@@ -155,7 +157,6 @@ impl Limbo {
             rl: None,
             config: Some(config),
         };
-        let guard = app.init_tracing()?;
         app.first_run(sql, quiet)?;
         Ok((app, guard))
     }
@@ -806,24 +807,23 @@ impl Limbo {
         Ok(())
     }
 
-    pub fn init_tracing(&mut self) -> Result<WorkerGuard, std::io::Error> {
-        let ((non_blocking, guard), should_emit_ansi) =
-            if let Some(file) = &self.opts.tracing_output {
-                (
-                    tracing_appender::non_blocking(
-                        std::fs::File::options()
-                            .append(true)
-                            .create(true)
-                            .open(file)?,
-                    ),
-                    false,
-                )
-            } else {
-                (
-                    tracing_appender::non_blocking(std::io::stderr()),
-                    IsTerminal::is_terminal(&std::io::stderr()),
-                )
-            };
+    pub fn init_tracing(opts: &Opts) -> Result<WorkerGuard, std::io::Error> {
+        let ((non_blocking, guard), should_emit_ansi) = if let Some(file) = &opts.tracing_output {
+            (
+                tracing_appender::non_blocking(
+                    std::fs::File::options()
+                        .append(true)
+                        .create(true)
+                        .open(file)?,
+                ),
+                false,
+            )
+        } else {
+            (
+                tracing_appender::non_blocking(std::io::stderr()),
+                IsTerminal::is_terminal(&std::io::stderr()),
+            )
+        };
         // Disable rustyline traces
         if let Err(e) = tracing_subscriber::registry()
             .with(
