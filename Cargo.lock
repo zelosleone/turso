@@ -3950,6 +3950,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "turso_parser"
+version = "0.1.4-pre.8"
+dependencies = [
+ "bitflags 2.9.0",
+ "criterion",
+ "fallible-iterator",
+ "miette",
+ "pprof",
+ "serde",
+ "strum",
+ "strum_macros",
+ "turso_sqlite3_parser",
+]
+
+[[package]]
 name = "turso_sqlite3"
 version = "0.1.4-pre.8"
 dependencies = [
