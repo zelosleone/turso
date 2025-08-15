@@ -5623,6 +5623,154 @@ mod tests {
             ),
             // parse expr
             (
+                b"SELECT 1 NOT NULL AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Binary (
+                                    Box::new(Expr::NotNull(
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    )),
+                                    Operator::And,
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                )),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 IS 1 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                select: OneSelect::Select {
+                    distinctness: None,
+                    columns: vec![ResultColumn::Expr(
+                        Box::new(Expr::Binary (
+                            Box::new(Expr::Binary (
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                Operator::Is,
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned())))
+                            )),
+                            Operator::And,
+                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                        )),
+                        None,
+                    )],
+                    from: None,
+                    where_clause: None,
+                    group_by: None,
+                    window_clause: vec![],
+                },
+                compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 IS NOT 1 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                select: OneSelect::Select {
+                    distinctness: None,
+                    columns: vec![ResultColumn::Expr(
+                        Box::new(Expr::Binary (
+                            Box::new(Expr::Binary (
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                Operator::IsNot,
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned())))
+                            )),
+                            Operator::And,
+                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                        )),
+                        None,
+                    )],
+                    from: None,
+                    where_clause: None,
+                    group_by: None,
+                    window_clause: vec![],
+                },
+                compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 IS NOT DISTINCT FROM 1 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                select: OneSelect::Select {
+                    distinctness: None,
+                    columns: vec![ResultColumn::Expr(
+                        Box::new(Expr::Binary (
+                            Box::new(Expr::Binary (
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                Operator::Is,
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned())))
+                            )),
+                            Operator::And,
+                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                        )),
+                        None,
+                    )],
+                    from: None,
+                    where_clause: None,
+                    group_by: None,
+                    window_clause: vec![],
+                },
+                compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT 1 IS DISTINCT FROM 1 AND 1".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                select: OneSelect::Select {
+                    distinctness: None,
+                    columns: vec![ResultColumn::Expr(
+                        Box::new(Expr::Binary (
+                            Box::new(Expr::Binary (
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                Operator::IsNot,
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned())))
+                            )),
+                            Operator::And,
+                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                        )),
+                        None,
+                    )],
+                    from: None,
+                    where_clause: None,
+                    group_by: None,
+                    window_clause: vec![],
+                },
+                compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
                 b"SELECT 1 + 2 * 3".as_slice(),
                 vec![Cmd::Stmt(Stmt::Select(Select {
                     with: None,
