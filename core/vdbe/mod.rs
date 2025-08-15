@@ -365,7 +365,7 @@ impl ProgramState {
 }
 
 impl Register {
-    pub fn get_owned_value(&self) -> &Value {
+    pub fn get_value(&self) -> &Value {
         match self {
             Register::Value(v) => v,
             Register::Record(r) => {
@@ -631,7 +631,7 @@ pub fn registers_to_ref_values(registers: &[Register]) -> Vec<RefValue> {
     registers
         .iter()
         .map(|reg| {
-            let value = reg.get_owned_value();
+            let value = reg.get_value();
             match value {
                 Value::Null => RefValue::Null,
                 Value::Integer(i) => RefValue::Integer(*i),
@@ -795,7 +795,7 @@ impl Row {
     pub fn get<'a, T: FromValueRow<'a> + 'a>(&'a self, idx: usize) -> Result<T> {
         let value = unsafe { self.values.add(idx).as_ref().unwrap() };
         let value = match value {
-            Register::Value(owned_value) => owned_value,
+            Register::Value(value) => value,
             _ => unreachable!("a row should be formed of values only"),
         };
         T::from_value(value)
@@ -804,7 +804,7 @@ impl Row {
     pub fn get_value(&self, idx: usize) -> &Value {
         let value = unsafe { self.values.add(idx).as_ref().unwrap() };
         match value {
-            Register::Value(owned_value) => owned_value,
+            Register::Value(value) => value,
             _ => unreachable!("a row should be formed of values only"),
         }
     }
@@ -813,7 +813,7 @@ impl Row {
         let values = unsafe { std::slice::from_raw_parts(self.values, self.count) };
         // This should be ownedvalues
         // TODO: add check for this
-        values.iter().map(|v| v.get_owned_value())
+        values.iter().map(|v| v.get_value())
     }
 
     pub fn len(&self) -> usize {

@@ -84,7 +84,7 @@ impl Cursor {
                 let obj = params.into_bound(py);
 
                 for (i, elem) in obj.iter().enumerate() {
-                    let value = py_to_owned_value(&elem)?;
+                    let value = py_to_db_value(&elem)?;
                     stmt.borrow_mut()
                         .bind_at(NonZeroUsize::new(i + 1).unwrap(), value);
                 }
@@ -343,8 +343,8 @@ fn row_to_py(py: Python, row: &turso_core::Row) -> Result<PyObject> {
         .into())
 }
 
-/// Converts a Python object to a Limbo Value
-fn py_to_owned_value(obj: &Bound<PyAny>) -> Result<turso_core::Value> {
+/// Converts a Python object to a Turso Value
+fn py_to_db_value(obj: &Bound<PyAny>) -> Result<turso_core::Value> {
     if obj.is_none() {
         Ok(Value::Null)
     } else if let Ok(integer) = obj.extract::<i64>() {

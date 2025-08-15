@@ -49,7 +49,7 @@ pub fn vector_extract(args: &[Register]) -> Result<Value> {
         ));
     }
 
-    let blob = match &args[0].get_owned_value() {
+    let blob = match &args[0].get_value() {
         Value::Blob(b) => b,
         _ => {
             return Err(LimboError::ConversionError(
@@ -138,12 +138,12 @@ pub fn vector_slice(args: &[Register]) -> Result<Value> {
     let vector = parse_vector(&args[0], None)?;
 
     let start_index = args[1]
-        .get_owned_value()
+        .get_value()
         .as_int()
         .ok_or_else(|| LimboError::InvalidArgument("start index must be an integer".into()))?;
 
     let end_index = args[2]
-        .get_owned_value()
+        .get_value()
         .as_int()
         .ok_or_else(|| LimboError::InvalidArgument("end_index must be an integer".into()))?;
 

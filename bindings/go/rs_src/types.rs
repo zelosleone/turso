@@ -174,7 +174,7 @@ impl LimboValue {
         Box::into_raw(Box::new(self)) as *const c_void
     }
 
-    pub fn from_owned_value(value: &turso_core::Value) -> Self {
+    pub fn from_db_value(value: &turso_core::Value) -> Self {
         match value {
             turso_core::Value::Integer(i) => {
                 LimboValue::new(ValueType::Integer, ValueUnion::from_int(*i))

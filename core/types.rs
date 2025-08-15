@@ -1110,7 +1110,7 @@ impl ImmutableRecord {
         registers: impl IntoIterator<Item = &'a Register, IntoIter = I>,
         len: usize,
     ) -> Self {
-        Self::from_values(registers.into_iter().map(|x| x.get_owned_value()), len)
+        Self::from_values(registers.into_iter().map(|x| x.get_value()), len)
     }
 
     pub fn from_values<'a>(

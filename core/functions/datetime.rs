@@ -27,7 +27,7 @@ pub fn exec_strftime(values: &[Register]) -> Value {
         return Value::Null;
     }
 
-    let value = &values[0].get_owned_value();
+    let value = &values[0].get_value();
     let format_str = if matches!(value, Value::Text(_) | Value::Integer(_) | Value::Float(_)) {
         format!("{value}")
     } else {
@@ -51,7 +51,7 @@ fn exec_datetime(values: &[Register], output_type: DateTimeOutput) -> Value {
         let now = parse_naive_date_time(&Value::build_text("now")).unwrap();
         return format_dt(now, output_type, false);
     }
-    if let Some(mut dt) = parse_naive_date_time(values[0].get_owned_value()) {
+    if let Some(mut dt) = parse_naive_date_time(values[0].get_value()) {
         // if successful, treat subsequent entries as modifiers
         modify_dt(&mut dt, &values[1..], output_type)
     } else {
@@ -65,7 +65,7 @@ fn modify_dt(dt: &mut NaiveDateTime, mods: &[Register], output_type: DateTimeOut
     let mut subsec_requested = false;
 
     for modifier in mods {
-        if let Value::Text(ref text_rc) = modifier.get_owned_value() {
+        if let Value::Text(ref text_rc) = modifier.get_value() {
             // TODO: to prevent double conversion and properly support 'utc'/'localtime', we also
             // need to keep track of the current timezone and apply it to the modifier.
             match apply_modifier(dt, text_rc.as_str()) {
@@ -647,8 +647,8 @@ pub fn exec_timediff(values: &[Register]) -> Value {
         return Value::Null;
     }
 
-    let start = parse_naive_date_time(values[0].get_owned_value());
-    let end = parse_naive_date_time(values[1].get_owned_value());
+    let start = parse_naive_date_time(values[0].get_value());
+    let end = parse_naive_date_time(values[1].get_value());
 
     match (start, end) {
         (Some(start), Some(end)) => {
@@ -1296,7 +1296,7 @@ mod tests {
             &[text("2023-06-15 12:30:45"), text("-1 day")],
             DateTimeOutput::DateTime,
         );
-        assert_eq!(result, *text(&expected).get_owned_value());
+        assert_eq!(result, *text(&expected).get_value());
     }
 
     #[test]
@@ -1311,7 +1311,7 @@ mod tests {
             ],
             DateTimeOutput::DateTime,
         );
-        assert_eq!(result, *text(&expected).get_owned_value());
+        assert_eq!(result, *text(&expected).get_value());
     }
 
     #[test]
@@ -1338,7 +1338,7 @@ mod tests {
             ],
             DateTimeOutput::DateTime,
         );
-        assert_eq!(result, *text(&expected).get_owned_value());
+        assert_eq!(result, *text(&expected).get_value());
     }
 
     #[test]
@@ -1357,7 +1357,7 @@ mod tests {
             ],
             DateTimeOutput::DateTime,
         );
-        assert_eq!(result, *text(&expected).get_owned_value());
+        assert_eq!(result, *text(&expected).get_value());
     }
 
     #[test]
@@ -1377,7 +1377,7 @@ mod tests {
             ],
             DateTimeOutput::DateTime,
         );
-        assert_eq!(result, *text(&expected).get_owned_value());
+        assert_eq!(result, *text(&expected).get_value());
     }
 
     #[test]
@@ -1395,7 +1395,7 @@ mod tests {
                     .format("%Y-%m-%d %H:%M:%S")
                     .to_string()
             )
-            .get_owned_value()
+            .get_value()
         );
         // TODO: utc modifier assumes time given is not already utc
         // add test when fixed in the future
@@ -1433,7 +1433,7 @@ mod tests {
             .unwrap();
         let expected = format(max);
         let result = exec_datetime(&[text("9999-12-31 23:59:59")], DateTimeOutput::DateTime);
-        assert_eq!(result, *text(&expected).get_owned_value());
+        assert_eq!(result, *text(&expected).get_value());
     }
 
     // leap second
@@ -1445,7 +1445,7 @@ mod tests {
             .unwrap();
         let expected = String::new(); // SQLite ignores leap seconds
         let result = exec_datetime(&[text(&leap_second.to_string())], DateTimeOutput::DateTime);
-        assert_eq!(result, *text(&expected).get_owned_value());
+        assert_eq!(result, *text(&expected).get_value());
     }
 
     #[test]
