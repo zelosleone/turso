@@ -2071,7 +2071,6 @@ pub fn op_transaction(
             match pager.begin_write_tx()? {
                 IOResult::Done(r) => {
                     if let LimboResult::Busy = r {
-                        tracing::error!("connection is busy");
                         pager.end_read_tx()?;
                         conn.transaction_state.replace(TransactionState::None);
                         conn.auto_commit.replace(true);
