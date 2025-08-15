@@ -177,8 +177,6 @@ impl ArbitraryFrom<&SimulatorEnv> for SelectFree {
 
 impl ArbitraryFrom<&SimulatorEnv> for Select {
     fn arbitrary_from<R: Rng>(rng: &mut R, env: &SimulatorEnv) -> Self {
-        let table = pick(&env.tables, rng);
-
         // Generate a number of selects based on the query size
         // If experimental indexes are enabled, we can have selects with compounds
         // Otherwise, we just have a single select with no compounds
@@ -196,11 +194,7 @@ impl ArbitraryFrom<&SimulatorEnv> for Select {
         let first = SelectInner::arbitrary_from(rng, env);
 
         let rest: Vec<SelectInner> = (0..num_compound_selects)
-            .map(|_| {
-                let mut select = first.clone();
-                select.where_clause = Predicate::arbitrary_from(rng, table);
-                select
-            })
+            .map(|_| SelectInner::arbitrary_from(rng, env))
             .collect();
 
         Self {

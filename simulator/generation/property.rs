@@ -71,6 +71,17 @@ pub(crate) enum Property {
         update: Update,
         select: Select,
     },
+    /// TableHasExpectedContent is a property in which the table
+    /// must have the expected content, i.e. all the insertions and
+    /// updates and deletions should have been persisted in the way
+    /// we think they were.
+    /// The execution of the property is as follows
+    ///     SELECT * FROM <t>
+    ///     ASSERT <expected_content>
+    TableHasExpectedContent {
+        table: String,
+        expected_content: Vec<Vec<SimValue>>,
+    },
     /// Double Create Failure is a property in which creating
     /// the same table twice leads to an error.
     /// The execution of the property is as follows
@@ -196,6 +207,7 @@ impl Property {
         match self {
             Property::InsertValuesSelect { .. } => "Insert-Values-Select",
             Property::ReadYourUpdatesBack { .. } => "Read-Your-Updates-Back",
+            Property::TableHasExpectedContent { .. } => "Table-Has-Expected-Content",
             Property::DoubleCreateFailure { .. } => "Double-Create-Failure",
             Property::SelectLimit { .. } => "Select-Limit",
             Property::DeleteSelect { .. } => "Delete-Select",
@@ -212,6 +224,59 @@ impl Property {
     /// and `interaction` cannot be serialized directly.
     pub(crate) fn interactions(&self) -> Vec<Interaction> {
         match self {
+            Property::TableHasExpectedContent {
+                table,
+                expected_content,
+            } => {
+                let table = table.to_string();
+                let table_name = table.clone();
+                let expected_content = expected_content.clone();
+                let assumption = Interaction::Assumption(Assertion {
+                    name: format!("table {} exists", table.clone()),
+                    func: Box::new(move |_: &Vec<ResultSet>, env: &mut SimulatorEnv| {
+                        if env.tables.iter().any(|t| t.name == table_name) {
+                            Ok(Ok(()))
+                        } else {
+                            Ok(Err(format!("table {table_name} does not exist")))
+                        }
+                    }),
+                });
+
+                let select_interaction = Interaction::Query(Query::Select(Select::simple(
+                    table.clone(),
+                    Predicate::true_(),
+                )));
+
+                let assertion = Interaction::Assertion(Assertion {
+                    name: format!("table {} should have the expected content", table.clone()),
+                    func: Box::new(move |stack: &Vec<ResultSet>, _| {
+                        let rows = stack.last().unwrap();
+                        let Ok(rows) = rows else {
+                            return Ok(Err(format!("expected rows but got error: {rows:?}")));
+                        };
+                        if rows.len() != expected_content.len() {
+                            return Ok(Err(format!(
+                                "expected {} rows but got {} for table {}",
+                                expected_content.len(),
+                                rows.len(),
+                                table.clone()
+                            )));
+                        }
+                        for expected_row in expected_content.iter() {
+                            if !rows.contains(expected_row) {
+                                return Ok(Err(format!(
+                                    "expected row {:?} not found in table {}",
+                                    expected_row,
+                                    table.clone()
+                                )));
+                            }
+                        }
+                        Ok(Ok(()))
+                    }),
+                });
+
+                vec![assumption, select_interaction, assertion]
+            }
             Property::ReadYourUpdatesBack { update, select } => {
                 let table = update.table().to_string();
                 let assumption = Interaction::Assumption(Assertion {
@@ -1119,6 +1184,18 @@ fn property_read_your_updates_back<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv
 
     Property::ReadYourUpdatesBack { update, select }
 }
+
+fn property_table_has_expected_content<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Property {
+    // Get a random table
+    let table = pick(&env.tables, rng);
+    // Generate rows to insert
+    let rows = table.rows.clone();
+    Property::TableHasExpectedContent {
+        table: table.name.clone(),
+        expected_content: rows,
+    }
+}
+
 fn property_select_limit<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Property {
     // Get a random table
     let table = pick(&env.tables, rng);
@@ -1355,6 +1432,10 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
                         0.0
                     },
                     Box::new(|rng: &mut R| property_insert_values_select(rng, env, &remaining_)),
+                ),
+                (
+                    remaining_.read,
+                    Box::new(|rng: &mut R| property_table_has_expected_content(rng, env)),
                 ),
                 (
                     f64::min(remaining_.read, remaining_.write),
