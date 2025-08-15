@@ -23,7 +23,6 @@ pub trait DatabaseStorage: Send + Sync {
     fn sync(&self, c: Completion) -> Result<Completion>;
     fn size(&self) -> Result<u64>;
     fn truncate(&self, len: usize, c: Completion) -> Result<Completion>;
-    fn copy_to(&self, io: &dyn crate::IO, path: &str) -> Result<()>;
 }
 
 #[cfg(feature = "fs")]
@@ -100,11 +99,6 @@ impl DatabaseStorage for DatabaseFile {
     fn truncate(&self, len: usize, c: Completion) -> Result<Completion> {
         let c = self.file.truncate(len, c)?;
         Ok(c)
-    }
-
-    #[instrument(skip_all, level = Level::INFO)]
-    fn copy_to(&self, io: &dyn crate::IO, path: &str) -> Result<()> {
-        self.file.copy_to(io, path)
     }
 }
 
