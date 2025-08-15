@@ -1775,7 +1775,6 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
         }
         pages_in_frames.truncate(max_frame as usize);
 
-
         wfs_data.nbackfills.store(0, Ordering::SeqCst);
         wfs_data.loaded.store(true, Ordering::SeqCst);
     });
