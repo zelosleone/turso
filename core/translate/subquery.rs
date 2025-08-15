@@ -75,8 +75,6 @@ pub fn emit_subquery(
         reg_agg_start: None,
         reg_nonagg_emit_once_flag: None,
         reg_result_cols_start: None,
-        result_column_indexes_in_orderby_sorter: (0..plan.result_columns.len()).collect(),
-        result_columns_to_skip_in_orderby_sorter: None,
         limit_ctx: None,
         reg_offset: None,
         reg_limit_offset_sum: None,
