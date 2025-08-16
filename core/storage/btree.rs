@@ -1,6 +1,7 @@
 use tracing::{instrument, Level};
 
 use crate::{
+    io_yield_many, io_yield_one,
     schema::Index,
     storage::{
         pager::{BtreePageAllocMode, Pager},
@@ -679,7 +680,7 @@ impl BTreeCursor {
                 }
                 let (page, c) = self.pager.read_page(self.root_page)?;
                 *self.is_empty_table_state.borrow_mut() = EmptyTableState::ReadPage { page };
-                Ok(IOResult::IO(IOCompletions::Single(c)))
+                io_yield_one!(c);
             }
             EmptyTableState::ReadPage { page } => {
                 turso_assert!(page.is_loaded(), "page should be loaded");
@@ -713,7 +714,7 @@ impl BTreeCursor {
                     self.stack.set_cell_index(past_rightmost_pointer);
                     let (page, c) = self.read_page(rightmost_pointer as usize)?;
                     self.stack.push_backwards(page);
-                    return Ok(IOResult::IO(IOCompletions::Single(c)));
+                    io_yield_one!(c);
                 }
             }
             if cell_idx >= cell_count as i32 {
@@ -777,7 +778,7 @@ impl BTreeCursor {
 
             let (mem_page, c) = self.read_page(left_child_page as usize)?;
             self.stack.push_backwards(mem_page);
-            return Ok(IOResult::IO(IOCompletions::Single(c)));
+            io_yield_one!(c);
         }
     }
 
@@ -798,7 +799,7 @@ impl BTreeCursor {
                 remaining_to_read: payload_size as usize - payload.len(),
                 page,
             });
-            return Ok(IOResult::IO(IOCompletions::Single(c)));
+            io_yield_one!(c);
         }
         let mut read_overflow_state = self.read_overflow_state.borrow_mut();
         let ReadPayloadOverflow {
@@ -831,7 +832,7 @@ impl BTreeCursor {
             })?;
             *page_btree = new_page;
             *next_page = next;
-            return Ok(IOResult::IO(IOCompletions::Single(c)));
+            io_yield_one!(c);
         }
         turso_assert!(
             *remaining_to_read == 0 && next == 0,
@@ -1005,7 +1006,7 @@ impl BTreeCursor {
                     is_write,
                 });
 
-            return Ok(IOResult::IO(IOCompletions::Single(c)));
+            io_yield_one!(c);
         }
         Ok(IOResult::Done(()))
     }
@@ -1065,7 +1066,7 @@ impl BTreeCursor {
                         },
                     );
 
-                    return Ok(IOResult::IO(IOCompletions::Single(c)));
+                    io_yield_one!(c);
                 }
                 CursorState::ReadWritePayload(PayloadOverflowWithOffset::ProcessPage {
                     mut remaining_to_read,
@@ -1130,7 +1131,7 @@ impl BTreeCursor {
                             is_write,
                         });
                     // Return IO to allow other operations
-                    return Ok(IOResult::IO(IOCompletions::Single(c)));
+                    io_yield_one!(c);
                 }
                 _ => {
                     return Err(LimboError::InternalError(
@@ -1239,7 +1240,7 @@ impl BTreeCursor {
                         self.stack.advance();
                         let (mem_page, c) = self.read_page(right_most_pointer as usize)?;
                         self.stack.push(mem_page);
-                        return Ok(IOResult::IO(IOCompletions::Single(c)));
+                        io_yield_one!(c);
                     }
                     _ => {
                         if self.ancestor_pages_have_more_children() {
@@ -1277,7 +1278,7 @@ impl BTreeCursor {
             let left_child_page = contents.cell_interior_read_left_child_page(cell_idx);
             let (mem_page, c) = self.read_page(left_child_page as usize)?;
             self.stack.push(mem_page);
-            return Ok(IOResult::IO(IOCompletions::Single(c)));
+            io_yield_one!(c);
         }
     }
 
@@ -1330,7 +1331,7 @@ impl BTreeCursor {
                 let rightmost_page_id = *rightmost_page_id;
                 let c = self.move_to_root()?;
                 self.move_to_right_state = (MoveToRightState::ProcessPage, rightmost_page_id);
-                return Ok(IOResult::IO(IOCompletions::Single(c)));
+                io_yield_one!(c);
             }
             MoveToRightState::ProcessPage => {
                 let mem_page = self.stack.top();
@@ -1351,7 +1352,7 @@ impl BTreeCursor {
                         self.stack.set_cell_index(contents.cell_count() as i32 + 1);
                         let (mem_page, c) = self.read_page(right_most_pointer as usize)?;
                         self.stack.push(mem_page);
-                        return Ok(IOResult::IO(IOCompletions::Single(c)));
+                        io_yield_one!(c);
                     }
 
                     None => {
@@ -1420,7 +1421,7 @@ impl BTreeCursor {
                     self.seek_state = CursorSeekState::MovingBetweenPages {
                         eq_seen: Cell::new(eq_seen.get()),
                     };
-                    return Ok(IOResult::IO(IOCompletions::Single(c)));
+                    io_yield_one!(c);
                 }
                 self.stack.set_cell_index(cell_count as i32 + 1);
                 match contents.rightmost_pointer() {
@@ -1430,7 +1431,7 @@ impl BTreeCursor {
                         self.seek_state = CursorSeekState::MovingBetweenPages {
                             eq_seen: Cell::new(eq_seen.get()),
                         };
-                        return Ok(IOResult::IO(IOCompletions::Single(c)));
+                        io_yield_one!(c);
                     }
                     None => {
                         unreachable!("we shall not go back up! The only way is down the slope");
@@ -1558,7 +1559,7 @@ impl BTreeCursor {
                             self.seek_state = CursorSeekState::MovingBetweenPages {
                                 eq_seen: Cell::new(eq_seen.get()),
                             };
-                            return Ok(IOResult::IO(IOCompletions::Single(c)));
+                            io_yield_one!(c);
                         }
                         None => {
                             unreachable!("we shall not go back up! The only way is down the slope");
@@ -1596,7 +1597,7 @@ impl BTreeCursor {
                 self.seek_state = CursorSeekState::MovingBetweenPages {
                     eq_seen: Cell::new(eq_seen.get()),
                 };
-                return Ok(IOResult::IO(IOCompletions::Single(c)));
+                io_yield_one!(c);
             }
 
             let cur_cell_idx = (min + max) >> 1; // rustc generates extra insns for (min+max)/2 due to them being isize. we know min&max are >=0 here.
@@ -2093,7 +2094,7 @@ impl BTreeCursor {
                     self.move_to_state = MoveToState::MoveToPage;
                     if matches!(self.seek_state, CursorSeekState::Start) {
                         let c = self.move_to_root()?;
-                        return Ok(IOResult::IO(IOCompletions::Single(c)));
+                        io_yield_one!(c);
                     }
                 }
                 MoveToState::MoveToPage => {
@@ -2623,7 +2624,7 @@ impl BTreeCursor {
                     *sub_state = BalanceSubState::NonRootDoBalancing;
                     if !completions.is_empty() {
                         // TODO: when tracking IO return all the completions here
-                        return Ok(IOResult::IO(IOCompletions::Many(completions)));
+                        io_yield_many!(completions);
                     }
                 }
                 BalanceSubState::NonRootDoBalancing => {
@@ -4100,7 +4101,7 @@ impl BTreeCursor {
             SeekEndState::Start => {
                 let c = self.move_to_root()?;
                 self.seek_end_state = SeekEndState::ProcessPage;
-                Ok(IOResult::IO(IOCompletions::Single(c)))
+                io_yield_one!(c);
             }
             SeekEndState::ProcessPage => {
                 let mem_page = self.stack.top();
@@ -4118,7 +4119,7 @@ impl BTreeCursor {
                         self.stack.set_cell_index(contents.cell_count() as i32 + 1); // invalid on interior
                         let (child, c) = self.read_page(right_most_pointer as usize)?;
                         self.stack.push(child);
-                        Ok(IOResult::IO(IOCompletions::Single(c)))
+                        io_yield_one!(c);
                     }
                     None => unreachable!("interior page must have rightmost pointer"),
                 }
@@ -4173,7 +4174,7 @@ impl BTreeCursor {
                         mv_cursor.rewind();
                     } else {
                         let c = self.move_to_root()?;
-                        return Ok(IOResult::IO(IOCompletions::Single(c)));
+                        io_yield_one!(c);
                     }
                 }
                 RewindState::NextRecord => {
@@ -4914,7 +4915,7 @@ impl BTreeCursor {
                         self.overflow_state = OverflowState::ProcessPage {
                             next_page: page.get(),
                         };
-                        return Ok(IOResult::IO(IOCompletions::Single(c)));
+                        io_yield_one!(c);
                     } else {
                         self.overflow_state = OverflowState::Done;
                     }
@@ -4946,7 +4947,7 @@ impl BTreeCursor {
                         self.overflow_state = OverflowState::ProcessPage {
                             next_page: page.get(),
                         };
-                        return Ok(IOResult::IO(IOCompletions::Single(c)));
+                        io_yield_one!(c);
                     } else {
                         self.overflow_state = OverflowState::Done;
                     }
@@ -4981,7 +4982,7 @@ impl BTreeCursor {
             self.state = CursorState::Destroy(DestroyInfo {
                 state: DestroyState::Start,
             });
-            return Ok(IOResult::IO(IOCompletions::Single(c)));
+            io_yield_one!(c);
         }
 
         loop {
@@ -5038,7 +5039,7 @@ impl BTreeCursor {
                                         "unable to get a mut reference to destroy state in cursor",
                                     );
                                     destroy_info.state = DestroyState::LoadPage;
-                                    return Ok(IOResult::IO(IOCompletions::Single(c)));
+                                    io_yield_one!(c);
                                 } else {
                                     let destroy_info = self.state.mut_destroy_info().expect(
                                         "unable to get a mut reference to destroy state in cursor",
@@ -5096,7 +5097,7 @@ impl BTreeCursor {
                                     "unable to get a mut reference to destroy state in cursor",
                                 );
                                 destroy_info.state = DestroyState::LoadPage;
-                                return Ok(IOResult::IO(IOCompletions::Single(c)));
+                                io_yield_one!(c);
                             }
                         },
                     }
@@ -5114,7 +5115,7 @@ impl BTreeCursor {
                                 .mut_destroy_info()
                                 .expect("unable to get a mut reference to destroy state in cursor");
                             destroy_info.state = DestroyState::LoadPage;
-                            return Ok(IOResult::IO(IOCompletions::Single(c)));
+                            io_yield_one!(c);
                         }
                         //  For any leaf cell, advance the index now that overflow pages have been cleared
                         BTreeCell::TableLeafCell(_) | BTreeCell::IndexLeafCell(_) => {
@@ -5299,7 +5300,7 @@ impl BTreeCursor {
             CountState::Start => {
                 let c = self.move_to_root()?;
                 self.count_state = CountState::Loop;
-                return Ok(IOResult::IO(IOCompletions::Single(c)));
+                io_yield_one!(c);
             }
             CountState::Loop => {
                 mem_page_rc = self.stack.top();
@@ -5325,7 +5326,7 @@ impl BTreeCursor {
                             // All pages of the b-tree have been visited. Return successfully
                             let c = self.move_to_root()?;
                             self.count_state = CountState::Finish;
-                            return Ok(IOResult::IO(IOCompletions::Single(c)));
+                            io_yield_one!(c);
                         }
 
                         // Move to parent
@@ -5356,7 +5357,7 @@ impl BTreeCursor {
                     self.stack.advance();
                     let (mem_page, c) = self.read_page(right_most_pointer as usize)?;
                     self.stack.push(mem_page);
-                    return Ok(IOResult::IO(IOCompletions::Single(c)));
+                    io_yield_one!(c);
                 } else {
                     // Move to child left page
                     let cell = contents.cell_get(cell_idx, self.usable_space())?;
@@ -5371,7 +5372,7 @@ impl BTreeCursor {
                             self.stack.advance();
                             let (mem_page, c) = self.read_page(left_child_page as usize)?;
                             self.stack.push(mem_page);
-                            return Ok(IOResult::IO(IOCompletions::Single(c)));
+                            io_yield_one!(c);
                         }
                         _ => unreachable!(),
                     }
@@ -5419,7 +5420,7 @@ impl BTreeCursor {
                     self.valid_state =
                         CursorValidState::RequireAdvance(IterationDirection::Forwards);
                     self.context = Some(ctx);
-                    return Ok(IOResult::IO(IOCompletions::Single(Completion::new_dummy())));
+                    io_yield_one!(Completion::new_dummy());
                 }
                 self.valid_state = CursorValidState::Valid;
                 Ok(IOResult::Done(()))
@@ -5565,7 +5566,7 @@ pub fn integrity_check(
         None => {
             let (page, c) = btree_read_page(pager, page_idx)?;
             state.page = Some(page.get());
-            return Ok(IOResult::IO(IOCompletions::Single(c)));
+            io_yield_one!(c);
         }
     };
     turso_assert!(page.is_loaded(), "page should be loaded");

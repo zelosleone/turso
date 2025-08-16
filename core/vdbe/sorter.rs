@@ -7,7 +7,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 use tempfile;
 
-use crate::return_if_io;
 use crate::types::IOCompletions;
 use crate::util::IOExt;
 use crate::{
@@ -19,6 +18,7 @@ use crate::{
     types::{IOResult, ImmutableRecord, KeyInfo, RecordCursor, RefValue},
     Result,
 };
+use crate::{io_yield_many, io_yield_one, return_if_io};
 
 #[derive(Debug, Clone, Copy)]
 enum SortState {
@@ -152,7 +152,7 @@ impl Sorter {
                 SortState::Flush => {
                     self.sort_state = SortState::InitHeap;
                     if let Some(c) = self.flush()? {
-                        return Ok(IOResult::IO(IOCompletions::Single(c)));
+                        io_yield_one!(c);
                     }
                 }
                 SortState::InitHeap => {
@@ -207,7 +207,7 @@ impl Sorter {
                     self.insert_state = InsertState::Insert;
                     if self.current_buffer_size + payload_size > self.max_buffer_size {
                         if let Some(c) = self.flush()? {
-                            return Ok(IOResult::IO(IOCompletions::Single(c)));
+                            io_yield_one!(c);
                         }
                     }
                 }
@@ -242,7 +242,7 @@ impl Sorter {
                     completions.push(c);
                 }
                 self.init_chunk_heap_state = InitChunkHeapState::PushChunk;
-                Ok(IOResult::IO(IOCompletions::Many(completions)))
+                io_yield_many!(completions);
             }
             InitChunkHeapState::PushChunk => {
                 // Make sure all chunks read at least one record into their buffer.
@@ -464,7 +464,7 @@ impl SortedChunk {
                             self.io_state.set(SortedChunkIOState::ReadEOF);
                         } else {
                             let c = self.read()?;
-                            return Ok(IOResult::IO(IOCompletions::Single(c)));
+                            io_yield_one!(c);
                         }
                     }
                 }

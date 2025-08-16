@@ -6,7 +6,7 @@ use super::operator::{
 use crate::schema::{BTreeTable, Column, Schema};
 use crate::types::{IOCompletions, IOResult, Value};
 use crate::util::{extract_column_name_from_expr, extract_view_columns};
-use crate::{Completion, LimboError, Result, Statement};
+use crate::{io_yield_one, Completion, LimboError, Result, Statement};
 use fallible_iterator::FallibleIterator;
 use std::collections::BTreeMap;
 use std::fmt;
@@ -562,9 +562,7 @@ impl IncrementalView {
                             // Yield control after processing a batch
                             // TODO: currently this inner statement is the one that is tracking completions
                             // so as a stop gap we can just return a dummy completion here
-                            return Ok(IOResult::IO(
-                                IOCompletions::Single(Completion::new_dummy()),
-                            ));
+                            io_yield_one!(Completion::new_dummy());
                         }
 
                         // This step() call resumes from where the statement left off
@@ -611,9 +609,7 @@ impl IncrementalView {
                                 // Process current batch before yielding
                                 self.merge_delta(&batch_delta);
                                 // The Statement needs to wait for IO
-                                return Ok(IOResult::IO(IOCompletions::Single(
-                                    Completion::new_dummy(),
-                                )));
+                                io_yield_one!(Completion::new_dummy());
                             }
                         }
                     }
