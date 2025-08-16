@@ -10,6 +10,7 @@ use crate::storage::{
 };
 use crate::types::IOCompletions;
 use crate::util::IOExt as _;
+use crate::{io_yield_many, io_yield_one};
 use crate::{
     return_if_io, turso_assert, types::WalFrameInfo, Completion, Connection, IOResult, LimboError,
     Result, TransactionState,
@@ -49,7 +50,7 @@ impl HeaderRef {
 
                 let (page, c) = pager.read_page(DatabaseHeader::PAGE_ID)?;
                 *pager.header_ref_state.borrow_mut() = HeaderRefState::CreateHeader { page };
-                Ok(IOResult::IO(IOCompletions::Single(c)))
+                io_yield_one!(c);
             }
             HeaderRefState::CreateHeader { page } => {
                 turso_assert!(page.is_loaded(), "page should be loaded");
@@ -85,7 +86,7 @@ impl HeaderRefMut {
 
                 let (page, c) = pager.read_page(DatabaseHeader::PAGE_ID)?;
                 *pager.header_ref_state.borrow_mut() = HeaderRefState::CreateHeader { page };
-                Ok(IOResult::IO(IOCompletions::Single(c)))
+                io_yield_one!(c);
             }
             HeaderRefState::CreateHeader { page } => {
                 turso_assert!(page.is_loaded(), "page should be loaded");
@@ -605,7 +606,7 @@ impl Pager {
                     ptrmap_page,
                     offset_in_ptrmap_page,
                 });
-                Ok(IOResult::IO(IOCompletions::Single(c)))
+                io_yield_one!(c);
             }
             PtrMapGetState::Deserialize {
                 ptrmap_page,
@@ -704,7 +705,7 @@ impl Pager {
                     ptrmap_page,
                     offset_in_ptrmap_page,
                 });
-                Ok(IOResult::IO(IOCompletions::Single(c)))
+                io_yield_one!(c);
             }
             PtrMapPutState::Deserialize {
                 ptrmap_page,
@@ -926,21 +927,20 @@ impl Pager {
                 match (self.db_state.get(), self.allocating_page1()) {
                     // In case of being empty or (allocating and this connection is performing allocation) then allocate the first page
                     (DbState::Uninitialized, false) | (DbState::Initializing, true) => {
-                        match self.allocate_page1()? {
-                            IOResult::Done(_) => Ok(IOResult::Done(())),
-                            IOResult::IO(io) => Ok(IOResult::IO(io)),
+                        if let IOResult::IO(c) = self.allocate_page1()? {
+                            return Ok(IOResult::IO(c));
+                        } else {
+                            return Ok(IOResult::Done(()));
                         }
                     }
                     // Give a chance for the allocation to happen elsewhere
-                    _ => Ok(IOResult::IO(IOCompletions::Single(Completion::new_dummy()))),
+                    _ => {}
                 }
-            } else {
-                // Give a chance for the allocation to happen elsewhere
-                Ok(IOResult::IO(IOCompletions::Single(Completion::new_dummy())))
             }
-        } else {
-            Ok(IOResult::Done(()))
+            // Give a chance for the allocation to happen elsewhere
+            io_yield_one!(Completion::new_dummy());
         }
+        Ok(IOResult::Done(()))
     }
 
     #[inline(always)]
@@ -1224,13 +1224,13 @@ impl Pager {
                         return Ok(IOResult::Done(PagerCommitResult::WalWritten));
                     } else {
                         self.commit_info.borrow_mut().state = CommitState::SyncWal;
-                        return Ok(IOResult::IO(IOCompletions::Many(completions)));
+                        io_yield_many!(completions);
                     }
                 }
                 CommitState::SyncWal => {
                     self.commit_info.borrow_mut().state = CommitState::AfterSyncWal;
                     let c = wal.borrow_mut().sync()?;
-                    return Ok(IOResult::IO(IOCompletions::Single(c)));
+                    io_yield_one!(c);
                 }
                 CommitState::AfterSyncWal => {
                     if wal_auto_checkpoint_disabled || !wal.borrow().should_checkpoint() {
@@ -1246,7 +1246,7 @@ impl Pager {
                 CommitState::SyncDbFile => {
                     let c = sqlite3_ondisk::begin_sync(self.db_file.clone(), self.syncing.clone())?;
                     self.commit_info.borrow_mut().state = CommitState::AfterSyncDbFile;
-                    return Ok(IOResult::IO(IOCompletions::Single(c)));
+                    io_yield_one!(c);
                 }
                 CommitState::AfterSyncDbFile => {
                     turso_assert!(!*self.syncing.borrow(), "should have finished syncing");
@@ -1338,7 +1338,7 @@ impl Pager {
                     let c = sqlite3_ondisk::begin_sync(self.db_file.clone(), self.syncing.clone())?;
                     self.checkpoint_state
                         .replace(CheckpointState::CheckpointDone { res });
-                    return Ok(IOResult::IO(IOCompletions::Single(c)));
+                    io_yield_one!(c);
                 }
                 CheckpointState::CheckpointDone { res } => {
                     turso_assert!(!*self.syncing.borrow(), "syncing should be done");
@@ -1505,7 +1505,7 @@ impl Pager {
                         // Add as leaf to current trunk
                         let (page, c) = self.read_page(trunk_page_id as usize)?;
                         trunk_page.replace(page);
-                        return Ok(IOResult::IO(IOCompletions::Single(c)));
+                        io_yield_one!(c);
                     }
                     let trunk_page = trunk_page.as_ref().unwrap();
                     turso_assert!(trunk_page.is_loaded(), "trunk_page should be loaded");
@@ -1602,7 +1602,7 @@ impl Pager {
 
                 self.allocate_page1_state
                     .replace(AllocatePage1State::Writing { page: page1 });
-                Ok(IOResult::IO(IOCompletions::Single(c)))
+                io_yield_one!(c);
             }
             AllocatePage1State::Writing { page } => {
                 let page1_ref = page.get();
@@ -1697,7 +1697,7 @@ impl Pager {
                         trunk_page,
                         current_db_size: new_db_size,
                     };
-                    return Ok(IOResult::IO(IOCompletions::Single(c)));
+                    io_yield_one!(c);
                 }
                 AllocatePageState::SearchAvailableFreeListLeaf {
                     trunk_page,
@@ -1733,7 +1733,7 @@ impl Pager {
                             leaf_page,
                             number_of_freelist_leaves,
                         };
-                        return Ok(IOResult::IO(IOCompletions::Single(c)));
+                        io_yield_one!(c);
                     }
 
                     // No freelist leaves on this trunk page.

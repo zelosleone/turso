@@ -19,7 +19,9 @@ use crate::storage::sqlite3_ondisk::{
     write_pages_vectored, PageSize, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
 };
 use crate::types::{IOCompletions, IOResult};
-use crate::{bail_corrupt_error, turso_assert, Buffer, LimboError, Result};
+use crate::{
+    bail_corrupt_error, io_yield_many, io_yield_one, turso_assert, Buffer, LimboError, Result,
+};
 use crate::{Completion, Page};
 
 use self::sqlite3_ondisk::{checksum_wal, PageContent, WAL_MAGIC_BE, WAL_MAGIC_LE};
@@ -1423,7 +1425,7 @@ impl WalFile {
                                 self.buffer_pool.clone(),
                             )?;
                             self.ongoing_checkpoint.state = CheckpointState::AccumulatePage;
-                            return Ok(IOResult::IO(IOCompletions::Single(c)));
+                            io_yield_one!(c);
                         }
                     }
                     self.ongoing_checkpoint.current_page += 1;
@@ -1461,7 +1463,7 @@ impl WalFile {
                     )?;
                     // batch is queued
                     self.ongoing_checkpoint.state = CheckpointState::AfterFlush;
-                    return Ok(IOResult::IO(IOCompletions::Many(completions)));
+                    io_yield_many!(completions);
                 }
                 CheckpointState::AfterFlush => {
                     turso_assert!(

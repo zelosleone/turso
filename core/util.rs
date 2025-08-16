@@ -18,6 +18,19 @@ use turso_sqlite3_parser::ast::{
 };
 use turso_sqlite3_parser::lexer::sql::Parser;
 
+#[macro_export]
+macro_rules! io_yield_one {
+    ($c:expr) => {
+        return Ok(IOResult::IO(IOCompletions::Single($c)));
+    };
+}
+#[macro_export]
+macro_rules! io_yield_many {
+    ($v:expr) => {
+        return Ok(IOResult::IO(IOCompletions::Many($v)));
+    };
+}
+
 pub trait IOExt {
     fn block<T>(&self, f: impl FnMut() -> Result<IOResult<T>>) -> Result<T>;
 }
