@@ -3,13 +3,18 @@ use std::sync::Arc;
 use turso_core::{types::Text, Buffer, Completion, LimboError, Value};
 
 use crate::{
+    database_replay_generator::DatabaseReplayGenerator,
     database_tape::{
         exec_stmt, run_stmt_expect_one_row, DatabaseChangesIteratorMode,
         DatabaseChangesIteratorOpts, DatabaseReplaySessionOpts, DatabaseTape, DatabaseWalSession,
     },
     errors::Error,
     protocol_io::{DataCompletion, DataPollResult, ProtocolIO},
-    types::{Coro, DatabaseTapeOperation, DbSyncInfo, DbSyncStatus, ProtocolCommand},
+    server_proto::{self, ExecuteStreamReq, Stmt, StreamRequest},
+    types::{
+        Coro, DatabaseTapeOperation, DatabaseTapeRowChangeType, DbSyncInfo, DbSyncStatus,
+        ProtocolCommand,
+    },
     wal_session::WalSession,
     Result,
 };
@@ -263,6 +268,8 @@ const TURSO_SYNC_INSERT_LAST_CHANGE_ID: &str =
     "INSERT INTO turso_sync_last_change_id(client_id, pull_gen, change_id) VALUES (?, 0, 0)";
 const TURSO_SYNC_UPDATE_LAST_CHANGE_ID: &str =
     "UPDATE turso_sync_last_change_id SET pull_gen = ?, change_id = ? WHERE client_id = ?";
+const TURSO_SYNC_UPSERT_LAST_CHANGE_ID: &str =
+    "INSERT INTO turso_sync_last_change_id(client_id, pull_gen, change_id) VALUES (?, ?, ?) ON CONFLICT(client_id) DO UPDATE SET pull_gen=excluded.pull_gen, change_id=excluded.change_id";
 
 /// Transfers row changes from source DB to target DB
 /// In order to guarantee atomicity and avoid conflicts - method maintain last_change_id counter in the target db table turso_sync_last_change_id
@@ -419,6 +426,307 @@ pub async fn transfer_logical_changes(
     Ok(())
 }
 
+fn convert_to_args(values: Vec<turso_core::Value>) -> Vec<server_proto::Value> {
+    values
+        .into_iter()
+        .map(|value| match value {
+            Value::Null => server_proto::Value::Null,
+            Value::Integer(value) => server_proto::Value::Integer { value },
+            Value::Float(value) => server_proto::Value::Float { value },
+            Value::Text(value) => server_proto::Value::Text {
+                value: value.as_str().to_string(),
+            },
+            Value::Blob(value) => server_proto::Value::Blob {
+                value: value.into(),
+            },
+        })
+        .collect()
+}
+
+pub async fn push_logical_changes<C: ProtocolIO>(
+    coro: &Coro,
+    client: &C,
+    source: &DatabaseTape,
+    target: &DatabaseTape,
+    client_id: &str,
+) -> Result<()> {
+    tracing::info!("push_logical_changes: client_id={client_id}");
+    let source_conn = connect_untracked(source)?;
+    let target_conn = connect_untracked(target)?;
+
+    // fetch last_change_id from the target DB in order to guarantee atomic replay of changes and avoid conflicts in case of failure
+    let source_pull_gen = 'source_pull_gen: {
+        let mut select_last_change_id_stmt =
+            match source_conn.prepare(TURSO_SYNC_SELECT_LAST_CHANGE_ID) {
+                Ok(stmt) => stmt,
+                Err(LimboError::ParseError(..)) => break 'source_pull_gen 0,
+                Err(err) => return Err(err.into()),
+            };
+
+        select_last_change_id_stmt
+            .bind_at(1.try_into().unwrap(), Value::Text(Text::new(client_id)));
+
+        match run_stmt_expect_one_row(coro, &mut select_last_change_id_stmt).await? {
+            Some(row) => row[0].as_int().ok_or_else(|| {
+                Error::DatabaseSyncEngineError("unexpected source pull_gen type".to_string())
+            })?,
+            None => {
+                tracing::info!("push_logical_changes: client_id={client_id}, turso_sync_last_change_id table is not found");
+                0
+            }
+        }
+    };
+    tracing::info!(
+        "push_logical_changes: client_id={client_id}, source_pull_gen={source_pull_gen}"
+    );
+
+    // fetch last_change_id from the target DB in order to guarantee atomic replay of changes and avoid conflicts in case of failure
+    let mut schema_stmt = target_conn.prepare(TURSO_SYNC_CREATE_TABLE)?;
+    exec_stmt(coro, &mut schema_stmt).await?;
+
+    let mut select_last_change_id_stmt = target_conn.prepare(TURSO_SYNC_SELECT_LAST_CHANGE_ID)?;
+    select_last_change_id_stmt.bind_at(1.try_into().unwrap(), Value::Text(Text::new(client_id)));
+
+    let mut last_change_id = match run_stmt_expect_one_row(coro, &mut select_last_change_id_stmt)
+        .await?
+    {
+        Some(row) => {
+            let target_pull_gen = row[0].as_int().ok_or_else(|| {
+                Error::DatabaseSyncEngineError("unexpected target pull_gen type".to_string())
+            })?;
+            let target_change_id = row[1].as_int().ok_or_else(|| {
+                Error::DatabaseSyncEngineError("unexpected target change_id type".to_string())
+            })?;
+            tracing::debug!(
+                "push_logical_changes: client_id={client_id}, target_pull_gen={target_pull_gen}, target_change_id={target_change_id}"
+            );
+            if target_pull_gen > source_pull_gen {
+                return Err(Error::DatabaseSyncEngineError(format!("protocol error: target_pull_gen > source_pull_gen: {target_pull_gen} > {source_pull_gen}")));
+            }
+            if target_pull_gen == source_pull_gen {
+                Some(target_change_id)
+            } else {
+                Some(0)
+            }
+        }
+        None => {
+            let mut insert_last_change_id_stmt =
+                target_conn.prepare(TURSO_SYNC_INSERT_LAST_CHANGE_ID)?;
+            insert_last_change_id_stmt
+                .bind_at(1.try_into().unwrap(), Value::Text(Text::new(client_id)));
+            exec_stmt(coro, &mut insert_last_change_id_stmt).await?;
+            None
+        }
+    };
+
+    tracing::debug!("push_logical_changes: last_change_id={:?}", last_change_id);
+    let replay_opts = DatabaseReplaySessionOpts {
+        use_implicit_rowid: false,
+    };
+
+    let conn = connect_untracked(target)?;
+    let generator = DatabaseReplayGenerator::new(conn, replay_opts);
+
+    let iterate_opts = DatabaseChangesIteratorOpts {
+        first_change_id: last_change_id.map(|x| x + 1),
+        mode: DatabaseChangesIteratorMode::Apply,
+        ignore_schema_changes: false,
+        ..Default::default()
+    };
+    let mut sql_over_http_requests = vec![
+        Stmt {
+            sql: Some("BEGIN IMMEDIATE".to_string()),
+            sql_id: None,
+            args: Vec::new(),
+            named_args: Vec::new(),
+            want_rows: Some(false),
+            replication_index: None,
+        },
+        Stmt {
+            sql: Some(TURSO_SYNC_CREATE_TABLE.to_string()),
+            sql_id: None,
+            args: Vec::new(),
+            named_args: Vec::new(),
+            want_rows: Some(false),
+            replication_index: None,
+        },
+    ];
+    let mut rows_changed = 0;
+    let mut changes = source.iterate_changes(iterate_opts)?;
+    while let Some(operation) = changes.next(coro).await? {
+        match operation {
+            DatabaseTapeOperation::RowChange(change) => {
+                assert!(
+                    last_change_id.is_none() || last_change_id.unwrap() < change.change_id,
+                    "change id must be strictly increasing: last_change_id={:?}, change.change_id={}",
+                    last_change_id,
+                    change.change_id
+                );
+                if change.table_name == TURSO_SYNC_TABLE_NAME {
+                    continue;
+                }
+                rows_changed += 1;
+                // we give user full control over CDC table - so let's not emit assert here for now
+                if last_change_id.is_some() && last_change_id.unwrap() + 1 != change.change_id {
+                    tracing::warn!(
+                        "out of order change sequence: {} -> {}",
+                        last_change_id.unwrap(),
+                        change.change_id
+                    );
+                }
+                last_change_id = Some(change.change_id);
+                let replay_info = generator.replay_info(coro, &change).await?;
+                let change_type = (&change.change).into();
+                match change.change {
+                    DatabaseTapeRowChangeType::Delete { before } => {
+                        assert!(replay_info.len() == 1);
+                        let values = generator.replay_values(
+                            &replay_info[0],
+                            change_type,
+                            change.id,
+                            before,
+                            None,
+                        );
+                        sql_over_http_requests.push(Stmt {
+                            sql: Some(replay_info[0].query.clone()),
+                            sql_id: None,
+                            args: convert_to_args(values),
+                            named_args: Vec::new(),
+                            want_rows: Some(false),
+                            replication_index: None,
+                        })
+                    }
+                    DatabaseTapeRowChangeType::Insert { after } => {
+                        assert!(replay_info.len() == 1);
+                        let values = generator.replay_values(
+                            &replay_info[0],
+                            change_type,
+                            change.id,
+                            after,
+                            None,
+                        );
+                        sql_over_http_requests.push(Stmt {
+                            sql: Some(replay_info[0].query.clone()),
+                            sql_id: None,
+                            args: convert_to_args(values),
+                            named_args: Vec::new(),
+                            want_rows: Some(false),
+                            replication_index: None,
+                        })
+                    }
+                    DatabaseTapeRowChangeType::Update {
+                        after,
+                        updates: Some(updates),
+                        ..
+                    } => {
+                        assert!(replay_info.len() == 1);
+                        let values = generator.replay_values(
+                            &replay_info[0],
+                            change_type,
+                            change.id,
+                            after,
+                            Some(updates),
+                        );
+                        sql_over_http_requests.push(Stmt {
+                            sql: Some(replay_info[0].query.clone()),
+                            sql_id: None,
+                            args: convert_to_args(values),
+                            named_args: Vec::new(),
+                            want_rows: Some(false),
+                            replication_index: None,
+                        })
+                    }
+                    DatabaseTapeRowChangeType::Update {
+                        before,
+                        after,
+                        updates: None,
+                    } => {
+                        assert!(replay_info.len() == 2);
+                        let values = generator.replay_values(
+                            &replay_info[0],
+                            change_type,
+                            change.id,
+                            before,
+                            None,
+                        );
+                        sql_over_http_requests.push(Stmt {
+                            sql: Some(replay_info[0].query.clone()),
+                            sql_id: None,
+                            args: convert_to_args(values),
+                            named_args: Vec::new(),
+                            want_rows: Some(false),
+                            replication_index: None,
+                        });
+                        let values = generator.replay_values(
+                            &replay_info[1],
+                            change_type,
+                            change.id,
+                            after,
+                            None,
+                        );
+                        sql_over_http_requests.push(Stmt {
+                            sql: Some(replay_info[1].query.clone()),
+                            sql_id: None,
+                            args: convert_to_args(values),
+                            named_args: Vec::new(),
+                            want_rows: Some(false),
+                            replication_index: None,
+                        });
+                    }
+                }
+            }
+            DatabaseTapeOperation::Commit => {
+                if rows_changed > 0 {
+                    tracing::info!("prepare update stmt for turso_sync_last_change_id table with client_id={} and last_change_id={:?}", client_id, last_change_id);
+                    // update turso_sync_last_change_id table with new value before commit
+                    let (next_pull_gen, next_change_id) =
+                        (source_pull_gen, last_change_id.unwrap_or(0));
+                    tracing::info!("transfer_logical_changes: client_id={client_id}, set pull_gen={next_pull_gen}, change_id={next_change_id}, rows_changed={rows_changed}");
+                    sql_over_http_requests.push(Stmt {
+                        sql: Some(TURSO_SYNC_UPSERT_LAST_CHANGE_ID.to_string()),
+                        sql_id: None,
+                        args: vec![
+                            server_proto::Value::Text {
+                                value: client_id.to_string(),
+                            },
+                            server_proto::Value::Integer {
+                                value: next_pull_gen,
+                            },
+                            server_proto::Value::Integer {
+                                value: next_change_id,
+                            },
+                        ],
+                        named_args: Vec::new(),
+                        want_rows: Some(false),
+                        replication_index: None,
+                    });
+                }
+                sql_over_http_requests.push(Stmt {
+                    sql: Some("COMMIT".to_string()),
+                    sql_id: None,
+                    args: Vec::new(),
+                    named_args: Vec::new(),
+                    want_rows: Some(false),
+                    replication_index: None,
+                });
+            }
+        }
+    }
+
+    tracing::debug!("hrana request: {:?}", sql_over_http_requests);
+    let request = server_proto::PipelineReqBody {
+        baton: None,
+        requests: sql_over_http_requests
+            .into_iter()
+            .map(|stmt| StreamRequest::Execute(ExecuteStreamReq { stmt }))
+            .collect(),
+    };
+
+    sql_execute_http(coro, client, request).await?;
+    tracing::info!("push_logical_changes: rows_changed={:?}", rows_changed);
+    Ok(())
+}
+
 /// Replace WAL frames [target_wal_match_watermark..) in the target DB with frames [source_wal_match_watermark..) from source DB
 /// Return the position in target DB wal which logically equivalent to the source_sync_watermark in the source DB WAL
 pub async fn transfer_physical_changes(
@@ -451,6 +759,8 @@ pub async fn transfer_physical_changes(
 
     let target_sync_watermark = {
         let mut target_session = DatabaseWalSession::new(coro, target_session).await?;
+        tracing::info!("rollback_changes_after: {target_wal_match_watermark}");
+
         target_session.rollback_changes_after(target_wal_match_watermark)?;
         let mut last_frame_info = None;
         let mut frame = vec![0u8; WAL_FRAME_SIZE];
@@ -462,7 +772,7 @@ pub async fn transfer_physical_changes(
         );
         for source_frame_no in source_wal_match_watermark + 1..=source_frames_count {
             let frame_info = source_conn.wal_get_frame(source_frame_no, &mut frame)?;
-            tracing::trace!("append page {} to target DB", frame_info.page_no);
+            tracing::debug!("append page {} to target DB", frame_info.page_no);
             target_session.append_page(frame_info.page_no, &frame[WAL_FRAME_HEADER..])?;
             if source_frame_no == source_sync_watermark {
                 target_sync_watermark = target_session.frames_count()? + 1; // +1 because page will be actually commited on next iteration
@@ -471,7 +781,7 @@ pub async fn transfer_physical_changes(
             last_frame_info = Some(frame_info);
         }
         let db_size = last_frame_info.unwrap().db_size;
-        tracing::trace!("commit WAL session to target with db_size={db_size}");
+        tracing::debug!("commit WAL session to target with db_size={db_size}");
         target_session.commit(db_size)?;
         assert!(target_sync_watermark != 0);
         target_sync_watermark
@@ -514,6 +824,30 @@ pub async fn reset_wal_file(
     let c = wal.truncate(wal_size, c)?;
     while !c.is_completed() {
         coro.yield_(ProtocolCommand::IO).await?;
+    }
+    Ok(())
+}
+
+async fn sql_execute_http<C: ProtocolIO>(
+    coro: &Coro,
+    client: &C,
+    request: server_proto::PipelineReqBody,
+) -> Result<()> {
+    let body = serde_json::to_vec(&request)?;
+    let completion = client.http("POST", "/v2/pipeline", Some(body))?;
+    let status = wait_status(coro, &completion).await?;
+    if status != http::StatusCode::OK {
+        let error = format!("sql_execute_http: unexpected status code: {status}");
+        return Err(Error::DatabaseSyncEngineError(error));
+    }
+    let response = wait_full_body(coro, &completion).await?;
+    let response: server_proto::PipelineRespBody = serde_json::from_slice(&response)?;
+    for result in response.results {
+        if let server_proto::StreamResult::Error { error } = result {
+            return Err(Error::DatabaseSyncEngineError(format!(
+                "failed to execute sql: {error:?}"
+            )));
+        }
     }
     Ok(())
 }
