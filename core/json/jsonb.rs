@@ -896,7 +896,7 @@ impl Jsonb {
         Ok((header, offset))
     }
 
-    pub fn is_valid(&self) -> Result<ElementType> {
+    pub fn element_type(&self) -> Result<ElementType> {
         match self.read_header(0) {
             Ok((header, offset)) => {
                 if self.data.get(offset..offset + header.1).is_some() {
@@ -2746,7 +2746,7 @@ impl Jsonb {
         Ok(pos)
     }
 
-    // Primitive implementation could be optimized.
+    // TODO Primitive implementation could be optimized.
     pub fn patch(&mut self, patch: &Jsonb) -> Result<()> {
         let (patch_header, _) = patch.read_header(0)?;
 
@@ -3578,14 +3578,14 @@ world""#,
     fn test_jsonb_is_valid() {
         // Valid JSONB
         let jsonb = Jsonb::from_str(r#"{"test":"value"}"#).unwrap();
-        assert!(jsonb.is_valid().is_ok());
+        assert!(jsonb.element_type().is_ok());
 
         // Invalid JSONB (manually corrupted)
         let mut invalid = jsonb.data.clone();
         if !invalid.is_empty() {
             invalid[0] = 0xFF; // Invalid element type
             let jsonb = Jsonb::new(0, Some(&invalid));
-            assert!(jsonb.is_valid().is_err());
+            assert!(jsonb.element_type().is_err());
         }
     }
 

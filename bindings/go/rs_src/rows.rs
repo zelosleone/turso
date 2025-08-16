@@ -80,7 +80,7 @@ pub extern "C" fn rows_get_value(ctx: *mut c_void, col_idx: usize) -> *const c_v
 
     if let Some(row) = ctx.stmt.row() {
         if let Ok(value) = row.get::<&Value>(col_idx) {
-            return LimboValue::from_owned_value(value).to_ptr();
+            return LimboValue::from_db_value(value).to_ptr();
         }
     }
     std::ptr::null()

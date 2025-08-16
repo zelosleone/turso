@@ -8,7 +8,7 @@ pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
     if values.is_empty() {
         return Ok(Value::Null);
     }
-    let format_str = match &values[0].get_owned_value() {
+    let format_str = match &values[0].get_value() {
         Value::Text(t) => t.as_str(),
         _ => return Ok(Value::Null),
     };
@@ -32,7 +32,7 @@ pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
                 if args_index >= values.len() {
                     return Err(LimboError::InvalidArgument("not enough arguments".into()));
                 }
-                let value = &values[args_index].get_owned_value();
+                let value = &values[args_index].get_value();
                 match value {
                     Value::Integer(_) => result.push_str(&format!("{value}")),
                     Value::Float(_) => result.push_str(&format!("{value}")),
@@ -44,7 +44,7 @@ pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
                 if args_index >= values.len() {
                     return Err(LimboError::InvalidArgument("not enough arguments".into()));
                 }
-                match &values[args_index].get_owned_value() {
+                match &values[args_index].get_value() {
                     Value::Text(t) => result.push_str(t.as_str()),
                     Value::Null => result.push_str("(null)"),
                     v => result.push_str(&format!("{v}")),
@@ -55,7 +55,7 @@ pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
                 if args_index >= values.len() {
                     return Err(LimboError::InvalidArgument("not enough arguments".into()));
                 }
-                let value = &values[args_index].get_owned_value();
+                let value = &values[args_index].get_value();
                 match value {
                     Value::Float(f) => result.push_str(&format!("{f:.6}")),
                     Value::Integer(i) => result.push_str(&format!("{:.6}", *i as f64)),
@@ -103,7 +103,7 @@ mod tests {
     fn test_printf_basic_string() {
         assert_eq!(
             exec_printf(&[text("Hello World")]).unwrap(),
-            *text("Hello World").get_owned_value()
+            *text("Hello World").get_value()
         );
     }
 
@@ -131,7 +131,7 @@ mod tests {
             (vec![text("100%% complete")], text("100% complete")),
         ];
         for (input, output) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), *output.get_owned_value());
+            assert_eq!(exec_printf(&input).unwrap(), *output.get_value());
         }
     }
 
@@ -155,7 +155,7 @@ mod tests {
             (vec![text("Number: %i"), integer(42)], text("Number: 42")),
         ];
         for (input, output) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), *output.get_owned_value())
+            assert_eq!(exec_printf(&input).unwrap(), *output.get_value())
         }
     }
 
@@ -190,7 +190,7 @@ mod tests {
         ];
 
         for (input, expected) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), *expected.get_owned_value());
+            assert_eq!(exec_printf(&input).unwrap(), *expected.get_value());
         }
     }
 
@@ -225,7 +225,7 @@ mod tests {
         ];
 
         for (input, expected) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), *expected.get_owned_value());
+            assert_eq!(exec_printf(&input).unwrap(), *expected.get_value());
         }
     }
 
@@ -267,7 +267,7 @@ mod tests {
         ];
 
         for (input, expected) in test_cases {
-            assert_eq!(exec_printf(&input).unwrap(), *expected.get_owned_value());
+            assert_eq!(exec_printf(&input).unwrap(), *expected.get_value());
         }
     }
 }
