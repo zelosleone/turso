@@ -1698,7 +1698,12 @@ impl WalFile {
             }
         }
 
-        self.last_checksum = self.get_shared().last_checksum;
+        let (header, cksm) = {
+            let shared = self.get_shared();
+            (*shared.wal_header.lock(), shared.last_checksum)
+        };
+        self.last_checksum = cksm;
+        self.header = header;
         self.max_frame = 0;
         self.min_frame = 0;
         Ok(())
