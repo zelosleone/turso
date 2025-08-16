@@ -11,6 +11,7 @@ use turso_core::{File, Result};
 
 use crate::{model::FAULT_ERROR_MSG, runner::clock::SimulatorClock};
 pub(crate) struct SimulatorFile {
+    pub path: String,
     pub(crate) inner: Arc<dyn File>,
     pub(crate) fault: Cell<bool>,
 
