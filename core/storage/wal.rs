@@ -1375,12 +1375,6 @@ impl WalFile {
         shared: Arc<UnsafeCell<WalFileShared>>,
         buffer_pool: Arc<BufferPool>,
     ) -> Self {
-        let checkpoint_page = Arc::new(Page::new(0));
-        let buffer = buffer_pool.get_page();
-        {
-            checkpoint_page.get().contents = Some(PageContent::new(0, Arc::new(buffer)));
-        }
-
         let header = unsafe { shared.get().as_mut().unwrap().wal_header.lock() };
         let last_checksum = unsafe { (*shared.get()).last_checksum };
         let disable_checkpoint_cache =
@@ -1813,7 +1807,7 @@ impl WalFile {
     /// Must be invoked while writer and checkpoint locks are still held.
     fn restart_log(&mut self, mode: CheckpointMode) -> Result<()> {
         turso_assert!(
-            matches!(mode, CheckpointMode::Restart | CheckpointMode::Truncate),
+            mode.should_restart_log(),
             "CheckpointMode must be Restart or Truncate"
         );
         turso_assert!(

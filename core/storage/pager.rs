@@ -287,6 +287,7 @@ impl Page {
         self.get().wal_tag.store(TAG_UNSET, Ordering::Release)
     }
 
+    #[inline]
     pub fn is_valid_for_checkpoint(&self, target_frame: u64, seq: u32) -> bool {
         let (f, s) = self.wal_tag_pair();
         f == target_frame && s == seq && !self.is_dirty()
