@@ -11,10 +11,9 @@ use std::fmt::{Debug, Formatter};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::{cell::Cell, fmt, rc::Rc, sync::Arc};
 
-use self::sqlite3_ondisk::{checksum_wal, PageContent, WAL_MAGIC_BE, WAL_MAGIC_LE};
 use super::buffer_pool::BufferPool;
 use super::pager::{PageRef, Pager};
-use super::sqlite3_ondisk::{self, WalHeader};
+use super::sqlite3_ondisk::{self, checksum_wal, WalHeader, WAL_MAGIC_BE, WAL_MAGIC_LE};
 use crate::fast_lock::SpinLock;
 use crate::io::{File, IO};
 use crate::result::LimboResult;
@@ -25,10 +24,9 @@ use crate::storage::sqlite3_ondisk::{
 };
 use crate::types::{IOCompletions, IOResult};
 use crate::{
-    bail_corrupt_error, io_yield_many, io_yield_one, turso_assert, Buffer, CompletionError,
+    bail_corrupt_error, io_yield_many, turso_assert, Buffer, Completion, CompletionError,
     LimboError, Result,
 };
-use crate::{Completion, Page};
 
 #[derive(Debug, Clone, Default)]
 pub struct CheckpointResult {
@@ -777,7 +775,7 @@ impl Drop for CheckpointLocks {
 static DISABLE_CKPT_CACHE: AtomicBool = AtomicBool::new(false);
 
 pub fn set_disable_ckpt_cache(v: bool) {
-    DISABLE_CKPT_CACHE.store(v, std::sync::atomic::Ordering::Relaxed);
+    DISABLE_CKPT_CACHE.store(v, Ordering::Relaxed);
 }
 
 impl Wal for WalFile {
@@ -1032,15 +1030,10 @@ impl Wal for WalFile {
         let key = self.encryption_key.borrow().clone();
         let seq = self.header.checkpoint_seq;
         let complete = Box::new(move |res: Result<(Arc<Buffer>, i32), CompletionError>| {
-            let Ok((buf, bytes_read)) = res else {
+            let Ok((buf, _bytes_read)) = res else {
                 page.clear_locked();
                 return;
             };
-            let buf_len = buf.len();
-            turso_assert!(
-                bytes_read == buf_len as i32,
-                "read({bytes_read}) less than expected({buf_len}): frame_id={frame_id}"
-            );
             let cloned = frame.clone();
             if let Some(key) = key.clone() {
                 match decrypt_page(buf.as_slice(), page_idx, &key) {
@@ -1377,8 +1370,11 @@ impl WalFile {
     ) -> Self {
         let header = unsafe { shared.get().as_mut().unwrap().wal_header.lock() };
         let last_checksum = unsafe { (*shared.get()).last_checksum };
-        let disable_checkpoint_cache =
-            std::env::var("TURSO_DISABLE_CHECKPOINT_CACHE").unwrap_or_default() != "";
+        let disable_checkpoint_cache = ["true", "1", "on"].contains(
+            &std::env::var("TURSO_DISABLE_CHECKPOINT_CACHE")
+                .unwrap_or_default()
+                .as_str(),
+        );
         set_disable_ckpt_cache(disable_checkpoint_cache);
         Self {
             io,
@@ -1600,12 +1596,13 @@ impl WalFile {
                                         self.page_size() as usize
                                             + WAL_FRAME_HEADER_SIZE
                                     ];
-                                    let c = self.read_frame_raw(target_frame, &mut raw)?; // WAL bytes
-                                    self.io.wait_for_completion(c)?;
+                                    self.io.wait_for_completion(
+                                        self.read_frame_raw(target_frame, &mut raw)?,
+                                    )?;
                                     let (_, wal_page) =
                                         sqlite3_ondisk::parse_wal_frame_header(&raw);
                                     let cached = cached_page.get_contents().buffer.as_slice();
-                                    debug_assert_eq!(wal_page, cached, "cache fast-path returned wrong content for page {page_id} frame {target_frame}");
+                                    turso_assert!(wal_page == cached, "cache fast-path returned wrong content for page {page_id} frame {target_frame}");
                                 }
                                 self.ongoing_checkpoint
                                     .pending_writes
@@ -1639,7 +1636,9 @@ impl WalFile {
                         }
                     }
 
-                    if self.ongoing_checkpoint.complete() {
+                    if !completions.is_empty() {
+                        io_yield_many!(completions);
+                    } else if self.ongoing_checkpoint.complete() {
                         // if we are completely done backfilling, we need to unpin any pages we
                         // used from the page cache.
                         for (page_id, frame_id) in
@@ -1920,11 +1919,14 @@ impl WalFile {
 
         let complete = {
             let buf_slot = buf_slot.clone();
-            Box::new(move |buf: Arc<Buffer>, bytes_read: i32| {
+            Box::new(move |res: Result<(Arc<Buffer>, i32), CompletionError>| {
+                let Ok((buf, read)) = res else {
+                    return;
+                };
                 let buf_len = buf.len();
                 turso_assert!(
-                    bytes_read == buf_len as i32,
-                    "read({bytes_read}) != expected({buf_len}): frame_id={frame_id}"
+                    read == buf_len as i32,
+                    "read({read}) != expected({buf_len}): frame_id={frame_id}"
                 );
                 *buf_slot.lock() = Some(buf);
             })
