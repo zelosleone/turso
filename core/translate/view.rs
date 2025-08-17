@@ -48,7 +48,15 @@ fn emit_create_view_program(
         where_clause: Some(format!("name = '{normalized_view_name}'")),
     });
 
+    program.emit_insn(Insn::SetCookie {
+        db: 0,
+        cookie: Cookie::SchemaVersion,
+        value: (schema.schema_version + 1) as i32,
+        p5: 0,
+    });
+
     // Populate materialized views if needed
+    // Note: This must come after SetCookie since it may do I/O operations
     if populate_materialized {
         program.emit_insn(Insn::PopulateMaterializedViews);
     }
