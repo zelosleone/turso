@@ -53,6 +53,13 @@ fn emit_create_view_program(
         program.emit_insn(Insn::PopulateMaterializedViews);
     }
 
+    program.emit_insn(Insn::SetCookie {
+        db: 0,
+        cookie: Cookie::SchemaVersion,
+        value: (schema.schema_version + 1) as i32,
+        p5: 0,
+    });
+
     Ok(())
 }
 
