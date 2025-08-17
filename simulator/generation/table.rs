@@ -42,6 +42,7 @@ impl Arbitrary for Table {
             rows: Vec::new(),
             name,
             columns,
+            indexes: vec![],
         }
     }
 }

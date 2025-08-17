@@ -30,9 +30,13 @@ pub(crate) struct CreateIndex {
 
 impl Shadow for CreateIndex {
     type Result = Vec<Vec<SimValue>>;
-    fn shadow(&self, _env: &mut SimulatorTables) -> Vec<Vec<SimValue>> {
-        // CREATE INDEX doesn't require any shadowing; we don't need to keep track
-        // in the simulator what indexes exist.
+    fn shadow(&self, env: &mut SimulatorTables) -> Vec<Vec<SimValue>> {
+        env.tables
+            .iter_mut()
+            .find(|t| t.name == self.table_name)
+            .unwrap()
+            .indexes
+            .push(self.index_name.clone());
         vec![]
     }
 }

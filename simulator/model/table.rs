@@ -45,6 +45,7 @@ pub(crate) struct Table {
     pub(crate) name: String,
     pub(crate) columns: Vec<Column>,
     pub(crate) rows: Vec<Vec<SimValue>>,
+    pub(crate) indexes: Vec<String>,
 }
 
 impl Table {
@@ -53,6 +54,7 @@ impl Table {
             rows,
             name: "".to_string(),
             columns: vec![],
+            indexes: vec![],
         }
     }
 }
