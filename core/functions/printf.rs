@@ -40,6 +40,20 @@ pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
                 }
                 args_index += 1;
             }
+            Some('u') => {
+                if args_index >= values.len() {
+                    return Err(LimboError::InvalidArgument("not enough arguments".into()));
+                }
+                let value = &values[args_index].get_value();
+                match value {
+                    Value::Integer(_) => {
+                        let converted_value = value.as_uint();
+                        result.push_str(&format!("{converted_value}"))
+                    }
+                    _ => result.push('0'),
+                }
+                args_index += 1;
+            }
             Some('s') => {
                 if args_index >= values.len() {
                     return Err(LimboError::InvalidArgument("not enough arguments".into()));
@@ -153,6 +167,29 @@ mod tests {
                 text("Number: 0"),
             ),
             (vec![text("Number: %i"), integer(42)], text("Number: 42")),
+        ];
+        for (input, output) in test_cases {
+            assert_eq!(exec_printf(&input).unwrap(), *output.get_value())
+        }
+    }
+
+    #[test]
+    fn test_printf_unsigned_integer_formatting() {
+        let test_cases = vec![
+            // Basic
+            (vec![text("Number: %u"), integer(42)], text("Number: 42")),
+            // Multiple numbers
+            (
+                vec![text("%u + %u = %u"), integer(2), integer(3), integer(5)],
+                text("2 + 3 = 5"),
+            ),
+            // Negative number should be represented as its uint representation
+            (
+                vec![text("Negative: %u"), integer(-1)],
+                text("Negative: 18446744073709551615"),
+            ),
+            // Non-numeric value defaults to 0
+            (vec![text("NaN: %u"), text("not a number")], text("NaN: 0")),
         ];
         for (input, output) in test_cases {
             assert_eq!(exec_printf(&input).unwrap(), *output.get_value())
