@@ -749,8 +749,12 @@ fn reopen_database(env: &mut SimulatorEnv) {
     };
 }
 
-fn random_create<R: rand::Rng>(rng: &mut R, _env: &SimulatorEnv) -> Interactions {
-    Interactions::Query(Query::Create(Create::arbitrary(rng)))
+fn random_create<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
+    let mut create = Create::arbitrary(rng);
+    while env.tables.iter().any(|t| t.name == create.table.name) {
+        create = Create::arbitrary(rng);
+    }
+    Interactions::Query(Query::Create(create))
 }
 
 fn random_read<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
@@ -781,9 +785,20 @@ fn random_create_index<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Option<
     if env.tables.is_empty() {
         return None;
     }
-    Some(Interactions::Query(Query::CreateIndex(
-        CreateIndex::arbitrary_from(rng, env),
-    )))
+    let mut create_index = CreateIndex::arbitrary_from(rng, env);
+    while env
+        .tables
+        .iter()
+        .find(|t| t.name == create_index.table_name)
+        .expect("table should exist")
+        .indexes
+        .iter()
+        .any(|i| i == &create_index.index_name)
+    {
+        create_index = CreateIndex::arbitrary_from(rng, env);
+    }
+
+    Some(Interactions::Query(Query::CreateIndex(create_index)))
 }
 
 fn random_fault<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
