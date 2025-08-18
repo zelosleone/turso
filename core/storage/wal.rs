@@ -772,12 +772,6 @@ impl Drop for CheckpointLocks {
     }
 }
 
-static DISABLE_CKPT_CACHE: AtomicBool = AtomicBool::new(false);
-
-pub fn set_disable_ckpt_cache(v: bool) {
-    DISABLE_CKPT_CACHE.store(v, Ordering::Relaxed);
-}
-
 impl Wal for WalFile {
     /// Begin a read transaction. The caller must ensure that there is not already
     /// an ongoing read transaction.
@@ -1370,12 +1364,15 @@ impl WalFile {
     ) -> Self {
         let header = unsafe { shared.get().as_mut().unwrap().wal_header.lock() };
         let last_checksum = unsafe { (*shared.get()).last_checksum };
-        let disable_checkpoint_cache = ["true", "1", "on"].contains(
-            &std::env::var("TURSO_DISABLE_CHECKPOINT_CACHE")
-                .unwrap_or_default()
-                .as_str(),
-        );
-        set_disable_ckpt_cache(disable_checkpoint_cache);
+        let enable_checkpoint_cache = ["true", "1", "on"].iter().any(|s| {
+            s.eq_ignore_ascii_case(
+                std::env::var("TURSO_ENABLE_CHECKPOINT_CACHE")
+                    .unwrap_or_default()
+                    .to_lowercase()
+                    .as_str(),
+            )
+        });
+        set_enable_checkpoint_cache(enable_checkpoint_cache);
         Self {
             io,
             // default to max frame in WAL, so that when we read schema we can read from WAL too if it's there.
@@ -1538,12 +1535,8 @@ impl WalFile {
                                 list.push((page_id, frame));
                             }
                         }
-                        // This is tricky, because for situations where we need to actually read these
-                        // pages from disk, we want to sort by frame for locality. For writes,
-                        // it is better if we are sorting by page ID, as it will lead to more
-                        // 'batched' writev calls grouped together. Since the latter is the common
-                        // case, we'll do that.
-                        list.sort_unstable_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+                        // sort by frame_id for read locality
+                        list.sort_unstable_by(|a, b| (a.1, a.0).cmp(&(b.1, b.0)));
                         list
                     };
                     self.ongoing_checkpoint.pages_to_checkpoint = to_checkpoint;
@@ -1583,12 +1576,15 @@ impl WalFile {
                             [self.ongoing_checkpoint.current_page as usize];
 
                         // Try cache first, if enabled
-                        if !DISABLE_CKPT_CACHE.load(Ordering::Relaxed) {
+                        if is_checkpoint_cache_enabled() {
                             if let Some(cached_page) =
                                 pager.cache_get_for_checkpoint(page_id as usize, target_frame, seq)
                             {
                                 let contents = cached_page.get_contents();
                                 let buffer = contents.buffer.clone();
+                                // TODO: remove this eventually to actually benefit from the
+                                // performance.. for now we assert that the cached page has the
+                                // exact contents as one read from the WAL.
                                 #[cfg(debug_assertions)]
                                 {
                                     let mut raw = vec![
@@ -2063,6 +2059,16 @@ impl WalFileShared {
         }
         Ok(())
     }
+}
+
+/// Enable experimental using cached pages to backfill .db file during checkpoint.
+static ENABLE_CKPT_CACHE: AtomicBool = AtomicBool::new(false);
+fn set_enable_checkpoint_cache(v: bool) {
+    ENABLE_CKPT_CACHE.store(v, Ordering::Relaxed);
+}
+#[inline]
+fn is_checkpoint_cache_enabled() -> bool {
+    ENABLE_CKPT_CACHE.load(Ordering::Relaxed)
 }
 
 #[cfg(test)]
