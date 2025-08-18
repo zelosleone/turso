@@ -1928,6 +1928,16 @@ impl Pager {
             state: CommitState::Start,
         });
         self.allocate_page_state.replace(AllocatePageState::Start);
+        self.free_page_state.replace(FreePageState::Start);
+        #[cfg(not(feature = "omit_autovacuum"))]
+        {
+            self.ptrmap_get_state.replace(PtrMapGetState::Start);
+            self.ptrmap_put_state.replace(PtrMapPutState::Start);
+            self.btree_create_vacuum_full_state
+                .replace(BtreeCreateVacuumFullState::Start);
+        }
+
+        self.header_ref_state.replace(HeaderRefState::Start);
     }
 
     pub fn with_header<T>(&self, f: impl Fn(&DatabaseHeader) -> T) -> Result<IOResult<T>> {
