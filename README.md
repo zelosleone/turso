@@ -262,7 +262,7 @@ console.log(users);
 <br>
 
 ```console
-pip install pyturso
+uv pip install pyturso
 ```
 
 Example usage:
