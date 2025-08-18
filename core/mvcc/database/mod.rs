@@ -506,8 +506,14 @@ impl<Clock: LogicalClock> StateTransition for CommitStateMachine<Clock> {
                         )
                         .map_err(|e| LimboError::InternalError(e.to_string()))
                         .unwrap();
-                    if let crate::types::IOResult::Done(_) = result {
-                        break;
+                    match result {
+                        crate::types::IOResult::Done(_) => {
+                            break;
+                        }
+                        crate::types::IOResult::IO(io) => {
+                            io.wait(self.pager.io.as_ref())?;
+                            continue;
+                        }
                     }
                 }
                 self.state = CommitState::Commit { end_ts };
@@ -981,16 +987,12 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         tx_id: TxID,
         pager: Rc<Pager>,
         connection: &Arc<Connection>,
-        schema_did_change: bool,
     ) -> Result<StateMachine<CommitStateMachine<Clock>>> {
-        let state_machine: StateMachine<CommitStateMachine<Clock>> =
-            StateMachine::<CommitStateMachine<Clock>>::new(CommitStateMachine::new(
-                CommitState::Initial,
-                pager,
-                tx_id,
-                connection.clone(),
-                schema_did_change,
-            ));
+        let state_machine: StateMachine<CommitStateMachine<Clock>> = StateMachine::<
+            CommitStateMachine<Clock>,
+        >::new(
+            CommitStateMachine::new(CommitState::Initial, pager, tx_id, connection.clone()),
+        );
         Ok(state_machine)
     }
 

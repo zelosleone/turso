@@ -971,6 +971,7 @@ impl Pager {
             TransactionState::Write { schema_did_change } => (true, schema_did_change),
             _ => (false, false),
         };
+        tracing::trace!("end_tx(schema_did_change={})", schema_did_change);
         if rollback {
             if is_write {
                 wal.borrow().end_write_tx();
