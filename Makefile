@@ -140,6 +140,10 @@ bench-vfs: uv-sync-test
 	cargo build --release
 	RUST_LOG=$(RUST_LOG) uv run --project limbo_test bench-vfs "$(SQL)" "$(N)"
 
+bench-sqlite: uv-sync-test
+	cargo build --release
+	RUST_LOG=$(RUST_LOG) uv run --project limbo_test bench-sqlite "$(VFS)" "$(SQL)" "$(N)"
+
 clickbench:
 	./perf/clickbench/benchmark.sh
 .PHONY: clickbench
