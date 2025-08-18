@@ -881,7 +881,12 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         Ok(())
     }
 
-    pub fn get_next_row_id_for_table(&self, table_id: u64, start: i64) -> Option<RowID> {
+    pub fn get_next_row_id_for_table(
+        &self,
+        table_id: u64,
+        start: i64,
+        tx_id: TxID,
+    ) -> Option<RowID> {
         tracing::trace!(
             "getting_next_id_for_table(table_id={}, range_start={})",
             table_id,
@@ -897,19 +902,50 @@ impl<Clock: LogicalClock> MvStore<Clock> {
             row_id: i64::MAX,
         };
 
-        self.rows
-            .range(min_bound..max_bound)
-            .next()
-            .map(|entry| *entry.key())
+        let tx = self.txs.get(&tx_id).unwrap();
+        let tx = tx.value().read();
+        let mut rows = self.rows.range(min_bound..max_bound);
+        rows.next().and_then(|row| {
+            // Find last valid version based on transaction.
+            self.find_last_visible_version(&tx, row)
+        })
     }
 
-    pub fn seek_rowid(&self, bound: Bound<&RowID>, lower_bound: bool) -> Option<RowID> {
+    fn find_last_visible_version(
+        &self,
+        tx: &parking_lot::lock_api::RwLockReadGuard<'_, parking_lot::RawRwLock, Transaction>,
+        row: crossbeam_skiplist::map::Entry<
+            '_,
+            RowID,
+            parking_lot::lock_api::RwLock<parking_lot::RawRwLock, Vec<RowVersion>>,
+        >,
+    ) -> Option<RowID> {
+        row.value()
+            .read()
+            .iter()
+            .rev()
+            .find(|version| version.is_visible_to(tx, &self.txs))
+            .map(|_| *row.key())
+    }
+
+    pub fn seek_rowid(
+        &self,
+        bound: Bound<&RowID>,
+        lower_bound: bool,
+        tx_id: TxID,
+    ) -> Option<RowID> {
         tracing::trace!("seek_rowid(bound={:?}, lower_bound={})", bound, lower_bound,);
 
+        let tx = self.txs.get(&tx_id).unwrap();
+        let tx = tx.value().read();
         if lower_bound {
-            self.rows.lower_bound(bound).map(|entry| *entry.key())
+            self.rows
+                .lower_bound(bound)
+                .and_then(|entry| self.find_last_visible_version(&tx, entry))
         } else {
-            self.rows.upper_bound(bound).map(|entry| *entry.key())
+            self.rows
+                .upper_bound(bound)
+                .and_then(|entry| self.find_last_visible_version(&tx, entry))
         }
     }
 
@@ -945,12 +981,16 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         tx_id: TxID,
         pager: Rc<Pager>,
         connection: &Arc<Connection>,
+        schema_did_change: bool,
     ) -> Result<StateMachine<CommitStateMachine<Clock>>> {
-        let state_machine: StateMachine<CommitStateMachine<Clock>> = StateMachine::<
-            CommitStateMachine<Clock>,
-        >::new(
-            CommitStateMachine::new(CommitState::Initial, pager, tx_id, connection.clone()),
-        );
+        let state_machine: StateMachine<CommitStateMachine<Clock>> =
+            StateMachine::<CommitStateMachine<Clock>>::new(CommitStateMachine::new(
+                CommitState::Initial,
+                pager,
+                tx_id,
+                connection.clone(),
+                schema_did_change,
+            ));
         Ok(state_machine)
     }
 

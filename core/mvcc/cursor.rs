@@ -57,7 +57,9 @@ impl<Clock: LogicalClock> MvccLazyCursor<Clock> {
             CursorPosition::Loaded(id) => Some(id),
             CursorPosition::BeforeFirst => {
                 // If we are before first, we need to try and find the first row.
-                let maybe_rowid = self.db.get_next_row_id_for_table(self.table_id, i64::MIN);
+                let maybe_rowid =
+                    self.db
+                        .get_next_row_id_for_table(self.table_id, i64::MIN, self.tx_id);
                 if let Some(id) = maybe_rowid {
                     self.current_pos = CursorPosition::Loaded(id);
                     Some(id)
@@ -75,7 +77,9 @@ impl<Clock: LogicalClock> MvccLazyCursor<Clock> {
             CursorPosition::Loaded(id) => self.db.read(self.tx_id, id),
             CursorPosition::BeforeFirst => {
                 // If we are before first, we need to try and find the first row.
-                let maybe_rowid = self.db.get_next_row_id_for_table(self.table_id, i64::MIN);
+                let maybe_rowid =
+                    self.db
+                        .get_next_row_id_for_table(self.table_id, i64::MIN, self.tx_id);
                 if let Some(id) = maybe_rowid {
                     self.current_pos = CursorPosition::Loaded(id);
                     self.db.read(self.tx_id, id)
@@ -103,18 +107,22 @@ impl<Clock: LogicalClock> MvccLazyCursor<Clock> {
                 return false;
             }
         };
-        self.current_pos = match self.db.get_next_row_id_for_table(self.table_id, min_id) {
-            Some(id) => CursorPosition::Loaded(id),
-            None => {
-                if before_first {
-                    // if it wasn't loaded and we didn't find anything, it means the table is empty.
-                    CursorPosition::BeforeFirst
-                } else {
-                    // if we had something loaded, and we didn't find next key then it means we are at the end.
-                    CursorPosition::End
+        self.current_pos =
+            match self
+                .db
+                .get_next_row_id_for_table(self.table_id, min_id, self.tx_id)
+            {
+                Some(id) => CursorPosition::Loaded(id),
+                None => {
+                    if before_first {
+                        // if it wasn't loaded and we didn't find anything, it means the table is empty.
+                        CursorPosition::BeforeFirst
+                    } else {
+                        // if we had something loaded, and we didn't find next key then it means we are at the end.
+                        CursorPosition::End
+                    }
                 }
-            }
-        };
+            };
         matches!(self.current_pos, CursorPosition::Loaded(_))
     }
 
@@ -175,7 +183,7 @@ impl<Clock: LogicalClock> MvccLazyCursor<Clock> {
             SeekOp::LT => (Bound::Excluded(&rowid), false),
             SeekOp::LE { eq_only: _ } => (Bound::Included(&rowid), false),
         };
-        let rowid = self.db.seek_rowid(bound, lower_bound);
+        let rowid = self.db.seek_rowid(bound, lower_bound, self.tx_id);
         if let Some(rowid) = rowid {
             self.current_pos = CursorPosition::Loaded(rowid);
             if op.eq_only() {
@@ -211,6 +219,7 @@ impl<Clock: LogicalClock> MvccLazyCursor<Clock> {
                     row_id: *int_key,
                 }),
                 true,
+                self.tx_id,
             )
             .is_some();
         if exists {
