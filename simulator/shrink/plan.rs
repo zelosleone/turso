@@ -73,14 +73,16 @@ impl InteractionPlan {
                             | Property::DropSelect { queries, .. } => {
                                 queries.clear();
                             }
+                            Property::FsyncNoWait { tables, .. }
+                            | Property::FaultyQuery { tables, .. } => {
+                                tables.retain(|table| depending_tables.contains(table));
+                            }
                             Property::SelectLimit { .. }
                             | Property::SelectSelectOptimizer { .. }
                             | Property::WhereTrueFalseNull { .. }
                             | Property::UNIONAllPreservesCardinality { .. }
-                            | Property::FsyncNoWait { .. }
                             | Property::ReadYourUpdatesBack { .. }
-                            | Property::TableHasExpectedContent { .. }
-                            | Property::FaultyQuery { .. } => {}
+                            | Property::TableHasExpectedContent { .. } => {}
                         }
                     }
                     // Check again after query clear if the interactions still uses the failing table
