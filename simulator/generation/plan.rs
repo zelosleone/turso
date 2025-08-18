@@ -123,11 +123,12 @@ impl Shadow for Interactions {
                 let mut is_error = false;
                 for interaction in property.interactions() {
                     match interaction {
-                        Interaction::Query(query)
-                        | Interaction::FsyncQuery(query)
-                        | Interaction::FaultyQuery(query) => {
-                            is_error = is_error || query.shadow(tables).is_err();
+                        Interaction::Query(query) | Interaction::FsyncQuery(query) => {
+                            if query.shadow(tables).is_err() {
+                                is_error = true;
+                            }
                         }
+                        Interaction::FaultyQuery(..) => {}
                         Interaction::Assertion(_) => {}
                         Interaction::Assumption(_) => {}
                         Interaction::Fault(_) => {}
