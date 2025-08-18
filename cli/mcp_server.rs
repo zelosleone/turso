@@ -116,9 +116,12 @@ impl TursoMcpServer {
                     };
 
                     let response = self.handle_request(request);
-                    let response_json = serde_json::to_string(&response)?;
-                    writeln!(stdout_lock, "{response_json}")?;
-                    stdout_lock.flush()?;
+                    // Don't send a response for notifications (when id is None)
+                    if response.id.is_some() || response.error.is_some() {
+                        let response_json = serde_json::to_string(&response)?;
+                        writeln!(stdout_lock, "{response_json}")?;
+                        stdout_lock.flush()?;
+                    }
                 }
                 Ok(Err(_)) => {
                     // Error reading from stdin
@@ -139,6 +142,18 @@ impl TursoMcpServer {
     }
 
     fn handle_request(&self, request: JsonRpcRequest) -> JsonRpcResponse {
+        // Check if this is a notification (no id field means it's a notification)
+        // Notifications should not receive a response according to JSON-RPC spec
+        if request.id.is_none() {
+            // For notifications, we return a special response that the caller should ignore
+            return JsonRpcResponse {
+                jsonrpc: "2.0".to_string(),
+                id: None,
+                result: None,
+                error: None,
+            };
+        }
+
         match request.method.as_str() {
             "initialize" => self.handle_initialize(request),
             "tools/list" => self.handle_list_tools(request),
