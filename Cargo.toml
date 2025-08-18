@@ -27,7 +27,7 @@ members = [
     "tests",
     "vendored/sqlite3-parser/sqlparser_bench",
     "parser",
-    "packages/turso-sync-engine",
+    "sync/engine",
     "sync/javascript",
 ]
 exclude = ["perf/latency/limbo"]
@@ -44,7 +44,7 @@ turso = { path = "bindings/rust", version = "0.1.4-pre.9" }
 turso_node = { path = "bindings/javascript", version = "0.1.4-pre.9" }
 limbo_completion = { path = "extensions/completion", version = "0.1.4-pre.9" }
 turso_core = { path = "core", version = "0.1.4-pre.9" }
-turso_sync_engine = { path = "packages/turso-sync-engine", version = "0.1.4-pre.9" }
+turso_sync_engine = { path = "sync/engine", version = "0.1.4-pre.9" }
 limbo_crypto = { path = "extensions/crypto", version = "0.1.4-pre.9" }
 limbo_csv = { path = "extensions/csv", version = "0.1.4-pre.9" }
 turso_ext = { path = "extensions/core", version = "0.1.4-pre.9" }
