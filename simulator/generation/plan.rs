@@ -654,13 +654,13 @@ impl Interaction {
             loop {
                 let syncing = {
                     let files = env.io.files.borrow();
-                    // TODO: currently assuming we only have 1 file that is syncing
                     files
                         .iter()
                         .any(|file| file.sync_completion.borrow().is_some())
                 };
                 let inject_fault = env.rng.gen_bool(current_prob);
-                if inject_fault || syncing {
+                // TODO: avoid for now injecting faults when syncing
+                if inject_fault && !syncing {
                     env.io.inject_fault(true);
                 }
 

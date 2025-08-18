@@ -192,7 +192,9 @@ pub(crate) fn execute_interaction(
             };
             tracing::debug!(?interaction);
             let results = interaction.execute_query(conn, &env.io);
-            tracing::debug!(?results);
+            if results.is_err() {
+                tracing::error!(?results);
+            }
             stack.push(results);
             limbo_integrity_check(conn)?;
         }
@@ -204,7 +206,9 @@ pub(crate) fn execute_interaction(
             };
 
             let results = interaction.execute_fsync_query(conn.clone(), env);
-            tracing::debug!(?results);
+            if results.is_err() {
+                tracing::error!(?results);
+            }
             stack.push(results);
 
             let query_interaction = Interaction::Query(query.clone());
@@ -235,7 +239,9 @@ pub(crate) fn execute_interaction(
             };
 
             let results = interaction.execute_faulty_query(&conn, env);
-            tracing::debug!(?results);
+            if results.is_err() {
+                tracing::error!(?results);
+            }
             stack.push(results);
             // Reset fault injection
             env.io.inject_fault(false);

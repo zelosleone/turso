@@ -80,7 +80,6 @@ pub(crate) enum Property {
     ///     ASSERT <expected_content>
     TableHasExpectedContent {
         table: String,
-        expected_content: Vec<Vec<SimValue>>,
     },
     /// Double Create Failure is a property in which creating
     /// the same table twice leads to an error.
@@ -224,13 +223,9 @@ impl Property {
     /// and `interaction` cannot be serialized directly.
     pub(crate) fn interactions(&self) -> Vec<Interaction> {
         match self {
-            Property::TableHasExpectedContent {
-                table,
-                expected_content,
-            } => {
+            Property::TableHasExpectedContent { table } => {
                 let table = table.to_string();
                 let table_name = table.clone();
-                let expected_content = expected_content.clone();
                 let assumption = Interaction::Assumption(Assertion {
                     name: format!("table {} exists", table.clone()),
                     func: Box::new(move |_: &Vec<ResultSet>, env: &mut SimulatorEnv| {
@@ -249,20 +244,25 @@ impl Property {
 
                 let assertion = Interaction::Assertion(Assertion {
                     name: format!("table {} should have the expected content", table.clone()),
-                    func: Box::new(move |stack: &Vec<ResultSet>, _| {
+                    func: Box::new(move |stack: &Vec<ResultSet>, env| {
                         let rows = stack.last().unwrap();
                         let Ok(rows) = rows else {
                             return Ok(Err(format!("expected rows but got error: {rows:?}")));
                         };
-                        if rows.len() != expected_content.len() {
+                        let sim_table = env
+                            .tables
+                            .iter()
+                            .find(|t| t.name == table)
+                            .expect("table should be in enviroment");
+                        if rows.len() != sim_table.rows.len() {
                             return Ok(Err(format!(
                                 "expected {} rows but got {} for table {}",
-                                expected_content.len(),
+                                sim_table.rows.len(),
                                 rows.len(),
                                 table.clone()
                             )));
                         }
-                        for expected_row in expected_content.iter() {
+                        for expected_row in sim_table.rows.iter() {
                             if !rows.contains(expected_row) {
                                 return Ok(Err(format!(
                                     "expected row {:?} not found in table {}",
@@ -1188,11 +1188,8 @@ fn property_read_your_updates_back<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv
 fn property_table_has_expected_content<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Property {
     // Get a random table
     let table = pick(&env.tables, rng);
-    // Generate rows to insert
-    let rows = table.rows.clone();
     Property::TableHasExpectedContent {
         table: table.name.clone(),
-        expected_content: rows,
     }
 }
 
