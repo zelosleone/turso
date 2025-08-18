@@ -25,8 +25,9 @@ if platform.system() == "Linux":
     vfs_list.append("io_uring")
 
 
-def append_time(times, start, perf_counter):
-    times.append(perf_counter() - start)
+def append_time(i, times, start, perf_counter):
+    if i > 0:
+        times.append(perf_counter() - start)
     return True
 
 
@@ -69,7 +70,7 @@ def bench_one(vfs: str, sql: str, iterations: int, assorted: bool, use_sqlite3=F
     for i in range(1, iterations + 1):
         for query in queries:
             start = perf_counter()
-            _ = shell.run_test_fn(query, lambda x: x is not None and append_time(times, start, perf_counter))
+            _ = shell.run_test_fn(query, lambda x: x is not None and append_time(i, times, start, perf_counter))
             test(f"  {test_name} | run {i:>3}: {times[-1]:.6f}s")
 
     shell.quit()
