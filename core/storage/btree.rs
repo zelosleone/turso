@@ -2292,8 +2292,6 @@ impl BTreeCursor {
                         *write_state = WriteState::Balancing;
                         assert!(self.balance_state.sub_state == BalanceSubState::Start, "There should be no balancing operation in progress when overwrite state is {:?}, got: {:?}", self.state, self.balance_state.sub_state);
                         // If we balance, we must save the cursor position and seek to it later.
-                        // FIXME: we shouldn't have both DeleteState::SeekAfterBalancing and
-                        // save_context()/restore/context(), they are practically the same thing.
                         self.save_context(match bkey {
                             BTreeKey::TableRowId(rowid) => CursorContext {
                                 key: CursorContextKey::TableRowId(rowid.0),
