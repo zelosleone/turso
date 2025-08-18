@@ -240,6 +240,40 @@ impl Limbo {
         self.writeln(opts)
     }
 
+    fn display_stats(&mut self, args: crate::commands::args::StatsArgs) -> io::Result<()> {
+        use crate::commands::args::StatsToggle;
+
+        // Handle on/off toggle
+        if let Some(toggle) = args.toggle {
+            match toggle {
+                StatsToggle::On => {
+                    self.opts.stats = true;
+                    self.writeln("Stats display enabled.")?;
+                }
+                StatsToggle::Off => {
+                    self.opts.stats = false;
+                    self.writeln("Stats display disabled.")?;
+                }
+            }
+            return Ok(());
+        }
+
+        // Display all metrics
+        let output = {
+            let metrics = self.conn.metrics.borrow();
+            format!("{metrics}")
+        };
+
+        self.writeln(output)?;
+
+        if args.reset {
+            self.conn.metrics.borrow_mut().reset();
+            self.writeln("Statistics reset.")?;
+        }
+
+        Ok(())
+    }
+
     pub fn reset_input(&mut self) {
         self.prompt = PROMPT.to_string();
         self.input_buff.clear();
@@ -383,6 +417,21 @@ impl Limbo {
             }
         }
         self.print_query_performance_stats(start, stats);
+
+        // Display stats if enabled
+        if self.opts.stats {
+            let stats_output = {
+                let metrics = self.conn.metrics.borrow();
+                metrics
+                    .last_statement
+                    .as_ref()
+                    .map(|last| format!("\n{last}"))
+            };
+            if let Some(output) = stats_output {
+                let _ = self.writeln(output);
+            }
+        }
+
         self.reset_input();
     }
 
@@ -563,6 +612,11 @@ impl Limbo {
                 }
                 Command::ShowInfo => {
                     let _ = self.show_info();
+                }
+                Command::Stats(args) => {
+                    if let Err(e) = self.display_stats(args) {
+                        let _ = self.writeln(e.to_string());
+                    }
                 }
                 Command::Import(args) => {
                     let w = self.writer.as_mut().unwrap();

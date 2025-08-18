@@ -47,6 +47,7 @@ use crate::translate::pragma::TURSO_CDC_DEFAULT_TABLE_NAME;
 use crate::types::WalFrameInfo;
 #[cfg(feature = "fs")]
 use crate::util::{OpenMode, OpenOptions};
+use crate::vdbe::metrics::ConnectionMetrics;
 use crate::vtab::VirtualTable;
 use core::str;
 pub use error::LimboError;
@@ -422,6 +423,7 @@ impl Database {
             attached_databases: RefCell::new(DatabaseCatalog::new()),
             query_only: Cell::new(false),
             view_transaction_states: RefCell::new(HashMap::new()),
+            metrics: RefCell::new(ConnectionMetrics::new()),
         });
         let builtin_syms = self.builtin_syms.borrow();
         // add built-in extensions symbols to the connection to prevent having to load each time
@@ -844,6 +846,8 @@ pub struct Connection {
     /// Per-connection view transaction states for uncommitted changes. This represents
     /// one entry per view that was touched in the transaction.
     view_transaction_states: RefCell<HashMap<String, ViewTransactionState>>,
+    /// Connection-level metrics aggregation
+    pub metrics: RefCell<ConnectionMetrics>,
 }
 
 impl Connection {
@@ -1956,26 +1960,32 @@ impl Statement {
     }
 
     pub fn step(&mut self) -> Result<StepResult> {
-        if !self.accesses_db {
-            return self
-                .program
-                .step(&mut self.state, self.mv_store.clone(), self.pager.clone());
-        }
-
-        const MAX_SCHEMA_RETRY: usize = 50;
-        let mut res = self
-            .program
-            .step(&mut self.state, self.mv_store.clone(), self.pager.clone());
-        for attempt in 0..MAX_SCHEMA_RETRY {
-            // Only reprepare if we still need to update schema
-            if !matches!(res, Err(LimboError::SchemaUpdated)) {
-                break;
+        let res = if !self.accesses_db {
+            self.program
+                .step(&mut self.state, self.mv_store.clone(), self.pager.clone())
+        } else {
+            const MAX_SCHEMA_RETRY: usize = 50;
+            let mut res =
+                self.program
+                    .step(&mut self.state, self.mv_store.clone(), self.pager.clone());
+            for attempt in 0..MAX_SCHEMA_RETRY {
+                // Only reprepare if we still need to update schema
+                if !matches!(res, Err(LimboError::SchemaUpdated)) {
+                    break;
+                }
+                tracing::debug!("reprepare: attempt={}", attempt);
+                self.reprepare()?;
+                res = self
+                    .program
+                    .step(&mut self.state, self.mv_store.clone(), self.pager.clone());
             }
-            tracing::debug!("reprepare: attempt={}", attempt);
-            self.reprepare()?;
-            res = self
-                .program
-                .step(&mut self.state, self.mv_store.clone(), self.pager.clone());
+            res
+        };
+
+        // Aggregate metrics when statement completes
+        if matches!(res, Ok(StepResult::Done)) {
+            let mut conn_metrics = self.program.connection.metrics.borrow_mut();
+            conn_metrics.record_statement(self.state.metrics.clone());
         }
 
         res
