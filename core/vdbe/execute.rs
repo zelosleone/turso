@@ -5152,10 +5152,16 @@ pub struct OpInsertState {
     pub old_record: Option<(i64, Vec<Value>)>,
 }
 
-#[derive(Debug, PartialEq, Copy, Clone)]
+#[derive(Debug, PartialEq)]
 pub enum OpInsertSubState {
     /// If this insert overwrites a record, capture the old record for incremental view maintenance.
     MaybeCaptureRecord,
+    /// Seek to the correct position if needed.
+    /// In a table insert, if the caller does not pass InsertFlags::REQUIRE_SEEK, they must ensure that a seek has already happened to the correct location.
+    /// This typically happens by invoking either Insn::NewRowid or Insn::NotExists, because:
+    /// 1. op_new_rowid() seeks to the end of the table, which is the correct insertion position.
+    /// 2. op_not_exists() seeks to the position in the table where the target rowid would be inserted.
+    Seek,
     /// Insert the row into the table.
     Insert,
     /// Updating last_insert_rowid may return IO, so we need a separate state for it so that we don't
@@ -5192,7 +5198,11 @@ pub fn op_insert(
                 // We also don't need to do it if the rowid of the UPDATEd row was changed, because that means
                 // we deleted it earlier and `op_delete` already captured the change.
                 if dependent_views.is_empty() || flag.has(InsertFlags::UPDATE_ROWID_CHANGE) {
-                    state.op_insert_state.sub_state = OpInsertSubState::Insert;
+                    if flag.has(InsertFlags::REQUIRE_SEEK) {
+                        state.op_insert_state.sub_state = OpInsertSubState::Seek;
+                    } else {
+                        state.op_insert_state.sub_state = OpInsertSubState::Insert;
+                    }
                     continue;
                 }
 
@@ -5232,15 +5242,36 @@ pub fn op_insert(
                 };
 
                 state.op_insert_state.old_record = old_record;
-                state.op_insert_state.sub_state = OpInsertSubState::Insert;
+                if flag.has(InsertFlags::REQUIRE_SEEK) {
+                    state.op_insert_state.sub_state = OpInsertSubState::Seek;
+                } else {
+                    state.op_insert_state.sub_state = OpInsertSubState::Insert;
+                }
                 continue;
+            }
+            OpInsertSubState::Seek => {
+                if let SeekInternalResult::IO(io) = seek_internal(
+                    program,
+                    state,
+                    pager,
+                    mv_store,
+                    RecordSource::Unpacked {
+                        start_reg: *key_reg,
+                        num_regs: 1,
+                    },
+                    *cursor_id,
+                    false,
+                    SeekOp::GE { eq_only: true },
+                )? {
+                    return Ok(InsnFunctionStepResult::IO(io));
+                }
+                state.op_insert_state.sub_state = OpInsertSubState::Insert;
             }
             OpInsertSubState::Insert => {
                 let key = match &state.registers[*key_reg].get_value() {
                     Value::Integer(i) => *i,
                     _ => unreachable!("expected integer key"),
                 };
-
                 let record = match &state.registers[*record_reg] {
                     Register::Record(r) => std::borrow::Cow::Borrowed(r),
                     Register::Value(value) => {
@@ -5252,19 +5283,14 @@ pub fn op_insert(
                     }
                     Register::Aggregate(..) => unreachable!("Cannot insert an aggregate value."),
                 };
+
                 {
                     let mut cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
 
-                    // In a table insert, if the caller does not pass InsertFlags::REQUIRE_SEEK, they must ensure that a seek has already happened to the correct location.
-                    // This typically happens by invoking either Insn::NewRowid or Insn::NotExists, because:
-                    // 1. op_new_rowid() seeks to the end of the table, which is the correct insertion position.
-                    // 2. op_not_exists() seeks to the position in the table where the target rowid would be inserted.
-                    let moved_before = !flag.has(InsertFlags::REQUIRE_SEEK);
-                    return_if_io!(cursor.insert(
-                        &BTreeKey::new_table_rowid(key, Some(record.as_ref())),
-                        moved_before
-                    ));
+                    return_if_io!(
+                        cursor.insert(&BTreeKey::new_table_rowid(key, Some(&record)), true,)
+                    );
                 }
                 // Increment metrics for row write
                 state.metrics.rows_written = state.metrics.rows_written.saturating_add(1);
