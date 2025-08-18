@@ -5288,9 +5288,7 @@ pub fn op_insert(
                     let mut cursor = state.get_cursor(*cursor_id);
                     let cursor = cursor.as_btree_mut();
 
-                    return_if_io!(
-                        cursor.insert(&BTreeKey::new_table_rowid(key, Some(&record)), true,)
-                    );
+                    return_if_io!(cursor.insert(&BTreeKey::new_table_rowid(key, Some(&record))));
                 }
                 // Increment metrics for row write
                 state.metrics.rows_written = state.metrics.rows_written.saturating_add(1);
@@ -5644,13 +5642,12 @@ pub fn op_idx_delete(
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum OpIdxInsertState {
-    /// Optional seek step done before an unique constraint check.
-    SeekIfUnique,
+    /// Optional seek step done before an unique constraint check or if the caller indicates a seek is required.
+    MaybeSeek,
     /// Optional unique constraint check done before an insert.
     UniqueConstraintCheck,
-    /// Main insert step. This is always performed. Usually the state machine just
-    /// skips to this step unless the insertion is made into a unique index.
-    Insert { moved_before: bool },
+    /// Main insert step. This is always performed.
+    Insert,
 }
 
 pub fn op_idx_insert(
@@ -5680,15 +5677,16 @@ pub fn op_idx_insert(
     };
 
     match state.op_idx_insert_state {
-        OpIdxInsertState::SeekIfUnique => {
+        OpIdxInsertState::MaybeSeek => {
             let (_, cursor_type) = program.cursor_ref.get(cursor_id).unwrap();
             let CursorType::BTreeIndex(index_meta) = cursor_type else {
                 panic!("IdxInsert: not a BTreeIndex cursor");
             };
-            if !index_meta.unique {
-                state.op_idx_insert_state = OpIdxInsertState::Insert {
-                    moved_before: false,
-                };
+
+            // TODO: currently we never pass USE_SEEK, so this other check is a bit redundant and we always seek,
+            // but I guess it's FutureProofed™®
+            if !index_meta.unique && flags.has(IdxInsertFlags::USE_SEEK) {
+                state.op_idx_insert_state = OpIdxInsertState::Insert;
                 return Ok(InsnFunctionStepResult::Step);
             }
 
@@ -5703,11 +5701,15 @@ pub fn op_idx_insert(
                 SeekOp::GE { eq_only: true },
             )? {
                 SeekInternalResult::Found => {
-                    state.op_idx_insert_state = OpIdxInsertState::UniqueConstraintCheck;
+                    state.op_idx_insert_state = if index_meta.unique {
+                        OpIdxInsertState::UniqueConstraintCheck
+                    } else {
+                        OpIdxInsertState::Insert
+                    };
                     Ok(InsnFunctionStepResult::Step)
                 }
                 SeekInternalResult::NotFound => {
-                    state.op_idx_insert_state = OpIdxInsertState::Insert { moved_before: true };
+                    state.op_idx_insert_state = OpIdxInsertState::Insert;
                     Ok(InsnFunctionStepResult::Step)
                 }
                 SeekInternalResult::IO(io) => Ok(InsnFunctionStepResult::IO(io)),
@@ -5753,33 +5755,23 @@ pub fn op_idx_insert(
             };
             state.op_idx_insert_state = if ignore_conflict {
                 state.pc += 1;
-                OpIdxInsertState::SeekIfUnique
+                OpIdxInsertState::MaybeSeek
             } else {
-                OpIdxInsertState::Insert { moved_before: true }
+                OpIdxInsertState::Insert
             };
             Ok(InsnFunctionStepResult::Step)
         }
-        OpIdxInsertState::Insert { moved_before } => {
+        OpIdxInsertState::Insert => {
             {
                 let mut cursor = state.get_cursor(cursor_id);
                 let cursor = cursor.as_btree_mut();
-                // To make this reentrant in case of `moved_before` = false, we need to check if the previous cursor.insert started
-                // a write/balancing operation. If it did, it means we already moved to the place we wanted.
-                let moved_before = moved_before
-                    || cursor.is_write_in_progress()
-                    || flags.has(IdxInsertFlags::USE_SEEK);
-                // Start insertion of row. This might trigger a balance procedure which will take care of moving to different pages,
-                // therefore, we don't want to seek again if that happens, meaning we don't want to return on io without moving to the following opcode
-                // because it could trigger a movement to child page after a balance root which will leave the current page as the root page.
-                return_if_io!(
-                    cursor.insert(&BTreeKey::new_index_key(record_to_insert), moved_before)
-                );
+                return_if_io!(cursor.insert(&BTreeKey::new_index_key(record_to_insert)));
             }
             // Increment metrics for index write
             if flags.has(IdxInsertFlags::NCHANGE) {
                 state.metrics.rows_written = state.metrics.rows_written.saturating_add(1);
             }
-            state.op_idx_insert_state = OpIdxInsertState::SeekIfUnique;
+            state.op_idx_insert_state = OpIdxInsertState::MaybeSeek;
             state.pc += 1;
             Ok(InsnFunctionStepResult::Step)
         }

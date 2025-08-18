@@ -637,7 +637,7 @@ impl StateTransition for WriteRowStateMachine {
                 let key = BTreeKey::new_table_rowid(self.row.id.row_id, self.record.as_ref());
 
                 match cursor
-                    .insert(&key, true)
+                    .insert(&key)
                     .map_err(|e| LimboError::InternalError(e.to_string()))?
                 {
                     IOResult::Done(()) => {

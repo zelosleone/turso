@@ -44,14 +44,6 @@ pub enum SeekEndState {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum InsertState {
-    Start,
-    Seek,
-    Advance,
-    InsertIntoPage,
-}
-
-#[derive(Debug, Clone, Copy)]
 pub enum MoveToState {
     Start,
     MoveToPage,
