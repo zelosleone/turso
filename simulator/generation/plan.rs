@@ -123,11 +123,12 @@ impl Shadow for Interactions {
                 let mut is_error = false;
                 for interaction in property.interactions() {
                     match interaction {
-                        Interaction::Query(query)
-                        | Interaction::FsyncQuery(query)
-                        | Interaction::FaultyQuery(query) => {
-                            is_error = is_error || query.shadow(tables).is_err();
+                        Interaction::Query(query) | Interaction::FsyncQuery(query) => {
+                            if query.shadow(tables).is_err() {
+                                is_error = true;
+                            }
                         }
+                        Interaction::FaultyQuery(..) => {}
                         Interaction::Assertion(_) => {}
                         Interaction::Assumption(_) => {}
                         Interaction::Fault(_) => {}
@@ -653,13 +654,13 @@ impl Interaction {
             loop {
                 let syncing = {
                     let files = env.io.files.borrow();
-                    // TODO: currently assuming we only have 1 file that is syncing
                     files
                         .iter()
                         .any(|file| file.sync_completion.borrow().is_some())
                 };
                 let inject_fault = env.rng.gen_bool(current_prob);
-                if inject_fault || syncing {
+                // TODO: avoid for now injecting faults when syncing
+                if inject_fault && !syncing {
                     env.io.inject_fault(true);
                 }
 

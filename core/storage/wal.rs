@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use strum::EnumString;
 use tracing::{instrument, Level};
 
-use std::fmt::Formatter;
+use std::fmt::{Debug, Formatter};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::{cell::Cell, fmt, rc::Rc, sync::Arc};
 
@@ -213,7 +213,7 @@ impl TursoRwLock {
 }
 
 /// Write-ahead log (WAL).
-pub trait Wal {
+pub trait Wal: Debug {
     /// Begin a read transaction.
     fn begin_read_tx(&mut self) -> Result<(LimboResult, bool)>;
 
@@ -277,6 +277,7 @@ pub trait Wal {
         mode: CheckpointMode,
     ) -> Result<IOResult<CheckpointResult>>;
     fn sync(&mut self) -> Result<Completion>;
+    fn is_syncing(&self) -> bool;
     fn get_max_frame_in_wal(&self) -> u64;
     fn get_max_frame(&self) -> u64;
     fn get_min_frame(&self) -> u64;
@@ -1122,9 +1123,14 @@ impl Wal for WalFile {
             syncing.set(false);
         });
         let shared = self.get_shared();
-        let c = shared.file.sync(completion)?;
         self.syncing.set(true);
+        let c = shared.file.sync(completion)?;
         Ok(c)
+    }
+
+    // Currently used for assertion purposes
+    fn is_syncing(&self) -> bool {
+        self.syncing.get()
     }
 
     fn get_max_frame_in_wal(&self) -> u64 {

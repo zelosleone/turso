@@ -65,7 +65,11 @@ impl SimulatorIO {
     pub(crate) fn print_stats(&self) {
         tracing::info!("run_once faults: {}", self.nr_run_once_faults.get());
         for file in self.files.borrow().iter() {
-            tracing::info!("\n===========================\n{}", file.stats_table());
+            tracing::info!(
+                "\n===========================\n\nPath: {}\n{}",
+                file.path,
+                file.stats_table()
+            );
         }
     }
 }
@@ -85,6 +89,7 @@ impl IO for SimulatorIO {
     ) -> Result<Arc<dyn turso_core::File>> {
         let inner = self.inner.open_file(path, flags, false)?;
         let file = Arc::new(SimulatorFile {
+            path: path.to_string(),
             inner,
             fault: Cell::new(false),
             nr_pread_faults: Cell::new(0),
