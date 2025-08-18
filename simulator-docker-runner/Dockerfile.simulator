@@ -17,6 +17,7 @@ COPY simulator ./simulator/
 COPY bindings ./bindings/
 COPY extensions ./extensions/
 COPY macros ./macros/
+COPY sync ./sync
 COPY parser ./parser/
 COPY vendored ./vendored/
 COPY cli ./cli/
