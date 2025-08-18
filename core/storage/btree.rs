@@ -405,6 +405,24 @@ pub struct CursorContext {
     pub seek_op: SeekOp,
 }
 
+impl CursorContext {
+    fn seek_eq_only(key: &BTreeKey<'_>) -> Self {
+        Self {
+            key: key.into(),
+            seek_op: SeekOp::GE { eq_only: true },
+        }
+    }
+}
+
+impl From<&BTreeKey<'_>> for CursorContextKey {
+    fn from(key: &BTreeKey<'_>) -> Self {
+        match key {
+            BTreeKey::TableRowId((rowid, _)) => CursorContextKey::TableRowId(*rowid),
+            BTreeKey::IndexKey(record) => CursorContextKey::IndexKeyRowId((*record).clone()),
+        }
+    }
+}
+
 /// In the future, we may expand these general validity states
 #[derive(Debug, PartialEq, Eq)]
 pub enum CursorValidState {
@@ -2235,16 +2253,7 @@ impl BTreeCursor {
                         *write_state = WriteState::Balancing;
                         assert!(self.balance_state.sub_state == BalanceSubState::Start, "There should be no balancing operation in progress when insert state is {:?}, got: {:?}", self.state, self.balance_state.sub_state);
                         // If we balance, we must save the cursor position and seek to it later.
-                        self.save_context(match bkey {
-                            BTreeKey::TableRowId(rowid) => CursorContext {
-                                key: CursorContextKey::TableRowId(rowid.0),
-                                seek_op: SeekOp::GE { eq_only: true },
-                            },
-                            BTreeKey::IndexKey(record) => CursorContext {
-                                key: CursorContextKey::IndexKeyRowId((*record).clone()),
-                                seek_op: SeekOp::GE { eq_only: true },
-                            },
-                        });
+                        self.save_context(CursorContext::seek_eq_only(bkey));
                     } else {
                         *write_state = WriteState::Finish;
                     }
@@ -2292,16 +2301,7 @@ impl BTreeCursor {
                         *write_state = WriteState::Balancing;
                         assert!(self.balance_state.sub_state == BalanceSubState::Start, "There should be no balancing operation in progress when overwrite state is {:?}, got: {:?}", self.state, self.balance_state.sub_state);
                         // If we balance, we must save the cursor position and seek to it later.
-                        self.save_context(match bkey {
-                            BTreeKey::TableRowId(rowid) => CursorContext {
-                                key: CursorContextKey::TableRowId(rowid.0),
-                                seek_op: SeekOp::GE { eq_only: true },
-                            },
-                            BTreeKey::IndexKey(record) => CursorContext {
-                                key: CursorContextKey::IndexKeyRowId((*record).clone()),
-                                seek_op: SeekOp::GE { eq_only: true },
-                            },
-                        });
+                        self.save_context(CursorContext::seek_eq_only(bkey));
                     } else {
                         *write_state = WriteState::Finish;
                     }
