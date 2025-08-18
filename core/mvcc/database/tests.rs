@@ -654,10 +654,10 @@ fn test_future_row() {
 use crate::mvcc::cursor::MvccLazyCursor;
 use crate::mvcc::database::{MvStore, Row, RowID};
 use crate::types::Text;
-use crate::Database;
 use crate::MemoryIO;
 use crate::RefValue;
 use crate::Value;
+use crate::{Database, StepResult};
 
 // Simple atomic clock implementation for testing
 
@@ -1121,6 +1121,38 @@ fn test_restart() {
             _ => panic!("Expected Text value"),
         }
         conn.close().unwrap();
+    }
+}
+
+#[test]
+fn test_connection_sees_other_connection_changes() {
+    let db = MvccTestDbNoConn::new_with_random_db();
+    let conn0 = db.connect();
+    conn0
+        .execute("CREATE TABLE IF NOT EXISTS test_table (id INTEGER PRIMARY KEY, text TEXT)")
+        .unwrap();
+    let conn1 = db.connect();
+    conn1
+        .execute("CREATE TABLE IF NOT EXISTS test_table (id INTEGER PRIMARY KEY, text TEXT)")
+        .unwrap();
+    conn0
+        .execute("INSERT INTO test_table (id, text) VALUES (965, 'text_877')")
+        .unwrap();
+    let mut stmt = conn1.query("SELECT * FROM test_table").unwrap().unwrap();
+    loop {
+        let res = stmt.step().unwrap();
+        match res {
+            StepResult::Row => {
+                let row = stmt.row().unwrap();
+                let text = row.get_value(1).to_text().unwrap();
+                assert_eq!(text, "text_877");
+            }
+            StepResult::Done => break,
+            StepResult::IO => {
+                stmt.run_once().unwrap();
+            }
+            _ => panic!("Expected Row"),
+        }
     }
 }
 
