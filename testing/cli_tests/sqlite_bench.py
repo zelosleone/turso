@@ -6,13 +6,13 @@ import os
 import platform
 import statistics
 import subprocess
-from faker import Faker
 from pathlib import Path
 from time import perf_counter, sleep
-from typing import Dict, List
+from typing import List
 
 from cli_tests.console import error, info, test
 from cli_tests.test_turso_cli import TestTursoShell
+from faker import Faker
 
 # for now, use debug for the debug assertions
 LIMBO_BIN = Path("./target/release/tursodb")
@@ -61,9 +61,9 @@ def bench_one(vfs: str, sql: str, iterations: int, assorted: bool, use_sqlite3=F
                 "select * from users;",
                 "insert into products (name,price) values (randomblob(1024*64), randomblob(1024*64));",
                 "select first_name, last_name, age from users limit 1000;",
-                "insert into users (first_name, last_name, email, phone_number, address, city, state, zipcode,age) values "
-                + f"('{fake.first_name()}', '{fake.last_name()}', '{fake.email()}', '{fake.phone_number()}', '{fake.street_address()}', "
-                + f"'{fake.city()}', '{fake.state_abbr()}', '{fake.zipcode()}', 62);",
+                "insert into users (first_name, last_name, email, phone_number, address, city, state, zipcode,age)"
+                + f"values ('{fake.first_name()}', '{fake.last_name()}', '{fake.email()}', '{fake.phone_number()}',"
+                + f"'{fake.street_address()}', '{fake.city()}', '{fake.state_abbr()}', '{fake.zipcode()}', 62);",
             ]
         )
     for i in range(1, iterations + 1):
