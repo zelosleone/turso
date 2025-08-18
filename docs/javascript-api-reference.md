@@ -7,15 +7,11 @@ This document describes the JavaScript API for Turso. The API is implemented in 
 
 The API is compatible with the libSQL promise API, which is an asynchronous variant of the `better-sqlite3` API.
 
-## class Database
+## Functions
 
-The `Database` class represents a connection that can prepare and execute SQL statements.
+#### connect(path, [options]) ⇒ Database
 
-### Methods
-
-#### new Database(path, [options]) ⇒ Database
-
-Creates a new database connection.
+Opens a new database connection.
 
 | Param   | Type                | Description               |
 | ------- | ------------------- | ------------------------- |
@@ -25,6 +21,12 @@ The `path` parameter points to the SQLite database file to open. If the file poi
 To open an in-memory database, please pass `:memory:` as the `path` parameter.
 
 The function returns a `Database` object.
+
+## class Database
+
+The `Database` class represents a connection that can prepare and execute SQL statements.
+
+### Methods
 
 #### prepare(sql) ⇒ Statement
 
