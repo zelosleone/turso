@@ -410,7 +410,7 @@ pub struct Pager {
 
     commit_info: RefCell<CommitInfo>,
     checkpoint_state: RefCell<CheckpointState>,
-    syncing: Rc<RefCell<bool>>,
+    syncing: Rc<Cell<bool>>,
     auto_vacuum_mode: RefCell<AutoVacuumMode>,
     /// 0 -> Database is empty,
     /// 1 -> Database is being initialized,
@@ -521,7 +521,7 @@ impl Pager {
             commit_info: RefCell::new(CommitInfo {
                 state: CommitState::Start,
             }),
-            syncing: Rc::new(RefCell::new(false)),
+            syncing: Rc::new(Cell::new(false)),
             checkpoint_state: RefCell::new(CheckpointState::Checkpoint),
             buffer_pool,
             auto_vacuum_mode: RefCell::new(AutoVacuumMode::None),
@@ -1233,6 +1233,7 @@ impl Pager {
                     io_yield_one!(c);
                 }
                 CommitState::AfterSyncWal => {
+                    turso_assert!(!wal.borrow().is_syncing(), "wal should have synced");
                     if wal_auto_checkpoint_disabled || !wal.borrow().should_checkpoint() {
                         self.commit_info.borrow_mut().state = CommitState::Start;
                         break PagerCommitResult::WalWritten;
@@ -1249,7 +1250,7 @@ impl Pager {
                     io_yield_one!(c);
                 }
                 CommitState::AfterSyncDbFile => {
-                    turso_assert!(!*self.syncing.borrow(), "should have finished syncing");
+                    turso_assert!(!self.syncing.get(), "should have finished syncing");
                     self.commit_info.borrow_mut().state = CommitState::Start;
                     break PagerCommitResult::Checkpointed(checkpoint_result);
                 }
@@ -1341,7 +1342,7 @@ impl Pager {
                     io_yield_one!(c);
                 }
                 CheckpointState::CheckpointDone { res } => {
-                    turso_assert!(!*self.syncing.borrow(), "syncing should be done");
+                    turso_assert!(!self.syncing.get(), "syncing should be done");
                     self.checkpoint_state.replace(CheckpointState::Checkpoint);
                     return Ok(IOResult::Done(res));
                 }

@@ -63,7 +63,7 @@ use crate::storage::pager::Pager;
 use crate::storage::wal::{PendingFlush, READMARK_NOT_USED};
 use crate::types::{RawSlice, RefValue, SerialType, SerialTypeKind, TextRef, TextSubtype};
 use crate::{bail_corrupt_error, turso_assert, File, Result, WalFileShared};
-use std::cell::{RefCell, UnsafeCell};
+use std::cell::{Cell, UnsafeCell};
 use std::collections::{BTreeMap, HashMap};
 use std::mem::MaybeUninit;
 use std::pin::Pin;
@@ -1055,12 +1055,12 @@ pub fn write_pages_vectored(
 #[instrument(skip_all, level = Level::DEBUG)]
 pub fn begin_sync(
     db_file: Arc<dyn DatabaseStorage>,
-    syncing: Rc<RefCell<bool>>,
+    syncing: Rc<Cell<bool>>,
 ) -> Result<Completion> {
-    assert!(!*syncing.borrow());
-    *syncing.borrow_mut() = true;
+    assert!(!syncing.get());
+    syncing.set(true);
     let completion = Completion::new_sync(move |_| {
-        *syncing.borrow_mut() = false;
+        syncing.set(false);
     });
     #[allow(clippy::arc_with_non_send_sync)]
     db_file.sync(completion)
