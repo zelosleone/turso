@@ -107,116 +107,6 @@ make docker-cli-build && \
 make docker-cli-run
 ```
 
-### MCP Server Mode
-
-The Turso CLI includes a built-in [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that allows AI assistants to interact with your databases. Start the MCP server with:
-
-```shell
-tursodb your_database.db --mcp
-```
-
-The MCP server provides seven tools for database interaction:
-
-#### Available Tools
-
-1. **`list_tables`** - List all tables in the database
-2. **`describe_table`** - Describe the structure of a specific table
-3. **`execute_query`** - Execute read-only SELECT queries
-4. **`insert_data`** - Insert new data into tables
-5. **`update_data`** - Update existing data in tables
-6. **`delete_data`** - Delete data from tables
-7. **`schema_change`** - Execute schema modification statements (CREATE TABLE, ALTER TABLE, DROP TABLE)
-
-#### Example Usage
-
-The MCP server runs as a single process that handles multiple JSON-RPC requests over stdin/stdout. Here's how to interact with it:
-
-#### Example with In-Memory Database
-
-```bash
-cat << 'EOF' | tursodb --mcp
-{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "client", "version": "1.0"}}}
-{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "schema_change", "arguments": {"query": "CREATE TABLE users (id INTEGER, name TEXT, email TEXT)"}}}
-{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "list_tables", "arguments": {}}}
-{"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "insert_data", "arguments": {"query": "INSERT INTO users VALUES (1, 'Alice', 'alice@example.com')"}}}
-{"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "execute_query", "arguments": {"query": "SELECT * FROM users"}}}
-EOF
-```
-
-#### Example with Existing Database
-
-```bash
-# Working with an existing database file
-cat << 'EOF' | tursodb mydb.db --mcp
-{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "client", "version": "1.0"}}}
-{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "list_tables", "arguments": {}}}
-EOF
-```
-
-#### Using with Claude Code
-
-If you're using [Claude Code](https://claude.ai/code), you can easily connect to your Turso MCP server using the built-in MCP management commands:
-
-##### Quick Setup
-
-1. **Add the MCP server** to Claude Code:
-   ```bash
-   claude mcp add my-database -- tursodb ./path/to/your/database.db --mcp
-   ```
-
-2. **Restart Claude Code** to activate the connection
-
-3. **Start querying** your database through natural language!
-
-##### Command Breakdown
-
-```bash
-claude mcp add my-database -- tursodb ./path/to/your/database.db --mcp
-#              ↑            ↑       ↑                           ↑
-#              |            |       |                           |
-#              Name         |       Database path               MCP flag
-#                          Separator
-```
-
-- **`my-database`** - Choose any name for your MCP server
-- **`--`** - Required separator between Claude options and your command
-- **`tursodb`** - The Turso database CLI
-- **`./path/to/your/database.db`** - Path to your SQLite database file
-- **`--mcp`** - Enables MCP server mode
-
-##### Example Usage
-
-```bash
-# For a local project database
-cd /your/project
-claude mcp add my-project-db -- tursodb ./data/app.db --mcp
-
-# For an absolute path
-claude mcp add analytics-db -- tursodb /Users/you/databases/analytics.db --mcp
-
-# For a specific project (local scope)
-claude mcp add project-db --local -- tursodb ./database.db --mcp
-```
-
-##### Managing MCP Servers
-
-```bash
-# List all configured MCP servers
-claude mcp list
-
-# Get details about a specific server
-claude mcp get my-database
-
-# Remove an MCP server
-claude mcp remove my-database
-```
-
-Once configured, you can ask Claude Code to:
-- "Show me all tables in the database"
-- "What's the schema for the users table?"
-- "Find all posts with more than 100 upvotes"
-- "Insert a new user with name 'Alice' and email 'alice@example.com'"
-
 </details>
 
 <details>
@@ -325,6 +215,122 @@ for rows.Next() {
 We integrated Turso Database into JDBC. For detailed instructions on how to use Turso Database with java, please refer to
 the [README.md under bindings/java](bindings/java/README.md).
 </details>
+
+### MCP Server Mode
+
+<details>
+<summary>The Turso CLI includes a built-in [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that allows AI assistants to interact with your databases.</summary>
+
+Start the MCP server with:
+
+```shell
+tursodb your_database.db --mcp
+```
+
+The MCP server provides seven tools for database interaction:
+
+#### Available Tools
+
+1. **`open_database`** - Open a new database
+2. **`current_database`** - Describe the current database
+3. **`list_tables`** - List all tables in the database
+4. **`describe_table`** - Describe the structure of a specific table
+5. **`execute_query`** - Execute read-only SELECT queries
+6. **`insert_data`** - Insert new data into tables
+7. **`update_data`** - Update existing data in tables
+8. **`delete_data`** - Delete data from tables
+9. **`schema_change`** - Execute schema modification statements (CREATE TABLE, ALTER TABLE, DROP TABLE)
+
+#### Example Usage
+
+The MCP server runs as a single process that handles multiple JSON-RPC requests over stdin/stdout. Here's how to interact with it:
+
+#### Example with In-Memory Database
+
+```bash
+cat << 'EOF' | tursodb --mcp
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "client", "version": "1.0"}}}
+{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "schema_change", "arguments": {"query": "CREATE TABLE users (id INTEGER, name TEXT, email TEXT)"}}}
+{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "list_tables", "arguments": {}}}
+{"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "insert_data", "arguments": {"query": "INSERT INTO users VALUES (1, 'Alice', 'alice@example.com')"}}}
+{"jsonrpc": "2.0", "id": 5, "method": "tools/call", "params": {"name": "execute_query", "arguments": {"query": "SELECT * FROM users"}}}
+EOF
+```
+
+#### Example with Existing Database
+
+```bash
+# Working with an existing database file
+cat << 'EOF' | tursodb mydb.db --mcp
+{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "client", "version": "1.0"}}}
+{"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "list_tables", "arguments": {}}}
+EOF
+```
+
+#### Using with Claude Code
+
+If you're using [Claude Code](https://claude.ai/code), you can easily connect to your Turso MCP server using the built-in MCP management commands:
+
+##### Quick Setup
+
+1. **Add the MCP server** to Claude Code:
+   ```bash
+   claude mcp add my-database -- tursodb ./path/to/your/database.db --mcp
+   ```
+
+2. **Restart Claude Code** to activate the connection
+
+3. **Start querying** your database through natural language!
+
+##### Command Breakdown
+
+```bash
+claude mcp add my-database -- tursodb ./path/to/your/database.db --mcp
+#              ↑            ↑       ↑                           ↑
+#              |            |       |                           |
+#              Name         |       Database path               MCP flag
+#                          Separator
+```
+
+- **`my-database`** - Choose any name for your MCP server
+- **`--`** - Required separator between Claude options and your command
+- **`tursodb`** - The Turso database CLI
+- **`./path/to/your/database.db`** - Path to your SQLite database file
+- **`--mcp`** - Enables MCP server mode
+
+##### Example Usage
+
+```bash
+# For a local project database
+cd /your/project
+claude mcp add my-project-db -- tursodb ./data/app.db --mcp
+
+# For an absolute path
+claude mcp add analytics-db -- tursodb /Users/you/databases/analytics.db --mcp
+
+# For a specific project (local scope)
+claude mcp add project-db --local -- tursodb ./database.db --mcp
+```
+
+##### Managing MCP Servers
+
+```bash
+# List all configured MCP servers
+claude mcp list
+
+# Get details about a specific server
+claude mcp get my-database
+
+# Remove an MCP server
+claude mcp remove my-database
+```
+
+Once configured, you can ask Claude Code to:
+- "Show me all tables in the database"
+- "What's the schema for the users table?"
+- "Find all posts with more than 100 upvotes"
+- "Insert a new user with name 'Alice' and email 'alice@example.com'"
+
 
 ## Contributing
 
