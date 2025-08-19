@@ -919,7 +919,7 @@ impl Wal for WalFile {
                 "read({bytes_read}) less than expected({buf_len}): frame_id={frame_id}"
             );
             let frame = frame.clone();
-            finish_read_page(page.get().id, buf, frame).unwrap();
+            finish_read_page(page.get().id, buf, frame);
         });
         begin_read_wal_frame(
             &self.get_shared().file,
