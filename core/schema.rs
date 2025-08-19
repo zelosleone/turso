@@ -943,9 +943,7 @@ fn create_table(
                                 order = o;
                             }
                         }
-                        ast::ColumnConstraint::NotNull {
-                            nullable, ..
-                        } => {
+                        ast::ColumnConstraint::NotNull { nullable, .. } => {
                             notnull = !nullable;
                         }
                         ast::ColumnConstraint::Default(ref expr) => default = Some(expr),

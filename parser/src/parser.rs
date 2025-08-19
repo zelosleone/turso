@@ -10987,7 +10987,7 @@ mod tests {
                 })],
             ),
             (
-                b"WITH test AS (SELECT 1) INSERT INTO foo(bar, baz) DEFAULT VALUES RETURNING bar".as_slice(),
+                b"WITH test AS (SELECT 1) INSERT INTO foo DEFAULT VALUES RETURNING bar".as_slice(),
                 vec![Cmd::Stmt(Stmt::Insert {
                     with: Some(With {
                         recursive: false,
@@ -11024,10 +11024,7 @@ mod tests {
                         name: Name::Ident("foo".to_owned()),
                         alias: None,
                     },
-                    columns: vec![
-                        Name::Ident("bar".to_owned()),
-                        Name::Ident("baz".to_owned()),
-                    ],
+                    columns: vec![],
                     body: InsertBody::DefaultValues,
                     returning: vec![
                         ResultColumn::Expr(
@@ -11038,7 +11035,7 @@ mod tests {
                 })],
             ),
             (
-                b"WITH test AS (SELECT 1) REPLACE INTO foo(bar, baz) DEFAULT VALUES RETURNING bar".as_slice(),
+                b"WITH test AS (SELECT 1) REPLACE INTO foo DEFAULT VALUES RETURNING bar".as_slice(),
                 vec![Cmd::Stmt(Stmt::Insert {
                     with: Some(With {
                         recursive: false,
@@ -11075,10 +11072,7 @@ mod tests {
                         name: Name::Ident("foo".to_owned()),
                         alias: None,
                     },
-                    columns: vec![
-                        Name::Ident("bar".to_owned()),
-                        Name::Ident("baz".to_owned()),
-                    ],
+                    columns: vec![],
                     body: InsertBody::DefaultValues,
                     returning: vec![
                         ResultColumn::Expr(
