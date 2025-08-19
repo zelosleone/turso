@@ -11,7 +11,7 @@
   "type": "module",
   "exports": {
     ".": "./dist/promise.js",
-    "./sync": "./dist/sync.js"
+    "./compat": "./dist/compat.js"
   },
   "files": [
     "browser.js",
