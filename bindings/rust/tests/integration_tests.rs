@@ -12,27 +12,32 @@ async fn test_rows_next() {
     conn.execute("INSERT INTO test (x) VALUES (1)", ())
         .await
         .unwrap();
+    assert_eq!(conn.last_insert_rowid(), 1);
     conn.execute("INSERT INTO test (x) VALUES (2)", ())
         .await
         .unwrap();
+    assert_eq!(conn.last_insert_rowid(), 2);
     conn.execute(
         "INSERT INTO test (x) VALUES (:x)",
         vec![(":x".to_string(), Value::Integer(3))],
     )
     .await
     .unwrap();
+    assert_eq!(conn.last_insert_rowid(), 3);
     conn.execute(
         "INSERT INTO test (x) VALUES (@x)",
         vec![("@x".to_string(), Value::Integer(4))],
     )
     .await
     .unwrap();
+    assert_eq!(conn.last_insert_rowid(), 4);
     conn.execute(
         "INSERT INTO test (x) VALUES ($x)",
         vec![("$x".to_string(), Value::Integer(5))],
     )
     .await
     .unwrap();
+    assert_eq!(conn.last_insert_rowid(), 5);
     let mut res = conn.query("SELECT * FROM test", ()).await.unwrap();
     assert_eq!(
         res.next().await.unwrap().unwrap().get_value(0).unwrap(),
