@@ -17,6 +17,7 @@ export class Connection {
   private session: Session;
   private isOpen: boolean = true;
   private defaultSafeIntegerMode: boolean = false;
+  private _inTransaction: boolean = false;
 
   constructor(config: Config) {
     if (!config.url) {
@@ -24,6 +25,19 @@ export class Connection {
     }
     this.config = config;
     this.session = new Session(config);
+    
+    // Define inTransaction property
+    Object.defineProperty(this, 'inTransaction', {
+      get: () => this._inTransaction,
+      enumerable: true
+    });
+  }
+
+  /**
+   * Whether the database is currently in a transaction.
+   */
+  get inTransaction(): boolean {
+    return this._inTransaction;
   }
 
   /**
@@ -141,6 +155,63 @@ export class Connection {
    */
   defaultSafeIntegers(toggle?: boolean): void {
     this.defaultSafeIntegerMode = toggle === false ? false : true;
+  }
+
+  /**
+   * Returns a function that executes the given function in a transaction.
+   * 
+   * @param fn - The function to wrap in a transaction
+   * @returns A function that will execute fn within a transaction
+   * 
+   * @example
+   * ```typescript
+   * const insert = await client.prepare("INSERT INTO users (name) VALUES (?)");
+   * const insertMany = client.transaction((users) => {
+   *   for (const user of users) {
+   *     insert.run([user]);
+   *   }
+   * });
+   * 
+   * await insertMany(['Alice', 'Bob', 'Charlie']);
+   * ```
+   */
+  transaction(fn: (...args: any[]) => any): any {
+    if (typeof fn !== "function") {
+      throw new TypeError("Expected first argument to be a function");
+    }
+
+    const db = this;
+    const wrapTxn = (mode: string) => {
+      return async (...bindParameters: any[]) => {
+        await db.exec("BEGIN " + mode);
+        db._inTransaction = true;
+        try {
+          const result = await fn(...bindParameters);
+          await db.exec("COMMIT");
+          db._inTransaction = false;
+          return result;
+        } catch (err) {
+          await db.exec("ROLLBACK");
+          db._inTransaction = false;
+          throw err;
+        }
+      };
+    };
+
+    const properties = {
+      default: { value: wrapTxn("") },
+      deferred: { value: wrapTxn("DEFERRED") },
+      immediate: { value: wrapTxn("IMMEDIATE") },
+      exclusive: { value: wrapTxn("EXCLUSIVE") },
+      database: { value: this, enumerable: true },
+    };
+
+    Object.defineProperties(properties.default.value, properties);
+    Object.defineProperties(properties.deferred.value, properties);
+    Object.defineProperties(properties.immediate.value, properties);
+    Object.defineProperties(properties.exclusive.value, properties);
+    
+    return properties.default.value;
   }
 
   /**

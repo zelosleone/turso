@@ -38,6 +38,7 @@ class Database {
   db: NativeDB;
   memory: boolean;
   open: boolean;
+  private _inTransaction: boolean = false;
 
   /**
    * Creates a new database connection. If the database file pointed to by `path` does not exists, it will be created.
@@ -61,9 +62,7 @@ class Database {
 
     Object.defineProperties(this, {
       inTransaction: {
-        get() {
-          throw new Error("not implemented");
-        },
+        get: () => this._inTransaction,
       },
       name: {
         get() {
@@ -117,12 +116,15 @@ class Database {
     const wrapTxn = (mode) => {
       return (...bindParameters) => {
         db.exec("BEGIN " + mode);
+        db._inTransaction = true;
         try {
           const result = fn(...bindParameters);
           db.exec("COMMIT");
+          db._inTransaction = false;
           return result;
         } catch (err) {
           db.exec("ROLLBACK");
+          db._inTransaction = false;
           throw err;
         }
       };

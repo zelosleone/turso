@@ -145,16 +145,16 @@ test.serial("Database.pragma() after close()", async (t) => {
 // Database.transaction()
 // ==========================================================================
 
-test.skip("Database.transaction()", async (t) => {
+test.serial("Database.transaction()", async (t) => {
   const db = t.context.db;
 
   const insert = await db.prepare(
     "INSERT INTO users(name, email) VALUES (:name, :email)"
   );
 
-  const insertMany = db.transaction((users) => {
+  const insertMany = db.transaction(async (users) => {
     t.is(db.inTransaction, true);
-    for (const user of users) insert.run(user);
+    for (const user of users) await insert.run(user);
   });
 
   t.is(db.inTransaction, false);
@@ -166,12 +166,12 @@ test.skip("Database.transaction()", async (t) => {
   t.is(db.inTransaction, false);
 
   const stmt = await db.prepare("SELECT * FROM users WHERE id = ?");
-  t.is(stmt.get(3).name, "Joey");
-  t.is(stmt.get(4).name, "Sally");
-  t.is(stmt.get(5).name, "Junior");
+  t.is((await stmt.get(3)).name, "Joey");
+  t.is((await stmt.get(4)).name, "Sally");
+  t.is((await stmt.get(5)).name, "Junior");
 });
 
-test.skip("Database.transaction().immediate()", async (t) => {
+test.serial("Database.transaction().immediate()", async (t) => {
   const db = t.context.db;
   const insert = await db.prepare(
     "INSERT INTO users(name, email) VALUES (:name, :email)"

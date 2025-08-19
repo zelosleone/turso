@@ -138,7 +138,7 @@ test.serial("Database.pragma() after close()", async (t) => {
 // Database.transaction()
 // ==========================================================================
 
-test.skip("Database.transaction()", async (t) => {
+test.serial("Database.transaction()", async (t) => {
   const db = t.context.db;
 
   const insert = db.prepare(
@@ -164,7 +164,7 @@ test.skip("Database.transaction()", async (t) => {
   t.is(stmt.get(5).name, "Junior");
 });
 
-test.skip("Database.transaction().immediate()", async (t) => {
+test.serial("Database.transaction().immediate()", async (t) => {
   const db = t.context.db;
   const insert = db.prepare(
     "INSERT INTO users(name, email) VALUES (:name, :email)"
