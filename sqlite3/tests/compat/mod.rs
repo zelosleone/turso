@@ -69,6 +69,7 @@ extern "C" {
     fn sqlite3_column_text(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_char;
     fn sqlite3_column_bytes(stmt: *mut sqlite3_stmt, idx: i32) -> i64;
     fn sqlite3_column_blob(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_void;
+    fn sqlite3_column_type(stmt: *mut sqlite3_stmt, idx: i32) -> i32;
 }
 
 const SQLITE_OK: i32 = 0;
@@ -80,6 +81,12 @@ const SQLITE_CHECKPOINT_PASSIVE: i32 = 0;
 const SQLITE_CHECKPOINT_FULL: i32 = 1;
 const SQLITE_CHECKPOINT_RESTART: i32 = 2;
 const SQLITE_CHECKPOINT_TRUNCATE: i32 = 3;
+const SQLITE_INTEGER: i32 = 1;
+const SQLITE_FLOAT: i32 = 2;
+const SQLITE_TEXT: i32 = 3;
+const SQLITE3_TEXT: i32 = 3;
+const SQLITE_BLOB: i32 = 4;
+const SQLITE_NULL: i32 = 5;
 
 #[cfg(not(target_os = "windows"))]
 mod tests {
@@ -641,6 +648,68 @@ mod tests {
             let col2_len = sqlite3_column_bytes(stmt, 0);
             let col2_slice = std::slice::from_raw_parts(col2_ptr as *const u8, col2_len as usize);
             assert_eq!(col2_slice, &data2[..2]);
+
+            assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+            assert_eq!(sqlite3_close(db), SQLITE_OK);
+        }
+    }
+
+    #[test]
+    fn test_sqlite3_column_type() {
+        unsafe {
+            let temp_file = tempfile::NamedTempFile::with_suffix(".db").unwrap();
+            let path = std::ffi::CString::new(temp_file.path().to_str().unwrap()).unwrap();
+            let mut db = std::ptr::null_mut();
+            assert_eq!(sqlite3_open(path.as_ptr(), &mut db), SQLITE_OK);
+
+            let mut stmt = std::ptr::null_mut();
+            assert_eq!(
+            sqlite3_prepare_v2(
+                db,
+                c"CREATE TABLE test_types (col_int INTEGER, col_float REAL, col_text TEXT, col_blob BLOB, col_null TEXT)".as_ptr(),
+                -1,
+                &mut stmt,
+                std::ptr::null_mut(),
+            ),
+            SQLITE_OK
+        );
+            assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+            assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+            let mut stmt = std::ptr::null_mut();
+            assert_eq!(
+                sqlite3_prepare_v2(
+                    db,
+                    c"INSERT INTO test_types VALUES (123, 45.67, 'hello', x'010203', NULL)"
+                        .as_ptr(),
+                    -1,
+                    &mut stmt,
+                    std::ptr::null_mut(),
+                ),
+                SQLITE_OK
+            );
+            assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+            assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+            let mut stmt = std::ptr::null_mut();
+            assert_eq!(
+                sqlite3_prepare_v2(
+                    db,
+                    c"SELECT col_int, col_float, col_text, col_blob, col_null FROM test_types"
+                        .as_ptr(),
+                    -1,
+                    &mut stmt,
+                    std::ptr::null_mut(),
+                ),
+                SQLITE_OK
+            );
+            assert_eq!(sqlite3_step(stmt), SQLITE_ROW);
+
+            assert_eq!(sqlite3_column_type(stmt, 0), SQLITE_INTEGER);
+            assert_eq!(sqlite3_column_type(stmt, 1), SQLITE_FLOAT);
+            assert_eq!(sqlite3_column_type(stmt, 2), SQLITE_TEXT);
+            assert_eq!(sqlite3_column_type(stmt, 3), SQLITE_BLOB);
+            assert_eq!(sqlite3_column_type(stmt, 4), SQLITE_NULL);
 
             assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
             assert_eq!(sqlite3_close(db), SQLITE_OK);

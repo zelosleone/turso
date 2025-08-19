@@ -41,6 +41,13 @@
 
 #define SQLITE_CHECKPOINT_TRUNCATE 3
 
+#define SQLITE_INTEGER  1
+#define SQLITE_FLOAT    2
+#define SQLITE_BLOB     4
+#define SQLITE_NULL     5
+#define SQLITE_TEXT     3
+#define SQLITE3_TEXT     3
+
 typedef void (*sqlite3_destructor_type)(void*);
 #define SQLITE_STATIC    ((sqlite3_destructor_type)0)
 #define SQLITE_TRANSIENT ((sqlite3_destructor_type)-1)
