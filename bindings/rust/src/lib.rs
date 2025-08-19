@@ -318,6 +318,12 @@ impl Connection {
         Ok(())
     }
 
+    /// Returns the rowid of the last row inserted.
+    pub fn last_insert_rowid(&self) -> i64 {
+        let conn = self.inner.lock().unwrap();
+        conn.last_insert_rowid()
+    }
+
     /// Flush dirty pages to disk.
     /// This will write the dirty pages to the WAL.
     pub fn cacheflush(&self) -> Result<()> {
