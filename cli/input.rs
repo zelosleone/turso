@@ -85,6 +85,7 @@ pub struct Settings {
     pub timer: bool,
     pub headers: bool,
     pub mcp: bool,
+    pub stats: bool,
 }
 
 impl From<Opts> for Settings {
@@ -110,6 +111,7 @@ impl From<Opts> for Settings {
             timer: false,
             headers: false,
             mcp: opts.mcp,
+            stats: false,
         }
     }
 }

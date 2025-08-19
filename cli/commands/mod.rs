@@ -3,8 +3,8 @@ pub mod import;
 
 use args::{
     CwdArgs, DbConfigArgs, EchoArgs, ExitArgs, HeadersArgs, IndexesArgs, LoadExtensionArgs,
-    NullValueArgs, OpcodesArgs, OpenArgs, OutputModeArgs, SchemaArgs, SetOutputArgs, TablesArgs,
-    TimerArgs,
+    NullValueArgs, OpcodesArgs, OpenArgs, OutputModeArgs, SchemaArgs, SetOutputArgs, StatsArgs,
+    TablesArgs, TimerArgs,
 };
 use clap::Parser;
 use import::ImportArgs;
@@ -78,6 +78,9 @@ pub enum Command {
     /// Print or set the current configuration for the database. Currently ignored.
     #[command(name = "dbconfig", display_name = ".dbconfig")]
     DbConfig(DbConfigArgs),
+    /// Display database statistics
+    #[command(name = "stats", display_name = ".stats")]
+    Stats(StatsArgs),
     /// List vfs modules available
     #[command(name = "vfslist", display_name = ".vfslist")]
     ListVfs,

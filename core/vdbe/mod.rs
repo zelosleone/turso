@@ -22,6 +22,7 @@ pub mod execute;
 pub mod explain;
 pub mod insn;
 pub mod likeop;
+pub mod metrics;
 pub mod sorter;
 
 use crate::{
@@ -35,6 +36,7 @@ use crate::{
         OpColumnState, OpDeleteState, OpDeleteSubState, OpIdxInsertState, OpInsertState,
         OpInsertSubState, OpNewRowidState, OpNoConflictState, OpRowIdState, OpSeekState,
     },
+    vdbe::metrics::StatementMetrics,
     IOExt, RefValue,
 };
 
@@ -257,6 +259,8 @@ pub struct ProgramState {
     op_delete_state: OpDeleteState,
     op_idx_delete_state: Option<OpIdxDeleteState>,
     op_integrity_check_state: OpIntegrityCheckState,
+    /// Metrics collected during statement execution
+    pub metrics: StatementMetrics,
     op_open_ephemeral_state: OpOpenEphemeralState,
     op_new_rowid_state: OpNewRowidState,
     op_idx_insert_state: OpIdxInsertState,
@@ -297,6 +301,7 @@ impl ProgramState {
             },
             op_idx_delete_state: None,
             op_integrity_check_state: OpIntegrityCheckState::Start,
+            metrics: StatementMetrics::new(),
             op_open_ephemeral_state: OpOpenEphemeralState::Start,
             op_new_rowid_state: OpNewRowidState::Start,
             op_idx_insert_state: OpIdxInsertState::SeekIfUnique,
@@ -446,16 +451,37 @@ impl Program {
             let _ = state.result_row.take();
             let (insn, insn_function) = &self.insns[state.pc as usize];
             trace_insn(self, state.pc as InsnReference, insn);
+            // Always increment VM steps for every loop iteration
+            state.metrics.vm_steps = state.metrics.vm_steps.saturating_add(1);
+
             match insn_function(self, state, insn, &pager, mv_store.as_ref()) {
-                Ok(InsnFunctionStepResult::Step) => {}
-                Ok(InsnFunctionStepResult::Done) => return Ok(StepResult::Done),
+                Ok(InsnFunctionStepResult::Step) => {
+                    // Instruction completed, moving to next
+                    state.metrics.insn_executed = state.metrics.insn_executed.saturating_add(1);
+                }
+                Ok(InsnFunctionStepResult::Done) => {
+                    // Instruction completed execution
+                    state.metrics.insn_executed = state.metrics.insn_executed.saturating_add(1);
+                    return Ok(StepResult::Done);
+                }
                 Ok(InsnFunctionStepResult::IO(io)) => {
+                    // Instruction not complete - waiting for I/O, will resume at same PC
                     state.io_completions = Some(io);
                     return Ok(StepResult::IO);
                 }
-                Ok(InsnFunctionStepResult::Row) => return Ok(StepResult::Row),
-                Ok(InsnFunctionStepResult::Interrupt) => return Ok(StepResult::Interrupt),
-                Ok(InsnFunctionStepResult::Busy) => return Ok(StepResult::Busy),
+                Ok(InsnFunctionStepResult::Row) => {
+                    // Instruction completed (ResultRow already incremented PC)
+                    state.metrics.insn_executed = state.metrics.insn_executed.saturating_add(1);
+                    return Ok(StepResult::Row);
+                }
+                Ok(InsnFunctionStepResult::Interrupt) => {
+                    // Instruction interrupted - may resume at same PC
+                    return Ok(StepResult::Interrupt);
+                }
+                Ok(InsnFunctionStepResult::Busy) => {
+                    // Instruction blocked - will retry at same PC
+                    return Ok(StepResult::Busy);
+                }
                 Err(err) => {
                     handle_program_error(&pager, &self.connection, &err)?;
                     return Err(err);

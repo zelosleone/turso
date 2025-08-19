@@ -1086,9 +1086,13 @@ pub fn op_vfilter(
         };
         cursor.filter(*idx_num as i32, idx_str, *arg_count, args)?
     };
+    // Increment filter_operations metric for virtual table filter
+    state.metrics.filter_operations = state.metrics.filter_operations.saturating_add(1);
     if !has_rows {
         state.pc = pc_if_empty.as_offset_int();
     } else {
+        // VFilter positions to the first row if any exist, which counts as a read
+        state.metrics.rows_read = state.metrics.rows_read.saturating_add(1);
         state.pc += 1;
     }
     Ok(InsnFunctionStepResult::Step)
@@ -1203,6 +1207,8 @@ pub fn op_vnext(
         cursor.next()?
     };
     if has_more {
+        // Increment metrics for row read from virtual table (including materialized views)
+        state.metrics.rows_read = state.metrics.rows_read.saturating_add(1);
         state.pc = pc_if_next.as_offset_int();
     } else {
         state.pc += 1;
@@ -1283,6 +1289,8 @@ pub fn op_rewind(
     if is_empty {
         state.pc = pc_if_empty.as_offset_int();
     } else {
+        // Rewind positions to the first row, which is effectively a read
+        state.metrics.rows_read = state.metrics.rows_read.saturating_add(1);
         state.pc += 1;
     }
     Ok(InsnFunctionStepResult::Step)
@@ -1312,6 +1320,8 @@ pub fn op_last(
     if is_empty {
         state.pc = pc_if_empty.as_offset_int();
     } else {
+        // Last positions to the last row, which is effectively a read
+        state.metrics.rows_read = state.metrics.rows_read.saturating_add(1);
         state.pc += 1;
     }
     Ok(InsnFunctionStepResult::Step)
@@ -1839,6 +1849,17 @@ pub fn op_next(
         cursor.is_empty()
     };
     if !is_empty {
+        // Increment metrics for row read
+        state.metrics.rows_read = state.metrics.rows_read.saturating_add(1);
+        state.metrics.btree_next = state.metrics.btree_next.saturating_add(1);
+        // Track if this is a full table scan or index scan
+        if let Some((_, cursor_type)) = program.cursor_ref.get(*cursor_id) {
+            if cursor_type.is_index() {
+                state.metrics.index_steps = state.metrics.index_steps.saturating_add(1);
+            } else if matches!(cursor_type, CursorType::BTreeTable(_)) {
+                state.metrics.fullscan_steps = state.metrics.fullscan_steps.saturating_add(1);
+            }
+        }
         state.pc = pc_if_next.as_offset_int();
     } else {
         state.pc += 1;
@@ -1870,6 +1891,17 @@ pub fn op_prev(
         cursor.is_empty()
     };
     if !is_empty {
+        // Increment metrics for row read
+        state.metrics.rows_read = state.metrics.rows_read.saturating_add(1);
+        state.metrics.btree_prev = state.metrics.btree_prev.saturating_add(1);
+        // Track if this is a full table scan or index scan
+        if let Some((_, cursor_type)) = program.cursor_ref.get(*cursor_id) {
+            if cursor_type.is_index() {
+                state.metrics.index_steps = state.metrics.index_steps.saturating_add(1);
+            } else if matches!(cursor_type, CursorType::BTreeTable(_)) {
+                state.metrics.fullscan_steps = state.metrics.fullscan_steps.saturating_add(1);
+            }
+        }
         state.pc = pc_if_prev.as_offset_int();
     } else {
         state.pc += 1;
@@ -2449,7 +2481,7 @@ pub fn op_seek_rowid(
         insn
     );
     assert!(target_pc.is_offset());
-    let pc = {
+    let (pc, did_seek) = {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_btree_mut();
         let rowid = match state.registers[*src_reg].get_value() {
@@ -2476,15 +2508,20 @@ pub fn op_seek_rowid(
                 let seek_result = return_if_io!(
                     cursor.seek(SeekKey::TableRowId(rowid), SeekOp::GE { eq_only: true })
                 );
-                if !matches!(seek_result, SeekResult::Found) {
+                let pc = if !matches!(seek_result, SeekResult::Found) {
                     target_pc.as_offset_int()
                 } else {
                     state.pc + 1
-                }
+                };
+                (pc, true)
             }
-            None => target_pc.as_offset_int(),
+            None => (target_pc.as_offset_int(), false),
         }
     };
+    // Increment btree_seeks metric for SeekRowid operation after cursor is dropped
+    if did_seek {
+        state.metrics.btree_seeks = state.metrics.btree_seeks.saturating_add(1);
+    }
     state.pc = pc;
     Ok(InsnFunctionStepResult::Step)
 }
@@ -2790,6 +2827,8 @@ pub fn seek_internal(
                             IOResult::IO(io) => return Ok(SeekInternalResult::IO(io)),
                         }
                     };
+                    // Increment btree_seeks metric after seek operation and cursor is dropped
+                    state.metrics.btree_seeks = state.metrics.btree_seeks.saturating_add(1);
                     let found = match seek_result {
                         SeekResult::Found => true,
                         SeekResult::NotFound => false,
@@ -3768,15 +3807,19 @@ pub fn op_sorter_sort(
         },
         insn
     );
-    let is_empty = {
+    let (is_empty, did_sort) = {
         let mut cursor = state.get_cursor(*cursor_id);
         let cursor = cursor.as_sorter_mut();
         let is_empty = cursor.is_empty();
         if !is_empty {
             return_if_io!(cursor.sort());
         }
-        is_empty
+        (is_empty, !is_empty)
     };
+    // Increment metrics for sort operation after cursor is dropped
+    if did_sort {
+        state.metrics.sort_operations = state.metrics.sort_operations.saturating_add(1);
+    }
     if is_empty {
         state.pc = pc_if_empty.as_offset_int();
     } else {
@@ -5211,6 +5254,8 @@ pub fn op_insert(
                         moved_before
                     ));
                 }
+                // Increment metrics for row write
+                state.metrics.rows_written = state.metrics.rows_written.saturating_add(1);
 
                 // Only update last_insert_rowid for regular table inserts, not schema modifications
                 let root_page = {
@@ -5421,6 +5466,8 @@ pub fn op_delete(
                     let cursor = cursor.as_btree_mut();
                     return_if_io!(cursor.delete());
                 }
+                // Increment metrics for row write (DELETE is a write operation)
+                state.metrics.rows_written = state.metrics.rows_written.saturating_add(1);
                 let schema = program.connection.schema.borrow();
                 let dependent_views = schema.get_dependent_materialized_views(table_name);
                 if dependent_views.is_empty() {
@@ -5542,6 +5589,8 @@ pub fn op_idx_delete(
                     let cursor = cursor.as_btree_mut();
                     return_if_io!(cursor.delete());
                 }
+                // Increment metrics for index write (delete is a write operation)
+                state.metrics.rows_written = state.metrics.rows_written.saturating_add(1);
                 let n_change = program.n_change.get();
                 program.n_change.set(n_change + 1);
                 state.pc += 1;
@@ -5688,9 +5737,12 @@ pub fn op_idx_insert(
                     cursor.insert(&BTreeKey::new_index_key(record_to_insert), moved_before)
                 );
             }
+            // Increment metrics for index write
+            if flags.has(IdxInsertFlags::NCHANGE) {
+                state.metrics.rows_written = state.metrics.rows_written.saturating_add(1);
+            }
             state.op_idx_insert_state = OpIdxInsertState::SeekIfUnique;
             state.pc += 1;
-            // TODO: flag optimizations, update n_change if OPFLAG_NCHANGE
             Ok(InsnFunctionStepResult::Step)
         }
     }
@@ -7001,6 +7053,12 @@ pub fn op_count(
     };
 
     state.registers[*target_reg] = Register::Value(Value::Integer(count as i64));
+
+    // For optimized COUNT(*) queries, the count represents rows that would be read
+    // SQLite tracks this differently (as pages read), but for consistency we track as rows
+    if *exact {
+        state.metrics.rows_read = state.metrics.rows_read.saturating_add(count as u64);
+    }
 
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)

@@ -90,6 +90,24 @@ pub struct NullValueArgs {
 }
 
 #[derive(Debug, Clone, Args)]
+pub struct StatsArgs {
+    /// Toggle stats mode: on or off
+    #[arg(value_enum)]
+    pub toggle: Option<StatsToggle>,
+    /// Reset stats after displaying
+    #[arg(long, short, default_value_t = false)]
+    pub reset: bool,
+}
+
+#[derive(Debug, ValueEnum, Clone)]
+pub enum StatsToggle {
+    /// Enable automatic stats display after each statement
+    On,
+    /// Disable automatic stats display
+    Off,
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct EchoArgs {
     #[arg(value_enum)]
     pub mode: EchoMode,
