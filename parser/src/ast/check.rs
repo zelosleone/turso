@@ -135,14 +135,17 @@ impl Stmt {
                         }
                     }
                 }
+
                 // SQLite3 engine raises this error later (not while parsing):
-                match select.column_count() {
-                    ColumnCount::Fixed(n) if n != columns.len() => Err(Error::Custom(format!(
-                        "expected {} columns for {} but got {}",
-                        columns.len(),
-                        view_name,
-                        n
-                    ))),
+                match (select.column_count(), columns.is_empty()) {
+                    (ColumnCount::Fixed(n), false) if n != columns.len() => {
+                        Err(Error::Custom(format!(
+                            "expected {} columns for {} but got {}",
+                            columns.len(),
+                            view_name,
+                            n
+                        )))
+                    }
                     _ => Ok(()),
                 }
             }
