@@ -884,16 +884,14 @@ pub fn begin_read_page(
         if bytes_read == 0 {
             buf = Arc::new(Buffer::new_temporary(0));
         }
-        if finish_read_page(page_idx, buf, page.clone()).is_err() {
-            page.set_error();
-        }
+        finish_read_page(page_idx, buf, page.clone());
     });
     let c = Completion::new_read(buf, complete);
     db_file.read_page(page_idx, c)
 }
 
 #[instrument(skip_all, level = Level::INFO)]
-pub fn finish_read_page(page_idx: usize, buffer_ref: Arc<Buffer>, page: PageRef) -> Result<()> {
+pub fn finish_read_page(page_idx: usize, buffer_ref: Arc<Buffer>, page: PageRef) {
     tracing::trace!(page_idx);
     let pos = if page_idx == DatabaseHeader::PAGE_ID {
         DatabaseHeader::SIZE
@@ -906,7 +904,6 @@ pub fn finish_read_page(page_idx: usize, buffer_ref: Arc<Buffer>, page: PageRef)
         page.clear_locked();
         page.set_loaded();
     }
-    Ok(())
 }
 
 #[instrument(skip_all, level = Level::DEBUG)]
