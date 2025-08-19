@@ -2015,41 +2015,45 @@ pub fn op_transaction(
 
     // 1. We try to upgrade current version
     let current_state = conn.transaction_state.get();
-    let (new_transaction_state, updated) = match (current_state, write) {
-        // pending state means that we tried beginning a tx and the method returned IO.
-        // instead of ending the read tx, just update the state to pending.
-        (TransactionState::PendingUpgrade, write) => {
-            turso_assert!(
-                *write,
-                "pending upgrade should only be set for write transactions"
-            );
-            (
+    let (new_transaction_state, updated) = if conn.is_nested_stmt.get() {
+        (current_state, false)
+    } else {
+        match (current_state, write) {
+            // pending state means that we tried beginning a tx and the method returned IO.
+            // instead of ending the read tx, just update the state to pending.
+            (TransactionState::PendingUpgrade, write) => {
+                turso_assert!(
+                    *write,
+                    "pending upgrade should only be set for write transactions"
+                );
+                (
+                    TransactionState::Write {
+                        schema_did_change: false,
+                    },
+                    true,
+                )
+            }
+            (TransactionState::Write { schema_did_change }, true) => {
+                (TransactionState::Write { schema_did_change }, false)
+            }
+            (TransactionState::Write { schema_did_change }, false) => {
+                (TransactionState::Write { schema_did_change }, false)
+            }
+            (TransactionState::Read, true) => (
                 TransactionState::Write {
                     schema_did_change: false,
                 },
                 true,
-            )
+            ),
+            (TransactionState::Read, false) => (TransactionState::Read, false),
+            (TransactionState::None, true) => (
+                TransactionState::Write {
+                    schema_did_change: false,
+                },
+                true,
+            ),
+            (TransactionState::None, false) => (TransactionState::Read, true),
         }
-        (TransactionState::Write { schema_did_change }, true) => {
-            (TransactionState::Write { schema_did_change }, false)
-        }
-        (TransactionState::Write { schema_did_change }, false) => {
-            (TransactionState::Write { schema_did_change }, false)
-        }
-        (TransactionState::Read, true) => (
-            TransactionState::Write {
-                schema_did_change: false,
-            },
-            true,
-        ),
-        (TransactionState::Read, false) => (TransactionState::Read, false),
-        (TransactionState::None, true) => (
-            TransactionState::Write {
-                schema_did_change: false,
-            },
-            true,
-        ),
-        (TransactionState::None, false) => (TransactionState::Read, true),
     };
 
     // 2. Start transaction if needed
@@ -2073,12 +2077,20 @@ pub fn op_transaction(
         }
     } else {
         if updated && matches!(current_state, TransactionState::None) {
+            turso_assert!(
+                !conn.is_nested_stmt.get(),
+                "nested stmt should not begin a new read transaction"
+            );
             if let LimboResult::Busy = pager.begin_read_tx()? {
                 return Ok(InsnFunctionStepResult::Busy);
             }
         }
 
         if updated && matches!(new_transaction_state, TransactionState::Write { .. }) {
+            turso_assert!(
+                !conn.is_nested_stmt.get(),
+                "nested stmt should not begin a new write transaction"
+            );
             match pager.begin_write_tx()? {
                 IOResult::Done(r) => {
                     if let LimboResult::Busy = r {
@@ -6425,12 +6437,13 @@ pub fn op_parse_schema(
     let previous_auto_commit = conn.auto_commit.get();
     conn.auto_commit.set(false);
 
-    if let Some(where_clause) = where_clause {
+    let maybe_nested_stmt_err = if let Some(where_clause) = where_clause {
         let stmt = conn.prepare(format!("SELECT * FROM sqlite_schema WHERE {where_clause}"))?;
 
         conn.with_schema_mut(|schema| {
             // TODO: This function below is synchronous, make it async
             let existing_views = schema.materialized_views.clone();
+            conn.is_nested_stmt.set(true);
             parse_schema_rows(
                 stmt,
                 schema,
@@ -6438,13 +6451,14 @@ pub fn op_parse_schema(
                 state.mv_tx_id,
                 existing_views,
             )
-        })?;
+        })
     } else {
         let stmt = conn.prepare("SELECT * FROM sqlite_schema")?;
 
         conn.with_schema_mut(|schema| {
             // TODO: This function below is synchronous, make it async
             let existing_views = schema.materialized_views.clone();
+            conn.is_nested_stmt.set(true);
             parse_schema_rows(
                 stmt,
                 schema,
@@ -6452,9 +6466,11 @@ pub fn op_parse_schema(
                 state.mv_tx_id,
                 existing_views,
             )
-        })?;
-    }
+        })
+    };
+    conn.is_nested_stmt.set(false);
     conn.auto_commit.set(previous_auto_commit);
+    maybe_nested_stmt_err?;
     state.pc += 1;
     Ok(InsnFunctionStepResult::Step)
 }

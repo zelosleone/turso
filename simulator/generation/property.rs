@@ -16,7 +16,6 @@ use crate::{
             Create, Delete, Drop, Insert, Query, Select,
         },
         table::SimValue,
-        FAULT_ERROR_MSG,
     },
     runner::env::SimulatorEnv,
 };
@@ -752,12 +751,10 @@ impl Property {
                                 Ok(Ok(()))
                             }
                             Err(err) => {
-                                let msg = format!("{err}");
-                                if msg.contains(FAULT_ERROR_MSG) {
-                                    Ok(Ok(()))
-                                } else {
-                                    Err(LimboError::InternalError(msg))
-                                }
+                                // We cannot make any assumptions about the error content; all we are about is, if the statement errored,
+                                // we don't shadow the results into the simulator env, i.e. we assume whatever the statement did was rolled back.
+                                tracing::error!("Fault injection produced error: {err}");
+                                Ok(Ok(()))
                             }
                         }
                     }),

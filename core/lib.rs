@@ -424,6 +424,7 @@ impl Database {
             query_only: Cell::new(false),
             view_transaction_states: RefCell::new(HashMap::new()),
             metrics: RefCell::new(ConnectionMetrics::new()),
+            is_nested_stmt: Cell::new(false),
         });
         let builtin_syms = self.builtin_syms.borrow();
         // add built-in extensions symbols to the connection to prevent having to load each time
@@ -848,6 +849,9 @@ pub struct Connection {
     view_transaction_states: RefCell<HashMap<String, ViewTransactionState>>,
     /// Connection-level metrics aggregation
     pub metrics: RefCell<ConnectionMetrics>,
+    /// Whether the connection is executing a statement initiated by another statement.
+    /// Generally this is only true for ParseSchema.
+    is_nested_stmt: Cell<bool>,
 }
 
 impl Connection {
@@ -2040,6 +2044,9 @@ impl Statement {
 
     pub fn run_once(&self) -> Result<()> {
         let res = self.pager.io.run_once();
+        if self.program.connection.is_nested_stmt.get() {
+            return res;
+        }
         if res.is_err() {
             let state = self.program.connection.transaction_state.get();
             if let TransactionState::Write { .. } = state {
