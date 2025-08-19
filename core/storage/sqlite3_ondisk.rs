@@ -876,6 +876,7 @@ pub fn begin_read_page(
     let buf = Arc::new(buf);
     let complete = Box::new(move |res: Result<(Arc<Buffer>, i32), CompletionError>| {
         let Ok((mut buf, bytes_read)) = res else {
+            page.clear_locked();
             return;
         };
         let buf_len = buf.len();
