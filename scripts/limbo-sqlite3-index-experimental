@@ -11,7 +11,7 @@ EXPERIMENTAL_FLAGS="--experimental-indexes"
 
 # if RUST_LOG is non-empty, enable tracing output
 if [ -n "$RUST_LOG" ]; then
-  TURSO_ENABLE_CHECKPOINT_CACHE=1 "$TURSODB" -m list -q $EXPERIMENTAL_FLAGS -t testing/test.log "$@"
+   "$TURSODB" -m list -q $EXPERIMENTAL_FLAGS -t testing/test.log "$@"
 else
-  TURSO_ENABLE_CHECKPOINT_CACHE=1 "$TURSODB" -m list -q $EXPERIMENTAL_FLAGS "$@"
+   "$TURSODB" -m list -q $EXPERIMENTAL_FLAGS "$@"
 fi

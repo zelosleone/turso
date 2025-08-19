@@ -288,8 +288,8 @@ impl Page {
     }
 
     #[inline]
-    pub fn is_valid_for_checkpoint(&self, target_frame: u64, seq: u32) -> bool {
-        let (f, s) = self.wal_tag_pair();
+    pub fn is_valid_for_checkpoint(&self, target_frame: u64) -> bool {
+        let (f, _s) = self.wal_tag_pair();
         f == target_frame && !self.is_dirty()
     }
 }
@@ -1168,7 +1168,7 @@ impl Pager {
         let mut page_cache = self.page_cache.write();
         let page_key = PageCacheKey::new(page_idx);
         page_cache.get(&page_key).and_then(|page| {
-            if page.is_valid_for_checkpoint(target_frame, seq) {
+            if page.is_valid_for_checkpoint(target_frame) {
                 tracing::trace!(
                     "cache_get_for_checkpoint: page {} frame {} is valid",
                     page_idx,
