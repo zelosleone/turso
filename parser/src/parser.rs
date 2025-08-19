@@ -1488,8 +1488,8 @@ impl<'a> Parser<'a> {
                             _ => {
                                 let distinct = self.parse_distinct()?;
                                 let exprs = self.parse_expr_list()?;
-                                eat_expect!(self, TK_RP);
                                 let order_by = self.parse_order_by()?;
+                                eat_expect!(self, TK_RP);
                                 let filter_over = self.parse_filter_over()?;
                                 return Ok(Box::new(Expr::FunctionCall {
                                     name,
