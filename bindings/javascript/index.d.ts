@@ -67,6 +67,14 @@ export declare class Database {
    * `Ok(())` if the database is closed successfully.
    */
   close(): void
+  /**
+   * Sets the default safe integers mode for all statements from this database.
+   *
+   * # Arguments
+   *
+   * * `toggle` - Whether to use safe integers by default.
+   */
+  defaultSafeIntegers(toggle?: boolean | undefined | null): void
   /** Runs the I/O loop synchronously. */
   ioLoopSync(): void
   /** Runs the I/O loop asynchronously, returning a Promise. */
@@ -107,6 +115,16 @@ export declare class Statement {
   raw(raw?: boolean | undefined | null): void
   /** Sets the presentation mode to pluck. */
   pluck(pluck?: boolean | undefined | null): void
+  /**
+   * Sets safe integers mode for this statement.
+   *
+   * # Arguments
+   *
+   * * `toggle` - Whether to use safe integers.
+   */
+  safeIntegers(toggle?: boolean | undefined | null): void
+  /** Get column information for the statement */
+  columns(): unknown[]
   /** Finalizes the statement. */
   finalize(): void
 }

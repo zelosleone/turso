@@ -1,6 +1,7 @@
 import { 
   decodeValue, 
-  type CursorEntry
+  type CursorEntry,
+  type Column
 } from './protocol.js';
 import { Session, type SessionConfig } from './session.js';
 import { DatabaseError } from './error.js';
@@ -18,10 +19,13 @@ export class Statement {
   private session: Session;
   private sql: string;
   private presentationMode: 'expanded' | 'raw' | 'pluck' = 'expanded';
+  private safeIntegerMode: boolean = false;
+  private columnMetadata: Column[];
 
-  constructor(sessionConfig: SessionConfig, sql: string) {
+  constructor(sessionConfig: SessionConfig, sql: string, columns?: Column[]) {
     this.session = new Session(sessionConfig);
     this.sql = sql;
+    this.columnMetadata = columns || [];
   }
 
 
@@ -44,6 +48,54 @@ export class Statement {
   }
 
   /**
+   * Enable pluck mode to return only the first column value from each row.
+   * 
+   * @param pluck Enable or disable pluck mode. If you don't pass the parameter, pluck mode is enabled.
+   * @returns This statement instance for chaining
+   * 
+   * @example
+   * ```typescript
+   * const stmt = client.prepare("SELECT id FROM users");
+   * const ids = await stmt.pluck().all();
+   * console.log(ids); // [1, 2, 3, ...]
+   * ```
+   */
+  pluck(pluck?: boolean): Statement {
+    this.presentationMode = pluck === false ? 'expanded' : 'pluck';
+    return this;
+  }
+
+  /**
+   * Sets safe integers mode for this statement.
+   * 
+   * @param toggle Whether to use safe integers. If you don't pass the parameter, safe integers mode is enabled.
+   * @returns This statement instance for chaining
+   */
+  safeIntegers(toggle?: boolean): Statement {
+    this.safeIntegerMode = toggle === false ? false : true;
+    return this;
+  }
+
+  /**
+   * Get column information for this statement.
+   * 
+   * @returns Array of column metadata objects matching the native bindings format
+   * 
+   * @example
+   * ```typescript
+   * const stmt = await client.prepare("SELECT id, name, email FROM users");
+   * const columns = stmt.columns();
+   * console.log(columns); // [{ name: 'id', type: 'INTEGER', column: null, database: null, table: null }, ...]
+   * ```
+   */
+  columns(): any[] {
+    return this.columnMetadata.map(col => ({
+      name: col.name,
+      type: col.decltype
+    }));
+  }
+
+  /**
    * Executes the prepared statement.
    * 
    * @param args - Optional array of parameter values or object with named parameters
@@ -58,7 +110,7 @@ export class Statement {
    */
   async run(args?: any): Promise<any> {
     const normalizedArgs = this.normalizeArgs(args);
-    const result = await this.session.execute(this.sql, normalizedArgs);
+    const result = await this.session.execute(this.sql, normalizedArgs, this.safeIntegerMode);
     return { changes: result.rowsAffected, lastInsertRowid: result.lastInsertRowid };
   }
 
@@ -79,10 +131,15 @@ export class Statement {
    */
   async get(args?: any): Promise<any> {
     const normalizedArgs = this.normalizeArgs(args);
-    const result = await this.session.execute(this.sql, normalizedArgs);
+    const result = await this.session.execute(this.sql, normalizedArgs, this.safeIntegerMode);
     const row = result.rows[0];
     if (!row) {
       return undefined;
+    }
+    
+    if (this.presentationMode === 'pluck') {
+      // In pluck mode, return only the first column value
+      return row[0];
     }
     
     if (this.presentationMode === 'raw') {
@@ -91,7 +148,12 @@ export class Statement {
       return [...row];
     }
     
-    return row;
+    // In expanded mode, convert to plain object with named properties  
+    const obj: any = {};
+    result.columns.forEach((col: string, i: number) => {
+      obj[col] = row[i];
+    });
+    return obj;
   }
 
   /**
@@ -109,11 +171,18 @@ export class Statement {
    */
   async all(args?: any): Promise<any[]> {
     const normalizedArgs = this.normalizeArgs(args);
-    const result = await this.session.execute(this.sql, normalizedArgs);
+    const result = await this.session.execute(this.sql, normalizedArgs, this.safeIntegerMode);
+    
+    if (this.presentationMode === 'pluck') {
+      // In pluck mode, return only the first column value from each row
+      return result.rows.map((row: any) => row[0]);
+    }
     
     if (this.presentationMode === 'raw') {
       return result.rows.map((row: any) => [...row]);
     }
+    
+    // In expanded mode, convert rows to plain objects with named properties
     return result.rows.map((row: any) => {
       const obj: any = {};
       result.columns.forEach((col: string, i: number) => {
@@ -156,8 +225,11 @@ export class Statement {
           break;
         case 'row':
           if (entry.row) {
-            const decodedRow = entry.row.map(decodeValue);
-            if (this.presentationMode === 'raw') {
+            const decodedRow = entry.row.map(value => decodeValue(value, this.safeIntegerMode));
+            if (this.presentationMode === 'pluck') {
+              // In pluck mode, yield only the first column value
+              yield decodedRow[0];
+            } else if (this.presentationMode === 'raw') {
               // In raw mode, yield arrays of values
               yield decodedRow;
             } else {

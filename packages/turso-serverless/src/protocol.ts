@@ -62,9 +62,21 @@ export interface CloseRequest {
   type: 'close';
 }
 
+export interface DescribeRequest {
+  type: 'describe';
+  sql: string;
+}
+
+export interface DescribeResult {
+  params: Array<{ name?: string }>;
+  cols: Column[];
+  is_explain: boolean;
+  is_readonly: boolean;
+}
+
 export interface PipelineRequest {
   baton: string | null;
-  requests: (ExecuteRequest | BatchRequest | SequenceRequest | CloseRequest)[];
+  requests: (ExecuteRequest | BatchRequest | SequenceRequest | CloseRequest | DescribeRequest)[];
 }
 
 export interface PipelineResponse {
@@ -73,8 +85,8 @@ export interface PipelineResponse {
   results: Array<{
     type: 'ok' | 'error';
     response?: {
-      type: 'execute' | 'batch' | 'sequence' | 'close';
-      result?: ExecuteResult;
+      type: 'execute' | 'batch' | 'sequence' | 'close' | 'describe';
+      result?: ExecuteResult | DescribeResult;
     };
     error?: {
       message: string;
@@ -89,10 +101,18 @@ export function encodeValue(value: any): Value {
   }
   
   if (typeof value === 'number') {
-    if (Number.isInteger(value)) {
-      return { type: 'integer', value: value.toString() };
+    if (!Number.isFinite(value)) {
+      throw new Error("Only finite numbers (not Infinity or NaN) can be passed as arguments");
     }
     return { type: 'float', value };
+  }
+  
+  if (typeof value === 'bigint') {
+    return { type: 'integer', value: value.toString() };
+  }
+  
+  if (typeof value === 'boolean') {
+    return { type: 'integer', value: value ? '1' : '0' };
   }
   
   if (typeof value === 'string') {
@@ -107,11 +127,14 @@ export function encodeValue(value: any): Value {
   return { type: 'text', value: String(value) };
 }
 
-export function decodeValue(value: Value): any {
+export function decodeValue(value: Value, safeIntegers: boolean = false): any {
   switch (value.type) {
     case 'null':
       return null;
     case 'integer':
+      if (safeIntegers) {
+        return BigInt(value.value as string);
+      }
       return parseInt(value.value as string, 10);
     case 'float':
       return value.value as number;

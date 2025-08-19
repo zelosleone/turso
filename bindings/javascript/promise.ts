@@ -38,6 +38,7 @@ class Database {
   db: NativeDB;
   memory: boolean;
   open: boolean;
+  private _inTransaction: boolean = false;
   /**
    * Creates a new database connection. If the database file pointed to by `path` does not exists, it will be created.
    *
@@ -65,9 +66,7 @@ class Database {
     this.memory = db.memory;
     Object.defineProperties(this, {
       inTransaction: {
-        get() {
-          throw new Error("not implemented");
-        },
+        get: () => this._inTransaction,
       },
       name: {
         get() {
@@ -121,12 +120,15 @@ class Database {
     const wrapTxn = (mode) => {
       return (...bindParameters) => {
         db.exec("BEGIN " + mode);
+        db._inTransaction = true;
         try {
           const result = fn(...bindParameters);
           db.exec("COMMIT");
+          db._inTransaction = false;
           return result;
         } catch (err) {
           db.exec("ROLLBACK");
+          db._inTransaction = false;
           throw err;
         }
       };
@@ -215,6 +217,15 @@ class Database {
   }
 
   /**
+   * Sets the default safe integers mode for all statements from this database.
+   *
+   * @param {boolean} [toggle] - Whether to use safe integers by default.
+   */
+  defaultSafeIntegers(toggle) {
+    this.db.defaultSafeIntegers(toggle);
+  }
+
+  /**
    * Closes the database connection.
    */
   close() {
@@ -251,6 +262,25 @@ class Statement {
   pluck(pluckMode) {
     this.stmt.pluck(pluckMode);
     return this;
+  }
+
+  /**
+   * Sets safe integers mode for this statement.
+   *
+   * @param {boolean} [toggle] - Whether to use safe integers.
+   */
+  safeIntegers(toggle) {
+    this.stmt.safeIntegers(toggle);
+    return this;
+  }
+
+  /**
+   * Get column information for the statement.
+   *
+   * @returns {Array} An array of column objects with name, column, table, database, and type properties.
+   */
+  columns() {
+    return this.stmt.columns();
   }
 
   get source() {
@@ -376,12 +406,6 @@ class Statement {
     throw new Error("not implemented");
   }
 
-  /**
-   * Returns the columns in the result set returned by this prepared statement.
-   */
-  columns() {
-    throw new Error("not implemented");
-  }
 
   /**
    * Binds the given parameters to the statement _permanently_
