@@ -62,9 +62,21 @@ export interface CloseRequest {
   type: 'close';
 }
 
+export interface DescribeRequest {
+  type: 'describe';
+  sql: string;
+}
+
+export interface DescribeResult {
+  params: Array<{ name?: string }>;
+  cols: Column[];
+  is_explain: boolean;
+  is_readonly: boolean;
+}
+
 export interface PipelineRequest {
   baton: string | null;
-  requests: (ExecuteRequest | BatchRequest | SequenceRequest | CloseRequest)[];
+  requests: (ExecuteRequest | BatchRequest | SequenceRequest | CloseRequest | DescribeRequest)[];
 }
 
 export interface PipelineResponse {
@@ -73,8 +85,8 @@ export interface PipelineResponse {
   results: Array<{
     type: 'ok' | 'error';
     response?: {
-      type: 'execute' | 'batch' | 'sequence' | 'close';
-      result?: ExecuteResult;
+      type: 'execute' | 'batch' | 'sequence' | 'close' | 'describe';
+      result?: ExecuteResult | DescribeResult;
     };
     error?: {
       message: string;

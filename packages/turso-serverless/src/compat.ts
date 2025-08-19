@@ -247,15 +247,8 @@ class LibSQLClient implements Client {
         normalizedStmt = this.normalizeStatement(stmtOrSql);
       }
 
-      await this.session.sequence(normalizedStmt.sql);
-      // Return empty result set for sequence execution
-      return this.convertResult({
-        columns: [],
-        columnTypes: [],
-        rows: [],
-        rowsAffected: 0,
-        lastInsertRowid: undefined
-      });
+      const result = await this.session.execute(normalizedStmt.sql, normalizedStmt.args, this._defaultSafeIntegers);
+      return this.convertResult(result);
     } catch (error: any) {
       throw new LibsqlError(error.message, "EXECUTE_ERROR");
     }

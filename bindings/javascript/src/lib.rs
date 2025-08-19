@@ -453,6 +453,42 @@ impl Statement {
         self.safe_integers.set(toggle.unwrap_or(true));
     }
 
+    /// Get column information for the statement
+    #[napi]
+    pub fn columns<'env>(&self, env: &'env Env) -> Result<Array<'env>> {
+        let stmt_ref = self.stmt.borrow();
+        let stmt = stmt_ref
+            .as_ref()
+            .ok_or_else(|| Error::new(Status::GenericFailure, "Statement has been finalized"))?;
+
+        let column_count = stmt.num_columns();
+        let mut js_array = env.create_array(column_count as u32)?;
+
+        for i in 0..column_count {
+            let mut js_obj = Object::new(env)?;
+            let column_name = stmt.get_column_name(i);
+            let column_type = stmt.get_column_type(i);
+
+            // Set the name property
+            js_obj.set("name", column_name.as_ref())?;
+
+            // Set type property if available
+            match column_type {
+                Some(type_str) => js_obj.set("type", type_str.as_str())?,
+                None => js_obj.set("type", ToNapiValue::into_unknown(Null, env)?)?,
+            }
+
+            // For now, set other properties to null since turso_core doesn't provide this metadata
+            js_obj.set("column", ToNapiValue::into_unknown(Null, env)?)?;
+            js_obj.set("table", ToNapiValue::into_unknown(Null, env)?)?;
+            js_obj.set("database", ToNapiValue::into_unknown(Null, env)?)?;
+
+            js_array.set(i as u32, js_obj)?;
+        }
+
+        Ok(js_array)
+    }
+
     /// Finalizes the statement.
     #[napi]
     pub fn finalize(&self) -> Result<()> {

@@ -123,6 +123,8 @@ export declare class Statement {
    * * `toggle` - Whether to use safe integers.
    */
   safeIntegers(toggle?: boolean | undefined | null): void
+  /** Get column information for the statement */
+  columns(): unknown[]
   /** Finalizes the statement. */
   finalize(): void
 }

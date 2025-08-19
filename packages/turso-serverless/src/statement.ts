@@ -1,6 +1,7 @@
 import { 
   decodeValue, 
-  type CursorEntry
+  type CursorEntry,
+  type Column
 } from './protocol.js';
 import { Session, type SessionConfig } from './session.js';
 import { DatabaseError } from './error.js';
@@ -19,10 +20,12 @@ export class Statement {
   private sql: string;
   private presentationMode: 'expanded' | 'raw' | 'pluck' = 'expanded';
   private safeIntegerMode: boolean = false;
+  private columnMetadata: Column[];
 
-  constructor(sessionConfig: SessionConfig, sql: string) {
+  constructor(sessionConfig: SessionConfig, sql: string, columns?: Column[]) {
     this.session = new Session(sessionConfig);
     this.sql = sql;
+    this.columnMetadata = columns || [];
   }
 
 
@@ -71,6 +74,25 @@ export class Statement {
   safeIntegers(toggle?: boolean): Statement {
     this.safeIntegerMode = toggle === false ? false : true;
     return this;
+  }
+
+  /**
+   * Get column information for this statement.
+   * 
+   * @returns Array of column metadata objects matching the native bindings format
+   * 
+   * @example
+   * ```typescript
+   * const stmt = await client.prepare("SELECT id, name, email FROM users");
+   * const columns = stmt.columns();
+   * console.log(columns); // [{ name: 'id', type: 'INTEGER', column: null, database: null, table: null }, ...]
+   * ```
+   */
+  columns(): any[] {
+    return this.columnMetadata.map(col => ({
+      name: col.name,
+      type: col.decltype
+    }));
   }
 
   /**
@@ -126,7 +148,12 @@ export class Statement {
       return [...row];
     }
     
-    return row;
+    // In expanded mode, convert to plain object with named properties  
+    const obj: any = {};
+    result.columns.forEach((col: string, i: number) => {
+      obj[col] = row[i];
+    });
+    return obj;
   }
 
   /**
@@ -154,6 +181,8 @@ export class Statement {
     if (this.presentationMode === 'raw') {
       return result.rows.map((row: any) => [...row]);
     }
+    
+    // In expanded mode, convert rows to plain objects with named properties
     return result.rows.map((row: any) => {
       const obj: any = {};
       result.columns.forEach((col: string, i: number) => {

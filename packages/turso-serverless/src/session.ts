@@ -9,6 +9,8 @@ import {
   type PipelineRequest,
   type SequenceRequest,
   type CloseRequest,
+  type DescribeRequest,
+  type DescribeResult,
   type NamedArg,
   type Value
 } from './protocol.js';
@@ -46,6 +48,43 @@ export class Session {
   constructor(config: SessionConfig) {
     this.config = config;
     this.baseUrl = normalizeUrl(config.url);
+  }
+
+  /**
+   * Describe a SQL statement to get its column metadata.
+   * 
+   * @param sql - The SQL statement to describe
+   * @returns Promise resolving to the statement description
+   */
+  async describe(sql: string): Promise<DescribeResult> {
+    const request: PipelineRequest = {
+      baton: this.baton,
+      requests: [{
+        type: "describe",
+        sql: sql
+      } as DescribeRequest]
+    };
+
+    const response = await executePipeline(this.baseUrl, this.config.authToken, request);
+    
+    this.baton = response.baton;
+    if (response.base_url) {
+      this.baseUrl = response.base_url;
+    }
+
+    // Check for errors in the response
+    if (response.results && response.results[0]) {
+      const result = response.results[0];
+      if (result.type === "error") {
+        throw new DatabaseError(result.error?.message || 'Describe execution failed');
+      }
+      
+      if (result.response?.type === "describe" && result.response.result) {
+        return result.response.result as DescribeResult;
+      }
+    }
+
+    throw new DatabaseError('Unexpected describe response');
   }
 
   /**

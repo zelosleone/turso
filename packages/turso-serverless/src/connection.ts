@@ -30,26 +30,54 @@ export class Connection {
    * Prepare a SQL statement for execution.
    * 
    * Each prepared statement gets its own session to avoid conflicts during concurrent execution.
+   * This method fetches column metadata using the describe functionality.
    * 
    * @param sql - The SQL statement to prepare
-   * @returns A Statement object that can be executed multiple ways
+   * @returns A Promise that resolves to a Statement object with column metadata
    * 
    * @example
    * ```typescript
-   * const stmt = client.prepare("SELECT * FROM users WHERE id = ?");
+   * const stmt = await client.prepare("SELECT * FROM users WHERE id = ?");
+   * const columns = stmt.columns();
    * const user = await stmt.get([123]);
-   * const allUsers = await stmt.all();
    * ```
    */
-  prepare(sql: string): Statement {
+  async prepare(sql: string): Promise<Statement> {
     if (!this.isOpen) {
       throw new TypeError("The database connection is not open");
     }
-    const stmt = new Statement(this.config, sql);
+    
+    // Create a session to get column metadata via describe
+    const session = new Session(this.config);
+    const description = await session.describe(sql);
+    await session.close();
+    
+    const stmt = new Statement(this.config, sql, description.cols);
     if (this.defaultSafeIntegerMode) {
       stmt.safeIntegers(true);
     }
     return stmt;
+  }
+
+
+  /**
+   * Execute a SQL statement and return all results.
+   * 
+   * @param sql - The SQL statement to execute
+   * @param args - Optional array of parameter values
+   * @returns Promise resolving to the complete result set
+   * 
+   * @example
+   * ```typescript
+   * const result = await client.execute("SELECT * FROM users WHERE id = ?", [123]);
+   * console.log(result.rows);
+   * ```
+   */
+  async execute(sql: string, args?: any[]): Promise<any> {
+    if (!this.isOpen) {
+      throw new TypeError("The database connection is not open");
+    }
+    return this.session.execute(sql, args || [], this.defaultSafeIntegerMode);
   }
 
   /**
@@ -60,7 +88,7 @@ export class Connection {
    * 
    * @example
    * ```typescript
-   * const result = await client.execute("SELECT * FROM users");
+   * const result = await client.exec("SELECT * FROM users");
    * console.log(result.rows);
    * ```
    */

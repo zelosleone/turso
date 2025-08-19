@@ -272,6 +272,15 @@ class Statement {
     return this;
   }
 
+  /**
+   * Get column information for the statement.
+   *
+   * @returns {Array} An array of column objects with name, column, table, database, and type properties.
+   */
+  columns() {
+    return this.stmt.columns();
+  }
+
   get source() {
     throw new Error("not implemented");
   }
@@ -395,12 +404,6 @@ class Statement {
     throw new Error("not implemented");
   }
 
-  /**
-   * Returns the columns in the result set returned by this prepared statement.
-   */
-  columns() {
-    throw new Error("not implemented");
-  }
 
   /**
    * Binds the given parameters to the statement _permanently_

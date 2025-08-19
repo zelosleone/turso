@@ -2076,6 +2076,32 @@ impl Statement {
         }
     }
 
+    pub fn get_column_type(&self, idx: usize) -> Option<String> {
+        let column = &self.program.result_columns.get(idx).expect("No column");
+        match &column.expr {
+            turso_sqlite3_parser::ast::Expr::Column {
+                table,
+                column: column_idx,
+                ..
+            } => {
+                let table_ref = self
+                    .program
+                    .table_references
+                    .find_table_by_internal_id(*table)?;
+                let table_column = table_ref.get_column_at(*column_idx)?;
+                match &table_column.ty {
+                    crate::schema::Type::Integer => Some("INTEGER".to_string()),
+                    crate::schema::Type::Real => Some("REAL".to_string()),
+                    crate::schema::Type::Text => Some("TEXT".to_string()),
+                    crate::schema::Type::Blob => Some("BLOB".to_string()),
+                    crate::schema::Type::Numeric => Some("NUMERIC".to_string()),
+                    crate::schema::Type::Null => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     pub fn parameters(&self) -> &parameters::Parameters {
         &self.program.parameters
     }
