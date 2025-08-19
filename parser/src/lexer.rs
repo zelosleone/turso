@@ -60,7 +60,7 @@ impl<'a> Iterator for Lexer<'a> {
                 b'[' => Some(self.mark(|l| l.eat_bracket())),
                 b'?' | b'$' | b'@' | b'#' | b':' => Some(self.mark(|l| l.eat_var())),
                 b if is_identifier_start(b) => Some(self.mark(|l| l.eat_blob_or_id())),
-                _ => Some(Ok(self.eat_unrecognized())),
+                _ => Some(self.eat_unrecognized()),
             },
         }
     }
@@ -643,13 +643,12 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn eat_unrecognized(&mut self) -> Token<'a> {
+    fn eat_unrecognized(&mut self) -> Result<Token<'a>, Error> {
         let start = self.offset;
         self.eat_while(|b| b.is_some() && !b.unwrap().is_ascii_whitespace());
-        Token {
-            value: &self.input[start..self.offset],
-            token_type: Some(TokenType::TK_ILLEGAL),
-        }
+        Err(Error::UnrecognizedToken(
+            (start, self.offset - start).into(),
+        ))
     }
 }
 
