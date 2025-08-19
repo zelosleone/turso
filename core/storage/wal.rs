@@ -67,23 +67,31 @@ impl CheckpointResult {
 pub enum CheckpointMode {
     /// Checkpoint as many frames as possible without waiting for any database readers or writers to finish, then sync the database file if all frames in the log were checkpointed.
     /// Passive never blocks readers or writers, only ensures (like all modes do) that there are no other checkpointers.
-    Passive,
+    ///
+    /// Optional upper_bound_inclusive parameter can be set in order to checkpoint frames with number no larger than the parameter
+    Passive { upper_bound_inclusive: Option<u64> },
     /// This mode blocks until there is no database writer and all readers are reading from the most recent database snapshot. It then checkpoints all frames in the log file and syncs the database file. This mode blocks new database writers while it is pending, but new database readers are allowed to continue unimpeded.
     Full,
     /// This mode works the same way as `Full` with the addition that after checkpointing the log file it blocks (calls the busy-handler callback) until all readers are reading from the database file only. This ensures that the next writer will restart the log file from the beginning. Like `Full`, this mode blocks new database writer attempts while it is pending, but does not impede readers.
     Restart,
     /// This mode works the same way as `Restart` with the addition that it also truncates the log file to zero bytes just prior to a successful return.
-    Truncate,
+    ///
+    /// Extra parameter can be set in order to perform conditional TRUNCATE: database will be checkpointed and truncated only if max_frames equals to the parameter value
+    /// this behaviour used by sync-engine which consolidate WAL before checkpoint and needs to be sure that no frames will be missed
+    Truncate { upper_bound_inclusive: Option<u64> },
 }
 
 impl CheckpointMode {
     fn should_restart_log(&self) -> bool {
-        matches!(self, CheckpointMode::Truncate | CheckpointMode::Restart)
+        matches!(
+            self,
+            CheckpointMode::Truncate { .. } | CheckpointMode::Restart
+        )
     }
     /// All modes other than Passive require a complete backfilling of all available frames
     /// from `shared.nbackfills + 1 -> shared.max_frame`
     fn require_all_backfilled(&self) -> bool {
-        !matches!(self, CheckpointMode::Passive)
+        !matches!(self, CheckpointMode::Passive { .. })
     }
 }
 
@@ -709,7 +717,7 @@ impl CheckpointLocks {
             // readers or writers. It acquires the checkpoint lock to ensure that no other
             // concurrent checkpoint happens, and acquires the exclusive read lock 0
             // to ensure that no readers read from a partially checkpointed db file.
-            CheckpointMode::Passive => {
+            CheckpointMode::Passive { .. } => {
                 let read0 = &mut shared.read_locks[0];
                 if !read0.write() {
                     shared.checkpoint_lock.unlock();
@@ -735,7 +743,7 @@ impl CheckpointLocks {
                 }
                 Ok(Self::Writer { ptr })
             }
-            CheckpointMode::Restart | CheckpointMode::Truncate => {
+            CheckpointMode::Restart | CheckpointMode::Truncate { .. } => {
                 // like all modes, we must acquire an exclusive checkpoint lock and lock on read 0
                 // to prevent a reader from reading a partially checkpointed db file.
                 let read0 = &mut shared.read_locks[0];
@@ -1513,7 +1521,25 @@ impl WalFile {
                     }
                     // acquire the appropriate exclusive locks depending on the checkpoint mode
                     self.acquire_proper_checkpoint_guard(mode)?;
-                    self.ongoing_checkpoint.max_frame = self.determine_max_safe_checkpoint_frame();
+                    let mut max_frame = self.determine_max_safe_checkpoint_frame();
+
+                    if let CheckpointMode::Truncate {
+                        upper_bound_inclusive: Some(upper_bound),
+                    } = mode
+                    {
+                        if max_frame > upper_bound {
+                            tracing::info!("abort checkpoint because latest frame in WAL is greater than upper_bound in TRUNCATE mode: {max_frame} != {upper_bound}");
+                            return Err(LimboError::Busy);
+                        }
+                    }
+                    if let CheckpointMode::Passive {
+                        upper_bound_inclusive: Some(upper_bound),
+                    } = mode
+                    {
+                        max_frame = max_frame.min(upper_bound);
+                    }
+
+                    self.ongoing_checkpoint.max_frame = max_frame;
                     self.ongoing_checkpoint.min_frame = nbackfills + 1;
                     let to_checkpoint = {
                         let shared = self.get_shared();
@@ -1676,7 +1702,7 @@ impl WalFile {
                             .max_frame
                             .saturating_sub(self.ongoing_checkpoint.min_frame - 1);
 
-                        if matches!(mode, CheckpointMode::Truncate) {
+                        if matches!(mode, CheckpointMode::Truncate { .. }) {
                             // sqlite always returns zeros for truncate mode
                             CheckpointResult::default()
                         } else if frames_checkpointed == 0
@@ -1858,7 +1884,7 @@ impl WalFile {
         self.min_frame = 0;
 
         // For TRUNCATE mode: shrink the WAL file to 0 B
-        if matches!(mode, CheckpointMode::Truncate) {
+        if matches!(mode, CheckpointMode::Truncate { .. }) {
             let c = Completion::new_trunc(|_| {
                 tracing::trace!("WAL file truncated to 0 B");
             });
@@ -1892,11 +1918,13 @@ impl WalFile {
     fn acquire_proper_checkpoint_guard(&mut self, mode: CheckpointMode) -> Result<()> {
         let needs_new_guard = !matches!(
             (&self.checkpoint_guard, mode),
-            (Some(CheckpointLocks::Read0 { .. }), CheckpointMode::Passive,)
-                | (
-                    Some(CheckpointLocks::Writer { .. }),
-                    CheckpointMode::Restart | CheckpointMode::Truncate,
-                ),
+            (
+                Some(CheckpointLocks::Read0 { .. }),
+                CheckpointMode::Passive { .. },
+            ) | (
+                Some(CheckpointLocks::Writer { .. }),
+                CheckpointMode::Restart | CheckpointMode::Truncate { .. },
+            ),
         );
         if needs_new_guard {
             // Drop any existing guard
@@ -2035,7 +2063,10 @@ impl WalFileShared {
     /// writing frames into the start of the log file.
     fn restart_wal_header(&mut self, io: &Arc<dyn IO>, mode: CheckpointMode) -> Result<()> {
         turso_assert!(
-            matches!(mode, CheckpointMode::Restart | CheckpointMode::Truncate),
+            matches!(
+                mode,
+                CheckpointMode::Restart | CheckpointMode::Truncate { .. }
+            ),
             "CheckpointMode must be Restart or Truncate"
         );
         {
@@ -2140,7 +2171,13 @@ pub mod test {
         let stat = std::fs::metadata(&walpath).unwrap();
         let meta_before = std::fs::metadata(&walpath).unwrap();
         let bytes_before = meta_before.len();
-        run_checkpoint_until_done(&mut *wal, &pager, CheckpointMode::Truncate);
+        run_checkpoint_until_done(
+            &mut *wal,
+            &pager,
+            CheckpointMode::Truncate {
+                upper_bound_inclusive: None,
+            },
+        );
         drop(wal);
 
         assert_eq!(pager.wal_frame_count().unwrap(), 0);
@@ -2338,7 +2375,13 @@ pub mod test {
         let (res1, max_before) = {
             let pager = conn1.pager.borrow();
             let mut wal = pager.wal.as_ref().unwrap().borrow_mut();
-            let res = run_checkpoint_until_done(&mut *wal, &pager, CheckpointMode::Passive);
+            let res = run_checkpoint_until_done(
+                &mut *wal,
+                &pager,
+                CheckpointMode::Passive {
+                    upper_bound_inclusive: None,
+                },
+            );
             let maxf = unsafe {
                 (&*db.maybe_shared_wal.read().as_ref().unwrap().get())
                     .max_frame
@@ -2367,7 +2410,13 @@ pub mod test {
         // Second passive checkpoint should finish
         let pager = conn1.pager.borrow();
         let mut wal = pager.wal.as_ref().unwrap().borrow_mut();
-        let res2 = run_checkpoint_until_done(&mut *wal, &pager, CheckpointMode::Passive);
+        let res2 = run_checkpoint_until_done(
+            &mut *wal,
+            &pager,
+            CheckpointMode::Passive {
+                upper_bound_inclusive: None,
+            },
+        );
         assert_eq!(
             res2.num_backfilled, res2.num_attempted,
             "Second checkpoint completes remaining frames"
@@ -2514,7 +2563,13 @@ pub mod test {
         let checkpoint_result = {
             let pager = conn_writer.pager.borrow();
             let mut wal = pager.wal.as_ref().unwrap().borrow_mut();
-            run_checkpoint_until_done(&mut *wal, &pager, CheckpointMode::Passive)
+            run_checkpoint_until_done(
+                &mut *wal,
+                &pager,
+                CheckpointMode::Passive {
+                    upper_bound_inclusive: None,
+                },
+            )
         };
 
         assert!(
@@ -2557,7 +2612,13 @@ pub mod test {
         {
             let pager = conn.pager.borrow();
             let mut wal = pager.wal.as_ref().unwrap().borrow_mut();
-            let _result = run_checkpoint_until_done(&mut *wal, &pager, CheckpointMode::Passive);
+            let _result = run_checkpoint_until_done(
+                &mut *wal,
+                &pager,
+                CheckpointMode::Passive {
+                    upper_bound_inclusive: None,
+                },
+            );
         }
 
         // check that read mark 1 (default reader) was updated to max_frame
@@ -2703,7 +2764,13 @@ pub mod test {
         let result1 = {
             let pager = conn_writer.pager.borrow();
             let mut wal = pager.wal.as_ref().unwrap().borrow_mut();
-            run_checkpoint_until_done(&mut *wal, &pager, CheckpointMode::Passive)
+            run_checkpoint_until_done(
+                &mut *wal,
+                &pager,
+                CheckpointMode::Passive {
+                    upper_bound_inclusive: None,
+                },
+            )
         };
         assert_eq!(result1.num_backfilled, r1_frame);
 
@@ -2714,7 +2781,13 @@ pub mod test {
         let result2 = {
             let pager = conn_writer.pager.borrow();
             let mut wal = pager.wal.as_ref().unwrap().borrow_mut();
-            run_checkpoint_until_done(&mut *wal, &pager, CheckpointMode::Passive)
+            run_checkpoint_until_done(
+                &mut *wal,
+                &pager,
+                CheckpointMode::Passive {
+                    upper_bound_inclusive: None,
+                },
+            )
         };
         assert_eq!(result1.num_backfilled + result2.num_backfilled, r2_frame);
 
@@ -2757,7 +2830,13 @@ pub mod test {
         {
             let pager = conn.pager.borrow();
             let mut wal = pager.wal.as_ref().unwrap().borrow_mut();
-            run_checkpoint_until_done(&mut *wal, &pager, CheckpointMode::Truncate);
+            run_checkpoint_until_done(
+                &mut *wal,
+                &pager,
+                CheckpointMode::Truncate {
+                    upper_bound_inclusive: None,
+                },
+            );
         }
 
         // Check file size after truncate
@@ -2812,7 +2891,13 @@ pub mod test {
         {
             let pager = conn.pager.borrow();
             let mut wal = pager.wal.as_ref().unwrap().borrow_mut();
-            run_checkpoint_until_done(&mut *wal, &pager, CheckpointMode::Truncate);
+            run_checkpoint_until_done(
+                &mut *wal,
+                &pager,
+                CheckpointMode::Truncate {
+                    upper_bound_inclusive: None,
+                },
+            );
         }
 
         // Check file size after truncate
@@ -2844,7 +2929,13 @@ pub mod test {
         {
             let pager = conn.pager.borrow();
             let mut wal = pager.wal.as_ref().unwrap().borrow_mut();
-            run_checkpoint_until_done(&mut *wal, &pager, CheckpointMode::Passive);
+            run_checkpoint_until_done(
+                &mut *wal,
+                &pager,
+                CheckpointMode::Passive {
+                    upper_bound_inclusive: None,
+                },
+            );
         }
         // delete the WAL file so we can read right from db and assert
         // that everything was backfilled properly
@@ -2933,7 +3024,13 @@ pub mod test {
         {
             let pager = conn1.pager.borrow();
             let mut wal = pager.wal.as_ref().unwrap().borrow_mut();
-            run_checkpoint_until_done(&mut *wal, &pager, CheckpointMode::Passive);
+            run_checkpoint_until_done(
+                &mut *wal,
+                &pager,
+                CheckpointMode::Passive {
+                    upper_bound_inclusive: None,
+                },
+            );
         }
 
         // Start a read transaction on conn2
