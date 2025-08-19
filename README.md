@@ -330,7 +330,7 @@ Once configured, you can ask Claude Code to:
 - "What's the schema for the users table?"
 - "Find all posts with more than 100 upvotes"
 - "Insert a new user with name 'Alice' and email 'alice@example.com'"
-
+</details>
 
 ## Contributing
 
