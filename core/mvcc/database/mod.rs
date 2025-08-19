@@ -1042,10 +1042,19 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         let tx = self.txs.get(&tx_id).unwrap();
         let tx = tx.value().read();
         let mut rows = self.rows.range(min_bound..max_bound);
-        rows.next().and_then(|row| {
-            // Find last valid version based on transaction.
-            self.find_last_visible_version(&tx, row)
-        })
+        loop {
+            // We are moving forward, so if a row was deleted we just need to skip it. Therefore, we need
+            // to loop either until we find a row that is not deleted or until we reach the end of the table.
+            let next_row = rows.next();
+            next_row.as_ref()?;
+
+            // We found a row, let's check if it's visible to the transaction.
+            let row = next_row.unwrap();
+            if let Some(visible_row) = self.find_last_visible_version(&tx, row) {
+                return Some(visible_row);
+            }
+            // If this row is not visible, continue to the next row
+        }
     }
 
     fn find_last_visible_version(
