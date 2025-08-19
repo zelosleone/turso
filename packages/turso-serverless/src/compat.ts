@@ -129,6 +129,7 @@ export interface Client {
 class LibSQLClient implements Client {
   private session: Session;
   private _closed = false;
+  private _defaultSafeIntegers = false;
 
   constructor(config: Config) {
     this.validateConfig(config);

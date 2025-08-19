@@ -211,6 +211,15 @@ class Database {
   }
 
   /**
+   * Sets the default safe integers mode for all statements from this database.
+   *
+   * @param {boolean} [toggle] - Whether to use safe integers by default.
+   */
+  defaultSafeIntegers(toggle) {
+    this.db.defaultSafeIntegers(toggle);
+  }
+
+  /**
    * Closes the database connection.
    */
   close() {
@@ -247,6 +256,16 @@ class Statement {
    */
   pluck(pluckMode) {
     this.stmt.pluck(pluckMode);
+    return this;
+  }
+
+  /**
+   * Sets safe integers mode for this statement.
+   *
+   * @param {boolean} [toggle] - Whether to use safe integers.
+   */
+  safeIntegers(toggle) {
+    this.stmt.safeIntegers(toggle);
     return this;
   }
 

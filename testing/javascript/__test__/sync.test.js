@@ -406,7 +406,7 @@ test.serial("Statement.all() [pluck]", async (t) => {
   t.deepEqual(stmt.pluck().all(), expected);
 });
 
-test.skip("Statement.all() [default safe integers]", async (t) => {
+test.serial("Statement.all() [default safe integers]", async (t) => {
   const db = t.context.db;
   db.defaultSafeIntegers();
   const stmt = db.prepare("SELECT * FROM users");
@@ -417,7 +417,7 @@ test.skip("Statement.all() [default safe integers]", async (t) => {
   t.deepEqual(stmt.raw().all(), expected);
 });
 
-test.skip("Statement.all() [statement safe integers]", async (t) => {
+test.serial("Statement.all() [statement safe integers]", async (t) => {
   const db = t.context.db;
   const stmt = db.prepare("SELECT * FROM users");
   stmt.safeIntegers();

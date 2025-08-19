@@ -16,6 +16,7 @@ export class Connection {
   private config: Config;
   private session: Session;
   private isOpen: boolean = true;
+  private defaultSafeIntegerMode: boolean = false;
 
   constructor(config: Config) {
     if (!config.url) {
@@ -44,7 +45,11 @@ export class Connection {
     if (!this.isOpen) {
       throw new TypeError("The database connection is not open");
     }
-    return new Statement(this.config, sql);
+    const stmt = new Statement(this.config, sql);
+    if (this.defaultSafeIntegerMode) {
+      stmt.safeIntegers(true);
+    }
+    return stmt;
   }
 
   /**
@@ -99,6 +104,15 @@ export class Connection {
     }
     const sql = `PRAGMA ${pragma}`;
     return this.session.execute(sql);
+  }
+
+  /**
+   * Sets the default safe integers mode for all statements from this connection.
+   * 
+   * @param toggle - Whether to use safe integers by default.
+   */
+  defaultSafeIntegers(toggle?: boolean): void {
+    this.defaultSafeIntegerMode = toggle === false ? false : true;
   }
 
   /**

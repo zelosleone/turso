@@ -53,11 +53,12 @@ export class Session {
    * 
    * @param sql - The SQL statement to execute
    * @param args - Optional array of parameter values or object with named parameters
+   * @param safeIntegers - Whether to return integers as BigInt
    * @returns Promise resolving to the complete result set
    */
-  async execute(sql: string, args: any[] | Record<string, any> = []): Promise<any> {
+  async execute(sql: string, args: any[] | Record<string, any> = [], safeIntegers: boolean = false): Promise<any> {
     const { response, entries } = await this.executeRaw(sql, args);
-    const result = await this.processCursorEntries(entries);
+    const result = await this.processCursorEntries(entries, safeIntegers);
     return result;
   }
 
@@ -137,7 +138,7 @@ export class Session {
    * @param entries - Async generator of cursor entries
    * @returns Promise resolving to the processed result
    */
-  async processCursorEntries(entries: AsyncGenerator<CursorEntry>): Promise<any> {
+  async processCursorEntries(entries: AsyncGenerator<CursorEntry>, safeIntegers: boolean = false): Promise<any> {
     let columns: string[] = [];
     let columnTypes: string[] = [];
     let rows: any[] = [];
@@ -154,7 +155,7 @@ export class Session {
           break;
         case 'row':
           if (entry.row) {
-            const decodedRow = entry.row.map(decodeValue);
+            const decodedRow = entry.row.map(value => decodeValue(value, safeIntegers));
             const rowObject = this.createRowObject(decodedRow, columns);
             rows.push(rowObject);
           }

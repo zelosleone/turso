@@ -18,6 +18,7 @@ export class Statement {
   private session: Session;
   private sql: string;
   private presentationMode: 'expanded' | 'raw' | 'pluck' = 'expanded';
+  private safeIntegerMode: boolean = false;
 
   constructor(sessionConfig: SessionConfig, sql: string) {
     this.session = new Session(sessionConfig);
@@ -62,6 +63,17 @@ export class Statement {
   }
 
   /**
+   * Sets safe integers mode for this statement.
+   * 
+   * @param toggle Whether to use safe integers. If you don't pass the parameter, safe integers mode is enabled.
+   * @returns This statement instance for chaining
+   */
+  safeIntegers(toggle?: boolean): Statement {
+    this.safeIntegerMode = toggle === false ? false : true;
+    return this;
+  }
+
+  /**
    * Executes the prepared statement.
    * 
    * @param args - Optional array of parameter values or object with named parameters
@@ -76,7 +88,7 @@ export class Statement {
    */
   async run(args?: any): Promise<any> {
     const normalizedArgs = this.normalizeArgs(args);
-    const result = await this.session.execute(this.sql, normalizedArgs);
+    const result = await this.session.execute(this.sql, normalizedArgs, this.safeIntegerMode);
     return { changes: result.rowsAffected, lastInsertRowid: result.lastInsertRowid };
   }
 
@@ -97,7 +109,7 @@ export class Statement {
    */
   async get(args?: any): Promise<any> {
     const normalizedArgs = this.normalizeArgs(args);
-    const result = await this.session.execute(this.sql, normalizedArgs);
+    const result = await this.session.execute(this.sql, normalizedArgs, this.safeIntegerMode);
     const row = result.rows[0];
     if (!row) {
       return undefined;
@@ -132,7 +144,7 @@ export class Statement {
    */
   async all(args?: any): Promise<any[]> {
     const normalizedArgs = this.normalizeArgs(args);
-    const result = await this.session.execute(this.sql, normalizedArgs);
+    const result = await this.session.execute(this.sql, normalizedArgs, this.safeIntegerMode);
     
     if (this.presentationMode === 'pluck') {
       // In pluck mode, return only the first column value from each row
@@ -184,7 +196,7 @@ export class Statement {
           break;
         case 'row':
           if (entry.row) {
-            const decodedRow = entry.row.map(decodeValue);
+            const decodedRow = entry.row.map(value => decodeValue(value, this.safeIntegerMode));
             if (this.presentationMode === 'pluck') {
               // In pluck mode, yield only the first column value
               yield decodedRow[0];

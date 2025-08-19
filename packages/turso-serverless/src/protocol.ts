@@ -115,11 +115,14 @@ export function encodeValue(value: any): Value {
   return { type: 'text', value: String(value) };
 }
 
-export function decodeValue(value: Value): any {
+export function decodeValue(value: Value, safeIntegers: boolean = false): any {
   switch (value.type) {
     case 'null':
       return null;
     case 'integer':
+      if (safeIntegers) {
+        return BigInt(value.value as string);
+      }
       return parseInt(value.value as string, 10);
     case 'float':
       return value.value as number;

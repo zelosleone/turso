@@ -41,6 +41,7 @@ pub struct Database {
     conn: Arc<turso_core::Connection>,
     is_memory: bool,
     is_open: Cell<bool>,
+    default_safe_integers: Cell<bool>,
 }
 
 #[napi]
@@ -92,6 +93,7 @@ impl Database {
             conn,
             is_memory,
             is_open: Cell::new(true),
+            default_safe_integers: Cell::new(false),
         }
     }
 
@@ -147,6 +149,7 @@ impl Database {
             stmt: RefCell::new(Some(stmt)),
             column_names,
             mode: RefCell::new(PresentationMode::Expanded),
+            safe_integers: Cell::new(self.default_safe_integers.get()),
         })
     }
 
@@ -192,6 +195,16 @@ impl Database {
         Ok(())
     }
 
+    /// Sets the default safe integers mode for all statements from this database.
+    ///
+    /// # Arguments
+    ///
+    /// * `toggle` - Whether to use safe integers by default.
+    #[napi(js_name = "defaultSafeIntegers")]
+    pub fn default_safe_integers(&self, toggle: Option<bool>) {
+        self.default_safe_integers.set(toggle.unwrap_or(true));
+    }
+
     /// Runs the I/O loop synchronously.
     #[napi]
     pub fn io_loop_sync(&self) -> Result<()> {
@@ -215,6 +228,7 @@ pub struct Statement {
     stmt: RefCell<Option<turso_core::Statement>>,
     column_names: Vec<std::ffi::CString>,
     mode: RefCell<PresentationMode>,
+    safe_integers: Cell<bool>,
 }
 
 #[napi]
@@ -290,7 +304,10 @@ impl Statement {
             ValueType::BigInt => {
                 let bigint_str = value.coerce_to_string()?.into_utf8()?.as_str()?.to_owned();
                 let bigint_value = bigint_str.parse::<i64>().map_err(|e| {
-                    Error::new(Status::NumberExpected, format!("Failed to parse BigInt: {e}"))
+                    Error::new(
+                        Status::NumberExpected,
+                        format!("Failed to parse BigInt: {e}"),
+                    )
                 })?;
                 turso_core::Value::Integer(bigint_value)
             }
@@ -362,11 +379,12 @@ impl Statement {
             .ok_or_else(|| Error::new(Status::GenericFailure, "No row data available"))?;
 
         let mode = self.mode.borrow();
+        let safe_integers = self.safe_integers.get();
         let row_value = match *mode {
             PresentationMode::Raw => {
                 let mut raw_array = env.create_array(row_data.len() as u32)?;
                 for (idx, value) in row_data.get_values().enumerate() {
-                    let js_value = to_js_value(env, value)?;
+                    let js_value = to_js_value(env, value, safe_integers)?;
                     raw_array.set(idx as u32, js_value)?;
                 }
                 raw_array.coerce_to_object()?.to_unknown()
@@ -381,7 +399,7 @@ impl Statement {
                             napi::Status::GenericFailure,
                             "Pluck mode requires at least one column in the result",
                         ))?;
-                to_js_value(env, value)?
+                to_js_value(env, value, safe_integers)?
             }
             PresentationMode::Expanded => {
                 let row = Object::new(env)?;
@@ -390,7 +408,7 @@ impl Statement {
                 for idx in 0..row_data.len() {
                     let value = row_data.get_value(idx);
                     let column_name = &self.column_names[idx];
-                    let js_value = to_js_value(env, value)?;
+                    let js_value = to_js_value(env, value, safe_integers)?;
                     unsafe {
                         napi::sys::napi_set_named_property(
                             raw_env,
@@ -425,6 +443,16 @@ impl Statement {
         });
     }
 
+    /// Sets safe integers mode for this statement.
+    ///
+    /// # Arguments
+    ///
+    /// * `toggle` - Whether to use safe integers.
+    #[napi(js_name = "safeIntegers")]
+    pub fn safe_integers(&self, toggle: Option<bool>) {
+        self.safe_integers.set(toggle.unwrap_or(true));
+    }
+
     /// Finalizes the statement.
     #[napi]
     pub fn finalize(&self) -> Result<()> {
@@ -456,11 +484,22 @@ impl Task for IoLoopTask {
 }
 
 /// Convert a Turso value to a JavaScript value.
-fn to_js_value<'a>(env: &'a napi::Env, value: &turso_core::Value) -> napi::Result<Unknown<'a>> {
+fn to_js_value<'a>(
+    env: &'a napi::Env,
+    value: &turso_core::Value,
+    safe_integers: bool,
+) -> napi::Result<Unknown<'a>> {
     match value {
         turso_core::Value::Null => ToNapiValue::into_unknown(Null, env),
-        turso_core::Value::Integer(i) => ToNapiValue::into_unknown(i, env),
-        turso_core::Value::Float(f) => ToNapiValue::into_unknown(f, env),
+        turso_core::Value::Integer(i) => {
+            if safe_integers {
+                let bigint = BigInt::from(*i);
+                ToNapiValue::into_unknown(bigint, env)
+            } else {
+                ToNapiValue::into_unknown(*i as f64, env)
+            }
+        }
+        turso_core::Value::Float(f) => ToNapiValue::into_unknown(*f, env),
         turso_core::Value::Text(s) => ToNapiValue::into_unknown(s.as_str(), env),
         turso_core::Value::Blob(b) => ToNapiValue::into_unknown(b, env),
     }
