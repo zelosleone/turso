@@ -1,6 +1,6 @@
 use crate::storage::buffer_pool::ArenaBuffer;
 use crate::storage::sqlite3_ondisk::WAL_FRAME_HEADER_SIZE;
-use crate::{turso_assert, BufferPool, CompletionError, Result};
+use crate::{BufferPool, CompletionError, Result};
 use bitflags::bitflags;
 use cfg_block::cfg_block;
 use std::cell::RefCell;
@@ -217,10 +217,6 @@ impl Completion {
     }
 
     pub fn complete(&self, result: i32) {
-        turso_assert!(
-            !self.finished(),
-            "should not complete a finished Completion"
-        );
         if self.inner.result.set(None).is_ok() {
             let result = Ok(result);
             match &self.inner.completion_type {
@@ -233,7 +229,6 @@ impl Completion {
     }
 
     pub fn error(&self, err: CompletionError) {
-        turso_assert!(!self.finished(), "should not error a finished Completion");
         if self.inner.result.set(Some(err)).is_ok() {
             let result = Err(err);
             match &self.inner.completion_type {
