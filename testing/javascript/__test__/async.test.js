@@ -279,6 +279,17 @@ test.serial("Statement.get() [raw]", async (t) => {
   t.deepEqual(await stmt.raw().get(1), [1, "Alice", "alice@example.org"]);
 });
 
+test.serial("Statement.get() values", async (t) => {
+  const db = t.context.db;
+
+  const stmt = (await db.prepare("SELECT ?")).raw();
+  t.deepEqual(await stmt.get(1), [1]);
+  t.deepEqual(await stmt.get(Number.MIN_VALUE), [Number.MIN_VALUE]);
+  t.deepEqual(await stmt.get(Number.MAX_VALUE), [Number.MAX_VALUE]);
+  t.deepEqual(await stmt.get(Number.MAX_SAFE_INTEGER), [Number.MAX_SAFE_INTEGER]);
+  t.deepEqual(await stmt.get(9007199254740991n), [9007199254740991]);
+});
+
 // ==========================================================================
 // Statement.iterate()
 // ==========================================================================

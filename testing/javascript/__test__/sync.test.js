@@ -334,7 +334,7 @@ test.serial("Statement.get() [raw]", async (t) => {
   t.deepEqual(stmt.raw().get(1), [1, "Alice", "alice@example.org"]);
 });
 
-test.skip("Statement.get() values", async (t) => {
+test.serial("Statement.get() values", async (t) => {
   const db = t.context.db;
 
   const stmt = db.prepare("SELECT ?").raw();

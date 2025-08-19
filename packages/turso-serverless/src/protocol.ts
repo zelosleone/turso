@@ -89,10 +89,18 @@ export function encodeValue(value: any): Value {
   }
   
   if (typeof value === 'number') {
-    if (Number.isInteger(value)) {
-      return { type: 'integer', value: value.toString() };
+    if (!Number.isFinite(value)) {
+      throw new Error("Only finite numbers (not Infinity or NaN) can be passed as arguments");
     }
     return { type: 'float', value };
+  }
+  
+  if (typeof value === 'bigint') {
+    return { type: 'integer', value: value.toString() };
+  }
+  
+  if (typeof value === 'boolean') {
+    return { type: 'integer', value: value ? '1' : '0' };
   }
   
   if (typeof value === 'string') {

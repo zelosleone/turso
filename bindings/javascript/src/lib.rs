@@ -281,11 +281,18 @@ impl Statement {
             ValueType::Null => turso_core::Value::Null,
             ValueType::Number => {
                 let n: f64 = unsafe { value.cast()? };
-                if n.fract() == 0.0 {
+                if n.fract() == 0.0 && n >= i64::MIN as f64 && n <= i64::MAX as f64 {
                     turso_core::Value::Integer(n as i64)
                 } else {
                     turso_core::Value::Float(n)
                 }
+            }
+            ValueType::BigInt => {
+                let bigint_str = value.coerce_to_string()?.into_utf8()?.as_str()?.to_owned();
+                let bigint_value = bigint_str.parse::<i64>().map_err(|e| {
+                    Error::new(Status::NumberExpected, format!("Failed to parse BigInt: {e}"))
+                })?;
+                turso_core::Value::Integer(bigint_value)
             }
             ValueType::String => {
                 let s = value.coerce_to_string()?.into_utf8()?;
