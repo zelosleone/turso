@@ -962,6 +962,10 @@ impl Pager {
         connection: &Connection,
         wal_auto_checkpoint_disabled: bool,
     ) -> Result<IOResult<PagerCommitResult>> {
+        if connection.is_nested_stmt.get() {
+            // Parent statement will handle the transaction rollback.
+            return Ok(IOResult::Done(PagerCommitResult::Rollback));
+        }
         tracing::trace!("end_tx(rollback={})", rollback);
         let Some(wal) = self.wal.as_ref() else {
             // TODO: Unsure what the semantics of "end_tx" is for in-memory databases, ephemeral tables and ephemeral indexes.
