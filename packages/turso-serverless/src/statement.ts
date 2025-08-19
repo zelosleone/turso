@@ -44,6 +44,24 @@ export class Statement {
   }
 
   /**
+   * Enable pluck mode to return only the first column value from each row.
+   * 
+   * @param pluck Enable or disable pluck mode. If you don't pass the parameter, pluck mode is enabled.
+   * @returns This statement instance for chaining
+   * 
+   * @example
+   * ```typescript
+   * const stmt = client.prepare("SELECT id FROM users");
+   * const ids = await stmt.pluck().all();
+   * console.log(ids); // [1, 2, 3, ...]
+   * ```
+   */
+  pluck(pluck?: boolean): Statement {
+    this.presentationMode = pluck === false ? 'expanded' : 'pluck';
+    return this;
+  }
+
+  /**
    * Executes the prepared statement.
    * 
    * @param args - Optional array of parameter values or object with named parameters
@@ -85,6 +103,11 @@ export class Statement {
       return undefined;
     }
     
+    if (this.presentationMode === 'pluck') {
+      // In pluck mode, return only the first column value
+      return row[0];
+    }
+    
     if (this.presentationMode === 'raw') {
       // In raw mode, return the row as a plain array (it already is one)
       // The row object is already an array with column properties added
@@ -110,6 +133,11 @@ export class Statement {
   async all(args?: any): Promise<any[]> {
     const normalizedArgs = this.normalizeArgs(args);
     const result = await this.session.execute(this.sql, normalizedArgs);
+    
+    if (this.presentationMode === 'pluck') {
+      // In pluck mode, return only the first column value from each row
+      return result.rows.map((row: any) => row[0]);
+    }
     
     if (this.presentationMode === 'raw') {
       return result.rows.map((row: any) => [...row]);
@@ -157,7 +185,10 @@ export class Statement {
         case 'row':
           if (entry.row) {
             const decodedRow = entry.row.map(decodeValue);
-            if (this.presentationMode === 'raw') {
+            if (this.presentationMode === 'pluck') {
+              // In pluck mode, yield only the first column value
+              yield decodedRow[0];
+            } else if (this.presentationMode === 'raw') {
               // In raw mode, yield arrays of values
               yield decodedRow;
             } else {
