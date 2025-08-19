@@ -128,8 +128,6 @@ pub type PageRef = Arc<Page>;
 
 /// Page is locked for I/O to prevent concurrent access.
 const PAGE_LOCKED: usize = 0b010;
-/// Page had an I/O error.
-const PAGE_ERROR: usize = 0b100;
 /// Page is dirty. Flush needed.
 const PAGE_DIRTY: usize = 0b1000;
 /// Page's contents are loaded in memory.
@@ -166,18 +164,6 @@ impl Page {
 
     pub fn clear_locked(&self) {
         self.get().flags.fetch_and(!PAGE_LOCKED, Ordering::Release);
-    }
-
-    pub fn is_error(&self) -> bool {
-        self.get().flags.load(Ordering::Relaxed) & PAGE_ERROR != 0
-    }
-
-    pub fn set_error(&self) {
-        self.get().flags.fetch_or(PAGE_ERROR, Ordering::Release);
-    }
-
-    pub fn clear_error(&self) {
-        self.get().flags.fetch_and(!PAGE_ERROR, Ordering::Release);
     }
 
     pub fn is_dirty(&self) -> bool {
