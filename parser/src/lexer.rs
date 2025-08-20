@@ -1,4 +1,4 @@
-use crate::{error::Error, token::TokenType};
+use crate::{error::Error, token::TokenType, Result};
 
 include!(concat!(env!("OUT_DIR"), "/keywords.rs"));
 
@@ -29,7 +29,7 @@ pub struct Lexer<'a> {
 }
 
 impl<'a> Iterator for Lexer<'a> {
-    type Item = Result<Token<'a>, Error>;
+    type Item = Result<Token<'a>>;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
@@ -78,9 +78,9 @@ impl<'a> Lexer<'a> {
     }
 
     #[inline]
-    pub fn mark<F, R>(&mut self, exc: F) -> Result<R, Error>
+    pub fn mark<F, R>(&mut self, exc: F) -> Result<R>
     where
-        F: FnOnce(&mut Self) -> Result<R, Error>,
+        F: FnOnce(&mut Self) -> Result<R>,
     {
         let start_offset = self.offset;
         let result = exc(self);
@@ -134,7 +134,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn eat_while_number_digit(&mut self) -> Result<(), Error> {
+    fn eat_while_number_digit(&mut self) -> Result<()> {
         loop {
             let start = self.offset;
             self.eat_while(|b| b.is_some() && b.unwrap().is_ascii_digit());
@@ -160,7 +160,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn eat_while_number_hexdigit(&mut self) -> Result<(), Error> {
+    fn eat_while_number_hexdigit(&mut self) -> Result<()> {
         loop {
             let start = self.offset;
             self.eat_while(|b| b.is_some() && b.unwrap().is_ascii_hexdigit());
@@ -243,7 +243,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn eat_slash_or_comment(&mut self) -> Result<Token<'a>, Error> {
+    fn eat_slash_or_comment(&mut self) -> Result<Token<'a>> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'/');
         match self.peek() {
@@ -358,7 +358,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn eat_ne(&mut self) -> Result<Token<'a>, Error> {
+    fn eat_ne(&mut self) -> Result<Token<'a>> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'!');
         match self.peek() {
@@ -395,7 +395,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn eat_lit_or_id(&mut self) -> Result<Token<'a>, Error> {
+    fn eat_lit_or_id(&mut self) -> Result<Token<'a>> {
         let start = self.offset;
         let quote = self.eat().unwrap();
         debug_assert!(quote == b'\'' || quote == b'"' || quote == b'`');
@@ -433,7 +433,7 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    fn eat_dot_or_frac(&mut self) -> Result<Token<'a>, Error> {
+    fn eat_dot_or_frac(&mut self) -> Result<Token<'a>> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'.');
 
@@ -464,7 +464,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn eat_expo(&mut self) -> Result<Token<'a>, Error> {
+    fn eat_expo(&mut self) -> Result<Token<'a>> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'e' || b == b'E');
         match self.peek() {
@@ -490,7 +490,7 @@ impl<'a> Lexer<'a> {
         })
     }
 
-    fn eat_number(&mut self) -> Result<Token<'a>, Error> {
+    fn eat_number(&mut self) -> Result<Token<'a>> {
         let start = self.offset;
         let first_digit = self.eat().unwrap();
         debug_assert!(first_digit.is_ascii_digit());
@@ -548,7 +548,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn eat_bracket(&mut self) -> Result<Token<'a>, Error> {
+    fn eat_bracket(&mut self) -> Result<Token<'a>> {
         let start = self.offset;
         self.eat_and_assert(|b| b == b'[');
         self.eat_while(|b| b.is_some() && b.unwrap() != b']');
@@ -567,7 +567,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn eat_var(&mut self) -> Result<Token<'a>, Error> {
+    fn eat_var(&mut self) -> Result<Token<'a>> {
         let start = self.offset;
         let tok = self.eat().unwrap();
         debug_assert!(tok == b'?' || tok == b'$' || tok == b'@' || tok == b'#' || tok == b':');
@@ -599,7 +599,7 @@ impl<'a> Lexer<'a> {
     }
 
     #[inline]
-    fn eat_blob_or_id(&mut self) -> Result<Token<'a>, Error> {
+    fn eat_blob_or_id(&mut self) -> Result<Token<'a>> {
         let start = self.offset;
         let start_char = self.eat().unwrap();
         debug_assert!(is_identifier_start(start_char));
@@ -643,7 +643,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn eat_unrecognized(&mut self) -> Result<Token<'a>, Error> {
+    fn eat_unrecognized(&mut self) -> Result<Token<'a>> {
         let start = self.offset;
         self.eat_while(|b| b.is_some() && !b.unwrap().is_ascii_whitespace());
         Err(Error::UnrecognizedToken(

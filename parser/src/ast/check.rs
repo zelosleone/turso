@@ -1,5 +1,5 @@
 //! Check for additional syntax error
-use crate::{ast::*, error::Error};
+use crate::{ast::*, error::Error, Result};
 
 impl Cmd {
     /// Statement accessor
@@ -27,7 +27,7 @@ impl Cmd {
         self.stmt().readonly()
     }
     /// check for extra rules
-    pub fn check(&self) -> Result<(), Error> {
+    pub fn check(&self) -> Result<()> {
         self.stmt().check()
     }
 }
@@ -84,7 +84,7 @@ impl Stmt {
     }
 
     /// check for extra rules
-    pub fn check(&self) -> Result<(), Error> {
+    pub fn check(&self) -> Result<()> {
         match self {
             Self::AlterTable(alter_table) => {
                 if let AlterTableBody::AddColumn(cd) = &alter_table.body {
@@ -193,7 +193,7 @@ impl Stmt {
 
 impl CreateTableBody {
     /// check for extra rules
-    pub fn check(&self, tbl_name: &QualifiedName) -> Result<(), Error> {
+    pub fn check(&self, tbl_name: &QualifiedName) -> Result<()> {
         if let Self::ColumnsAndConstraints {
             columns,
             constraints: _,
@@ -310,7 +310,7 @@ impl OneSelect {
         }
     }
     /// Check all VALUES have the same number of terms
-    pub fn push(values: &mut Vec<Vec<Expr>>, v: Vec<Expr>) -> Result<(), Error> {
+    pub fn push(values: &mut Vec<Vec<Expr>>, v: Vec<Expr>) -> Result<()> {
         if values[0].len() != v.len() {
             return Err(Error::Custom(
                 "all VALUES must have the same number of terms".to_owned(),
