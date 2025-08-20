@@ -1046,10 +1046,9 @@ impl<Clock: LogicalClock> MvStore<Clock> {
             // We are moving forward, so if a row was deleted we just need to skip it. Therefore, we need
             // to loop either until we find a row that is not deleted or until we reach the end of the table.
             let next_row = rows.next();
-            next_row.as_ref()?;
+            let row = next_row?;
 
             // We found a row, let's check if it's visible to the transaction.
-            let row = next_row.unwrap();
             if let Some(visible_row) = self.find_last_visible_version(&tx, row) {
                 return Some(visible_row);
             }
