@@ -1198,3 +1198,48 @@ fn get_record_value(row: &Row) -> ImmutableRecord {
     record.start_serialization(&row.data);
     record
 }
+
+#[test]
+fn test_interactive_transaction() {
+    let db = MvccTestDbNoConn::new_with_random_db();
+    let conn = db.connect();
+
+    // do some transaction
+    conn.execute("BEGIN").unwrap();
+    conn.execute("CREATE TABLE test (x)").unwrap();
+    conn.execute("INSERT INTO test (x) VALUES (1)").unwrap();
+    conn.execute("INSERT INTO test (x) VALUES (2)").unwrap();
+    conn.execute("COMMIT").unwrap();
+
+    // expect other transaction to see the changes
+    let rows = get_rows(&conn, "SELECT * FROM test");
+    assert_eq!(rows, vec![vec![Value::Integer(1)], vec![Value::Integer(2)]]);
+}
+
+#[test]
+fn test_commit_without_tx() {
+    let db = MvccTestDbNoConn::new_with_random_db();
+    let conn = db.connect();
+    // do not start interactive transaction
+    conn.execute("CREATE TABLE test (x)").unwrap();
+    conn.execute("INSERT INTO test (x) VALUES (1)").unwrap();
+
+    // expect error on trying to commit a non-existent interactive transaction
+    let err = conn.execute("COMMIT").unwrap_err();
+    if let LimboError::TxError(e) = err {
+        assert_eq!(e.to_string(), "cannot commit - no transaction is active");
+    } else {
+        panic!("Expected TxError");
+    }
+}
+
+fn get_rows(conn: &Arc<Connection>, query: &str) -> Vec<Vec<Value>> {
+    let mut stmt = conn.prepare(query).unwrap();
+    let mut rows = Vec::new();
+    while let StepResult::Row = stmt.step().unwrap() {
+        let row = stmt.row().unwrap();
+        let values = row.get_values().cloned().collect::<Vec<_>>();
+        rows.push(values);
+    }
+    rows
+}
