@@ -3,6 +3,7 @@ use crate::translate::emitter::emit_program;
 use crate::translate::optimizer::optimize_plan;
 use crate::translate::plan::{DeletePlan, Operation, Plan};
 use crate::translate::planner::{parse_limit, parse_where};
+use crate::util::normalize_ident;
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, TableRefIdCounter};
 use crate::{schema::Schema, Result, SymbolTable};
 use std::sync::Arc;
@@ -21,7 +22,8 @@ pub fn translate_delete(
     mut program: ProgramBuilder,
     connection: &Arc<crate::Connection>,
 ) -> Result<ProgramBuilder> {
-    if schema.table_has_indexes(&tbl_name.name.to_string()) && !schema.indexes_enabled() {
+    let tbl_name = normalize_ident(tbl_name.name.as_str());
+    if schema.table_has_indexes(&tbl_name) && !schema.indexes_enabled() {
         // Let's disable altering a table with indices altogether instead of checking column by
         // column to be extra safe.
         crate::bail_parse_error!(
@@ -63,14 +65,14 @@ pub fn translate_delete(
 
 pub fn prepare_delete_plan(
     schema: &Schema,
-    tbl_name: &QualifiedName,
+    tbl_name: String,
     where_clause: Option<Box<Expr>>,
     limit: Option<Box<Limit>>,
     result_columns: Vec<super::plan::ResultSetColumn>,
     table_ref_counter: &mut TableRefIdCounter,
     connection: &Arc<crate::Connection>,
 ) -> Result<Plan> {
-    let table = match schema.get_table(tbl_name.name.as_str()) {
+    let table = match schema.get_table(&tbl_name) {
         Some(table) => table,
         None => crate::bail_parse_error!("no such table: {}", tbl_name),
     };
@@ -81,12 +83,11 @@ pub fn prepare_delete_plan(
     } else {
         crate::bail_parse_error!("Table is neither a virtual table nor a btree table");
     };
-    let name = tbl_name.name.as_str().to_string();
     let indexes = schema.get_indices(table.get_name()).to_vec();
     let joined_tables = vec![JoinedTable {
         op: Operation::default_scan_for(&table),
         table,
-        identifier: name,
+        identifier: tbl_name,
         internal_id: table_ref_counter.next(),
         join_info: None,
         col_used_mask: ColumnUsedMask::default(),
