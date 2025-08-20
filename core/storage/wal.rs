@@ -426,7 +426,7 @@ struct OngoingCheckpoint {
     state: CheckpointState,
     /// Batch repreesnts a collection of pages to be backfilled to the DB file.
     pending_writes: WriteBatch,
-    /// Array of
+    /// Read operations currently ongoing.
     inflight_reads: Vec<InflightRead>,
     /// Array of atomic counters representing write operations that are currently in flight.
     inflight_writes: Vec<Arc<AtomicBool>>,
