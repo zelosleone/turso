@@ -516,6 +516,12 @@ do_execsql_test_on_specific_db {:memory:} insert-explicit-rowid-with-rowidalias 
 8|6|8|5
 12|10|12|9}
 
+do_execsql_test_on_specific_db {:memory:} null-value-insert-null-type-column {
+    CREATE TABLE test (id INTEGER,name NULL);
+    INSERT INTO test (id, name) VALUES (1, NULL);
+    SELECT * FROM test;
+} {1|}
+
 do_execsql_test_in_memory_error_content insert-explicit-rowid-conflict {
     create table t (x);
     insert into t(rowid, x) values (1, 1);
@@ -595,3 +601,8 @@ do_catchsql_test unknown-backtick-identifier-in-values-clause {
   CREATE TABLE tt (x);
   INSERT INTO tt VALUES(`asdf`);
 } {1 {no such column: `asdf`}}
+
+do_execsql_test_in_memory_error_content  null-insert-in-nulltype-column-notnull-constraint {
+    CREATE TABLE test (id INTEGER,name NULL NOT NULL);
+    INSERT INTO test (id, name) VALUES (1, NULL);
+} {NOT NULL constraint failed}
