@@ -128,8 +128,6 @@ pub type PageRef = Arc<Page>;
 
 /// Page is locked for I/O to prevent concurrent access.
 const PAGE_LOCKED: usize = 0b010;
-/// Page had an I/O error.
-const PAGE_ERROR: usize = 0b100;
 /// Page is dirty. Flush needed.
 const PAGE_DIRTY: usize = 0b1000;
 /// Page's contents are loaded in memory.
@@ -166,18 +164,6 @@ impl Page {
 
     pub fn clear_locked(&self) {
         self.get().flags.fetch_and(!PAGE_LOCKED, Ordering::Release);
-    }
-
-    pub fn is_error(&self) -> bool {
-        self.get().flags.load(Ordering::Relaxed) & PAGE_ERROR != 0
-    }
-
-    pub fn set_error(&self) {
-        self.get().flags.fetch_or(PAGE_ERROR, Ordering::Release);
-    }
-
-    pub fn clear_error(&self) {
-        self.get().flags.fetch_and(!PAGE_ERROR, Ordering::Release);
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -962,6 +948,10 @@ impl Pager {
         connection: &Connection,
         wal_auto_checkpoint_disabled: bool,
     ) -> Result<IOResult<PagerCommitResult>> {
+        if connection.is_nested_stmt.get() {
+            // Parent statement will handle the transaction rollback.
+            return Ok(IOResult::Done(PagerCommitResult::Rollback));
+        }
         tracing::trace!("end_tx(rollback={})", rollback);
         let Some(wal) = self.wal.as_ref() else {
             // TODO: Unsure what the semantics of "end_tx" is for in-memory databases, ephemeral tables and ephemeral indexes.
@@ -1134,7 +1124,7 @@ impl Pager {
             .iter()
             .copied()
             .collect::<Vec<usize>>();
-        let mut completions = Vec::with_capacity(dirty_pages.len());
+        let mut completions: Vec<Completion> = Vec::with_capacity(dirty_pages.len());
         for page_id in dirty_pages {
             let page = {
                 let mut cache = self.page_cache.write();
@@ -1148,11 +1138,18 @@ impl Pager {
                 );
                 page
             };
-            let c = wal.borrow_mut().append_frame(
-                page.clone(),
-                self.page_size.get().expect("page size not set"),
-                0,
-            )?;
+            let c = wal
+                .borrow_mut()
+                .append_frame(
+                    page.clone(),
+                    self.page_size.get().expect("page size not set"),
+                    0,
+                )
+                .inspect_err(|_| {
+                    for c in completions.iter() {
+                        c.abort();
+                    }
+                })?;
             // TODO: invalidade previous completions if this one fails
             completions.push(c);
         }
@@ -1186,7 +1183,7 @@ impl Pager {
                             .get()
                     };
                     let dirty_len = self.dirty_pages.borrow().iter().len();
-                    let mut completions = Vec::with_capacity(dirty_len);
+                    let mut completions: Vec<Completion> = Vec::with_capacity(dirty_len);
                     for (curr_page_idx, page_id) in
                         self.dirty_pages.borrow().iter().copied().enumerate()
                     {
@@ -1212,11 +1209,18 @@ impl Pager {
                         };
 
                         // TODO: invalidade previous completions on error here
-                        let c = wal.borrow_mut().append_frame(
-                            page.clone(),
-                            self.page_size.get().expect("page size not set"),
-                            db_size,
-                        )?;
+                        let c = wal
+                            .borrow_mut()
+                            .append_frame(
+                                page.clone(),
+                                self.page_size.get().expect("page size not set"),
+                                db_size,
+                            )
+                            .inspect_err(|_| {
+                                for c in completions.iter() {
+                                    c.abort();
+                                }
+                            })?;
                         completions.push(c);
                     }
                     self.dirty_pages.borrow_mut().clear();

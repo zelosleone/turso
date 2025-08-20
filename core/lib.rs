@@ -50,7 +50,7 @@ use crate::util::{OpenMode, OpenOptions};
 use crate::vdbe::metrics::ConnectionMetrics;
 use crate::vtab::VirtualTable;
 use core::str;
-pub use error::LimboError;
+pub use error::{CompletionError, LimboError};
 use fallible_iterator::FallibleIterator;
 pub use io::clock::{Clock, Instant};
 #[cfg(all(feature = "fs", target_family = "unix"))]
@@ -424,6 +424,7 @@ impl Database {
             query_only: Cell::new(false),
             view_transaction_states: RefCell::new(HashMap::new()),
             metrics: RefCell::new(ConnectionMetrics::new()),
+            is_nested_stmt: Cell::new(false),
         });
         let builtin_syms = self.builtin_syms.borrow();
         // add built-in extensions symbols to the connection to prevent having to load each time
@@ -447,7 +448,7 @@ impl Database {
             "header read must be a multiple of 512 for O_DIRECT"
         );
         let buf = Arc::new(Buffer::new_temporary(PageSize::MIN as usize));
-        let c = Completion::new_read(buf.clone(), move |_buf, _| {});
+        let c = Completion::new_read(buf.clone(), move |_res| {});
         let c = self.db_file.read_header(c)?;
         self.io.wait_for_completion(c)?;
         let page_size = u16::from_be_bytes(buf.as_slice()[16..18].try_into().unwrap());
@@ -848,6 +849,9 @@ pub struct Connection {
     view_transaction_states: RefCell<HashMap<String, ViewTransactionState>>,
     /// Connection-level metrics aggregation
     pub metrics: RefCell<ConnectionMetrics>,
+    /// Whether the connection is executing a statement initiated by another statement.
+    /// Generally this is only true for ParseSchema.
+    is_nested_stmt: Cell<bool>,
 }
 
 impl Connection {
@@ -1305,9 +1309,9 @@ impl Connection {
             Ok(result) => result,
             // on windows, zero read will trigger UnexpectedEof
             #[cfg(target_os = "windows")]
-            Err(LimboError::IOError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                return Ok(false)
-            }
+            Err(LimboError::CompletionError(CompletionError::IOError(
+                std::io::ErrorKind::UnexpectedEof,
+            ))) => return Ok(false),
             Err(err) => return Err(err),
         };
 
@@ -2040,6 +2044,9 @@ impl Statement {
 
     pub fn run_once(&self) -> Result<()> {
         let res = self.pager.io.run_once();
+        if self.program.connection.is_nested_stmt.get() {
+            return res;
+        }
         if res.is_err() {
             let state = self.program.connection.transaction_state.get();
             if let TransactionState::Write { .. } = state {
@@ -2066,6 +2073,32 @@ impl Statement {
         match column.name(&self.program.table_references) {
             Some(name) => Cow::Borrowed(name),
             None => Cow::Owned(column.expr.to_string()),
+        }
+    }
+
+    pub fn get_column_type(&self, idx: usize) -> Option<String> {
+        let column = &self.program.result_columns.get(idx).expect("No column");
+        match &column.expr {
+            turso_sqlite3_parser::ast::Expr::Column {
+                table,
+                column: column_idx,
+                ..
+            } => {
+                let table_ref = self
+                    .program
+                    .table_references
+                    .find_table_by_internal_id(*table)?;
+                let table_column = table_ref.get_column_at(*column_idx)?;
+                match &table_column.ty {
+                    crate::schema::Type::Integer => Some("INTEGER".to_string()),
+                    crate::schema::Type::Real => Some("REAL".to_string()),
+                    crate::schema::Type::Text => Some("TEXT".to_string()),
+                    crate::schema::Type::Blob => Some("BLOB".to_string()),
+                    crate::schema::Type::Numeric => Some("NUMERIC".to_string()),
+                    crate::schema::Type::Null => None,
+                }
+            }
+            _ => None,
         }
     }
 

@@ -9,6 +9,8 @@ import {
   type PipelineRequest,
   type SequenceRequest,
   type CloseRequest,
+  type DescribeRequest,
+  type DescribeResult,
   type NamedArg,
   type Value
 } from './protocol.js';
@@ -49,15 +51,53 @@ export class Session {
   }
 
   /**
+   * Describe a SQL statement to get its column metadata.
+   * 
+   * @param sql - The SQL statement to describe
+   * @returns Promise resolving to the statement description
+   */
+  async describe(sql: string): Promise<DescribeResult> {
+    const request: PipelineRequest = {
+      baton: this.baton,
+      requests: [{
+        type: "describe",
+        sql: sql
+      } as DescribeRequest]
+    };
+
+    const response = await executePipeline(this.baseUrl, this.config.authToken, request);
+    
+    this.baton = response.baton;
+    if (response.base_url) {
+      this.baseUrl = response.base_url;
+    }
+
+    // Check for errors in the response
+    if (response.results && response.results[0]) {
+      const result = response.results[0];
+      if (result.type === "error") {
+        throw new DatabaseError(result.error?.message || 'Describe execution failed');
+      }
+      
+      if (result.response?.type === "describe" && result.response.result) {
+        return result.response.result as DescribeResult;
+      }
+    }
+
+    throw new DatabaseError('Unexpected describe response');
+  }
+
+  /**
    * Execute a SQL statement and return all results.
    * 
    * @param sql - The SQL statement to execute
    * @param args - Optional array of parameter values or object with named parameters
+   * @param safeIntegers - Whether to return integers as BigInt
    * @returns Promise resolving to the complete result set
    */
-  async execute(sql: string, args: any[] | Record<string, any> = []): Promise<any> {
+  async execute(sql: string, args: any[] | Record<string, any> = [], safeIntegers: boolean = false): Promise<any> {
     const { response, entries } = await this.executeRaw(sql, args);
-    const result = await this.processCursorEntries(entries);
+    const result = await this.processCursorEntries(entries, safeIntegers);
     return result;
   }
 
@@ -137,7 +177,7 @@ export class Session {
    * @param entries - Async generator of cursor entries
    * @returns Promise resolving to the processed result
    */
-  async processCursorEntries(entries: AsyncGenerator<CursorEntry>): Promise<any> {
+  async processCursorEntries(entries: AsyncGenerator<CursorEntry>, safeIntegers: boolean = false): Promise<any> {
     let columns: string[] = [];
     let columnTypes: string[] = [];
     let rows: any[] = [];
@@ -154,7 +194,7 @@ export class Session {
           break;
         case 'row':
           if (entry.row) {
-            const decodedRow = entry.row.map(decodeValue);
+            const decodedRow = entry.row.map(value => decodeValue(value, safeIntegers));
             const rowObject = this.createRowObject(decodedRow, columns);
             rows.push(rowObject);
           }

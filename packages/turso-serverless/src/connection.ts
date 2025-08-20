@@ -16,6 +16,8 @@ export class Connection {
   private config: Config;
   private session: Session;
   private isOpen: boolean = true;
+  private defaultSafeIntegerMode: boolean = false;
+  private _inTransaction: boolean = false;
 
   constructor(config: Config) {
     if (!config.url) {
@@ -23,28 +25,73 @@ export class Connection {
     }
     this.config = config;
     this.session = new Session(config);
+    
+    // Define inTransaction property
+    Object.defineProperty(this, 'inTransaction', {
+      get: () => this._inTransaction,
+      enumerable: true
+    });
+  }
+
+  /**
+   * Whether the database is currently in a transaction.
+   */
+  get inTransaction(): boolean {
+    return this._inTransaction;
   }
 
   /**
    * Prepare a SQL statement for execution.
    * 
    * Each prepared statement gets its own session to avoid conflicts during concurrent execution.
+   * This method fetches column metadata using the describe functionality.
    * 
    * @param sql - The SQL statement to prepare
-   * @returns A Statement object that can be executed multiple ways
+   * @returns A Promise that resolves to a Statement object with column metadata
    * 
    * @example
    * ```typescript
-   * const stmt = client.prepare("SELECT * FROM users WHERE id = ?");
+   * const stmt = await client.prepare("SELECT * FROM users WHERE id = ?");
+   * const columns = stmt.columns();
    * const user = await stmt.get([123]);
-   * const allUsers = await stmt.all();
    * ```
    */
-  prepare(sql: string): Statement {
+  async prepare(sql: string): Promise<Statement> {
     if (!this.isOpen) {
       throw new TypeError("The database connection is not open");
     }
-    return new Statement(this.config, sql);
+    
+    // Create a session to get column metadata via describe
+    const session = new Session(this.config);
+    const description = await session.describe(sql);
+    await session.close();
+    
+    const stmt = new Statement(this.config, sql, description.cols);
+    if (this.defaultSafeIntegerMode) {
+      stmt.safeIntegers(true);
+    }
+    return stmt;
+  }
+
+
+  /**
+   * Execute a SQL statement and return all results.
+   * 
+   * @param sql - The SQL statement to execute
+   * @param args - Optional array of parameter values
+   * @returns Promise resolving to the complete result set
+   * 
+   * @example
+   * ```typescript
+   * const result = await client.execute("SELECT * FROM users WHERE id = ?", [123]);
+   * console.log(result.rows);
+   * ```
+   */
+  async execute(sql: string, args?: any[]): Promise<any> {
+    if (!this.isOpen) {
+      throw new TypeError("The database connection is not open");
+    }
+    return this.session.execute(sql, args || [], this.defaultSafeIntegerMode);
   }
 
   /**
@@ -55,7 +102,7 @@ export class Connection {
    * 
    * @example
    * ```typescript
-   * const result = await client.execute("SELECT * FROM users");
+   * const result = await client.exec("SELECT * FROM users");
    * console.log(result.rows);
    * ```
    */
@@ -99,6 +146,72 @@ export class Connection {
     }
     const sql = `PRAGMA ${pragma}`;
     return this.session.execute(sql);
+  }
+
+  /**
+   * Sets the default safe integers mode for all statements from this connection.
+   * 
+   * @param toggle - Whether to use safe integers by default.
+   */
+  defaultSafeIntegers(toggle?: boolean): void {
+    this.defaultSafeIntegerMode = toggle === false ? false : true;
+  }
+
+  /**
+   * Returns a function that executes the given function in a transaction.
+   * 
+   * @param fn - The function to wrap in a transaction
+   * @returns A function that will execute fn within a transaction
+   * 
+   * @example
+   * ```typescript
+   * const insert = await client.prepare("INSERT INTO users (name) VALUES (?)");
+   * const insertMany = client.transaction((users) => {
+   *   for (const user of users) {
+   *     insert.run([user]);
+   *   }
+   * });
+   * 
+   * await insertMany(['Alice', 'Bob', 'Charlie']);
+   * ```
+   */
+  transaction(fn: (...args: any[]) => any): any {
+    if (typeof fn !== "function") {
+      throw new TypeError("Expected first argument to be a function");
+    }
+
+    const db = this;
+    const wrapTxn = (mode: string) => {
+      return async (...bindParameters: any[]) => {
+        await db.exec("BEGIN " + mode);
+        db._inTransaction = true;
+        try {
+          const result = await fn(...bindParameters);
+          await db.exec("COMMIT");
+          db._inTransaction = false;
+          return result;
+        } catch (err) {
+          await db.exec("ROLLBACK");
+          db._inTransaction = false;
+          throw err;
+        }
+      };
+    };
+
+    const properties = {
+      default: { value: wrapTxn("") },
+      deferred: { value: wrapTxn("DEFERRED") },
+      immediate: { value: wrapTxn("IMMEDIATE") },
+      exclusive: { value: wrapTxn("EXCLUSIVE") },
+      database: { value: this, enumerable: true },
+    };
+
+    Object.defineProperties(properties.default.value, properties);
+    Object.defineProperties(properties.deferred.value, properties);
+    Object.defineProperties(properties.immediate.value, properties);
+    Object.defineProperties(properties.exclusive.value, properties);
+    
+    return properties.default.value;
   }
 
   /**

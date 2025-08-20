@@ -20,7 +20,8 @@ use crate::storage::sqlite3_ondisk::{
 };
 use crate::types::{IOCompletions, IOResult};
 use crate::{
-    bail_corrupt_error, io_yield_many, io_yield_one, turso_assert, Buffer, LimboError, Result,
+    bail_corrupt_error, io_yield_many, io_yield_one, turso_assert, Buffer, CompletionError,
+    LimboError, Result,
 };
 use crate::{Completion, Page};
 
@@ -912,14 +913,17 @@ impl Wal for WalFile {
         let offset = self.frame_offset(frame_id);
         page.set_locked();
         let frame = page.clone();
-        let complete = Box::new(move |buf: Arc<Buffer>, bytes_read: i32| {
+        let complete = Box::new(move |res: Result<(Arc<Buffer>, i32), CompletionError>| {
+            let Ok((buf, bytes_read)) = res else {
+                return;
+            };
             let buf_len = buf.len();
             turso_assert!(
                 bytes_read == buf_len as i32,
                 "read({bytes_read}) less than expected({buf_len}): frame_id={frame_id}"
             );
             let frame = frame.clone();
-            finish_read_page(page.get().id, buf, frame).unwrap();
+            finish_read_page(page.get().id, buf, frame);
         });
         begin_read_wal_frame(
             &self.get_shared().file,
@@ -934,7 +938,10 @@ impl Wal for WalFile {
         tracing::debug!("read_frame({})", frame_id);
         let offset = self.frame_offset(frame_id);
         let (frame_ptr, frame_len) = (frame.as_mut_ptr(), frame.len());
-        let complete = Box::new(move |buf: Arc<Buffer>, bytes_read: i32| {
+        let complete = Box::new(move |res: Result<(Arc<Buffer>, i32), CompletionError>| {
+            let Ok((buf, bytes_read)) = res else {
+                return;
+            };
             let buf_len = buf.len();
             turso_assert!(
                 bytes_read == buf_len as i32,
@@ -985,7 +992,10 @@ impl Wal for WalFile {
             let (page_ptr, page_len) = (page.as_ptr(), page.len());
             let complete = Box::new({
                 let conflict = conflict.clone();
-                move |buf: Arc<Buffer>, bytes_read: i32| {
+                move |res: Result<(Arc<Buffer>, i32), CompletionError>| {
+                    let Ok((buf, bytes_read)) = res else {
+                        return;
+                    };
                     let buf_len = buf.len();
                     turso_assert!(
                         bytes_read == buf_len as i32,
@@ -1077,7 +1087,10 @@ impl Wal for WalFile {
 
             let c = Completion::new_write({
                 let frame_bytes = frame_bytes.clone();
-                move |bytes_written| {
+                move |res: Result<i32, CompletionError>| {
+                    let Ok(bytes_written) = res else {
+                        return;
+                    };
                     let frame_len = frame_bytes.len();
                     turso_assert!(
                         bytes_written == frame_len as i32,

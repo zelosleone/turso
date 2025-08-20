@@ -1,6 +1,6 @@
 {
   "name": "@tursodatabase/database",
-  "version": "0.1.4-pre.9",
+  "version": "0.1.4-pre.10",
   "repository": {
     "type": "git",
     "url": "https://github.com/tursodatabase/turso"
@@ -11,11 +11,12 @@
   "type": "module",
   "exports": {
     ".": "./dist/promise.js",
-    "./sync": "./dist/sync.js"
+    "./compat": "./dist/compat.js"
   },
   "files": [
     "browser.js",
     "index.js",
+    "index.d.ts",
     "dist/**"
   ],
   "types": "index.d.ts",

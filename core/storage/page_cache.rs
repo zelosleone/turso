@@ -47,7 +47,7 @@ struct HashMapNode {
 #[derive(Debug, PartialEq)]
 pub enum CacheError {
     InternalError(String),
-    Locked,
+    Locked { pgno: usize },
     Dirty { pgno: usize },
     Pinned { pgno: usize },
     ActiveRefs,
@@ -189,7 +189,9 @@ impl DumbLruPageCache {
     ) -> Result<(), CacheError> {
         let entry_mut = unsafe { entry.as_mut() };
         if entry_mut.page.is_locked() {
-            return Err(CacheError::Locked);
+            return Err(CacheError::Locked {
+                pgno: entry_mut.page.get().id,
+            });
         }
         if entry_mut.page.is_dirty() {
             return Err(CacheError::Dirty {
@@ -911,7 +913,10 @@ mod tests {
         let mut cache = DumbLruPageCache::default();
         let (_, mut entry) = insert_and_get_entry(&mut cache, 1);
         unsafe { entry.as_mut().page.set_locked() };
-        assert_eq!(cache.detach(entry, false), Err(CacheError::Locked));
+        assert_eq!(
+            cache.detach(entry, false),
+            Err(CacheError::Locked { pgno: 1 })
+        );
         cache.verify_list_integrity();
     }
 
