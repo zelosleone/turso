@@ -752,16 +752,25 @@ mod tests {
                 SQLITE_OK
             );
 
-            let expected = ["INTEGER", "REAL", "TEXT", "BLOB", "NULL"];
+            let expected = [
+                Some("INTEGER"),
+                Some("REAL"),
+                Some("TEXT"),
+                Some("BLOB"),
+                None,
+            ];
 
             for i in 0..sqlite3_column_count(stmt) {
                 let decl = sqlite3_column_decltype(stmt, i);
-                assert!(!decl.is_null());
-                let s = std::ffi::CStr::from_ptr(decl)
-                    .to_string_lossy()
-                    .into_owned();
-                println!("{s}");
-                assert_eq!(s, expected[i as usize]);
+
+                if decl.is_null() {
+                    assert!(expected[i as usize].is_none());
+                } else {
+                    let s = std::ffi::CStr::from_ptr(decl)
+                        .to_string_lossy()
+                        .into_owned();
+                    assert_eq!(Some(s.as_str()), expected[i as usize]);
+                }
             }
 
             assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);

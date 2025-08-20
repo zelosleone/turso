@@ -549,12 +549,20 @@ void test_sqlite3_column_decltype()
         -1, &stmt, NULL);
     assert(rc == SQLITE_OK);
 
-    const char* expected[] = { "INTEGER", "REAL", "TEXT", "BLOB", "NULL"};
+    const char* expected[] = { "INTEGER", "REAL", "TEXT", "BLOB", NULL};
 
     for (int i = 0; i < sqlite3_column_count(stmt); i++) {
         const char* decl = sqlite3_column_decltype(stmt, i);
-        assert(decl != NULL);  
-        assert(strcmp(decl, expected[i]) == 0);
+        //printf("DECL %s \n", decl);
+        //assert(decl != NULL);  
+        //assert(strcmp(decl, expected[i]) == 0);
+        if (decl == NULL) {
+            printf("DECL (null)\n");
+            assert(expected[i] == NULL);
+        } else {
+            printf("DECL %s\n", decl);
+            assert(strcmp(decl, expected[i]) == 0);
+        }
     }
 
     printf("sqlite3_column_decltype test completed!\n");

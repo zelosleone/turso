@@ -2095,7 +2095,7 @@ impl Statement {
                     crate::schema::Type::Text => Some("TEXT".to_string()),
                     crate::schema::Type::Blob => Some("BLOB".to_string()),
                     crate::schema::Type::Numeric => Some("NUMERIC".to_string()),
-                    crate::schema::Type::Null => Some("NULL".to_string()),
+                    crate::schema::Type::Null => None,
                 }
             }
             _ => None,
