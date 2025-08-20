@@ -1201,7 +1201,7 @@ fn get_rows(conn: &Arc<Connection>, query: &str) -> Vec<Vec<Value>> {
     let mut rows = Vec::new();
     while let StepResult::Row = stmt.step().unwrap() {
         let row = stmt.row().unwrap();
-        let values = row.get_values().map(|v| v.clone()).collect::<Vec<_>>();
+        let values = row.get_values().cloned().collect::<Vec<_>>();
         rows.push(values);
     }
     rows
