@@ -666,7 +666,7 @@ mod tests {
             assert_eq!(
             sqlite3_prepare_v2(
                 db,
-                c"CREATE TABLE test_types (col_int INTEGER, col_float REAL, col_text TEXT, col_blob BLOB, col_null TEXT)".as_ptr(),
+                c"CREATE TABLE test_types (col_int INTEGER, col_float REAL, col_text TEXT, col_blob BLOB, col_null NULL)".as_ptr(),
                 -1,
                 &mut stmt,
                 std::ptr::null_mut(),
@@ -680,7 +680,7 @@ mod tests {
             assert_eq!(
                 sqlite3_prepare_v2(
                     db,
-                    c"INSERT INTO test_types VALUES (123, 45.67, 'hello', x'010203', NULL)"
+                    c"INSERT INTO test_types VALUES (123, 45.67, 'hello', x'010203', 'null')"
                         .as_ptr(),
                     -1,
                     &mut stmt,
