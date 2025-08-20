@@ -304,7 +304,7 @@ impl ProgramState {
             metrics: StatementMetrics::new(),
             op_open_ephemeral_state: OpOpenEphemeralState::Start,
             op_new_rowid_state: OpNewRowidState::Start,
-            op_idx_insert_state: OpIdxInsertState::SeekIfUnique,
+            op_idx_insert_state: OpIdxInsertState::MaybeSeek,
             op_insert_state: OpInsertState {
                 sub_state: OpInsertSubState::MaybeCaptureRecord,
                 old_record: None,
