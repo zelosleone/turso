@@ -28,6 +28,7 @@ use super::btree::{btree_init_page, BTreePage};
 use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCacheKey};
 use super::sqlite3_ondisk::begin_write_btree_page;
 use super::wal::CheckpointMode;
+use crate::storage::encryption::EncryptionKey;
 
 /// SQLite's default maximum page count
 const DEFAULT_MAX_PAGE_COUNT: u32 = 0xfffffffe;
@@ -425,6 +426,7 @@ pub struct Pager {
     header_ref_state: RefCell<HeaderRefState>,
     #[cfg(not(feature = "omit_autovacuum"))]
     btree_create_vacuum_full_state: Cell<BtreeCreateVacuumFullState>,
+    pub(crate) encryption_key: RefCell<Option<EncryptionKey>>,
 }
 
 #[derive(Debug, Clone)]
@@ -526,6 +528,7 @@ impl Pager {
             header_ref_state: RefCell::new(HeaderRefState::Start),
             #[cfg(not(feature = "omit_autovacuum"))]
             btree_create_vacuum_full_state: Cell::new(BtreeCreateVacuumFullState::Start),
+            encryption_key: RefCell::new(None),
         })
     }
 
@@ -627,8 +630,8 @@ impl Pager {
                 // Check if the calculated offset for the entry is within the bounds of the actual page data length.
                 if offset_in_ptrmap_page + PTRMAP_ENTRY_SIZE > actual_data_length {
                     return Err(LimboError::InternalError(format!(
-                            "Ptrmap offset {offset_in_ptrmap_page} + entry size {PTRMAP_ENTRY_SIZE} out of bounds for page {ptrmap_pg_no} (actual data len {actual_data_length})"
-                        )));
+                        "Ptrmap offset {offset_in_ptrmap_page} + entry size {PTRMAP_ENTRY_SIZE} out of bounds for page {ptrmap_pg_no} (actual data len {actual_data_length})"
+                    )));
                 }
 
                 let entry_slice = &ptrmap_page_data_slice
@@ -670,8 +673,8 @@ impl Pager {
                     || is_ptrmap_page(db_page_no_to_update, page_size)
                 {
                     return Err(LimboError::InternalError(format!(
-                            "Cannot set ptrmap entry for page {db_page_no_to_update}: it's a header/ptrmap page or invalid."
-                        )));
+                        "Cannot set ptrmap entry for page {db_page_no_to_update}: it's a header/ptrmap page or invalid."
+                    )));
                 }
 
                 let ptrmap_pg_no = get_ptrmap_page_no_for_db_page(db_page_no_to_update, page_size);
@@ -1006,8 +1009,14 @@ impl Pager {
                 matches!(frame_watermark, Some(0) | None),
                 "frame_watermark must be either None or Some(0) because DB has no WAL and read with other watermark is invalid"
             );
+
             page.set_locked();
-            let c = self.begin_read_disk_page(page_idx, page.clone(), allow_empty_read)?;
+            let c = self.begin_read_disk_page(
+                page_idx,
+                page.clone(),
+                allow_empty_read,
+                self.encryption_key.borrow().as_ref(),
+            )?;
             return Ok((page, c));
         };
 
@@ -1020,7 +1029,12 @@ impl Pager {
             return Ok((page, c));
         }
 
-        let c = self.begin_read_disk_page(page_idx, page.clone(), allow_empty_read)?;
+        let c = self.begin_read_disk_page(
+            page_idx,
+            page.clone(),
+            allow_empty_read,
+            self.encryption_key.borrow().as_ref(),
+        )?;
         Ok((page, c))
     }
 
@@ -1045,6 +1059,7 @@ impl Pager {
         page_idx: usize,
         page: PageRef,
         allow_empty_read: bool,
+        encryption_key: Option<&EncryptionKey>,
     ) -> Result<Completion> {
         sqlite3_ondisk::begin_read_page(
             self.db_file.clone(),
@@ -1052,6 +1067,7 @@ impl Pager {
             page,
             page_idx,
             allow_empty_read,
+            encryption_key,
         )
     }
 
@@ -1957,6 +1973,12 @@ impl Pager {
         let header = header_ref.borrow_mut();
         Ok(IOResult::Done(f(header)))
     }
+
+    pub fn set_encryption_key(&self, key: Option<EncryptionKey>) {
+        self.encryption_key.replace(key.clone());
+        let Some(wal) = self.wal.as_ref() else { return };
+        wal.borrow_mut().set_encryption_key(key)
+    }
 }
 
 pub fn allocate_new_page(page_id: usize, buffer_pool: &Arc<BufferPool>, offset: usize) -> PageRef {
@@ -2071,10 +2093,10 @@ mod ptrmap {
         pub fn serialize(&self, buffer: &mut [u8]) -> Result<()> {
             if buffer.len() < PTRMAP_ENTRY_SIZE {
                 return Err(LimboError::InternalError(format!(
-                "Buffer too small to serialize ptrmap entry. Expected at least {} bytes, got {}",
-                PTRMAP_ENTRY_SIZE,
-                buffer.len()
-            )));
+                    "Buffer too small to serialize ptrmap entry. Expected at least {} bytes, got {}",
+                    PTRMAP_ENTRY_SIZE,
+                    buffer.len()
+                )));
             }
             buffer[0] = self.entry_type as u8;
             buffer[1..5].copy_from_slice(&self.parent_page_no.to_be_bytes());
