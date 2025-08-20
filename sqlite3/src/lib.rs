@@ -708,20 +708,18 @@ pub unsafe extern "C" fn sqlite3_column_type(
     idx: ffi::c_int,
 ) -> ffi::c_int {
     let stmt = &mut *stmt;
+    let row = stmt
+        .stmt
+        .row()
+        .expect("Function should only be called after `SQLITE_ROW`");
 
-    if let Some(val) = stmt.stmt.get_column_type(idx as usize) {
-        match val.as_str() {
-            "INTEGER" => return SQLITE_INTEGER,
-            "REAL" => return SQLITE_FLOAT,
-            "TEXT" => return SQLITE_TEXT,
-            "BLOB" => return SQLITE_BLOB,
-
-            //SQLite3 column type doesn't cover numeric value
-            _ => return SQLITE_NULL,
-        }
+    match row.get::<&Value>(idx as usize) {
+        Ok(turso_core::Value::Integer(_)) => SQLITE_INTEGER,
+        Ok(turso_core::Value::Text(_)) => SQLITE_TEXT,
+        Ok(turso_core::Value::Float(_)) => SQLITE_FLOAT,
+        Ok(turso_core::Value::Blob(_)) => SQLITE_BLOB,
+        _ => SQLITE_NULL,
     }
-
-    SQLITE_NULL
 }
 
 #[no_mangle]

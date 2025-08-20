@@ -494,12 +494,12 @@ void test_sqlite3_column_type()
     assert(rc == SQLITE_OK);
 
     rc = sqlite3_exec(db,
-        "CREATE TABLE test_column_type (col_int INTEGER, col_float REAL, col_text TEXT, col_blob BLOB, col_null NULL);",
+        "CREATE TABLE test_column_type (col_int INTEGER, col_float REAL, col_text TEXT, col_blob BLOB, col_null TEXT);",
         NULL, NULL, NULL);
     assert(rc == SQLITE_OK);
     
     rc = sqlite3_exec(db,
-        "INSERT INTO test_column_type VALUES (42, 3.14, 'hello', x'010203', 'null');",
+        "INSERT INTO test_column_type VALUES (42, 3.14, 'hello', x'010203', NULL);",
         NULL, NULL, NULL);
     assert(rc == SQLITE_OK);
 
