@@ -17,6 +17,7 @@ void test_sqlite3_bind_text();
 void test_sqlite3_bind_text2();
 void test_sqlite3_bind_blob();
 void test_sqlite3_column_type();
+void test_sqlite3_column_decltype();
 
 int allocated = 0;
 
@@ -33,6 +34,7 @@ int main(void)
     test_sqlite3_bind_text2();
     test_sqlite3_bind_blob();
     test_sqlite3_column_type();
+    test_sqlite3_column_decltype();
     return 0;
 }
 
@@ -523,6 +525,39 @@ void test_sqlite3_column_type()
     }
 
     printf("sqlite3_column_type test completed!\n");
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+}
+
+void test_sqlite3_column_decltype()
+{
+    sqlite3 *db;
+    sqlite3_stmt *stmt;
+    int rc;
+
+    rc = sqlite3_open(":memory:", &db);
+    assert(rc == SQLITE_OK);
+
+    rc = sqlite3_exec(db,
+        "CREATE TABLE test_decltype (col_int INTEGER, col_float REAL, col_text TEXT, col_blob BLOB, col_null NULL);",
+        NULL, NULL, NULL);
+    assert(rc == SQLITE_OK);
+
+    rc = sqlite3_prepare_v2(db,
+        "SELECT col_int, col_float, col_text, col_blob, col_null FROM test_decltype;",
+        -1, &stmt, NULL);
+    assert(rc == SQLITE_OK);
+
+    const char* expected[] = { "INTEGER", "REAL", "TEXT", "BLOB", "NULL"};
+
+    for (int i = 0; i < sqlite3_column_count(stmt); i++) {
+        const char* decl = sqlite3_column_decltype(stmt, i);
+        assert(decl != NULL);  
+        assert(strcmp(decl, expected[i]) == 0);
+    }
+
+    printf("sqlite3_column_decltype test completed!\n");
 
     sqlite3_finalize(stmt);
     sqlite3_close(db);

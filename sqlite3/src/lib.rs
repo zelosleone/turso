@@ -730,10 +730,17 @@ pub unsafe extern "C" fn sqlite3_column_count(stmt: *mut sqlite3_stmt) -> ffi::c
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_column_decltype(
-    _stmt: *mut sqlite3_stmt,
-    _idx: ffi::c_int,
+    stmt: *mut sqlite3_stmt,
+    idx: ffi::c_int,
 ) -> *const ffi::c_char {
-    stub!();
+    let stmt = &mut *stmt;
+
+    if let Some(val) = stmt.stmt.get_column_type(idx as usize) {
+        let c_string = CString::new(val).expect("CString::new failed");
+        c_string.into_raw()
+    } else {
+        std::ptr::null()
+    }
 }
 
 #[no_mangle]

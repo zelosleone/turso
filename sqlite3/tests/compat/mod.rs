@@ -70,6 +70,7 @@ extern "C" {
     fn sqlite3_column_bytes(stmt: *mut sqlite3_stmt, idx: i32) -> i64;
     fn sqlite3_column_blob(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_void;
     fn sqlite3_column_type(stmt: *mut sqlite3_stmt, idx: i32) -> i32;
+    fn sqlite3_column_decltype(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_char;
 }
 
 const SQLITE_OK: i32 = 0;
@@ -710,6 +711,58 @@ mod tests {
             assert_eq!(sqlite3_column_type(stmt, 2), SQLITE_TEXT);
             assert_eq!(sqlite3_column_type(stmt, 3), SQLITE_BLOB);
             assert_eq!(sqlite3_column_type(stmt, 4), SQLITE_NULL);
+
+            assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+            assert_eq!(sqlite3_close(db), SQLITE_OK);
+        }
+    }
+
+    #[test]
+    fn test_sqlite3_column_decltype() {
+        unsafe {
+            let temp_file = tempfile::NamedTempFile::with_suffix(".db").unwrap();
+            let path = std::ffi::CString::new(temp_file.path().to_str().unwrap()).unwrap();
+            let mut db = std::ptr::null_mut();
+            assert_eq!(sqlite3_open(path.as_ptr(), &mut db), SQLITE_OK);
+
+            let mut stmt = std::ptr::null_mut();
+            assert_eq!(
+            sqlite3_prepare_v2(
+                db,
+                c"CREATE TABLE test_decltype (col_int INTEGER, col_float REAL, col_text TEXT, col_blob BLOB, col_null NULL)".as_ptr(),
+                -1,
+                &mut stmt,
+                std::ptr::null_mut(),
+            ),
+            SQLITE_OK
+        );
+            assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+            assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+            let mut stmt = std::ptr::null_mut();
+            assert_eq!(
+                sqlite3_prepare_v2(
+                    db,
+                    c"SELECT col_int, col_float, col_text, col_blob, col_null FROM test_decltype"
+                        .as_ptr(),
+                    -1,
+                    &mut stmt,
+                    std::ptr::null_mut(),
+                ),
+                SQLITE_OK
+            );
+
+            let expected = ["INTEGER", "REAL", "TEXT", "BLOB", "NULL"];
+
+            for i in 0..sqlite3_column_count(stmt) {
+                let decl = sqlite3_column_decltype(stmt, i);
+                assert!(!decl.is_null());
+                let s = std::ffi::CStr::from_ptr(decl)
+                    .to_string_lossy()
+                    .into_owned();
+                println!("{s}");
+                assert_eq!(s, expected[i as usize]);
+            }
 
             assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
             assert_eq!(sqlite3_close(db), SQLITE_OK);
