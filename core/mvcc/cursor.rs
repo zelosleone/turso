@@ -157,7 +157,7 @@ impl<Clock: LogicalClock> MvccLazyCursor<Clock> {
         self.last();
         match self.current_pos {
             CursorPosition::Loaded(id) => id.row_id + 1,
-            CursorPosition::BeforeFirst => i64::MIN,
+            CursorPosition::BeforeFirst => 1,
             CursorPosition::End => i64::MAX,
         }
     }
