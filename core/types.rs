@@ -2494,6 +2494,14 @@ impl IOCompletions {
             IOCompletions::Many(completions) => completions.iter().all(|c| c.finished()),
         }
     }
+
+    /// Send abort signal to completions
+    pub fn abort(&self) {
+        match self {
+            IOCompletions::Single(c) => c.abort(),
+            IOCompletions::Many(completions) => completions.iter().for_each(|c| c.abort()),
+        }
+    }
 }
 
 #[derive(Debug)]
