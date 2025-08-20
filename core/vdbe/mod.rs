@@ -442,7 +442,7 @@ impl Program {
                 return Ok(StepResult::Interrupt);
             }
             if let Some(io) = &state.io_completions {
-                if !io.completed() {
+                if !io.finished() {
                     return Ok(StepResult::IO);
                 }
                 state.io_completions = None;

@@ -915,6 +915,7 @@ impl Wal for WalFile {
         let frame = page.clone();
         let complete = Box::new(move |res: Result<(Arc<Buffer>, i32), CompletionError>| {
             let Ok((buf, bytes_read)) = res else {
+                page.clear_locked();
                 return;
             };
             let buf_len = buf.len();

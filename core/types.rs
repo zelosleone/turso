@@ -2488,10 +2488,18 @@ impl IOCompletions {
         }
     }
 
-    pub fn completed(&self) -> bool {
+    pub fn finished(&self) -> bool {
         match self {
-            IOCompletions::Single(c) => c.is_completed(),
-            IOCompletions::Many(completions) => completions.iter().all(|c| c.is_completed()),
+            IOCompletions::Single(c) => c.finished(),
+            IOCompletions::Many(completions) => completions.iter().all(|c| c.finished()),
+        }
+    }
+
+    /// Send abort signal to completions
+    pub fn abort(&self) {
+        match self {
+            IOCompletions::Single(c) => c.abort(),
+            IOCompletions::Many(completions) => completions.iter().for_each(|c| c.abort()),
         }
     }
 }

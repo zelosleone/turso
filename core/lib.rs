@@ -2048,6 +2048,9 @@ impl Statement {
             return res;
         }
         if res.is_err() {
+            if let Some(io) = &self.state.io_completions {
+                io.abort();
+            }
             let state = self.program.connection.transaction_state.get();
             if let TransactionState::Write { .. } = state {
                 let end_tx_res = self.pager.end_tx(true, &self.program.connection, true)?;
