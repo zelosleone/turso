@@ -605,4 +605,4 @@ do_catchsql_test unknown-backtick-identifier-in-values-clause {
 do_execsql_test_in_memory_error_content  null-insert-in-nulltype-column-notnull-constraint {
     CREATE TABLE test (id INTEGER,name NULL NOT NULL);
     INSERT INTO test (id, name) VALUES (1, NULL);
-} {Runtime error: NOT NULL constraint failed:}
+} {NOT NULL constraint failed}
