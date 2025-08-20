@@ -248,7 +248,6 @@ pub struct ProgramState {
     /// Indicate whether an [Insn::Once] instruction at a given program counter position has already been executed, well, once.
     once: SmallVec<u32, 4>,
     regex_cache: RegexCache,
-    pub(crate) mv_tx_id: Option<crate::mvcc::database::TxID>,
     interrupted: bool,
     pub parameters: HashMap<NonZero<usize>, Value>,
     commit_state: CommitState,
@@ -285,7 +284,6 @@ impl ProgramState {
             ended_coroutine: Bitfield::new(),
             once: SmallVec::<u32, 4>::new(),
             regex_cache: RegexCache::new(),
-            mv_tx_id: None,
             interrupted: false,
             parameters: HashMap::new(),
             commit_state: CommitState::Ready,
@@ -520,6 +518,8 @@ impl Program {
                     }
                     assert!(state_machine.is_finalized());
                 }
+                conn.mv_tx_id.set(None);
+                conn.transaction_state.replace(TransactionState::None);
                 mv_transactions.clear();
             }
             Ok(IOResult::Done(()))

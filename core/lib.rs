@@ -421,6 +421,7 @@ impl Database {
             closed: Cell::new(false),
             attached_databases: RefCell::new(DatabaseCatalog::new()),
             query_only: Cell::new(false),
+            mv_tx_id: Cell::new(None),
             view_transaction_states: RefCell::new(HashMap::new()),
         });
         let builtin_syms = self.builtin_syms.borrow();
@@ -821,6 +822,7 @@ pub struct Connection {
     database_schemas: RefCell<std::collections::HashMap<usize, Arc<Schema>>>,
     /// Whether to automatically commit transaction
     auto_commit: Cell<bool>,
+    /// Transactions that are in progress.
     mv_transactions: RefCell<Vec<crate::mvcc::database::TxID>>,
     transaction_state: Cell<TransactionState>,
     last_insert_rowid: Cell<i64>,
@@ -840,6 +842,7 @@ pub struct Connection {
     /// Attached databases
     attached_databases: RefCell<DatabaseCatalog>,
     query_only: Cell<bool>,
+    pub(crate) mv_tx_id: Cell<Option<crate::mvcc::database::TxID>>,
 
     /// Per-connection view transaction states for uncommitted changes. This represents
     /// one entry per view that was touched in the transaction.
@@ -1948,7 +1951,7 @@ impl Statement {
     }
 
     pub fn set_mv_tx_id(&mut self, mv_tx_id: Option<u64>) {
-        self.state.mv_tx_id = mv_tx_id;
+        self.program.connection.mv_tx_id.set(mv_tx_id);
     }
 
     pub fn interrupt(&mut self) {

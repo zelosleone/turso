@@ -988,6 +988,7 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         pager: Rc<Pager>,
         connection: &Arc<Connection>,
     ) -> Result<StateMachine<CommitStateMachine<Clock>>> {
+        tracing::trace!("commit_tx(tx_id={})", tx_id);
         let state_machine: StateMachine<CommitStateMachine<Clock>> = StateMachine::<
             CommitStateMachine<Clock>,
         >::new(

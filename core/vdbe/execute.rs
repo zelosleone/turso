@@ -937,7 +937,7 @@ pub fn op_open_read(
     let pager = program.get_pager_from_database_index(db);
 
     let (_, cursor_type) = program.cursor_ref.get(*cursor_id).unwrap();
-    let mv_cursor = match state.mv_tx_id {
+    let mv_cursor = match program.connection.mv_tx_id.get() {
         Some(tx_id) => {
             let table_id = *root_page as u64;
             let mv_store = mv_store.unwrap().clone();
@@ -2025,7 +2025,7 @@ pub fn op_transaction(
         // In MVCC we don't have write exclusivity, therefore we just need to start a transaction if needed.
         // Programs can run Transaction twice, first with read flag and then with write flag. So a single txid is enough
         // for both.
-        if state.mv_tx_id.is_none() {
+        if program.connection.mv_tx_id.get().is_none() {
             // We allocate the first page lazily in the first transaction.
             return_if_io!(pager.maybe_allocate_page1());
             // TODO: when we fix MVCC enable schema cookie detection for reprepare statements
@@ -2037,7 +2037,7 @@ pub fn op_transaction(
             // }
             let tx_id = mv_store.begin_tx(pager.clone());
             conn.mv_transactions.borrow_mut().push(tx_id);
-            state.mv_tx_id = Some(tx_id);
+            program.connection.mv_tx_id.set(Some(tx_id));
         }
     } else {
         if updated && matches!(current_state, TransactionState::None) {
@@ -6113,7 +6113,7 @@ pub fn op_open_write(
         CursorType::BTreeIndex(index) => Some(index),
         _ => None,
     };
-    let mv_cursor = match state.mv_tx_id {
+    let mv_cursor = match program.connection.mv_tx_id.get() {
         Some(tx_id) => {
             let table_id = root_page;
             let mv_store = mv_store.unwrap().clone();
@@ -6383,7 +6383,7 @@ pub fn op_parse_schema(
                 stmt,
                 schema,
                 &conn.syms.borrow(),
-                state.mv_tx_id,
+                program.connection.mv_tx_id.get(),
                 existing_views,
             )
         })?;
@@ -6397,7 +6397,7 @@ pub fn op_parse_schema(
                 stmt,
                 schema,
                 &conn.syms.borrow(),
-                state.mv_tx_id,
+                program.connection.mv_tx_id.get(),
                 existing_views,
             )
         })?;
@@ -6774,7 +6774,7 @@ pub fn op_open_ephemeral(
             let root_page = return_if_io!(pager.btree_create(flag));
 
             let (_, cursor_type) = program.cursor_ref.get(cursor_id).unwrap();
-            let mv_cursor = match state.mv_tx_id {
+            let mv_cursor = match program.connection.mv_tx_id.get() {
                 Some(tx_id) => {
                     let table_id = root_page as u64;
                     let mv_store = mv_store.unwrap().clone();
