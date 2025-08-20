@@ -94,6 +94,31 @@ impl MemorySimFile {
                 sum.into()
             })
     }
+
+    fn insert_op(&self, op: OperationType) {
+        self.callbacks.lock().push(Operation {
+            time: self.generate_latency(),
+            op,
+        });
+    }
+
+    pub fn write_buf(&self, buf: &[u8], offset: usize) -> usize {
+        let mut file_buf = self.buffer.borrow_mut();
+        let more_space = if file_buf.len() < offset {
+            (offset + buf.len()) - file_buf.len()
+        } else {
+            buf.len().saturating_sub(file_buf.len() - offset)
+        };
+        if more_space > 0 {
+            file_buf.reserve(more_space);
+            for _ in 0..more_space {
+                file_buf.push(0);
+            }
+        }
+
+        file_buf[offset..][0..buf.len()].copy_from_slice(buf);
+        buf.len()
+    }
 }
 
 impl File for MemorySimFile {
@@ -113,10 +138,7 @@ impl File for MemorySimFile {
             completion: c.clone(),
             offset: pos,
         };
-        self.callbacks.lock().push(Operation {
-            time: self.generate_latency(),
-            op,
-        });
+        self.insert_op(op);
         Ok(c)
     }
 
@@ -133,10 +155,26 @@ impl File for MemorySimFile {
             completion: c.clone(),
             offset: pos,
         };
-        self.callbacks.lock().push(Operation {
-            time: self.generate_latency(),
-            op,
-        });
+        self.insert_op(op);
+        Ok(c)
+    }
+
+    fn pwritev(
+        &self,
+        pos: usize,
+        buffers: Vec<Arc<turso_core::Buffer>>,
+        c: Completion,
+    ) -> Result<Completion> {
+        if buffers.len() == 1 {
+            return self.pwrite(pos, buffers[0].clone(), c);
+        }
+        let op = OperationType::WriteV {
+            fd: self.fd.clone(),
+            buffers,
+            completion: c.clone(),
+            offset: pos,
+        };
+        self.insert_op(op);
         Ok(c)
     }
 
@@ -146,10 +184,7 @@ impl File for MemorySimFile {
             fd: self.fd.clone(),
             completion: c.clone(),
         };
-        self.callbacks.lock().push(Operation {
-            time: self.generate_latency(),
-            op,
-        });
+        self.insert_op(op);
         Ok(c)
     }
 
@@ -165,10 +200,7 @@ impl File for MemorySimFile {
             completion: c.clone(),
             len,
         };
-        self.callbacks.lock().push(Operation {
-            time: self.generate_latency(),
-            op,
-        });
+        self.insert_op(op);
         Ok(c)
     }
 }
