@@ -216,10 +216,12 @@ We integrated Turso Database into JDBC. For detailed instructions on how to use 
 the [README.md under bindings/java](bindings/java/README.md).
 </details>
 
-### MCP Server Mode
-
 <details>
-<summary>The Turso CLI includes a built-in [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that allows AI assistants to interact with your databases.</summary>
+<summary>🤖 MCP Server Mode</summary>
+<br>
+
+
+The Turso CLI includes a built-in [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that allows AI assistants to interact with your databases.
 
 Start the MCP server with:
 
