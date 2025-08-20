@@ -4421,7 +4421,11 @@ impl BTreeCursor {
     /// 9. Finish -> Delete operation is done. Return CursorResult(Ok())
     #[instrument(skip(self), level = Level::DEBUG)]
     pub fn delete(&mut self) -> Result<IOResult<()>> {
-        assert!(self.mv_cursor.is_none());
+        if let Some(mv_cursor) = &self.mv_cursor {
+            let rowid = mv_cursor.borrow_mut().current_row_id().unwrap();
+            mv_cursor.borrow_mut().delete(rowid, self.pager.clone())?;
+            return Ok(IOResult::Done(()));
+        }
 
         if let CursorState::None = &self.state {
             self.state = CursorState::Delete(DeleteState::Start);

@@ -52,6 +52,11 @@ impl<Clock: LogicalClock> MvccLazyCursor<Clock> {
         Ok(())
     }
 
+    pub fn delete(&mut self, rowid: RowID, pager: Rc<Pager>) -> Result<()> {
+        self.db.delete(self.tx_id, rowid, pager)?;
+        Ok(())
+    }
+
     pub fn current_row_id(&mut self) -> Option<RowID> {
         match self.current_pos {
             CursorPosition::Loaded(id) => Some(id),

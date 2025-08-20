@@ -1156,6 +1156,43 @@ fn test_connection_sees_other_connection_changes() {
     }
 }
 
+#[test]
+fn test_delete_with_conn() {
+    let db = MvccTestDbNoConn::new_with_random_db();
+    let conn0 = db.connect();
+    conn0.execute("CREATE TABLE test(t)").unwrap();
+
+    let mut inserts = vec![1, 2, 3, 4, 5, 6, 7];
+
+    for t in &inserts {
+        conn0
+            .execute(format!("INSERT INTO test(t) VALUES ({t})"))
+            .unwrap();
+    }
+
+    conn0.execute("DELETE FROM test WHERE t = 5").unwrap();
+    inserts.remove(4);
+
+    let mut stmt = conn0.prepare("SELECT * FROM test").unwrap();
+    let mut pos = 0;
+    loop {
+        let res = stmt.step().unwrap();
+        match res {
+            StepResult::Row => {
+                let row = stmt.row().unwrap();
+                let t = row.get_value(0).as_int().unwrap();
+                assert_eq!(t, inserts[pos]);
+                pos += 1;
+            }
+            StepResult::Done => break,
+            StepResult::IO => {
+                stmt.run_once().unwrap();
+            }
+            _ => panic!("Expected Row"),
+        }
+    }
+}
+
 fn get_record_value(row: &Row) -> ImmutableRecord {
     let mut record = ImmutableRecord::new(1024);
     record.start_serialization(&row.data);

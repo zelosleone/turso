@@ -246,6 +246,7 @@ pub enum CommitState {
     BeginPagerTxn { end_ts: u64 },
     WriteRow { end_ts: u64, write_set_index: usize },
     WriteRowStateMachine { end_ts: u64, write_set_index: usize },
+    DeleteRowStateMachine { end_ts: u64, write_set_index: usize },
     CommitPagerTxn { end_ts: u64 },
     Commit { end_ts: u64 },
 }
@@ -266,6 +267,7 @@ pub struct CommitStateMachine<Clock: LogicalClock> {
     connection: Arc<Connection>,
     write_set: Vec<RowID>,
     write_row_state_machine: Option<StateMachine<WriteRowStateMachine>>,
+    delete_row_state_machine: Option<StateMachine<DeleteRowStateMachine>>,
     _phantom: PhantomData<Clock>,
 }
 
@@ -275,6 +277,23 @@ pub struct WriteRowStateMachine {
     pager: Rc<Pager>,
     row: Row,
     record: Option<ImmutableRecord>,
+    cursor: Option<BTreeCursor>,
+}
+
+#[derive(Debug)]
+pub enum DeleteRowState {
+    Initial,
+    CreateCursor,
+    Seek,
+    Delete,
+}
+
+pub struct DeleteRowStateMachine {
+    state: DeleteRowState,
+    is_finalized: bool,
+    pager: Rc<Pager>,
+    rowid: RowID,
+    column_count: usize,
     cursor: Option<BTreeCursor>,
 }
 
@@ -288,6 +307,7 @@ impl<Clock: LogicalClock> CommitStateMachine<Clock> {
             connection,
             write_set: Vec::new(),
             write_row_state_machine: None,
+            delete_row_state_machine: None,
             _phantom: PhantomData,
         }
     }
@@ -457,12 +477,16 @@ impl<Clock: LogicalClock> StateTransition for CommitStateMachine<Clock> {
                                 break;
                             }
                         }
-                        if let Some(TxTimestampOrID::Timestamp(row_tx_id)) = row_version.end {
+                        if let Some(TxTimestampOrID::TxID(row_tx_id)) = row_version.end {
                             if row_tx_id == self.tx_id {
-                                let state_machine = mvcc_store
-                                    .write_row_to_pager(self.pager.clone(), &row_version.row)?;
-                                self.write_row_state_machine = Some(state_machine);
-                                self.state = CommitState::WriteRowStateMachine {
+                                let column_count = row_version.row.column_count;
+                                let state_machine = mvcc_store.delete_row_from_pager(
+                                    self.pager.clone(),
+                                    row_version.row.id,
+                                    column_count,
+                                )?;
+                                self.delete_row_state_machine = Some(state_machine);
+                                self.state = CommitState::DeleteRowStateMachine {
                                     end_ts,
                                     write_set_index,
                                 };
@@ -473,12 +497,32 @@ impl<Clock: LogicalClock> StateTransition for CommitStateMachine<Clock> {
                 }
                 Ok(TransitionResult::Continue)
             }
+
             CommitState::WriteRowStateMachine {
                 end_ts,
                 write_set_index,
             } => {
                 let write_row_state_machine = self.write_row_state_machine.as_mut().unwrap();
                 match write_row_state_machine.step(&())? {
+                    TransitionResult::Io(io) => return Ok(TransitionResult::Io(io)),
+                    TransitionResult::Continue => {
+                        return Ok(TransitionResult::Continue);
+                    }
+                    TransitionResult::Done(_) => {
+                        self.state = CommitState::WriteRow {
+                            end_ts,
+                            write_set_index: write_set_index + 1,
+                        };
+                        return Ok(TransitionResult::Continue);
+                    }
+                }
+            }
+            CommitState::DeleteRowStateMachine {
+                end_ts,
+                write_set_index,
+            } => {
+                let delete_row_state_machine = self.delete_row_state_machine.as_mut().unwrap();
+                match delete_row_state_machine.step(&())? {
                     TransitionResult::Io(io) => return Ok(TransitionResult::Io(io)),
                     TransitionResult::Continue => {
                         return Ok(TransitionResult::Continue);
@@ -664,6 +708,93 @@ impl StateTransition for WriteRowStateMachine {
 
     fn is_finalized(&self) -> bool {
         self.is_finalized
+    }
+}
+
+impl StateTransition for DeleteRowStateMachine {
+    type Context = ();
+    type SMResult = ();
+
+    #[tracing::instrument(fields(state = ?self.state), skip(self, _context))]
+    fn step(&mut self, _context: &Self::Context) -> Result<TransitionResult<Self::SMResult>> {
+        use crate::storage::btree::BTreeCursor;
+        use crate::types::{IOResult, SeekKey, SeekOp};
+
+        match self.state {
+            DeleteRowState::Initial => {
+                self.state = DeleteRowState::CreateCursor;
+                Ok(TransitionResult::Continue)
+            }
+            DeleteRowState::CreateCursor => {
+                let root_page = self.rowid.table_id as usize;
+                let num_columns = self.column_count;
+
+                let cursor =
+                    BTreeCursor::new_table(None, self.pager.clone(), root_page, num_columns);
+                self.cursor = Some(cursor);
+
+                self.state = DeleteRowState::Seek;
+                Ok(TransitionResult::Continue)
+            }
+            DeleteRowState::Seek => {
+                let seek_key = SeekKey::TableRowId(self.rowid.row_id);
+                let cursor = self.cursor.as_mut().unwrap();
+
+                match cursor.seek(seek_key, SeekOp::GE { eq_only: true })? {
+                    IOResult::Done(_) => {
+                        self.state = DeleteRowState::Delete;
+                        Ok(TransitionResult::Continue)
+                    }
+                    IOResult::IO(io) => {
+                        return Ok(TransitionResult::Io(io));
+                    }
+                }
+            }
+            DeleteRowState::Delete => {
+                // Insert the record into the B-tree
+                let cursor = self.cursor.as_mut().unwrap();
+
+                match cursor
+                    .delete()
+                    .map_err(|e| LimboError::InternalError(e.to_string()))?
+                {
+                    IOResult::Done(()) => {
+                        tracing::trace!(
+                            "delete_row_from_pager(table_id={}, row_id={})",
+                            self.rowid.table_id,
+                            self.rowid.row_id
+                        );
+                        self.finalize(&())?;
+                        Ok(TransitionResult::Done(()))
+                    }
+                    IOResult::IO(io) => {
+                        return Ok(TransitionResult::Io(io));
+                    }
+                }
+            }
+        }
+    }
+
+    fn finalize(&mut self, _context: &Self::Context) -> Result<()> {
+        self.is_finalized = true;
+        Ok(())
+    }
+
+    fn is_finalized(&self) -> bool {
+        self.is_finalized
+    }
+}
+
+impl DeleteRowStateMachine {
+    fn new(pager: Rc<Pager>, rowid: RowID, column_count: usize) -> Self {
+        Self {
+            state: DeleteRowState::Initial,
+            is_finalized: false,
+            pager,
+            rowid,
+            column_count,
+            cursor: None,
+        }
     }
 }
 
@@ -911,10 +1042,18 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         let tx = self.txs.get(&tx_id).unwrap();
         let tx = tx.value().read();
         let mut rows = self.rows.range(min_bound..max_bound);
-        rows.next().and_then(|row| {
-            // Find last valid version based on transaction.
-            self.find_last_visible_version(&tx, row)
-        })
+        loop {
+            // We are moving forward, so if a row was deleted we just need to skip it. Therefore, we need
+            // to loop either until we find a row that is not deleted or until we reach the end of the table.
+            let next_row = rows.next();
+            let row = next_row?;
+
+            // We found a row, let's check if it's visible to the transaction.
+            if let Some(visible_row) = self.find_last_visible_version(&tx, row) {
+                return Some(visible_row);
+            }
+            // If this row is not visible, continue to the next row
+        }
     }
 
     fn find_last_visible_version(
@@ -1167,6 +1306,21 @@ impl<Clock: LogicalClock> MvStore<Clock> {
         Ok(state_machine)
     }
 
+    pub fn delete_row_from_pager(
+        &self,
+        pager: Rc<Pager>,
+        rowid: RowID,
+        column_count: usize,
+    ) -> Result<StateMachine<DeleteRowStateMachine>> {
+        let state_machine: StateMachine<DeleteRowStateMachine> = StateMachine::<
+            DeleteRowStateMachine,
+        >::new(
+            DeleteRowStateMachine::new(pager, rowid, column_count),
+        );
+
+        Ok(state_machine)
+    }
+
     /// Try to scan for row ids in the table.
     ///
     /// This function loads all row ids of a table if the rowids of table were not populated yet.
@@ -1356,18 +1510,21 @@ fn is_begin_visible(
 
 fn is_end_visible(
     txs: &SkipMap<TxID, RwLock<Transaction>>,
-    tx: &Transaction,
-    rv: &RowVersion,
+    current_tx: &Transaction,
+    row_version: &RowVersion,
 ) -> bool {
-    match rv.end {
-        Some(TxTimestampOrID::Timestamp(rv_end_ts)) => tx.begin_ts < rv_end_ts,
+    match row_version.end {
+        Some(TxTimestampOrID::Timestamp(rv_end_ts)) => current_tx.begin_ts < rv_end_ts,
         Some(TxTimestampOrID::TxID(rv_end)) => {
-            let te = txs.get(&rv_end).unwrap();
-            let te = te.value().read();
-            let visible = match te.state.load() {
-                TransactionState::Active => tx.tx_id != te.tx_id,
+            let other_tx = txs.get(&rv_end).unwrap();
+            let other_tx = other_tx.value().read();
+            let visible = match other_tx.state.load() {
+                // V's sharp mind discovered an issue with the hekaton paper which basically states that a
+                // transaction can see a row version if the end is a TXId only if it isn't the same transaction.
+                // Source: https://avi.im/blag/2023/hekaton-paper-typo/
+                TransactionState::Active => current_tx.tx_id != other_tx.tx_id,
                 TransactionState::Preparing => false, // NOTICE: makes sense for snapshot isolation, not so much for serializable!
-                TransactionState::Committed(committed_ts) => tx.begin_ts < committed_ts,
+                TransactionState::Committed(committed_ts) => current_tx.begin_ts < committed_ts,
                 TransactionState::Aborted => false,
                 TransactionState::Terminated => {
                     tracing::debug!("TODO: should reread rv's end field - it should have updated the timestamp in the row version by now");
@@ -1375,9 +1532,9 @@ fn is_end_visible(
                 }
             };
             tracing::trace!(
-                "is_end_visible: tx={tx}, te={te} rv = {:?}-{:?}  visible = {visible}",
-                rv.begin,
-                rv.end
+                "is_end_visible: tx={current_tx}, te={other_tx} rv = {:?}-{:?}  visible = {visible}",
+                row_version.begin,
+                row_version.end
             );
             visible
         }
