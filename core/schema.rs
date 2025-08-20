@@ -931,8 +931,10 @@ fn create_table(
                                 order = o;
                             }
                         }
-                        turso_sqlite3_parser::ast::ColumnConstraint::NotNull { .. } => {
-                            notnull = true;
+                        turso_sqlite3_parser::ast::ColumnConstraint::NotNull {
+                            nullable, ..
+                        } => {
+                            notnull = !nullable;
                         }
                         turso_sqlite3_parser::ast::ColumnConstraint::Default(expr) => {
                             default = Some(expr)
