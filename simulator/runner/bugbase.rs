@@ -463,15 +463,13 @@ impl BugBase {
         Ok(PathBuf::from(
             String::from_utf8(
                 Command::new("git")
-                    .args(["rev-parse", "--git-dir"])
+                    .args(["rev-parse", "--show-toplevel"])
                     .output()
                     .with_context(|| "should be able to get the git path")?
                     .stdout,
             )
             .with_context(|| "commit hash should be valid utf8")?
-            .trim()
-            .strip_suffix(".git")
-            .with_context(|| "should be able to strip .git suffix")?,
+            .trim(),
         ))
     }
 }
