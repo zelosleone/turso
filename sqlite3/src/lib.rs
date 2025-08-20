@@ -36,6 +36,13 @@ pub const SQLITE_CHECKPOINT_FULL: ffi::c_int = 1;
 pub const SQLITE_CHECKPOINT_RESTART: ffi::c_int = 2;
 pub const SQLITE_CHECKPOINT_TRUNCATE: ffi::c_int = 3;
 
+pub const SQLITE_INTEGER: ffi::c_int = 1;
+pub const SQLITE_FLOAT: ffi::c_int = 2;
+pub const SQLITE_TEXT: ffi::c_int = 3;
+pub const SQLITE3_TEXT: ffi::c_int = 3;
+pub const SQLITE_BLOB: ffi::c_int = 4;
+pub const SQLITE_NULL: ffi::c_int = 5;
+
 pub struct sqlite3 {
     pub(crate) inner: Arc<Mutex<sqlite3Inner>>,
 }
@@ -697,10 +704,22 @@ pub unsafe extern "C" fn sqlite3_bind_blob(
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_column_type(
-    _stmt: *mut sqlite3_stmt,
-    _idx: ffi::c_int,
+    stmt: *mut sqlite3_stmt,
+    idx: ffi::c_int,
 ) -> ffi::c_int {
-    stub!();
+    let stmt = &mut *stmt;
+    let row = stmt
+        .stmt
+        .row()
+        .expect("Function should only be called after `SQLITE_ROW`");
+
+    match row.get::<&Value>(idx as usize) {
+        Ok(turso_core::Value::Integer(_)) => SQLITE_INTEGER,
+        Ok(turso_core::Value::Text(_)) => SQLITE_TEXT,
+        Ok(turso_core::Value::Float(_)) => SQLITE_FLOAT,
+        Ok(turso_core::Value::Blob(_)) => SQLITE_BLOB,
+        _ => SQLITE_NULL,
+    }
 }
 
 #[no_mangle]
@@ -711,10 +730,17 @@ pub unsafe extern "C" fn sqlite3_column_count(stmt: *mut sqlite3_stmt) -> ffi::c
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_column_decltype(
-    _stmt: *mut sqlite3_stmt,
-    _idx: ffi::c_int,
+    stmt: *mut sqlite3_stmt,
+    idx: ffi::c_int,
 ) -> *const ffi::c_char {
-    stub!();
+    let stmt = &mut *stmt;
+
+    if let Some(val) = stmt.stmt.get_column_type(idx as usize) {
+        let c_string = CString::new(val).expect("CString::new failed");
+        c_string.into_raw()
+    } else {
+        std::ptr::null()
+    }
 }
 
 #[no_mangle]
