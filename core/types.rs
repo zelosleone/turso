@@ -2488,10 +2488,10 @@ impl IOCompletions {
         }
     }
 
-    pub fn completed(&self) -> bool {
+    pub fn finished(&self) -> bool {
         match self {
-            IOCompletions::Single(c) => c.is_completed(),
-            IOCompletions::Many(completions) => completions.iter().all(|c| c.is_completed()),
+            IOCompletions::Single(c) => c.finished(),
+            IOCompletions::Many(completions) => completions.iter().all(|c| c.finished()),
         }
     }
 }
