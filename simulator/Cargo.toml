@@ -43,3 +43,4 @@ garde = { workspace = true, features = ["derive", "serde"] }
 json5 = { version = "0.4.1" }
 strum = { workspace = true }
 parking_lot = { workspace = true }
+indexmap = "2.10.0"
