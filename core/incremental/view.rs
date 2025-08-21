@@ -73,7 +73,7 @@ pub struct IncrementalView {
     // WHERE clause predicate for filtering (kept for compatibility)
     pub where_predicate: FilterPredicate,
     // The SELECT statement that defines how to transform input data
-    pub select_stmt: Box<ast::Select>,
+    pub select_stmt: ast::Select,
 
     // Internal filter operator for predicate evaluation
     filter_operator: Option<FilterOperator>,
@@ -180,7 +180,7 @@ impl IncrementalView {
                 view_name,
                 columns: _,
                 select,
-            }) => IncrementalView::from_stmt(view_name, select.into(), schema),
+            }) => IncrementalView::from_stmt(view_name, select, schema),
             _ => Err(LimboError::ParseError(format!(
                 "View is not a CREATE MATERIALIZED VIEW statement: {sql}"
             ))),
@@ -189,7 +189,7 @@ impl IncrementalView {
 
     pub fn from_stmt(
         view_name: ast::QualifiedName,
-        select: Box<ast::Select>,
+        select: ast::Select,
         schema: &Schema,
     ) -> Result<Self> {
         let name = view_name.name.as_str().to_string();
@@ -250,7 +250,7 @@ impl IncrementalView {
         name: String,
         initial_data: Vec<(i64, Vec<Value>)>,
         where_predicate: FilterPredicate,
-        select_stmt: Box<ast::Select>,
+        select_stmt: ast::Select,
         base_table: Arc<BTreeTable>,
         base_table_column_names: Vec<String>,
         columns: Vec<Column>,
