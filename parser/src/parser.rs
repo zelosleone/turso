@@ -1,14 +1,14 @@
 use crate::ast::{
-    AlterTableBody, As, Cmd, ColumnConstraint, ColumnDefinition, CommonTableExpr, CompoundOperator,
-    CompoundSelect, CreateTableBody, DeferSubclause, Distinctness, Expr, ForeignKeyClause,
-    FrameBound, FrameClause, FrameExclude, FrameMode, FromClause, FunctionTail, GroupBy, Indexed,
-    IndexedColumn, InitDeferredPred, InsertBody, JoinConstraint, JoinOperator, JoinType,
-    JoinedSelectTable, LikeOperator, Limit, Literal, Materialized, Name, NamedColumnConstraint,
-    NamedTableConstraint, NullsOrder, OneSelect, Operator, Over, PragmaBody, PragmaValue,
-    QualifiedName, RefAct, RefArg, ResolveType, ResultColumn, Select, SelectBody, SelectTable, Set,
-    SortOrder, SortedColumn, Stmt, TableConstraint, TableOptions, TransactionType, TriggerCmd,
-    TriggerEvent, TriggerTime, Type, TypeSize, UnaryOperator, Upsert, UpsertDo, UpsertIndex,
-    Window, WindowDef, With,
+    AlterTable, AlterTableBody, As, Cmd, ColumnConstraint, ColumnDefinition, CommonTableExpr,
+    CompoundOperator, CompoundSelect, CreateTableBody, CreateVirtualTable, DeferSubclause,
+    Distinctness, Expr, ForeignKeyClause, FrameBound, FrameClause, FrameExclude, FrameMode,
+    FromClause, FunctionTail, GroupBy, Indexed, IndexedColumn, InitDeferredPred, InsertBody,
+    JoinConstraint, JoinOperator, JoinType, JoinedSelectTable, LikeOperator, Limit, Literal,
+    Materialized, Name, NamedColumnConstraint, NamedTableConstraint, NullsOrder, OneSelect,
+    Operator, Over, PragmaBody, PragmaValue, QualifiedName, RefAct, RefArg, ResolveType,
+    ResultColumn, Select, SelectBody, SelectTable, Set, SortOrder, SortedColumn, Stmt,
+    TableConstraint, TableOptions, TransactionType, TriggerCmd, TriggerEvent, TriggerTime, Type,
+    TypeSize, UnaryOperator, Update, Upsert, UpsertDo, UpsertIndex, Window, WindowDef, With,
 };
 use crate::error::Error;
 use crate::lexer::{Lexer, Token};
@@ -172,8 +172,12 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub fn offset(&self) -> usize {
+        self.lexer.offset
+    }
+
     // entrypoint of parsing
-    fn next_cmd(&mut self) -> Result<Option<Cmd>, Error> {
+    pub fn next_cmd(&mut self) -> Result<Option<Cmd>, Error> {
         // consumes prefix SEMI
         while let Some(token) = self.peek()? {
             if token.token_type == Some(TK_SEMI) {
@@ -730,6 +734,22 @@ impl<'a> Parser<'a> {
         })
     }
 
+    fn parse_create_materialized_view(&mut self) -> Result<Stmt, Error> {
+        eat_assert!(self, TK_MATERIALIZED);
+        eat_assert!(self, TK_VIEW);
+        let if_not_exists = self.parse_if_not_exists()?;
+        let view_name = self.parse_fullname(false)?;
+        let columns = self.parse_eid_list()?;
+        eat_expect!(self, TK_AS);
+        let select = self.parse_select()?;
+        Ok(Stmt::CreateMaterializedView {
+            if_not_exists,
+            view_name,
+            columns,
+            select,
+        })
+    }
+
     fn parse_vtab_arg(&mut self) -> Result<String, Error> {
         let tok = self.peek_no_eof()?;
 
@@ -808,18 +828,26 @@ impl<'a> Parser<'a> {
             _ => vec![],
         };
 
-        Ok(Stmt::CreateVirtualTable {
+        Ok(Stmt::CreateVirtualTable(CreateVirtualTable {
             if_not_exists,
             tbl_name,
             module_name,
             args,
-        })
+        }))
     }
 
     fn parse_create_stmt(&mut self) -> Result<Stmt, Error> {
         eat_assert!(self, TK_CREATE);
         let mut first_tok = peek_expect!(
-            self, TK_TEMP, TK_TABLE, TK_VIRTUAL, TK_VIEW, TK_INDEX, TK_UNIQUE, TK_TRIGGER
+            self,
+            TK_TEMP,
+            TK_TABLE,
+            TK_VIRTUAL,
+            TK_VIEW,
+            TK_INDEX,
+            TK_UNIQUE,
+            TK_TRIGGER,
+            TK_MATERIALIZED
         );
         let mut temp = false;
         if first_tok.token_type == Some(TK_TEMP) {
@@ -831,6 +859,7 @@ impl<'a> Parser<'a> {
         match first_tok.token_type.unwrap() {
             TK_TABLE => self.parse_create_table(temp),
             TK_VIEW => self.parse_create_view(temp),
+            TK_MATERIALIZED => self.parse_create_materialized_view(),
             TK_TRIGGER => self.parse_create_trigger(temp),
             TK_VIRTUAL => self.parse_create_virtual(),
             TK_INDEX | TK_UNIQUE => self.parse_create_index(),
@@ -3265,20 +3294,20 @@ impl<'a> Parser<'a> {
                     eat_assert!(self, TK_COLUMNKW);
                 }
 
-                Ok(Stmt::AlterTable {
+                Ok(Stmt::AlterTable(AlterTable {
                     name: tbl_name,
                     body: AlterTableBody::AddColumn(self.parse_column_definition()?),
-                })
+                }))
             }
             TK_DROP => {
                 if self.peek_no_eof()?.token_type == Some(TK_COLUMNKW) {
                     eat_assert!(self, TK_COLUMNKW);
                 }
 
-                Ok(Stmt::AlterTable {
+                Ok(Stmt::AlterTable(AlterTable {
                     name: tbl_name,
                     body: AlterTableBody::DropColumn(self.parse_nm()?),
-                })
+                }))
             }
             TK_RENAME => {
                 let col_name = match self.peek_no_eof()?.token_type.unwrap().fallback_id_if_ok() {
@@ -3294,18 +3323,18 @@ impl<'a> Parser<'a> {
                 let to_name = self.parse_nm()?;
 
                 if let Some(col_name) = col_name {
-                    Ok(Stmt::AlterTable {
+                    Ok(Stmt::AlterTable(AlterTable {
                         name: tbl_name,
                         body: AlterTableBody::RenameColumn {
                             old: col_name,
                             new: to_name,
                         },
-                    })
+                    }))
                 } else {
-                    Ok(Stmt::AlterTable {
+                    Ok(Stmt::AlterTable(AlterTable {
                         name: tbl_name,
                         body: AlterTableBody::RenameTo(to_name),
-                    })
+                    }))
                 }
             }
             _ => unreachable!(),
@@ -3744,7 +3773,7 @@ impl<'a> Parser<'a> {
         let returning = self.parse_returning()?;
         let order_by = self.parse_order_by()?;
         let limit = self.parse_limit()?;
-        Ok(Stmt::Update {
+        Ok(Stmt::Update(Update {
             with,
             or_conflict: resolve_type,
             tbl_name,
@@ -3755,7 +3784,7 @@ impl<'a> Parser<'a> {
             returning,
             order_by,
             limit,
-        })
+        }))
     }
 
     fn parse_update(&mut self) -> Result<Stmt, Error> {
@@ -4082,6 +4111,28 @@ mod tests {
                             distinctness: None,
                             columns: vec![ResultColumn::Expr(
                                 Box::new(Expr::Literal(Literal::Numeric("3.333".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT ?".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Variable("".to_owned())),
                                 None,
                             )],
                             from: None,
@@ -8755,59 +8806,59 @@ mod tests {
             // parse alter
             (
                 b"ALTER TABLE foo RENAME TO bar".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::RenameTo(Name::Ident("bar".to_owned())),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo RENAME baz TO bar".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::RenameColumn {
                         old: Name::Ident("baz".to_owned()),
                         new: Name::Ident("bar".to_owned())
                     },
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo RENAME COLUMN baz TO bar".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::RenameColumn {
                         old: Name::Ident("baz".to_owned()),
                         new: Name::Ident("bar".to_owned())
                     },
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo DROP baz".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::DropColumn(Name::Ident("baz".to_owned())),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo DROP COLUMN baz".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::DropColumn(Name::Ident("baz".to_owned())),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD baz".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
                         col_type: None,
                         constraints: vec![],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8817,11 +8868,11 @@ mod tests {
                         }),
                         constraints: vec![],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT 1".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8838,11 +8889,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT (1)".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8861,11 +8912,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT +1".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8885,11 +8936,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT -1".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8909,11 +8960,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT hello".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8930,11 +8981,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER NULL".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8952,11 +9003,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER NOT NULL ON CONFLICT IGNORE".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8974,11 +9025,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER NOT NULL ON CONFLICT REPLACE".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8996,11 +9047,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER NOT NULL ON CONFLICT ROLLBACK".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9018,11 +9069,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER NOT NULL ON CONFLICT ROLLBACK".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9040,95 +9091,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
-            ),
-            (
-                b"ALTER TABLE foo ADD COLUMN baz INTEGER PRIMARY KEY".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
-                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
-                    body: AlterTableBody::AddColumn(ColumnDefinition {
-                        col_name: Name::Ident("baz".to_owned()),
-                        col_type: Some(Type {
-                            name: "INTEGER".to_owned(),
-                            size: None,
-                        }),
-                        constraints: vec![
-                            NamedColumnConstraint {
-                                name: None,
-                                constraint: ColumnConstraint::PrimaryKey {
-                                    order: None,
-                                    conflict_clause: None,
-                                    auto_increment: false,
-                                }
-                            },
-                        ],
-                    }),
-                })],
-            ),
-            (
-                b"ALTER TABLE foo ADD COLUMN baz INTEGER PRIMARY KEY ASC ON CONFLICT ROLLBACK AUTOINCREMENT".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
-                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
-                    body: AlterTableBody::AddColumn(ColumnDefinition {
-                        col_name: Name::Ident("baz".to_owned()),
-                        col_type: Some(Type {
-                            name: "INTEGER".to_owned(),
-                            size: None,
-                        }),
-                        constraints: vec![
-                            NamedColumnConstraint {
-                                name: None,
-                                constraint: ColumnConstraint::PrimaryKey {
-                                    order: Some(SortOrder::Asc),
-                                    conflict_clause: Some(ResolveType::Rollback),
-                                    auto_increment: true,
-                                }
-                            },
-                        ],
-                    }),
-                })],
-            ),
-            (
-                b"ALTER TABLE foo ADD COLUMN baz INTEGER UNIQUE".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
-                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
-                    body: AlterTableBody::AddColumn(ColumnDefinition {
-                        col_name: Name::Ident("baz".to_owned()),
-                        col_type: Some(Type {
-                            name: "INTEGER".to_owned(),
-                            size: None,
-                        }),
-                        constraints: vec![
-                            NamedColumnConstraint {
-                                name: None,
-                                constraint: ColumnConstraint::Unique(None),
-                            },
-                        ],
-                    }),
-                })],
-            ),
-            (
-                b"ALTER TABLE foo ADD COLUMN baz INTEGER UNIQUE ON CONFLICT ROLLBACK".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
-                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
-                    body: AlterTableBody::AddColumn(ColumnDefinition {
-                        col_name: Name::Ident("baz".to_owned()),
-                        col_type: Some(Type {
-                            name: "INTEGER".to_owned(),
-                            size: None,
-                        }),
-                        constraints: vec![
-                            NamedColumnConstraint {
-                                name: None,
-                                constraint: ColumnConstraint::Unique(Some(ResolveType::Rollback)),
-                            },
-                        ],
-                    }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER CHECK (1)".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9145,11 +9112,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER CHECK (1)".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9166,11 +9133,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9192,11 +9159,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON INSERT SET NULL".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9232,11 +9199,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON UPDATE SET NULL".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9272,11 +9239,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE SET NULL".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9312,11 +9279,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE SET DEFAULT".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9352,11 +9319,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE CASCADE".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9392,11 +9359,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE RESTRICT".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9432,11 +9399,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE NO ACTION".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9472,11 +9439,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar DEFERRABLE".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9501,11 +9468,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar NOT DEFERRABLE INITIALLY IMMEDIATE".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9530,11 +9497,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar NOT DEFERRABLE INITIALLY DEFERRED".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9559,11 +9526,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar NOT DEFERRABLE INITIALLY DEFERRED".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9588,11 +9555,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER COLLATE bar".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9609,11 +9576,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER GENERATED ALWAYS AS (1)".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9631,11 +9598,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER AS (1)".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9653,11 +9620,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER AS (1) STORED".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9675,7 +9642,7 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             // parse create index
             (
@@ -9773,7 +9740,7 @@ mod tests {
                 })],
             ),
             (
-                b"CREATE TEMP TABLE IF NOT EXISTS foo (bar, baz INTEGER, CONSTRAINT tbl_cons PRIMARY KEY (bar AUTOINCREMENT) ON CONFLICT ROLLBACK) STRICT".as_slice(),
+                b"CREATE TEMP TABLE IF NOT EXISTS foo (baz INTEGER, CONSTRAINT tbl_cons PRIMARY KEY (bar AUTOINCREMENT) ON CONFLICT ROLLBACK) STRICT".as_slice(),
                 vec![Cmd::Stmt(Stmt::CreateTable {
                     temporary: true,
                     if_not_exists: true,
@@ -9784,11 +9751,6 @@ mod tests {
                     },
                     body: CreateTableBody::ColumnsAndConstraints {
                         columns: vec![
-                            ColumnDefinition {
-                                col_name: Name::Ident("bar".to_owned()),
-                                col_type: None,
-                                constraints: vec![],
-                            },
                             ColumnDefinition {
                                 col_name: Name::Ident("baz".to_owned()),
                                 col_type: Some(Type {
@@ -9819,7 +9781,7 @@ mod tests {
                 })],
             ),
             (
-                b"CREATE TEMP TABLE IF NOT EXISTS foo (bar, baz INTEGER, UNIQUE (bar) ON CONFLICT ROLLBACK) WITHOUT ROWID".as_slice(),
+                b"CREATE TEMP TABLE IF NOT EXISTS foo (bar INTEGER PRIMARY KEY, baz INTEGER, UNIQUE (bar) ON CONFLICT ROLLBACK) WITHOUT ROWID".as_slice(),
                 vec![Cmd::Stmt(Stmt::CreateTable {
                     temporary: true,
                     if_not_exists: true,
@@ -9832,8 +9794,20 @@ mod tests {
                         columns: vec![
                             ColumnDefinition {
                                 col_name: Name::Ident("bar".to_owned()),
-                                col_type: None,
-                                constraints: vec![],
+                                col_type: Some(Type {
+                                    name: "INTEGER".to_owned(),
+                                    size: None,
+                                }),
+                                constraints: vec![
+                                    NamedColumnConstraint {
+                                        name: None,
+                                        constraint: ColumnConstraint::PrimaryKey {
+                                            order: None,
+                                            conflict_clause: None,
+                                            auto_increment: false,
+                                        }
+                                    }
+                                ],
                             },
                             ColumnDefinition {
                                 col_name: Name::Ident("baz".to_owned()),
@@ -10636,7 +10610,7 @@ mod tests {
             ),
             // parse create view
             (
-                b"CREATE VIEW foo AS SELECT 1".as_slice(),
+                b"CREATE VIEW foo(bar) AS SELECT 1".as_slice(),
                 vec![Cmd::Stmt(Stmt::CreateView {
                     temporary: false,
                     if_not_exists: false,
@@ -10645,7 +10619,13 @@ mod tests {
                         name: Name::Ident("foo".to_owned()),
                         alias: None,
                     },
-                    columns: vec![],
+                    columns: vec![
+                        IndexedColumn {
+                            col_name: Name::Ident("bar".to_owned()),
+                            collation_name: None,
+                            order: None,
+                        }
+                    ],
                     select: Select {
                         with: None,
                         body: SelectBody {
@@ -10708,7 +10688,7 @@ mod tests {
             // parse CREATE VIRTUAL TABLE
             (
                 b"CREATE VIRTUAL TABLE foo USING bar".as_slice(),
-                vec![Cmd::Stmt(Stmt::CreateVirtualTable {
+                vec![Cmd::Stmt(Stmt::CreateVirtualTable(CreateVirtualTable {
                     if_not_exists: false,
                     tbl_name: QualifiedName {
                         db_name: None,
@@ -10717,11 +10697,11 @@ mod tests {
                     },
                     module_name: Name::Ident("bar".to_owned()),
                     args: vec![],
-                })],
+                }))],
             ),
             (
                 b"CREATE VIRTUAL TABLE foo USING bar()".as_slice(),
-                vec![Cmd::Stmt(Stmt::CreateVirtualTable {
+                vec![Cmd::Stmt(Stmt::CreateVirtualTable(CreateVirtualTable{
                     if_not_exists: false,
                     tbl_name: QualifiedName {
                         db_name: None,
@@ -10730,11 +10710,11 @@ mod tests {
                     },
                     module_name: Name::Ident("bar".to_owned()),
                     args: vec![],
-                })],
+                }))],
             ),
             (
                 b"CREATE VIRTUAL TABLE IF NOT EXISTS foo USING bar(1, 2, ('hello', (3.333), 'world', (1, 2)))".as_slice(),
-                vec![Cmd::Stmt(Stmt::CreateVirtualTable {
+                vec![Cmd::Stmt(Stmt::CreateVirtualTable(CreateVirtualTable{
                     if_not_exists: true,
                     tbl_name: QualifiedName {
                         db_name: None,
@@ -10747,11 +10727,11 @@ mod tests {
                         "2".to_owned(),
                         "('hello', (3.333), 'world', (1, 2))".to_owned(),
                     ],
-                })],
+                }))],
             ),
             (
                 b"CREATE VIRTUAL TABLE ft USING fts5(x, tokenize = '''porter'' ''ascii''')".as_slice(),
-                vec![Cmd::Stmt(Stmt::CreateVirtualTable {
+                vec![Cmd::Stmt(Stmt::CreateVirtualTable(CreateVirtualTable {
                     if_not_exists: false,
                     tbl_name: QualifiedName {
                         db_name: None,
@@ -10763,7 +10743,7 @@ mod tests {
                         "x".to_owned(),
                         "tokenize = '''porter'' ''ascii'''".to_owned(),
                     ],
-                })],
+                }))],
             ),
             // parse delete
             (
@@ -11094,7 +11074,7 @@ mod tests {
             // parse update
             (
                 b"UPDATE foo SET bar = 1".as_slice(),
-                vec![Cmd::Stmt(Stmt::Update {
+                vec![Cmd::Stmt(Stmt::Update(Update {
                     with: None,
                     or_conflict: None,
                     tbl_name: QualifiedName {
@@ -11116,11 +11096,11 @@ mod tests {
                     returning: vec![],
                     order_by: vec![],
                     limit: None,
-                })],
+                }))],
             ),
             (
                 b"WITH test AS (SELECT 1) UPDATE OR REPLACE foo NOT INDEXED SET bar = 1 FROM foo_2 WHERE 1 RETURNING bar ORDER By bar LIMIT 1".as_slice(),
-                vec![Cmd::Stmt(Stmt::Update {
+                vec![Cmd::Stmt(Stmt::Update(Update {
                     with: Some(With {
                         recursive: false,
                         ctes: vec![
@@ -11195,7 +11175,7 @@ mod tests {
                         expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
                         offset: None,
                     }),
-                })],
+                }))],
             ),
             // parse reindex
             (

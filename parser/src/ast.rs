@@ -24,18 +24,59 @@ pub enum Cmd {
     Stmt(Stmt),
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct CreateVirtualTable {
+    /// `IF NOT EXISTS`
+    pub if_not_exists: bool,
+    /// table name
+    pub tbl_name: QualifiedName,
+    /// module name
+    pub module_name: Name,
+    /// args
+    pub args: Vec<String>, // TODO smol str
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Update {
+    /// CTE
+    pub with: Option<With>,
+    /// `OR`
+    pub or_conflict: Option<ResolveType>,
+    /// table name
+    pub tbl_name: QualifiedName,
+    /// `INDEXED`
+    pub indexed: Option<Indexed>,
+    /// `SET` assignments
+    pub sets: Vec<Set>,
+    /// `FROM`
+    pub from: Option<FromClause>,
+    /// `WHERE` clause
+    pub where_clause: Option<Box<Expr>>,
+    /// `RETURNING`
+    pub returning: Vec<ResultColumn>,
+    /// `ORDER BY`
+    pub order_by: Vec<SortedColumn>,
+    /// `LIMIT`
+    pub limit: Option<Limit>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct AlterTable {
+    // table name
+    pub name: QualifiedName,
+    // `ALTER TABLE` body
+    pub body: AlterTableBody,
+}
 /// SQL statement
 // https://sqlite.org/syntax/sql-stmt.html
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Stmt {
     /// `ALTER TABLE`: table name, body
-    AlterTable {
-        // table name
-        name: QualifiedName,
-        // `ALTER TABLE` body
-        body: AlterTableBody,
-    },
+    AlterTable(AlterTable),
     /// `ANALYSE`: object name
     Analyze {
         // object name
@@ -123,17 +164,20 @@ pub enum Stmt {
         /// query
         select: Select,
     },
-    /// `CREATE VIRTUAL TABLE`
-    CreateVirtualTable {
+    /// `CREATE MATERIALIZED VIEW`
+    CreateMaterializedView {
         /// `IF NOT EXISTS`
         if_not_exists: bool,
-        /// table name
-        tbl_name: QualifiedName,
-        /// module name
-        module_name: Name,
-        /// args
-        args: Vec<String>, // TODO smol str
+        /// view name
+        view_name: QualifiedName,
+        /// columns
+        columns: Vec<IndexedColumn>,
+        /// query
+        select: Select,
     },
+
+    /// `CREATE VIRTUAL TABLE`
+    CreateVirtualTable(CreateVirtualTable),
     /// `DELETE`
     Delete {
         /// CTE
@@ -231,28 +275,7 @@ pub enum Stmt {
     /// `SELECT`
     Select(Select),
     /// `UPDATE`
-    Update {
-        /// CTE
-        with: Option<With>,
-        /// `OR`
-        or_conflict: Option<ResolveType>,
-        /// table name
-        tbl_name: QualifiedName,
-        /// `INDEXED`
-        indexed: Option<Indexed>,
-        /// `SET` assignments
-        sets: Vec<Set>,
-        /// `FROM`
-        from: Option<FromClause>,
-        /// `WHERE` clause
-        where_clause: Option<Box<Expr>>,
-        /// `RETURNING`
-        returning: Vec<ResultColumn>,
-        /// `ORDER BY`
-        order_by: Vec<SortedColumn>,
-        /// `LIMIT`
-        limit: Option<Limit>,
-    },
+    Update(Update),
     /// `VACUUM`: database name, into expr
     Vacuum {
         // database name
@@ -273,6 +296,36 @@ pub enum Stmt {
 ///
 /// FIXME: rename this to TableReferenceId.
 pub struct TableInternalId(usize);
+
+impl Default for TableInternalId {
+    fn default() -> Self {
+        Self(1)
+    }
+}
+
+impl From<usize> for TableInternalId {
+    fn from(value: usize) -> Self {
+        Self(value)
+    }
+}
+
+impl std::ops::AddAssign<usize> for TableInternalId {
+    fn add_assign(&mut self, rhs: usize) {
+        self.0 += rhs;
+    }
+}
+
+impl From<TableInternalId> for usize {
+    fn from(value: TableInternalId) -> Self {
+        value.0
+    }
+}
+
+impl std::fmt::Display for TableInternalId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "t{}", self.0)
+    }
+}
 
 /// SQL expression
 // https://sqlite.org/syntax/expr.html
@@ -508,6 +561,36 @@ pub enum Operator {
     Subtract,
 }
 
+impl Operator {
+    /// returns whether order of operations can be ignored
+    pub fn is_commutative(&self) -> bool {
+        matches!(
+            self,
+            Operator::Add
+                | Operator::Multiply
+                | Operator::BitwiseAnd
+                | Operator::BitwiseOr
+                | Operator::Equals
+                | Operator::NotEquals
+        )
+    }
+
+    /// Returns true if this operator is a comparison operator that may need affinity conversion
+    pub fn is_comparison(&self) -> bool {
+        matches!(
+            self,
+            Self::Equals
+                | Self::NotEquals
+                | Self::Less
+                | Self::LessEquals
+                | Self::Greater
+                | Self::GreaterEquals
+                | Self::Is
+                | Self::IsNot
+        )
+    }
+}
+
 /// Unary operators
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -732,10 +815,32 @@ pub enum Name {
 }
 
 impl Name {
+    pub fn new(s: impl AsRef<str>) -> Self {
+        let s = s.as_ref();
+        let bytes = s.as_bytes();
+
+        if s.is_empty() {
+            return Name::Ident(s.to_string());
+        }
+
+        match bytes[0] {
+            b'"' | b'\'' | b'`' | b'[' => Name::Quoted(s.to_string()),
+            _ => Name::Ident(s.to_string()),
+        }
+    }
+
     pub fn as_str(&self) -> &str {
         match self {
             Name::Ident(s) | Name::Quoted(s) => s.as_str(),
         }
+    }
+
+    /// Checks if a name represents a double-quoted string that should get fallback behavior
+    pub fn is_double_quoted(&self) -> bool {
+        if let Self::Quoted(ident) = self {
+            return ident.starts_with("\"");
+        }
+        false
     }
 }
 
@@ -749,6 +854,13 @@ pub struct QualifiedName {
     pub name: Name,
     /// alias
     pub alias: Option<Name>, // FIXME restrict alias usage (fullname vs xfullname)
+}
+
+impl std::fmt::Display for QualifiedName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use fmt::ToTokens as _;
+        self.to_fmt(f)
+    }
 }
 
 /// `ALTER TABLE` body
@@ -1103,16 +1215,30 @@ pub enum PragmaName {
     DatabaseList,
     /// Encoding - only support utf8
     Encoding,
+    /// Current free page count.
+    FreelistCount,
     /// Run integrity check on the database file
     IntegrityCheck,
     /// `journal_mode` pragma
     JournalMode,
+    /// encryption key for encrypted databases. This is just called `key` because most
+    /// extensions use this name instead of `encryption_key`.
+    #[strum(serialize = "key")]
+    #[cfg_attr(feature = "serde", serde(rename = "key"))]
+    EncryptionKey,
     /// Noop as per SQLite docs
     LegacyFileFormat,
+    /// Set or get the maximum number of pages in the database file.
+    MaxPageCount,
+    /// `module_list` pragma
+    /// `module_list` lists modules used by virtual tables.
+    ModuleList,
     /// Return the total number of pages in the database file.
     PageCount,
     /// Return the page size of the database in bytes.
     PageSize,
+    /// make connection query only
+    QueryOnly,
     /// Returns schema version of the database file.
     SchemaVersion,
     /// returns information about the columns of a table
@@ -1210,6 +1336,19 @@ pub enum ResolveType {
     Ignore,
     /// `REPLACE`
     Replace,
+}
+
+impl ResolveType {
+    /// Get the OE_XXX bit value
+    pub fn bit_value(&self) -> usize {
+        match self {
+            ResolveType::Rollback => 1,
+            ResolveType::Abort => 2,
+            ResolveType::Fail => 3,
+            ResolveType::Ignore => 4,
+            ResolveType::Replace => 5,
+        }
+    }
 }
 
 /// `WITH` clause
