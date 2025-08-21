@@ -289,6 +289,7 @@ pub trait Wal: Debug {
     fn sync(&mut self) -> Result<Completion>;
     fn is_syncing(&self) -> bool;
     fn get_max_frame_in_wal(&self) -> u64;
+    fn get_checkpoint_seq(&self) -> u32;
     fn get_max_frame(&self) -> u64;
     fn get_min_frame(&self) -> u64;
     fn rollback(&mut self) -> Result<()>;
@@ -1301,6 +1302,10 @@ impl Wal for WalFile {
 
     fn get_max_frame_in_wal(&self) -> u64 {
         self.get_shared().max_frame.load(Ordering::Acquire)
+    }
+
+    fn get_checkpoint_seq(&self) -> u32 {
+        self.header.checkpoint_seq
     }
 
     fn get_max_frame(&self) -> u64 {
