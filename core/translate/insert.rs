@@ -741,13 +741,16 @@ fn build_insertion<'a>(
 
     if columns.is_none() {
         // Case 1: No columns specified - map values to columns in order
+        if num_values != table_columns.iter().filter(|c| !c.hidden).count() {
+            crate::bail_parse_error!(
+                "table {} has {} columns but {} values were supplied",
+                &table.get_name(),
+                table_columns.len(),
+                num_values
+            );
+        }
         let mut value_idx = 0;
         for (i, col) in table_columns.iter().enumerate() {
-            if value_idx == num_values {
-                // If there are less values than columns, the rest will have value_index = None,
-                // meaning NULLs will be emitted for them.
-                break;
-            }
             if col.hidden {
                 // Hidden columns are not taken into account.
                 continue;
@@ -762,15 +765,6 @@ fn build_insertion<'a>(
                 column_mappings[i].value_index = Some(value_idx);
             }
             value_idx += 1;
-        }
-
-        if value_idx != num_values {
-            crate::bail_parse_error!(
-                "table {} has {} columns but {} values were supplied",
-                &table.get_name(),
-                num_values,
-                value_idx
-            );
         }
     } else {
         // Case 2: Columns specified - map named columns to their values
