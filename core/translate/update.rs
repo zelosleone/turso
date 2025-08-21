@@ -349,17 +349,26 @@ pub fn prepare_update_plan(
     // Check what indexes will need to be updated by checking set_clauses and see
     // if a column is contained in an index.
     let indexes = schema.get_indices(table_name.as_str());
-    let indexes_to_update = indexes
+    let rowid_alias_used = set_clauses
         .iter()
-        .filter(|index| {
-            index.columns.iter().any(|index_column| {
-                set_clauses
-                    .iter()
-                    .any(|(set_index_column, _)| index_column.pos_in_table == *set_index_column)
+        .any(|(idx, _)| columns[*idx].is_rowid_alias);
+    let indexes_to_update = if rowid_alias_used {
+        // If the rowid alias is used in the SET clause, we need to update all indexes
+        indexes.to_vec()
+    } else {
+        // otherwise we need to update the indexes whose columns are set in the SET clause
+        indexes
+            .iter()
+            .filter(|index| {
+                index.columns.iter().any(|index_column| {
+                    set_clauses
+                        .iter()
+                        .any(|(set_index_column, _)| index_column.pos_in_table == *set_index_column)
+                })
             })
-        })
-        .cloned()
-        .collect();
+            .cloned()
+            .collect()
+    };
 
     Ok(Plan::Update(UpdatePlan {
         table_references,
