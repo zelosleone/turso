@@ -34,6 +34,7 @@ pub struct CheckpointResult {
     pub num_attempted: u64,
     /// number of frames moved successfully from WAL to db file after checkpoint
     pub num_backfilled: u64,
+    pub max_frame: u64,
     /// In the case of everything backfilled, we need to hold the locks until the db
     /// file is truncated.
     maybe_guard: Option<CheckpointLocks>,
@@ -46,10 +47,11 @@ impl Drop for CheckpointResult {
 }
 
 impl CheckpointResult {
-    pub fn new(n_frames: u64, n_ckpt: u64) -> Self {
+    pub fn new(n_frames: u64, n_ckpt: u64, max_frame: u64) -> Self {
         Self {
             num_attempted: n_frames,
             num_backfilled: n_ckpt,
+            max_frame,
             maybe_guard: None,
         }
     }
@@ -1517,7 +1519,12 @@ impl WalFile {
                     if !needs_backfill && !mode.should_restart_log() {
                         // there are no frames to copy over and we don't need to reset
                         // the log so we can return early success.
-                        return Ok(IOResult::Done(self.prev_checkpoint.clone()));
+                        return Ok(IOResult::Done(CheckpointResult {
+                            num_attempted: self.prev_checkpoint.num_attempted,
+                            num_backfilled: self.prev_checkpoint.num_backfilled,
+                            max_frame: nbackfills,
+                            maybe_guard: None,
+                        }));
                     }
                     // acquire the appropriate exclusive locks depending on the checkpoint mode
                     self.acquire_proper_checkpoint_guard(mode)?;
@@ -1537,6 +1544,21 @@ impl WalFile {
                     } = mode
                     {
                         max_frame = max_frame.min(upper_bound);
+                    }
+
+                    if max_frame <= nbackfills {
+                        tracing::debug!(
+                            "no need in checkpoint: max_frame={}, nbackfills={}, prev={:?}",
+                            max_frame,
+                            nbackfills,
+                            self.prev_checkpoint
+                        );
+                        return Ok(IOResult::Done(CheckpointResult {
+                            num_attempted: self.prev_checkpoint.num_attempted,
+                            num_backfilled: self.prev_checkpoint.num_backfilled,
+                            max_frame: nbackfills,
+                            maybe_guard: None,
+                        }));
                     }
 
                     self.ongoing_checkpoint.max_frame = max_frame;
@@ -1697,9 +1719,8 @@ impl WalFile {
                         let frames_possible = current_mx.saturating_sub(nbackfills);
 
                         // the total # of frames we actually backfilled
-                        let frames_checkpointed = self
-                            .ongoing_checkpoint
-                            .max_frame
+                        let checkpoint_max_frame = self.ongoing_checkpoint.max_frame;
+                        let frames_checkpointed = checkpoint_max_frame
                             .saturating_sub(self.ongoing_checkpoint.min_frame - 1);
 
                         if matches!(mode, CheckpointMode::Truncate { .. }) {
@@ -1714,7 +1735,11 @@ impl WalFile {
                         } else {
                             // otherwise return the normal result of the total # of possible frames
                             // we could have backfilled, and the number we actually did.
-                            CheckpointResult::new(frames_possible, frames_checkpointed)
+                            CheckpointResult::new(
+                                frames_possible,
+                                frames_checkpointed,
+                                checkpoint_max_frame,
+                            )
                         }
                     };
 
