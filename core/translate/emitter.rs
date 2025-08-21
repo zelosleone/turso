@@ -1056,8 +1056,10 @@ fn emit_update_insns(
             dest: idx_rowid_reg,
         });
 
+        // Skip over the UNIQUE constraint failure if the existing row is the one that we are currently changing
+        let original_rowid_reg = beg;
         program.emit_insn(Insn::Eq {
-            lhs: rowid_reg,
+            lhs: original_rowid_reg,
             rhs: idx_rowid_reg,
             target_pc: constraint_check,
             flags: CmpInsFlags::default(), // TODO: not sure what type of comparison flag is needed
