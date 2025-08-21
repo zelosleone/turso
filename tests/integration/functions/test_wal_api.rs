@@ -627,3 +627,50 @@ fn test_wal_checkpoint_no_work() {
     );
     reader.execute("SELECT * FROM test").unwrap();
 }
+
+#[test]
+fn test_wal_revert_change_db_size() {
+    let db = TempDatabase::new_empty(false);
+    let writer = db.connect_limbo();
+
+    writer.execute("create table t(x, y)").unwrap();
+    let watermark = writer.wal_state().unwrap().max_frame;
+    writer
+        .execute("insert into t values (1, randomblob(10 * 4096))")
+        .unwrap();
+    writer
+        .execute("insert into t values (2, randomblob(20 * 4096))")
+        .unwrap();
+    let mut changed = writer.wal_changed_pages_after(watermark).unwrap();
+    changed.sort();
+
+    let mut frame = [0u8; 4096 + 24];
+
+    writer.wal_insert_begin().unwrap();
+    let mut frames_count = writer.wal_state().unwrap().max_frame;
+    for page_no in changed {
+        let page = &mut frame[24..];
+        if !writer
+            .try_wal_watermark_read_page(page_no, page, Some(watermark))
+            .unwrap()
+        {
+            continue;
+        }
+        let info = WalFrameInfo {
+            page_no: page_no,
+            db_size: if page_no == 2 { 2 } else { 0 },
+        };
+        info.put_to_frame_header(&mut frame);
+        frames_count += 1;
+        writer.wal_insert_frame(frames_count, &frame).unwrap();
+    }
+    writer.wal_insert_end().unwrap();
+
+    writer
+        .execute("insert into t values (3, randomblob(30 * 4096))")
+        .unwrap();
+    assert_eq!(
+        limbo_exec_rows(&db, &writer, "SELECT x, length(y) FROM t"),
+        vec![vec![Value::Integer(3), Value::Integer(30 * 4096)]]
+    );
+}

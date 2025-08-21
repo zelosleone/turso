@@ -346,16 +346,15 @@ impl DumbLruPageCache {
         Ok(())
     }
 
+    /// Removes all pages from the cache with pgno greater than len
     pub fn truncate(&mut self, len: usize) -> Result<(), CacheError> {
         let head_ptr = *self.head.borrow();
         let mut current = head_ptr;
-        let mut has_non_removed = false;
         while let Some(node) = current {
             let node_ref = unsafe { node.as_ref() };
 
             current = node_ref.next;
             if node_ref.key.pgno <= len {
-                has_non_removed = true;
                 continue;
             }
 
@@ -368,10 +367,6 @@ impl DumbLruPageCache {
             unsafe {
                 let _ = Box::from_raw(node.as_ptr());
             }
-        }
-        if !has_non_removed {
-            let _ = self.head.take();
-            let _ = self.tail.take();
         }
         Ok(())
     }
@@ -1267,6 +1262,38 @@ mod tests {
         assert_eq!(cache.capacity, 3);
         cache.verify_list_integrity();
         assert!(cache.insert(create_key(4), page_with_content(4)).is_ok());
+    }
+
+    #[test]
+    fn test_truncate_page_cache() {
+        let mut cache = DumbLruPageCache::new(10);
+        let _ = insert_page(&mut cache, 1);
+        let _ = insert_page(&mut cache, 4);
+        let _ = insert_page(&mut cache, 8);
+        let _ = insert_page(&mut cache, 10);
+        cache.truncate(4).unwrap();
+        assert!(cache.contains_key(&PageCacheKey { pgno: 1 }));
+        assert!(cache.contains_key(&PageCacheKey { pgno: 4 }));
+        assert!(!cache.contains_key(&PageCacheKey { pgno: 8 }));
+        assert!(!cache.contains_key(&PageCacheKey { pgno: 10 }));
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.capacity, 10);
+        cache.verify_list_integrity();
+        assert!(cache.insert(create_key(8), page_with_content(8)).is_ok());
+    }
+
+    #[test]
+    fn test_truncate_page_cache_remove_all() {
+        let mut cache = DumbLruPageCache::new(10);
+        let _ = insert_page(&mut cache, 8);
+        let _ = insert_page(&mut cache, 10);
+        cache.truncate(4).unwrap();
+        assert!(!cache.contains_key(&PageCacheKey { pgno: 8 }));
+        assert!(!cache.contains_key(&PageCacheKey { pgno: 10 }));
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.capacity, 10);
+        cache.verify_list_integrity();
+        assert!(cache.insert(create_key(8), page_with_content(8)).is_ok());
     }
 
     #[test]
