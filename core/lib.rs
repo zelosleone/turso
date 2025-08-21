@@ -44,7 +44,7 @@ use crate::incremental::view::ViewTransactionState;
 use crate::translate::optimizer::optimize_plan;
 use crate::translate::pragma::TURSO_CDC_DEFAULT_TABLE_NAME;
 #[cfg(all(feature = "fs", feature = "conn_raw_api"))]
-use crate::types::WalFrameInfo;
+use crate::types::{WalFrameInfo, WalState};
 #[cfg(feature = "fs")]
 use crate::util::{OpenMode, OpenOptions};
 use crate::vdbe::metrics::ConnectionMetrics;
@@ -1340,8 +1340,8 @@ impl Connection {
     }
 
     #[cfg(all(feature = "fs", feature = "conn_raw_api"))]
-    pub fn wal_frame_count(&self) -> Result<u64> {
-        self.pager.borrow().wal_frame_count()
+    pub fn wal_state(&self) -> Result<WalState> {
+        self.pager.borrow().wal_state()
     }
 
     #[cfg(all(feature = "fs", feature = "conn_raw_api"))]

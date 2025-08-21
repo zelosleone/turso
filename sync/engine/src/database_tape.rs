@@ -191,7 +191,7 @@ pub struct DatabaseWalSession {
 impl DatabaseWalSession {
     pub async fn new(coro: &Coro, wal_session: WalSession) -> Result<Self> {
         let conn = wal_session.conn();
-        let frames_count = conn.wal_frame_count()?;
+        let frames_count = conn.wal_state()?.max_frame;
         let mut page_size_stmt = conn.prepare("PRAGMA page_size")?;
         let Some(row) = run_stmt_expect_one_row(coro, &mut page_size_stmt).await? else {
             return Err(Error::DatabaseTapeError(
@@ -217,7 +217,7 @@ impl DatabaseWalSession {
     }
 
     pub fn frames_count(&self) -> Result<u64> {
-        Ok(self.wal_session.conn().wal_frame_count()?)
+        Ok(self.wal_session.conn().wal_state()?.max_frame)
     }
 
     pub fn append_page(&mut self, page_no: u32, page: &[u8]) -> Result<()> {

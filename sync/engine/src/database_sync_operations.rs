@@ -746,7 +746,7 @@ pub async fn transfer_physical_changes(
     let mut source_session = WalSession::new(source_conn.clone());
     source_session.begin()?;
 
-    let source_frames_count = source_conn.wal_frame_count()?;
+    let source_frames_count = source_conn.wal_state()?.max_frame;
     assert!(
         source_frames_count >= source_wal_match_watermark,
         "watermark can't be greater than current frames count: {source_frames_count} vs {source_wal_match_watermark}",
@@ -1074,15 +1074,15 @@ pub mod tests {
             let conn1 = db1.connect(&coro).await?;
             conn1.execute("CREATE TABLE t(x, y)")?;
             conn1.execute("INSERT INTO t VALUES (1, 2)")?;
-            let conn1_match_watermark = conn1.wal_frame_count().unwrap();
+            let conn1_match_watermark = conn1.wal_state().unwrap().max_frame;
             conn1.execute("INSERT INTO t VALUES (3, 4)")?;
-            let conn1_sync_watermark = conn1.wal_frame_count().unwrap();
+            let conn1_sync_watermark = conn1.wal_state().unwrap().max_frame;
             conn1.execute("INSERT INTO t VALUES (5, 6)")?;
 
             let conn2 = db2.connect(&coro).await?;
             conn2.execute("CREATE TABLE t(x, y)")?;
             conn2.execute("INSERT INTO t VALUES (1, 2)")?;
-            let conn2_match_watermark = conn2.wal_frame_count().unwrap();
+            let conn2_match_watermark = conn2.wal_state().unwrap().max_frame;
             conn2.execute("INSERT INTO t VALUES (5, 6)")?;
 
             // db1 WAL frames: [A1 A2] [A3] [A4] (sync_watermark) [A5]
