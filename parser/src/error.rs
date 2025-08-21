@@ -5,7 +5,7 @@ use crate::token::TokenType;
 
 /// SQL lexer and parser errors
 #[non_exhaustive]
-#[derive(Debug, miette::Diagnostic)]
+#[derive(Clone, Debug, miette::Diagnostic)]
 #[diagnostic()]
 pub enum Error {
     /// Lexer error

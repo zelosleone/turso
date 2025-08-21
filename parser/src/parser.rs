@@ -209,6 +209,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => {
                     let stmt = self.parse_stmt()?;
+                    stmt.check()?;
                     Some(Cmd::Stmt(stmt))
                 }
             },
