@@ -746,7 +746,7 @@ pub async fn transfer_physical_changes(
     let mut source_session = WalSession::new(source_conn.clone());
     source_session.begin()?;
 
-    let source_frames_count = source_conn.wal_frame_count()?;
+    let source_frames_count = source_conn.wal_state()?.max_frame;
     assert!(
         source_frames_count >= source_wal_match_watermark,
         "watermark can't be greater than current frames count: {source_frames_count} vs {source_wal_match_watermark}",

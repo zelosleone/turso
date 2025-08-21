@@ -349,7 +349,7 @@ impl<C: ProtocolIO> DatabaseSyncEngine<C> {
         // todo(sivukhin): push frames in multiple batches
         let generation = self.meta().synced_generation;
         let start_frame = self.meta().synced_frame_no.unwrap_or(0) + 1;
-        let end_frame = wal.conn().wal_frame_count()? + 1;
+        let end_frame = wal.conn().wal_state()?.max_frame + 1;
         match wal_push(
             coro,
             self.protocol.as_ref(),

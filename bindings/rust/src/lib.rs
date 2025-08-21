@@ -191,8 +191,9 @@ impl Connection {
             .inner
             .lock()
             .map_err(|e| Error::MutexError(e.to_string()))?;
-        conn.wal_frame_count()
+        conn.wal_state()
             .map_err(|e| Error::WalOperationError(format!("wal_insert_begin failed: {e}")))
+            .map(|state| state.max_frame)
     }
 
     #[cfg(feature = "conn_raw_api")]
