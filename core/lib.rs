@@ -20,7 +20,7 @@ mod schema;
 #[cfg(feature = "series")]
 mod series;
 pub mod state_machine;
-mod storage;
+pub mod storage;
 #[allow(dead_code)]
 #[cfg(feature = "time")]
 mod time;
@@ -126,6 +126,7 @@ pub struct Database {
     schema: Mutex<Arc<Schema>>,
     db_file: Arc<dyn DatabaseStorage>,
     path: String,
+    wal_path: String,
     pub io: Arc<dyn IO>,
     buffer_pool: Arc<BufferPool>,
     // Shared structures of a Database are the parts that are common to multiple threads that might
@@ -261,9 +262,10 @@ impl Database {
         // turso-sync-engine create 2 databases with different names in the same IO if MemoryIO is used
         // in this case we need to bypass registry (as this is MemoryIO DB) but also preserve original distinction in names (e.g. :memory:-draft and :memory:-synced)
         if path.starts_with(":memory:") {
-            return Self::open_with_flags_bypass_registry(
+            return Self::open_with_flags_bypass_registry_internal(
                 io,
                 path,
+                &format!("{path}-wal"),
                 db_file,
                 flags,
                 enable_mvcc,
@@ -282,9 +284,10 @@ impl Database {
         if let Some(db) = registry.get(&canonical_path).and_then(Weak::upgrade) {
             return Ok(db);
         }
-        let db = Self::open_with_flags_bypass_registry(
+        let db = Self::open_with_flags_bypass_registry_internal(
             io,
             path,
+            &format!("{path}-wal"),
             db_file,
             flags,
             enable_mvcc,
@@ -296,17 +299,41 @@ impl Database {
     }
 
     #[allow(clippy::arc_with_non_send_sync)]
-    fn open_with_flags_bypass_registry(
+    #[cfg(all(feature = "fs", feature = "conn_raw_api"))]
+    pub fn open_with_flags_bypass_registry(
         io: Arc<dyn IO>,
         path: &str,
+        wal_path: &str,
         db_file: Arc<dyn DatabaseStorage>,
         flags: OpenFlags,
         enable_mvcc: bool,
         enable_indexes: bool,
         enable_views: bool,
     ) -> Result<Arc<Database>> {
-        let wal_path = format!("{path}-wal");
-        let maybe_shared_wal = WalFileShared::open_shared_if_exists(&io, wal_path.as_str())?;
+        Self::open_with_flags_bypass_registry_internal(
+            io,
+            path,
+            wal_path,
+            db_file,
+            flags,
+            enable_mvcc,
+            enable_indexes,
+            enable_views,
+        )
+    }
+
+    #[allow(clippy::arc_with_non_send_sync)]
+    fn open_with_flags_bypass_registry_internal(
+        io: Arc<dyn IO>,
+        path: &str,
+        wal_path: &str,
+        db_file: Arc<dyn DatabaseStorage>,
+        flags: OpenFlags,
+        enable_mvcc: bool,
+        enable_indexes: bool,
+        enable_views: bool,
+    ) -> Result<Arc<Database>> {
+        let maybe_shared_wal = WalFileShared::open_shared_if_exists(&io, wal_path)?;
 
         let mv_store = if enable_mvcc {
             Some(Arc::new(MvStore::new(
@@ -334,6 +361,7 @@ impl Database {
         let db = Arc::new(Database {
             mv_store,
             path: path.to_string(),
+            wal_path: wal_path.to_string(),
             schema: Mutex::new(Arc::new(Schema::new(enable_indexes))),
             _shared_page_cache: shared_page_cache.clone(),
             maybe_shared_wal: RwLock::new(maybe_shared_wal),
@@ -545,8 +573,9 @@ impl Database {
         )?;
 
         pager.page_size.set(Some(page_size));
-        let wal_path = format!("{}-wal", self.path);
-        let file = self.io.open_file(&wal_path, OpenFlags::Create, false)?;
+        let file = self
+            .io
+            .open_file(&self.wal_path, OpenFlags::Create, false)?;
         let real_shared_wal = WalFileShared::new_shared(file)?;
         // Modify Database::maybe_shared_wal to point to the new WAL file so that other connections
         // can open the existing WAL.
