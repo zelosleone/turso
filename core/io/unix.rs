@@ -6,7 +6,7 @@ use crate::Result;
 use parking_lot::Mutex;
 use rustix::{
     fd::{AsFd, AsRawFd},
-    fs::{self, FlockOperation, OFlags, OpenOptionsExt},
+    fs::{self, FlockOperation},
 };
 use std::os::fd::RawFd;
 
@@ -97,7 +97,7 @@ impl IO for UnixIO {
     fn open_file(&self, path: &str, flags: OpenFlags, _direct: bool) -> Result<Arc<dyn File>> {
         trace!("open_file(path = {})", path);
         let mut file = std::fs::File::options();
-        file.read(true).custom_flags(OFlags::NONBLOCK.bits() as i32);
+        file.read(true);
 
         if !flags.contains(OpenFlags::ReadOnly) {
             file.write(true);
