@@ -1592,18 +1592,26 @@ impl<'a> Parser<'a> {
                 }
                 TK_OR => {
                     eat_assert!(self, TK_OR);
-                    Box::new(Expr::Binary(result, Operator::Or, self.parse_expr(pre)?))
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Or,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_AND => {
                     eat_assert!(self, TK_AND);
-                    Box::new(Expr::Binary(result, Operator::And, self.parse_expr(pre)?))
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::And,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_EQ => {
                     eat_assert!(self, TK_EQ);
                     Box::new(Expr::Binary(
                         result,
                         Operator::Equals,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_NE => {
@@ -1611,7 +1619,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::NotEquals,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_IS => {
@@ -1644,7 +1652,7 @@ impl<'a> Parser<'a> {
                         }
                     };
 
-                    Box::new(Expr::Binary(result, op, self.parse_expr(pre)?))
+                    Box::new(Expr::Binary(result, op, self.parse_expr(pre + 1)?))
                 }
                 TK_BETWEEN => {
                     eat_assert!(self, TK_BETWEEN);
@@ -1754,14 +1762,18 @@ impl<'a> Parser<'a> {
                 }
                 TK_LT => {
                     eat_assert!(self, TK_LT);
-                    Box::new(Expr::Binary(result, Operator::Less, self.parse_expr(pre)?))
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Less,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_GT => {
                     eat_assert!(self, TK_GT);
                     Box::new(Expr::Binary(
                         result,
                         Operator::Greater,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_LE => {
@@ -1769,7 +1781,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::LessEquals,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_GE => {
@@ -1777,7 +1789,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::GreaterEquals,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_ESCAPE => unreachable!(),
@@ -1786,7 +1798,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::BitwiseAnd,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_BITOR => {
@@ -1794,7 +1806,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::BitwiseOr,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_LSHIFT => {
@@ -1802,7 +1814,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::LeftShift,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_RSHIFT => {
@@ -1810,19 +1822,23 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::RightShift,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_PLUS => {
                     eat_assert!(self, TK_PLUS);
-                    Box::new(Expr::Binary(result, Operator::Add, self.parse_expr(pre)?))
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Add,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_MINUS => {
                     eat_assert!(self, TK_MINUS);
                     Box::new(Expr::Binary(
                         result,
                         Operator::Subtract,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_STAR => {
@@ -1830,7 +1846,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::Multiply,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_SLASH => {
@@ -1838,7 +1854,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::Divide,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_REM => {
@@ -1846,7 +1862,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::Modulus,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_CONCAT => {
@@ -1854,7 +1870,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::Concat,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_PTR => {
@@ -1865,7 +1881,7 @@ impl<'a> Parser<'a> {
                         Operator::ArrowRightShift
                     };
 
-                    Box::new(Expr::Binary(result, op, self.parse_expr(pre)?))
+                    Box::new(Expr::Binary(result, op, self.parse_expr(pre + 1)?))
                 }
                 TK_COLLATE => Box::new(Expr::Collate(result, self.parse_collate()?.unwrap())),
                 _ => unreachable!(),
