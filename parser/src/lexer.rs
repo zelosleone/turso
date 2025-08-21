@@ -574,13 +574,7 @@ impl<'a> Lexer<'a> {
 
         match tok {
             b'?' => {
-                let start_digit = self.offset;
                 self.eat_while(|b| b.is_some() && b.unwrap().is_ascii_digit());
-
-                // empty variable name
-                if start_digit == self.offset {
-                    return Err(Error::BadVariableName((start, self.offset - start).into()));
-                }
 
                 Ok(Token {
                     value: &self.input[start + 1..self.offset], // do not include '? in the value
