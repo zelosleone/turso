@@ -28,7 +28,9 @@ use super::btree::{btree_init_page, BTreePage};
 use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCacheKey};
 use super::sqlite3_ondisk::begin_write_btree_page;
 use super::wal::CheckpointMode;
-use crate::storage::encryption::{EncryptionKey, ENCRYPTION_METADATA_SIZE};
+use crate::storage::encryption::{
+    EncryptionKey, PerConnEncryptionContext, ENCRYPTION_METADATA_SIZE,
+};
 
 /// SQLite's default maximum page count
 const DEFAULT_MAX_PAGE_COUNT: u32 = 0xfffffffe;
@@ -483,7 +485,7 @@ pub struct Pager {
     header_ref_state: RefCell<HeaderRefState>,
     #[cfg(not(feature = "omit_autovacuum"))]
     btree_create_vacuum_full_state: Cell<BtreeCreateVacuumFullState>,
-    pub(crate) encryption_key: RefCell<Option<EncryptionKey>>,
+    pub(crate) encryption_ctx: RefCell<Option<PerConnEncryptionContext>>,
 }
 
 #[derive(Debug, Clone)]
@@ -585,7 +587,7 @@ impl Pager {
             header_ref_state: RefCell::new(HeaderRefState::Start),
             #[cfg(not(feature = "omit_autovacuum"))]
             btree_create_vacuum_full_state: Cell::new(BtreeCreateVacuumFullState::Start),
-            encryption_key: RefCell::new(None),
+            encryption_ctx: RefCell::new(None),
         })
     }
 
@@ -1072,7 +1074,7 @@ impl Pager {
                 page_idx,
                 page.clone(),
                 allow_empty_read,
-                self.encryption_key.borrow().as_ref(),
+                self.encryption_ctx.borrow().as_ref(),
             )?;
             return Ok((page, c));
         };
@@ -1090,7 +1092,7 @@ impl Pager {
             page_idx,
             page.clone(),
             allow_empty_read,
-            self.encryption_key.borrow().as_ref(),
+            self.encryption_ctx.borrow().as_ref(),
         )?;
         Ok((page, c))
     }
@@ -1116,7 +1118,7 @@ impl Pager {
         page_idx: usize,
         page: PageRef,
         allow_empty_read: bool,
-        encryption_key: Option<&EncryptionKey>,
+        encryption_key: Option<&PerConnEncryptionContext>,
     ) -> Result<Completion> {
         sqlite3_ondisk::begin_read_page(
             self.db_file.clone(),
@@ -1694,7 +1696,7 @@ impl Pager {
                 default_header.database_size = 1.into();
 
                 // if a key is set, then we will reserve space for encryption metadata
-                if self.encryption_key.borrow().is_some() {
+                if self.encryption_ctx.borrow().is_some() {
                     default_header.reserved_space = ENCRYPTION_METADATA_SIZE as u8;
                 }
 
@@ -2076,10 +2078,11 @@ impl Pager {
         Ok(IOResult::Done(f(header)))
     }
 
-    pub fn set_encryption_key(&self, key: Option<EncryptionKey>) {
-        self.encryption_key.replace(key.clone());
+    pub fn set_encryption_context(&self, key: &EncryptionKey) {
+        let encryption_ctx = PerConnEncryptionContext::new(key).unwrap();
+        self.encryption_ctx.replace(Some(encryption_ctx.clone()));
         let Some(wal) = self.wal.as_ref() else { return };
-        wal.borrow_mut().set_encryption_key(key)
+        wal.borrow_mut().set_encryption_context(encryption_ctx)
     }
 }
 

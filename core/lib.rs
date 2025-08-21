@@ -76,7 +76,7 @@ use std::{
 };
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
-pub use storage::encryption::EncryptionKey;
+pub use storage::encryption::{EncryptionKey, PerConnEncryptionContext};
 use storage::page_cache::DumbLruPageCache;
 use storage::pager::{AtomicDbState, DbState};
 use storage::sqlite3_ondisk::PageSize;
@@ -1904,11 +1904,11 @@ impl Connection {
         self.syms.borrow().vtab_modules.keys().cloned().collect()
     }
 
-    pub fn set_encryption_key(&self, key: Option<EncryptionKey>) {
+    pub fn set_encryption_key(&self, key: EncryptionKey) {
         tracing::trace!("setting encryption key for connection");
-        *self.encryption_key.borrow_mut() = key.clone();
+        *self.encryption_key.borrow_mut() = Some(key.clone());
         let pager = self.pager.borrow();
-        pager.set_encryption_key(key);
+        pager.set_encryption_context(&key);
     }
 }
 
