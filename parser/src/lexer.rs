@@ -140,12 +140,13 @@ impl<'a> Lexer<'a> {
             self.eat_while(|b| b.is_some() && b.unwrap().is_ascii_digit());
             match self.peek() {
                 Some(b'_') => {
+                    self.eat_and_assert(|b| b == b'_');
+
                     if start == self.offset {
                         // before the underscore, there was no digit
                         return Err(Error::BadNumber((start, self.offset - start).into()));
                     }
 
-                    self.eat_and_assert(|b| b == b'_');
                     match self.peek() {
                         Some(b) if b.is_ascii_digit() => continue, // Continue if next is a digit
                         _ => {
@@ -950,6 +951,13 @@ mod tests {
                 b"123".as_slice(),
                 Token {
                     value: b"123".as_slice(),
+                    token_type: Some(TokenType::TK_INTEGER),
+                },
+            ),
+            (
+                b"9_223_372_036_854_775_807".as_slice(),
+                Token {
+                    value: b"9_223_372_036_854_775_807".as_slice(),
                     token_type: Some(TokenType::TK_INTEGER),
                 },
             ),
