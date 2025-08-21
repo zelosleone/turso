@@ -1106,7 +1106,8 @@ impl Wal for WalFile {
         };
         self.ensure_header_if_needed(page_size)?;
         tracing::debug!("write_raw_frame({})", frame_id);
-        if page.len() != self.page_size() as usize {
+        // if page_size wasn't initialized before - we will initialize it during that raw write
+        if self.page_size() != 0 && page.len() != self.page_size() as usize {
             return Err(LimboError::InvalidArgument(format!(
                 "unexpected page size in frame: got={}, expected={}",
                 page.len(),
