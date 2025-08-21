@@ -31,6 +31,12 @@ impl IO for WindowsIO {
     }
 
     #[instrument(err, skip_all, level = Level::TRACE)]
+    fn remove_file(&self, path: &str) -> Result<()> {
+        trace!("remove_file(path = {})", path);
+        Ok(std::fs::remove_file(path)?)
+    }
+
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn run_once(&self) -> Result<()> {
         Ok(())
     }

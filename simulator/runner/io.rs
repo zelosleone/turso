@@ -109,6 +109,11 @@ impl IO for SimulatorIO {
         Ok(file)
     }
 
+    fn remove_file(&self, path: &str) -> Result<()> {
+        self.files.borrow_mut().retain(|x| x.path != path);
+        Ok(())
+    }
+
     fn run_once(&self) -> Result<()> {
         if self.fault.get() {
             self.nr_run_once_faults

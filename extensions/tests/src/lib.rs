@@ -337,6 +337,12 @@ impl VfsExtension for TestFS {
             io: self.callbacks.clone(),
         })
     }
+
+    fn remove_file(&self, path: &str) -> ExtResult<()> {
+        let _ = env_logger::try_init();
+        log::debug!("remove file with testing VFS: {path}");
+        std::fs::remove_file(path).map_err(|_| ResultCode::Error)
+    }
 }
 
 #[cfg(not(target_family = "wasm"))]
