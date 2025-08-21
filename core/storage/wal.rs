@@ -1552,21 +1552,6 @@ impl WalFile {
                         max_frame = max_frame.min(upper_bound);
                     }
 
-                    if max_frame <= nbackfills {
-                        tracing::debug!(
-                            "no need in checkpoint: max_frame={}, nbackfills={}, prev={:?}",
-                            max_frame,
-                            nbackfills,
-                            self.prev_checkpoint
-                        );
-                        return Ok(IOResult::Done(CheckpointResult {
-                            num_attempted: self.prev_checkpoint.num_attempted,
-                            num_backfilled: self.prev_checkpoint.num_backfilled,
-                            max_frame: nbackfills,
-                            maybe_guard: None,
-                        }));
-                    }
-
                     self.ongoing_checkpoint.max_frame = max_frame;
                     self.ongoing_checkpoint.min_frame = nbackfills + 1;
                     let to_checkpoint = {

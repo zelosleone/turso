@@ -540,6 +540,9 @@ fn test_wal_upper_bound_truncate() {
         writer.checkpoint(mode).err().unwrap(),
         LimboError::Busy
     ));
+    writer
+        .execute("insert into test values (3, 'final')")
+        .unwrap();
 }
 
 #[test]
@@ -578,4 +581,49 @@ fn test_wal_state_checkpoint_seq() {
             max_frame: 1
         }
     );
+}
+
+#[test]
+fn test_wal_checkpoint_no_work() {
+    let db = TempDatabase::new_empty(false);
+    let writer = db.connect_limbo();
+    let reader = db.connect_limbo();
+
+    writer
+        .execute("create table test(id integer primary key, value text)")
+        .unwrap();
+    // open read txn in order to hold early WAL frames and prevent them from checkpoint
+    reader.execute("BEGIN").unwrap();
+    reader.execute("SELECT * FROM test").unwrap();
+
+    writer
+        .execute("insert into test values (1, 'hello')")
+        .unwrap();
+
+    writer
+        .execute("insert into test values (2, 'turso')")
+        .unwrap();
+    writer
+        .checkpoint(CheckpointMode::Passive {
+            upper_bound_inclusive: None,
+        })
+        .unwrap();
+    assert!(writer
+        .checkpoint(CheckpointMode::Truncate {
+            upper_bound_inclusive: None,
+        })
+        .is_err());
+    writer
+        .execute("insert into test values (3, 'limbo')")
+        .unwrap();
+
+    let state = writer.wal_state().unwrap();
+    assert_eq!(
+        state,
+        WalState {
+            checkpoint_seq_no: 0,
+            max_frame: 5
+        }
+    );
+    reader.execute("SELECT * FROM test").unwrap();
 }
