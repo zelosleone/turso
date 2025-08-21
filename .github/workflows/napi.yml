@@ -26,9 +26,6 @@ jobs:
       fail-fast: false
       matrix:
         settings:
-          - host: macos-13
-            target: x86_64-apple-darwin
-            build: yarn build --target x86_64-apple-darwin
           - host: windows-latest
             build: |
               yarn build --target x86_64-pc-windows-msvc
@@ -113,38 +110,6 @@ jobs:
             bindings/javascript/${{ env.APP_NAME }}.*.node
             bindings/javascript/${{ env.APP_NAME }}.*.wasm
           if-no-files-found: error
-  test-macOS-windows-binding:
-    name: Test bindings on ${{ matrix.settings.target }} - node@${{ matrix.node }}
-    needs:
-      - build
-    strategy:
-      fail-fast: false
-      matrix:
-        settings:
-          - host: macos-13
-            target: x86_64-apple-darwin
-        node:
-          - "20"
-    runs-on: ${{ matrix.settings.host }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup node
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node }}
-          architecture: x64
-      - name: Install dependencies
-        run: yarn install
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: bindings-${{ matrix.settings.target }}
-          path: bindings/javascript
-      - name: List packages
-        run: ls -R .
-        shell: bash
-      - name: Test bindings
-        run: yarn test
   test-linux-x64-gnu-binding:
     name: Test bindings on Linux-x64-gnu - node@${{ matrix.node }}
     needs:
@@ -173,42 +138,6 @@ jobs:
         shell: bash
       - name: Test bindings
         run: docker run --rm -v $(pwd):/build -w /build node:${{ matrix.node }}-slim yarn test
-  universal-macOS:
-    name: Build universal macOS binary
-    needs:
-      - build
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Setup node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Install dependencies
-        run: yarn install
-      - name: Download macOS x64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: bindings-x86_64-apple-darwin
-          path: bindings/javascript
-      - name: Download macOS arm64 artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: bindings-aarch64-apple-darwin
-          path: bindings/javascript
-      - name: List packages
-        run: ls -R .
-        shell: bash
-      - name: Combine binaries
-        run: yarn universal
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: bindings-universal-apple-darwin
-          path: |
-            bindings/javascript/${{ env.APP_NAME }}.*.node
-            bindings/javascript/${{ env.APP_NAME }}.*.wasm
-          if-no-files-found: error
   publish:
     name: Publish
     runs-on: ubuntu-latest
@@ -217,9 +146,7 @@ jobs:
       contents: read
       id-token: write
     needs:
-      - test-macOS-windows-binding
       - test-linux-x64-gnu-binding
-      - universal-macOS
     steps:
       - uses: actions/checkout@v4
       - name: Setup node
