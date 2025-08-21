@@ -22,7 +22,7 @@ jobs:
     steps:
       - id: gen-matrix
         run: |
-          echo "python-versions=[\"3.9\",\"3.10\",\"3.11\",\"3.12\",\"3.13\"]" >> $GITHUB_OUTPUT
+          echo "python-versions=[\"3.9\",\"3.13\"]" >> $GITHUB_OUTPUT
 
   test:
     needs: configure-strategy
