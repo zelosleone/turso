@@ -603,6 +603,24 @@ impl Table {
         }
     }
 
+    /// Returns the column position and column for a given column name.
+    pub fn get_column_by_name(&self, name: &str) -> Option<(usize, &Column)> {
+        let name = normalize_ident(name);
+        match self {
+            Self::BTree(table) => table.get_column(name.as_str()),
+            Self::Virtual(table) => table
+                .columns
+                .iter()
+                .enumerate()
+                .find(|(_, col)| col.name.as_ref() == Some(&name)),
+            Self::FromClauseSubquery(from_clause_subquery) => from_clause_subquery
+                .columns
+                .iter()
+                .enumerate()
+                .find(|(_, col)| col.name.as_ref() == Some(&name)),
+        }
+    }
+
     pub fn columns(&self) -> &Vec<Column> {
         match self {
             Self::BTree(table) => &table.columns,
