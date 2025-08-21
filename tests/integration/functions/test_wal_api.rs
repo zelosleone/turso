@@ -476,7 +476,7 @@ fn test_wal_upper_bound_passive() {
         .execute("insert into test values (2, 'turso')")
         .unwrap();
     let watermark2 = writer.wal_frame_count().unwrap();
-    let expected = vec![
+    let expected = [
         vec![
             turso_core::types::Value::Integer(1),
             turso_core::types::Value::Text(turso_core::types::Text::new("hello")),
