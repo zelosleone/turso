@@ -2211,7 +2211,7 @@ pub mod test {
         );
         drop(wal);
 
-        assert_eq!(pager.wal_frame_count().unwrap(), 0);
+        assert_eq!(pager.wal_state().unwrap().max_frame, 0);
 
         tracing::info!("wal filepath: {walpath:?}, size: {}", stat.len());
         let meta_after = std::fs::metadata(&walpath).unwrap();
