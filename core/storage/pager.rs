@@ -1413,7 +1413,16 @@ impl Pager {
                 page.get().id == header.page_number as usize,
                 "page has unexpected id"
             );
-            self.add_dirty(&page);
+        }
+        if header.page_number == 1 {
+            let db_size = self
+                .io
+                .block(|| self.with_header(|header| header.database_size))?;
+            tracing::debug!("truncate page_cache as first page was written: {}", db_size);
+            let mut page_cache = self.page_cache.write();
+            page_cache.truncate(db_size.get() as usize).map_err(|e| {
+                LimboError::InternalError(format!("Failed to truncate page cache: {e:?}"))
+            })?;
         }
         if header.is_commit_frame() {
             for page_id in self.dirty_pages.borrow().iter() {

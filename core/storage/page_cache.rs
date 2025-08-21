@@ -1,7 +1,10 @@
+use std::sync::atomic::Ordering;
 use std::{cell::RefCell, ptr::NonNull};
 
 use std::sync::Arc;
 use tracing::{debug, trace};
+
+use crate::turso_assert;
 
 use super::pager::PageRef;
 
@@ -343,13 +346,43 @@ impl DumbLruPageCache {
         Ok(())
     }
 
+    /// Removes all pages from the cache with pgno greater than len
+    pub fn truncate(&mut self, len: usize) -> Result<(), CacheError> {
+        let head_ptr = *self.head.borrow();
+        let mut current = head_ptr;
+        while let Some(node) = current {
+            let node_ref = unsafe { node.as_ref() };
+
+            current = node_ref.next;
+            if node_ref.key.pgno <= len {
+                continue;
+            }
+
+            self.map.borrow_mut().remove(&node_ref.key);
+            turso_assert!(!node_ref.page.is_dirty(), "page must be clean");
+            turso_assert!(!node_ref.page.is_locked(), "page must be unlocked");
+            turso_assert!(!node_ref.page.is_pinned(), "page must be unpinned");
+            self.detach(node, true)?;
+
+            unsafe {
+                let _ = Box::from_raw(node.as_ptr());
+            }
+        }
+        Ok(())
+    }
+
     pub fn print(&self) {
         tracing::debug!("page_cache_len={}", self.map.borrow().len());
         let head_ptr = *self.head.borrow();
         let mut current = head_ptr;
         while let Some(node) = current {
             unsafe {
-                tracing::debug!("page={:?}", node.as_ref().key);
+                tracing::debug!(
+                    "page={:?}, flags={}, pin_count={}",
+                    node.as_ref().key,
+                    node.as_ref().page.get().flags.load(Ordering::SeqCst),
+                    node.as_ref().page.get().pin_count.load(Ordering::SeqCst),
+                );
                 let node_ref = node.as_ref();
                 current = node_ref.next;
             }
@@ -1229,6 +1262,38 @@ mod tests {
         assert_eq!(cache.capacity, 3);
         cache.verify_list_integrity();
         assert!(cache.insert(create_key(4), page_with_content(4)).is_ok());
+    }
+
+    #[test]
+    fn test_truncate_page_cache() {
+        let mut cache = DumbLruPageCache::new(10);
+        let _ = insert_page(&mut cache, 1);
+        let _ = insert_page(&mut cache, 4);
+        let _ = insert_page(&mut cache, 8);
+        let _ = insert_page(&mut cache, 10);
+        cache.truncate(4).unwrap();
+        assert!(cache.contains_key(&PageCacheKey { pgno: 1 }));
+        assert!(cache.contains_key(&PageCacheKey { pgno: 4 }));
+        assert!(!cache.contains_key(&PageCacheKey { pgno: 8 }));
+        assert!(!cache.contains_key(&PageCacheKey { pgno: 10 }));
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.capacity, 10);
+        cache.verify_list_integrity();
+        assert!(cache.insert(create_key(8), page_with_content(8)).is_ok());
+    }
+
+    #[test]
+    fn test_truncate_page_cache_remove_all() {
+        let mut cache = DumbLruPageCache::new(10);
+        let _ = insert_page(&mut cache, 8);
+        let _ = insert_page(&mut cache, 10);
+        cache.truncate(4).unwrap();
+        assert!(!cache.contains_key(&PageCacheKey { pgno: 8 }));
+        assert!(!cache.contains_key(&PageCacheKey { pgno: 10 }));
+        assert_eq!(cache.len(), 0);
+        assert_eq!(cache.capacity, 10);
+        cache.verify_list_integrity();
+        assert!(cache.insert(create_key(8), page_with_content(8)).is_ok());
     }
 
     #[test]
