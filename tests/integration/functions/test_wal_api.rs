@@ -657,7 +657,7 @@ fn test_wal_revert_change_db_size() {
             continue;
         }
         let info = WalFrameInfo {
-            page_no: page_no,
+            page_no,
             db_size: if page_no == 2 { 2 } else { 0 },
         };
         info.put_to_frame_header(&mut frame);
