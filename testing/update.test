@@ -366,3 +366,15 @@ do_execsql_test_on_specific_db {:memory:} row-values-repeated-values-should-take
     INSERT INTO test (id, name) VALUES (1, 'test');
     UPDATE test SET (name, name) = ('mordor', 'shire') RETURNING id, name;
 } {1|shire}
+
+do_execsql_test_on_specific_db {:memory:} rowid-update-updates-all-indexes {
+    CREATE TABLE t (a integer primary key, b unique, c unique);
+    INSERT INTO t VALUES (1,1,1);
+    UPDATE t SET a = 2, b = 3;
+    SELECT * from t;
+    -- massage optimizer into using b and c indexes respectively
+    SELECT * from t WHERE b > 0;
+    SELECT * from t WHERE c > 0;
+} {2|3|1
+2|3|1
+2|3|1}
