@@ -34,6 +34,12 @@ impl IO for GenericIO {
             memory_io: Arc::new(MemoryIO::new()),
         }))
     }
+    
+    fn remove_file(&self, path: &str) -> Result<()> {
+        trace!("remove_file(path = {})", path);
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
 
     fn run_once(&self) -> Result<()> {
         Ok(())

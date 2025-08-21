@@ -502,6 +502,11 @@ impl IO for UringIO {
         Ok(uring_file)
     }
 
+    fn remove_file(&self, path: &str) -> Result<()> {
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
     fn run_once(&self) -> Result<()> {
         trace!("run_once()");
         let mut inner = self.inner.borrow_mut();

@@ -8,6 +8,7 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
     let register_fn_name = format_ident!("register_{}", struct_name);
     let register_static = format_ident!("register_static_{}", struct_name);
     let open_fn_name = format_ident!("{}_open", struct_name);
+    let remove_fn_name = format_ident!("{}_remove", struct_name);
     let close_fn_name = format_ident!("{}_close", struct_name);
     let read_fn_name = format_ident!("{}_read", struct_name);
     let write_fn_name = format_ident!("{}_write", struct_name);
@@ -30,6 +31,7 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
                 vfs: ctx,
                 name,
                 open: #open_fn_name,
+                remove: #remove_fn_name,
                 close: #close_fn_name,
                 read: #read_fn_name,
                 write: #write_fn_name,
@@ -54,6 +56,7 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
                 vfs: ctx,
                 name,
                 open: #open_fn_name,
+                remove: #remove_fn_name,
                 close: #close_fn_name,
                 read: #read_fn_name,
                 write: #write_fn_name,
@@ -97,6 +100,22 @@ pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
                 return ::std::ptr::null();
             };
             ::std::boxed::Box::into_raw(::std::boxed::Box::new(vfs_file)) as *const ::std::ffi::c_void
+        }
+
+        #[no_mangle]
+        pub unsafe extern "C" fn #remove_fn_name(
+            ctx: *const ::std::ffi::c_void,
+            path: *const ::std::ffi::c_char,
+        ) -> ::turso_ext::ResultCode {
+            let ctx = &*(ctx as *const ::turso_ext::VfsImpl);
+            let Ok(path_str) = ::std::ffi::CStr::from_ptr(path).to_str() else {
+                  return ::turso_ext::ResultCode::Error;
+            };
+            let vfs = &*(ctx.vfs as *const #struct_name);
+            if let Err(e) = <#struct_name as ::turso_ext::VfsExtension>::remove_file(vfs, path_str) {
+                return e;
+            };
+            ::turso_ext::ResultCode::OK
         }
 
         #[no_mangle]

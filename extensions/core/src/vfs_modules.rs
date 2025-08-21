@@ -19,6 +19,7 @@ pub trait VfsExtension: Default + Send + Sync {
     const NAME: &'static str;
     type File: VfsFile;
     fn open_file(&self, path: &str, flags: i32, direct: bool) -> ExtResult<Self::File>;
+    fn remove_file(&self, path: &str) -> ExtResult<()>;
     fn run_once(&self) -> ExtResult<()> {
         Ok(())
     }
@@ -54,6 +55,7 @@ pub struct VfsImpl {
     pub name: *const c_char,
     pub vfs: *const c_void,
     pub open: VfsOpen,
+    pub remove: VfsRemove,
     pub close: VfsClose,
     pub read: VfsRead,
     pub write: VfsWrite,
@@ -196,6 +198,8 @@ pub type VfsRunOnce = unsafe extern "C" fn(file: *const c_void) -> ResultCode;
 pub type VfsGetCurrentTime = unsafe extern "C" fn() -> *const c_char;
 
 pub type VfsGenerateRandomNumber = unsafe extern "C" fn() -> i64;
+
+pub type VfsRemove = unsafe extern "C" fn(ctx: *const c_void, path: *const c_char) -> ResultCode;
 
 #[repr(C)]
 pub struct VfsFileImpl {
