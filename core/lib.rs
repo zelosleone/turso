@@ -1612,21 +1612,7 @@ impl Connection {
         }
         let pragma = format!("PRAGMA {pragma_name}");
         let mut stmt = self.prepare(pragma)?;
-        let mut results = Vec::new();
-        loop {
-            match stmt.step()? {
-                vdbe::StepResult::Row => {
-                    let row: Vec<Value> = stmt.row().unwrap().get_values().cloned().collect();
-                    results.push(row);
-                }
-                vdbe::StepResult::Interrupt | vdbe::StepResult::Busy => {
-                    return Err(LimboError::Busy);
-                }
-                _ => break,
-            }
-        }
-
-        Ok(results)
+        stmt.run_collect_rows()
     }
 
     /// Set a new value to `pragma_name`.
@@ -1643,21 +1629,7 @@ impl Connection {
         }
         let pragma = format!("PRAGMA {pragma_name} = {pragma_value}");
         let mut stmt = self.prepare(pragma)?;
-        let mut results = Vec::new();
-        loop {
-            match stmt.step()? {
-                vdbe::StepResult::Row => {
-                    let row: Vec<Value> = stmt.row().unwrap().get_values().cloned().collect();
-                    results.push(row);
-                }
-                vdbe::StepResult::Interrupt | vdbe::StepResult::Busy => {
-                    return Err(LimboError::Busy);
-                }
-                _ => break,
-            }
-        }
-
-        Ok(results)
+        stmt.run_collect_rows()
     }
 
     pub fn experimental_views_enabled(&self) -> bool {
@@ -2014,6 +1986,23 @@ impl Statement {
                 vdbe::StepResult::Done => return Ok(()),
                 vdbe::StepResult::IO => self.run_once()?,
                 vdbe::StepResult::Row => continue,
+                vdbe::StepResult::Interrupt | vdbe::StepResult::Busy => {
+                    return Err(LimboError::Busy)
+                }
+            }
+        }
+    }
+
+    pub(crate) fn run_collect_rows(&mut self) -> Result<Vec<Vec<Value>>> {
+        let mut values = Vec::new();
+        loop {
+            match self.step()? {
+                vdbe::StepResult::Done => return Ok(values),
+                vdbe::StepResult::IO => self.run_once()?,
+                vdbe::StepResult::Row => {
+                    values.push(self.row().unwrap().get_values().cloned().collect());
+                    continue;
+                }
                 vdbe::StepResult::Interrupt | vdbe::StepResult::Busy => {
                     return Err(LimboError::Busy)
                 }
