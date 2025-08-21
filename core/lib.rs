@@ -298,7 +298,7 @@ impl Database {
         Ok(db)
     }
 
-    #[allow(clippy::arc_with_non_send_sync)]
+    #[allow(clippy::arc_with_non_send_sync, clippy::too_many_arguments)]
     #[cfg(all(feature = "fs", feature = "conn_raw_api"))]
     pub fn open_with_flags_bypass_registry(
         io: Arc<dyn IO>,
@@ -322,7 +322,7 @@ impl Database {
         )
     }
 
-    #[allow(clippy::arc_with_non_send_sync)]
+    #[allow(clippy::arc_with_non_send_sync, clippy::too_many_arguments)]
     fn open_with_flags_bypass_registry_internal(
         io: Arc<dyn IO>,
         path: &str,
