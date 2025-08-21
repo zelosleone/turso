@@ -2646,7 +2646,7 @@ pub struct WalFrameInfo {
     pub db_size: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct WalState {
     pub checkpoint_seq_no: u32,
     pub max_frame: u64,
