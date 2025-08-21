@@ -36,7 +36,7 @@ pub fn init_order_by(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx,
     result_columns: &[ResultSetColumn],
-    order_by: &[(ast::Expr, SortOrder)],
+    order_by: &[(Box<ast::Expr>, SortOrder)],
     referenced_tables: &TableReferences,
 ) -> Result<()> {
     let sort_cursor = program.alloc_cursor_id(CursorType::Sorter);
@@ -55,8 +55,10 @@ pub fn init_order_by(
      */
     let collations = order_by
         .iter()
-        .map(|(expr, _)| match expr {
-            ast::Expr::Collate(_, collation_name) => CollationSeq::new(collation_name).map(Some),
+        .map(|(expr, _)| match expr.as_ref() {
+            ast::Expr::Collate(_, collation_name) => {
+                CollationSeq::new(collation_name.as_str()).map(Some)
+            }
             ast::Expr::Column { table, column, .. } => {
                 let table = referenced_tables.find_table_by_internal_id(*table).unwrap();
 
@@ -86,7 +88,7 @@ pub fn emit_order_by(
     t_ctx: &mut TranslateCtx,
     plan: &SelectPlan,
 ) -> Result<()> {
-    let order_by = plan.order_by.as_ref().unwrap();
+    let order_by = &plan.order_by;
     let result_columns = &plan.result_columns;
     let sort_loop_start_label = program.allocate_label();
     let sort_loop_next_label = program.allocate_label();
@@ -161,7 +163,7 @@ pub fn order_by_sorter_insert(
     sort_metadata: &SortMetadata,
     plan: &SelectPlan,
 ) -> Result<()> {
-    let order_by = plan.order_by.as_ref().unwrap();
+    let order_by = &plan.order_by;
     let order_by_len = order_by.len();
     let result_columns = &plan.result_columns;
     let result_columns_to_skip_len = sort_metadata
@@ -322,7 +324,7 @@ pub struct OrderByRemapping {
 ///
 /// If any result columns can be skipped, this returns list of 2-tuples of (SkippedResultColumnIndex: usize, ResultColumnIndexInOrderBySorter: usize)
 pub fn order_by_deduplicate_result_columns(
-    order_by: &[(ast::Expr, SortOrder)],
+    order_by: &[(Box<ast::Expr>, SortOrder)],
     result_columns: &[ResultSetColumn],
 ) -> Vec<OrderByRemapping> {
     let mut result_column_remapping: Vec<OrderByRemapping> = Vec::new();

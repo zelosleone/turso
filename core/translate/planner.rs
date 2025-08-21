@@ -49,21 +49,17 @@ pub fn resolve_aggregates(
                 filter_over,
                 order_by,
             } => {
-                if filter_over.is_some() {
+                if filter_over.filter_clause.is_some() || filter_over.over_clause.is_some() {
                     crate::bail_parse_error!(
                         "FILTER clause is not supported yet in aggregate functions"
                     );
                 }
-                if order_by.is_some() {
+                if !order_by.is_empty() {
                     crate::bail_parse_error!(
                         "ORDER BY clause is not supported yet in aggregate functions"
                     );
                 }
-                let args_count = if let Some(args) = &args {
-                    args.len()
-                } else {
-                    0
-                };
+                let args_count = args.len();
                 match Func::resolve_function(name.as_str(), args_count) {
                     Ok(Func::Agg(f)) => {
                         let distinctness = Distinctness::from_ast(distinctness.as_ref());
@@ -72,31 +68,28 @@ pub fn resolve_aggregates(
                                 "SELECT with DISTINCT is not allowed without indexes enabled"
                             );
                         }
-                        let num_args = args.as_ref().map_or(0, |args| args.len());
-                        if distinctness.is_distinct() && num_args != 1 {
+                        if distinctness.is_distinct() && args.len() != 1 {
                             crate::bail_parse_error!(
                                 "DISTINCT aggregate functions must have exactly one argument"
                             );
                         }
                         aggs.push(Aggregate {
                             func: f,
-                            args: args.clone().unwrap_or_default(),
+                            args: args.iter().map(|arg| *arg.clone()).collect(),
                             original_expr: expr.clone(),
                             distinctness,
                         });
                         contains_aggregates = true;
                     }
                     _ => {
-                        if let Some(args) = args {
-                            for arg in args.iter() {
-                                contains_aggregates |= resolve_aggregates(schema, arg, aggs)?;
-                            }
+                        for arg in args.iter() {
+                            contains_aggregates |= resolve_aggregates(schema, arg, aggs)?;
                         }
                     }
                 }
             }
             Expr::FunctionCallStar { name, filter_over } => {
-                if filter_over.is_some() {
+                if filter_over.filter_clause.is_some() || filter_over.over_clause.is_some() {
                     crate::bail_parse_error!(
                         "FILTER clause is not supported yet in aggregate functions"
                     );
@@ -356,15 +349,15 @@ fn parse_from_clause_table(
             ctes,
             table_ref_counter,
             vtab_predicates,
-            qualified_name,
-            maybe_alias,
-            None,
+            &qualified_name,
+            maybe_alias.as_ref(),
+            &[],
             connection,
         ),
         ast::SelectTable::Select(subselect, maybe_alias) => {
             let Plan::Select(subplan) = prepare_select_plan(
                 schema,
-                *subselect,
+                subselect,
                 syms,
                 table_references.outer_query_refs(),
                 table_ref_counter,
@@ -392,16 +385,16 @@ fn parse_from_clause_table(
             ));
             Ok(())
         }
-        ast::SelectTable::TableCall(qualified_name, maybe_args, maybe_alias) => parse_table(
+        ast::SelectTable::TableCall(qualified_name, args, maybe_alias) => parse_table(
             schema,
             syms,
             table_references,
             ctes,
             table_ref_counter,
             vtab_predicates,
-            qualified_name,
-            maybe_alias,
-            maybe_args,
+            &qualified_name,
+            maybe_alias.as_ref(),
+            &args,
             connection,
         ),
         _ => todo!(),
@@ -416,14 +409,14 @@ fn parse_table(
     ctes: &mut Vec<JoinedTable>,
     table_ref_counter: &mut TableRefIdCounter,
     vtab_predicates: &mut Vec<Expr>,
-    qualified_name: QualifiedName,
-    maybe_alias: Option<As>,
-    maybe_args: Option<Vec<Expr>>,
+    qualified_name: &QualifiedName,
+    maybe_alias: Option<&As>,
+    args: &[Box<Expr>],
     connection: &Arc<crate::Connection>,
 ) -> Result<()> {
     let normalized_qualified_name = normalize_ident(qualified_name.name.as_str());
-    let database_id = connection.resolve_database_id(&qualified_name)?;
-    let table_name = qualified_name.name;
+    let database_id = connection.resolve_database_id(qualified_name)?;
+    let table_name = qualified_name.name.clone();
 
     // Check if the FROM clause table is referring to a CTE in the current scope.
     if let Some(cte_idx) = ctes
@@ -448,14 +441,7 @@ fn parse_table(
             .map(|a| a.as_str().to_string());
         let internal_id = table_ref_counter.next();
         let tbl_ref = if let Table::Virtual(tbl) = table.as_ref() {
-            if let Some(args) = maybe_args {
-                transform_args_into_where_terms(
-                    args,
-                    internal_id,
-                    vtab_predicates,
-                    table.as_ref(),
-                )?;
-            }
+            transform_args_into_where_terms(args, internal_id, vtab_predicates, table.as_ref())?;
             Table::Virtual(tbl.clone())
         } else if let Table::BTree(table) = table.as_ref() {
             Table::BTree(table.clone())
@@ -485,12 +471,14 @@ fn parse_table(
         let subselect = Box::new(view_select);
 
         // Use the view name as alias if no explicit alias was provided
-        let view_alias = maybe_alias.or_else(|| Some(ast::As::As(table_name.clone())));
+        let view_alias = maybe_alias
+            .cloned()
+            .or_else(|| Some(ast::As::As(table_name.clone())));
 
         // Recursively call parse_from_clause_table with the view as a SELECT
         return parse_from_clause_table(
             schema,
-            ast::SelectTable::Select(subselect, view_alias),
+            ast::SelectTable::Select(*subselect.clone(), view_alias),
             table_references,
             vtab_predicates,
             ctes,
@@ -559,12 +547,12 @@ fn parse_table(
 }
 
 fn transform_args_into_where_terms(
-    args: Vec<Expr>,
+    args: &[Box<Expr>],
     internal_id: TableInternalId,
     predicates: &mut Vec<Expr>,
     table: &Table,
 ) -> Result<()> {
-    let mut args_iter = args.into_iter();
+    let mut args_iter = args.iter();
     let mut hidden_count = 0;
     for (i, col) in table.columns().iter().enumerate() {
         if !col.hidden {
@@ -579,12 +567,12 @@ fn transform_args_into_where_terms(
                 column: i,
                 is_rowid_alias: col.is_rowid_alias,
             };
-            let expr = match arg_expr {
+            let expr = match arg_expr.as_ref() {
                 Expr::Literal(Null) => Expr::IsNull(Box::new(column_expr)),
                 other => Expr::Binary(
-                    Box::new(column_expr),
+                    column_expr.into(),
                     ast::Operator::Equals,
-                    Box::new(other),
+                    other.clone().into(),
                 ),
             };
             predicates.push(expr);
@@ -615,7 +603,7 @@ pub fn parse_from(
     table_ref_counter: &mut TableRefIdCounter,
     connection: &Arc<crate::Connection>,
 ) -> Result<()> {
-    if from.as_ref().and_then(|f| f.select.as_ref()).is_none() {
+    if from.is_none() {
         return Ok(());
     }
 
@@ -629,7 +617,7 @@ pub fn parse_from(
             if cte.materialized == Materialized::Yes {
                 crate::bail_parse_error!("Materialized CTEs are not yet supported");
             }
-            if cte.columns.is_some() {
+            if !cte.columns.is_empty() {
                 crate::bail_parse_error!("CTE columns are not yet supported");
             }
 
@@ -668,7 +656,7 @@ pub fn parse_from(
             // CTE can refer to other CTEs that came before it, plus any schema tables or tables in the outer scope.
             let cte_plan = prepare_select_plan(
                 schema,
-                *cte.select,
+                cte.select,
                 syms,
                 &outer_query_refs_for_cte,
                 table_ref_counter,
@@ -690,12 +678,12 @@ pub fn parse_from(
         }
     }
 
-    let mut from_owned = std::mem::take(&mut from).unwrap();
-    let select_owned = *std::mem::take(&mut from_owned.select).unwrap();
-    let joins_owned = std::mem::take(&mut from_owned.joins).unwrap_or_default();
+    let from_owned = std::mem::take(&mut from).unwrap();
+    let select_owned = from_owned.select;
+    let joins_owned = from_owned.joins;
     parse_from_clause_table(
         schema,
-        select_owned,
+        *select_owned,
         table_references,
         vtab_predicates,
         &mut ctes_as_subqueries,
@@ -722,7 +710,7 @@ pub fn parse_from(
 }
 
 pub fn parse_where(
-    where_clause: Option<Expr>,
+    where_clause: Option<&Expr>,
     table_references: &mut TableReferences,
     result_columns: Option<&[ResultSetColumn]>,
     out_where_clause: &mut Vec<WhereTerm>,
@@ -941,7 +929,7 @@ fn parse_join(
 
     parse_from_clause_table(
         schema,
-        table,
+        table.as_ref().clone(),
         table_references,
         vtab_predicates,
         ctes,
@@ -959,8 +947,6 @@ fn parse_join(
         _ => (false, false),
     };
 
-    let mut using = None;
-
     if natural && constraint.is_some() {
         crate::bail_parse_error!("NATURAL JOIN cannot be combined with ON or USING clause");
     }
@@ -969,7 +955,7 @@ fn parse_join(
         assert!(table_references.joined_tables().len() >= 2);
         let rightmost_table = table_references.joined_tables().last().unwrap();
         // NATURAL JOIN is first transformed into a USING join with the common columns
-        let mut distinct_names: Option<ast::DistinctNames> = None;
+        let mut distinct_names: Vec<ast::Name> = vec![];
         // TODO: O(n^2) maybe not great for large tables or big multiway joins
         // SQLite doesn't use HIDDEN columns for NATURAL joins: https://www3.sqlite.org/src/info/ab09ef427181130b
         for right_col in rightmost_table.columns().iter().filter(|col| !col.hidden) {
@@ -981,17 +967,9 @@ fn parse_join(
             {
                 for left_col in left_table.columns().iter().filter(|col| !col.hidden) {
                     if left_col.name == right_col.name {
-                        if let Some(distinct_names) = distinct_names.as_mut() {
-                            distinct_names
-                                .insert(ast::Name::from_str(
-                                    &left_col.name.clone().expect("column name is None"),
-                                ))
-                                .unwrap();
-                        } else {
-                            distinct_names = Some(ast::DistinctNames::new(ast::Name::from_str(
-                                &left_col.name.clone().expect("column name is None"),
-                            )));
-                        }
+                        distinct_names.push(ast::Name::new(
+                            left_col.name.clone().expect("column name is None"),
+                        ));
                         found_match = true;
                         break;
                     }
@@ -1001,18 +979,20 @@ fn parse_join(
                 }
             }
         }
-        if let Some(distinct_names) = distinct_names {
-            Some(ast::JoinConstraint::Using(distinct_names))
-        } else {
+        if distinct_names.is_empty() {
             crate::bail_parse_error!("No columns found to NATURAL join on");
+        } else {
+            Some(ast::JoinConstraint::Using(distinct_names))
         }
     } else {
         constraint
     };
 
+    let mut using = vec![];
+
     if let Some(constraint) = constraint {
         match constraint {
-            ast::JoinConstraint::On(expr) => {
+            ast::JoinConstraint::On(ref expr) => {
                 let mut preds = vec![];
                 break_predicate_at_and_boundaries(expr, &mut preds);
                 for predicate in preds.iter_mut() {
@@ -1110,7 +1090,7 @@ fn parse_join(
                         consumed: false,
                     });
                 }
-                using = Some(distinct_names);
+                using = distinct_names;
             }
         }
     }
@@ -1128,7 +1108,7 @@ fn parse_join(
 
 pub fn parse_limit(limit: &Limit) -> Result<(Option<isize>, Option<isize>)> {
     let offset_val = match &limit.offset {
-        Some(offset_expr) => match offset_expr {
+        Some(offset_expr) => match offset_expr.as_ref() {
             Expr::Literal(ast::Literal::Numeric(n)) => n.parse().ok(),
             // If OFFSET is negative, the result is as if OFFSET is zero
             Expr::Unary(UnaryOperator::Negative, expr) => {
@@ -1143,16 +1123,16 @@ pub fn parse_limit(limit: &Limit) -> Result<(Option<isize>, Option<isize>)> {
         None => Some(0),
     };
 
-    if let Expr::Literal(ast::Literal::Numeric(n)) = &limit.expr {
+    if let Expr::Literal(ast::Literal::Numeric(n)) = limit.expr.as_ref() {
         Ok((n.parse().ok(), offset_val))
-    } else if let Expr::Unary(UnaryOperator::Negative, expr) = &limit.expr {
-        if let Expr::Literal(ast::Literal::Numeric(n)) = &**expr {
+    } else if let Expr::Unary(UnaryOperator::Negative, expr) = limit.expr.as_ref() {
+        if let Expr::Literal(ast::Literal::Numeric(n)) = expr.as_ref() {
             let limit_val = n.parse::<isize>().ok().map(|num| -num);
             Ok((limit_val, offset_val))
         } else {
             crate::bail_parse_error!("Invalid LIMIT clause");
         }
-    } else if let Expr::Id(id) = &limit.expr {
+    } else if let Expr::Id(id) = limit.expr.as_ref() {
         if id.as_str().eq_ignore_ascii_case("true") {
             Ok((Some(1), offset_val))
         } else if id.as_str().eq_ignore_ascii_case("false") {
@@ -1165,14 +1145,14 @@ pub fn parse_limit(limit: &Limit) -> Result<(Option<isize>, Option<isize>)> {
     }
 }
 
-pub fn break_predicate_at_and_boundaries(predicate: Expr, out_predicates: &mut Vec<Expr>) {
+pub fn break_predicate_at_and_boundaries(predicate: &Expr, out_predicates: &mut Vec<Expr>) {
     match predicate {
         Expr::Binary(left, ast::Operator::And, right) => {
-            break_predicate_at_and_boundaries(*left, out_predicates);
-            break_predicate_at_and_boundaries(*right, out_predicates);
+            break_predicate_at_and_boundaries(left, out_predicates);
+            break_predicate_at_and_boundaries(right, out_predicates);
         }
         _ => {
-            out_predicates.push(predicate);
+            out_predicates.push(predicate.clone());
         }
     }
 }

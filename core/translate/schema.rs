@@ -308,100 +308,110 @@ fn check_automatic_pk_index_required(
             let mut unique_sets = vec![];
 
             // Check table constraints for PRIMARY KEY
-            if let Some(constraints) = constraints {
-                for constraint in constraints {
-                    if let ast::TableConstraint::PrimaryKey {
-                        columns: pk_cols, ..
-                    } = &constraint.constraint
-                    {
-                        if primary_key_definition.is_some() {
-                            bail_parse_error!("table {} has more than one primary key", tbl_name);
-                        }
-                        let primary_key_column_results = pk_cols
+            for constraint in constraints {
+                if let ast::TableConstraint::PrimaryKey {
+                    columns: pk_cols, ..
+                } = &constraint.constraint
+                {
+                    if primary_key_definition.is_some() {
+                        bail_parse_error!("table {} has more than one primary key", tbl_name);
+                    }
+                    let primary_key_column_results = pk_cols
+                        .iter()
+                        .map(|col| match col.expr.as_ref() {
+                            ast::Expr::Id(name) => {
+                                if !columns.iter().any(
+                                    |ast::ColumnDefinition { col_name, .. }| {
+                                        col_name.as_str() == name.as_str()
+                                    },
+                                ) {
+                                    bail_parse_error!("No such column: {}", name.as_str());
+                                }
+                                Ok(PrimaryKeyColumnInfo {
+                                    name: name.as_str(),
+                                    is_descending: matches!(col.order, Some(ast::SortOrder::Desc)),
+                                })
+                            }
+                            _ => Err(LimboError::ParseError(
+                                "expressions prohibited in PRIMARY KEY and UNIQUE constraints"
+                                    .to_string(),
+                            )),
+                        })
+                        .collect::<Result<Vec<_>>>()?;
+
+                    for pk_info in primary_key_column_results {
+                        let column_name = pk_info.name;
+                        let column_def = columns
                             .iter()
-                            .map(|col| match &col.expr {
-                                ast::Expr::Id(name) => {
-                                    if !columns.iter().any(|(k, _)| k.as_str() == name.as_str()) {
-                                        bail_parse_error!("No such column: {}", name.as_str());
-                                    }
-                                    Ok(PrimaryKeyColumnInfo {
-                                        name: name.as_str(),
-                                        is_descending: matches!(
-                                            col.order,
-                                            Some(ast::SortOrder::Desc)
-                                        ),
-                                    })
-                                }
-                                _ => Err(LimboError::ParseError(
-                                    "expressions prohibited in PRIMARY KEY and UNIQUE constraints"
-                                        .to_string(),
-                                )),
+                            .find(|ast::ColumnDefinition { col_name, .. }| {
+                                col_name.as_str() == column_name
                             })
-                            .collect::<Result<Vec<_>>>()?;
+                            .expect("primary key column should be in Create Body columns");
 
-                        for pk_info in primary_key_column_results {
-                            let column_name = pk_info.name;
-                            let (_, column_def) = columns
-                                .iter()
-                                .find(|(k, _)| k.as_str() == column_name)
-                                .expect("primary key column should be in Create Body columns");
-
-                            match &mut primary_key_definition {
-                                Some(PrimaryKeyDefinitionType::Simple { column, .. }) => {
-                                    let mut columns = HashSet::new();
-                                    columns.insert(std::mem::take(column));
-                                    // Have to also insert the current column_name we are iterating over in primary_key_column_results
-                                    columns.insert(column_name.to_string());
-                                    primary_key_definition =
-                                        Some(PrimaryKeyDefinitionType::Composite { columns });
-                                }
-                                Some(PrimaryKeyDefinitionType::Composite { columns }) => {
-                                    columns.insert(column_name.to_string());
-                                }
-                                None => {
-                                    let typename =
-                                        column_def.col_type.as_ref().map(|t| t.name.as_str());
-                                    let is_descending = pk_info.is_descending;
-                                    primary_key_definition =
-                                        Some(PrimaryKeyDefinitionType::Simple {
-                                            typename,
-                                            is_descending,
-                                            column: column_name.to_string(),
-                                        });
-                                }
+                        match &mut primary_key_definition {
+                            Some(PrimaryKeyDefinitionType::Simple { column, .. }) => {
+                                let mut columns = HashSet::new();
+                                columns.insert(std::mem::take(column));
+                                // Have to also insert the current column_name we are iterating over in primary_key_column_results
+                                columns.insert(column_name.to_string());
+                                primary_key_definition =
+                                    Some(PrimaryKeyDefinitionType::Composite { columns });
+                            }
+                            Some(PrimaryKeyDefinitionType::Composite { columns }) => {
+                                columns.insert(column_name.to_string());
+                            }
+                            None => {
+                                let typename =
+                                    column_def.col_type.as_ref().map(|t| t.name.as_str());
+                                let is_descending = pk_info.is_descending;
+                                primary_key_definition = Some(PrimaryKeyDefinitionType::Simple {
+                                    typename,
+                                    is_descending,
+                                    column: column_name.to_string(),
+                                });
                             }
                         }
-                    } else if let ast::TableConstraint::Unique {
-                        columns: unique_columns,
-                        conflict_clause,
-                    } = &constraint.constraint
-                    {
-                        if conflict_clause.is_some() {
-                            unimplemented!("ON CONFLICT not implemented");
-                        }
-
-                        let col_names = unique_columns
-                            .iter()
-                            .map(|column| match &column.expr {
-                                turso_parser::ast::Expr::Id(id) => {
-                                    if !columns.iter().any(|(k, _)| k.as_str() == id.as_str()) {
-                                        bail_parse_error!("No such column: {}", id.as_str());
-                                    }
-                                    Ok(crate::util::normalize_ident(id.as_str()))
-                                }
-                                _ => {
-                                    todo!("Unsupported unique expression");
-                                }
-                            })
-                            .collect::<Result<HashSet<String>>>()?;
-                        unique_sets.push(col_names);
                     }
+                } else if let ast::TableConstraint::Unique {
+                    columns: unique_columns,
+                    conflict_clause,
+                } = &constraint.constraint
+                {
+                    if conflict_clause.is_some() {
+                        unimplemented!("ON CONFLICT not implemented");
+                    }
+
+                    let col_names = unique_columns
+                        .iter()
+                        .map(|column| match column.expr.as_ref() {
+                            turso_parser::ast::Expr::Id(id) => {
+                                if !columns.iter().any(
+                                    |ast::ColumnDefinition { col_name, .. }| {
+                                        col_name.as_str() == id.as_str()
+                                    },
+                                ) {
+                                    bail_parse_error!("No such column: {}", id.as_str());
+                                }
+                                Ok(crate::util::normalize_ident(id.as_str()))
+                            }
+                            _ => {
+                                todo!("Unsupported unique expression");
+                            }
+                        })
+                        .collect::<Result<HashSet<String>>>()?;
+                    unique_sets.push(col_names);
                 }
             }
 
             // Check column constraints for PRIMARY KEY and UNIQUE
-            for (_, col_def) in columns.iter() {
-                for constraint in &col_def.constraints {
+            for ast::ColumnDefinition {
+                col_name,
+                col_type,
+                constraints,
+                ..
+            } in columns.iter()
+            {
+                for constraint in constraints {
                     if matches!(
                         constraint.constraint,
                         ast::ColumnConstraint::PrimaryKey { .. }
@@ -409,15 +419,15 @@ fn check_automatic_pk_index_required(
                         if primary_key_definition.is_some() {
                             bail_parse_error!("table {} has more than one primary key", tbl_name);
                         }
-                        let typename = col_def.col_type.as_ref().map(|t| t.name.as_str());
+                        let typename = col_type.as_ref().map(|t| t.name.as_str());
                         primary_key_definition = Some(PrimaryKeyDefinitionType::Simple {
                             typename,
                             is_descending: false,
-                            column: col_def.col_name.as_str().to_string(),
+                            column: col_name.as_str().to_string(),
                         });
                     } else if matches!(constraint.constraint, ast::ColumnConstraint::Unique(..)) {
                         let mut single_set = HashSet::new();
-                        single_set.insert(col_def.col_name.as_str().to_string());
+                        single_set.insert(col_name.as_str().to_string());
                         unique_sets.push(single_set);
                     }
                 }
@@ -506,15 +516,13 @@ fn create_table_body_to_str(tbl_name: &ast::QualifiedName, body: &ast::CreateTab
     sql
 }
 
-fn create_vtable_body_to_str(vtab: &CreateVirtualTable, module: Rc<VTabImpl>) -> String {
-    let args = if let Some(args) = &vtab.args {
-        args.iter()
-            .map(|arg| arg.to_string())
-            .collect::<Vec<String>>()
-            .join(", ")
-    } else {
-        "".to_string()
-    };
+fn create_vtable_body_to_str(vtab: &ast::CreateVirtualTable, module: Rc<VTabImpl>) -> String {
+    let args = vtab
+        .args
+        .iter()
+        .map(|arg| arg.to_string())
+        .collect::<Vec<String>>()
+        .join(", ");
     let if_not_exists = if vtab.if_not_exists {
         "IF NOT EXISTS "
     } else {
@@ -522,8 +530,6 @@ fn create_vtable_body_to_str(vtab: &CreateVirtualTable, module: Rc<VTabImpl>) ->
     };
     let ext_args = vtab
         .args
-        .as_ref()
-        .unwrap_or(&vec![])
         .iter()
         .map(|a| turso_ext::Value::from_text(a.to_string()))
         .collect::<Vec<_>>();
@@ -553,7 +559,7 @@ fn create_vtable_body_to_str(vtab: &CreateVirtualTable, module: Rc<VTabImpl>) ->
 }
 
 pub fn translate_create_virtual_table(
-    vtab: CreateVirtualTable,
+    vtab: ast::CreateVirtualTable,
     schema: &Schema,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
@@ -567,7 +573,7 @@ pub fn translate_create_virtual_table(
 
     let table_name = tbl_name.name.as_str().to_string();
     let module_name_str = module_name.as_str().to_string();
-    let args_vec = args.clone().unwrap_or_default();
+    let args_vec = args.clone();
     let Some(vtab_module) = syms.vtab_modules.get(&module_name_str) else {
         bail_parse_error!("no such module: {}", module_name_str);
     };

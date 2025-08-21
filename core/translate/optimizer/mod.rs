@@ -186,7 +186,7 @@ fn optimize_table_access(
     table_references: &mut TableReferences,
     available_indexes: &HashMap<String, Vec<Arc<Index>>>,
     where_clause: &mut [WhereTerm],
-    order_by: &mut Option<Vec<(ast::Expr, SortOrder)>>,
+    order_by: &mut Vec<(Box<ast::Expr>, SortOrder)>,
     group_by: &mut Option<GroupBy>,
 ) -> Result<Option<Vec<JoinOrderMember>>> {
     let access_methods_arena = RefCell::new(Vec::new());
@@ -241,11 +241,11 @@ fn optimize_table_access(
                     let _ = group_by.as_mut().and_then(|g| g.sort_order.take());
                 }
                 EliminatesSortBy::Order => {
-                    let _ = order_by.take();
+                    order_by.clear();
                 }
                 EliminatesSortBy::GroupByAndOrder => {
                     let _ = group_by.as_mut().and_then(|g| g.sort_order.take());
-                    let _ = order_by.take();
+                    order_by.clear();
                 }
             }
         }
@@ -467,7 +467,7 @@ fn build_vtab_scan_op(
         .map(|(i, c)| {
             c.ok_or_else(|| {
                 LimboError::ExtensionError(format!(
-                    "argv_index values must form contiguous sequence starting from 1, missing index {}", 
+                    "argv_index values must form contiguous sequence starting from 1, missing index {}",
                     i + 1
                 ))
             })
@@ -536,10 +536,8 @@ fn rewrite_exprs_select(plan: &mut SelectPlan) -> Result<()> {
             rewrite_expr(expr, &mut param_count)?;
         }
     }
-    if let Some(order_by) = &mut plan.order_by {
-        for (expr, _) in order_by.iter_mut() {
-            rewrite_expr(expr, &mut param_count)?;
-        }
+    for (expr, _) in plan.order_by.iter_mut() {
+        rewrite_expr(expr, &mut param_count)?;
     }
 
     Ok(())
@@ -561,10 +559,8 @@ fn rewrite_exprs_update(plan: &mut UpdatePlan) -> Result<()> {
     for cond in plan.where_clause.iter_mut() {
         rewrite_expr(&mut cond.expr, &mut param_idx)?;
     }
-    if let Some(order_by) = &mut plan.order_by {
-        for (expr, _) in order_by.iter_mut() {
-            rewrite_expr(expr, &mut param_idx)?;
-        }
+    for (expr, _) in plan.order_by.iter_mut() {
+        rewrite_expr(expr, &mut param_idx)?;
     }
     if let Some(rc) = plan.returning.as_mut() {
         for rc in rc.iter_mut() {
@@ -651,10 +647,7 @@ impl Optimizable for ast::Expr {
             }
             Expr::RowId { .. } => true,
             Expr::InList { lhs, rhs, .. } => {
-                lhs.is_nonnull(tables)
-                    && rhs
-                        .as_ref()
-                        .is_none_or(|rhs| rhs.iter().all(|rhs| rhs.is_nonnull(tables)))
+                lhs.is_nonnull(tables) && rhs.is_empty() || rhs.iter().all(|v| v.is_nonnull(tables))
             }
             Expr::InSelect { .. } => false,
             Expr::InTable { .. } => false,
@@ -715,15 +708,10 @@ impl Optimizable for ast::Expr {
             }
             Expr::Exists(_) => false,
             Expr::FunctionCall { args, name, .. } => {
-                let Some(func) = resolver
-                    .resolve_function(name.as_str(), args.as_ref().map_or(0, |args| args.len()))
-                else {
+                let Some(func) = resolver.resolve_function(name.as_str(), args.len()) else {
                     return false;
                 };
-                func.is_deterministic()
-                    && args
-                        .as_ref()
-                        .is_none_or(|args| args.iter().all(|arg| arg.is_constant(resolver)))
+                func.is_deterministic() && args.iter().all(|arg| arg.is_constant(resolver))
             }
             Expr::FunctionCallStar { .. } => false,
             Expr::Id(id) => {
@@ -734,10 +722,8 @@ impl Optimizable for ast::Expr {
             Expr::Column { .. } => false,
             Expr::RowId { .. } => false,
             Expr::InList { lhs, rhs, .. } => {
-                lhs.is_constant(resolver)
-                    && rhs
-                        .as_ref()
-                        .is_none_or(|rhs| rhs.iter().all(|rhs| rhs.is_constant(resolver)))
+                lhs.is_constant(resolver) && rhs.is_empty()
+                    || rhs.iter().all(|v| v.is_constant(resolver))
             }
             Expr::InSelect { .. } => {
                 false // might be constant, too annoying to check subqueries etc. implement later
@@ -827,14 +813,6 @@ impl Optimizable for ast::Expr {
                 Ok(None)
             }
             Self::InList { lhs: _, not, rhs } => {
-                if rhs.is_none() {
-                    return Ok(Some(if *not {
-                        AlwaysTrueOrFalse::AlwaysTrue
-                    } else {
-                        AlwaysTrueOrFalse::AlwaysFalse
-                    }));
-                }
-                let rhs = rhs.as_ref().unwrap();
                 if rhs.is_empty() {
                     return Ok(Some(if *not {
                         AlwaysTrueOrFalse::AlwaysTrue

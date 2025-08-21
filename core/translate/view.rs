@@ -120,7 +120,7 @@ pub fn translate_create_view(
     schema: &Schema,
     view_name: &str,
     select_stmt: &ast::Select,
-    _columns: Option<&Vec<ast::IndexedColumn>>,
+    _columns: &[ast::IndexedColumn],
     _connection: Arc<Connection>,
     syms: &SymbolTable,
     mut program: ProgramBuilder,

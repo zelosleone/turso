@@ -51,7 +51,6 @@ use crate::vdbe::metrics::ConnectionMetrics;
 use crate::vtab::VirtualTable;
 use core::str;
 pub use error::{CompletionError, LimboError};
-use fallible_iterator::FallibleIterator;
 pub use io::clock::{Clock, Instant};
 #[cfg(all(feature = "fs", target_family = "unix"))]
 pub use io::UnixIO;
@@ -875,7 +874,7 @@ impl Connection {
         let sql = sql.as_ref();
         tracing::trace!("Preparing: {}", sql);
         let mut parser = Parser::new(sql.as_bytes());
-        let cmd = parser.next()?;
+        let cmd = parser.next_cmd()?;
         let syms = self.syms.borrow();
         let cmd = cmd.expect("Successful parse on nonempty input string should produce a command");
         let byte_offset_end = parser.offset();
@@ -1032,7 +1031,7 @@ impl Connection {
         let sql = sql.as_ref();
         tracing::trace!("Preparing and executing batch: {}", sql);
         let mut parser = Parser::new(sql.as_bytes());
-        while let Some(cmd) = parser.next()? {
+        while let Some(cmd) = parser.next_cmd()? {
             let syms = self.syms.borrow();
             let pager = self.pager.borrow().clone();
             let byte_offset_end = parser.offset();
@@ -1068,7 +1067,7 @@ impl Connection {
         let sql = sql.as_ref();
         tracing::trace!("Querying: {}", sql);
         let mut parser = Parser::new(sql.as_bytes());
-        let cmd = parser.next()?;
+        let cmd = parser.next_cmd()?;
         let byte_offset_end = parser.offset();
         let input = str::from_utf8(&sql.as_bytes()[..byte_offset_end])
             .unwrap()
@@ -1110,7 +1109,7 @@ impl Connection {
                     ast::Stmt::Select(select) => {
                         let mut plan = prepare_select_plan(
                             self.schema.borrow().deref(),
-                            *select,
+                            select,
                             &syms,
                             &[],
                             &mut table_ref_counter,
@@ -1140,7 +1139,7 @@ impl Connection {
         }
         let sql = sql.as_ref();
         let mut parser = Parser::new(sql.as_bytes());
-        while let Some(cmd) = parser.next()? {
+        while let Some(cmd) = parser.next_cmd()? {
             let syms = self.syms.borrow();
             let pager = self.pager.borrow().clone();
             let byte_offset_end = parser.offset();
@@ -2017,7 +2016,7 @@ impl Statement {
         *conn.schema.borrow_mut() = conn._db.clone_schema()?;
         self.program = {
             let mut parser = Parser::new(self.program.sql.as_bytes());
-            let cmd = parser.next()?;
+            let cmd = parser.next_cmd()?;
             let cmd = cmd.expect("Same SQL string should be able to be parsed");
 
             let syms = conn.syms.borrow();
@@ -2084,7 +2083,7 @@ impl Statement {
     pub fn get_column_type(&self, idx: usize) -> Option<String> {
         let column = &self.program.result_columns.get(idx).expect("No column");
         match &column.expr {
-            turso_sqlite3_parser::ast::Expr::Column {
+            turso_parser::ast::Expr::Column {
                 table,
                 column: column_idx,
                 ..
@@ -2227,7 +2226,7 @@ impl Iterator for QueryRunner<'_> {
     type Item = Result<Option<Statement>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.parser.next() {
+        match self.parser.next_cmd() {
             Ok(Some(cmd)) => {
                 let byte_offset_end = self.parser.offset();
                 let input = str::from_utf8(&self.statements[self.last_offset..byte_offset_end])
@@ -2237,10 +2236,7 @@ impl Iterator for QueryRunner<'_> {
                 Some(self.conn.run_cmd(cmd, input))
             }
             Ok(None) => None,
-            Err(err) => {
-                self.parser.finalize();
-                Some(Result::Err(LimboError::from(err)))
-            }
+            Err(err) => Some(Result::Err(LimboError::from(err))),
         }
     }
 }

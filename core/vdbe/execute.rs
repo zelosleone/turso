@@ -68,7 +68,6 @@ use super::{
     insn::{Cookie, RegisterOrLiteral},
     CommitState,
 };
-use fallible_iterator::FallibleIterator;
 use parking_lot::RwLock;
 use rand::{thread_rng, Rng};
 use turso_parser::ast;
@@ -4866,7 +4865,7 @@ pub fn op_function(
                                         unique,
                                         if_not_exists,
                                         idx_name,
-                                        tbl_name: ast::Name::from_str(&rename_to),
+                                        tbl_name: ast::Name::new(&rename_to),
                                         columns,
                                         where_clause,
                                     }
@@ -4892,7 +4891,7 @@ pub fn op_function(
                                         if_not_exists,
                                         tbl_name: ast::QualifiedName {
                                             db_name: None,
-                                            name: ast::Name::from_str(&rename_to),
+                                            name: ast::Name::new(&rename_to),
                                             alias: None,
                                         },
                                         body,
@@ -4957,7 +4956,7 @@ pub fn op_function(
                                 }
 
                                 for column in &mut columns {
-                                    match &mut column.expr {
+                                    match column.expr.as_mut() {
                                         ast::Expr::Id(ast::Name::Ident(id))
                                             if normalize_ident(id) == rename_from =>
                                         {
@@ -4994,43 +4993,28 @@ pub fn op_function(
                                     mut columns,
                                     constraints,
                                     options,
-                                } = *body
+                                } = body
                                 else {
                                     todo!()
                                 };
 
-                                let column_index = columns
-                                    .get_index_of(&ast::Name::from_str(&rename_from))
+                                let column = columns
+                                    .iter_mut()
+                                    .find(|column| column.col_name == ast::Name::new(&rename_from))
                                     .expect("column being renamed should be present");
 
-                                let mut column_definition =
-                                    columns.get_index(column_index).unwrap().1.clone();
-
-                                column_definition.col_name = ast::Name::from_str(&rename_to);
-
-                                assert!(columns
-                                    .insert(
-                                        ast::Name::from_str(&rename_to),
-                                        column_definition.clone()
-                                    )
-                                    .is_none());
-
-                                // Swaps indexes with the last one and pops the end, effectively
-                                // replacing the entry.
-                                columns.swap_remove_index(column_index).unwrap();
+                                column.col_name = ast::Name::new(&rename_to);
 
                                 Some(
                                     ast::Stmt::CreateTable {
                                         temporary,
                                         if_not_exists,
                                         tbl_name,
-                                        body: Box::new(
-                                            ast::CreateTableBody::ColumnsAndConstraints {
-                                                columns,
-                                                constraints,
-                                                options,
-                                            },
-                                        ),
+                                        body: ast::CreateTableBody::ColumnsAndConstraints {
+                                            columns,
+                                            constraints,
+                                            options,
+                                        },
                                     }
                                     .format()
                                     .unwrap(),

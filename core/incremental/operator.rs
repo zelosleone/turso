@@ -323,8 +323,11 @@ impl FilterPredicate {
     pub fn from_select(select: &turso_parser::ast::Select) -> crate::Result<Self> {
         use turso_parser::ast::*;
 
-        if let OneSelect::Select(select_stmt) = &*select.body.select {
-            if let Some(where_clause) = &select_stmt.where_clause {
+        if let OneSelect::Select {
+            ref where_clause, ..
+        } = select.body.select
+        {
+            if let Some(where_clause) = where_clause {
                 Self::from_sql_expr(where_clause)
             } else {
                 Ok(FilterPredicate::None)
@@ -344,7 +347,7 @@ pub enum ProjectColumn {
     Column(String),
     /// Computed expression
     Expression {
-        expr: turso_parser::ast::Expr,
+        expr: Box<turso_parser::ast::Expr>,
         alias: Option<String>,
     },
 }
@@ -643,11 +646,7 @@ impl ProjectOperator {
         output
     }
 
-    fn evaluate_expression(
-        &self,
-        expr: &turso_parser::ast::Expr,
-        values: &[Value],
-    ) -> Value {
+    fn evaluate_expression(&self, expr: &turso_parser::ast::Expr, values: &[Value]) -> Value {
         use turso_parser::ast::*;
 
         match expr {
@@ -749,15 +748,11 @@ impl ProjectOperator {
             Expr::FunctionCall { name, args, .. } => {
                 match name.as_str().to_lowercase().as_str() {
                     "hex" => {
-                        if let Some(arg_list) = args {
-                            if arg_list.len() == 1 {
-                                let arg_val = self.evaluate_expression(&arg_list[0], values);
-                                match arg_val {
-                                    Value::Integer(i) => Value::Text(Text::new(&format!("{i:X}"))),
-                                    _ => Value::Null,
-                                }
-                            } else {
-                                Value::Null
+                        if args.len() == 1 {
+                            let arg_val = self.evaluate_expression(&args[0], values);
+                            match arg_val {
+                                Value::Integer(i) => Value::Text(Text::new(&format!("{i:X}"))),
+                                _ => Value::Null,
                             }
                         } else {
                             Value::Null

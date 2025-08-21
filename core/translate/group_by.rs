@@ -85,7 +85,7 @@ pub fn init_group_by<'a>(
     group_by: &'a GroupBy,
     plan: &SelectPlan,
     result_columns: &'a [ResultSetColumn],
-    order_by: &'a Option<Vec<(ast::Expr, ast::SortOrder)>>,
+    order_by: &'a [(Box<ast::Expr>, ast::SortOrder)],
 ) -> Result<()> {
     collect_non_aggregate_expressions(
         &mut t_ctx.non_aggregate_expressions,
@@ -141,7 +141,7 @@ pub fn init_group_by<'a>(
             .iter()
             .map(|expr| match expr {
                 ast::Expr::Collate(_, collation_name) => {
-                    CollationSeq::new(collation_name).map(Some)
+                    CollationSeq::new(collation_name.as_str()).map(Some)
                 }
                 ast::Expr::Column { table, column, .. } => {
                     let table_reference = plan
@@ -238,13 +238,13 @@ fn collect_non_aggregate_expressions<'a>(
     group_by: &'a GroupBy,
     plan: &SelectPlan,
     root_result_columns: &'a [ResultSetColumn],
-    order_by: &'a Option<Vec<(ast::Expr, ast::SortOrder)>>,
+    order_by: &'a [(Box<ast::Expr>, ast::SortOrder)],
 ) -> Result<()> {
     let mut result_columns = Vec::new();
     for expr in root_result_columns
         .iter()
         .map(|col| &col.expr)
-        .chain(order_by.iter().flat_map(|o| o.iter().map(|(e, _)| e)))
+        .chain(order_by.iter().map(|(e, _)| e.as_ref()))
         .chain(group_by.having.iter().flatten())
     {
         collect_result_columns(expr, plan, &mut result_columns)?;
@@ -821,8 +821,8 @@ pub fn group_by_emit_row_phase<'a>(
         }
     }
 
-    match &plan.order_by {
-        None => {
+    match plan.order_by.is_empty() {
+        true => {
             emit_select_result(
                 program,
                 &t_ctx.resolver,
@@ -835,7 +835,7 @@ pub fn group_by_emit_row_phase<'a>(
                 t_ctx.limit_ctx,
             )?;
         }
-        Some(_) => {
+        false => {
             order_by_sorter_insert(
                 program,
                 &t_ctx.resolver,
@@ -954,8 +954,8 @@ pub fn translate_aggregation_step_groupby(
 
             if num_args == 2 {
                 match &agg_arg_source.args()[1] {
-                    ast::Expr::Column { .. } => {
-                        delimiter_expr = agg_arg_source.args()[1].clone();
+                    arg @ ast::Expr::Column { .. } => {
+                        delimiter_expr = arg.clone();
                     }
                     ast::Expr::Literal(ast::Literal::String(s)) => {
                         delimiter_expr = ast::Expr::Literal(ast::Literal::String(s.to_string()));
@@ -1054,7 +1054,7 @@ pub fn translate_aggregation_step_groupby(
             let delimiter_reg = program.alloc_register();
 
             let delimiter_expr = match &agg_arg_source.args()[1] {
-                ast::Expr::Column { .. } => agg_arg_source.args()[1].clone(),
+                arg @ ast::Expr::Column { .. } => arg.clone(),
                 ast::Expr::Literal(ast::Literal::String(s)) => {
                     ast::Expr::Literal(ast::Literal::String(s.to_string()))
                 }

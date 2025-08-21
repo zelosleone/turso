@@ -255,7 +255,7 @@ fn resolve_sorted_columns<'a>(
 ) -> crate::Result<Vec<((usize, &'a Column), SortOrder)>> {
     let mut resolved = Vec::with_capacity(cols.len());
     for sc in cols {
-        let ident = normalize_ident(match &sc.expr {
+        let ident = normalize_ident(match sc.expr.as_ref() {
             // SQLite supports indexes on arbitrary expressions, but we don't (yet).
             // See "How to use indexes on expressions" in https://www.sqlite.org/expridx.html
             Expr::Id(ast::Name::Ident(col_name))

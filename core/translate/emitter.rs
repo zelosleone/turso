@@ -287,12 +287,12 @@ pub fn emit_query<'a>(
     }
 
     // Initialize cursors and other resources needed for query execution
-    if let Some(ref mut order_by) = plan.order_by {
+    if !plan.order_by.is_empty() {
         init_order_by(
             program,
             t_ctx,
             &plan.result_columns,
-            order_by,
+            &plan.order_by,
             &plan.table_references,
         )?;
     }
@@ -359,8 +359,9 @@ pub fn emit_query<'a>(
 
     program.preassign_label_to_next_insn(after_main_loop_label);
 
-    let mut order_by_necessary = plan.order_by.is_some() && !plan.contains_constant_false_condition;
-    let order_by = plan.order_by.as_ref();
+    let mut order_by_necessary =
+        !plan.order_by.is_empty() && !plan.contains_constant_false_condition;
+    let order_by = &plan.order_by;
 
     // Handle GROUP BY and aggregation processing
     if plan.group_by.is_some() {
@@ -381,7 +382,7 @@ pub fn emit_query<'a>(
     }
 
     // Process ORDER BY results if needed
-    if order_by.is_some() && order_by_necessary {
+    if !order_by.is_empty() && order_by_necessary {
         emit_order_by(program, t_ctx, plan)?;
     }
 

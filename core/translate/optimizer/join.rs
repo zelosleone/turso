@@ -719,7 +719,7 @@ mod tests {
                 t2.clone(),
                 Some(JoinInfo {
                     outer: false,
-                    using: None,
+                    using: vec![],
                 }),
                 table_id_counter.next(),
             ),
@@ -823,7 +823,7 @@ mod tests {
                 table_customers.clone(),
                 Some(JoinInfo {
                     outer: false,
-                    using: None,
+                    using: vec![],
                 }),
                 table_id_counter.next(),
             ),
@@ -831,7 +831,7 @@ mod tests {
                 table_order_items.clone(),
                 Some(JoinInfo {
                     outer: false,
-                    using: None,
+                    using: vec![],
                 }),
                 table_id_counter.next(),
             ),
@@ -1007,7 +1007,7 @@ mod tests {
                 t2.clone(),
                 Some(JoinInfo {
                     outer: false,
-                    using: None,
+                    using: vec![],
                 }),
                 table_id_counter.next(),
             ),
@@ -1015,7 +1015,7 @@ mod tests {
                 t3.clone(),
                 Some(JoinInfo {
                     outer: false,
-                    using: None,
+                    using: vec![],
                 }),
                 table_id_counter.next(),
             ),
@@ -1113,7 +1113,7 @@ mod tests {
                     t.clone(),
                     Some(JoinInfo {
                         outer: false,
-                        using: None,
+                        using: vec![],
                     }),
                     table_id_counter.next(),
                 )
@@ -1122,7 +1122,7 @@ mod tests {
                 fact_table.clone(),
                 Some(JoinInfo {
                     outer: false,
-                    using: None,
+                    using: vec![],
                 }),
                 table_id_counter.next(),
             ));

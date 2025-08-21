@@ -11,7 +11,7 @@ use crate::{
     Value,
 };
 use turso_macros::Description;
-use turso_sqlite3_parser::ast::SortOrder;
+use turso_parser::ast::SortOrder;
 
 /// Flags provided to comparison instructions (e.g. Eq, Ne) which determine behavior related to NULL values.
 #[derive(Clone, Copy, Debug, Default)]

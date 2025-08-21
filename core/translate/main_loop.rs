@@ -741,7 +741,7 @@ pub fn emit_loop(
         return emit_loop_source(program, t_ctx, plan, LoopEmitTarget::AggStep);
     }
     // if we DONT have a group by, but we have an order by, we emit a record into the order by sorter.
-    if plan.order_by.is_some() {
+    if !plan.order_by.is_empty() {
         return emit_loop_source(program, t_ctx, plan, LoopEmitTarget::OrderBySorter);
     }
     // if we have neither, we emit a ResultRow. In that case, if we have a Limit, we handle that with DecrJumpZero.

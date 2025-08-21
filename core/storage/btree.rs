@@ -7114,7 +7114,7 @@ mod tests {
     };
     use sorted_vec::SortedVec;
     use test_log::test;
-    use turso_sqlite3_parser::ast::SortOrder;
+    use turso_parser::ast::SortOrder;
 
     use super::*;
     use crate::{

@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use turso_parser::ast::{
-    self, Expr, InsertBody, OneSelect, QualifiedName, ResolveType, ResultColumn,
-    With,
+    self, Expr, InsertBody, OneSelect, QualifiedName, ResolveType, ResultColumn, With,
 };
 
 use crate::error::{SQLITE_CONSTRAINT_NOTNULL, SQLITE_CONSTRAINT_PRIMARYKEY};
@@ -13,7 +12,6 @@ use crate::translate::emitter::{
 use crate::translate::expr::{
     emit_returning_results, process_returning_clause, ReturningValueRegisters,
 };
-use crate::translate::plan::TableReferences;
 use crate::translate::planner::ROWID;
 use crate::util::normalize_ident;
 use crate::vdbe::builder::ProgramBuilderOpts;
@@ -46,9 +44,9 @@ pub fn translate_insert(
     with: Option<With>,
     on_conflict: Option<ResolveType>,
     tbl_name: QualifiedName,
-    columns: Option<DistinctNames>,
+    columns: Vec<ast::Name>,
     mut body: InsertBody,
-    mut returning: Option<Vec<ResultColumn>>,
+    mut returning: Vec<ResultColumn>,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
     connection: &Arc<crate::Connection>,
@@ -102,9 +100,9 @@ pub fn translate_insert(
 
     let root_page = btree_table.root_page;
 
-    let mut values: Option<Vec<Expr>> = None;
+    let mut values: Option<Vec<Box<Expr>>> = None;
     let inserting_multiple_rows = match &mut body {
-        InsertBody::Select(select, _) => match select.body.select.as_mut() {
+        InsertBody::Select(select, _) => match &mut select.body.select {
             // TODO see how to avoid clone
             OneSelect::Values(values_expr) if values_expr.len() <= 1 => {
                 if values_expr.is_empty() {
@@ -112,10 +110,11 @@ pub fn translate_insert(
                 }
                 let mut param_idx = 1;
                 for expr in values_expr.iter_mut().flat_map(|v| v.iter_mut()) {
-                    match expr {
+                    match expr.as_mut() {
                         Expr::Id(name) => {
                             if name.is_double_quoted() {
-                                *expr = Expr::Literal(ast::Literal::String(format!("{name}")));
+                                *expr =
+                                    Expr::Literal(ast::Literal::String(format!("{name}"))).into();
                             } else {
                                 // an INSERT INTO ... VALUES (...) cannot reference columns
                                 crate::bail_parse_error!("no such column: {name}");
@@ -143,17 +142,13 @@ pub fn translate_insert(
     let cdc_table = prepare_cdc_if_necessary(&mut program, schema, table.get_name())?;
 
     // Process RETURNING clause using shared module
-    let (result_columns, _) = if let Some(returning) = &mut returning {
-        process_returning_clause(
-            returning,
-            &table,
-            table_name.as_str(),
-            &mut program,
-            connection,
-        )?
-    } else {
-        (vec![], TableReferences::new(vec![], vec![]))
-    };
+    let (result_columns, _) = process_returning_clause(
+        &mut returning,
+        &table,
+        table_name.as_str(),
+        &mut program,
+        connection,
+    )?;
 
     // Set up the program to return result columns if RETURNING is specified
     if !result_columns.is_empty() {
@@ -166,8 +161,7 @@ pub fn translate_insert(
         // TODO: upsert
         InsertBody::Select(select, _) => {
             // Simple Common case of INSERT INTO <table> VALUES (...)
-            if matches!(select.body.select.as_ref(),  OneSelect::Values(values) if values.len() <= 1)
-            {
+            if matches!(&select.body.select, OneSelect::Values(values) if values.len() <= 1) {
                 (
                     values.as_ref().unwrap().len(),
                     program.alloc_cursor_id(CursorType::BTreeTable(btree_table.clone())),
@@ -190,14 +184,8 @@ pub fn translate_insert(
                     coroutine_implementation_start: halt_label,
                 };
                 program.incr_nesting();
-                let result = translate_select(
-                    schema,
-                    *select,
-                    syms,
-                    program,
-                    query_destination,
-                    connection,
-                )?;
+                let result =
+                    translate_select(schema, select, syms, program, query_destination, connection)?;
                 program = result.program;
                 program.decr_nesting();
 
@@ -721,7 +709,7 @@ struct ColMapping<'a> {
 fn build_insertion<'a>(
     program: &mut ProgramBuilder,
     table: &'a Table,
-    columns: &Option<DistinctNames>,
+    columns: &'a [ast::Name],
     num_values: usize,
 ) -> Result<Insertion<'a>> {
     let table_columns = table.columns();
@@ -739,7 +727,7 @@ fn build_insertion<'a>(
         })
         .collect::<Vec<_>>();
 
-    if columns.is_none() {
+    if columns.is_empty() {
         // Case 1: No columns specified - map values to columns in order
         if num_values != table_columns.iter().filter(|c| !c.hidden).count() {
             crate::bail_parse_error!(
@@ -769,7 +757,7 @@ fn build_insertion<'a>(
     } else {
         // Case 2: Columns specified - map named columns to their values
         // Map each named column to its value index
-        for (value_index, column_name) in columns.as_ref().unwrap().iter().enumerate() {
+        for (value_index, column_name) in columns.iter().enumerate() {
             let column_name = normalize_ident(column_name.as_str());
             if let Some((idx_in_table, col_in_table)) = table.get_column_by_name(&column_name) {
                 // Named column
@@ -850,7 +838,7 @@ fn translate_rows_multiple<'short, 'long: 'short>(
 #[allow(clippy::too_many_arguments)]
 fn translate_rows_single(
     program: &mut ProgramBuilder,
-    value: &[Expr],
+    value: &[Box<Expr>],
     insertion: &Insertion,
     resolver: &Resolver,
 ) -> Result<()> {
@@ -976,7 +964,7 @@ fn translate_column(
 fn translate_virtual_table_insert(
     mut program: ProgramBuilder,
     virtual_table: Arc<VirtualTable>,
-    columns: Option<DistinctNames>,
+    columns: Vec<ast::Name>,
     mut body: InsertBody,
     on_conflict: Option<ResolveType>,
     resolver: &Resolver,
@@ -985,7 +973,7 @@ fn translate_virtual_table_insert(
         crate::bail_constraint_error!("Table is read-only: {}", virtual_table.name);
     }
     let (num_values, value) = match &mut body {
-        InsertBody::Select(select, None) => match select.body.select.as_mut() {
+        InsertBody::Select(select, None) => match &mut select.body.select {
             OneSelect::Values(values) => (values[0].len(), values.pop().unwrap()),
             _ => crate::bail_parse_error!("Virtual tables only support VALUES clause in INSERT"),
         },

@@ -12,7 +12,7 @@ use crate::{
     vdbe::builder::{ProgramBuilder, ProgramBuilderOpts},
     SymbolTable,
 };
-use turso_parser::ast::{Expr, Indexed, SortOrder};
+use turso_parser::ast::{self, Expr, Indexed, SortOrder};
 
 use super::emitter::emit_program;
 use super::expr::process_returning_clause;
@@ -54,7 +54,7 @@ addr  opcode         p1    p2    p3    p4             p5  comment
 */
 pub fn translate_update(
     schema: &Schema,
-    body: &mut Update,
+    body: &mut ast::Update,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
     connection: &Arc<crate::Connection>,
@@ -74,7 +74,7 @@ pub fn translate_update(
 
 pub fn translate_update_for_schema_change(
     schema: &Schema,
-    body: &mut Update,
+    body: &mut ast::Update,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
     connection: &Arc<crate::Connection>,
@@ -104,7 +104,7 @@ pub fn translate_update_for_schema_change(
 pub fn prepare_update_plan(
     program: &mut ProgramBuilder,
     schema: &Schema,
-    body: &mut Update,
+    body: &mut ast::Update,
     connection: &Arc<crate::Connection>,
 ) -> crate::Result<Plan> {
     if body.with.is_some() {
@@ -134,13 +134,11 @@ pub fn prepare_update_plan(
     };
     let iter_dir = body
         .order_by
-        .as_ref()
-        .and_then(|order_by| {
-            order_by.first().and_then(|ob| {
-                ob.order.map(|o| match o {
-                    SortOrder::Asc => IterationDirection::Forwards,
-                    SortOrder::Desc => IterationDirection::Backwards,
-                })
+        .first()
+        .and_then(|ob| {
+            ob.order.map(|o| match o {
+                SortOrder::Asc => IterationDirection::Forwards,
+                SortOrder::Desc => IterationDirection::Backwards,
             })
         })
         .unwrap_or(IterationDirection::Forwards);
@@ -174,9 +172,9 @@ pub fn prepare_update_plan(
     for set in &mut body.sets {
         bind_column_references(&mut set.expr, &mut table_references, None, connection)?;
 
-        let values = match &set.expr {
+        let values = match set.expr.as_ref() {
             Expr::Parenthesized(vals) => vals.clone(),
-            expr => vec![expr.clone()],
+            expr => vec![expr.clone().into()],
         };
 
         if set.col_names.len() != values.len() {
@@ -203,27 +201,19 @@ pub fn prepare_update_plan(
         }
     }
 
-    let (result_columns, _table_references) = if let Some(returning) = &mut body.returning {
-        process_returning_clause(
-            returning,
-            &table,
-            body.tbl_name.name.as_str(),
-            program,
-            connection,
-        )?
-    } else {
-        (
-            vec![],
-            crate::translate::plan::TableReferences::new(vec![], vec![]),
-        )
-    };
+    let (result_columns, _table_references) = process_returning_clause(
+        &mut body.returning,
+        &table,
+        body.tbl_name.name.as_str(),
+        program,
+        connection,
+    )?;
 
-    let order_by = body.order_by.as_ref().map(|order| {
-        order
-            .iter()
-            .map(|o| (o.expr.clone(), o.order.unwrap_or(SortOrder::Asc)))
-            .collect()
-    });
+    let order_by = body
+        .order_by
+        .iter()
+        .map(|o| (o.expr.clone(), o.order.unwrap_or(SortOrder::Asc)))
+        .collect();
 
     // Sqlite determines we should create an ephemeral table if we do not have a FROM clause
     // Difficult to say what items from the plan can be checked for this so currently just checking if a RowId Alias is referenced
@@ -256,7 +246,7 @@ pub fn prepare_update_plan(
 
         // Parse the WHERE clause
         parse_where(
-            body.where_clause.as_ref().map(|w| *w.clone()),
+            body.where_clause.as_deref(),
             &mut table_references,
             Some(&result_columns),
             &mut where_clause,
@@ -298,7 +288,7 @@ pub fn prepare_update_plan(
             }],
             where_clause,       // original WHERE terms from the UPDATE clause
             group_by: None,     // N/A
-            order_by: None,     // N/A
+            order_by: vec![],   // N/A
             aggregates: vec![], // N/A
             limit: None,        // N/A
             query_destination: QueryDestination::EphemeralTable {
@@ -331,7 +321,7 @@ pub fn prepare_update_plan(
     if ephemeral_plan.is_none() {
         // Parse the WHERE clause
         parse_where(
-            body.where_clause.as_ref().map(|w| *w.clone()),
+            body.where_clause.as_deref(),
             &mut table_references,
             Some(&result_columns),
             &mut where_clause,
@@ -340,11 +330,7 @@ pub fn prepare_update_plan(
     };
 
     // Parse the LIMIT/OFFSET clause
-    let (limit, offset) = body
-        .limit
-        .as_ref()
-        .map(|l| parse_limit(l))
-        .unwrap_or(Ok((None, None)))?;
+    let (limit, offset) = body.limit.as_ref().map_or(Ok((None, None)), parse_limit)?;
 
     // Check what indexes will need to be updated by checking set_clauses and see
     // if a column is contained in an index.
