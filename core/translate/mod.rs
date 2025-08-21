@@ -9,6 +9,7 @@
 
 pub(crate) mod aggregation;
 pub(crate) mod alter;
+pub(crate) mod analyze;
 pub(crate) mod attach;
 pub(crate) mod collate;
 mod compound_select;
@@ -43,6 +44,7 @@ use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, QueryMode};
 use crate::vdbe::Program;
 use crate::{bail_parse_error, Connection, Result, SymbolTable};
 use alter::translate_alter_table;
+use analyze::translate_analyze;
 use index::{translate_create_index, translate_drop_index};
 use insert::translate_insert;
 use rollback::translate_rollback;
@@ -146,7 +148,7 @@ pub fn translate_inner(
         ast::Stmt::AlterTable(alter) => {
             translate_alter_table(alter, syms, schema, program, connection, input)?
         }
-        ast::Stmt::Analyze { .. } => bail_parse_error!("ANALYZE not supported yet"),
+        ast::Stmt::Analyze { name } => translate_analyze(name, schema, program)?,
         ast::Stmt::Attach { expr, db_name, key } => {
             attach::translate_attach(&expr, &db_name, &key, schema, syms, program)?
         }
