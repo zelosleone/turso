@@ -784,7 +784,7 @@ fn test_wal_api_insert_exec_mix() {
         }
         let info = WalFrameInfo {
             db_size: 0,
-            page_no: page_no,
+            page_no,
         };
         info.put_to_frame_header(&mut frame);
         frames.push(frame);
@@ -824,7 +824,7 @@ fn test_wal_api_insert_exec_mix() {
         vec![
             vec![
                 turso_core::types::Value::Integer(1),
-                turso_core::types::Value::Integer(1 * 4096),
+                turso_core::types::Value::Integer(4096),
             ],
             vec![
                 turso_core::types::Value::Integer(3),
@@ -922,7 +922,7 @@ fn test_db_share_same_file() {
         rows,
         vec![vec![
             turso_core::types::Value::Integer(1),
-            turso_core::types::Value::Integer(1 * 4096),
+            turso_core::types::Value::Integer(4096),
         ]]
     );
 }
