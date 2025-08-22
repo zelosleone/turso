@@ -141,6 +141,7 @@ fn new_join_type(n0: &[u8], n1: Option<&[u8]>, n2: Option<&[u8]>) -> Result<Join
 
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
+    offset: usize,
 
     /// The current token being processed
     current_token: Token<'a>,
@@ -165,6 +166,7 @@ impl<'a> Parser<'a> {
     pub fn new(input: &'a [u8]) -> Self {
         Self {
             lexer: Lexer::new(input),
+            offset: 0,
             peekable: false,
             current_token: Token {
                 value: b"",
@@ -174,7 +176,7 @@ impl<'a> Parser<'a> {
     }
 
     pub fn offset(&self) -> usize {
-        self.lexer.offset
+        self.offset
     }
 
     // entrypoint of parsing
@@ -524,6 +526,7 @@ impl<'a> Parser<'a> {
     #[inline]
     fn eat(&mut self) -> Result<Option<Token<'a>>> {
         let result = self.peek()?;
+        self.offset = self.lexer.offset;
         self.peekable = false; // Clear the peek mark after consuming
         Ok(result)
     }
@@ -3825,6 +3828,14 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_offset() {
+        let s = "SELECT 1; SELECT 1";
+        let mut p = Parser::new(s.as_bytes());
+        p.next_cmd().unwrap();
+        assert_eq!(&s[..p.offset()], "SELECT 1;");
+    }
 
     #[test]
     fn test_parser() {
