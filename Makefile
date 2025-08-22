@@ -87,9 +87,9 @@ reset-db:
 .PHONY: reset-db
 
 test-sqlite3: reset-db
-	cargo test -p turso_sqlite3 --test compat
+	cargo test -p turso_sqlite3 --test compat -- --test-threads=1
 	./scripts/clone_test_db.sh
-	cargo test -p turso_sqlite3 --test compat --features sqlite3
+	cargo test -p turso_sqlite3 --test compat --features sqlite3 -- --test-threads=1
 .PHONY: test-sqlite3
 
 test-json:
