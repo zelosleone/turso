@@ -275,7 +275,6 @@ fn test_statement_reset() -> anyhow::Result<()> {
 }
 
 #[test]
-#[ignore]
 fn test_wal_checkpoint() -> anyhow::Result<()> {
     let _ = env_logger::try_init();
     let tmp_db =
