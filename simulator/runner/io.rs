@@ -7,17 +7,13 @@ use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use turso_core::{Clock, Instant, OpenFlags, PlatformIO, Result, IO};
 
-use crate::{
-    model::FAULT_ERROR_MSG,
-    runner::{clock::SimulatorClock, file::SimulatorFile},
-};
+use crate::runner::{clock::SimulatorClock, file::SimulatorFile};
 
 pub(crate) struct SimulatorIO {
     pub(crate) inner: Box<dyn IO>,
     pub(crate) fault: Cell<bool>,
     pub(crate) files: RefCell<Vec<Arc<SimulatorFile>>>,
     pub(crate) rng: RefCell<ChaCha8Rng>,
-    pub(crate) nr_run_once_faults: Cell<usize>,
     pub(crate) page_size: usize,
     seed: u64,
     latency_probability: usize,
@@ -39,7 +35,6 @@ impl SimulatorIO {
         let fault = Cell::new(false);
         let files = RefCell::new(Vec::new());
         let rng = RefCell::new(ChaCha8Rng::seed_from_u64(seed));
-        let nr_run_once_faults = Cell::new(0);
         let clock = SimulatorClock::new(ChaCha8Rng::seed_from_u64(seed), min_tick, max_tick);
 
         Ok(Self {
@@ -47,7 +42,6 @@ impl SimulatorIO {
             fault,
             files,
             rng,
-            nr_run_once_faults,
             page_size,
             seed,
             latency_probability,
@@ -63,7 +57,6 @@ impl SimulatorIO {
     }
 
     pub(crate) fn print_stats(&self) {
-        tracing::info!("run_once faults: {}", self.nr_run_once_faults.get());
         for file in self.files.borrow().iter() {
             tracing::info!(
                 "\n===========================\n\nPath: {}\n{}",
@@ -115,13 +108,6 @@ impl IO for SimulatorIO {
     }
 
     fn run_once(&self) -> Result<()> {
-        if self.fault.get() {
-            self.nr_run_once_faults
-                .replace(self.nr_run_once_faults.get() + 1);
-            return Err(turso_core::LimboError::InternalError(
-                FAULT_ERROR_MSG.into(),
-            ));
-        }
         let now = self.now();
         for file in self.files.borrow().iter() {
             file.run_queued_io(now)?;
