@@ -345,6 +345,26 @@ test.serial("Statement.get() values", async (t) => {
   t.deepEqual(stmt.get(9007199254740991n), [9007199254740991]);
 });
 
+test.serial("Statement.get() [blob]", (t) => {
+  const db = t.context.db;
+
+  // Create table with blob column
+  db.exec("CREATE TABLE IF NOT EXISTS blobs (id INTEGER PRIMARY KEY, data BLOB)");
+  
+  // Test inserting and retrieving blob data
+  const binaryData = Buffer.from([0x48, 0x65, 0x6c, 0x6c, 0x6f, 0x20, 0x57, 0x6f, 0x72, 0x6c, 0x64]); // "Hello World"
+  const insertStmt = db.prepare("INSERT INTO blobs (data) VALUES (?)");
+  insertStmt.run([binaryData]);
+  
+  // Retrieve the blob data
+  const selectStmt = db.prepare("SELECT data FROM blobs WHERE id = 1");
+  const result = selectStmt.get();
+  
+  t.truthy(result, "Should return a result");
+  t.true(Buffer.isBuffer(result.data), "Should return Buffer for blob data");
+  t.deepEqual(result.data, binaryData, "Blob data should match original");
+});
+
 // ==========================================================================
 // Statement.iterate()
 // ==========================================================================

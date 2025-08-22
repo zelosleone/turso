@@ -289,7 +289,6 @@ impl Statement {
         let non_zero_idx = NonZeroUsize::new(index as usize).ok_or_else(|| {
             Error::new(Status::InvalidArg, "Parameter index must be greater than 0")
         })?;
-
         let value_type = value.get_type()?;
         let turso_value = match value_type {
             ValueType::Null => turso_core::Value::Null,
@@ -320,16 +319,22 @@ impl Statement {
                 turso_core::Value::Integer(if b { 1 } else { 0 })
             }
             ValueType::Object => {
-                // Try to cast as Buffer first, fallback to string conversion
-                if let Ok(buffer) = unsafe { value.cast::<Buffer>() } {
-                    turso_core::Value::Blob(buffer.to_vec())
+                let obj = value.coerce_to_object()?;
+
+                if obj.is_buffer()? || obj.is_typedarray()? {
+                    let length = obj.get_named_property::<u32>("length")?;
+                    let mut bytes = Vec::with_capacity(length as usize);
+                    for i in 0..length {
+                        let byte = obj.get_element::<u32>(i)?;
+                        bytes.push(byte as u8);
+                    }
+                    turso_core::Value::Blob(bytes)
                 } else {
                     let s = value.coerce_to_string()?.into_utf8()?;
                     turso_core::Value::Text(s.as_str()?.to_owned().into())
                 }
             }
             _ => {
-                // Fallback to string conversion for unknown types
                 let s = value.coerce_to_string()?.into_utf8()?;
                 turso_core::Value::Text(s.as_str()?.to_owned().into())
             }
@@ -537,7 +542,10 @@ fn to_js_value<'a>(
         }
         turso_core::Value::Float(f) => ToNapiValue::into_unknown(*f, env),
         turso_core::Value::Text(s) => ToNapiValue::into_unknown(s.as_str(), env),
-        turso_core::Value::Blob(b) => ToNapiValue::into_unknown(b, env),
+        turso_core::Value::Blob(b) => {
+            let buffer = Buffer::from(b.as_slice());
+            ToNapiValue::into_unknown(buffer, env)
+        }
     }
 }
 

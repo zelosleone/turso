@@ -18,6 +18,10 @@ export function bindParams(stmt, params) {
       bindNamedParams(stmt, param);
       return;
     }
+    if (Array.isArray(param)) {
+      bindPositionalParams(stmt, [param]);
+      return;
+    }
     bindValue(stmt, 1, param);
     return;
   }
