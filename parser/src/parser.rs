@@ -2156,7 +2156,7 @@ impl<'a> Parser<'a> {
                     let last_name = names.last().unwrap();
                     for name in &names[..names.len() - 1] {
                         if name == last_name {
-                            return Err(Error::Custom(format!("duplicate name: {}", name)));
+                            return Err(Error::Custom(format!("duplicate name: {name}")));
                         }
                     }
                 }
