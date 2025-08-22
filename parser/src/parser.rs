@@ -27,7 +27,7 @@ macro_rules! peek_expect {
                         $(($x, TK_ID) => token,)*
                         _ => {
                             return Err(Error::ParseUnexpectedToken {
-                                parsed_offset: ($parser.lexer.offset, 1).into(),
+                                parsed_offset: ($parser.offset(), 1).into(),
                                 expected: &[
                                     $($x,)*
                                 ],
@@ -141,7 +141,6 @@ fn new_join_type(n0: &[u8], n1: Option<&[u8]>, n2: Option<&[u8]>) -> Result<Join
 
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
-    offset: usize,
 
     /// The current token being processed
     current_token: Token<'a>,
@@ -166,17 +165,23 @@ impl<'a> Parser<'a> {
     pub fn new(input: &'a [u8]) -> Self {
         Self {
             lexer: Lexer::new(input),
-            offset: 0,
             peekable: false,
             current_token: Token {
-                value: b"",
+                value: &input[..0],
                 token_type: None,
             },
         }
     }
 
+    #[inline(always)]
     pub fn offset(&self) -> usize {
-        self.offset
+        if !self.peekable {
+            // not peekable means current token already consumed
+            // so just take lexer offset
+            self.lexer.offset
+        } else {
+            self.lexer.offset - self.current_token.value.len()
+        }
     }
 
     // entrypoint of parsing
@@ -229,7 +234,7 @@ impl<'a> Parser<'a> {
                 Some(token) => {
                     if !found_semi {
                         return Err(Error::ParseUnexpectedToken {
-                            parsed_offset: (self.lexer.offset, 1).into(),
+                            parsed_offset: (self.offset(), 1).into(),
                             expected: &[TK_SEMI],
                             got: token.token_type.unwrap(),
                         });
@@ -526,7 +531,6 @@ impl<'a> Parser<'a> {
     #[inline]
     fn eat(&mut self) -> Result<Option<Token<'a>>> {
         let result = self.peek()?;
-        self.offset = self.lexer.offset;
         self.peekable = false; // Clear the peek mark after consuming
         Ok(result)
     }
@@ -754,10 +758,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_vtab_arg(&mut self) -> Result<String> {
-        let tok = self.peek_no_eof()?;
-
-        // minus len() because lexer already consumed the token
-        let start_idx = self.lexer.offset - tok.value.len();
+        let start_idx = self.offset();
 
         loop {
             match self.peek_no_eof()?.token_type.unwrap() {
@@ -787,7 +788,7 @@ impl<'a> Parser<'a> {
         }
 
         // minus 1 because lexer already consumed TK_COMMA or TK_RP
-        let end_idx = self.lexer.offset - 1;
+        let end_idx = self.offset();
         if start_idx == end_idx {
             return Err(Error::Custom("unexpected COMMA in vtab args".to_owned()));
         }
@@ -1470,7 +1471,7 @@ impl<'a> Parser<'a> {
                     } else if tok.token_type == Some(TK_LP) {
                         if can_be_lit_str {
                             return Err(Error::ParseUnexpectedToken {
-                                parsed_offset: (self.lexer.offset, 1).into(),
+                                parsed_offset: (self.offset(), 1).into(),
                                 got: TK_STRING,
                                 expected: &[TK_ID, TK_INDEXED, TK_JOIN_KW],
                             });
@@ -3834,7 +3835,7 @@ mod tests {
         let s = "SELECT 1; SELECT 1";
         let mut p = Parser::new(s.as_bytes());
         p.next_cmd().unwrap();
-        assert_eq!(&s[..p.offset()], "SELECT 1;");
+        assert_eq!(&s[..p.offset()], "SELECT 1; ");
     }
 
     #[test]
