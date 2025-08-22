@@ -147,7 +147,7 @@ export function decodeValue(value: Value, safeIntegers: boolean = false): any {
         for (let i = 0; i < binaryString.length; i++) {
           bytes[i] = binaryString.charCodeAt(i);
         }
-        return bytes;
+        return Buffer.from(bytes);
       }
       return null;
     default:
