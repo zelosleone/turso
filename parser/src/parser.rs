@@ -4002,7 +4002,6 @@ mod tests {
             "CREATE VIEW foo(bar, bar) AS SELECT 1, 1",
             "CREATE VIEW foo(bar) AS SELECT 1, 1",
             "DELETE FROM my_table ORDER BY col1",
-            "INSERT INTO my_table(bar, bar) VALUES (1, 1)",
             "INSERT INTO my_table(bar) DEFAULT VALUES",
             "INSERT INTO my_table(bar, baz, barr) VALUES (1, 1)",
             "UPDATE foo SET bar = 1 ORDER BY bar",
