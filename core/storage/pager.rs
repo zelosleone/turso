@@ -1158,15 +1158,10 @@ impl Pager {
         let page_key = PageCacheKey::new(page_idx);
         match page_cache.insert(page_key, page.clone()) {
             Ok(_) => {}
-            Err(CacheError::Full) => return Err(LimboError::CacheFull),
             Err(CacheError::KeyExists) => {
                 unreachable!("Page should not exist in cache after get() miss")
             }
-            Err(e) => {
-                return Err(LimboError::InternalError(format!(
-                    "Failed to insert page into cache: {e:?}"
-                )))
-            }
+            Err(e) => return Err(e.into()),
         }
         Ok(())
     }
@@ -1902,15 +1897,7 @@ impl Pager {
                             self.add_dirty(&page);
                             let page_key = PageCacheKey::new(page.get().id);
                             let mut cache = self.page_cache.write();
-                            match cache.insert(page_key, page.clone()) {
-                                Ok(_) => (),
-                                Err(CacheError::Full) => return Err(LimboError::CacheFull),
-                                Err(_) => {
-                                    return Err(LimboError::InternalError(
-                                        "Unknown error inserting page to cache".into(),
-                                    ))
-                                }
-                            }
+                            cache.insert(page_key, page.clone())?;
                         }
                     }
 
@@ -2081,15 +2068,7 @@ impl Pager {
                         {
                             // Run in separate block to avoid deadlock on page cache write lock
                             let mut cache = self.page_cache.write();
-                            match cache.insert(page_key, page.clone()) {
-                                Err(CacheError::Full) => return Err(LimboError::CacheFull),
-                                Err(_) => {
-                                    return Err(LimboError::InternalError(
-                                        "Unknown error inserting page to cache".into(),
-                                    ))
-                                }
-                                Ok(_) => {}
-                            };
+                            cache.insert(page_key, page.clone())?;
                         }
                         header.database_size = new_db_size.into();
                         *state = AllocatePageState::Start;
