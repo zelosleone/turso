@@ -193,10 +193,7 @@ impl File for UnixFile {
 
     #[instrument(err, skip_all, level = Level::TRACE)]
     fn pread(&self, pos: usize, c: Completion) -> Result<Completion> {
-        let file = self
-            .file
-            .try_lock()
-            .ok_or_else(|| LimboError::LockingError("Failed locking file".to_string()))?;
+        let file = self.file.lock();
         let result = unsafe {
             let r = c.as_read();
             let buf = r.buf();
@@ -221,10 +218,7 @@ impl File for UnixFile {
 
     #[instrument(err, skip_all, level = Level::TRACE)]
     fn pwrite(&self, pos: usize, buffer: Arc<crate::Buffer>, c: Completion) -> Result<Completion> {
-        let file = self
-            .file
-            .try_lock()
-            .ok_or_else(|| LimboError::LockingError("Failed locking file".to_string()))?;
+        let file = self.file.lock();
         let result = { rustix::io::pwrite(file.as_fd(), buffer.as_slice(), pos as u64) };
         match result {
             Ok(n) => {
@@ -248,10 +242,7 @@ impl File for UnixFile {
             // use `pwrite` for single buffer
             return self.pwrite(pos, buffers[0].clone(), c);
         }
-        let file = self
-            .file
-            .try_lock()
-            .ok_or_else(|| LimboError::LockingError("Failed locking file".to_string()))?;
+        let file = self.file.lock();
 
         match try_pwritev_raw(file.as_raw_fd(), pos as u64, &buffers, 0, 0) {
             Ok(written) => {
@@ -267,10 +258,7 @@ impl File for UnixFile {
 
     #[instrument(err, skip_all, level = Level::TRACE)]
     fn sync(&self, c: Completion) -> Result<Completion> {
-        let file = self
-            .file
-            .try_lock()
-            .ok_or_else(|| LimboError::LockingError("Failed locking file".to_string()))?;
+        let file = self.file.lock();
         let result = unsafe { libc::fsync(file.as_raw_fd()) };
         if result == -1 {
             let e = std::io::Error::last_os_error();
@@ -284,19 +272,13 @@ impl File for UnixFile {
 
     #[instrument(err, skip_all, level = Level::TRACE)]
     fn size(&self) -> Result<u64> {
-        let file = self
-            .file
-            .try_lock()
-            .ok_or_else(|| LimboError::LockingError("Failed locking file".to_string()))?;
+        let file = self.file.lock();
         Ok(file.metadata()?.len())
     }
 
     #[instrument(err, skip_all, level = Level::INFO)]
     fn truncate(&self, len: usize, c: Completion) -> Result<Completion> {
-        let file = self
-            .file
-            .try_lock()
-            .ok_or_else(|| LimboError::LockingError("Failed locking file".to_string()))?;
+        let file = self.file.lock();
         let result = file.set_len(len as u64);
         match result {
             Ok(()) => {
