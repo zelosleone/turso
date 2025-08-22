@@ -2151,14 +2151,6 @@ impl<'a> Parser<'a> {
                 Some(tok) if tok.token_type == Some(TK_COMMA) => {
                     eat_assert!(self, TK_COMMA);
                     names.push(self.parse_nm()?);
-
-                    // check dup
-                    let last_name = names.last().unwrap();
-                    for name in &names[..names.len() - 1] {
-                        if name == last_name {
-                            return Err(Error::Custom(format!("duplicate name: {name}")));
-                        }
-                    }
                 }
                 _ => break,
             }
