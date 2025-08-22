@@ -4037,6 +4037,7 @@ dependencies = [
  "tracing",
  "turso_ext",
  "turso_macros",
+ "turso_parser",
  "turso_sqlite3_parser",
  "uncased",
  "uuid",
@@ -4102,6 +4103,7 @@ dependencies = [
  "serde",
  "strum",
  "strum_macros",
+ "thiserror 1.0.69",
  "turso_sqlite3_parser",
 ]
 

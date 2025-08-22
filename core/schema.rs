@@ -10,7 +10,7 @@ pub struct View {
     pub name: String,
     pub sql: String,
     pub select_stmt: ast::Select,
-    pub columns: Option<Vec<Column>>,
+    pub columns: Vec<Column>,
 }
 
 /// Type alias for regular views collection
@@ -24,7 +24,6 @@ use crate::util::{module_args_from_sql, module_name_from_sql, IOExt, UnparsedFro
 use crate::{return_if_io, LimboError, MvCursor, Pager, RefValue, SymbolTable, VirtualTable};
 use crate::{util::normalize_ident, Result};
 use core::fmt;
-use fallible_iterator::FallibleIterator;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap};
@@ -33,10 +32,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tracing::trace;
-use turso_sqlite3_parser::ast::{self, ColumnDefinition, Expr, Literal, SortOrder, TableOptions};
-use turso_sqlite3_parser::{
+use turso_parser::ast::{self, ColumnDefinition, Expr, Literal, SortOrder, TableOptions};
+use turso_parser::{
     ast::{Cmd, CreateTableBody, QualifiedName, ResultColumn, Stmt},
-    lexer::sql::Parser,
+    parser::Parser,
 };
 
 const SCHEMA_TABLE_NAME: &str = "sqlite_schema";
@@ -409,7 +408,7 @@ impl Schema {
 
                     // Parse the SQL to determine if it's a regular or materialized view
                     let mut parser = Parser::new(sql.as_bytes());
-                    if let Ok(Some(Cmd::Stmt(stmt))) = parser.next() {
+                    if let Ok(Some(Cmd::Stmt(stmt))) = parser.next_cmd() {
                         match stmt {
                             Stmt::CreateMaterializedView { .. } => {
                                 // Create IncrementalView for materialized views
@@ -434,11 +433,9 @@ impl Schema {
                                 // If column names were provided in CREATE VIEW (col1, col2, ...),
                                 // use them to rename the columns
                                 let mut final_columns = view_columns;
-                                if let Some(ref names) = column_names {
-                                    for (i, indexed_col) in names.iter().enumerate() {
-                                        if let Some(col) = final_columns.get_mut(i) {
-                                            col.name = Some(indexed_col.col_name.to_string());
-                                        }
+                                for (i, indexed_col) in column_names.iter().enumerate() {
+                                    if let Some(col) = final_columns.get_mut(i) {
+                                        col.name = Some(indexed_col.col_name.to_string());
                                     }
                                 }
 
@@ -446,8 +443,8 @@ impl Schema {
                                 let view = View {
                                     name: name.to_string(),
                                     sql: sql.to_string(),
-                                    select_stmt: *select,
-                                    columns: Some(final_columns),
+                                    select_stmt: select,
+                                    columns: final_columns,
                                 };
                                 self.add_view(view);
                             }
@@ -696,10 +693,10 @@ impl BTreeTable {
 
     pub fn from_sql(sql: &str, root_page: usize) -> Result<BTreeTable> {
         let mut parser = Parser::new(sql.as_bytes());
-        let cmd = parser.next()?;
+        let cmd = parser.next_cmd()?;
         match cmd {
             Some(Cmd::Stmt(Stmt::CreateTable { tbl_name, body, .. })) => {
-                create_table(tbl_name, *body, root_page)
+                create_table(tbl_name, body, root_page)
             }
             _ => unreachable!("Expected CREATE TABLE statement"),
         }
@@ -833,53 +830,53 @@ fn create_table(
             options,
         } => {
             is_strict = options.contains(TableOptions::STRICT);
-            if let Some(constraints) = constraints {
-                for c in constraints {
-                    if let turso_sqlite3_parser::ast::TableConstraint::PrimaryKey {
-                        columns, ..
-                    } = c.constraint
-                    {
-                        for column in columns {
-                            let col_name = match column.expr {
+            for c in constraints {
+                if let ast::TableConstraint::PrimaryKey { columns, .. } = c.constraint {
+                    for column in columns {
+                        let col_name = match column.expr.as_ref() {
+                            Expr::Id(id) => normalize_ident(id.as_str()),
+                            Expr::Literal(Literal::String(value)) => {
+                                value.trim_matches('\'').to_owned()
+                            }
+                            _ => {
+                                todo!("Unsupported primary key expression");
+                            }
+                        };
+                        primary_key_columns
+                            .push((col_name, column.order.unwrap_or(SortOrder::Asc)));
+                    }
+                } else if let ast::TableConstraint::Unique {
+                    columns,
+                    conflict_clause,
+                } = c.constraint
+                {
+                    if conflict_clause.is_some() {
+                        unimplemented!("ON CONFLICT not implemented");
+                    }
+                    let unique_set = columns
+                        .into_iter()
+                        .map(|column| {
+                            let column_name = match column.expr.as_ref() {
                                 Expr::Id(id) => normalize_ident(id.as_str()),
-                                Expr::Literal(Literal::String(value)) => {
-                                    value.trim_matches('\'').to_owned()
-                                }
                                 _ => {
-                                    todo!("Unsupported primary key expression");
+                                    todo!("Unsupported unique expression");
                                 }
                             };
-                            primary_key_columns
-                                .push((col_name, column.order.unwrap_or(SortOrder::Asc)));
-                        }
-                    } else if let turso_sqlite3_parser::ast::TableConstraint::Unique {
-                        columns,
-                        conflict_clause,
-                    } = c.constraint
-                    {
-                        if conflict_clause.is_some() {
-                            unimplemented!("ON CONFLICT not implemented");
-                        }
-                        let unique_set = columns
-                            .into_iter()
-                            .map(|column| {
-                                let column_name = match column.expr {
-                                    Expr::Id(id) => normalize_ident(id.as_str()),
-                                    _ => {
-                                        todo!("Unsupported unique expression");
-                                    }
-                                };
-                                UniqueColumnProps {
-                                    column_name,
-                                    order: column.order.unwrap_or(SortOrder::Asc),
-                                }
-                            })
-                            .collect();
-                        unique_sets.push(unique_set);
-                    }
+                            UniqueColumnProps {
+                                column_name,
+                                order: column.order.unwrap_or(SortOrder::Asc),
+                            }
+                        })
+                        .collect();
+                    unique_sets.push(unique_set);
                 }
             }
-            for (col_name, col_def) in columns {
+            for ast::ColumnDefinition {
+                col_name,
+                col_type,
+                constraints,
+            } in &columns
+            {
                 let name = col_name.as_str().to_string();
                 // Regular sqlite tables have an integer rowid that uniquely identifies a row.
                 // Even if you create a table with a column e.g. 'id INT PRIMARY KEY', there will still
@@ -889,17 +886,17 @@ fn create_table(
                 // A column defined as exactly INTEGER PRIMARY KEY is a rowid alias, meaning that the rowid
                 // and the value of this column are the same.
                 // https://www.sqlite.org/lang_createtable.html#rowids_and_the_integer_primary_key
-                let ty_str = col_def
-                    .col_type
+                let ty_str = col_type
                     .as_ref()
+                    .cloned()
                     .map(|ast::Type { name, .. }| name.clone())
                     .unwrap_or_default();
 
                 let mut typename_exactly_integer = false;
-                let ty = match col_def.col_type {
+                let ty = match col_type {
                     Some(data_type) => 'ty: {
                         // https://www.sqlite.org/datatype3.html
-                        let mut type_name = data_type.name;
+                        let mut type_name = data_type.name.clone();
                         type_name.make_ascii_uppercase();
 
                         if type_name.is_empty() {
@@ -938,33 +935,26 @@ fn create_table(
                 let mut order = SortOrder::Asc;
                 let mut unique = false;
                 let mut collation = None;
-                for c_def in col_def.constraints {
+                for c_def in constraints {
                     match c_def.constraint {
-                        turso_sqlite3_parser::ast::ColumnConstraint::PrimaryKey {
-                            order: o,
-                            ..
-                        } => {
+                        ast::ColumnConstraint::PrimaryKey { order: o, .. } => {
                             primary_key = true;
                             if let Some(o) = o {
                                 order = o;
                             }
                         }
-                        turso_sqlite3_parser::ast::ColumnConstraint::NotNull {
-                            nullable, ..
-                        } => {
+                        ast::ColumnConstraint::NotNull { nullable, .. } => {
                             notnull = !nullable;
                         }
-                        turso_sqlite3_parser::ast::ColumnConstraint::Default(expr) => {
-                            default = Some(expr)
-                        }
+                        ast::ColumnConstraint::Default(ref expr) => default = Some(expr),
                         // TODO: for now we don't check Resolve type of unique
-                        turso_sqlite3_parser::ast::ColumnConstraint::Unique(on_conflict) => {
+                        ast::ColumnConstraint::Unique(on_conflict) => {
                             if on_conflict.is_some() {
                                 unimplemented!("ON CONFLICT not implemented");
                             }
                             unique = true;
                         }
-                        turso_sqlite3_parser::ast::ColumnConstraint::Collate { collation_name } => {
+                        ast::ColumnConstraint::Collate { ref collation_name } => {
                             collation = Some(CollationSeq::new(collation_name.as_str())?);
                         }
                         _ => {}
@@ -987,7 +977,7 @@ fn create_table(
                     primary_key,
                     is_rowid_alias: typename_exactly_integer && primary_key,
                     notnull,
-                    default,
+                    default: default.cloned(),
                     unique,
                     collation,
                     hidden: false,
@@ -1059,7 +1049,7 @@ pub struct Column {
     pub primary_key: bool,
     pub is_rowid_alias: bool,
     pub notnull: bool,
-    pub default: Option<Expr>,
+    pub default: Option<Box<Expr>>,
     pub unique: bool,
     pub collation: Option<CollationSeq>,
     pub hidden: bool,
@@ -1441,13 +1431,13 @@ pub struct IndexColumn {
     /// b.pos_in_table == 1
     pub pos_in_table: usize,
     pub collation: Option<CollationSeq>,
-    pub default: Option<Expr>,
+    pub default: Option<Box<Expr>>,
 }
 
 impl Index {
     pub fn from_sql(sql: &str, root_page: usize, table: &BTreeTable) -> Result<Index> {
         let mut parser = Parser::new(sql.as_bytes());
-        let cmd = parser.next()?;
+        let cmd = parser.next_cmd()?;
         match cmd {
             Some(Cmd::Stmt(Stmt::CreateIndex {
                 idx_name,

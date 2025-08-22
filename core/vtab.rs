@@ -2,13 +2,13 @@ use crate::pragma::{PragmaVirtualTable, PragmaVirtualTableCursor};
 use crate::schema::Column;
 use crate::util::columns_from_create_table_body;
 use crate::{Connection, LimboError, SymbolTable, Value};
-use fallible_iterator::FallibleIterator;
+
 use std::ffi::c_void;
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use turso_ext::{ConstraintInfo, IndexInfo, OrderByInfo, ResultCode, VTabKind, VTabModuleImpl};
-use turso_sqlite3_parser::{ast, lexer::sql::Parser};
+use turso_parser::{ast, parser::Parser};
 
 #[derive(Debug, Clone)]
 pub(crate) enum VirtualTableType {
@@ -105,7 +105,7 @@ impl VirtualTable {
 
     fn resolve_columns(schema: String) -> crate::Result<Vec<Column>> {
         let mut parser = Parser::new(schema.as_bytes());
-        if let ast::Cmd::Stmt(ast::Stmt::CreateTable { body, .. }) = parser.next()?.ok_or(
+        if let ast::Cmd::Stmt(ast::Stmt::CreateTable { body, .. }) = parser.next_cmd()?.ok_or(
             LimboError::ParseError("Failed to parse schema from virtual table module".to_string()),
         )? {
             columns_from_create_table_body(&body)

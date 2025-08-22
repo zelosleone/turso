@@ -6,7 +6,7 @@ use crate::vdbe::builder::{CursorType, ProgramBuilder};
 use crate::vdbe::insn::{CmpInsFlags, Cookie, Insn};
 use crate::{Connection, Result, SymbolTable};
 use std::sync::Arc;
-use turso_sqlite3_parser::ast::{self, fmt::ToTokens};
+use turso_parser::ast::{self, fmt::ToTokens};
 
 /// Common logic for creating views (both regular and materialized)
 fn emit_create_view_program(
@@ -120,7 +120,7 @@ pub fn translate_create_view(
     schema: &Schema,
     view_name: &str,
     select_stmt: &ast::Select,
-    _columns: Option<&Vec<ast::IndexedColumn>>,
+    _columns: &[ast::IndexedColumn],
     _connection: Arc<Connection>,
     syms: &SymbolTable,
     mut program: ProgramBuilder,

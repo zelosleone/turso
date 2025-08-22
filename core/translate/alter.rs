@@ -1,6 +1,5 @@
-use fallible_iterator::FallibleIterator as _;
 use std::sync::Arc;
-use turso_sqlite3_parser::{ast, lexer::sql::Parser};
+use turso_parser::{ast, parser::Parser};
 
 use crate::{
     function::{AlterTableFunc, Func},
@@ -16,7 +15,7 @@ use crate::{
 use super::{schema::SQLITE_TABLEID, update::translate_update_for_schema_change};
 
 pub fn translate_alter_table(
-    alter: (ast::QualifiedName, ast::AlterTableBody),
+    alter: ast::AlterTable,
     syms: &SymbolTable,
     schema: &Schema,
     mut program: ProgramBuilder,
@@ -24,7 +23,10 @@ pub fn translate_alter_table(
     input: &str,
 ) -> Result<ProgramBuilder> {
     program.begin_write_operation();
-    let (table_name, alter_table) = alter;
+    let ast::AlterTable {
+        name: table_name,
+        body: alter_table,
+    } = alter;
     let table_name = table_name.name.as_str();
     if schema.table_has_indexes(table_name) && !schema.indexes_enabled() {
         // Let's disable altering a table with indices altogether instead of checking column by
@@ -91,7 +93,8 @@ pub fn translate_alter_table(
             );
 
             let mut parser = Parser::new(stmt.as_bytes());
-            let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next().unwrap() else {
+            let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next_cmd().unwrap()
+            else {
                 unreachable!();
             };
 
@@ -167,7 +170,7 @@ pub fn translate_alter_table(
 
             if let Some(default) = &column.default {
                 if !matches!(
-                    default,
+                    default.as_ref(),
                     ast::Expr::Literal(
                         ast::Literal::Null
                             | ast::Literal::Blob(_)
@@ -204,7 +207,8 @@ pub fn translate_alter_table(
             );
 
             let mut parser = Parser::new(stmt.as_bytes());
-            let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next().unwrap() else {
+            let Some(ast::Cmd::Stmt(ast::Stmt::Update(mut update))) = parser.next_cmd().unwrap()
+            else {
                 unreachable!();
             };
 

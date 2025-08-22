@@ -1,7 +1,7 @@
 use std::{cell::Cell, cmp::Ordering, sync::Arc};
 
 use tracing::{instrument, Level};
-use turso_sqlite3_parser::ast::{self, TableInternalId};
+use turso_parser::ast::{self, TableInternalId};
 
 use crate::{
     numeric::Numeric,
@@ -17,7 +17,7 @@ use crate::{
 
 #[derive(Default)]
 pub struct TableRefIdCounter {
-    next_free: TableInternalId,
+    next_free: ast::TableInternalId,
 }
 
 impl TableRefIdCounter {
@@ -868,7 +868,7 @@ impl ProgramBuilder {
                 _ => break 'value None,
             };
 
-            let Some(ast::Expr::Literal(ref literal)) = default else {
+            let Some(ast::Expr::Literal(ref literal)) = default.as_ref().map(|v| v.as_ref()) else {
                 break 'value None;
             };
 

@@ -1,5 +1,5 @@
 use std::{cmp::Ordering, sync::Arc};
-use turso_sqlite3_parser::ast::{self, SortOrder};
+use turso_parser::ast::{self, SortOrder};
 
 use crate::{
     function::AggFunc,
@@ -13,7 +13,7 @@ use crate::{
 };
 use crate::{schema::Type, types::SeekOp};
 
-use turso_sqlite3_parser::ast::TableInternalId;
+use turso_parser::ast::TableInternalId;
 
 use super::{emitter::OperationMode, planner::determine_where_to_eval_term};
 
@@ -288,7 +288,7 @@ pub struct SelectPlan {
     /// group by clause
     pub group_by: Option<GroupBy>,
     /// order by clause
-    pub order_by: Option<Vec<(ast::Expr, SortOrder)>>,
+    pub order_by: Vec<(Box<ast::Expr>, SortOrder)>,
     /// all the aggregates collected from the result columns, order by, and (TODO) having clauses
     pub aggregates: Vec<Aggregate>,
     /// limit clause
@@ -342,16 +342,22 @@ impl SelectPlan {
             return false;
         }
 
-        let count = turso_sqlite3_parser::ast::Expr::FunctionCall {
-            name: turso_sqlite3_parser::ast::Name::Ident("count".to_string()),
+        let count = ast::Expr::FunctionCall {
+            name: ast::Name::Ident("count".to_string()),
             distinctness: None,
-            args: None,
-            order_by: None,
-            filter_over: None,
+            args: vec![],
+            order_by: vec![],
+            filter_over: ast::FunctionTail {
+                filter_clause: None,
+                over_clause: None,
+            },
         };
-        let count_star = turso_sqlite3_parser::ast::Expr::FunctionCallStar {
-            name: turso_sqlite3_parser::ast::Name::Ident("count".to_string()),
-            filter_over: None,
+        let count_star = ast::Expr::FunctionCallStar {
+            name: ast::Name::Ident("count".to_string()),
+            filter_over: ast::FunctionTail {
+                filter_clause: None,
+                over_clause: None,
+            },
         };
         let result_col_expr = &self.result_columns.first().unwrap().expr;
         if *result_col_expr != count && *result_col_expr != count_star {
@@ -370,7 +376,7 @@ pub struct DeletePlan {
     /// where clause split into a vec at 'AND' boundaries.
     pub where_clause: Vec<WhereTerm>,
     /// order by clause
-    pub order_by: Option<Vec<(ast::Expr, SortOrder)>>,
+    pub order_by: Vec<(Box<ast::Expr>, SortOrder)>,
     /// limit clause
     pub limit: Option<isize>,
     /// offset clause
@@ -385,9 +391,9 @@ pub struct DeletePlan {
 pub struct UpdatePlan {
     pub table_references: TableReferences,
     // (colum index, new value) pairs
-    pub set_clauses: Vec<(usize, ast::Expr)>,
+    pub set_clauses: Vec<(usize, Box<ast::Expr>)>,
     pub where_clause: Vec<WhereTerm>,
-    pub order_by: Option<Vec<(ast::Expr, SortOrder)>>,
+    pub order_by: Vec<(Box<ast::Expr>, SortOrder)>,
     pub limit: Option<isize>,
     pub offset: Option<isize>,
     // TODO: optional RETURNING clause
@@ -410,10 +416,6 @@ pub enum IterationDirection {
 
 pub fn select_star(tables: &[JoinedTable], out_columns: &mut Vec<ResultSetColumn>) {
     for table in tables.iter() {
-        let maybe_using_cols = table
-            .join_info
-            .as_ref()
-            .and_then(|join_info| join_info.using.as_ref());
         out_columns.extend(
             table
                 .columns()
@@ -423,8 +425,8 @@ pub fn select_star(tables: &[JoinedTable], out_columns: &mut Vec<ResultSetColumn
                 .filter(|(_, col)| {
                     // If we are joining with USING, we need to deduplicate the columns from the right table
                     // that are also present in the USING clause.
-                    if let Some(using_cols) = maybe_using_cols {
-                        !using_cols.iter().any(|using_col| {
+                    if let Some(join_info) = &table.join_info {
+                        !join_info.using.iter().any(|using_col| {
                             col.name
                                 .as_ref()
                                 .is_some_and(|name| name.eq_ignore_ascii_case(using_col.as_str()))
@@ -453,7 +455,7 @@ pub struct JoinInfo {
     /// Whether this is an OUTER JOIN.
     pub outer: bool,
     /// The USING clause for the join, if any. NATURAL JOIN is transformed into USING (col1, col2, ...).
-    pub using: Option<ast::DistinctNames>,
+    pub using: Vec<ast::Name>,
 }
 
 /// A joined table in the query plan.

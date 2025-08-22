@@ -10,7 +10,7 @@ use crate::{
     Result,
 };
 use turso_ext::{ConstraintInfo, ConstraintOp};
-use turso_sqlite3_parser::ast::{self, SortOrder, TableInternalId};
+use turso_parser::ast::{self, SortOrder, TableInternalId};
 
 use super::cost::ESTIMATED_HARDCODED_ROWS_PER_TABLE;
 

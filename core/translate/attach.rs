@@ -6,7 +6,7 @@ use crate::translate::{ProgramBuilder, ProgramBuilderOpts};
 use crate::util::normalize_ident;
 use crate::vdbe::insn::Insn;
 use crate::{Result, SymbolTable};
-use turso_sqlite3_parser::ast::{Expr, Literal};
+use turso_parser::ast::{Expr, Literal};
 
 /// Translate ATTACH statement
 /// SQLite implements ATTACH as a function call to sqlite_attach()

@@ -13,10 +13,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tracing::{instrument, Level};
-use turso_sqlite3_parser::ast::{
+use turso_parser::ast::{
     self, fmt::ToTokens, Cmd, CreateTableBody, Expr, FunctionTail, Literal, Stmt, UnaryOperator,
 };
-use turso_sqlite3_parser::lexer::sql::Parser;
+use turso_parser::parser::Parser;
 
 #[macro_export]
 macro_rules! io_yield_one {
@@ -166,8 +166,8 @@ pub fn parse_schema_rows(
                         use crate::incremental::view::IncrementalView;
                         use crate::schema::View;
                         use fallible_iterator::FallibleIterator;
-                        use turso_sqlite3_parser::ast::{Cmd, Stmt};
-                        use turso_sqlite3_parser::lexer::sql::Parser;
+                        use turso_parser::ast::{Cmd, Stmt};
+                        use turso_parser::parser::Parser;
 
                         let name: &str = row.get::<&str>(1)?;
                         let sql: &str = row.get::<&str>(4)?;
@@ -175,7 +175,7 @@ pub fn parse_schema_rows(
 
                         // Parse the SQL to determine if it's a regular or materialized view
                         let mut parser = Parser::new(sql.as_bytes());
-                        if let Ok(Some(Cmd::Stmt(stmt))) = parser.next() {
+                        if let Ok(Some(Cmd::Stmt(stmt))) = parser.next_cmd() {
                             match stmt {
                                 Stmt::CreateMaterializedView { .. } => {
                                     // Handle materialized view with potential reuse
@@ -234,16 +234,15 @@ pub fn parse_schema_rows(
                                     ..
                                 } => {
                                     // Extract actual columns from the SELECT statement
-                                    let view_columns = extract_view_columns(&select, schema);
+                                    let view_columns =
+                                        crate::util::extract_view_columns(&select, schema);
 
                                     // If column names were provided in CREATE VIEW (col1, col2, ...),
                                     // use them to rename the columns
                                     let mut final_columns = view_columns;
-                                    if let Some(ref names) = column_names {
-                                        for (i, indexed_col) in names.iter().enumerate() {
-                                            if let Some(col) = final_columns.get_mut(i) {
-                                                col.name = Some(indexed_col.col_name.to_string());
-                                            }
+                                    for (i, indexed_col) in column_names.iter().enumerate() {
+                                        if let Some(col) = final_columns.get_mut(i) {
+                                            col.name = Some(indexed_col.col_name.to_string());
                                         }
                                     }
 
@@ -251,8 +250,8 @@ pub fn parse_schema_rows(
                                     let view = View {
                                         name: name.to_string(),
                                         sql: sql.to_string(),
-                                        select_stmt: *select,
-                                        columns: Some(final_columns),
+                                        select_stmt: select,
+                                        columns: final_columns,
                                     };
                                     schema.add_view(view);
                                 }
@@ -509,7 +508,11 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
                 }
         }
         (Expr::Collate(expr1, collation1), Expr::Collate(expr2, collation2)) => {
-            exprs_are_equivalent(expr1, expr2) && collation1.eq_ignore_ascii_case(collation2)
+            // TODO: check correctness of comparing colation as strings
+            exprs_are_equivalent(expr1, expr2)
+                && collation1
+                    .as_str()
+                    .eq_ignore_ascii_case(collation2.as_str())
         }
         (
             Expr::FunctionCall {
@@ -544,26 +547,12 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
             },
         ) => {
             name1.as_str().eq_ignore_ascii_case(name2.as_str())
-                && match (filter1, filter2) {
+                && match (&filter1.filter_clause, &filter2.filter_clause) {
+                    (Some(expr1), Some(expr2)) => exprs_are_equivalent(expr1, expr2),
                     (None, None) => true,
-                    (
-                        Some(FunctionTail {
-                            filter_clause: fc1,
-                            over_clause: oc1,
-                        }),
-                        Some(FunctionTail {
-                            filter_clause: fc2,
-                            over_clause: oc2,
-                        }),
-                    ) => match ((fc1, fc2), (oc1, oc2)) {
-                        ((Some(fc1), Some(fc2)), (Some(oc1), Some(oc2))) => {
-                            exprs_are_equivalent(fc1, fc2) && oc1 == oc2
-                        }
-                        ((Some(fc1), Some(fc2)), _) => exprs_are_equivalent(fc1, fc2),
-                        _ => false,
-                    },
                     _ => false,
                 }
+                && filter1.over_clause == filter2.over_clause
         }
         (Expr::NotNull(expr1), Expr::NotNull(expr2)) => exprs_are_equivalent(expr1, expr2),
         (Expr::IsNull(expr1), Expr::IsNull(expr2)) => exprs_are_equivalent(expr1, expr2),
@@ -610,117 +599,99 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
         ) => {
             *not1 == *not2
                 && exprs_are_equivalent(lhs1, lhs2)
+                && rhs1.len() == rhs2.len()
                 && rhs1
-                    .as_ref()
-                    .zip(rhs2.as_ref())
-                    .map(|(list1, list2)| {
-                        list1.len() == list2.len()
-                            && list1
-                                .iter()
-                                .zip(list2)
-                                .all(|(e1, e2)| exprs_are_equivalent(e1, e2))
-                    })
-                    .unwrap_or(false)
+                    .iter()
+                    .zip(rhs2.iter())
+                    .all(|(a, b)| exprs_are_equivalent(a, b))
         }
         // fall back to naive equality check
         _ => expr1 == expr2,
     }
 }
 
-pub fn columns_from_create_table_body(body: &ast::CreateTableBody) -> crate::Result<Vec<Column>> {
+pub fn columns_from_create_table_body(
+    body: &turso_parser::ast::CreateTableBody,
+) -> crate::Result<Vec<Column>> {
     let CreateTableBody::ColumnsAndConstraints { columns, .. } = body else {
         return Err(crate::LimboError::ParseError(
             "CREATE TABLE body must contain columns and constraints".to_string(),
         ));
     };
 
+    use turso_parser::ast;
+
     Ok(columns
-        .into_iter()
-        .map(|(name, column_def)| {
-            Column {
-                name: Some(normalize_ident(name.as_str())),
-                ty: match column_def.col_type {
-                    Some(ref data_type) => {
-                        // https://www.sqlite.org/datatype3.html
-                        let type_name = data_type.name.as_str().to_uppercase();
-                        if type_name.contains("INT") {
-                            Type::Integer
-                        } else if type_name.contains("CHAR")
-                            || type_name.contains("CLOB")
-                            || type_name.contains("TEXT")
-                        {
-                            Type::Text
-                        } else if type_name.contains("BLOB") || type_name.is_empty() {
-                            Type::Blob
-                        } else if type_name.contains("REAL")
-                            || type_name.contains("FLOA")
-                            || type_name.contains("DOUB")
-                        {
-                            Type::Real
-                        } else {
-                            Type::Numeric
+        .iter()
+        .map(
+            |ast::ColumnDefinition {
+                 col_name: name,
+                 col_type,
+                 constraints,
+             }| {
+                Column {
+                    name: Some(normalize_ident(name.as_str())),
+                    ty: match col_type {
+                        Some(ref data_type) => {
+                            // https://www.sqlite.org/datatype3.html
+                            let type_name = data_type.name.as_str().to_uppercase();
+                            if type_name.contains("INT") {
+                                Type::Integer
+                            } else if type_name.contains("CHAR")
+                                || type_name.contains("CLOB")
+                                || type_name.contains("TEXT")
+                            {
+                                Type::Text
+                            } else if type_name.contains("BLOB") || type_name.is_empty() {
+                                Type::Blob
+                            } else if type_name.contains("REAL")
+                                || type_name.contains("FLOA")
+                                || type_name.contains("DOUB")
+                            {
+                                Type::Real
+                            } else {
+                                Type::Numeric
+                            }
                         }
-                    }
-                    None => Type::Null,
-                },
-                default: column_def
-                    .constraints
-                    .iter()
-                    .find_map(|c| match &c.constraint {
-                        turso_sqlite3_parser::ast::ColumnConstraint::Default(val) => {
-                            Some(val.clone())
-                        }
+                        None => Type::Null,
+                    },
+                    default: constraints.iter().find_map(|c| match &c.constraint {
+                        ast::ColumnConstraint::Default(val) => Some(val.clone()),
                         _ => None,
                     }),
-                notnull: column_def.constraints.iter().any(|c| {
-                    matches!(
-                        c.constraint,
-                        turso_sqlite3_parser::ast::ColumnConstraint::NotNull { .. }
-                    )
-                }),
-                ty_str: column_def
-                    .col_type
-                    .clone()
-                    .map(|t| t.name.to_string())
-                    .unwrap_or_default(),
-                primary_key: column_def.constraints.iter().any(|c| {
-                    matches!(
-                        c.constraint,
-                        turso_sqlite3_parser::ast::ColumnConstraint::PrimaryKey { .. }
-                    )
-                }),
-                is_rowid_alias: false,
-                unique: column_def.constraints.iter().any(|c| {
-                    matches!(
-                        c.constraint,
-                        turso_sqlite3_parser::ast::ColumnConstraint::Unique(..)
-                    )
-                }),
-                collation: column_def
-                    .constraints
-                    .iter()
-                    .find_map(|c| match &c.constraint {
+                    notnull: constraints
+                        .iter()
+                        .any(|c| matches!(c.constraint, ast::ColumnConstraint::NotNull { .. })),
+                    ty_str: col_type
+                        .clone()
+                        .map(|t| t.name.to_string())
+                        .unwrap_or_default(),
+                    primary_key: constraints
+                        .iter()
+                        .any(|c| matches!(c.constraint, ast::ColumnConstraint::PrimaryKey { .. })),
+                    is_rowid_alias: false,
+                    unique: constraints
+                        .iter()
+                        .any(|c| matches!(c.constraint, ast::ColumnConstraint::Unique(..))),
+                    collation: constraints.iter().find_map(|c| match &c.constraint {
                         // TODO: see if this should be the correct behavior
                         // currently there cannot be any user defined collation sequences.
                         // But in the future, when a user defines a collation sequence, creates a table with it,
                         // then closes the db and opens it again. This may panic here if the collation seq is not registered
                         // before reading the columns
-                        turso_sqlite3_parser::ast::ColumnConstraint::Collate { collation_name } => {
-                            Some(
-                                CollationSeq::new(collation_name.as_str()).expect(
-                                    "collation should have been set correctly in create table",
-                                ),
-                            )
-                        }
+                        ast::ColumnConstraint::Collate { collation_name } => Some(
+                            CollationSeq::new(collation_name.as_str())
+                                .expect("collation should have been set correctly in create table"),
+                        ),
                         _ => None,
                     }),
-                hidden: column_def
-                    .col_type
-                    .as_ref()
-                    .map(|data_type| data_type.name.as_str().contains("HIDDEN"))
-                    .unwrap_or(false),
-            }
-        })
+                    hidden: col_type
+                        .as_ref()
+                        .map(|data_type| data_type.name.as_str().contains("HIDDEN"))
+                        .unwrap_or(false),
+                }
+            },
+        )
         .collect::<Vec<_>>())
 }
 
@@ -742,10 +713,7 @@ pub fn can_pushdown_predicate(
                 can_pushdown &= join_idx <= table_idx;
             }
             Expr::FunctionCall { args, name, .. } => {
-                let function = crate::function::Func::resolve_function(
-                    name.as_str(),
-                    args.as_ref().map_or(0, |a| a.len()),
-                )?;
+                let function = crate::function::Func::resolve_function(name.as_str(), args.len())?;
                 // is deterministic
                 can_pushdown &= function.is_deterministic();
             }
@@ -1223,8 +1191,8 @@ pub fn parse_pragma_bool(expr: &Expr) -> Result<bool> {
 }
 
 /// Extract column name from an expression (e.g., for SELECT clauses)
-pub fn extract_column_name_from_expr(expr: &ast::Expr) -> Option<String> {
-    match expr {
+pub fn extract_column_name_from_expr(expr: impl AsRef<ast::Expr>) -> Option<String> {
+    match expr.as_ref() {
         ast::Expr::Id(name) => Some(name.as_str().to_string()),
         ast::Expr::Qualified(_, name) => Some(name.as_str().to_string()),
         _ => None,
@@ -1235,10 +1203,15 @@ pub fn extract_column_name_from_expr(expr: &ast::Expr) -> Option<String> {
 pub fn extract_view_columns(select_stmt: &ast::Select, schema: &Schema) -> Vec<Column> {
     let mut columns = Vec::new();
     // Navigate to the first SELECT in the statement
-    if let ast::OneSelect::Select(select_core) = select_stmt.body.select.as_ref() {
+    if let ast::OneSelect::Select {
+        ref from,
+        columns: select_columns,
+        ..
+    } = &select_stmt.body.select
+    {
         // First, we need to figure out which table(s) are being selected from
-        let table_name = if let Some(from) = &select_core.from {
-            if let Some(ast::SelectTable::Table(qualified_name, _, _)) = from.select.as_deref() {
+        let table_name = if let Some(from) = from {
+            if let ast::SelectTable::Table(qualified_name, _, _) = from.select.as_ref() {
                 Some(normalize_ident(qualified_name.name.as_str()))
             } else {
                 None
@@ -1249,7 +1222,7 @@ pub fn extract_view_columns(select_stmt: &ast::Select, schema: &Schema) -> Vec<C
         // Get the table for column resolution
         let _table = table_name.as_ref().and_then(|name| schema.get_table(name));
         // Process each column in the SELECT list
-        for (i, result_col) in select_core.columns.iter().enumerate() {
+        for (i, result_col) in select_columns.iter().enumerate() {
             match result_col {
                 ast::ResultColumn::Expr(expr, alias) => {
                     let name = alias
@@ -1370,7 +1343,7 @@ pub fn extract_view_columns(select_stmt: &ast::Select, schema: &Schema) -> Vec<C
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use turso_sqlite3_parser::ast::{self, Expr, Literal, Name, Operator::*, Type};
+    use turso_parser::ast::{self, Expr, Literal, Name, Operator::*, Type};
 
     #[test]
     fn test_normalize_ident() {
@@ -1463,25 +1436,34 @@ pub mod tests {
         let func1 = Expr::FunctionCall {
             name: Name::Ident("SUM".to_string()),
             distinctness: None,
-            args: Some(vec![Expr::Id(Name::Ident("x".to_string()))]),
-            order_by: None,
-            filter_over: None,
+            args: vec![Expr::Id(Name::Ident("x".to_string())).into()],
+            order_by: vec![],
+            filter_over: FunctionTail {
+                filter_clause: None,
+                over_clause: None,
+            },
         };
         let func2 = Expr::FunctionCall {
             name: Name::Ident("sum".to_string()),
             distinctness: None,
-            args: Some(vec![Expr::Id(Name::Ident("x".to_string()))]),
-            order_by: None,
-            filter_over: None,
+            args: vec![Expr::Id(Name::Ident("x".to_string())).into()],
+            order_by: vec![],
+            filter_over: FunctionTail {
+                filter_clause: None,
+                over_clause: None,
+            },
         };
         assert!(exprs_are_equivalent(&func1, &func2));
 
         let func3 = Expr::FunctionCall {
             name: Name::Ident("SUM".to_string()),
             distinctness: Some(ast::Distinctness::Distinct),
-            args: Some(vec![Expr::Id(Name::Ident("x".to_string()))]),
-            order_by: None,
-            filter_over: None,
+            args: vec![Expr::Id(Name::Ident("x".to_string())).into()],
+            order_by: vec![],
+            filter_over: FunctionTail {
+                filter_clause: None,
+                over_clause: None,
+            },
         };
         assert!(!exprs_are_equivalent(&func1, &func3));
     }
@@ -1491,16 +1473,22 @@ pub mod tests {
         let sum = Expr::FunctionCall {
             name: Name::Ident("SUM".to_string()),
             distinctness: None,
-            args: Some(vec![Expr::Id(Name::Ident("x".to_string()))]),
-            order_by: None,
-            filter_over: None,
+            args: vec![Expr::Id(Name::Ident("x".to_string())).into()],
+            order_by: vec![],
+            filter_over: FunctionTail {
+                filter_clause: None,
+                over_clause: None,
+            },
         };
         let sum_distinct = Expr::FunctionCall {
             name: Name::Ident("SUM".to_string()),
             distinctness: Some(ast::Distinctness::Distinct),
-            args: Some(vec![Expr::Id(Name::Ident("x".to_string()))]),
-            order_by: None,
-            filter_over: None,
+            args: vec![Expr::Id(Name::Ident("x".to_string())).into()],
+            order_by: vec![],
+            filter_over: FunctionTail {
+                filter_clause: None,
+                over_clause: None,
+            },
         };
         assert!(!exprs_are_equivalent(&sum, &sum_distinct));
     }
@@ -1526,7 +1514,8 @@ pub mod tests {
             Box::new(Expr::Literal(Literal::Numeric("683".to_string()))),
             Add,
             Box::new(Expr::Literal(Literal::Numeric("799.0".to_string()))),
-        )]);
+        )
+        .into()]);
         let expr2 = Expr::Binary(
             Box::new(Expr::Literal(Literal::Numeric("799".to_string()))),
             Add,
@@ -1540,7 +1529,8 @@ pub mod tests {
             Box::new(Expr::Literal(Literal::Numeric("6".to_string()))),
             Add,
             Box::new(Expr::Literal(Literal::Numeric("7".to_string()))),
-        )]);
+        )
+        .into()]);
         let expr8 = Expr::Binary(
             Box::new(Expr::Literal(Literal::Numeric("6".to_string()))),
             Add,

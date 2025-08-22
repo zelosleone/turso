@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 
-use turso_sqlite3_parser::ast::{self, SortOrder, TableInternalId};
+use turso_parser::ast::{self, SortOrder, TableInternalId};
 
 use crate::{
     translate::optimizer::access_method::AccessMethodParams,
@@ -71,19 +71,19 @@ impl OrderTarget {
 /// TODO: this does not currently handle the case where we definitely cannot eliminate
 /// the ORDER BY sorter, but we could still eliminate the GROUP BY sorter.
 pub fn compute_order_target(
-    order_by_opt: &mut Option<Vec<(ast::Expr, SortOrder)>>,
+    order_by: &mut Vec<(Box<ast::Expr>, SortOrder)>,
     group_by_opt: Option<&mut GroupBy>,
 ) -> Option<OrderTarget> {
-    match (&order_by_opt, group_by_opt) {
+    match (order_by.is_empty(), group_by_opt) {
         // No ordering demands - we don't care what order the joined result rows are in
-        (None, None) => None,
+        (true, None) => None,
         // Only ORDER BY - we would like the joined result rows to be in the order specified by the ORDER BY
-        (Some(order_by), None) => OrderTarget::maybe_from_iterator(
-            order_by.iter().map(|(expr, order)| (expr, *order)),
+        (false, None) => OrderTarget::maybe_from_iterator(
+            order_by.iter().map(|(expr, order)| (expr.as_ref(), *order)),
             EliminatesSortBy::Order,
         ),
         // Only GROUP BY - we would like the joined result rows to be in the order specified by the GROUP BY
-        (None, Some(group_by)) => OrderTarget::maybe_from_iterator(
+        (true, Some(group_by)) => OrderTarget::maybe_from_iterator(
             group_by.exprs.iter().map(|expr| (expr, SortOrder::Asc)),
             EliminatesSortBy::Group,
         ),
@@ -96,7 +96,7 @@ pub fn compute_order_target(
         // If the GROUP BY contains all the expressions in the ORDER BY,
         // then we again can use the GROUP BY expressions as the target order for the join;
         // however in this case we must take the ASC/DESC from ORDER BY into account.
-        (Some(order_by), Some(group_by)) => {
+        (false, Some(group_by)) => {
             // Does the group by contain all expressions in the order by?
             let group_by_contains_all = order_by.iter().all(|(expr, _)| {
                 group_by
@@ -133,7 +133,7 @@ pub fn compute_order_target(
                     *order_by_dir;
             }
             // Now we can remove the ORDER BY from the query.
-            order_by_opt.take();
+            order_by.clear();
 
             OrderTarget::maybe_from_iterator(
                 group_by

@@ -4,8 +4,8 @@
 use chrono::Datelike;
 use std::rc::Rc;
 use std::sync::Arc;
-use turso_sqlite3_parser::ast::{self, ColumnDefinition, Expr, Literal, Name};
-use turso_sqlite3_parser::ast::{PragmaName, QualifiedName};
+use turso_parser::ast::{self, ColumnDefinition, Expr, Literal, Name};
+use turso_parser::ast::{PragmaName, QualifiedName};
 
 use super::integrity_check::translate_integrity_check;
 use crate::pragma::pragma_for;
@@ -63,9 +63,9 @@ pub fn translate_pragma(
         None => query_pragma(pragma, schema, None, pager, connection, program)?,
         Some(ast::PragmaBody::Equals(value) | ast::PragmaBody::Call(value)) => match pragma {
             PragmaName::TableInfo => {
-                query_pragma(pragma, schema, Some(value), pager, connection, program)?
+                query_pragma(pragma, schema, Some(*value), pager, connection, program)?
             }
-            _ => update_pragma(pragma, schema, syms, value, pager, connection, program)?,
+            _ => update_pragma(pragma, schema, syms, *value, pager, connection, program)?,
         },
     };
     match mode {
@@ -275,14 +275,17 @@ fn update_pragma(
             if let Some(table) = &opts.table() {
                 // make sure that we have table created
                 program = translate_create_table(
-                    QualifiedName::single(ast::Name::from_str(table)),
+                    QualifiedName {
+                        db_name: None,
+                        name: ast::Name::new(table),
+                        alias: None,
+                    },
                     false,
-                    ast::CreateTableBody::columns_and_constraints_from_definition(
-                        turso_cdc_table_columns(),
-                        None,
-                        ast::TableOptions::NONE,
-                    )
-                    .unwrap(),
+                    ast::CreateTableBody::ColumnsAndConstraints {
+                        columns: turso_cdc_table_columns(),
+                        constraints: vec![],
+                        options: ast::TableOptions::NONE,
+                    },
                     true,
                     schema,
                     syms,
@@ -460,9 +463,7 @@ fn query_pragma(
                     let view = view_mutex.lock().unwrap();
                     emit_columns_for_table_info(&mut program, &view.columns, base_reg);
                 } else if let Some(view) = schema.get_view(&name) {
-                    if let Some(ref columns) = view.columns {
-                        emit_columns_for_table_info(&mut program, columns, base_reg);
-                    }
+                    emit_columns_for_table_info(&mut program, &view.columns, base_reg);
                 }
             }
             let col_names = ["cid", "name", "type", "notnull", "dflt_value", "pk"];
@@ -698,7 +699,7 @@ pub const TURSO_CDC_DEFAULT_TABLE_NAME: &str = "turso_cdc";
 fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
     vec![
         ast::ColumnDefinition {
-            col_name: ast::Name::from_str("change_id"),
+            col_name: ast::Name::new("change_id"),
             col_type: Some(ast::Type {
                 name: "INTEGER".to_string(),
                 size: None,
@@ -713,7 +714,7 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
             }],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name::from_str("change_time"),
+            col_name: ast::Name::new("change_time"),
             col_type: Some(ast::Type {
                 name: "INTEGER".to_string(),
                 size: None,
@@ -721,7 +722,7 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
             constraints: vec![],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name::from_str("change_type"),
+            col_name: ast::Name::new("change_type"),
             col_type: Some(ast::Type {
                 name: "INTEGER".to_string(),
                 size: None,
@@ -729,7 +730,7 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
             constraints: vec![],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name::from_str("table_name"),
+            col_name: ast::Name::new("table_name"),
             col_type: Some(ast::Type {
                 name: "TEXT".to_string(),
                 size: None,
@@ -737,12 +738,12 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
             constraints: vec![],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name::from_str("id"),
+            col_name: ast::Name::new("id"),
             col_type: None,
             constraints: vec![],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name::from_str("before"),
+            col_name: ast::Name::new("before"),
             col_type: Some(ast::Type {
                 name: "BLOB".to_string(),
                 size: None,
@@ -750,7 +751,7 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
             constraints: vec![],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name::from_str("after"),
+            col_name: ast::Name::new("after"),
             col_type: Some(ast::Type {
                 name: "BLOB".to_string(),
                 size: None,
@@ -758,7 +759,7 @@ fn turso_cdc_table_columns() -> Vec<ColumnDefinition> {
             constraints: vec![],
         },
         ast::ColumnDefinition {
-            col_name: ast::Name::from_str("updates"),
+            col_name: ast::Name::new("updates"),
             col_type: Some(ast::Type {
                 name: "BLOB".to_string(),
                 size: None,

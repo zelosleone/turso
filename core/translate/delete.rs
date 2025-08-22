@@ -7,7 +7,7 @@ use crate::util::normalize_ident;
 use crate::vdbe::builder::{ProgramBuilder, ProgramBuilderOpts, TableRefIdCounter};
 use crate::{schema::Schema, Result, SymbolTable};
 use std::sync::Arc;
-use turso_sqlite3_parser::ast::{Expr, Limit, QualifiedName, ResultColumn};
+use turso_parser::ast::{Expr, Limit, QualifiedName, ResultColumn};
 
 use super::plan::{ColumnUsedMask, JoinedTable, TableReferences};
 
@@ -16,8 +16,8 @@ pub fn translate_delete(
     schema: &Schema,
     tbl_name: &QualifiedName,
     where_clause: Option<Box<Expr>>,
-    limit: Option<Box<Limit>>,
-    returning: Option<Vec<ResultColumn>>,
+    limit: Option<Limit>,
+    returning: Vec<ResultColumn>,
     syms: &SymbolTable,
     mut program: ProgramBuilder,
     connection: &Arc<crate::Connection>,
@@ -35,7 +35,7 @@ pub fn translate_delete(
     // the result set, and only after that it opens the table for writing and deletes the rows. It
     // also uses a couple of instructions that we don't implement yet (i.e.: RowSetAdd, RowSetRead,
     // RowSetTest). So for now I'll just defer it altogether.
-    if returning.is_some() {
+    if !returning.is_empty() {
         crate::bail_parse_error!("RETURNING currently not implemented for DELETE statements.");
     }
     let result_columns = vec![];
@@ -67,7 +67,7 @@ pub fn prepare_delete_plan(
     schema: &Schema,
     tbl_name: String,
     where_clause: Option<Box<Expr>>,
-    limit: Option<Box<Limit>>,
+    limit: Option<Limit>,
     result_columns: Vec<super::plan::ResultSetColumn>,
     table_ref_counter: &mut TableRefIdCounter,
     connection: &Arc<crate::Connection>,
@@ -99,7 +99,7 @@ pub fn prepare_delete_plan(
 
     // Parse the WHERE clause
     parse_where(
-        where_clause.map(|e| *e),
+        where_clause.as_deref(),
         &mut table_references,
         None,
         &mut where_predicates,
@@ -113,7 +113,7 @@ pub fn prepare_delete_plan(
         table_references,
         result_columns,
         where_clause: where_predicates,
-        order_by: None,
+        order_by: vec![],
         limit: resolved_limit,
         offset: resolved_offset,
         contains_constant_false_condition: false,

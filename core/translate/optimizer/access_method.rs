@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use turso_ext::{ConstraintInfo, ConstraintUsage, ResultCode};
-use turso_sqlite3_parser::ast::SortOrder;
+use turso_parser::ast::SortOrder;
 
 use crate::translate::optimizer::constraints::{convert_to_vtab_constraint, Constraint};
 use crate::{

@@ -1,18 +1,19 @@
 use crate::ast::{
-    AlterTableBody, As, Cmd, ColumnConstraint, ColumnDefinition, CommonTableExpr, CompoundOperator,
-    CompoundSelect, CreateTableBody, DeferSubclause, Distinctness, Expr, ForeignKeyClause,
-    FrameBound, FrameClause, FrameExclude, FrameMode, FromClause, FunctionTail, GroupBy, Indexed,
-    IndexedColumn, InitDeferredPred, InsertBody, JoinConstraint, JoinOperator, JoinType,
-    JoinedSelectTable, LikeOperator, Limit, Literal, Materialized, Name, NamedColumnConstraint,
-    NamedTableConstraint, NullsOrder, OneSelect, Operator, Over, PragmaBody, PragmaValue,
-    QualifiedName, RefAct, RefArg, ResolveType, ResultColumn, Select, SelectBody, SelectTable, Set,
-    SortOrder, SortedColumn, Stmt, TableConstraint, TableOptions, TransactionType, TriggerCmd,
-    TriggerEvent, TriggerTime, Type, TypeSize, UnaryOperator, Upsert, UpsertDo, UpsertIndex,
-    Window, WindowDef, With,
+    AlterTable, AlterTableBody, As, Cmd, ColumnConstraint, ColumnDefinition, CommonTableExpr,
+    CompoundOperator, CompoundSelect, CreateTableBody, CreateVirtualTable, DeferSubclause,
+    Distinctness, Expr, ForeignKeyClause, FrameBound, FrameClause, FrameExclude, FrameMode,
+    FromClause, FunctionTail, GroupBy, Indexed, IndexedColumn, InitDeferredPred, InsertBody,
+    JoinConstraint, JoinOperator, JoinType, JoinedSelectTable, LikeOperator, Limit, Literal,
+    Materialized, Name, NamedColumnConstraint, NamedTableConstraint, NullsOrder, OneSelect,
+    Operator, Over, PragmaBody, PragmaValue, QualifiedName, RefAct, RefArg, ResolveType,
+    ResultColumn, Select, SelectBody, SelectTable, Set, SortOrder, SortedColumn, Stmt,
+    TableConstraint, TableOptions, TransactionType, TriggerCmd, TriggerEvent, TriggerTime, Type,
+    TypeSize, UnaryOperator, Update, Upsert, UpsertDo, UpsertIndex, Window, WindowDef, With,
 };
 use crate::error::Error;
 use crate::lexer::{Lexer, Token};
 use crate::token::TokenType::{self, *};
+use crate::Result;
 
 macro_rules! peek_expect {
     ( $parser:expr, $( $x:ident ),* $(,)?) => {
@@ -89,7 +90,7 @@ fn from_bytes(bytes: &[u8]) -> String {
 }
 
 #[inline]
-fn join_type_from_bytes(s: &[u8]) -> Result<JoinType, Error> {
+fn join_type_from_bytes(s: &[u8]) -> Result<JoinType> {
     if b"CROSS".eq_ignore_ascii_case(s) {
         Ok(JoinType::INNER | JoinType::CROSS)
     } else if b"FULL".eq_ignore_ascii_case(s) {
@@ -113,7 +114,7 @@ fn join_type_from_bytes(s: &[u8]) -> Result<JoinType, Error> {
 }
 
 #[inline]
-fn new_join_type(n0: &[u8], n1: Option<&[u8]>, n2: Option<&[u8]>) -> Result<JoinType, Error> {
+fn new_join_type(n0: &[u8], n1: Option<&[u8]>, n2: Option<&[u8]>) -> Result<JoinType> {
     let mut jt = join_type_from_bytes(n0)?;
 
     if let Some(n1) = n1 {
@@ -140,6 +141,7 @@ fn new_join_type(n0: &[u8], n1: Option<&[u8]>, n2: Option<&[u8]>) -> Result<Join
 
 pub struct Parser<'a> {
     lexer: Lexer<'a>,
+    offset: usize,
 
     /// The current token being processed
     current_token: Token<'a>,
@@ -147,7 +149,7 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Iterator for Parser<'a> {
-    type Item = Result<Cmd, Error>;
+    type Item = Result<Cmd>;
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
@@ -164,6 +166,7 @@ impl<'a> Parser<'a> {
     pub fn new(input: &'a [u8]) -> Self {
         Self {
             lexer: Lexer::new(input),
+            offset: 0,
             peekable: false,
             current_token: Token {
                 value: b"",
@@ -172,8 +175,12 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
     // entrypoint of parsing
-    fn next_cmd(&mut self) -> Result<Option<Cmd>, Error> {
+    pub fn next_cmd(&mut self) -> Result<Option<Cmd>> {
         // consumes prefix SEMI
         while let Some(token) = self.peek()? {
             if token.token_type == Some(TK_SEMI) {
@@ -205,6 +212,7 @@ impl<'a> Parser<'a> {
                 }
                 _ => {
                     let stmt = self.parse_stmt()?;
+                    stmt.check()?;
                     Some(Cmd::Stmt(stmt))
                 }
             },
@@ -236,9 +244,7 @@ impl<'a> Parser<'a> {
     }
 
     #[inline(always)]
-    fn consume_lexer_without_whitespaces_or_comments(
-        &mut self,
-    ) -> Option<Result<Token<'a>, Error>> {
+    fn consume_lexer_without_whitespaces_or_comments(&mut self) -> Option<Result<Token<'a>>> {
         debug_assert!(!self.peekable);
         loop {
             let tok = self.lexer.next();
@@ -252,7 +258,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn next_token(&mut self) -> Result<Option<Token<'a>>, Error> {
+    fn next_token(&mut self) -> Result<Option<Token<'a>>> {
         debug_assert!(!self.peekable);
         let mut next = self.consume_lexer_without_whitespaces_or_comments();
 
@@ -487,9 +493,9 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    fn mark<F, R>(&mut self, exc: F) -> Result<R, Error>
+    fn mark<F, R>(&mut self, exc: F) -> Result<R>
     where
-        F: FnOnce(&mut Self) -> Result<R, Error>,
+        F: FnOnce(&mut Self) -> Result<R>,
     {
         let old_peekable = self.peekable;
         let old_current_token = self.current_token.clone();
@@ -518,15 +524,16 @@ impl<'a> Parser<'a> {
 
     /// Get the next token from the lexer
     #[inline]
-    fn eat(&mut self) -> Result<Option<Token<'a>>, Error> {
+    fn eat(&mut self) -> Result<Option<Token<'a>>> {
         let result = self.peek()?;
+        self.offset = self.lexer.offset;
         self.peekable = false; // Clear the peek mark after consuming
         Ok(result)
     }
 
     /// Peek at the next token without consuming it
     #[inline]
-    fn peek(&mut self) -> Result<Option<Token<'a>>, Error> {
+    fn peek(&mut self) -> Result<Option<Token<'a>>> {
         if self.peekable {
             return Ok(Some(self.current_token.clone()));
         }
@@ -535,7 +542,7 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    fn eat_no_eof(&mut self) -> Result<Token<'a>, Error> {
+    fn eat_no_eof(&mut self) -> Result<Token<'a>> {
         match self.eat()? {
             None => Err(Error::ParseUnexpectedEOF),
             Some(token) => Ok(token),
@@ -543,14 +550,14 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    fn peek_no_eof(&mut self) -> Result<Token<'a>, Error> {
+    fn peek_no_eof(&mut self) -> Result<Token<'a>> {
         match self.peek()? {
             None => Err(Error::ParseUnexpectedEOF),
             Some(token) => Ok(token),
         }
     }
 
-    fn parse_stmt(&mut self) -> Result<Stmt, Error> {
+    fn parse_stmt(&mut self) -> Result<Stmt> {
         let tok = peek_expect!(
             self,
             TK_BEGIN,
@@ -601,7 +608,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_nm(&mut self) -> Result<Name, Error> {
+    fn parse_nm(&mut self) -> Result<Name> {
         let tok = eat_expect!(self, TK_ID, TK_STRING, TK_INDEXED, TK_JOIN_KW);
 
         let first_char = tok.value[0]; // no need to check empty
@@ -611,7 +618,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_transopt(&mut self) -> Result<Option<Name>, Error> {
+    fn parse_transopt(&mut self) -> Result<Option<Name>> {
         match self.peek()? {
             None => Ok(None),
             Some(tok) => match tok.token_type.unwrap() {
@@ -632,7 +639,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_begin(&mut self) -> Result<Stmt, Error> {
+    fn parse_begin(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_BEGIN);
 
         let transtype = match self.peek()? {
@@ -660,14 +667,14 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_commit(&mut self) -> Result<Stmt, Error> {
+    fn parse_commit(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_COMMIT, TK_END);
         Ok(Stmt::Commit {
             name: self.parse_transopt()?,
         })
     }
 
-    fn parse_rollback(&mut self) -> Result<Stmt, Error> {
+    fn parse_rollback(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_ROLLBACK);
 
         let tx_name = self.parse_transopt()?;
@@ -695,14 +702,14 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_savepoint(&mut self) -> Result<Stmt, Error> {
+    fn parse_savepoint(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_SAVEPOINT);
         Ok(Stmt::Savepoint {
             name: self.parse_nm()?,
         })
     }
 
-    fn parse_release(&mut self) -> Result<Stmt, Error> {
+    fn parse_release(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_RELEASE);
 
         if self.peek_no_eof()?.token_type == Some(TK_SAVEPOINT) {
@@ -714,7 +721,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_create_view(&mut self, temporary: bool) -> Result<Stmt, Error> {
+    fn parse_create_view(&mut self, temporary: bool) -> Result<Stmt> {
         eat_assert!(self, TK_VIEW);
         let if_not_exists = self.parse_if_not_exists()?;
         let view_name = self.parse_fullname(false)?;
@@ -730,7 +737,23 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_vtab_arg(&mut self) -> Result<String, Error> {
+    fn parse_create_materialized_view(&mut self) -> Result<Stmt> {
+        eat_assert!(self, TK_MATERIALIZED);
+        eat_assert!(self, TK_VIEW);
+        let if_not_exists = self.parse_if_not_exists()?;
+        let view_name = self.parse_fullname(false)?;
+        let columns = self.parse_eid_list()?;
+        eat_expect!(self, TK_AS);
+        let select = self.parse_select()?;
+        Ok(Stmt::CreateMaterializedView {
+            if_not_exists,
+            view_name,
+            columns,
+            select,
+        })
+    }
+
+    fn parse_vtab_arg(&mut self) -> Result<String> {
         let tok = self.peek_no_eof()?;
 
         // minus len() because lexer already consumed the token
@@ -772,7 +795,7 @@ impl<'a> Parser<'a> {
         Ok(from_bytes(&self.lexer.input[start_idx..end_idx]))
     }
 
-    fn parse_create_virtual(&mut self) -> Result<Stmt, Error> {
+    fn parse_create_virtual(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_VIRTUAL);
         eat_expect!(self, TK_TABLE);
         let if_not_exists = self.parse_if_not_exists()?;
@@ -808,18 +831,26 @@ impl<'a> Parser<'a> {
             _ => vec![],
         };
 
-        Ok(Stmt::CreateVirtualTable {
+        Ok(Stmt::CreateVirtualTable(CreateVirtualTable {
             if_not_exists,
             tbl_name,
             module_name,
             args,
-        })
+        }))
     }
 
-    fn parse_create_stmt(&mut self) -> Result<Stmt, Error> {
+    fn parse_create_stmt(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_CREATE);
         let mut first_tok = peek_expect!(
-            self, TK_TEMP, TK_TABLE, TK_VIRTUAL, TK_VIEW, TK_INDEX, TK_UNIQUE, TK_TRIGGER
+            self,
+            TK_TEMP,
+            TK_TABLE,
+            TK_VIRTUAL,
+            TK_VIEW,
+            TK_INDEX,
+            TK_UNIQUE,
+            TK_TRIGGER,
+            TK_MATERIALIZED
         );
         let mut temp = false;
         if first_tok.token_type == Some(TK_TEMP) {
@@ -831,6 +862,7 @@ impl<'a> Parser<'a> {
         match first_tok.token_type.unwrap() {
             TK_TABLE => self.parse_create_table(temp),
             TK_VIEW => self.parse_create_view(temp),
+            TK_MATERIALIZED => self.parse_create_materialized_view(),
             TK_TRIGGER => self.parse_create_trigger(temp),
             TK_VIRTUAL => self.parse_create_virtual(),
             TK_INDEX | TK_UNIQUE => self.parse_create_index(),
@@ -838,7 +870,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_with_stmt(&mut self) -> Result<Stmt, Error> {
+    fn parse_with_stmt(&mut self) -> Result<Stmt> {
         let with = self.parse_with()?;
         debug_assert!(with.is_some());
         let first_tok =
@@ -853,7 +885,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_if_not_exists(&mut self) -> Result<bool, Error> {
+    fn parse_if_not_exists(&mut self) -> Result<bool> {
         if let Some(tok) = self.peek()? {
             if tok.token_type == Some(TK_IF) {
                 eat_assert!(self, TK_IF);
@@ -869,7 +901,7 @@ impl<'a> Parser<'a> {
         Ok(true)
     }
 
-    fn parse_fullname(&mut self, allow_alias: bool) -> Result<QualifiedName, Error> {
+    fn parse_fullname(&mut self, allow_alias: bool) -> Result<QualifiedName> {
         let first_name = self.parse_nm()?;
 
         let secone_name = if let Some(tok) = self.peek()? {
@@ -913,7 +945,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_signed(&mut self) -> Result<Box<Expr>, Error> {
+    fn parse_signed(&mut self) -> Result<Box<Expr>> {
         peek_expect!(self, TK_FLOAT, TK_INTEGER, TK_PLUS, TK_MINUS);
 
         let expr = self.parse_expr_operand()?;
@@ -928,7 +960,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_type(&mut self) -> Result<Option<Type>, Error> {
+    fn parse_type(&mut self) -> Result<Option<Type>> {
         let mut type_name = if let Some(tok) = self.peek()? {
             match tok.token_type.unwrap().fallback_id_if_ok() {
                 TK_ID | TK_STRING => {
@@ -1002,7 +1034,7 @@ impl<'a> Parser<'a> {
     ///
     /// this function detect precedence by peeking first token of operator
     /// after parsing a operand (binary operator)
-    fn current_token_precedence(&mut self) -> Result<Option<u8>, Error> {
+    fn current_token_precedence(&mut self) -> Result<Option<u8>> {
         let tok = self.peek()?;
         if tok.is_none() {
             return Ok(None);
@@ -1026,7 +1058,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_distinct(&mut self) -> Result<Option<Distinctness>, Error> {
+    fn parse_distinct(&mut self) -> Result<Option<Distinctness>> {
         match self.peek()? {
             None => Ok(None),
             Some(tok) => match tok.token_type.unwrap() {
@@ -1043,7 +1075,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_filter_clause(&mut self) -> Result<Option<Box<Expr>>, Error> {
+    fn parse_filter_clause(&mut self) -> Result<Option<Box<Expr>>> {
         match self.peek()? {
             None => return Ok(None),
             Some(tok) => match tok.token_type.unwrap() {
@@ -1061,7 +1093,7 @@ impl<'a> Parser<'a> {
         Ok(Some(expr))
     }
 
-    fn parse_frame_opt(&mut self) -> Result<Option<FrameClause>, Error> {
+    fn parse_frame_opt(&mut self) -> Result<Option<FrameClause>> {
         let range_or_rows = match self.peek()? {
             None => return Ok(None),
             Some(tok) => match tok.token_type.unwrap() {
@@ -1171,7 +1203,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_window(&mut self) -> Result<Window, Error> {
+    fn parse_window(&mut self) -> Result<Window> {
         let name = match self.peek()? {
             None => None,
             Some(tok) => match tok.token_type.unwrap() {
@@ -1202,7 +1234,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_over_clause(&mut self) -> Result<Option<Over>, Error> {
+    fn parse_over_clause(&mut self) -> Result<Option<Over>> {
         match self.peek()? {
             None => return Ok(None),
             Some(tok) => match tok.token_type.unwrap() {
@@ -1225,7 +1257,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_filter_over(&mut self) -> Result<FunctionTail, Error> {
+    fn parse_filter_over(&mut self) -> Result<FunctionTail> {
         let filter_clause = self.parse_filter_clause()?;
         let over_clause = self.parse_over_clause()?;
         Ok(FunctionTail {
@@ -1234,7 +1266,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_raise_type(&mut self) -> Result<ResolveType, Error> {
+    fn parse_raise_type(&mut self) -> Result<ResolveType> {
         let tok = eat_expect!(self, TK_ROLLBACK, TK_ABORT, TK_FAIL);
 
         match tok.token_type.unwrap() {
@@ -1245,7 +1277,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_expr_operand(&mut self) -> Result<Box<Expr>, Error> {
+    fn parse_expr_operand(&mut self) -> Result<Box<Expr>> {
         let tok = peek_expect!(
             self,
             TK_LP,
@@ -1458,8 +1490,8 @@ impl<'a> Parser<'a> {
                             _ => {
                                 let distinct = self.parse_distinct()?;
                                 let exprs = self.parse_expr_list()?;
-                                eat_expect!(self, TK_RP);
                                 let order_by = self.parse_order_by()?;
+                                eat_expect!(self, TK_RP);
                                 let filter_over = self.parse_filter_over()?;
                                 return Ok(Box::new(Expr::FunctionCall {
                                     name,
@@ -1512,7 +1544,7 @@ impl<'a> Parser<'a> {
     }
 
     #[allow(clippy::vec_box)]
-    fn parse_expr_list(&mut self) -> Result<Vec<Box<Expr>>, Error> {
+    fn parse_expr_list(&mut self) -> Result<Vec<Box<Expr>>> {
         let mut exprs = vec![];
         while let Some(tok) = self.peek()? {
             match tok.token_type.unwrap().fallback_id_if_ok() {
@@ -1534,7 +1566,7 @@ impl<'a> Parser<'a> {
         Ok(exprs)
     }
 
-    fn parse_expr(&mut self, precedence: u8) -> Result<Box<Expr>, Error> {
+    fn parse_expr(&mut self, precedence: u8) -> Result<Box<Expr>> {
         let mut result = self.parse_expr_operand()?;
 
         loop {
@@ -1563,18 +1595,26 @@ impl<'a> Parser<'a> {
                 }
                 TK_OR => {
                     eat_assert!(self, TK_OR);
-                    Box::new(Expr::Binary(result, Operator::Or, self.parse_expr(pre)?))
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Or,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_AND => {
                     eat_assert!(self, TK_AND);
-                    Box::new(Expr::Binary(result, Operator::And, self.parse_expr(pre)?))
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::And,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_EQ => {
                     eat_assert!(self, TK_EQ);
                     Box::new(Expr::Binary(
                         result,
                         Operator::Equals,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_NE => {
@@ -1582,7 +1622,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::NotEquals,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_IS => {
@@ -1615,7 +1655,7 @@ impl<'a> Parser<'a> {
                         }
                     };
 
-                    Box::new(Expr::Binary(result, op, self.parse_expr(pre)?))
+                    Box::new(Expr::Binary(result, op, self.parse_expr(pre + 1)?))
                 }
                 TK_BETWEEN => {
                     eat_assert!(self, TK_BETWEEN);
@@ -1725,14 +1765,18 @@ impl<'a> Parser<'a> {
                 }
                 TK_LT => {
                     eat_assert!(self, TK_LT);
-                    Box::new(Expr::Binary(result, Operator::Less, self.parse_expr(pre)?))
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Less,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_GT => {
                     eat_assert!(self, TK_GT);
                     Box::new(Expr::Binary(
                         result,
                         Operator::Greater,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_LE => {
@@ -1740,7 +1784,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::LessEquals,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_GE => {
@@ -1748,7 +1792,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::GreaterEquals,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_ESCAPE => unreachable!(),
@@ -1757,7 +1801,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::BitwiseAnd,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_BITOR => {
@@ -1765,7 +1809,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::BitwiseOr,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_LSHIFT => {
@@ -1773,7 +1817,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::LeftShift,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_RSHIFT => {
@@ -1781,19 +1825,23 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::RightShift,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_PLUS => {
                     eat_assert!(self, TK_PLUS);
-                    Box::new(Expr::Binary(result, Operator::Add, self.parse_expr(pre)?))
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Add,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_MINUS => {
                     eat_assert!(self, TK_MINUS);
                     Box::new(Expr::Binary(
                         result,
                         Operator::Subtract,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_STAR => {
@@ -1801,7 +1849,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::Multiply,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_SLASH => {
@@ -1809,7 +1857,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::Divide,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_REM => {
@@ -1817,7 +1865,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::Modulus,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_CONCAT => {
@@ -1825,7 +1873,7 @@ impl<'a> Parser<'a> {
                     Box::new(Expr::Binary(
                         result,
                         Operator::Concat,
-                        self.parse_expr(pre)?,
+                        self.parse_expr(pre + 1)?,
                     ))
                 }
                 TK_PTR => {
@@ -1836,7 +1884,7 @@ impl<'a> Parser<'a> {
                         Operator::ArrowRightShift
                     };
 
-                    Box::new(Expr::Binary(result, op, self.parse_expr(pre)?))
+                    Box::new(Expr::Binary(result, op, self.parse_expr(pre + 1)?))
                 }
                 TK_COLLATE => Box::new(Expr::Collate(result, self.parse_collate()?.unwrap())),
                 _ => unreachable!(),
@@ -1846,7 +1894,7 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn parse_collate(&mut self) -> Result<Option<Name>, Error> {
+    fn parse_collate(&mut self) -> Result<Option<Name>> {
         if let Some(tok) = self.peek()? {
             if tok.token_type == Some(TK_COLLATE) {
                 eat_assert!(self, TK_COLLATE);
@@ -1865,7 +1913,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_sort_order(&mut self) -> Result<Option<SortOrder>, Error> {
+    fn parse_sort_order(&mut self) -> Result<Option<SortOrder>> {
         match self.peek()? {
             Some(tok) if tok.token_type == Some(TK_ASC) => {
                 eat_assert!(self, TK_ASC);
@@ -1879,7 +1927,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_eid(&mut self) -> Result<IndexedColumn, Error> {
+    fn parse_eid(&mut self) -> Result<IndexedColumn> {
         let nm = self.parse_nm()?;
         let collate = self.parse_collate()?;
         let sort_order = self.parse_sort_order()?;
@@ -1890,7 +1938,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_eid_list(&mut self) -> Result<Vec<IndexedColumn>, Error> {
+    fn parse_eid_list(&mut self) -> Result<Vec<IndexedColumn>> {
         if let Some(tok) = self.peek()? {
             if tok.token_type == Some(TK_LP) {
                 eat_assert!(self, TK_LP);
@@ -1916,7 +1964,7 @@ impl<'a> Parser<'a> {
         Ok(columns)
     }
 
-    fn parse_common_table_expr(&mut self) -> Result<CommonTableExpr, Error> {
+    fn parse_common_table_expr(&mut self) -> Result<CommonTableExpr> {
         let nm = self.parse_nm()?;
         let eid_list = self.parse_eid_list()?;
         eat_expect!(self, TK_AS);
@@ -1943,7 +1991,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_with(&mut self) -> Result<Option<With>, Error> {
+    fn parse_with(&mut self) -> Result<Option<With>> {
         if let Some(tok) = self.peek()? {
             if tok.token_type == Some(TK_WITH) {
                 eat_assert!(self, TK_WITH);
@@ -1976,7 +2024,7 @@ impl<'a> Parser<'a> {
         Ok(Some(With { recursive, ctes }))
     }
 
-    fn parse_as(&mut self) -> Result<Option<As>, Error> {
+    fn parse_as(&mut self) -> Result<Option<As>> {
         match self.peek()? {
             None => Ok(None),
             Some(tok) => match tok.token_type.unwrap().fallback_id_if_ok() {
@@ -1990,7 +2038,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_window_defn(&mut self) -> Result<WindowDef, Error> {
+    fn parse_window_defn(&mut self) -> Result<WindowDef> {
         let name = self.parse_nm()?;
         eat_expect!(self, TK_AS);
         eat_expect!(self, TK_LP);
@@ -1999,7 +2047,7 @@ impl<'a> Parser<'a> {
         Ok(WindowDef { name, window })
     }
 
-    fn parse_window_clause(&mut self) -> Result<Vec<WindowDef>, Error> {
+    fn parse_window_clause(&mut self) -> Result<Vec<WindowDef>> {
         match self.peek()? {
             None => return Ok(vec![]),
             Some(tok) => match tok.token_type.unwrap() {
@@ -2024,7 +2072,7 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn parse_group_by(&mut self) -> Result<Option<GroupBy>, Error> {
+    fn parse_group_by(&mut self) -> Result<Option<GroupBy>> {
         match self.peek()? {
             None => return Ok(None),
             Some(tok) => match tok.token_type.unwrap() {
@@ -2048,7 +2096,7 @@ impl<'a> Parser<'a> {
         Ok(Some(GroupBy { exprs, having }))
     }
 
-    fn parse_where(&mut self) -> Result<Option<Box<Expr>>, Error> {
+    fn parse_where(&mut self) -> Result<Option<Box<Expr>>> {
         match self.peek()? {
             None => Ok(None),
             Some(tok) => match tok.token_type.unwrap() {
@@ -2062,7 +2110,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_indexed(&mut self) -> Result<Option<Indexed>, Error> {
+    fn parse_indexed(&mut self) -> Result<Option<Indexed>> {
         match self.peek()? {
             None => Ok(None),
             Some(tok) => match tok.token_type.unwrap() {
@@ -2081,7 +2129,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_nm_list(&mut self) -> Result<Vec<Name>, Error> {
+    fn parse_nm_list(&mut self) -> Result<Vec<Name>> {
         let mut names = vec![self.parse_nm()?];
 
         loop {
@@ -2097,7 +2145,7 @@ impl<'a> Parser<'a> {
         Ok(names)
     }
 
-    fn parse_nm_list_opt(&mut self) -> Result<Vec<Name>, Error> {
+    fn parse_nm_list_opt(&mut self) -> Result<Vec<Name>> {
         match self.peek()? {
             Some(tok) if tok.token_type == Some(TK_LP) => {
                 eat_assert!(self, TK_LP);
@@ -2110,7 +2158,7 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn parse_on_using(&mut self) -> Result<Option<JoinConstraint>, Error> {
+    fn parse_on_using(&mut self) -> Result<Option<JoinConstraint>> {
         match self.peek()? {
             None => Ok(None),
             Some(tok) => match tok.token_type.unwrap() {
@@ -2131,7 +2179,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_joined_tables(&mut self) -> Result<Vec<JoinedSelectTable>, Error> {
+    fn parse_joined_tables(&mut self) -> Result<Vec<JoinedSelectTable>> {
         let mut result = vec![];
         while let Some(tok) = self.peek()? {
             let op = match tok.token_type.unwrap() {
@@ -2252,7 +2300,7 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn parse_from_clause(&mut self) -> Result<FromClause, Error> {
+    fn parse_from_clause(&mut self) -> Result<FromClause> {
         let tok = peek_expect!(self, TK_ID, TK_STRING, TK_INDEXED, TK_JOIN_KW, TK_LP);
 
         match tok.token_type.unwrap().fallback_id_if_ok() {
@@ -2312,7 +2360,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_from_clause_opt(&mut self) -> Result<Option<FromClause>, Error> {
+    fn parse_from_clause_opt(&mut self) -> Result<Option<FromClause>> {
         match self.peek()? {
             None => return Ok(None),
             Some(tok) if tok.token_type == Some(TK_FROM) => {
@@ -2324,7 +2372,7 @@ impl<'a> Parser<'a> {
         Ok(Some(self.parse_from_clause()?))
     }
 
-    fn parse_select_column(&mut self) -> Result<ResultColumn, Error> {
+    fn parse_select_column(&mut self) -> Result<ResultColumn> {
         match self.peek_no_eof()?.token_type.unwrap().fallback_id_if_ok() {
             TK_STAR => {
                 eat_assert!(self, TK_STAR);
@@ -2333,7 +2381,7 @@ impl<'a> Parser<'a> {
             tt => {
                 // dot STAR case
                 if tt == TK_ID || tt == TK_STRING || tt == TK_INDEXED || tt == TK_JOIN_KW {
-                    if let Ok(res) = self.mark(|p| -> Result<ResultColumn, Error> {
+                    if let Ok(res) = self.mark(|p| -> Result<ResultColumn> {
                         let name = p.parse_nm()?;
                         eat_expect!(p, TK_DOT);
                         eat_expect!(p, TK_STAR);
@@ -2350,7 +2398,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_select_columns(&mut self) -> Result<Vec<ResultColumn>, Error> {
+    fn parse_select_columns(&mut self) -> Result<Vec<ResultColumn>> {
         let mut result = vec![self.parse_select_column()?];
 
         while let Some(tok) = self.peek()? {
@@ -2367,7 +2415,7 @@ impl<'a> Parser<'a> {
     }
 
     #[allow(clippy::vec_box)]
-    fn parse_nexpr_list(&mut self) -> Result<Vec<Box<Expr>>, Error> {
+    fn parse_nexpr_list(&mut self) -> Result<Vec<Box<Expr>>> {
         let mut result = vec![self.parse_expr(0)?];
         while let Some(tok) = self.peek()? {
             if tok.token_type == Some(TK_COMMA) {
@@ -2382,7 +2430,7 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn parse_one_select(&mut self) -> Result<OneSelect, Error> {
+    fn parse_one_select(&mut self) -> Result<OneSelect> {
         let tok = eat_expect!(self, TK_SELECT, TK_VALUES);
         match tok.token_type.unwrap() {
             TK_SELECT => {
@@ -2424,7 +2472,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_select_body(&mut self) -> Result<SelectBody, Error> {
+    fn parse_select_body(&mut self) -> Result<SelectBody> {
         let select = self.parse_one_select()?;
         let mut compounds = vec![];
         while let Some(tok) = self.peek()? {
@@ -2458,7 +2506,7 @@ impl<'a> Parser<'a> {
         Ok(SelectBody { select, compounds })
     }
 
-    fn parse_sorted_column(&mut self) -> Result<SortedColumn, Error> {
+    fn parse_sorted_column(&mut self) -> Result<SortedColumn> {
         let expr = self.parse_expr(0)?;
         let sort_order = self.parse_sort_order()?;
 
@@ -2482,7 +2530,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_sort_list(&mut self) -> Result<Vec<SortedColumn>, Error> {
+    fn parse_sort_list(&mut self) -> Result<Vec<SortedColumn>> {
         let mut columns = vec![self.parse_sorted_column()?];
         loop {
             match self.peek()? {
@@ -2497,7 +2545,7 @@ impl<'a> Parser<'a> {
         Ok(columns)
     }
 
-    fn parse_order_by(&mut self) -> Result<Vec<SortedColumn>, Error> {
+    fn parse_order_by(&mut self) -> Result<Vec<SortedColumn>> {
         if let Some(tok) = self.peek()? {
             if tok.token_type == Some(TK_ORDER) {
                 eat_assert!(self, TK_ORDER);
@@ -2512,7 +2560,7 @@ impl<'a> Parser<'a> {
         self.parse_sort_list()
     }
 
-    fn parse_limit(&mut self) -> Result<Option<Limit>, Error> {
+    fn parse_limit(&mut self) -> Result<Option<Limit>> {
         if let Some(tok) = self.peek()? {
             if tok.token_type == Some(TK_LIMIT) {
                 eat_assert!(self, TK_LIMIT);
@@ -2541,7 +2589,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_select_without_cte(&mut self, with: Option<With>) -> Result<Select, Error> {
+    fn parse_select_without_cte(&mut self, with: Option<With>) -> Result<Select> {
         let body = self.parse_select_body()?;
         let order_by = self.parse_order_by()?;
         let limit = self.parse_limit()?;
@@ -2553,12 +2601,12 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_select(&mut self) -> Result<Select, Error> {
+    fn parse_select(&mut self) -> Result<Select> {
         let with = self.parse_with()?;
         self.parse_select_without_cte(with)
     }
 
-    fn parse_primary_table_constraint(&mut self) -> Result<TableConstraint, Error> {
+    fn parse_primary_table_constraint(&mut self) -> Result<TableConstraint> {
         eat_assert!(self, TK_PRIMARY);
         eat_expect!(self, TK_KEY);
         eat_expect!(self, TK_LP);
@@ -2573,7 +2621,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_unique_table_constraint(&mut self) -> Result<TableConstraint, Error> {
+    fn parse_unique_table_constraint(&mut self) -> Result<TableConstraint> {
         eat_assert!(self, TK_UNIQUE);
         eat_expect!(self, TK_LP);
         let columns = self.parse_sort_list()?;
@@ -2585,7 +2633,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_check_table_constraint(&mut self) -> Result<TableConstraint, Error> {
+    fn parse_check_table_constraint(&mut self) -> Result<TableConstraint> {
         eat_assert!(self, TK_CHECK);
         eat_expect!(self, TK_LP);
         let expr = self.parse_expr(0)?;
@@ -2593,7 +2641,7 @@ impl<'a> Parser<'a> {
         Ok(TableConstraint::Check(expr))
     }
 
-    fn parse_foreign_key_table_constraint(&mut self) -> Result<TableConstraint, Error> {
+    fn parse_foreign_key_table_constraint(&mut self) -> Result<TableConstraint> {
         eat_assert!(self, TK_FOREIGN);
         eat_expect!(self, TK_KEY);
         peek_expect!(self, TK_LP); // make sure we have columns
@@ -2608,7 +2656,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_named_table_constraints(&mut self) -> Result<Vec<NamedTableConstraint>, Error> {
+    fn parse_named_table_constraints(&mut self) -> Result<Vec<NamedTableConstraint>> {
         let mut result = vec![];
 
         while let Some(tok) = self.peek()? {
@@ -2662,7 +2710,7 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn parse_table_option(&mut self) -> Result<TableOptions, Error> {
+    fn parse_table_option(&mut self) -> Result<TableOptions> {
         match self.peek()? {
             Some(tok) => match tok.token_type.unwrap().fallback_id_if_ok() {
                 TK_WITHOUT => {
@@ -2694,7 +2742,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_table_options(&mut self) -> Result<TableOptions, Error> {
+    fn parse_table_options(&mut self) -> Result<TableOptions> {
         let mut result = self.parse_table_option()?;
         loop {
             match self.peek()? {
@@ -2709,7 +2757,7 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn parse_create_table_args(&mut self) -> Result<CreateTableBody, Error> {
+    fn parse_create_table_args(&mut self) -> Result<CreateTableBody> {
         let tok = eat_expect!(self, TK_LP, TK_AS);
         match tok.token_type.unwrap() {
             TK_AS => Ok(CreateTableBody::AsSelect(self.parse_select()?)),
@@ -2746,7 +2794,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_create_table(&mut self, temporary: bool) -> Result<Stmt, Error> {
+    fn parse_create_table(&mut self, temporary: bool) -> Result<Stmt> {
         eat_assert!(self, TK_TABLE);
         let if_not_exists = self.parse_if_not_exists()?;
         let tbl_name = self.parse_fullname(false)?;
@@ -2759,7 +2807,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_analyze(&mut self) -> Result<Stmt, Error> {
+    fn parse_analyze(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_ANALYZE);
         let name = match self.peek()? {
             Some(tok) => match tok.token_type.unwrap().fallback_id_if_ok() {
@@ -2772,7 +2820,7 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Analyze { name })
     }
 
-    fn parse_attach(&mut self) -> Result<Stmt, Error> {
+    fn parse_attach(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_ATTACH);
         if self.peek_no_eof()?.token_type == Some(TK_DATABASE) {
             eat_assert!(self, TK_DATABASE);
@@ -2795,7 +2843,7 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Attach { expr, db_name, key })
     }
 
-    fn parse_detach(&mut self) -> Result<Stmt, Error> {
+    fn parse_detach(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_DETACH);
         if self.peek_no_eof()?.token_type == Some(TK_DATABASE) {
             eat_assert!(self, TK_DATABASE);
@@ -2806,7 +2854,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_pragma_value(&mut self) -> Result<PragmaValue, Error> {
+    fn parse_pragma_value(&mut self) -> Result<PragmaValue> {
         match self.peek_no_eof()?.token_type.unwrap().fallback_id_if_ok() {
             TK_ON | TK_DELETE | TK_DEFAULT => {
                 let tok = eat_assert!(self, TK_ON, TK_DELETE, TK_DEFAULT);
@@ -2821,7 +2869,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_pragma(&mut self) -> Result<Stmt, Error> {
+    fn parse_pragma(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_PRAGMA);
         let name = self.parse_fullname(false)?;
         match self.peek()? {
@@ -2848,7 +2896,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_vacuum(&mut self) -> Result<Stmt, Error> {
+    fn parse_vacuum(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_VACUUM);
 
         let name = match self.peek()? {
@@ -2870,7 +2918,7 @@ impl<'a> Parser<'a> {
         Ok(Stmt::Vacuum { name, into })
     }
 
-    fn parse_term(&mut self) -> Result<Box<Expr>, Error> {
+    fn parse_term(&mut self) -> Result<Box<Expr>> {
         peek_expect!(
             self,
             TK_NULL,
@@ -2884,7 +2932,7 @@ impl<'a> Parser<'a> {
         self.parse_expr_operand()
     }
 
-    fn parse_default_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
+    fn parse_default_column_constraint(&mut self) -> Result<ColumnConstraint> {
         eat_assert!(self, TK_DEFAULT);
         match self.peek_no_eof()?.token_type.unwrap().fallback_id_if_ok() {
             TK_LP => {
@@ -2916,7 +2964,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_resolve_type(&mut self) -> Result<ResolveType, Error> {
+    fn parse_resolve_type(&mut self) -> Result<ResolveType> {
         match self.peek_no_eof()?.token_type.unwrap() {
             TK_IGNORE => {
                 eat_assert!(self, TK_IGNORE);
@@ -2930,7 +2978,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_on_conflict(&mut self) -> Result<Option<ResolveType>, Error> {
+    fn parse_on_conflict(&mut self) -> Result<Option<ResolveType>> {
         match self.peek()? {
             None => return Ok(None),
             Some(tok) => match tok.token_type.unwrap() {
@@ -2945,7 +2993,7 @@ impl<'a> Parser<'a> {
         Ok(Some(self.parse_resolve_type()?))
     }
 
-    fn parse_or_conflict(&mut self) -> Result<Option<ResolveType>, Error> {
+    fn parse_or_conflict(&mut self) -> Result<Option<ResolveType>> {
         match self.peek()? {
             None => return Ok(None),
             Some(tok) => match tok.token_type.unwrap() {
@@ -2959,7 +3007,7 @@ impl<'a> Parser<'a> {
         Ok(Some(self.parse_resolve_type()?))
     }
 
-    fn parse_auto_increment(&mut self) -> Result<bool, Error> {
+    fn parse_auto_increment(&mut self) -> Result<bool> {
         match self.peek()? {
             None => Ok(false),
             Some(tok) => match tok.token_type.unwrap() {
@@ -2972,7 +3020,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_not_null_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
+    fn parse_not_null_column_constraint(&mut self) -> Result<ColumnConstraint> {
         let has_not = match self.peek_no_eof()?.token_type.unwrap() {
             TK_NOT => {
                 eat_assert!(self, TK_NOT);
@@ -2988,7 +3036,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_primary_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
+    fn parse_primary_column_constraint(&mut self) -> Result<ColumnConstraint> {
         eat_assert!(self, TK_PRIMARY);
         eat_expect!(self, TK_KEY);
         let sort_order = self.parse_sort_order()?;
@@ -3002,12 +3050,12 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_unique_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
+    fn parse_unique_column_constraint(&mut self) -> Result<ColumnConstraint> {
         eat_assert!(self, TK_UNIQUE);
         Ok(ColumnConstraint::Unique(self.parse_on_conflict()?))
     }
 
-    fn parse_check_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
+    fn parse_check_column_constraint(&mut self) -> Result<ColumnConstraint> {
         eat_assert!(self, TK_CHECK);
         eat_expect!(self, TK_LP);
         let expr = self.parse_expr(0)?;
@@ -3015,7 +3063,7 @@ impl<'a> Parser<'a> {
         Ok(ColumnConstraint::Check(expr))
     }
 
-    fn parse_ref_act(&mut self) -> Result<RefAct, Error> {
+    fn parse_ref_act(&mut self) -> Result<RefAct> {
         let tok = eat_expect!(self, TK_SET, TK_CASCADE, TK_RESTRICT, TK_NO);
 
         match tok.token_type.unwrap() {
@@ -3037,7 +3085,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_ref_args(&mut self) -> Result<Vec<RefArg>, Error> {
+    fn parse_ref_args(&mut self) -> Result<Vec<RefArg>> {
         let mut result = vec![];
 
         while let Some(tok) = self.peek()? {
@@ -3063,7 +3111,7 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn parse_foreign_key_clause(&mut self) -> Result<ForeignKeyClause, Error> {
+    fn parse_foreign_key_clause(&mut self) -> Result<ForeignKeyClause> {
         eat_assert!(self, TK_REFERENCES);
         let name = self.parse_nm()?;
         let eid_list = self.parse_eid_list()?;
@@ -3075,7 +3123,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_defer_subclause(&mut self) -> Result<Option<DeferSubclause>, Error> {
+    fn parse_defer_subclause(&mut self) -> Result<Option<DeferSubclause>> {
         let has_not = match self.peek()? {
             Some(tok) => match tok.token_type.unwrap() {
                 TK_DEFERRABLE => false,
@@ -3112,7 +3160,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn parse_reference_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
+    fn parse_reference_column_constraint(&mut self) -> Result<ColumnConstraint> {
         let clause = self.parse_foreign_key_clause()?;
         let deref_clause = self.parse_defer_subclause()?;
         Ok(ColumnConstraint::ForeignKey {
@@ -3121,7 +3169,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_generated_column_constraint(&mut self) -> Result<ColumnConstraint, Error> {
+    fn parse_generated_column_constraint(&mut self) -> Result<ColumnConstraint> {
         let tok = eat_assert!(self, TK_GENERATED, TK_AS);
         match tok.token_type.unwrap() {
             TK_GENERATED => {
@@ -3150,7 +3198,7 @@ impl<'a> Parser<'a> {
         Ok(ColumnConstraint::Generated { expr, typ })
     }
 
-    fn parse_named_column_constraints(&mut self) -> Result<Vec<NamedColumnConstraint>, Error> {
+    fn parse_named_column_constraints(&mut self) -> Result<Vec<NamedColumnConstraint>> {
         let mut result = vec![];
 
         loop {
@@ -3242,7 +3290,7 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn parse_column_definition(&mut self) -> Result<ColumnDefinition, Error> {
+    fn parse_column_definition(&mut self) -> Result<ColumnDefinition> {
         let col_name = self.parse_nm()?;
         let col_type = self.parse_type()?;
         let constraints = self.parse_named_column_constraints()?;
@@ -3253,7 +3301,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_alter(&mut self) -> Result<Stmt, Error> {
+    fn parse_alter(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_ALTER);
         eat_expect!(self, TK_TABLE);
         let tbl_name = self.parse_fullname(false)?;
@@ -3265,20 +3313,20 @@ impl<'a> Parser<'a> {
                     eat_assert!(self, TK_COLUMNKW);
                 }
 
-                Ok(Stmt::AlterTable {
+                Ok(Stmt::AlterTable(AlterTable {
                     name: tbl_name,
                     body: AlterTableBody::AddColumn(self.parse_column_definition()?),
-                })
+                }))
             }
             TK_DROP => {
                 if self.peek_no_eof()?.token_type == Some(TK_COLUMNKW) {
                     eat_assert!(self, TK_COLUMNKW);
                 }
 
-                Ok(Stmt::AlterTable {
+                Ok(Stmt::AlterTable(AlterTable {
                     name: tbl_name,
                     body: AlterTableBody::DropColumn(self.parse_nm()?),
-                })
+                }))
             }
             TK_RENAME => {
                 let col_name = match self.peek_no_eof()?.token_type.unwrap().fallback_id_if_ok() {
@@ -3294,25 +3342,25 @@ impl<'a> Parser<'a> {
                 let to_name = self.parse_nm()?;
 
                 if let Some(col_name) = col_name {
-                    Ok(Stmt::AlterTable {
+                    Ok(Stmt::AlterTable(AlterTable {
                         name: tbl_name,
                         body: AlterTableBody::RenameColumn {
                             old: col_name,
                             new: to_name,
                         },
-                    })
+                    }))
                 } else {
-                    Ok(Stmt::AlterTable {
+                    Ok(Stmt::AlterTable(AlterTable {
                         name: tbl_name,
                         body: AlterTableBody::RenameTo(to_name),
-                    })
+                    }))
                 }
             }
             _ => unreachable!(),
         }
     }
 
-    fn parse_create_index(&mut self) -> Result<Stmt, Error> {
+    fn parse_create_index(&mut self) -> Result<Stmt> {
         let tok = eat_assert!(self, TK_INDEX, TK_UNIQUE);
         let has_unique = tok.token_type == Some(TK_UNIQUE);
         if has_unique {
@@ -3338,7 +3386,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_set(&mut self) -> Result<Set, Error> {
+    fn parse_set(&mut self) -> Result<Set> {
         let tok = peek_expect!(self, TK_LP, TK_ID, TK_STRING, TK_JOIN_KW, TK_INDEXED);
 
         match tok.token_type.unwrap() {
@@ -3363,7 +3411,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_set_list(&mut self) -> Result<Vec<Set>, Error> {
+    fn parse_set_list(&mut self) -> Result<Vec<Set>> {
         let mut results = vec![self.parse_set()?];
         loop {
             match self.peek()? {
@@ -3378,7 +3426,7 @@ impl<'a> Parser<'a> {
         Ok(results)
     }
 
-    fn parse_returning(&mut self) -> Result<Vec<ResultColumn>, Error> {
+    fn parse_returning(&mut self) -> Result<Vec<ResultColumn>> {
         match self.peek()? {
             Some(tok) if tok.token_type == Some(TK_RETURNING) => {
                 eat_assert!(self, TK_RETURNING);
@@ -3389,7 +3437,7 @@ impl<'a> Parser<'a> {
         self.parse_select_columns()
     }
 
-    fn parse_upsert(&mut self) -> Result<(Option<Box<Upsert>>, Vec<ResultColumn>), Error> {
+    fn parse_upsert(&mut self) -> Result<(Option<Box<Upsert>>, Vec<ResultColumn>)> {
         match self.peek()? {
             Some(tok) => match tok.token_type.unwrap() {
                 TK_ON => {
@@ -3462,7 +3510,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_trigger_insert_cmd(&mut self) -> Result<TriggerCmd, Error> {
+    fn parse_trigger_insert_cmd(&mut self) -> Result<TriggerCmd> {
         let tok = eat_assert!(self, TK_INSERT, TK_REPLACE);
         let resolve_type = match tok.token_type.unwrap() {
             TK_INSERT => self.parse_or_conflict()?,
@@ -3485,7 +3533,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_trigger_update_cmd(&mut self) -> Result<TriggerCmd, Error> {
+    fn parse_trigger_update_cmd(&mut self) -> Result<TriggerCmd> {
         eat_assert!(self, TK_UPDATE);
         let or_conflict = self.parse_or_conflict()?;
         let tbl_name = self.parse_nm()?;
@@ -3502,7 +3550,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_trigger_delete_cmd(&mut self) -> Result<TriggerCmd, Error> {
+    fn parse_trigger_delete_cmd(&mut self) -> Result<TriggerCmd> {
         eat_assert!(self, TK_DELETE);
         eat_expect!(self, TK_FROM);
         let tbl_name = self.parse_nm()?;
@@ -3513,7 +3561,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_trigger_cmd(&mut self) -> Result<TriggerCmd, Error> {
+    fn parse_trigger_cmd(&mut self) -> Result<TriggerCmd> {
         let tok = peek_expect!(
             self, TK_INSERT, TK_REPLACE, TK_UPDATE, TK_DELETE, TK_WITH, TK_SELECT, TK_VALUES,
         );
@@ -3530,7 +3578,7 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn parse_create_trigger(&mut self, temporary: bool) -> Result<Stmt, Error> {
+    fn parse_create_trigger(&mut self, temporary: bool) -> Result<Stmt> {
         eat_assert!(self, TK_TRIGGER);
 
         let if_not_exists = self.parse_if_not_exists()?;
@@ -3612,7 +3660,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_delete_without_cte(&mut self, with: Option<With>) -> Result<Stmt, Error> {
+    fn parse_delete_without_cte(&mut self, with: Option<With>) -> Result<Stmt> {
         eat_assert!(self, TK_DELETE);
         eat_expect!(self, TK_FROM);
         let tbl_name = self.parse_fullname(true)?;
@@ -3632,12 +3680,12 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_delete(&mut self) -> Result<Stmt, Error> {
+    fn parse_delete(&mut self) -> Result<Stmt> {
         let with = self.parse_with()?;
         self.parse_delete_without_cte(with)
     }
 
-    fn parse_if_exists(&mut self) -> Result<bool, Error> {
+    fn parse_if_exists(&mut self) -> Result<bool> {
         match self.peek()? {
             Some(tok) if tok.token_type == Some(TK_IF) => {
                 eat_assert!(self, TK_IF);
@@ -3648,7 +3696,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_drop_stmt(&mut self) -> Result<Stmt, Error> {
+    fn parse_drop_stmt(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_DROP);
         let tok = peek_expect!(self, TK_TABLE, TK_INDEX, TK_TRIGGER, TK_VIEW);
 
@@ -3693,7 +3741,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_insert_without_cte(&mut self, with: Option<With>) -> Result<Stmt, Error> {
+    fn parse_insert_without_cte(&mut self, with: Option<With>) -> Result<Stmt> {
         let tok = eat_assert!(self, TK_INSERT, TK_REPLACE);
         let resolve_type = match tok.token_type.unwrap() {
             TK_INSERT => self.parse_or_conflict()?,
@@ -3727,12 +3775,12 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_insert(&mut self) -> Result<Stmt, Error> {
+    fn parse_insert(&mut self) -> Result<Stmt> {
         let with = self.parse_with()?;
         self.parse_insert_without_cte(with)
     }
 
-    fn parse_update_without_cte(&mut self, with: Option<With>) -> Result<Stmt, Error> {
+    fn parse_update_without_cte(&mut self, with: Option<With>) -> Result<Stmt> {
         eat_assert!(self, TK_UPDATE);
         let resolve_type = self.parse_or_conflict()?;
         let tbl_name = self.parse_fullname(true)?;
@@ -3744,7 +3792,7 @@ impl<'a> Parser<'a> {
         let returning = self.parse_returning()?;
         let order_by = self.parse_order_by()?;
         let limit = self.parse_limit()?;
-        Ok(Stmt::Update {
+        Ok(Stmt::Update(Update {
             with,
             or_conflict: resolve_type,
             tbl_name,
@@ -3755,15 +3803,15 @@ impl<'a> Parser<'a> {
             returning,
             order_by,
             limit,
-        })
+        }))
     }
 
-    fn parse_update(&mut self) -> Result<Stmt, Error> {
+    fn parse_update(&mut self) -> Result<Stmt> {
         let with = self.parse_with()?;
         self.parse_update_without_cte(with)
     }
 
-    fn parse_reindex(&mut self) -> Result<Stmt, Error> {
+    fn parse_reindex(&mut self) -> Result<Stmt> {
         eat_assert!(self, TK_REINDEX);
         match self.peek()? {
             Some(tok) => match tok.token_type.unwrap().fallback_id_if_ok() {
@@ -3780,6 +3828,14 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_offset() {
+        let s = "SELECT 1; SELECT 1";
+        let mut p = Parser::new(s.as_bytes());
+        p.next_cmd().unwrap();
+        assert_eq!(&s[..p.offset()], "SELECT 1;");
+    }
 
     #[test]
     fn test_parser() {
@@ -4082,6 +4138,28 @@ mod tests {
                             distinctness: None,
                             columns: vec![ResultColumn::Expr(
                                 Box::new(Expr::Literal(Literal::Numeric("3.333".to_owned()))),
+                                None,
+                            )],
+                            from: None,
+                            where_clause: None,
+                            group_by: None,
+                            window_clause: vec![],
+                        },
+                        compounds: vec![],
+                    },
+                    order_by: vec![],
+                    limit: None,
+                }))],
+            ),
+            (
+                b"SELECT ?".as_slice(),
+                vec![Cmd::Stmt(Stmt::Select(Select {
+                    with: None,
+                    body: SelectBody {
+                        select: OneSelect::Select {
+                            distinctness: None,
+                            columns: vec![ResultColumn::Expr(
+                                Box::new(Expr::Variable("".to_owned())),
                                 None,
                             )],
                             from: None,
@@ -8755,59 +8833,59 @@ mod tests {
             // parse alter
             (
                 b"ALTER TABLE foo RENAME TO bar".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::RenameTo(Name::Ident("bar".to_owned())),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo RENAME baz TO bar".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::RenameColumn {
                         old: Name::Ident("baz".to_owned()),
                         new: Name::Ident("bar".to_owned())
                     },
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo RENAME COLUMN baz TO bar".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::RenameColumn {
                         old: Name::Ident("baz".to_owned()),
                         new: Name::Ident("bar".to_owned())
                     },
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo DROP baz".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::DropColumn(Name::Ident("baz".to_owned())),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo DROP COLUMN baz".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::DropColumn(Name::Ident("baz".to_owned())),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD baz".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
                         col_type: None,
                         constraints: vec![],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8817,11 +8895,11 @@ mod tests {
                         }),
                         constraints: vec![],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT 1".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8838,11 +8916,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT (1)".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8861,11 +8939,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT +1".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8885,11 +8963,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT -1".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8909,11 +8987,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER DEFAULT hello".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8930,11 +9008,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER NULL".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8952,11 +9030,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER NOT NULL ON CONFLICT IGNORE".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8974,11 +9052,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER NOT NULL ON CONFLICT REPLACE".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -8996,11 +9074,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER NOT NULL ON CONFLICT ROLLBACK".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9018,11 +9096,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER NOT NULL ON CONFLICT ROLLBACK".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9040,95 +9118,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
-            ),
-            (
-                b"ALTER TABLE foo ADD COLUMN baz INTEGER PRIMARY KEY".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
-                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
-                    body: AlterTableBody::AddColumn(ColumnDefinition {
-                        col_name: Name::Ident("baz".to_owned()),
-                        col_type: Some(Type {
-                            name: "INTEGER".to_owned(),
-                            size: None,
-                        }),
-                        constraints: vec![
-                            NamedColumnConstraint {
-                                name: None,
-                                constraint: ColumnConstraint::PrimaryKey {
-                                    order: None,
-                                    conflict_clause: None,
-                                    auto_increment: false,
-                                }
-                            },
-                        ],
-                    }),
-                })],
-            ),
-            (
-                b"ALTER TABLE foo ADD COLUMN baz INTEGER PRIMARY KEY ASC ON CONFLICT ROLLBACK AUTOINCREMENT".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
-                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
-                    body: AlterTableBody::AddColumn(ColumnDefinition {
-                        col_name: Name::Ident("baz".to_owned()),
-                        col_type: Some(Type {
-                            name: "INTEGER".to_owned(),
-                            size: None,
-                        }),
-                        constraints: vec![
-                            NamedColumnConstraint {
-                                name: None,
-                                constraint: ColumnConstraint::PrimaryKey {
-                                    order: Some(SortOrder::Asc),
-                                    conflict_clause: Some(ResolveType::Rollback),
-                                    auto_increment: true,
-                                }
-                            },
-                        ],
-                    }),
-                })],
-            ),
-            (
-                b"ALTER TABLE foo ADD COLUMN baz INTEGER UNIQUE".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
-                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
-                    body: AlterTableBody::AddColumn(ColumnDefinition {
-                        col_name: Name::Ident("baz".to_owned()),
-                        col_type: Some(Type {
-                            name: "INTEGER".to_owned(),
-                            size: None,
-                        }),
-                        constraints: vec![
-                            NamedColumnConstraint {
-                                name: None,
-                                constraint: ColumnConstraint::Unique(None),
-                            },
-                        ],
-                    }),
-                })],
-            ),
-            (
-                b"ALTER TABLE foo ADD COLUMN baz INTEGER UNIQUE ON CONFLICT ROLLBACK".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
-                    name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
-                    body: AlterTableBody::AddColumn(ColumnDefinition {
-                        col_name: Name::Ident("baz".to_owned()),
-                        col_type: Some(Type {
-                            name: "INTEGER".to_owned(),
-                            size: None,
-                        }),
-                        constraints: vec![
-                            NamedColumnConstraint {
-                                name: None,
-                                constraint: ColumnConstraint::Unique(Some(ResolveType::Rollback)),
-                            },
-                        ],
-                    }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER CHECK (1)".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable(AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9145,11 +9139,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER CHECK (1)".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9166,11 +9160,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9192,11 +9186,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON INSERT SET NULL".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9232,11 +9226,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON UPDATE SET NULL".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9272,11 +9266,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE SET NULL".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9312,11 +9306,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE SET DEFAULT".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9352,11 +9346,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE CASCADE".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9392,11 +9386,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE RESTRICT".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9432,11 +9426,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar(test, test_2) MATCH test_3 ON DELETE NO ACTION".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9472,11 +9466,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar DEFERRABLE".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9501,11 +9495,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar NOT DEFERRABLE INITIALLY IMMEDIATE".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9530,11 +9524,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar NOT DEFERRABLE INITIALLY DEFERRED".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9559,11 +9553,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER REFERENCES bar NOT DEFERRABLE INITIALLY DEFERRED".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9588,11 +9582,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER COLLATE bar".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9609,11 +9603,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER GENERATED ALWAYS AS (1)".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9631,11 +9625,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER AS (1)".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9653,11 +9647,11 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             (
                 b"ALTER TABLE foo ADD COLUMN baz INTEGER AS (1) STORED".as_slice(),
-                vec![Cmd::Stmt(Stmt::AlterTable {
+                vec![Cmd::Stmt(Stmt::AlterTable (AlterTable {
                     name: QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                     body: AlterTableBody::AddColumn(ColumnDefinition {
                         col_name: Name::Ident("baz".to_owned()),
@@ -9675,7 +9669,7 @@ mod tests {
                             },
                         ],
                     }),
-                })],
+                }))],
             ),
             // parse create index
             (
@@ -9773,7 +9767,7 @@ mod tests {
                 })],
             ),
             (
-                b"CREATE TEMP TABLE IF NOT EXISTS foo (bar, baz INTEGER, CONSTRAINT tbl_cons PRIMARY KEY (bar AUTOINCREMENT) ON CONFLICT ROLLBACK) STRICT".as_slice(),
+                b"CREATE TEMP TABLE IF NOT EXISTS foo (baz INTEGER, CONSTRAINT tbl_cons PRIMARY KEY (bar AUTOINCREMENT) ON CONFLICT ROLLBACK) STRICT".as_slice(),
                 vec![Cmd::Stmt(Stmt::CreateTable {
                     temporary: true,
                     if_not_exists: true,
@@ -9784,11 +9778,6 @@ mod tests {
                     },
                     body: CreateTableBody::ColumnsAndConstraints {
                         columns: vec![
-                            ColumnDefinition {
-                                col_name: Name::Ident("bar".to_owned()),
-                                col_type: None,
-                                constraints: vec![],
-                            },
                             ColumnDefinition {
                                 col_name: Name::Ident("baz".to_owned()),
                                 col_type: Some(Type {
@@ -9819,7 +9808,7 @@ mod tests {
                 })],
             ),
             (
-                b"CREATE TEMP TABLE IF NOT EXISTS foo (bar, baz INTEGER, UNIQUE (bar) ON CONFLICT ROLLBACK) WITHOUT ROWID".as_slice(),
+                b"CREATE TEMP TABLE IF NOT EXISTS foo (bar INTEGER PRIMARY KEY, baz INTEGER, UNIQUE (bar) ON CONFLICT ROLLBACK) WITHOUT ROWID".as_slice(),
                 vec![Cmd::Stmt(Stmt::CreateTable {
                     temporary: true,
                     if_not_exists: true,
@@ -9832,8 +9821,20 @@ mod tests {
                         columns: vec![
                             ColumnDefinition {
                                 col_name: Name::Ident("bar".to_owned()),
-                                col_type: None,
-                                constraints: vec![],
+                                col_type: Some(Type {
+                                    name: "INTEGER".to_owned(),
+                                    size: None,
+                                }),
+                                constraints: vec![
+                                    NamedColumnConstraint {
+                                        name: None,
+                                        constraint: ColumnConstraint::PrimaryKey {
+                                            order: None,
+                                            conflict_clause: None,
+                                            auto_increment: false,
+                                        }
+                                    }
+                                ],
                             },
                             ColumnDefinition {
                                 col_name: Name::Ident("baz".to_owned()),
@@ -10636,7 +10637,7 @@ mod tests {
             ),
             // parse create view
             (
-                b"CREATE VIEW foo AS SELECT 1".as_slice(),
+                b"CREATE VIEW foo(bar) AS SELECT 1".as_slice(),
                 vec![Cmd::Stmt(Stmt::CreateView {
                     temporary: false,
                     if_not_exists: false,
@@ -10645,7 +10646,13 @@ mod tests {
                         name: Name::Ident("foo".to_owned()),
                         alias: None,
                     },
-                    columns: vec![],
+                    columns: vec![
+                        IndexedColumn {
+                            col_name: Name::Ident("bar".to_owned()),
+                            collation_name: None,
+                            order: None,
+                        }
+                    ],
                     select: Select {
                         with: None,
                         body: SelectBody {
@@ -10708,7 +10715,7 @@ mod tests {
             // parse CREATE VIRTUAL TABLE
             (
                 b"CREATE VIRTUAL TABLE foo USING bar".as_slice(),
-                vec![Cmd::Stmt(Stmt::CreateVirtualTable {
+                vec![Cmd::Stmt(Stmt::CreateVirtualTable(CreateVirtualTable {
                     if_not_exists: false,
                     tbl_name: QualifiedName {
                         db_name: None,
@@ -10717,11 +10724,11 @@ mod tests {
                     },
                     module_name: Name::Ident("bar".to_owned()),
                     args: vec![],
-                })],
+                }))],
             ),
             (
                 b"CREATE VIRTUAL TABLE foo USING bar()".as_slice(),
-                vec![Cmd::Stmt(Stmt::CreateVirtualTable {
+                vec![Cmd::Stmt(Stmt::CreateVirtualTable(CreateVirtualTable{
                     if_not_exists: false,
                     tbl_name: QualifiedName {
                         db_name: None,
@@ -10730,11 +10737,11 @@ mod tests {
                     },
                     module_name: Name::Ident("bar".to_owned()),
                     args: vec![],
-                })],
+                }))],
             ),
             (
                 b"CREATE VIRTUAL TABLE IF NOT EXISTS foo USING bar(1, 2, ('hello', (3.333), 'world', (1, 2)))".as_slice(),
-                vec![Cmd::Stmt(Stmt::CreateVirtualTable {
+                vec![Cmd::Stmt(Stmt::CreateVirtualTable(CreateVirtualTable{
                     if_not_exists: true,
                     tbl_name: QualifiedName {
                         db_name: None,
@@ -10747,11 +10754,11 @@ mod tests {
                         "2".to_owned(),
                         "('hello', (3.333), 'world', (1, 2))".to_owned(),
                     ],
-                })],
+                }))],
             ),
             (
                 b"CREATE VIRTUAL TABLE ft USING fts5(x, tokenize = '''porter'' ''ascii''')".as_slice(),
-                vec![Cmd::Stmt(Stmt::CreateVirtualTable {
+                vec![Cmd::Stmt(Stmt::CreateVirtualTable(CreateVirtualTable {
                     if_not_exists: false,
                     tbl_name: QualifiedName {
                         db_name: None,
@@ -10763,7 +10770,7 @@ mod tests {
                         "x".to_owned(),
                         "tokenize = '''porter'' ''ascii'''".to_owned(),
                     ],
-                })],
+                }))],
             ),
             // parse delete
             (
@@ -10990,7 +10997,7 @@ mod tests {
                 })],
             ),
             (
-                b"WITH test AS (SELECT 1) INSERT INTO foo(bar, baz) DEFAULT VALUES RETURNING bar".as_slice(),
+                b"WITH test AS (SELECT 1) INSERT INTO foo DEFAULT VALUES RETURNING bar".as_slice(),
                 vec![Cmd::Stmt(Stmt::Insert {
                     with: Some(With {
                         recursive: false,
@@ -11027,10 +11034,7 @@ mod tests {
                         name: Name::Ident("foo".to_owned()),
                         alias: None,
                     },
-                    columns: vec![
-                        Name::Ident("bar".to_owned()),
-                        Name::Ident("baz".to_owned()),
-                    ],
+                    columns: vec![],
                     body: InsertBody::DefaultValues,
                     returning: vec![
                         ResultColumn::Expr(
@@ -11041,7 +11045,7 @@ mod tests {
                 })],
             ),
             (
-                b"WITH test AS (SELECT 1) REPLACE INTO foo(bar, baz) DEFAULT VALUES RETURNING bar".as_slice(),
+                b"WITH test AS (SELECT 1) REPLACE INTO foo DEFAULT VALUES RETURNING bar".as_slice(),
                 vec![Cmd::Stmt(Stmt::Insert {
                     with: Some(With {
                         recursive: false,
@@ -11078,10 +11082,7 @@ mod tests {
                         name: Name::Ident("foo".to_owned()),
                         alias: None,
                     },
-                    columns: vec![
-                        Name::Ident("bar".to_owned()),
-                        Name::Ident("baz".to_owned()),
-                    ],
+                    columns: vec![],
                     body: InsertBody::DefaultValues,
                     returning: vec![
                         ResultColumn::Expr(
@@ -11094,7 +11095,7 @@ mod tests {
             // parse update
             (
                 b"UPDATE foo SET bar = 1".as_slice(),
-                vec![Cmd::Stmt(Stmt::Update {
+                vec![Cmd::Stmt(Stmt::Update(Update {
                     with: None,
                     or_conflict: None,
                     tbl_name: QualifiedName {
@@ -11116,11 +11117,11 @@ mod tests {
                     returning: vec![],
                     order_by: vec![],
                     limit: None,
-                })],
+                }))],
             ),
             (
                 b"WITH test AS (SELECT 1) UPDATE OR REPLACE foo NOT INDEXED SET bar = 1 FROM foo_2 WHERE 1 RETURNING bar ORDER By bar LIMIT 1".as_slice(),
-                vec![Cmd::Stmt(Stmt::Update {
+                vec![Cmd::Stmt(Stmt::Update(Update {
                     with: Some(With {
                         recursive: false,
                         ctes: vec![
@@ -11195,7 +11196,7 @@ mod tests {
                         expr: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
                         offset: None,
                     }),
-                })],
+                }))],
             ),
             // parse reindex
             (

@@ -1,4 +1,4 @@
-use turso_sqlite3_parser::ast;
+use turso_parser::ast;
 
 use crate::{
     function::AggFunc,
@@ -68,7 +68,7 @@ fn emit_collseq_if_needed(
 ) {
     // Check if this is a column expression with explicit COLLATE clause
     if let ast::Expr::Collate(_, collation_name) = expr {
-        if let Ok(collation) = CollationSeq::new(collation_name) {
+        if let Ok(collation) = CollationSeq::new(collation_name.as_str()) {
             program.emit_insn(Insn::CollSeq {
                 reg: None,
                 collation,
@@ -189,8 +189,8 @@ pub fn translate_aggregation_step(
 
             if agg.args.len() == 2 {
                 match &agg.args[1] {
-                    ast::Expr::Column { .. } => {
-                        delimiter_expr = agg.args[1].clone();
+                    arg @ ast::Expr::Column { .. } => {
+                        delimiter_expr = arg.clone();
                     }
                     ast::Expr::Literal(ast::Literal::String(s)) => {
                         delimiter_expr = ast::Expr::Literal(ast::Literal::String(s.to_string()));
@@ -309,7 +309,7 @@ pub fn translate_aggregation_step(
 
             let expr = &agg.args[0];
             let delimiter_expr = match &agg.args[1] {
-                ast::Expr::Column { .. } => agg.args[1].clone(),
+                arg @ ast::Expr::Column { .. } => arg.clone(),
                 ast::Expr::Literal(ast::Literal::String(s)) => {
                     ast::Expr::Literal(ast::Literal::String(s.to_string()))
                 }

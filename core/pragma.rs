@@ -3,7 +3,7 @@ use bitflags::bitflags;
 use std::sync::Arc;
 use strum::IntoEnumIterator;
 use turso_ext::{ConstraintInfo, ConstraintOp, ConstraintUsage, IndexInfo, ResultCode};
-use turso_sqlite3_parser::ast::PragmaName;
+use turso_parser::ast::PragmaName;
 
 bitflags! {
     // Flag names match those used in SQLite:

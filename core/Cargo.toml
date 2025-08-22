@@ -76,6 +76,7 @@ pack1 = { version = "1.0.0", features = ["bytemuck"] }
 bytemuck = "1.23.1"
 aes-gcm = { version = "0.10.3"}
 aes = { version = "0.8.4"}
+turso_parser = { workspace = true }
 
 [build-dependencies]
 chrono = { version = "0.4.38", default-features = false }

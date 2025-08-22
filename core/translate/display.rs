@@ -1,13 +1,12 @@
 use core::fmt;
 use std::fmt::{Display, Formatter};
-use turso_sqlite3_parser::{
+use turso_parser::{
     ast::{
         self,
-        fmt::{ToTokens, TokenStream},
+        fmt::{ToSqlContext, ToTokens, TokenStream},
         SortOrder, TableInternalId,
     },
-    dialect::TokenType,
-    to_sql_string::ToSqlContext,
+    token::TokenType,
 };
 
 use crate::{schema::Table, translate::plan::TableReferences};
@@ -203,9 +202,9 @@ impl fmt::Display for UpdatePlan {
                 },
             }
         }
-        if let Some(order_by) = &self.order_by {
+        if !self.order_by.is_empty() {
             writeln!(f, "ORDER BY:")?;
-            for (expr, dir) in order_by {
+            for (expr, dir) in &self.order_by {
                 writeln!(
                     f,
                     "  - {} {}",
@@ -302,7 +301,7 @@ impl ToTokens for Plan {
 
                     s.comma(
                         order_by.iter().map(|(expr, order)| ast::SortedColumn {
-                            expr: expr.clone(),
+                            expr: expr.clone().into(),
                             order: Some(*order),
                             nulls: None,
                         }),
@@ -369,7 +368,13 @@ impl ToTokens for SelectPlan {
         context: &C,
     ) -> Result<(), S::Error> {
         if !self.values.is_empty() {
-            ast::OneSelect::Values(self.values.clone()).to_tokens_with_context(s, context)?;
+            ast::OneSelect::Values(
+                self.values
+                    .iter()
+                    .map(|values| values.iter().map(|v| Box::from(v.clone())).collect())
+                    .collect(),
+            )
+            .to_tokens_with_context(s, context)?;
         } else {
             s.append(TokenType::TK_SELECT, None)?;
             if self.distinctness.is_distinct() {
@@ -437,12 +442,12 @@ impl ToTokens for SelectPlan {
             }
         }
 
-        if let Some(order_by) = &self.order_by {
+        if !self.order_by.is_empty() {
             s.append(TokenType::TK_ORDER, None)?;
             s.append(TokenType::TK_BY, None)?;
 
             s.comma(
-                order_by.iter().map(|(expr, order)| ast::SortedColumn {
+                self.order_by.iter().map(|(expr, order)| ast::SortedColumn {
                     expr: expr.clone(),
                     order: Some(*order),
                     nulls: None,
@@ -499,12 +504,12 @@ impl ToTokens for DeletePlan {
             }
         }
 
-        if let Some(order_by) = &self.order_by {
+        if !self.order_by.is_empty() {
             s.append(TokenType::TK_ORDER, None)?;
             s.append(TokenType::TK_BY, None)?;
 
             s.comma(
-                order_by.iter().map(|(expr, order)| ast::SortedColumn {
+                self.order_by.iter().map(|(expr, order)| ast::SortedColumn {
                     expr: expr.clone(),
                     order: Some(*order),
                     nulls: None,
@@ -557,7 +562,7 @@ impl ToTokens for UpdatePlan {
                     .unwrap();
 
                 ast::Set {
-                    col_names: ast::Names::single(ast::Name::from_str(col_name)),
+                    col_names: vec![ast::Name::new(col_name)],
                     expr: set_expr.clone(),
                 }
             }),
@@ -580,12 +585,12 @@ impl ToTokens for UpdatePlan {
             }
         }
 
-        if let Some(order_by) = &self.order_by {
+        if !self.order_by.is_empty() {
             s.append(TokenType::TK_ORDER, None)?;
             s.append(TokenType::TK_BY, None)?;
 
             s.comma(
-                order_by.iter().map(|(expr, order)| ast::SortedColumn {
+                self.order_by.iter().map(|(expr, order)| ast::SortedColumn {
                     expr: expr.clone(),
                     order: Some(*order),
                     nulls: None,

@@ -1,4 +1,4 @@
-use turso_sqlite3_parser::ast::Name;
+use turso_parser::ast::Name;
 
 use crate::{
     schema::Schema,
