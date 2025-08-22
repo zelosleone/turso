@@ -1,11 +1,11 @@
 use crate::ast::{
-    AlterTable, AlterTableBody, As, Cmd, ColumnConstraint, ColumnDefinition, CommonTableExpr,
-    CompoundOperator, CompoundSelect, CreateTableBody, CreateVirtualTable, DeferSubclause,
-    Distinctness, Expr, ForeignKeyClause, FrameBound, FrameClause, FrameExclude, FrameMode,
-    FromClause, FunctionTail, GroupBy, Indexed, IndexedColumn, InitDeferredPred, InsertBody,
-    JoinConstraint, JoinOperator, JoinType, JoinedSelectTable, LikeOperator, Limit, Literal,
-    Materialized, Name, NamedColumnConstraint, NamedTableConstraint, NullsOrder, OneSelect,
-    Operator, Over, PragmaBody, PragmaValue, QualifiedName, RefAct, RefArg, ResolveType,
+    check::ColumnCount, AlterTable, AlterTableBody, As, Cmd, ColumnConstraint, ColumnDefinition,
+    CommonTableExpr, CompoundOperator, CompoundSelect, CreateTableBody, CreateVirtualTable,
+    DeferSubclause, Distinctness, Expr, ForeignKeyClause, FrameBound, FrameClause, FrameExclude,
+    FrameMode, FromClause, FunctionTail, GroupBy, Indexed, IndexedColumn, InitDeferredPred,
+    InsertBody, JoinConstraint, JoinOperator, JoinType, JoinedSelectTable, LikeOperator, Limit,
+    Literal, Materialized, Name, NamedColumnConstraint, NamedTableConstraint, NullsOrder,
+    OneSelect, Operator, Over, PragmaBody, PragmaValue, QualifiedName, RefAct, RefArg, ResolveType,
     ResultColumn, Select, SelectBody, SelectTable, Set, SortOrder, SortedColumn, Stmt,
     TableConstraint, TableOptions, TransactionType, TriggerCmd, TriggerEvent, TriggerTime, Type,
     TypeSize, UnaryOperator, Update, Upsert, UpsertDo, UpsertIndex, Window, WindowDef, With,
@@ -196,25 +196,15 @@ impl<'a> Parser<'a> {
                 TK_EXPLAIN => {
                     eat_assert!(self, TK_EXPLAIN);
 
-                    let mut is_query_plan = false;
                     if self.peek_no_eof()?.token_type == Some(TK_QUERY) {
                         eat_assert!(self, TK_QUERY);
                         eat_expect!(self, TK_PLAN);
-                        is_query_plan = true;
-                    }
-
-                    let stmt = self.parse_stmt()?;
-                    if is_query_plan {
-                        Some(Cmd::ExplainQueryPlan(stmt))
+                        Some(Cmd::ExplainQueryPlan(self.parse_stmt()?))
                     } else {
-                        Some(Cmd::Explain(stmt))
+                        Some(Cmd::Explain(self.parse_stmt()?))
                     }
                 }
-                _ => {
-                    let stmt = self.parse_stmt()?;
-                    stmt.check()?;
-                    Some(Cmd::Stmt(stmt))
-                }
+                _ => Some(Cmd::Stmt(self.parse_stmt()?)),
             },
         };
 
@@ -725,9 +715,20 @@ impl<'a> Parser<'a> {
         eat_assert!(self, TK_VIEW);
         let if_not_exists = self.parse_if_not_exists()?;
         let view_name = self.parse_fullname(false)?;
-        let columns = self.parse_eid_list()?;
+        let columns = self.parse_eid_list(true)?;
         eat_expect!(self, TK_AS);
         let select = self.parse_select()?;
+        if let (ColumnCount::Fixed(n), false) = (select.column_count(), columns.is_empty()) {
+            if n != columns.len() {
+                return Err(Error::Custom(format!(
+                    "expected {} columns for {} but got {}",
+                    columns.len(),
+                    view_name,
+                    n
+                )));
+            }
+        }
+
         Ok(Stmt::CreateView {
             temporary,
             if_not_exists,
@@ -742,7 +743,7 @@ impl<'a> Parser<'a> {
         eat_assert!(self, TK_VIEW);
         let if_not_exists = self.parse_if_not_exists()?;
         let view_name = self.parse_fullname(false)?;
-        let columns = self.parse_eid_list()?;
+        let columns = self.parse_eid_list(false)?;
         eat_expect!(self, TK_AS);
         let select = self.parse_select()?;
         Ok(Stmt::CreateMaterializedView {
@@ -1938,7 +1939,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    fn parse_eid_list(&mut self) -> Result<Vec<IndexedColumn>> {
+    fn parse_eid_list(&mut self, check_dup: bool) -> Result<Vec<IndexedColumn>> {
         if let Some(tok) = self.peek()? {
             if tok.token_type == Some(TK_LP) {
                 eat_assert!(self, TK_LP);
@@ -1955,6 +1956,19 @@ impl<'a> Parser<'a> {
                 Some(tok) if tok.token_type == Some(TK_COMMA) => {
                     eat_assert!(self, TK_COMMA);
                     columns.push(self.parse_eid()?);
+
+                    // check dup
+                    if check_dup {
+                        let las_col = columns.last().unwrap();
+                        for col in &columns[..columns.len() - 1] {
+                            if col.col_name == las_col.col_name {
+                                return Err(Error::Custom(format!(
+                                    "duplicate column name: {}",
+                                    col.col_name
+                                )));
+                            }
+                        }
+                    }
                 }
                 _ => break,
             }
@@ -1966,7 +1980,7 @@ impl<'a> Parser<'a> {
 
     fn parse_common_table_expr(&mut self) -> Result<CommonTableExpr> {
         let nm = self.parse_nm()?;
-        let eid_list = self.parse_eid_list()?;
+        let eid_list = self.parse_eid_list(false)?;
         eat_expect!(self, TK_AS);
         let wqas = match self.peek_no_eof()?.token_type.unwrap() {
             TK_MATERIALIZED => {
@@ -2463,6 +2477,12 @@ impl<'a> Parser<'a> {
 
                     eat_expect!(self, TK_LP);
                     values.push(self.parse_nexpr_list()?);
+                    if values.last().unwrap().len() != values[0].len() {
+                        return Err(Error::Custom(
+                            "all VALUES must have the same number of terms".to_owned(),
+                        ));
+                    }
+
                     eat_expect!(self, TK_RP);
                 }
 
@@ -2645,7 +2665,7 @@ impl<'a> Parser<'a> {
         eat_assert!(self, TK_FOREIGN);
         eat_expect!(self, TK_KEY);
         peek_expect!(self, TK_LP); // make sure we have columns
-        let columns = self.parse_eid_list()?;
+        let columns = self.parse_eid_list(false)?;
         peek_expect!(self, TK_REFERENCES);
         let clause = self.parse_foreign_key_clause()?;
         let deref_clause = self.parse_defer_subclause()?;
@@ -2757,12 +2777,23 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn parse_create_table_args(&mut self) -> Result<CreateTableBody> {
+    fn parse_create_table_args(&mut self, tbl_name: &QualifiedName) -> Result<CreateTableBody> {
         let tok = eat_expect!(self, TK_LP, TK_AS);
+
         match tok.token_type.unwrap() {
             TK_AS => Ok(CreateTableBody::AsSelect(self.parse_select()?)),
             TK_LP => {
-                let mut columns = vec![self.parse_column_definition()?];
+                let mut columns = vec![self.parse_column_definition(false)?];
+                let mut generated_count = 0;
+                let mut has_primary_key = false;
+                for cs in &columns[0].constraints {
+                    match cs.constraint {
+                        ColumnConstraint::Generated { .. } => generated_count += 1,
+                        ColumnConstraint::PrimaryKey { .. } => has_primary_key = true,
+                        _ => {}
+                    }
+                }
+
                 let mut constraints = vec![];
                 loop {
                     match self.peek()? {
@@ -2771,10 +2802,29 @@ impl<'a> Parser<'a> {
                             match self.peek_no_eof()?.token_type.unwrap() {
                                 TK_CONSTRAINT | TK_PRIMARY | TK_UNIQUE | TK_CHECK | TK_FOREIGN => {
                                     constraints = self.parse_named_table_constraints()?;
+                                    for cons in &constraints {
+                                        if let TableConstraint::PrimaryKey { .. } = cons.constraint
+                                        {
+                                            has_primary_key = true;
+                                            break;
+                                        }
+                                    }
+
                                     break;
                                 }
                                 _ => {
-                                    columns.push(self.parse_column_definition()?);
+                                    columns.push(self.parse_column_definition(false)?);
+                                    for cs in &columns.last().unwrap().constraints {
+                                        match cs.constraint {
+                                            ColumnConstraint::Generated { .. } => {
+                                                generated_count += 1
+                                            }
+                                            ColumnConstraint::PrimaryKey { .. } => {
+                                                has_primary_key = true
+                                            }
+                                            _ => {}
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2782,8 +2832,53 @@ impl<'a> Parser<'a> {
                     }
                 }
 
+                // larger than or equal columns len means we have only generated columns
+                if generated_count >= columns.len() {
+                    return Err(Error::Custom(
+                        "must have at least one non-generated column".to_owned(),
+                    ));
+                }
+
                 eat_expect!(self, TK_RP);
                 let options = self.parse_table_options()?;
+
+                // strict check
+                if options.contains(TableOptions::STRICT) {
+                    for c in &columns {
+                        match &c.col_type {
+                            Some(Type { name, .. }) => {
+                                // The datatype must be one of following: INT INTEGER REAL TEXT BLOB ANY
+                                if !(name.eq_ignore_ascii_case("INT")
+                                    || name.eq_ignore_ascii_case("INTEGER")
+                                    || name.eq_ignore_ascii_case("REAL")
+                                    || name.eq_ignore_ascii_case("TEXT")
+                                    || name.eq_ignore_ascii_case("BLOB")
+                                    || name.eq_ignore_ascii_case("ANY"))
+                                {
+                                    return Err(Error::Custom(format!(
+                                        "unknown datatype for {}.{}: \"{}\"",
+                                        tbl_name, c.col_name, name
+                                    )));
+                                }
+                            }
+                            _ => {
+                                // Every column definition must specify a datatype for that column. The freedom to specify a column without a datatype is removed.
+                                return Err(Error::Custom(format!(
+                                    "missing datatype for {}.{}",
+                                    tbl_name, c.col_name
+                                )));
+                            }
+                        }
+                    }
+                }
+
+                // primary key check
+                if options.contains(TableOptions::WITHOUT_ROWID) && !has_primary_key {
+                    return Err(Error::Custom(format!(
+                        "PRIMARY KEY missing on table {tbl_name}"
+                    )));
+                }
+
                 Ok(CreateTableBody::ColumnsAndConstraints {
                     columns,
                     constraints,
@@ -2798,7 +2893,17 @@ impl<'a> Parser<'a> {
         eat_assert!(self, TK_TABLE);
         let if_not_exists = self.parse_if_not_exists()?;
         let tbl_name = self.parse_fullname(false)?;
-        let body = self.parse_create_table_args()?;
+        if temporary {
+            if let Some(ref db_name) = tbl_name.db_name {
+                if !db_name.as_str().eq_ignore_ascii_case("TEMP") {
+                    return Err(Error::Custom(
+                        "temporary table name must be unqualified".to_owned(),
+                    ));
+                }
+            }
+        }
+
+        let body = self.parse_create_table_args(&tbl_name)?;
         Ok(Stmt::CreateTable {
             temporary,
             if_not_exists,
@@ -3114,7 +3219,7 @@ impl<'a> Parser<'a> {
     fn parse_foreign_key_clause(&mut self) -> Result<ForeignKeyClause> {
         eat_assert!(self, TK_REFERENCES);
         let name = self.parse_nm()?;
-        let eid_list = self.parse_eid_list()?;
+        let eid_list = self.parse_eid_list(false)?;
         let ref_args = self.parse_ref_args()?;
         Ok(ForeignKeyClause {
             tbl_name: name,
@@ -3198,7 +3303,10 @@ impl<'a> Parser<'a> {
         Ok(ColumnConstraint::Generated { expr, typ })
     }
 
-    fn parse_named_column_constraints(&mut self) -> Result<Vec<NamedColumnConstraint>> {
+    fn parse_named_column_constraints(
+        &mut self,
+        in_alter: bool,
+    ) -> Result<Vec<NamedColumnConstraint>> {
         let mut result = vec![];
 
         loop {
@@ -3244,12 +3352,25 @@ impl<'a> Parser<'a> {
                         });
                     }
                     TK_PRIMARY => {
+                        if in_alter {
+                            return Err(Error::Custom(
+                                "Cannot add a PRIMARY KEY column in ALTER TABLE statement"
+                                    .to_owned(),
+                            ));
+                        }
+
                         result.push(NamedColumnConstraint {
                             name,
                             constraint: self.parse_primary_column_constraint()?,
                         });
                     }
                     TK_UNIQUE => {
+                        if in_alter {
+                            return Err(Error::Custom(
+                                "Cannot add a UNIQUE column in ALTER TABLE statement".to_owned(),
+                            ));
+                        }
+
                         result.push(NamedColumnConstraint {
                             name,
                             constraint: self.parse_unique_column_constraint()?,
@@ -3290,10 +3411,14 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn parse_column_definition(&mut self) -> Result<ColumnDefinition> {
+    fn parse_column_definition(&mut self, in_alter: bool) -> Result<ColumnDefinition> {
         let col_name = self.parse_nm()?;
+        if !in_alter && col_name.as_str().eq_ignore_ascii_case("rowid") {
+            return Err(Error::Custom("cannot use reserved word: ROWID".to_owned()));
+        }
+
         let col_type = self.parse_type()?;
-        let constraints = self.parse_named_column_constraints()?;
+        let constraints = self.parse_named_column_constraints(in_alter)?;
         Ok(ColumnDefinition {
             col_name,
             col_type,
@@ -3315,7 +3440,7 @@ impl<'a> Parser<'a> {
 
                 Ok(Stmt::AlterTable(AlterTable {
                     name: tbl_name,
-                    body: AlterTableBody::AddColumn(self.parse_column_definition()?),
+                    body: AlterTableBody::AddColumn(self.parse_column_definition(true)?),
                 }))
             }
             TK_DROP => {
@@ -3669,6 +3794,9 @@ impl<'a> Parser<'a> {
         let returning = self.parse_returning()?;
         let order_by = self.parse_order_by()?;
         let limit = self.parse_limit()?;
+        if !order_by.is_empty() && limit.is_none() {
+            return Err(Error::Custom("ORDER BY without LIMIT on DELETE".to_owned()));
+        }
         Ok(Stmt::Delete {
             with,
             tbl_name,
@@ -3754,12 +3882,31 @@ impl<'a> Parser<'a> {
         let columns = self.parse_nm_list_opt()?;
         let (body, returning) = match self.peek_no_eof()?.token_type.unwrap() {
             TK_DEFAULT => {
+                if !columns.is_empty() {
+                    return Err(Error::Custom(format!(
+                        "0 values for {} columns",
+                        columns.len()
+                    )));
+                }
+
                 eat_assert!(self, TK_DEFAULT);
                 eat_expect!(self, TK_VALUES);
                 (InsertBody::DefaultValues, self.parse_returning()?)
             }
             _ => {
                 let select = self.parse_select()?;
+                if !columns.is_empty() {
+                    if let ColumnCount::Fixed(n) = select.body.select.column_count() {
+                        if n != columns.len() {
+                            return Err(Error::Custom(format!(
+                                "{} values for {} columns",
+                                n,
+                                columns.len()
+                            )));
+                        }
+                    }
+                }
+
                 let (upsert, returning) = self.parse_upsert()?;
                 (InsertBody::Select(select, upsert), returning)
             }
@@ -3792,6 +3939,9 @@ impl<'a> Parser<'a> {
         let returning = self.parse_returning()?;
         let order_by = self.parse_order_by()?;
         let limit = self.parse_limit()?;
+        if !order_by.is_empty() && limit.is_none() {
+            return Err(Error::Custom("ORDER BY without LIMIT on UPDATE".to_owned()));
+        }
         Ok(Stmt::Update(Update {
             with,
             or_conflict: resolve_type,
@@ -3835,6 +3985,33 @@ mod tests {
         let mut p = Parser::new(s.as_bytes());
         p.next_cmd().unwrap();
         assert_eq!(&s[..p.offset()], "SELECT 1;");
+    }
+
+    #[test]
+    fn test_expect_fail() {
+        let testcases = vec![
+            "ALTER TABLE my_table ADD COLUMN my_column PRIMARY KEY",
+            "ALTER TABLE my_table ADD COLUMN my_column UNIQUE",
+            "CREATE TEMP TABLE baz.foo(bar)",
+            "CREATE TABLE foo(rowid)",
+            "CREATE TABLE foo(d INT AS (a*abs(b)))",
+            "CREATE TABLE foo(d INT AS (a*abs(b)))",
+            "CREATE TABLE foo(bar UNKNOWN_INT) STRICT",
+            "CREATE TABLE foo(bar) STRICT",
+            "CREATE TABLE foo(bar) WITHOUT ROWID",
+            "CREATE VIEW foo(bar, bar) AS SELECT 1, 1",
+            "CREATE VIEW foo(bar) AS SELECT 1, 1",
+            "DELETE FROM my_table ORDER BY col1",
+            "INSERT INTO my_table(bar) DEFAULT VALUES",
+            "INSERT INTO my_table(bar, baz, barr) VALUES (1, 1)",
+            "UPDATE foo SET bar = 1 ORDER BY bar",
+        ];
+
+        for tc in testcases {
+            let mut p = Parser::new(tc.as_bytes());
+            let result = p.next_cmd();
+            assert!(result.is_err(), "Expected error for: {tc}");
+        }
     }
 
     #[test]
