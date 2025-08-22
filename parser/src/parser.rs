@@ -4019,7 +4019,7 @@ mod tests {
         for tc in testcases {
             let mut p = Parser::new(tc.as_bytes());
             let result = p.next_cmd();
-            assert!(result.is_err(), "Expected error for: {}", tc);
+            assert!(result.is_err(), "Expected error for: {tc}");
         }
     }
 
