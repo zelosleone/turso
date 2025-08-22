@@ -926,3 +926,53 @@ fn test_db_share_same_file() {
         ]]
     );
 }
+
+#[test]
+fn test_wal_api_simulate_spilled_frames() {
+    let (mut rng, _) = rng_from_time();
+    let db1 = TempDatabase::new_empty(false);
+    let conn1 = db1.connect_limbo();
+    let db2 = TempDatabase::new_empty(false);
+    let conn2 = db2.connect_limbo();
+    conn1
+        .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y)")
+        .unwrap();
+    conn2
+        .execute("CREATE TABLE t(x INTEGER PRIMARY KEY, y)")
+        .unwrap();
+    let watermark = conn1.wal_state().unwrap().max_frame;
+    for _ in 0..128 {
+        let key = rng.next_u32();
+        let length = rng.next_u32() % 4096 + 1;
+        conn1
+            .execute(format!(
+                "INSERT INTO t VALUES ({key}, randomblob({length}))"
+            ))
+            .unwrap();
+    }
+    let mut frame = [0u8; 24 + 4096];
+    conn2
+        .checkpoint(CheckpointMode::Truncate {
+            upper_bound_inclusive: None,
+        })
+        .unwrap();
+    conn2.wal_insert_begin().unwrap();
+    let frames_count = conn1.wal_state().unwrap().max_frame;
+    for frame_id in watermark + 1..=frames_count {
+        let mut info = conn1.wal_get_frame(frame_id, &mut frame).unwrap();
+        info.db_size = 0;
+        info.put_to_frame_header(&mut frame);
+        conn2
+            .wal_insert_frame(frame_id - watermark, &frame)
+            .unwrap();
+    }
+    for _ in 0..128 {
+        let key = rng.next_u32();
+        let length = rng.next_u32() % 4096 + 1;
+        conn2
+            .execute(format!(
+                "INSERT INTO t VALUES ({key}, randomblob({length}))"
+            ))
+            .unwrap();
+    }
+}

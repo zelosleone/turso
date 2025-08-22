@@ -284,6 +284,7 @@ fn test_wal_checkpoint() -> anyhow::Result<()> {
     let conn = tmp_db.connect_limbo();
 
     for i in 0..iterations {
+        log::info!("iteration #{}", i);
         let insert_query = format!("INSERT INTO test VALUES ({i})");
         do_flush(&conn, &tmp_db)?;
         conn.checkpoint(CheckpointMode::Passive {
@@ -823,7 +824,7 @@ pub fn run_query_core(
                         on_row(row)
                     }
                 }
-                _ => unreachable!(),
+                r => panic!("unexpected step result: {r:?}"),
             }
         }
     };

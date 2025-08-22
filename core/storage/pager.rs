@@ -1416,22 +1416,25 @@ impl Pager {
                 "wal_insert_frame() called on database without WAL".to_string(),
             ));
         };
-        let mut wal = wal.borrow_mut();
         let (header, raw_page) = parse_wal_frame_header(frame);
-        wal.write_frame_raw(
-            self.buffer_pool.clone(),
-            frame_no,
-            header.page_number as u64,
-            header.db_size as u64,
-            raw_page,
-        )?;
-        if let Some(page) = self.cache_get(header.page_number as usize) {
-            let content = page.get_contents();
-            content.as_ptr().copy_from_slice(raw_page);
-            turso_assert!(
-                page.get().id == header.page_number as usize,
-                "page has unexpected id"
-            );
+
+        {
+            let mut wal = wal.borrow_mut();
+            wal.write_frame_raw(
+                self.buffer_pool.clone(),
+                frame_no,
+                header.page_number as u64,
+                header.db_size as u64,
+                raw_page,
+            )?;
+            if let Some(page) = self.cache_get(header.page_number as usize) {
+                let content = page.get_contents();
+                content.as_ptr().copy_from_slice(raw_page);
+                turso_assert!(
+                    page.get().id == header.page_number as usize,
+                    "page has unexpected id"
+                );
+            }
         }
         if header.page_number == 1 {
             let db_size = self
