@@ -347,7 +347,6 @@ pub enum BtreePageAllocMode {
 }
 
 /// This will keep track of the state of current cache commit in order to not repeat work
-#[derive(Clone)]
 struct CommitInfo {
     state: Cell<CommitState>,
     time: Cell<crate::io::clock::Instant>,

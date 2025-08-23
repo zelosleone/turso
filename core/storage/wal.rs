@@ -1433,7 +1433,7 @@ impl Wal for WalFile {
             Vec::with_capacity(pages.len());
 
         // Rolling checksum input to each frame build
-        let mut rolling_csum: (u32, u32) = self.last_checksum;
+        let mut rolling_checksum: (u32, u32) = self.last_checksum;
 
         let mut next_frame_id = self.max_frame + 1;
         // Build every frame in order, updating the rolling checksum
@@ -1451,14 +1451,16 @@ impl Wal for WalFile {
             };
 
             let frame_db_size = if idx + 1 == pages.len() {
+                // if it's the final frame we are appending, and the caller included a db_size for the
+                // commit frame, then we ensure to set it in the header.
                 db_size_on_commit.unwrap_or(0)
             } else {
                 0
             };
-            let (new_csum, frame_bytes) = prepare_wal_frame(
+            let (new_checksum, frame_bytes) = prepare_wal_frame(
                 &self.buffer_pool,
                 &header,
-                rolling_csum,
+                rolling_checksum,
                 shared_page_size,
                 page_id as u32,
                 frame_db_size,
@@ -1467,17 +1469,17 @@ impl Wal for WalFile {
             iovecs.push(frame_bytes);
 
             // (page, assigned_frame_id, cumulative_checksum_at_this_frame)
-            page_frame_and_checksum.push((page.clone(), next_frame_id, new_csum));
+            page_frame_and_checksum.push((page.clone(), next_frame_id, new_checksum));
 
             // Advance for the next frame
-            rolling_csum = new_csum;
+            rolling_checksum = new_checksum;
             next_frame_id += 1;
         }
 
         let first_frame_id = self.max_frame + 1;
         let start_off = self.frame_offset(first_frame_id);
 
-        // pre-advance in-memory WAL state like the single-frame path
+        // pre-advance in-memory WAL state
         for (page, fid, csum) in &page_frame_and_checksum {
             self.complete_append_frame(page.get().id as u64, *fid, *csum);
         }
