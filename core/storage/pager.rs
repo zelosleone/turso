@@ -28,9 +28,7 @@ use super::btree::{btree_init_page, BTreePage};
 use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCacheKey};
 use super::sqlite3_ondisk::begin_write_btree_page;
 use super::wal::CheckpointMode;
-use crate::storage::encryption::{
-    EncryptionKey, EncryptionContext, ENCRYPTION_METADATA_SIZE,
-};
+use crate::storage::encryption::{CipherMode, EncryptionContext, EncryptionKey};
 
 /// SQLite's default maximum page count
 const DEFAULT_MAX_PAGE_COUNT: u32 = 0xfffffffe;
@@ -1726,8 +1724,8 @@ impl Pager {
                 default_header.database_size = 1.into();
 
                 // if a key is set, then we will reserve space for encryption metadata
-                if self.encryption_ctx.borrow().is_some() {
-                    default_header.reserved_space = ENCRYPTION_METADATA_SIZE as u8;
+                if let Some(ref ctx) = *self.encryption_ctx.borrow() {
+                    default_header.reserved_space = ctx.required_reserved_bytes()
                 }
 
                 if let Some(size) = self.page_size.get() {
@@ -2112,7 +2110,7 @@ impl Pager {
     }
 
     pub fn set_encryption_context(&self, key: &EncryptionKey) {
-        let encryption_ctx = EncryptionContext::new(key).unwrap();
+        let encryption_ctx = EncryptionContext::new(CipherMode::Aegis256, key).unwrap();
         self.encryption_ctx.replace(Some(encryption_ctx.clone()));
         let Some(wal) = self.wal.as_ref() else { return };
         wal.borrow_mut().set_encryption_context(encryption_ctx)
