@@ -11,7 +11,7 @@ variables:
   simple_identifier_break: (?!\w)
 
   toplevel_reserved: |-
-    (?xi: alter | create | cross | delete | drop | from | grant | group | inner | insert | join
+    (?xi: alter | analyze | create | cross | delete | drop | from | grant | group | inner | insert | join
     | left | on | order | outer | right | select | set | truncate | union
     | update | where )
   additional_toplevel_reserved: (?!)
@@ -75,6 +75,7 @@ contexts:
     - include: dml-statements
     - include: grant-statements
     - include: revoke-statements
+    - include: analyze-statements
     - include: other-statements
 
   ###[ COMMENTS ]################################################################
@@ -559,6 +560,13 @@ contexts:
     - meta_include_prototype: false
     - meta_scope: meta.statement.revoke.sql
     - include: immediately-pop
+
+  ###[ ANALYZE STATEMENTS ]######################################################
+
+  analyze-statements:
+    - match: \b(?i:analyze)\b
+      scope: keyword.other.ddl.sql
+      set: expect-table-name
 
   ###[ OTHER STATEMENTS ]########################################################
 
