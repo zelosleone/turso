@@ -347,7 +347,7 @@ pub enum BtreePageAllocMode {
 
 /// This will keep track of the state of current cache commit in order to not repeat work
 struct CommitInfo {
-    state: CommitState,
+    state: Cell<CommitState>,
 }
 
 /// Track the state of the auto-vacuum mode.
@@ -460,10 +460,10 @@ pub struct Pager {
     pub io: Arc<dyn crate::io::IO>,
     dirty_pages: Rc<RefCell<HashSet<usize, hash::BuildHasherDefault<hash::DefaultHasher>>>>,
 
-    commit_info: RefCell<CommitInfo>,
+    commit_info: CommitInfo,
     checkpoint_state: RefCell<CheckpointState>,
     syncing: Rc<Cell<bool>>,
-    auto_vacuum_mode: RefCell<AutoVacuumMode>,
+    auto_vacuum_mode: Cell<AutoVacuumMode>,
     /// 0 -> Database is empty,
     /// 1 -> Database is being initialized,
     /// 2 -> Database is initialized and ready for use.
@@ -571,13 +571,13 @@ impl Pager {
             dirty_pages: Rc::new(RefCell::new(HashSet::with_hasher(
                 hash::BuildHasherDefault::new(),
             ))),
-            commit_info: RefCell::new(CommitInfo {
-                state: CommitState::Start,
-            }),
+            commit_info: CommitInfo {
+                state: CommitState::Start.into(),
+            },
             syncing: Rc::new(Cell::new(false)),
             checkpoint_state: RefCell::new(CheckpointState::Checkpoint),
             buffer_pool,
-            auto_vacuum_mode: RefCell::new(AutoVacuumMode::None),
+            auto_vacuum_mode: Cell::new(AutoVacuumMode::None),
             db_state,
             init_lock,
             allocate_page1_state,
@@ -620,11 +620,11 @@ impl Pager {
     }
 
     pub fn get_auto_vacuum_mode(&self) -> AutoVacuumMode {
-        *self.auto_vacuum_mode.borrow()
+        self.auto_vacuum_mode.get()
     }
 
     pub fn set_auto_vacuum_mode(&self, mode: AutoVacuumMode) {
-        *self.auto_vacuum_mode.borrow_mut() = mode;
+        self.auto_vacuum_mode.set(mode);
     }
 
     /// Retrieves the pointer map entry for a given database page.
@@ -840,8 +840,8 @@ impl Pager {
         //  If autovacuum is enabled, we need to allocate a new page number that is greater than the largest root page number
         #[cfg(not(feature = "omit_autovacuum"))]
         {
-            let auto_vacuum_mode = self.auto_vacuum_mode.borrow();
-            match *auto_vacuum_mode {
+            let auto_vacuum_mode = self.auto_vacuum_mode.get();
+            match auto_vacuum_mode {
                 AutoVacuumMode::None => {
                     let page =
                         return_if_io!(self.do_allocate_page(page_type, 0, BtreePageAllocMode::Any));
@@ -1299,7 +1299,7 @@ impl Pager {
         };
         let mut checkpoint_result = CheckpointResult::default();
         let res = loop {
-            let state = self.commit_info.borrow().state;
+            let state = self.commit_info.state.get();
             trace!(?state);
             match state {
                 CommitState::Start => {
@@ -1354,35 +1354,35 @@ impl Pager {
                     if completions.is_empty() {
                         return Ok(IOResult::Done(PagerCommitResult::WalWritten));
                     } else {
-                        self.commit_info.borrow_mut().state = CommitState::SyncWal;
+                        self.commit_info.state.set(CommitState::SyncWal);
                         io_yield_many!(completions);
                     }
                 }
                 CommitState::SyncWal => {
-                    self.commit_info.borrow_mut().state = CommitState::AfterSyncWal;
+                    self.commit_info.state.set(CommitState::AfterSyncWal);
                     let c = wal.borrow_mut().sync()?;
                     io_yield_one!(c);
                 }
                 CommitState::AfterSyncWal => {
                     turso_assert!(!wal.borrow().is_syncing(), "wal should have synced");
                     if wal_auto_checkpoint_disabled || !wal.borrow().should_checkpoint() {
-                        self.commit_info.borrow_mut().state = CommitState::Start;
+                        self.commit_info.state.set(CommitState::Start);
                         break PagerCommitResult::WalWritten;
                     }
-                    self.commit_info.borrow_mut().state = CommitState::Checkpoint;
+                    self.commit_info.state.set(CommitState::Checkpoint);
                 }
                 CommitState::Checkpoint => {
                     checkpoint_result = return_if_io!(self.checkpoint());
-                    self.commit_info.borrow_mut().state = CommitState::SyncDbFile;
+                    self.commit_info.state.set(CommitState::SyncDbFile);
                 }
                 CommitState::SyncDbFile => {
                     let c = sqlite3_ondisk::begin_sync(self.db_file.clone(), self.syncing.clone())?;
-                    self.commit_info.borrow_mut().state = CommitState::AfterSyncDbFile;
+                    self.commit_info.state.set(CommitState::AfterSyncDbFile);
                     io_yield_one!(c);
                 }
                 CommitState::AfterSyncDbFile => {
                     turso_assert!(!self.syncing.get(), "should have finished syncing");
-                    self.commit_info.borrow_mut().state = CommitState::Start;
+                    self.commit_info.state.set(CommitState::Start);
                     break PagerCommitResult::Checkpointed(checkpoint_result);
                 }
             }
@@ -1817,7 +1817,7 @@ impl Pager {
                         //  If the following conditions are met, allocate a pointer map page, add to cache and increment the database size
                         //  - autovacuum is enabled
                         //  - the last page is a pointer map page
-                        if matches!(*self.auto_vacuum_mode.borrow(), AutoVacuumMode::Full)
+                        if matches!(self.auto_vacuum_mode.get(), AutoVacuumMode::Full)
                             && is_ptrmap_page(new_db_size + 1, header.page_size.get() as usize)
                         {
                             // we will allocate a ptrmap page, so increment size
@@ -2083,9 +2083,7 @@ impl Pager {
     fn reset_internal_states(&self) {
         self.checkpoint_state.replace(CheckpointState::Checkpoint);
         self.syncing.replace(false);
-        self.commit_info.replace(CommitInfo {
-            state: CommitState::Start,
-        });
+        self.commit_info.state.set(CommitState::Start);
         self.allocate_page_state.replace(AllocatePageState::Start);
         self.free_page_state.replace(FreePageState::Start);
         #[cfg(not(feature = "omit_autovacuum"))]
