@@ -1,4 +1,5 @@
 use crate::result::LimboResult;
+use crate::storage::wal::IOV_MAX;
 use crate::storage::{
     btree::BTreePageInner,
     buffer_pool::BufferPool,
@@ -346,8 +347,10 @@ pub enum BtreePageAllocMode {
 }
 
 /// This will keep track of the state of current cache commit in order to not repeat work
+#[derive(Clone)]
 struct CommitInfo {
     state: Cell<CommitState>,
+    time: Cell<crate::io::clock::Instant>,
 }
 
 /// Track the state of the auto-vacuum mode.
@@ -563,6 +566,7 @@ impl Pager {
         } else {
             RefCell::new(AllocatePage1State::Done)
         };
+        let now = io.now();
         Ok(Self {
             db_file,
             wal,
@@ -573,6 +577,7 @@ impl Pager {
             ))),
             commit_info: CommitInfo {
                 state: CommitState::Start.into(),
+                time: now.into(),
             },
             syncing: Rc::new(Cell::new(false)),
             checkpoint_state: RefCell::new(CheckpointState::Checkpoint),
@@ -1250,36 +1255,46 @@ impl Pager {
             .iter()
             .copied()
             .collect::<Vec<usize>>();
-        let mut completions: Vec<Completion> = Vec::with_capacity(dirty_pages.len());
-        for page_id in dirty_pages {
+        let len = dirty_pages.len().min(IOV_MAX);
+        let mut completions: Vec<Completion> = Vec::new();
+        let mut pages = Vec::with_capacity(len);
+        let page_sz = self.page_size.get().unwrap_or_default();
+        let commit_frame = None; // cacheflush only so we are not setting a commit frame here
+        for (idx, page_id) in dirty_pages.iter().enumerate() {
             let page = {
                 let mut cache = self.page_cache.write();
-                let page_key = PageCacheKey::new(page_id);
+                let page_key = PageCacheKey::new(*page_id);
                 let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
                 let page_type = page.get().contents.as_ref().unwrap().maybe_page_type();
-                trace!(
-                    "commit_dirty_pages(page={}, page_type={:?}",
-                    page_id,
-                    page_type
-                );
+                trace!("cacheflush(page={}, page_type={:?}", page_id, page_type);
                 page
             };
+            pages.push(page);
+            if pages.len() == IOV_MAX {
+                let c = wal
+                    .borrow_mut()
+                    .append_frames_vectored(
+                        std::mem::replace(
+                            &mut pages,
+                            Vec::with_capacity(std::cmp::min(IOV_MAX, dirty_pages.len() - idx)),
+                        ),
+                        page_sz,
+                        commit_frame,
+                    )
+                    .inspect_err(|_| {
+                        for c in completions.iter() {
+                            c.abort();
+                        }
+                    })?;
+                completions.push(c);
+            }
+        }
+        if !pages.is_empty() {
             let c = wal
                 .borrow_mut()
-                .append_frame(
-                    page.clone(),
-                    self.page_size.get().expect("page size not set"),
-                    0,
-                )
-                .inspect_err(|_| {
-                    for c in completions.iter() {
-                        c.abort();
-                    }
-                })?;
-            // TODO: invalidade previous completions if this one fails
+                .append_frames_vectored(pages, page_sz, commit_frame)?;
             completions.push(c);
         }
-        // Pages are cleared dirty on callback completion
         Ok(completions)
     }
 
@@ -1297,57 +1312,70 @@ impl Pager {
                 "commit_dirty_pages() called on database without WAL".to_string(),
             ));
         };
+
         let mut checkpoint_result = CheckpointResult::default();
         let res = loop {
             let state = self.commit_info.state.get();
             trace!(?state);
             match state {
                 CommitState::Start => {
-                    let db_size = {
+                    let now = self.io.now();
+                    self.commit_info.time.set(now);
+                    let db_size_after = {
                         self.io
                             .block(|| self.with_header(|header| header.database_size))?
                             .get()
                     };
-                    let dirty_len = self.dirty_pages.borrow().iter().len();
-                    let mut completions: Vec<Completion> = Vec::with_capacity(dirty_len);
-                    for (curr_page_idx, page_id) in
-                        self.dirty_pages.borrow().iter().copied().enumerate()
-                    {
-                        let is_last_frame = curr_page_idx == dirty_len - 1;
 
-                        let db_size = if is_last_frame { db_size } else { 0 };
+                    let dirty_ids: Vec<usize> = self.dirty_pages.borrow().iter().copied().collect();
+                    if dirty_ids.is_empty() {
+                        return Ok(IOResult::Done(PagerCommitResult::WalWritten));
+                    }
 
+                    let page_sz = self.page_size.get().expect("page size not set");
+                    let mut completions: Vec<Completion> = Vec::new();
+                    let mut pages: Vec<PageRef> = Vec::with_capacity(dirty_ids.len().min(IOV_MAX));
+                    let total = dirty_ids.len();
+
+                    for (i, page_id) in dirty_ids.into_iter().enumerate() {
                         let page = {
                             let mut cache = self.page_cache.write();
                             let page_key = PageCacheKey::new(page_id);
-                            let page = cache.get(&page_key).unwrap_or_else(|| {
-                                panic!(
-                                    "we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it. page={page_id}"
-                                )
-                            });
-                            let page_type = page.get().contents.as_ref().unwrap().maybe_page_type();
+                            let page = cache.get(&page_key).expect(
+                                "dirty list contained a page that cache dropped (page={page_id})",
+                            );
                             trace!(
-                                "commit_dirty_pages(page={}, page_type={:?}",
+                                "commit_dirty_pages(page={}, page_type={:?})",
                                 page_id,
-                                page_type
+                                page.get().contents.as_ref().unwrap().maybe_page_type()
                             );
                             page
                         };
+                        pages.push(page);
 
-                        // TODO: invalidade previous completions on error here
-                        let c = wal
-                            .borrow_mut()
-                            .append_frame(
-                                page.clone(),
-                                self.page_size.get().expect("page size not set"),
-                                db_size,
-                            )
-                            .inspect_err(|_| {
-                                for c in completions.iter() {
-                                    c.abort();
+                        let end_of_chunk = pages.len() == IOV_MAX || i == total - 1;
+                        if end_of_chunk {
+                            let commit_flag = if i == total - 1 {
+                                // Only the commit frame (final) frame carries the db_size
+                                Some(db_size_after)
+                            } else {
+                                None
+                            };
+                            let r = wal.borrow_mut().append_frames_vectored(
+                                std::mem::take(&mut pages),
+                                page_sz,
+                                commit_flag,
+                            );
+                            match r {
+                                Ok(c) => completions.push(c),
+                                Err(e) => {
+                                    for c in &completions {
+                                        c.abort();
+                                    }
+                                    return Err(e);
                                 }
-                            })?;
-                        completions.push(c);
+                            }
+                        }
                     }
                     self.dirty_pages.borrow_mut().clear();
                     // Nothing to append
@@ -1355,13 +1383,17 @@ impl Pager {
                         return Ok(IOResult::Done(PagerCommitResult::WalWritten));
                     } else {
                         self.commit_info.state.set(CommitState::SyncWal);
+                    }
+                    if !completions.iter().all(|c| c.is_completed()) {
                         io_yield_many!(completions);
                     }
                 }
                 CommitState::SyncWal => {
                     self.commit_info.state.set(CommitState::AfterSyncWal);
                     let c = wal.borrow_mut().sync()?;
-                    io_yield_one!(c);
+                    if !c.is_completed() {
+                        io_yield_one!(c);
+                    }
                 }
                 CommitState::AfterSyncWal => {
                     turso_assert!(!wal.borrow().is_syncing(), "wal should have synced");
@@ -1378,7 +1410,9 @@ impl Pager {
                 CommitState::SyncDbFile => {
                     let c = sqlite3_ondisk::begin_sync(self.db_file.clone(), self.syncing.clone())?;
                     self.commit_info.state.set(CommitState::AfterSyncDbFile);
-                    io_yield_one!(c);
+                    if !c.is_completed() {
+                        io_yield_one!(c);
+                    }
                 }
                 CommitState::AfterSyncDbFile => {
                     turso_assert!(!self.syncing.get(), "should have finished syncing");
@@ -1387,7 +1421,15 @@ impl Pager {
                 }
             }
         };
-        // We should only signal that we finished appenind frames after wal sync to avoid inconsistencies when sync fails
+
+        let now = self.io.now();
+        tracing::debug!(
+            "total time flushing cache: {} ms",
+            now.to_system_time()
+                .duration_since(self.commit_info.time.get().to_system_time())
+                .unwrap()
+                .as_millis()
+        );
         wal.borrow_mut().finish_append_frames_commit()?;
         Ok(IOResult::Done(res))
     }
@@ -2087,6 +2129,7 @@ impl Pager {
         self.checkpoint_state.replace(CheckpointState::Checkpoint);
         self.syncing.replace(false);
         self.commit_info.state.set(CommitState::Start);
+        self.commit_info.time.set(self.io.now());
         self.allocate_page_state.replace(AllocatePageState::Start);
         self.free_page_state.replace(FreePageState::Start);
         #[cfg(not(feature = "omit_autovacuum"))]
