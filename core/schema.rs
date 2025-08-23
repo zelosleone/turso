@@ -255,7 +255,8 @@ impl Schema {
     }
 
     pub fn table_has_indexes(&self, table_name: &str) -> bool {
-        self.has_indexes.contains(table_name)
+        let name = normalize_ident(table_name);
+        self.has_indexes.contains(&name)
     }
 
     pub fn table_set_has_index(&mut self, table_name: &str) {
