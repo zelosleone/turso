@@ -235,44 +235,51 @@ pub struct PlanContext<'a>(pub &'a [&'a TableReferences]);
 
 // Definitely not perfect yet
 impl ToSqlContext for PlanContext<'_> {
-    fn get_column_name(&self, table_id: TableInternalId, col_idx: usize) -> String {
-        let table = self
+    fn get_column_name(&self, table_id: TableInternalId, col_idx: usize) -> Option<&str> {
+        let Some(table) = self
             .0
             .iter()
             .find_map(|table_ref| table_ref.find_table_by_internal_id(table_id))
-            .unwrap();
+        else {
+            return None;
+        };
         let cols = table.columns();
-        match cols.get(col_idx).unwrap().name.as_ref() {
-            None => format!("{col_idx}"),
-            Some(n) => n.to_string(),
+        match cols.get(col_idx) {
+            None => None,
+            Some(col) => match col.name.as_ref() {
+                None => None,
+                Some(n) => Some(n),
+            },
         }
     }
 
-    fn get_table_name(&self, id: TableInternalId) -> &str {
-        let table_ref = self
+    fn get_table_name(&self, id: TableInternalId) -> Option<&str> {
+        let Some(table_ref) = self
             .0
             .iter()
             .find(|table_ref| table_ref.find_table_by_internal_id(id).is_some())
-            .unwrap();
+        else {
+            return None;
+        };
         let joined_table = table_ref.find_joined_table_by_internal_id(id);
         let outer_query = table_ref.find_outer_query_ref_by_internal_id(id);
         match (joined_table, outer_query) {
-            (Some(table), None) => &table.identifier,
-            (None, Some(table)) => &table.identifier,
+            (Some(table), None) => Some(&table.identifier),
+            (None, Some(table)) => Some(&table.identifier),
             _ => unreachable!(),
         }
     }
 }
 
 impl ToTokens for Plan {
-    fn to_tokens_with_context<S: TokenStream + ?Sized, C: ToSqlContext>(
+    fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
         s: &mut S,
         context: &C,
     ) -> Result<(), S::Error> {
         match self {
             Self::Select(select) => {
-                select.to_tokens_with_context(s, &PlanContext(&[&select.table_references]))?;
+                select.to_tokens(s, &PlanContext(&[&select.table_references]))?;
             }
             Self::CompoundSelect {
                 left,
@@ -289,11 +296,11 @@ impl ToTokens for Plan {
                 let context = &PlanContext(all_refs.as_slice());
 
                 for (plan, operator) in left {
-                    plan.to_tokens_with_context(s, context)?;
-                    operator.to_tokens_with_context(s, context)?;
+                    plan.to_tokens(s, context)?;
+                    operator.to_tokens(s, context)?;
                 }
 
-                right_most.to_tokens_with_context(s, context)?;
+                right_most.to_tokens(s, context)?;
 
                 if let Some(order_by) = order_by {
                     s.append(TokenType::TK_ORDER, None)?;
@@ -319,8 +326,8 @@ impl ToTokens for Plan {
                     s.append(TokenType::TK_FLOAT, Some(&offset.to_string()))?;
                 }
             }
-            Self::Delete(delete) => delete.to_tokens_with_context(s, context)?,
-            Self::Update(update) => update.to_tokens_with_context(s, context)?,
+            Self::Delete(delete) => delete.to_tokens(s, context)?,
+            Self::Update(update) => update.to_tokens(s, context)?,
         }
 
         Ok(())
@@ -328,7 +335,7 @@ impl ToTokens for Plan {
 }
 
 impl ToTokens for JoinedTable {
-    fn to_tokens_with_context<S: TokenStream + ?Sized, C: ToSqlContext>(
+    fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
         s: &mut S,
         _context: &C,
@@ -345,7 +352,7 @@ impl ToTokens for JoinedTable {
             Table::FromClauseSubquery(from_clause_subquery) => {
                 s.append(TokenType::TK_LP, None)?;
                 // Could possibly merge the contexts together here
-                from_clause_subquery.plan.to_tokens_with_context(
+                from_clause_subquery.plan.to_tokens(
                     s,
                     &PlanContext(&[&from_clause_subquery.plan.table_references]),
                 )?;
@@ -362,7 +369,7 @@ impl ToTokens for JoinedTable {
 
 // TODO: currently cannot print the original CTE as it is optimized into a subquery
 impl ToTokens for SelectPlan {
-    fn to_tokens_with_context<S: TokenStream + ?Sized, C: ToSqlContext>(
+    fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
         s: &mut S,
         context: &C,
@@ -374,7 +381,7 @@ impl ToTokens for SelectPlan {
                     .map(|values| values.iter().map(|v| Box::from(v.clone())).collect())
                     .collect(),
             )
-            .to_tokens_with_context(s, context)?;
+            .to_tokens(s, context)?;
         } else {
             s.append(TokenType::TK_SELECT, None)?;
             if self.distinctness.is_distinct() {
@@ -386,7 +393,7 @@ impl ToTokens for SelectPlan {
                     s.append(TokenType::TK_COMMA, None)?;
                 }
 
-                expr.to_tokens_with_context(s, context)?;
+                expr.to_tokens(s, context)?;
                 if let Some(alias) = alias {
                     s.append(TokenType::TK_AS, None)?;
                     s.append(TokenType::TK_ID, Some(alias))?;
@@ -403,7 +410,7 @@ impl ToTokens for SelectPlan {
                 }
 
                 let table_ref = self.joined_tables().get(order.original_idx).unwrap();
-                table_ref.to_tokens_with_context(s, context)?;
+                table_ref.to_tokens(s, context)?;
             }
 
             if !self.where_clause.is_empty() {
@@ -418,7 +425,7 @@ impl ToTokens for SelectPlan {
                     if i != 0 {
                         s.append(TokenType::TK_AND, None)?;
                     }
-                    expr.to_tokens_with_context(s, context)?;
+                    expr.to_tokens(s, context)?;
                 }
             }
 
@@ -436,7 +443,7 @@ impl ToTokens for SelectPlan {
                         if i != 0 {
                             s.append(TokenType::TK_AND, None)?;
                         }
-                        expr.to_tokens_with_context(s, context)?;
+                        expr.to_tokens(s, context)?;
                     }
                 }
             }
@@ -471,7 +478,7 @@ impl ToTokens for SelectPlan {
 }
 
 impl ToTokens for DeletePlan {
-    fn to_tokens_with_context<S: TokenStream + ?Sized, C: ToSqlContext>(
+    fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
         s: &mut S,
         _: &C,
@@ -500,7 +507,7 @@ impl ToTokens for DeletePlan {
                 if i != 0 {
                     s.append(TokenType::TK_AND, None)?;
                 }
-                expr.to_tokens_with_context(s, context)?;
+                expr.to_tokens(s, context)?;
             }
         }
 
@@ -533,7 +540,7 @@ impl ToTokens for DeletePlan {
 }
 
 impl ToTokens for UpdatePlan {
-    fn to_tokens_with_context<S: TokenStream + ?Sized, C: ToSqlContext>(
+    fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
         s: &mut S,
         _: &C,
@@ -578,10 +585,10 @@ impl ToTokens for UpdatePlan {
                 .map(|where_clause| where_clause.expr.clone());
             iter.next()
                 .expect("should not be empty")
-                .to_tokens_with_context(s, context)?;
+                .to_tokens(s, context)?;
             for expr in iter {
                 s.append(TokenType::TK_AND, None)?;
-                expr.to_tokens_with_context(s, context)?;
+                expr.to_tokens(s, context)?;
             }
         }
 
