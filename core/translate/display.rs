@@ -236,28 +236,20 @@ pub struct PlanContext<'a>(pub &'a [&'a TableReferences]);
 // Definitely not perfect yet
 impl ToSqlContext for PlanContext<'_> {
     fn get_column_name(&self, table_id: TableInternalId, col_idx: usize) -> Option<Option<&str>> {
-        let Some(table) = self
+        let table = self
             .0
             .iter()
-            .find_map(|table_ref| table_ref.find_table_by_internal_id(table_id))
-        else {
-            return None;
-        };
+            .find_map(|table_ref| table_ref.find_table_by_internal_id(table_id))?;
         let cols = table.columns();
-        match cols.get(col_idx) {
-            None => None,
-            Some(col) => Some(col.name.as_ref().map(|name| name.as_ref())),
-        }
+        cols.get(col_idx)
+            .map(|col| col.name.as_ref().map(|name| name.as_ref()))
     }
 
     fn get_table_name(&self, id: TableInternalId) -> Option<&str> {
-        let Some(table_ref) = self
+        let table_ref = self
             .0
             .iter()
-            .find(|table_ref| table_ref.find_table_by_internal_id(id).is_some())
-        else {
-            return None;
-        };
+            .find(|table_ref| table_ref.find_table_by_internal_id(id).is_some())?;
         let joined_table = table_ref.find_joined_table_by_internal_id(id);
         let outer_query = table_ref.find_outer_query_ref_by_internal_id(id);
         match (joined_table, outer_query) {
