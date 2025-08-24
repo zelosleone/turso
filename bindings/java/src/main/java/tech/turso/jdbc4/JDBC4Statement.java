@@ -11,12 +11,27 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.regex.Pattern;
 import tech.turso.annotations.Nullable;
 import tech.turso.annotations.SkipNullableCheck;
 import tech.turso.core.TursoResultSet;
 import tech.turso.core.TursoStatement;
 
 public class JDBC4Statement implements Statement {
+
+  private static final Pattern BATCH_COMPATIBLE_PATTERN =
+      Pattern.compile(
+          "^\\s*"
+              + // Leading whitespace
+              "(?:/\\*.*?\\*/\\s*)*"
+              + // Optional C-style comments
+              "(?:--[^\\n]*\\n\\s*)*"
+              + // Optional SQL line comments
+              "(?:"
+              + // Start of keywords group
+              "INSERT|UPDATE|DELETE"
+              + ")\\b",
+          Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
   private final JDBC4Connection connection;
 
@@ -254,6 +269,7 @@ public class JDBC4Statement implements Statement {
     batchCommands.clear();
   }
 
+  // TODO: let's make this batch operation atomic
   @Override
   public int[] executeBatch() throws SQLException {
     ensureOpen();
@@ -310,31 +326,14 @@ public class JDBC4Statement implements Statement {
     return updateCounts;
   }
 
-  /**
-   * Checks if a SQL statement is compatible with batch execution. Only INSERT, UPDATE, DELETE, and
-   * DDL statements are allowed in batch. SELECT and other query statements are not allowed.
-   *
-   * @param sql The SQL statement to check
-   * @return true if the statement is batch-compatible, false otherwise
-   */
-  private boolean isBatchCompatibleStatement(String sql) {
+  boolean isBatchCompatibleStatement(String sql) {
     if (sql == null || sql.trim().isEmpty()) {
       return false;
     }
 
-    // Trim and convert to uppercase for case-insensitive comparison
-    String trimmedSql = sql.trim().toUpperCase();
-
-    // Check if it starts with batch-compatible keywords
-    return trimmedSql.startsWith("INSERT")
-        || trimmedSql.startsWith("UPDATE")
-        || trimmedSql.startsWith("DELETE")
-        || trimmedSql.startsWith("CREATE")
-        || trimmedSql.startsWith("DROP")
-        || trimmedSql.startsWith("ALTER")
-        || trimmedSql.startsWith("TRUNCATE")
-        || trimmedSql.startsWith("REPLACE")
-        || trimmedSql.startsWith("MERGE");
+    // Check if the SQL matches batch-compatible patterns (DML and DDL)
+    // This will return false for SELECT, EXPLAIN, PRAGMA, SHOW, etc.
+    return BATCH_COMPATIBLE_PATTERN.matcher(sql).find();
   }
 
   @Override
