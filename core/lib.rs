@@ -2170,6 +2170,10 @@ impl Statement {
         self.state.bind_at(index, value);
     }
 
+    pub fn clear_bindings(&mut self) {
+        self.state.clear_bindings();
+    }
+
     pub fn reset(&mut self) {
         self.state.reset();
     }

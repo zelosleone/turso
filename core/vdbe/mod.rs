@@ -335,6 +335,10 @@ impl ProgramState {
         self.parameters.insert(index, value);
     }
 
+    pub fn clear_bindings(&mut self) {
+        self.parameters.clear();
+    }
+
     pub fn get_parameter(&self, index: NonZero<usize>) -> Value {
         self.parameters.get(&index).cloned().unwrap_or(Value::Null)
     }
