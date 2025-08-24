@@ -17,7 +17,7 @@ use super::sqlite3_ondisk::{self, checksum_wal, WalHeader, WAL_MAGIC_BE, WAL_MAG
 use crate::fast_lock::SpinLock;
 use crate::io::{clock, File, IO};
 use crate::result::LimboResult;
-use crate::storage::encryption::PerConnEncryptionContext;
+use crate::storage::encryption::EncryptionContext;
 use crate::storage::sqlite3_ondisk::{
     begin_read_wal_frame, begin_read_wal_frame_raw, finish_read_page, prepare_wal_frame,
     write_pages_vectored, PageSize, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
@@ -297,7 +297,7 @@ pub trait Wal: Debug {
     /// Return unique set of pages changed **after** frame_watermark position and until current WAL session max_frame_no
     fn changed_pages_after(&self, frame_watermark: u64) -> Result<Vec<u32>>;
 
-    fn set_encryption_context(&mut self, ctx: PerConnEncryptionContext);
+    fn set_encryption_context(&mut self, ctx: EncryptionContext);
 
     #[cfg(debug_assertions)]
     fn as_any(&self) -> &dyn std::any::Any;
@@ -568,7 +568,7 @@ pub struct WalFile {
     /// Manages locks needed for checkpointing
     checkpoint_guard: Option<CheckpointLocks>,
 
-    encryption_ctx: RefCell<Option<PerConnEncryptionContext>>,
+    encryption_ctx: RefCell<Option<EncryptionContext>>,
 }
 
 impl fmt::Debug for WalFile {
@@ -1374,7 +1374,7 @@ impl Wal for WalFile {
         self
     }
 
-    fn set_encryption_context(&mut self, ctx: PerConnEncryptionContext) {
+    fn set_encryption_context(&mut self, ctx: EncryptionContext) {
         self.encryption_ctx.replace(Some(ctx));
     }
 }

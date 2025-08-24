@@ -1,5 +1,5 @@
 use crate::error::LimboError;
-use crate::storage::encryption::PerConnEncryptionContext;
+use crate::storage::encryption::EncryptionContext;
 use crate::{io::Completion, Buffer, CompletionError, Result};
 use std::sync::Arc;
 use tracing::{instrument, Level};
@@ -15,14 +15,14 @@ pub trait DatabaseStorage: Send + Sync {
     fn read_page(
         &self,
         page_idx: usize,
-        encryption_ctx: Option<&PerConnEncryptionContext>,
+        encryption_ctx: Option<&EncryptionContext>,
         c: Completion,
     ) -> Result<Completion>;
     fn write_page(
         &self,
         page_idx: usize,
         buffer: Arc<Buffer>,
-        encryption_ctx: Option<&PerConnEncryptionContext>,
+        encryption_ctx: Option<&EncryptionContext>,
         c: Completion,
     ) -> Result<Completion>;
     fn write_pages(
@@ -30,7 +30,7 @@ pub trait DatabaseStorage: Send + Sync {
         first_page_idx: usize,
         page_size: usize,
         buffers: Vec<Arc<Buffer>>,
-        encryption_ctx: Option<&PerConnEncryptionContext>,
+        encryption_ctx: Option<&EncryptionContext>,
         c: Completion,
     ) -> Result<Completion>;
     fn sync(&self, c: Completion) -> Result<Completion>;
@@ -59,7 +59,7 @@ impl DatabaseStorage for DatabaseFile {
     fn read_page(
         &self,
         page_idx: usize,
-        encryption_ctx: Option<&PerConnEncryptionContext>,
+        encryption_ctx: Option<&EncryptionContext>,
         c: Completion,
     ) -> Result<Completion> {
         let r = c.as_read();
@@ -111,7 +111,7 @@ impl DatabaseStorage for DatabaseFile {
         &self,
         page_idx: usize,
         buffer: Arc<Buffer>,
-        encryption_ctx: Option<&PerConnEncryptionContext>,
+        encryption_ctx: Option<&EncryptionContext>,
         c: Completion,
     ) -> Result<Completion> {
         let buffer_size = buffer.len();
@@ -135,7 +135,7 @@ impl DatabaseStorage for DatabaseFile {
         first_page_idx: usize,
         page_size: usize,
         buffers: Vec<Arc<Buffer>>,
-        encryption_key: Option<&PerConnEncryptionContext>,
+        encryption_key: Option<&EncryptionContext>,
         c: Completion,
     ) -> Result<Completion> {
         assert!(first_page_idx > 0);
@@ -187,7 +187,7 @@ impl DatabaseFile {
 fn encrypt_buffer(
     page_idx: usize,
     buffer: Arc<Buffer>,
-    ctx: &PerConnEncryptionContext,
+    ctx: &EncryptionContext,
 ) -> Arc<Buffer> {
     let encrypted_data = ctx.encrypt_page(buffer.as_slice(), page_idx).unwrap();
     Arc::new(Buffer::new(encrypted_data.to_vec()))

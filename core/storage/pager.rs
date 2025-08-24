@@ -29,7 +29,7 @@ use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCac
 use super::sqlite3_ondisk::begin_write_btree_page;
 use super::wal::CheckpointMode;
 use crate::storage::encryption::{
-    EncryptionKey, PerConnEncryptionContext, ENCRYPTION_METADATA_SIZE,
+    EncryptionKey, EncryptionContext, ENCRYPTION_METADATA_SIZE,
 };
 
 /// SQLite's default maximum page count
@@ -493,7 +493,7 @@ pub struct Pager {
     header_ref_state: RefCell<HeaderRefState>,
     #[cfg(not(feature = "omit_autovacuum"))]
     btree_create_vacuum_full_state: Cell<BtreeCreateVacuumFullState>,
-    pub(crate) encryption_ctx: RefCell<Option<PerConnEncryptionContext>>,
+    pub(crate) encryption_ctx: RefCell<Option<EncryptionContext>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1137,7 +1137,7 @@ impl Pager {
         page_idx: usize,
         page: PageRef,
         allow_empty_read: bool,
-        encryption_key: Option<&PerConnEncryptionContext>,
+        encryption_key: Option<&EncryptionContext>,
     ) -> Result<Completion> {
         sqlite3_ondisk::begin_read_page(
             self.db_file.clone(),
@@ -2112,7 +2112,7 @@ impl Pager {
     }
 
     pub fn set_encryption_context(&self, key: &EncryptionKey) {
-        let encryption_ctx = PerConnEncryptionContext::new(key).unwrap();
+        let encryption_ctx = EncryptionContext::new(key).unwrap();
         self.encryption_ctx.replace(Some(encryption_ctx.clone()));
         let Some(wal) = self.wal.as_ref() else { return };
         wal.borrow_mut().set_encryption_context(encryption_ctx)

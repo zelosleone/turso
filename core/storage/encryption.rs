@@ -113,12 +113,12 @@ impl std::fmt::Debug for Cipher {
 }
 
 #[derive(Clone)]
-pub struct PerConnEncryptionContext {
+pub struct EncryptionContext {
     cipher_mode: CipherMode,
     cipher: Cipher,
 }
 
-impl PerConnEncryptionContext {
+impl EncryptionContext {
     pub fn new(key: &EncryptionKey) -> Result<Self> {
         let cipher_mode = CipherMode::Aes256Gcm;
         let required_size = cipher_mode.required_key_size();
@@ -281,7 +281,7 @@ mod tests {
         };
 
         let key = EncryptionKey::from_string("alice and bob use encryption on database");
-        let ctx = PerConnEncryptionContext::new(&key).unwrap();
+        let ctx = EncryptionContext::new(&key).unwrap();
 
         let page_id = 42;
         let encrypted = ctx.encrypt_page(&page_data, page_id).unwrap();
