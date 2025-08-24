@@ -41,6 +41,7 @@ pub mod numeric;
 mod numeric;
 
 use crate::incremental::view::ViewTransactionState;
+use crate::storage::encryption::CipherMode;
 use crate::translate::optimizer::optimize_plan;
 use crate::translate::pragma::TURSO_CDC_DEFAULT_TABLE_NAME;
 #[cfg(all(feature = "fs", feature = "conn_raw_api"))]
@@ -455,6 +456,7 @@ impl Database {
             metrics: RefCell::new(ConnectionMetrics::new()),
             is_nested_stmt: Cell::new(false),
             encryption_key: RefCell::new(None),
+            encryption_cipher: RefCell::new(None),
         });
         let builtin_syms = self.builtin_syms.borrow();
         // add built-in extensions symbols to the connection to prevent having to load each time
@@ -886,6 +888,7 @@ pub struct Connection {
     /// Generally this is only true for ParseSchema.
     is_nested_stmt: Cell<bool>,
     encryption_key: RefCell<Option<EncryptionKey>>,
+    encryption_cipher: RefCell<Option<CipherMode>>,
 }
 
 impl Connection {
@@ -1960,6 +1963,15 @@ impl Connection {
         *self.encryption_key.borrow_mut() = Some(key.clone());
         let pager = self.pager.borrow();
         pager.set_encryption_context(&key);
+    }
+
+    pub fn set_encryption_cipher(&self, cipher: CipherMode) {
+        tracing::trace!("setting encryption cipher for connection");
+        self.encryption_cipher.replace(Some(cipher));
+    }
+
+    pub fn get_encryption_cipher_mode(&self) -> Option<CipherMode> {
+        self.encryption_cipher.borrow().clone()
     }
 }
 

@@ -10,7 +10,7 @@ use turso_parser::ast::{PragmaName, QualifiedName};
 use super::integrity_check::translate_integrity_check;
 use crate::pragma::pragma_for;
 use crate::schema::Schema;
-use crate::storage::encryption::EncryptionKey;
+use crate::storage::encryption::{CipherMode, EncryptionKey};
 use crate::storage::pager::AutoVacuumMode;
 use crate::storage::pager::Pager;
 use crate::storage::sqlite3_ondisk::CacheSize;
@@ -318,6 +318,12 @@ fn update_pragma(
             connection.set_encryption_key(key);
             Ok((program, TransactionMode::None))
         }
+        PragmaName::EncryptionCipher => {
+            let value = parse_string(&value)?;
+            let cipher = CipherMode::try_from(value.as_str())?;
+            connection.set_encryption_cipher(cipher);
+            Ok((program, TransactionMode::None))
+        }
     }
 }
 
@@ -587,6 +593,15 @@ fn query_pragma(
             program.emit_string8(msg.to_string(), register);
             program.emit_result_row(register, 1);
             program.add_pragma_result_column(pragma.to_string());
+            Ok((program, TransactionMode::None))
+        }
+        PragmaName::EncryptionCipher => {
+            if let Some(cipher) = connection.get_encryption_cipher_mode() {
+                let register = program.alloc_register();
+                program.emit_string8(cipher.to_string(), register);
+                program.emit_result_row(register, 1);
+                program.add_pragma_result_column(pragma.to_string());
+            }
             Ok((program, TransactionMode::None))
         }
     }

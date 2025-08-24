@@ -1211,6 +1211,10 @@ pub enum PragmaName {
     AutoVacuum,
     /// `cache_size` pragma
     CacheSize,
+    /// encryption cipher algorithm name for encrypted databases
+    #[strum(serialize = "cipher")]
+    #[cfg_attr(feature = "serde", serde(rename = "cipher"))]
+    EncryptionCipher,
     /// List databases
     DatabaseList,
     /// Encoding - only support utf8

@@ -134,6 +134,30 @@ pub enum CipherMode {
     Aegis256,
 }
 
+impl TryFrom<&str> for CipherMode {
+    type Error = LimboError;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s.to_lowercase().as_str() {
+            "aes256gcm" | "aes-256-gcm" | "aes_256_gcm" => Ok(CipherMode::Aes256Gcm),
+            "aegis256" | "aegis-256" | "aegis_256" => Ok(CipherMode::Aegis256),
+            _ => Err(LimboError::InvalidArgument(format!(
+                "Unknown cipher name: {}",
+                s
+            ))),
+        }
+    }
+}
+
+impl std::fmt::Display for CipherMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CipherMode::Aes256Gcm => write!(f, "aes256gcm"),
+            CipherMode::Aegis256 => write!(f, "aegis256"),
+        }
+    }
+}
+
 impl CipherMode {
     /// Every cipher requires a specific key size. For 256-bit algorithms, this is 32 bytes.
     /// For 128-bit algorithms, it would be 16 bytes, etc.

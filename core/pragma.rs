@@ -111,6 +111,10 @@ pub fn pragma_for(pragma: &PragmaName) -> Pragma {
             PragmaFlags::Result0 | PragmaFlags::SchemaReq | PragmaFlags::NoColumns1,
             &["hexkey"],
         ),
+        EncryptionCipher => Pragma::new(
+            PragmaFlags::Result0 | PragmaFlags::SchemaReq | PragmaFlags::NoColumns1,
+            &["cipher"],
+        ),
     }
 }
 
