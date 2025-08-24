@@ -18,14 +18,6 @@ impl EncryptionKey {
         Self(key)
     }
 
-    pub fn from_string(s: &str) -> Self {
-        let mut key = [0u8; 32];
-        let bytes = s.as_bytes();
-        let len = bytes.len().min(32);
-        key[..len].copy_from_slice(&bytes[..len]);
-        Self(key)
-    }
-
     pub fn from_hex_string(s: &str) -> Result<Self> {
         let hex_str = s.trim();
         let bytes = hex::decode(hex_str)
@@ -379,6 +371,13 @@ mod tests {
     use super::*;
     use rand::Rng;
 
+    fn generate_random_hex_key() -> String {
+        let mut rng = rand::thread_rng();
+        let mut bytes = [0u8; 32];
+        rng.fill(&mut bytes);
+        hex::encode(bytes)
+    }
+
     #[test]
     #[cfg(feature = "encryption")]
     fn test_aes_encrypt_decrypt_round_trip() {
@@ -395,7 +394,7 @@ mod tests {
             page
         };
 
-        let key = EncryptionKey::from_string("alice and bob use encryption on database");
+        let key = EncryptionKey::from_hex_string(&generate_random_hex_key()).unwrap();
         let ctx = EncryptionContext::new(CipherMode::Aes256Gcm, &key).unwrap();
 
         let page_id = 42;
@@ -412,7 +411,7 @@ mod tests {
     #[test]
     #[cfg(feature = "encryption")]
     fn test_aegis256_cipher_wrapper() {
-        let key = EncryptionKey::from_string("alice and bob use AEGIS-256 here!");
+        let key = EncryptionKey::from_hex_string(&generate_random_hex_key()).unwrap();
         let cipher = Aegis256Cipher::new(&key);
 
         let plaintext = b"Hello, AEGIS-256!";
@@ -429,7 +428,7 @@ mod tests {
     #[test]
     #[cfg(feature = "encryption")]
     fn test_aegis256_raw_encryption() {
-        let key = EncryptionKey::from_string("alice and bob use AEGIS-256 here!");
+        let key = EncryptionKey::from_hex_string(&generate_random_hex_key()).unwrap();
         let ctx = EncryptionContext::new(CipherMode::Aegis256, &key).unwrap();
 
         let plaintext = b"Hello, AEGIS-256!";
@@ -458,7 +457,7 @@ mod tests {
             page
         };
 
-        let key = EncryptionKey::from_string("alice and bob use AEGIS-256 for pages!");
+        let key = EncryptionKey::from_hex_string(&generate_random_hex_key()).unwrap();
         let ctx = EncryptionContext::new(CipherMode::Aegis256, &key).unwrap();
 
         let page_id = 42;
