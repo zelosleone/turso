@@ -75,7 +75,7 @@ use std::{
 };
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
-pub use storage::encryption::{EncryptionKey, EncryptionContext};
+pub use storage::encryption::{EncryptionContext, EncryptionKey};
 use storage::page_cache::DumbLruPageCache;
 use storage::pager::{AtomicDbState, DbState};
 use storage::sqlite3_ondisk::PageSize;
