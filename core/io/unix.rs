@@ -260,11 +260,19 @@ impl File for UnixFile {
     fn sync(&self, c: Completion) -> Result<Completion> {
         let file = self.file.lock();
 
-        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-        let result = libc::fsync(file.as_raw_fd());
-
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        let result = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) };
+        let result = unsafe {
+            
+            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+            {
+                libc::fsync(file.as_raw_fd())
+            }
+            
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            {
+                libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC)
+            }
+            
+        };
         
         if result == -1 {
             let e = std::io::Error::last_os_error();
