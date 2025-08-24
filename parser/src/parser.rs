@@ -31,7 +31,7 @@ macro_rules! peek_expect {
                                 expected: &[
                                     $($x,)*
                                 ],
-                                got: token.token_type.unwrap(),
+                                got: tt,
                             })
                         }
                     }
@@ -223,10 +223,11 @@ impl<'a> Parser<'a> {
                 }
                 Some(token) => {
                     if !found_semi {
+                        let tt = token.token_type.unwrap();
                         return Err(Error::ParseUnexpectedToken {
                             parsed_offset: (self.offset(), 1).into(),
                             expected: &[TK_SEMI],
-                            got: token.token_type.unwrap(),
+                            got: tt,
                         });
                     }
 
@@ -253,7 +254,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn next_token(&mut self) -> Result<Option<Token<'a>>> {
+    fn next_token(&mut self) -> Result<Option<&Token<'a>>> {
         debug_assert!(!self.peekable);
         let mut next = self.consume_lexer_without_whitespaces_or_comments();
 
@@ -479,9 +480,9 @@ impl<'a> Parser<'a> {
         match next {
             None => Ok(None), // EOF
             Some(Ok(tok)) => {
-                self.current_token = tok.clone();
+                self.current_token = tok;
                 self.peekable = true;
-                Ok(Some(tok))
+                Ok(Some(&self.current_token))
             }
             Some(Err(err)) => Err(err),
         }
@@ -520,16 +521,21 @@ impl<'a> Parser<'a> {
     /// Get the next token from the lexer
     #[inline]
     fn eat(&mut self) -> Result<Option<Token<'a>>> {
-        let result = self.peek()?;
-        self.peekable = false; // Clear the peek mark after consuming
-        Ok(result)
+        match self.peek()? {
+            None => Ok(None),
+            Some(tok) => {
+                let result = tok.clone();
+                self.peekable = false; // Clear the peek mark after consuming
+                Ok(Some(result))
+            }
+        }
     }
 
     /// Peek at the next token without consuming it
     #[inline]
-    fn peek(&mut self) -> Result<Option<Token<'a>>> {
+    fn peek(&mut self) -> Result<Option<&Token<'a>>> {
         if self.peekable {
-            return Ok(Some(self.current_token.clone()));
+            return Ok(Some(&self.current_token));
         }
 
         self.next_token()
@@ -544,7 +550,7 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    fn peek_no_eof(&mut self) -> Result<Token<'a>> {
+    fn peek_no_eof(&mut self) -> Result<&Token<'a>> {
         match self.peek()? {
             None => Err(Error::ParseUnexpectedEOF),
             Some(token) => Ok(token),
@@ -966,7 +972,7 @@ impl<'a> Parser<'a> {
         let mut type_name = if let Some(tok) = self.peek()? {
             match tok.token_type.unwrap().fallback_id_if_ok() {
                 TK_ID | TK_STRING => {
-                    eat_assert!(self, TK_ID, TK_STRING);
+                    let tok = eat_assert!(self, TK_ID, TK_STRING);
                     from_bytes(tok.value)
                 }
                 _ => return Ok(None),
@@ -978,7 +984,7 @@ impl<'a> Parser<'a> {
         while let Some(tok) = self.peek()? {
             match tok.token_type.unwrap().fallback_id_if_ok() {
                 TK_ID | TK_STRING => {
-                    eat_assert!(self, TK_ID, TK_STRING);
+                    let tok = eat_assert!(self, TK_ID, TK_STRING);
                     type_name.push(' ');
                     type_name.push_str(from_bytes_as_str(tok.value));
                 }
@@ -1324,25 +1330,25 @@ impl<'a> Parser<'a> {
                 Ok(Box::new(Expr::Literal(Literal::Null)))
             }
             TK_BLOB => {
-                eat_assert!(self, TK_BLOB);
+                let tok = eat_assert!(self, TK_BLOB);
                 Ok(Box::new(Expr::Literal(Literal::Blob(from_bytes(
                     tok.value,
                 )))))
             }
             TK_FLOAT => {
-                eat_assert!(self, TK_FLOAT);
+                let tok = eat_assert!(self, TK_FLOAT);
                 Ok(Box::new(Expr::Literal(Literal::Numeric(from_bytes(
                     tok.value,
                 )))))
             }
             TK_INTEGER => {
-                eat_assert!(self, TK_INTEGER);
+                let tok = eat_assert!(self, TK_INTEGER);
                 Ok(Box::new(Expr::Literal(Literal::Numeric(from_bytes(
                     tok.value,
                 )))))
             }
             TK_VARIABLE => {
-                eat_assert!(self, TK_VARIABLE);
+                let tok = eat_assert!(self, TK_VARIABLE);
                 Ok(Box::new(Expr::Variable(from_bytes(tok.value))))
             }
             TK_CAST => {

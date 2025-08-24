@@ -17,7 +17,7 @@ use super::sqlite3_ondisk::{self, checksum_wal, WalHeader, WAL_MAGIC_BE, WAL_MAG
 use crate::fast_lock::SpinLock;
 use crate::io::{clock, File, IO};
 use crate::result::LimboResult;
-use crate::storage::encryption::{decrypt_page, encrypt_page, EncryptionKey};
+use crate::storage::encryption::EncryptionContext;
 use crate::storage::sqlite3_ondisk::{
     begin_read_wal_frame, begin_read_wal_frame_raw, finish_read_page, prepare_wal_frame,
     write_pages_vectored, PageSize, WAL_FRAME_HEADER_SIZE, WAL_HEADER_SIZE,
@@ -297,7 +297,7 @@ pub trait Wal: Debug {
     /// Return unique set of pages changed **after** frame_watermark position and until current WAL session max_frame_no
     fn changed_pages_after(&self, frame_watermark: u64) -> Result<Vec<u32>>;
 
-    fn set_encryption_key(&mut self, key: Option<EncryptionKey>);
+    fn set_encryption_context(&mut self, ctx: EncryptionContext);
 
     #[cfg(debug_assertions)]
     fn as_any(&self) -> &dyn std::any::Any;
@@ -568,7 +568,7 @@ pub struct WalFile {
     /// Manages locks needed for checkpointing
     checkpoint_guard: Option<CheckpointLocks>,
 
-    encryption_key: RefCell<Option<EncryptionKey>>,
+    encryption_ctx: RefCell<Option<EncryptionContext>>,
 }
 
 impl fmt::Debug for WalFile {
@@ -1034,7 +1034,7 @@ impl Wal for WalFile {
         page.set_locked();
         let frame = page.clone();
         let page_idx = page.get().id;
-        let key = self.encryption_key.borrow().clone();
+        let encryption_ctx = self.encryption_ctx.borrow().clone();
         let seq = self.header.checkpoint_seq;
         let complete = Box::new(move |res: Result<(Arc<Buffer>, i32), CompletionError>| {
             let Ok((buf, bytes_read)) = res else {
@@ -1047,8 +1047,8 @@ impl Wal for WalFile {
                 "read({bytes_read}) less than expected({buf_len}): frame_id={frame_id}"
             );
             let cloned = frame.clone();
-            if let Some(key) = key.clone() {
-                match decrypt_page(buf.as_slice(), page_idx, &key) {
+            if let Some(ctx) = encryption_ctx.clone() {
+                match ctx.decrypt_page(buf.as_slice(), page_idx) {
                     Ok(decrypted_data) => {
                         buf.as_mut_slice().copy_from_slice(&decrypted_data);
                     }
@@ -1213,15 +1213,15 @@ impl Wal for WalFile {
             let page_content = page.get_contents();
             let page_buf = page_content.as_ptr();
 
-            let key = self.encryption_key.borrow();
+            let encryption_ctx = self.encryption_ctx.borrow();
             let encrypted_data = {
-                if let Some(key) = key.as_ref() {
-                    Some(encrypt_page(page_buf, page_id, key)?)
+                if let Some(key) = encryption_ctx.as_ref() {
+                    Some(key.encrypt_page(page_buf, page_id)?)
                 } else {
                     None
                 }
             };
-            let data_to_write = if key.as_ref().is_some() {
+            let data_to_write = if encryption_ctx.as_ref().is_some() {
                 encrypted_data.as_ref().unwrap().as_slice()
             } else {
                 page_buf
@@ -1374,8 +1374,8 @@ impl Wal for WalFile {
         self
     }
 
-    fn set_encryption_key(&mut self, key: Option<EncryptionKey>) {
-        self.encryption_key.replace(key);
+    fn set_encryption_context(&mut self, ctx: EncryptionContext) {
+        self.encryption_ctx.replace(Some(ctx));
     }
 }
 
@@ -1413,7 +1413,7 @@ impl WalFile {
             prev_checkpoint: CheckpointResult::default(),
             checkpoint_guard: None,
             header: *header,
-            encryption_key: RefCell::new(None),
+            encryption_ctx: RefCell::new(None),
         }
     }
 
@@ -1665,7 +1665,7 @@ impl WalFile {
                                 pager,
                                 batch_map,
                                 done_flag,
-                                self.encryption_key.borrow().as_ref(),
+                                self.encryption_ctx.borrow().as_ref(),
                             )?);
                         }
                     }

@@ -132,6 +132,7 @@ pub fn prepare_update_plan(
         Some(table) => table,
         None => bail_parse_error!("Parse error: no such table: {}", table_name),
     };
+    let table_name = table.get_name();
     let iter_dir = body
         .order_by
         .first()
@@ -149,7 +150,7 @@ pub fn prepare_update_plan(
             Table::BTree(btree_table) => Table::BTree(btree_table.clone()),
             _ => unreachable!(),
         },
-        identifier: table_name.as_str().to_string(),
+        identifier: table_name.to_string(),
         internal_id: program.table_reference_counter.next(),
         op: build_scan_op(&table, iter_dir),
         join_info: None,
@@ -235,7 +236,7 @@ pub fn prepare_update_plan(
                 Table::BTree(btree_table) => Table::BTree(btree_table.clone()),
                 _ => unreachable!(),
             },
-            identifier: table_name.as_str().to_string(),
+            identifier: table_name.to_string(),
             internal_id,
             op: build_scan_op(&table, iter_dir),
             join_info: None,
@@ -334,7 +335,7 @@ pub fn prepare_update_plan(
 
     // Check what indexes will need to be updated by checking set_clauses and see
     // if a column is contained in an index.
-    let indexes = schema.get_indices(table_name.as_str());
+    let indexes = schema.get_indices(table_name);
     let rowid_alias_used = set_clauses
         .iter()
         .any(|(idx, _)| columns[*idx].is_rowid_alias);

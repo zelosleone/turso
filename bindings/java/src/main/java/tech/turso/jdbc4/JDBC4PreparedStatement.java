@@ -177,6 +177,11 @@ public final class JDBC4PreparedStatement extends JDBC4Statement implements Prep
   }
 
   @Override
+  public void addBatch(String sql) throws SQLException {
+    throw new SQLException("addBatch(String) cannot be called on a PreparedStatement");
+  }
+
+  @Override
   public void setCharacterStream(int parameterIndex, Reader reader, int length)
       throws SQLException {}
 
