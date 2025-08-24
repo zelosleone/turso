@@ -259,12 +259,24 @@ impl File for UnixFile {
     #[instrument(err, skip_all, level = Level::TRACE)]
     fn sync(&self, c: Completion) -> Result<Completion> {
         let file = self.file.lock();
-        let result = unsafe { libc::fsync(file.as_raw_fd()) };
+
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        let result = libc::fsync(file.as_raw_fd());
+
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        let result = unsafe { libc::fcntl(file.as_raw_fd(), libc::F_FULLFSYNC) };
+        
         if result == -1 {
             let e = std::io::Error::last_os_error();
             Err(e.into())
         } else {
+
+            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
             trace!("fsync");
+
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            trace!("fcntl(F_FULLSYNC)");
+
             c.complete(0);
             Ok(c)
         }
