@@ -315,7 +315,7 @@ fn update_pragma(
         PragmaName::EncryptionKey => {
             let value = parse_string(&value)?;
             let key = EncryptionKey::from_string(&value);
-            connection.set_encryption_key(Some(key));
+            connection.set_encryption_key(key);
             Ok((program, TransactionMode::None))
         }
     }
