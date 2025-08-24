@@ -28,9 +28,7 @@ use super::btree::{btree_init_page, BTreePage};
 use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCacheKey};
 use super::sqlite3_ondisk::begin_write_btree_page;
 use super::wal::CheckpointMode;
-use crate::storage::encryption::{
-    EncryptionKey, EncryptionContext, ENCRYPTION_METADATA_SIZE,
-};
+use crate::storage::encryption::{EncryptionContext, EncryptionKey, ENCRYPTION_METADATA_SIZE};
 
 /// SQLite's default maximum page count
 const DEFAULT_MAX_PAGE_COUNT: u32 = 0xfffffffe;

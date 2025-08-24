@@ -184,11 +184,7 @@ impl DatabaseFile {
     }
 }
 
-fn encrypt_buffer(
-    page_idx: usize,
-    buffer: Arc<Buffer>,
-    ctx: &EncryptionContext,
-) -> Arc<Buffer> {
+fn encrypt_buffer(page_idx: usize, buffer: Arc<Buffer>, ctx: &EncryptionContext) -> Arc<Buffer> {
     let encrypted_data = ctx.encrypt_page(buffer.as_slice(), page_idx).unwrap();
     Arc::new(Buffer::new(encrypted_data.to_vec()))
 }
