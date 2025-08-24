@@ -331,8 +331,6 @@ public class JDBC4Statement implements Statement {
       return false;
     }
 
-    // Check if the SQL matches batch-compatible patterns (DML and DDL)
-    // This will return false for SELECT, EXPLAIN, PRAGMA, SHOW, etc.
     return BATCH_COMPATIBLE_PATTERN.matcher(sql).find();
   }
 
