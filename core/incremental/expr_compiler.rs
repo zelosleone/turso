@@ -14,7 +14,7 @@ use crate::SymbolTable;
 use crate::{CaptureDataChangesMode, Connection, QueryMode, Result, Value};
 use std::rc::Rc;
 use std::sync::Arc;
-use turso_sqlite3_parser::ast::{Expr, Literal, Operator};
+use turso_parser::ast::{Expr, Literal, Operator};
 
 // Transform an expression to replace column references with Register expressions Why do we want to
 // do this?
@@ -65,19 +65,17 @@ fn transform_expr_for_dbsp(expr: &Expr, input_column_names: &[String]) -> Expr {
         } => Expr::FunctionCall {
             name: name.clone(),
             distinctness: *distinctness,
-            args: args.as_ref().map(|args_vec| {
-                args_vec
-                    .iter()
-                    .map(|arg| transform_expr_for_dbsp(arg, input_column_names))
-                    .collect()
-            }),
+            args: args
+                .iter()
+                .map(|arg| Box::new(transform_expr_for_dbsp(arg, input_column_names)))
+                .collect(),
             order_by: order_by.clone(),
             filter_over: filter_over.clone(),
         },
         Expr::Parenthesized(exprs) => Expr::Parenthesized(
             exprs
                 .iter()
-                .map(|e| transform_expr_for_dbsp(e, input_column_names))
+                .map(|e| Box::new(transform_expr_for_dbsp(e, input_column_names)))
                 .collect(),
         ),
         // For other expression types, keep as is

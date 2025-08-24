@@ -96,9 +96,7 @@ pub struct IncrementalView {
 impl IncrementalView {
     /// Validate that a CREATE MATERIALIZED VIEW statement can be handled by IncrementalView
     /// This should be called early, before updating sqlite_master
-    pub fn can_create_view(select: &ast::Select, schema: &Schema) -> Result<()> {
-        // Check for aggregations
-        let (group_by_columns, aggregate_functions, _) = Self::extract_aggregation_info(select);
+    pub fn can_create_view(select: &ast::Select) -> Result<()> {
         // Check for JOINs
         let (join_tables, join_condition) = Self::extract_join_info(select);
         if join_tables.is_some() || join_condition.is_some() {
@@ -346,7 +344,7 @@ impl IncrementalView {
             let mut columns = Vec::new();
             for col in project_op.columns() {
                 // Check if it's a simple column reference
-                if let turso_sqlite3_parser::ast::Expr::Id(name) = &col.expr {
+                if let turso_parser::ast::Expr::Id(name) = &col.expr {
                     columns.push(name.as_str().to_string());
                 } else {
                     // For expressions, we need all columns (for now)

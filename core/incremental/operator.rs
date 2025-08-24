@@ -10,7 +10,6 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Debug, Display};
 use std::sync::Arc;
 use std::sync::Mutex;
-use turso_sqlite3_parser::ast::*;
 
 /// Tracks computation counts to verify incremental behavior (for tests now), and in the future
 /// should be used to provide statistics.
@@ -346,7 +345,7 @@ impl FilterPredicate {
 #[derive(Debug, Clone)]
 pub struct ProjectColumn {
     /// The original SQL expression (for debugging/fallback)
-    pub expr: turso_sqlite3_parser::ast::Expr,
+    pub expr: turso_parser::ast::Expr,
     /// Optional alias for the column
     pub alias: Option<String>,
     /// Compiled expression (handles both trivial columns and complex expressions)
@@ -620,11 +619,11 @@ impl std::fmt::Debug for ProjectOperator {
 impl ProjectOperator {
     /// Create a new ProjectOperator from a SELECT statement, extracting projection columns
     pub fn from_select(
-        select: &turso_sqlite3_parser::ast::Select,
+        select: &turso_parser::ast::Select,
         input_column_names: Vec<String>,
         schema: &crate::schema::Schema,
     ) -> crate::Result<Self> {
-        use turso_sqlite3_parser::ast::*;
+        use turso_parser::ast::*;
 
         // Set up internal connection for expression evaluation
         let io = Arc::new(crate::MemoryIO::new());
@@ -640,9 +639,13 @@ impl ProjectOperator {
         let temp_syms = SymbolTable::new();
 
         // Extract columns from SELECT statement
-        let columns = if let OneSelect::Select(ref select_stmt) = &*select.body.select {
+        let columns = if let OneSelect::Select {
+            columns: ref select_columns,
+            ..
+        } = &select.body.select
+        {
             let mut columns = Vec::new();
-            for result_col in &select_stmt.columns {
+            for result_col in select_columns {
                 match result_col {
                     ResultColumn::Expr(expr, alias) => {
                         let alias_str = if let Some(As::As(alias_name)) = alias {
@@ -659,7 +662,7 @@ impl ProjectOperator {
                             internal_conn.clone(),
                         )?;
                         columns.push(ProjectColumn {
-                            expr: expr.clone(),
+                            expr: (**expr).clone(),
                             alias: alias_str,
                             compiled,
                         });
