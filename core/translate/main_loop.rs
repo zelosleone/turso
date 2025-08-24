@@ -148,14 +148,21 @@ pub fn init_loop(
             agg.args.len() == 1,
             "DISTINCT aggregate functions must have exactly one argument"
         );
-        let index_name = format!("distinct_agg_{}_{}", i, agg.args[0]);
+        let index_name = format!(
+            "distinct_agg_{}_{}",
+            i,
+            agg.args[0].displayer(&PlanContext(&[tables]))
+        );
         let index = Arc::new(Index {
             name: index_name.clone(),
             table_name: String::new(),
             ephemeral: true,
             root_page: 0,
             columns: vec![IndexColumn {
-                name: agg.args[0].to_string(),
+                name: agg.args[0]
+                    .displayer(&PlanContext(&[tables]))
+                    .to_string()
+                    .unwrap(),
                 order: SortOrder::Asc,
                 pos_in_table: 0,
                 collation: None, // FIXME: this should be inferred from the expression
