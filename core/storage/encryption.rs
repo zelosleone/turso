@@ -1,15 +1,13 @@
 #![allow(unused_variables, dead_code)]
 use crate::{LimboError, Result};
+use aegis::aegis256::Aegis256;
 use aes_gcm::{
     aead::{Aead, AeadCore, KeyInit, OsRng},
     Aes256Gcm, Key, Nonce,
 };
 use std::ops::Deref;
 
-pub const ENCRYPTION_METADATA_SIZE: usize = 28;
 pub const ENCRYPTED_PAGE_SIZE: usize = 4096;
-pub const ENCRYPTION_NONCE_SIZE: usize = 12;
-pub const ENCRYPTION_TAG_SIZE: usize = 16;
 
 #[repr(transparent)]
 #[derive(Clone)]
@@ -70,9 +68,65 @@ impl Drop for EncryptionKey {
     }
 }
 
+// wrapper struct for AEGIS-256 cipher, because the crate we use is a bit low-level and we add
+// some nice abstractions here
+// note, the AEGIS has many variants and support for hardware acceleration. Here we just use the
+// vanilla version, which is still order of maginitudes faster than AES-GCM in software. Hardware
+// based compilation is left for future work.
+#[derive(Clone)]
+pub struct Aegis256Cipher {
+    key: EncryptionKey,
+}
+
+impl Aegis256Cipher {
+    // AEGIS-256 supports both 16 and 32 byte tags, we use the 16 byte variant, it is faster
+    // and provides sufficient security for our use case.
+    const TAG_SIZE: usize = 16;
+    fn new(key: &EncryptionKey) -> Self {
+        Self { key: key.clone() }
+    }
+
+    fn encrypt(&self, plaintext: &[u8], ad: &[u8]) -> Result<(Vec<u8>, [u8; 32])> {
+        let nonce = generate_secure_nonce();
+        let (ciphertext, tag) =
+            Aegis256::<16>::new(self.key.as_bytes(), &nonce).encrypt(plaintext, ad);
+        let mut result = ciphertext;
+        result.extend_from_slice(&tag);
+        Ok((result, nonce))
+    }
+
+    fn decrypt(&self, ciphertext: &[u8], nonce: &[u8; 32], ad: &[u8]) -> Result<Vec<u8>> {
+        if ciphertext.len() < Self::TAG_SIZE {
+            return Err(LimboError::InternalError(
+                "Ciphertext too short for AEGIS-256".into(),
+            ));
+        }
+        let (ct, tag) = ciphertext.split_at(ciphertext.len() - Self::TAG_SIZE);
+        let tag_array: [u8; 16] = tag
+            .try_into()
+            .map_err(|_| LimboError::InternalError("Invalid tag size for AEGIS-256".into()))?;
+
+        let plaintext = Aegis256::<16>::new(self.key.as_bytes(), nonce)
+            .decrypt(ct, &tag_array, ad)
+            .map_err(|_| {
+                LimboError::InternalError("AEGIS-256 decryption failed: invalid tag".into())
+            })?;
+        Ok(plaintext)
+    }
+}
+
+impl std::fmt::Debug for Aegis256Cipher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Aegis256Cipher")
+            .field("key", &"<redacted>")
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CipherMode {
     Aes256Gcm,
+    Aegis256,
 }
 
 impl CipherMode {
@@ -81,33 +135,43 @@ impl CipherMode {
     pub fn required_key_size(&self) -> usize {
         match self {
             CipherMode::Aes256Gcm => 32,
+            CipherMode::Aegis256 => 32,
         }
     }
 
-    /// Returns the nonce size for this cipher mode. Though most AEAD ciphers use 12-byte nonces.
+    /// Returns the nonce size for this cipher mode.
     pub fn nonce_size(&self) -> usize {
         match self {
-            CipherMode::Aes256Gcm => ENCRYPTION_NONCE_SIZE,
+            CipherMode::Aes256Gcm => 12,
+            CipherMode::Aegis256 => 32,
         }
     }
 
-    /// Returns the authentication tag size for this cipher mode. All common AEAD ciphers use 16-byte tags.
+    /// Returns the authentication tag size for this cipher mode.
     pub fn tag_size(&self) -> usize {
         match self {
-            CipherMode::Aes256Gcm => ENCRYPTION_TAG_SIZE,
+            CipherMode::Aes256Gcm => 16,
+            CipherMode::Aegis256 => 16,
         }
+    }
+
+    /// Returns the total metadata size (nonce + tag) for this cipher mode.
+    pub fn metadata_size(&self) -> usize {
+        self.nonce_size() + self.tag_size()
     }
 }
 
 #[derive(Clone)]
 pub enum Cipher {
     Aes256Gcm(Box<Aes256Gcm>),
+    Aegis256(Box<Aegis256Cipher>),
 }
 
 impl std::fmt::Debug for Cipher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Cipher::Aes256Gcm(_) => write!(f, "Cipher::Aes256Gcm"),
+            Cipher::Aegis256(_) => write!(f, "Cipher::Aegis256"),
         }
     }
 }
@@ -119,8 +183,7 @@ pub struct EncryptionContext {
 }
 
 impl EncryptionContext {
-    pub fn new(key: &EncryptionKey) -> Result<Self> {
-        let cipher_mode = CipherMode::Aes256Gcm;
+    pub fn new(cipher_mode: CipherMode, key: &EncryptionKey) -> Result<Self> {
         let required_size = cipher_mode.required_key_size();
         if key.as_slice().len() != required_size {
             return Err(crate::LimboError::InvalidArgument(format!(
@@ -136,6 +199,7 @@ impl EncryptionContext {
                 let cipher_key: &Key<Aes256Gcm> = key.as_ref().into();
                 Cipher::Aes256Gcm(Box::new(Aes256Gcm::new(cipher_key)))
             }
+            CipherMode::Aegis256 => Cipher::Aegis256(Box::new(Aegis256Cipher::new(key))),
         };
         Ok(Self {
             cipher_mode,
@@ -145,6 +209,11 @@ impl EncryptionContext {
 
     pub fn cipher_mode(&self) -> CipherMode {
         self.cipher_mode
+    }
+
+    /// Returns the number of reserved bytes required at the end of each page for encryption metadata.
+    pub fn required_reserved_bytes(&self) -> u8 {
+        self.cipher_mode.metadata_size() as u8
     }
 
     #[cfg(feature = "encryption")]
@@ -159,21 +228,26 @@ impl EncryptionContext {
             ENCRYPTED_PAGE_SIZE,
             "Page data must be exactly {ENCRYPTED_PAGE_SIZE} bytes"
         );
-        let reserved_bytes = &page[ENCRYPTED_PAGE_SIZE - ENCRYPTION_METADATA_SIZE..];
+
+        let metadata_size = self.cipher_mode.metadata_size();
+        let reserved_bytes = &page[ENCRYPTED_PAGE_SIZE - metadata_size..];
         let reserved_bytes_zeroed = reserved_bytes.iter().all(|&b| b == 0);
         assert!(
             reserved_bytes_zeroed,
             "last reserved bytes must be empty/zero, but found non-zero bytes"
         );
-        let payload = &page[..ENCRYPTED_PAGE_SIZE - ENCRYPTION_METADATA_SIZE];
+
+        let payload = &page[..ENCRYPTED_PAGE_SIZE - metadata_size];
         let (encrypted, nonce) = self.encrypt_raw(payload)?;
 
+        let nonce_size = self.cipher_mode.nonce_size();
         assert_eq!(
             encrypted.len(),
-            ENCRYPTED_PAGE_SIZE - nonce.len(),
+            ENCRYPTED_PAGE_SIZE - nonce_size,
             "Encrypted page must be exactly {} bytes",
-            ENCRYPTED_PAGE_SIZE - nonce.len()
+            ENCRYPTED_PAGE_SIZE - nonce_size
         );
+
         let mut result = Vec::with_capacity(ENCRYPTED_PAGE_SIZE);
         result.extend_from_slice(&encrypted);
         result.extend_from_slice(&nonce);
@@ -198,18 +272,21 @@ impl EncryptionContext {
             "Encrypted page data must be exactly {ENCRYPTED_PAGE_SIZE} bytes"
         );
 
-        let nonce_start = encrypted_page.len() - ENCRYPTION_NONCE_SIZE;
+        let nonce_size = self.cipher_mode.nonce_size();
+        let nonce_start = encrypted_page.len() - nonce_size;
         let payload = &encrypted_page[..nonce_start];
         let nonce = &encrypted_page[nonce_start..];
 
         let decrypted_data = self.decrypt_raw(payload, nonce)?;
 
+        let metadata_size = self.cipher_mode.metadata_size();
         assert_eq!(
             decrypted_data.len(),
-            ENCRYPTED_PAGE_SIZE - ENCRYPTION_METADATA_SIZE,
+            ENCRYPTED_PAGE_SIZE - metadata_size,
             "Decrypted page data must be exactly {} bytes",
-            ENCRYPTED_PAGE_SIZE - ENCRYPTION_METADATA_SIZE
+            ENCRYPTED_PAGE_SIZE - metadata_size
         );
+
         let mut result = Vec::with_capacity(ENCRYPTED_PAGE_SIZE);
         result.extend_from_slice(&decrypted_data);
         result.resize(ENCRYPTED_PAGE_SIZE, 0);
@@ -231,6 +308,11 @@ impl EncryptionContext {
                     .map_err(|e| LimboError::InternalError(format!("Encryption failed: {e:?}")))?;
                 Ok((ciphertext, nonce.to_vec()))
             }
+            Cipher::Aegis256(cipher) => {
+                let ad = b"";
+                let (ciphertext, nonce) = cipher.encrypt(plaintext, ad)?;
+                Ok((ciphertext, nonce.to_vec()))
+            }
         }
     }
 
@@ -242,6 +324,16 @@ impl EncryptionContext {
                     crate::LimboError::InternalError(format!("Decryption failed: {e:?}"))
                 })?;
                 Ok(plaintext)
+            }
+            Cipher::Aegis256(cipher) => {
+                let nonce_array: [u8; 32] = nonce.try_into().map_err(|_| {
+                    LimboError::InternalError(format!(
+                        "Invalid nonce size for AEGIS-256: expected 32, got {}",
+                        nonce.len()
+                    ))
+                })?;
+                let ad = b"";
+                cipher.decrypt(ciphertext, &nonce_array, ad)
             }
         }
     }
@@ -261,6 +353,14 @@ impl EncryptionContext {
     }
 }
 
+fn generate_secure_nonce() -> [u8; 32] {
+    // use OsRng directly to fill bytes, similar to how AeadCore does it
+    use aes_gcm::aead::rand_core::RngCore;
+    let mut nonce = [0u8; 32];
+    OsRng.fill_bytes(&mut nonce);
+    nonce
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,9 +368,11 @@ mod tests {
 
     #[test]
     #[cfg(feature = "encryption")]
-    fn test_encrypt_decrypt_round_trip() {
+    fn test_aes_encrypt_decrypt_round_trip() {
         let mut rng = rand::thread_rng();
-        let data_size = ENCRYPTED_PAGE_SIZE - ENCRYPTION_METADATA_SIZE;
+        let cipher_mode = CipherMode::Aes256Gcm;
+        let metadata_size = cipher_mode.metadata_size();
+        let data_size = ENCRYPTED_PAGE_SIZE - metadata_size;
 
         let page_data = {
             let mut page = vec![0u8; ENCRYPTED_PAGE_SIZE];
@@ -281,13 +383,75 @@ mod tests {
         };
 
         let key = EncryptionKey::from_string("alice and bob use encryption on database");
-        let ctx = EncryptionContext::new(&key).unwrap();
+        let ctx = EncryptionContext::new(CipherMode::Aes256Gcm, &key).unwrap();
 
         let page_id = 42;
         let encrypted = ctx.encrypt_page(&page_data, page_id).unwrap();
         assert_eq!(encrypted.len(), ENCRYPTED_PAGE_SIZE);
         assert_ne!(&encrypted[..data_size], &page_data[..data_size]);
         assert_ne!(&encrypted[..], &page_data[..]);
+
+        let decrypted = ctx.decrypt_page(&encrypted, page_id).unwrap();
+        assert_eq!(decrypted.len(), ENCRYPTED_PAGE_SIZE);
+        assert_eq!(decrypted, page_data);
+    }
+
+    #[test]
+    #[cfg(feature = "encryption")]
+    fn test_aegis256_cipher_wrapper() {
+        let key = EncryptionKey::from_string("alice and bob use AEGIS-256 here!");
+        let cipher = Aegis256Cipher::new(&key);
+
+        let plaintext = b"Hello, AEGIS-256!";
+        let ad = b"additional data";
+
+        let (ciphertext, nonce) = cipher.encrypt(plaintext, ad).unwrap();
+        assert_eq!(nonce.len(), 32);
+        assert_ne!(ciphertext[..plaintext.len()], plaintext[..]);
+
+        let decrypted = cipher.decrypt(&ciphertext, &nonce, ad).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    #[cfg(feature = "encryption")]
+    fn test_aegis256_raw_encryption() {
+        let key = EncryptionKey::from_string("alice and bob use AEGIS-256 here!");
+        let ctx = EncryptionContext::new(CipherMode::Aegis256, &key).unwrap();
+
+        let plaintext = b"Hello, AEGIS-256!";
+        let (ciphertext, nonce) = ctx.encrypt_raw(plaintext).unwrap();
+
+        assert_eq!(nonce.len(), 32); // AEGIS-256 uses 32-byte nonces
+        assert_ne!(ciphertext[..plaintext.len()], plaintext[..]);
+
+        let decrypted = ctx.decrypt_raw(&ciphertext, &nonce).unwrap();
+        assert_eq!(decrypted, plaintext);
+    }
+
+    #[test]
+    #[cfg(feature = "encryption")]
+    fn test_aegis256_encrypt_decrypt_round_trip() {
+        let mut rng = rand::thread_rng();
+        let cipher_mode = CipherMode::Aegis256;
+        let metadata_size = cipher_mode.metadata_size();
+        let data_size = ENCRYPTED_PAGE_SIZE - metadata_size;
+
+        let page_data = {
+            let mut page = vec![0u8; ENCRYPTED_PAGE_SIZE];
+            page.iter_mut()
+                .take(data_size)
+                .for_each(|byte| *byte = rng.gen());
+            page
+        };
+
+        let key = EncryptionKey::from_string("alice and bob use AEGIS-256 for pages!");
+        let ctx = EncryptionContext::new(CipherMode::Aegis256, &key).unwrap();
+
+        let page_id = 42;
+        let encrypted = ctx.encrypt_page(&page_data, page_id).unwrap();
+        assert_eq!(encrypted.len(), ENCRYPTED_PAGE_SIZE);
+        assert_ne!(&encrypted[..data_size], &page_data[..data_size]);
 
         let decrypted = ctx.decrypt_page(&encrypted, page_id).unwrap();
         assert_eq!(decrypted.len(), ENCRYPTED_PAGE_SIZE);
