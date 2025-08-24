@@ -1535,7 +1535,7 @@ impl Connection {
         {
             self.pager
                 .borrow()
-                .checkpoint_shutdown(self.wal_auto_checkpoint_disabled.get());
+                .checkpoint_shutdown(self.wal_auto_checkpoint_disabled.get())?;
         };
         Ok(())
     }
