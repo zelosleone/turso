@@ -2,11 +2,16 @@ package tech.turso.jdbc4;
 
 import static java.util.Objects.requireNonNull;
 
+import java.sql.BatchUpdateException;
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.SQLTimeoutException;
 import java.sql.SQLWarning;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
 import tech.turso.annotations.Nullable;
 import tech.turso.annotations.SkipNullableCheck;
@@ -32,6 +37,12 @@ public class JDBC4Statement implements Statement {
   private int queryTimeoutSeconds;
 
   private ReentrantLock connectionLock = new ReentrantLock();
+
+  /**
+   * List of SQL statements to be executed as a batch. Used for batch processing as per JDBC
+   * specification.
+   */
+  private List<String> batchCommands = new ArrayList<>();
 
   public JDBC4Statement(JDBC4Connection connection) {
     this(
@@ -232,18 +243,78 @@ public class JDBC4Statement implements Statement {
 
   @Override
   public void addBatch(String sql) throws SQLException {
-    // TODO
+    ensureOpen();
+    if (sql == null) {
+      throw new SQLException("SQL command cannot be null");
+    }
+    batchCommands.add(sql);
   }
 
   @Override
   public void clearBatch() throws SQLException {
-    // TODO
+    ensureOpen();
+    batchCommands.clear();
   }
 
   @Override
   public int[] executeBatch() throws SQLException {
-    // TODO
-    return new int[0];
+    ensureOpen();
+
+    int[] updateCounts = new int[batchCommands.size()];
+    List<String> failedCommands = new ArrayList<>();
+    int[] successfulCounts = new int[batchCommands.size()];
+
+    // Execute each command in the batch
+    for (int i = 0; i < batchCommands.size(); i++) {
+      String sql = batchCommands.get(i);
+      try {
+        // Check if the statement returns a ResultSet (SELECT statements)
+        // In batch processing, SELECT statements should throw an exception
+        if (execute(sql)) {
+          // This means the statement returned a ResultSet, which is not allowed in batch
+          failedCommands.add(sql);
+          updateCounts[i] = EXECUTE_FAILED;
+          // Create a BatchUpdateException for the failed command
+          BatchUpdateException bue =
+              new BatchUpdateException(
+                  "Batch entry "
+                      + i
+                      + " ("
+                      + sql
+                      + ") was aborted. "
+                      + "Batch commands cannot return result sets.",
+                  "HY000", // General error SQL state
+                  0,
+                  updateCounts);
+          // Clear the batch after failure
+          clearBatch();
+          throw bue;
+        } else {
+          // For DML statements, get the update count
+          updateCounts[i] = getUpdateCount();
+        }
+      } catch (SQLException e) {
+        // Handle SQL exceptions during batch execution
+        failedCommands.add(sql);
+        updateCounts[i] = EXECUTE_FAILED;
+
+        // Create a BatchUpdateException with the partial results
+        BatchUpdateException bue =
+            new BatchUpdateException(
+                "Batch entry " + i + " (" + sql + ") failed: " + e.getMessage(),
+                e.getSQLState(),
+                e.getErrorCode(),
+                updateCounts,
+                e.getCause());
+        // Clear the batch after failure
+        clearBatch();
+        throw bue;
+      }
+    }
+
+    // Clear the batch after successful execution
+    clearBatch();
+    return updateCounts;
   }
 
   @Override
