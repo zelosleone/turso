@@ -539,6 +539,28 @@ pub unsafe extern "C" fn sqlite3_bind_parameter_name(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn sqlite3_bind_parameter_index(
+    stmt: *mut sqlite3_stmt,
+    name: *const ffi::c_char,
+) -> ffi::c_int {
+    if stmt.is_null() || name.is_null() {
+        return 0;
+    }
+
+    let stmt = &*stmt;
+    let name_str = match CStr::from_ptr(name).to_str() {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+
+    if let Some(index) = stmt.stmt.parameter_index(name_str) {
+        index.get() as ffi::c_int
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn sqlite3_bind_null(stmt: *mut sqlite3_stmt, idx: ffi::c_int) -> ffi::c_int {
     if stmt.is_null() {
         return SQLITE_MISUSE;
