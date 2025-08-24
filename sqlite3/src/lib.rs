@@ -712,6 +712,18 @@ pub unsafe extern "C" fn sqlite3_bind_blob(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn sqlite3_clear_bindings(stmt: *mut sqlite3_stmt) -> ffi::c_int {
+    if stmt.is_null() {
+        return SQLITE_MISUSE;
+    }
+
+    let stmt_ref = &mut *stmt;
+    stmt_ref.stmt.clear_bindings();
+
+    SQLITE_OK
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn sqlite3_column_type(
     stmt: *mut sqlite3_stmt,
     idx: ffi::c_int,

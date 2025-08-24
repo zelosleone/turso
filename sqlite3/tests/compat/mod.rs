@@ -27,6 +27,7 @@ extern "C" {
         tail: *mut *const libc::c_char,
     ) -> i32;
     fn sqlite3_step(stmt: *mut sqlite3_stmt) -> i32;
+    fn sqlite3_reset(stmt: *mut sqlite3_stmt) -> i32;
     fn sqlite3_finalize(stmt: *mut sqlite3_stmt) -> i32;
     fn sqlite3_wal_checkpoint(db: *mut sqlite3, db_name: *const libc::c_char) -> i32;
     fn sqlite3_wal_checkpoint_v2(
@@ -49,6 +50,7 @@ extern "C" {
     fn sqlite3_bind_int(stmt: *mut sqlite3_stmt, idx: i32, val: i64) -> i32;
     fn sqlite3_bind_parameter_count(stmt: *mut sqlite3_stmt) -> i32;
     fn sqlite3_bind_parameter_name(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_char;
+    fn sqlite3_clear_bindings(stmt: *mut sqlite3_stmt) -> i32;
     fn sqlite3_column_name(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_char;
     fn sqlite3_last_insert_rowid(db: *mut sqlite3) -> i32;
     fn sqlite3_column_count(stmt: *mut sqlite3_stmt) -> i32;
@@ -1173,6 +1175,69 @@ mod tests {
                 assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
                 assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
             }
+        }
+    }
+
+    #[test]
+    fn test_sqlite3_clear_bindings() {
+        unsafe {
+            let mut db: *mut sqlite3 = ptr::null_mut();
+            let mut stmt: *mut sqlite3_stmt = ptr::null_mut();
+
+            assert_eq!(sqlite3_open(c":memory:".as_ptr(), &mut db), SQLITE_OK);
+
+            assert_eq!(
+                sqlite3_prepare_v2(
+                    db,
+                    c"CREATE TABLE person (id INTEGER, name TEXT, age INTEGER)".as_ptr(),
+                    -1,
+                    &mut stmt,
+                    ptr::null_mut()
+                ),
+                SQLITE_OK
+            );
+            assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+            assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+            assert_eq!(
+                sqlite3_prepare_v2(
+                    db,
+                    c"INSERT INTO person (id, name, age) VALUES (1, 'John', 25), (2, 'Jane', 30)"
+                        .as_ptr(),
+                    -1,
+                    &mut stmt,
+                    ptr::null_mut()
+                ),
+                SQLITE_OK
+            );
+            assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+            assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+            assert_eq!(
+                sqlite3_prepare_v2(
+                    db,
+                    c"SELECT * FROM person WHERE id = ? AND age > ?".as_ptr(),
+                    -1,
+                    &mut stmt,
+                    ptr::null_mut()
+                ),
+                SQLITE_OK
+            );
+
+            // Bind parameters - should find John (id=1, age=25 > 20)
+            assert_eq!(sqlite3_bind_int(stmt, 1, 1), SQLITE_OK);
+            assert_eq!(sqlite3_bind_int(stmt, 2, 20), SQLITE_OK);
+            assert_eq!(sqlite3_step(stmt), SQLITE_ROW);
+            assert_eq!(sqlite3_column_int(stmt, 0), 1);
+            assert_eq!(sqlite3_column_int(stmt, 2), 25);
+
+            // Reset and clear bindings, query should return no rows
+            assert_eq!(sqlite3_reset(stmt), SQLITE_OK);
+            assert_eq!(sqlite3_clear_bindings(stmt), SQLITE_OK);
+            assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+
+            assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+            assert_eq!(sqlite3_close(db), SQLITE_OK);
         }
     }
 }
