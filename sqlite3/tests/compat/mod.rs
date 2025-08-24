@@ -71,6 +71,7 @@ extern "C" {
     fn sqlite3_column_blob(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_void;
     fn sqlite3_column_type(stmt: *mut sqlite3_stmt, idx: i32) -> i32;
     fn sqlite3_column_decltype(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_char;
+    fn sqlite3_get_autocommit(db: *mut sqlite3) -> i32;
 }
 
 const SQLITE_OK: i32 = 0;
@@ -983,6 +984,85 @@ mod tests {
                 assert_eq!(count, 1);
                 assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
                 assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+            }
+        }
+
+        #[test]
+        fn test_get_autocommit() {
+            unsafe {
+                let temp_file = tempfile::NamedTempFile::with_suffix(".db").unwrap();
+                let path = std::ffi::CString::new(temp_file.path().to_str().unwrap()).unwrap();
+                let mut db = ptr::null_mut();
+                assert_eq!(sqlite3_open(path.as_ptr(), &mut db), SQLITE_OK);
+
+                // Should be in autocommit mode by default
+                assert_eq!(sqlite3_get_autocommit(db), 1);
+
+                // Begin a transaction
+                let mut stmt = ptr::null_mut();
+                assert_eq!(
+                    sqlite3_prepare_v2(db, c"BEGIN".as_ptr(), -1, &mut stmt, ptr::null_mut()),
+                    SQLITE_OK
+                );
+                assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+                assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+                // Should NOT be in autocommit mode during transaction
+                assert_eq!(sqlite3_get_autocommit(db), 0);
+
+                // Create a table within the transaction
+                let mut stmt = ptr::null_mut();
+                assert_eq!(
+                    sqlite3_prepare_v2(
+                        db,
+                        c"CREATE TABLE test (id INTEGER PRIMARY KEY)".as_ptr(),
+                        -1,
+                        &mut stmt,
+                        ptr::null_mut()
+                    ),
+                    SQLITE_OK
+                );
+                assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+                assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+                // Still not in autocommit mode
+                assert_eq!(sqlite3_get_autocommit(db), 0);
+
+                // Commit the transaction
+                let mut stmt = ptr::null_mut();
+                assert_eq!(
+                    sqlite3_prepare_v2(db, c"COMMIT".as_ptr(), -1, &mut stmt, ptr::null_mut()),
+                    SQLITE_OK
+                );
+                assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+                assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+                // Should be back in autocommit mode after commit
+                assert_eq!(sqlite3_get_autocommit(db), 1);
+
+                // Test with ROLLBACK
+                let mut stmt = ptr::null_mut();
+                assert_eq!(
+                    sqlite3_prepare_v2(db, c"BEGIN".as_ptr(), -1, &mut stmt, ptr::null_mut()),
+                    SQLITE_OK
+                );
+                assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+                assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+                assert_eq!(sqlite3_get_autocommit(db), 0);
+
+                let mut stmt = ptr::null_mut();
+                assert_eq!(
+                    sqlite3_prepare_v2(db, c"ROLLBACK".as_ptr(), -1, &mut stmt, ptr::null_mut()),
+                    SQLITE_OK
+                );
+                assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+                assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+                // Should be back in autocommit mode after rollback
+                assert_eq!(sqlite3_get_autocommit(db), 1);
+
+                assert_eq!(sqlite3_close(db), SQLITE_OK);
             }
         }
 

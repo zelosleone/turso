@@ -378,8 +378,17 @@ pub unsafe extern "C" fn sqlite3_deserialize(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_get_autocommit(_db: *mut sqlite3) -> ffi::c_int {
-    stub!();
+pub unsafe extern "C" fn sqlite3_get_autocommit(db: *mut sqlite3) -> ffi::c_int {
+    if db.is_null() {
+        return 1;
+    }
+    let db: &mut sqlite3 = &mut *db;
+    let inner = db.inner.lock().unwrap();
+    if inner.conn.get_auto_commit() {
+        1
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
