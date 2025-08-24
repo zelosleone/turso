@@ -12,6 +12,7 @@ use crate::ast::TableInternalId;
 /// Context to be used in ToSqlString
 pub trait ToSqlContext {
     /// Given an id, get the table name
+    /// First Option indicates whether the table exists
     ///
     /// Currently not considering aliases
     fn get_table_name(&self, _id: TableInternalId) -> Option<&str> {
@@ -19,8 +20,21 @@ pub trait ToSqlContext {
     }
 
     /// Given a table id and a column index, get the column name
-    fn get_column_name(&self, _table_id: TableInternalId, _col_idx: usize) -> Option<&str> {
+    /// First Option indicates whether the column exists
+    /// Second Option indicates whether the column has a name
+    fn get_column_name(&self, _table_id: TableInternalId, _col_idx: usize) -> Option<Option<&str>> {
         None
+    }
+
+    /// Helper to get a flat column name
+    /// If the column exists and has a name, return the name
+    /// If the column exists but has no name, return the index as string
+    fn get_flat_column_name(&self, table_id: TableInternalId, col_idx: usize) -> Option<String> {
+        match self.get_column_name(table_id, col_idx) {
+            Some(Some(name)) => Some(name.to_string()),
+            Some(None) => Some(format!("{col_idx}")),
+            None => None,
+        }
     }
 }
 
@@ -780,7 +794,13 @@ impl ToTokens for Expr {
             Self::Column { table, column, .. } => {
                 s.append(TK_ID, context.get_table_name(*table))?;
                 s.append(TK_DOT, None)?;
-                s.append(TK_ID, context.get_column_name(*table, *column))
+                s.append(
+                    TK_ID,
+                    context
+                        .get_flat_column_name(*table, *column)
+                        .as_ref()
+                        .map(|s| s.as_ref()),
+                )
             }
             Self::InList { lhs, not, rhs } => {
                 lhs.to_tokens(s, context)?;

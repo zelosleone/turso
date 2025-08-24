@@ -235,7 +235,7 @@ pub struct PlanContext<'a>(pub &'a [&'a TableReferences]);
 
 // Definitely not perfect yet
 impl ToSqlContext for PlanContext<'_> {
-    fn get_column_name(&self, table_id: TableInternalId, col_idx: usize) -> Option<&str> {
+    fn get_column_name(&self, table_id: TableInternalId, col_idx: usize) -> Option<Option<&str>> {
         let Some(table) = self
             .0
             .iter()
@@ -246,10 +246,7 @@ impl ToSqlContext for PlanContext<'_> {
         let cols = table.columns();
         match cols.get(col_idx) {
             None => None,
-            Some(col) => match col.name.as_ref() {
-                None => None,
-                Some(n) => Some(n),
-            },
+            Some(col) => Some(col.name.as_ref().map(|name| name.as_ref())),
         }
     }
 
