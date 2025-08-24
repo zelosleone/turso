@@ -50,6 +50,7 @@ extern "C" {
     fn sqlite3_bind_int(stmt: *mut sqlite3_stmt, idx: i32, val: i64) -> i32;
     fn sqlite3_bind_parameter_count(stmt: *mut sqlite3_stmt) -> i32;
     fn sqlite3_bind_parameter_name(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_char;
+    fn sqlite3_bind_parameter_index(stmt: *mut sqlite3_stmt, name: *const libc::c_char) -> i32;
     fn sqlite3_clear_bindings(stmt: *mut sqlite3_stmt) -> i32;
     fn sqlite3_column_name(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_char;
     fn sqlite3_last_insert_rowid(db: *mut sqlite3) -> i32;
@@ -1238,6 +1239,44 @@ mod tests {
 
             assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
             assert_eq!(sqlite3_close(db), SQLITE_OK);
+        }
+    }
+
+    #[test]
+    fn test_sqlite3_bind_parameter_index() {
+        const SQLITE_OK: i32 = 0;
+
+        unsafe {
+            let mut db: *mut sqlite3 = ptr::null_mut();
+            let mut stmt: *mut sqlite3_stmt = ptr::null_mut();
+
+            assert_eq!(sqlite3_open(c":memory:".as_ptr(), &mut db), SQLITE_OK);
+
+            assert_eq!(
+                sqlite3_prepare_v2(
+                    db,
+                    c"SELECT * FROM sqlite_master WHERE name = :table_name AND type = :object_type"
+                        .as_ptr(),
+                    -1,
+                    &mut stmt,
+                    ptr::null_mut()
+                ),
+                SQLITE_OK
+            );
+
+            let index1 = sqlite3_bind_parameter_index(stmt, c":table_name".as_ptr());
+            assert_eq!(index1, 1);
+
+            let index2 = sqlite3_bind_parameter_index(stmt, c":object_type".as_ptr());
+            assert_eq!(index2, 2);
+
+            let index3 = sqlite3_bind_parameter_index(stmt, c":nonexistent".as_ptr());
+            assert_eq!(index3, 0);
+
+            let index4 = sqlite3_bind_parameter_index(stmt, ptr::null());
+            assert_eq!(index4, 0);
+
+            assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
         }
     }
 }

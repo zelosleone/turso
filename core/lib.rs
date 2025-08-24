@@ -2166,6 +2166,10 @@ impl Statement {
         self.program.parameters.count()
     }
 
+    pub fn parameter_index(&self, name: &str) -> Option<NonZero<usize>> {
+        self.program.parameters.index(name)
+    }
+
     pub fn bind_at(&mut self, index: NonZero<usize>, value: Value) {
         self.state.bind_at(index, value);
     }

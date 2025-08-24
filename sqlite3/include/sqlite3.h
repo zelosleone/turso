@@ -153,6 +153,8 @@ int sqlite3_bind_parameter_count(sqlite3_stmt *_stmt);
 
 const char *sqlite3_bind_parameter_name(sqlite3_stmt *_stmt, int _idx);
 
+int sqlite3_bind_parameter_index(sqlite3_stmt *_stmt, const char *_name);
+
 int sqlite3_bind_null(sqlite3_stmt *_stmt, int _idx);
 
 int sqlite3_bind_int64(sqlite3_stmt *_stmt, int _idx, int64_t _val);
