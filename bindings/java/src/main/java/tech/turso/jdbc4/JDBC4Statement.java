@@ -11,7 +11,6 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
-
 import tech.turso.annotations.Nullable;
 import tech.turso.annotations.SkipNullableCheck;
 import tech.turso.core.TursoResultSet;
@@ -261,7 +260,6 @@ public class JDBC4Statement implements Statement {
 
     int[] updateCounts = new int[batchCommands.size()];
     List<String> failedCommands = new ArrayList<>();
-    int[] successfulCounts = new int[batchCommands.size()];
 
     // Execute each command in the batch
     for (int i = 0; i < batchCommands.size(); i++) {
