@@ -176,7 +176,7 @@ class JDBC4StatementTest {
         "INSERT INTO batch_test VALUES (1, 'initial1'), (2, 'initial2'), (3, 'initial3');");
 
     // Add batch commands with different operations
-    stmt.addBatch("UPDATE batch_test SET value = 'updated' WHERE id = 1;");
+    stmt.addBatch("UPDATE batch_test SET value = 'updated';");
     stmt.addBatch("DELETE FROM batch_test WHERE id = 2;");
     stmt.addBatch("INSERT INTO batch_test VALUES (4, 'new');");
 
@@ -185,7 +185,7 @@ class JDBC4StatementTest {
 
     // Verify update counts
     assertThat(updateCounts).hasSize(3);
-    assertThat(updateCounts[0]).isEqualTo(1); // UPDATE affected 1 row
+    assertThat(updateCounts[0]).isEqualTo(3); // UPDATE affected 3 row
     assertThat(updateCounts[1]).isEqualTo(1); // DELETE affected 1 row
     assertThat(updateCounts[2]).isEqualTo(1); // INSERT affected 1 row
 

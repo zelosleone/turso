@@ -4,15 +4,14 @@ import static java.util.Objects.requireNonNull;
 
 import java.sql.BatchUpdateException;
 import java.sql.Connection;
-import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.SQLTimeoutException;
 import java.sql.SQLWarning;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.locks.ReentrantLock;
+
 import tech.turso.annotations.Nullable;
 import tech.turso.annotations.SkipNullableCheck;
 import tech.turso.core.TursoResultSet;
@@ -268,13 +267,9 @@ public class JDBC4Statement implements Statement {
     for (int i = 0; i < batchCommands.size(); i++) {
       String sql = batchCommands.get(i);
       try {
-        // Check if the statement returns a ResultSet (SELECT statements)
-        // In batch processing, SELECT statements should throw an exception
-        if (execute(sql)) {
-          // This means the statement returned a ResultSet, which is not allowed in batch
+        if (!isBatchCompatibleStatement(sql)) {
           failedCommands.add(sql);
           updateCounts[i] = EXECUTE_FAILED;
-          // Create a BatchUpdateException for the failed command
           BatchUpdateException bue =
               new BatchUpdateException(
                   "Batch entry "
@@ -289,12 +284,12 @@ public class JDBC4Statement implements Statement {
           // Clear the batch after failure
           clearBatch();
           throw bue;
-        } else {
-          // For DML statements, get the update count
-          updateCounts[i] = getUpdateCount();
         }
+
+        execute(sql);
+        // For DML statements, get the update count
+        updateCounts[i] = getUpdateCount();
       } catch (SQLException e) {
-        // Handle SQL exceptions during batch execution
         failedCommands.add(sql);
         updateCounts[i] = EXECUTE_FAILED;
 
@@ -315,6 +310,33 @@ public class JDBC4Statement implements Statement {
     // Clear the batch after successful execution
     clearBatch();
     return updateCounts;
+  }
+
+  /**
+   * Checks if a SQL statement is compatible with batch execution. Only INSERT, UPDATE, DELETE, and
+   * DDL statements are allowed in batch. SELECT and other query statements are not allowed.
+   *
+   * @param sql The SQL statement to check
+   * @return true if the statement is batch-compatible, false otherwise
+   */
+  private boolean isBatchCompatibleStatement(String sql) {
+    if (sql == null || sql.trim().isEmpty()) {
+      return false;
+    }
+
+    // Trim and convert to uppercase for case-insensitive comparison
+    String trimmedSql = sql.trim().toUpperCase();
+
+    // Check if it starts with batch-compatible keywords
+    return trimmedSql.startsWith("INSERT")
+        || trimmedSql.startsWith("UPDATE")
+        || trimmedSql.startsWith("DELETE")
+        || trimmedSql.startsWith("CREATE")
+        || trimmedSql.startsWith("DROP")
+        || trimmedSql.startsWith("ALTER")
+        || trimmedSql.startsWith("TRUNCATE")
+        || trimmedSql.startsWith("REPLACE")
+        || trimmedSql.startsWith("MERGE");
   }
 
   @Override
