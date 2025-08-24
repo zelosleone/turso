@@ -1961,17 +1961,31 @@ impl Connection {
     pub fn set_encryption_key(&self, key: EncryptionKey) {
         tracing::trace!("setting encryption key for connection");
         *self.encryption_key.borrow_mut() = Some(key.clone());
-        let pager = self.pager.borrow();
-        pager.set_encryption_context(&key);
+        self.set_encryption_context();
     }
 
     pub fn set_encryption_cipher(&self, cipher: CipherMode) {
         tracing::trace!("setting encryption cipher for connection");
         self.encryption_cipher.replace(Some(cipher));
+        self.set_encryption_context();
     }
 
     pub fn get_encryption_cipher_mode(&self) -> Option<CipherMode> {
         self.encryption_cipher.borrow().clone()
+    }
+
+    // if both key and cipher are set, set encryption context on pager
+    fn set_encryption_context(&self) {
+        let key_ref = self.encryption_key.borrow();
+        let Some(key) = key_ref.as_ref() else {
+            return;
+        };
+        let Some(cipher) = self.encryption_cipher.borrow().clone() else {
+            return;
+        };
+        tracing::trace!("setting encryption ctx for connection");
+        let pager = self.pager.borrow();
+        pager.set_encryption_context(cipher, key);
     }
 }
 

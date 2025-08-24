@@ -18,6 +18,7 @@ fn test_per_page_encryption() -> anyhow::Result<()> {
             &conn,
             "PRAGMA hexkey = 'b1bbfda4f589dc9daaf004fe21111e00dc00c98237102f5c7002a5669fc76327';",
         )?;
+        run_query(&tmp_db, &conn, "PRAGMA cipher = 'aegis256';")?;
         run_query(
             &tmp_db,
             &conn,
@@ -55,6 +56,7 @@ fn test_per_page_encryption() -> anyhow::Result<()> {
         // let's test the existing db with the key
         let existing_db = TempDatabase::new_with_existent(&db_path, false);
         let conn = existing_db.connect_limbo();
+        run_query(&tmp_db, &conn, "PRAGMA cipher = 'aegis256';")?;
         run_query(
             &existing_db,
             &conn,

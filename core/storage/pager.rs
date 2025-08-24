@@ -2109,8 +2109,8 @@ impl Pager {
         Ok(IOResult::Done(f(header)))
     }
 
-    pub fn set_encryption_context(&self, key: &EncryptionKey) {
-        let encryption_ctx = EncryptionContext::new(CipherMode::Aegis256, key).unwrap();
+    pub fn set_encryption_context(&self, cipher_mode: CipherMode, key: &EncryptionKey) {
+        let encryption_ctx = EncryptionContext::new(cipher_mode, key).unwrap();
         self.encryption_ctx.replace(Some(encryption_ctx.clone()));
         let Some(wal) = self.wal.as_ref() else { return };
         wal.borrow_mut().set_encryption_context(encryption_ctx)
