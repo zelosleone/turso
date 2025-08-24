@@ -127,17 +127,13 @@ class JDBC4StatementTest {
   void testAddBatch_single_statement() throws SQLException {
     stmt.execute("CREATE TABLE batch_test (id INTEGER PRIMARY KEY, value TEXT);");
 
-    // Add a single batch command
     stmt.addBatch("INSERT INTO batch_test VALUES (1, 'test1');");
 
-    // Execute batch
     int[] updateCounts = stmt.executeBatch();
 
-    // Verify results
     assertThat(updateCounts).hasSize(1);
     assertThat(updateCounts[0]).isEqualTo(1);
 
-    // Verify data was inserted
     ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM batch_test;");
     assertTrue(rs.next());
     assertThat(rs.getInt(1)).isEqualTo(1);
@@ -147,21 +143,17 @@ class JDBC4StatementTest {
   void testAddBatch_multiple_statements() throws SQLException {
     stmt.execute("CREATE TABLE batch_test (id INTEGER PRIMARY KEY, value TEXT);");
 
-    // Add multiple batch commands
     stmt.addBatch("INSERT INTO batch_test VALUES (1, 'test1');");
     stmt.addBatch("INSERT INTO batch_test VALUES (2, 'test2');");
     stmt.addBatch("INSERT INTO batch_test VALUES (3, 'test3');");
 
-    // Execute batch
     int[] updateCounts = stmt.executeBatch();
 
-    // Verify results
     assertThat(updateCounts).hasSize(3);
     assertThat(updateCounts[0]).isEqualTo(1);
     assertThat(updateCounts[1]).isEqualTo(1);
     assertThat(updateCounts[2]).isEqualTo(1);
 
-    // Verify all data was inserted
     ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM batch_test;");
     assertTrue(rs.next());
     assertThat(rs.getInt(1)).isEqualTo(3);
@@ -171,19 +163,15 @@ class JDBC4StatementTest {
   void testAddBatch_with_updates_and_deletes() throws SQLException {
     stmt.execute("CREATE TABLE batch_test (id INTEGER PRIMARY KEY, value TEXT);");
 
-    // Insert initial data
     stmt.execute(
         "INSERT INTO batch_test VALUES (1, 'initial1'), (2, 'initial2'), (3, 'initial3');");
 
-    // Add batch commands with different operations
     stmt.addBatch("UPDATE batch_test SET value = 'updated';");
     stmt.addBatch("DELETE FROM batch_test WHERE id = 2;");
     stmt.addBatch("INSERT INTO batch_test VALUES (4, 'new');");
 
-    // Execute batch
     int[] updateCounts = stmt.executeBatch();
 
-    // Verify update counts
     assertThat(updateCounts).hasSize(3);
     assertThat(updateCounts[0]).isEqualTo(3); // UPDATE affected 3 row
     assertThat(updateCounts[1]).isEqualTo(1); // DELETE affected 1 row
@@ -199,18 +187,14 @@ class JDBC4StatementTest {
   void testClearBatch() throws SQLException {
     stmt.execute("CREATE TABLE batch_test (id INTEGER PRIMARY KEY, value TEXT);");
 
-    // Add batch commands
     stmt.addBatch("INSERT INTO batch_test VALUES (1, 'test1');");
     stmt.addBatch("INSERT INTO batch_test VALUES (2, 'test2');");
 
-    // Clear the batch
     stmt.clearBatch();
 
-    // Execute batch should return empty array
     int[] updateCounts = stmt.executeBatch();
     assertThat(updateCounts).isEmpty();
 
-    // Verify no data was inserted
     ResultSet rs = stmt.executeQuery("SELECT COUNT(*) FROM batch_test;");
     assertTrue(rs.next());
     assertThat(rs.getInt(1)).isEqualTo(0);
@@ -221,29 +205,23 @@ class JDBC4StatementTest {
     stmt.execute("CREATE TABLE batch_test (id INTEGER PRIMARY KEY, value TEXT);");
     stmt.execute("INSERT INTO batch_test VALUES (1, 'test1');");
 
-    // Add a SELECT statement to batch (not allowed)
     stmt.addBatch("INSERT INTO batch_test VALUES (2, 'test2');");
     stmt.addBatch("SELECT * FROM batch_test;"); // This should cause an exception
     stmt.addBatch("INSERT INTO batch_test VALUES (3, 'test3');");
 
-    // Execute batch should throw BatchUpdateException
     BatchUpdateException exception =
         assertThrows(BatchUpdateException.class, () -> stmt.executeBatch());
 
-    // Verify exception message
     assertTrue(exception.getMessage().contains("Batch commands cannot return result sets"));
 
-    // Verify update counts for executed statements before the failure
     int[] updateCounts = exception.getUpdateCounts();
     assertThat(updateCounts).hasSize(3);
     assertThat(updateCounts[0]).isEqualTo(1); // First INSERT succeeded
     assertThat(updateCounts[1]).isEqualTo(Statement.EXECUTE_FAILED); // SELECT failed
-    // The third statement may not have been executed depending on implementation
   }
 
   @Test
-  void testBatch_with_null_command_should_throw_exception() throws SQLException {
-    // Adding null command should throw SQLException
+  void testBatch_with_null_command_should_throw_exception() {
     assertThrows(SQLException.class, () -> stmt.addBatch(null));
   }
 
@@ -251,7 +229,6 @@ class JDBC4StatementTest {
   void testBatch_operations_on_closed_statement_should_throw_exception() throws SQLException {
     stmt.close();
 
-    // All batch operations should throw SQLException on closed statement
     assertThrows(SQLException.class, () -> stmt.addBatch("INSERT INTO test VALUES (1);"));
     assertThrows(SQLException.class, () -> stmt.clearBatch());
     assertThrows(SQLException.class, () -> stmt.executeBatch());
@@ -261,16 +238,13 @@ class JDBC4StatementTest {
   void testBatch_with_syntax_error_should_throw_exception() throws SQLException {
     stmt.execute("CREATE TABLE batch_test (id INTEGER PRIMARY KEY, value TEXT);");
 
-    // Add batch commands with a syntax error
     stmt.addBatch("INSERT INTO batch_test VALUES (1, 'test1');");
     stmt.addBatch("INVALID SQL SYNTAX;"); // This should cause an exception
     stmt.addBatch("INSERT INTO batch_test VALUES (3, 'test3');");
 
-    // Execute batch should throw BatchUpdateException
     BatchUpdateException exception =
         assertThrows(BatchUpdateException.class, () -> stmt.executeBatch());
 
-    // Verify update counts show partial execution
     int[] updateCounts = exception.getUpdateCounts();
     assertThat(updateCounts).hasSize(3);
     assertThat(updateCounts[0]).isEqualTo(1); // First INSERT succeeded
@@ -279,10 +253,7 @@ class JDBC4StatementTest {
 
   @Test
   void testBatch_empty_batch_returns_empty_array() throws SQLException {
-    // Execute empty batch
     int[] updateCounts = stmt.executeBatch();
-
-    // Should return empty array
     assertThat(updateCounts).isEmpty();
   }
 
@@ -290,11 +261,9 @@ class JDBC4StatementTest {
   void testBatch_clears_after_successful_execution() throws SQLException {
     stmt.execute("CREATE TABLE batch_test (id INTEGER PRIMARY KEY, value TEXT);");
 
-    // Add and execute batch
     stmt.addBatch("INSERT INTO batch_test VALUES (1, 'test1');");
     stmt.executeBatch();
 
-    // Execute batch again should return empty array (batch was cleared)
     int[] updateCounts = stmt.executeBatch();
     assertThat(updateCounts).isEmpty();
   }
@@ -303,13 +272,10 @@ class JDBC4StatementTest {
   void testBatch_clears_after_failed_execution() throws SQLException {
     stmt.execute("CREATE TABLE batch_test (id INTEGER PRIMARY KEY, value TEXT);");
 
-    // Add batch with SELECT statement that will fail
     stmt.addBatch("SELECT * FROM batch_test;");
 
-    // Execute batch should fail
     assertThrows(BatchUpdateException.class, () -> stmt.executeBatch());
 
-    // Execute batch again should return empty array (batch was cleared after failure)
     int[] updateCounts = stmt.executeBatch();
     assertThat(updateCounts).isEmpty();
   }
@@ -319,7 +285,6 @@ class JDBC4StatementTest {
   void testIsBatchCompatibleStatement_compatible_statements() {
     JDBC4Statement jdbc4Stmt = (JDBC4Statement) stmt;
 
-    // Basic INSERT statements
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("INSERT INTO table VALUES (1, 2);"));
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("insert into table values (1, 2);"));
     assertTrue(
@@ -327,12 +292,10 @@ class JDBC4StatementTest {
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("INSERT OR REPLACE INTO table VALUES (1);"));
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("INSERT OR IGNORE INTO table VALUES (1);"));
 
-    // INSERT with whitespace
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("  INSERT INTO table VALUES (1);"));
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("\t\nINSERT INTO table VALUES (1);"));
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("   \n\t  INSERT INTO table VALUES (1);"));
 
-    // INSERT with comments
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("/* comment */ INSERT INTO table VALUES (1);"));
     assertTrue(
         jdbc4Stmt.isBatchCompatibleStatement(
@@ -343,36 +306,29 @@ class JDBC4StatementTest {
         jdbc4Stmt.isBatchCompatibleStatement(
             "-- comment 1\n-- comment 2\nINSERT INTO table VALUES (1);"));
 
-    // Complex cases with multiple comments
     assertTrue(
         jdbc4Stmt.isBatchCompatibleStatement(
             "  /* comment */ -- another\n  INSERT INTO table VALUES (1);"));
 
-    // Basic UPDATE statements
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("UPDATE table SET col = 1;"));
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("update table set col = 1;"));
     assertTrue(
         jdbc4Stmt.isBatchCompatibleStatement("UPDATE table SET col1 = 1, col2 = 2 WHERE id = 3;"));
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("UPDATE OR REPLACE table SET col = 1;"));
 
-    // UPDATE with whitespace
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("  UPDATE table SET col = 1;"));
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("\t\nUPDATE table SET col = 1;"));
 
-    // UPDATE with comments
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("/* comment */ UPDATE table SET col = 1;"));
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("-- comment\nUPDATE table SET col = 1;"));
 
-    // Basic DELETE statements
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("DELETE FROM table;"));
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("delete from table;"));
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("DELETE FROM table WHERE id = 1;"));
 
-    // DELETE with whitespace
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("  DELETE FROM table;"));
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("\t\nDELETE FROM table;"));
 
-    // DELETE with comments
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("/* comment */ DELETE FROM table;"));
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("-- comment\nDELETE FROM table;"));
   }
@@ -381,34 +337,27 @@ class JDBC4StatementTest {
   void testIsBatchCompatibleStatement_non_compatible_statements() {
     JDBC4Statement jdbc4Stmt = (JDBC4Statement) stmt;
 
-    // SELECT statements should not be compatible
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("SELECT * FROM table;"));
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("select * from table;"));
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("  SELECT * FROM table;"));
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("/* comment */ SELECT * FROM table;"));
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("-- comment\nSELECT * FROM table;"));
 
-    // EXPLAIN statements
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("EXPLAIN SELECT * FROM table;"));
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("EXPLAIN QUERY PLAN SELECT * FROM table;"));
 
-    // PRAGMA statements
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("PRAGMA table_info(table);"));
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("PRAGMA foreign_keys = ON;"));
 
-    // ANALYZE statements
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("ANALYZE;"));
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("ANALYZE table;"));
 
-    // WITH statements (CTEs)
     assertFalse(
         jdbc4Stmt.isBatchCompatibleStatement(
             "WITH cte AS (SELECT * FROM table) SELECT * FROM cte;"));
 
-    // VACUUM
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("VACUUM;"));
 
-    // VALUES
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("VALUES (1, 2), (3, 4);"));
   }
 
@@ -416,23 +365,19 @@ class JDBC4StatementTest {
   void testIsBatchCompatibleStatement_edge_cases() {
     JDBC4Statement jdbc4Stmt = (JDBC4Statement) stmt;
 
-    // Null and empty cases
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement(null));
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement(""));
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("   "));
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("\t\n"));
 
-    // Comments only
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("/* comment only */"));
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("-- comment only"));
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("/* comment */ -- another comment"));
 
-    // Keywords in wrong context (should not match if not at statement start)
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("SELECT * FROM table WHERE name = 'INSERT';"));
     assertFalse(
         jdbc4Stmt.isBatchCompatibleStatement("SELECT * FROM table WHERE action = 'DELETE';"));
 
-    // Partial keywords (should not match)
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("INSER INTO table VALUES (1);"));
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("UPDAT table SET col = 1;"));
     assertFalse(jdbc4Stmt.isBatchCompatibleStatement("DELET FROM table;"));
@@ -442,7 +387,6 @@ class JDBC4StatementTest {
   void testIsBatchCompatibleStatement_case_insensitive() {
     JDBC4Statement jdbc4Stmt = (JDBC4Statement) stmt;
 
-    // Mixed case should work
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("Insert INTO table VALUES (1);"));
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("InSeRt INTO table VALUES (1);"));
     assertTrue(jdbc4Stmt.isBatchCompatibleStatement("UPDATE table SET col = 1;"));
