@@ -16,7 +16,7 @@ fn test_per_page_encryption() -> anyhow::Result<()> {
         run_query(
             &tmp_db,
             &conn,
-            "PRAGMA hexkey = 'super secret key for encryption';",
+            "PRAGMA hexkey = 'b1bbfda4f589dc9daaf004fe21111e00dc00c98237102f5c7002a5669fc76327';",
         )?;
         run_query(
             &tmp_db,
@@ -58,7 +58,7 @@ fn test_per_page_encryption() -> anyhow::Result<()> {
         run_query(
             &existing_db,
             &conn,
-            "PRAGMA hexkey = 'super secret key for encryption';",
+            "PRAGMA hexkey = 'b1bbfda4f589dc9daaf004fe21111e00dc00c98237102f5c7002a5669fc76327';",
         )?;
         run_query_on_row(&existing_db, &conn, "SELECT * FROM test", |row: &Row| {
             assert_eq!(row.get::<i64>(0).unwrap(), 1);

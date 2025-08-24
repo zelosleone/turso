@@ -26,6 +26,19 @@ impl EncryptionKey {
         Self(key)
     }
 
+    pub fn from_hex_string(s: &str) -> Result<Self> {
+        let hex_str = s.trim();
+        let bytes = hex::decode(hex_str)
+            .map_err(|e| LimboError::InvalidArgument(format!("Invalid hex string: {}", e)))?;
+        let key: [u8; 32] = bytes.try_into().map_err(|v: Vec<u8>| {
+            LimboError::InvalidArgument(format!(
+                "Hex string must decode to exactly 32 bytes, got {}",
+                v.len()
+            ))
+        })?;
+        Ok(Self(key))
+    }
+
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
     }
