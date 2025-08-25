@@ -7017,7 +7017,7 @@ fn fill_cell_payload(
 ) -> Result<IOResult<()>> {
     let overflow_page_pointer_size = 4;
     let overflow_page_data_size = usable_space - overflow_page_pointer_size;
-    loop {
+    let result = loop {
         let record_buf = record.get_payload();
         match fill_cell_payload_state {
             FillCellPayloadState::Start => {
@@ -7049,7 +7049,7 @@ fn fill_cell_payload(
                 if !overflows {
                     // enough allowed space to fit inside a btree page
                     cell_payload.extend_from_slice(record_buf.as_ref());
-                    break;
+                    break Ok(IOResult::Done(()));
                 }
 
                 // so far we've written any of: left child page, rowid, payload size (depending on page type)
@@ -7102,13 +7102,22 @@ fn fill_cell_payload(
                             let cur_page = current_overflow_page.as_ref().expect("we must have overflowed if the remaining payload fits on the current page");
                             cur_page.unpin(); // We can safely unpin the current overflow page now.
                                               // Everything copied.
-                            break;
+                            break Ok(IOResult::Done(()));
                         }
                         *state = CopyDataState::AllocateOverflowPage;
                         *src_data_offset += amount_to_copy;
                     }
                     CopyDataState::AllocateOverflowPage => {
-                        let new_overflow_page = return_if_io!(pager.allocate_overflow_page());
+                        let new_overflow_page = match pager.allocate_overflow_page() {
+                            Ok(IOResult::Done(new_overflow_page)) => new_overflow_page,
+                            Ok(IOResult::IO(io_result)) => return Ok(IOResult::IO(io_result)),
+                            Err(e) => {
+                                if let Some(cur_page) = current_overflow_page {
+                                    cur_page.unpin();
+                                }
+                                break Err(e);
+                            }
+                        };
                         new_overflow_page.pin(); // Pin the current overflow page so the cache won't evict it because we need this page to be in memory for the next iteration of FillCellPayloadState::CopyData.
                         if let Some(prev_page) = current_overflow_page {
                             prev_page.unpin(); // We can safely unpin the previous overflow page now.
@@ -7146,9 +7155,9 @@ fn fill_cell_payload(
                 }
             }
         }
-    }
+    };
     page.unpin();
-    Ok(IOResult::Done(()))
+    result
 }
 /// Returns the maximum payload size (X) that can be stored directly on a b-tree page without spilling to overflow pages.
 ///
