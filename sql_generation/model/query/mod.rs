@@ -10,14 +10,7 @@ use serde::{Deserialize, Serialize};
 use turso_parser::ast::fmt::ToSqlContext;
 use update::Update;
 
-use crate::{
-    generation::Shadow,
-    model::{
-        query::transaction::{Begin, Commit, Rollback},
-        table::SimValue,
-    },
-    runner::env::SimulatorTables,
-};
+use crate::model::query::transaction::{Begin, Commit, Rollback};
 
 pub mod create;
 pub mod create_index;
@@ -71,25 +64,6 @@ impl Query {
             | Query::Drop(Drop { table, .. }) => vec![table.clone()],
             Query::CreateIndex(CreateIndex { table_name, .. }) => vec![table_name.clone()],
             Query::Begin(..) | Query::Commit(..) | Query::Rollback(..) => vec![],
-        }
-    }
-}
-
-impl Shadow for Query {
-    type Result = anyhow::Result<Vec<Vec<SimValue>>>;
-
-    fn shadow(&self, env: &mut SimulatorTables) -> Self::Result {
-        match self {
-            Query::Create(create) => create.shadow(env),
-            Query::Insert(insert) => insert.shadow(env),
-            Query::Delete(delete) => delete.shadow(env),
-            Query::Select(select) => select.shadow(env),
-            Query::Update(update) => update.shadow(env),
-            Query::Drop(drop) => drop.shadow(env),
-            Query::CreateIndex(create_index) => Ok(create_index.shadow(env)),
-            Query::Begin(begin) => Ok(begin.shadow(env)),
-            Query::Commit(commit) => Ok(commit.shadow(env)),
-            Query::Rollback(rollback) => Ok(rollback.shadow(env)),
         }
     }
 }

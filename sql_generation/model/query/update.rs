@@ -2,7 +2,7 @@ use std::fmt::Display;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{generation::Shadow, model::table::SimValue, runner::env::SimulatorTables};
+use crate::model::table::SimValue;
 
 use super::predicate::Predicate;
 
@@ -16,43 +16,6 @@ pub(crate) struct Update {
 impl Update {
     pub fn table(&self) -> &str {
         &self.table
-    }
-}
-
-impl Shadow for Update {
-    type Result = anyhow::Result<Vec<Vec<SimValue>>>;
-
-    fn shadow(&self, tables: &mut SimulatorTables) -> Self::Result {
-        let table = tables.tables.iter_mut().find(|t| t.name == self.table);
-
-        let table = if let Some(table) = table {
-            table
-        } else {
-            return Err(anyhow::anyhow!(
-                "Table {} does not exist. UPDATE statement ignored.",
-                self.table
-            ));
-        };
-
-        let t2 = table.clone();
-        for row in table
-            .rows
-            .iter_mut()
-            .filter(|r| self.predicate.test(r, &t2))
-        {
-            for (column, set_value) in &self.set_values {
-                if let Some((idx, _)) = table
-                    .columns
-                    .iter()
-                    .enumerate()
-                    .find(|(_, c)| &c.name == column)
-                {
-                    row[idx] = set_value.clone();
-                }
-            }
-        }
-
-        Ok(vec![])
     }
 }
 
