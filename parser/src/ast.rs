@@ -285,6 +285,23 @@ pub enum Stmt {
     },
 }
 
+impl Stmt {
+    pub fn attach(expr: Expr, db_name: Expr, key: Option<Expr>) -> Stmt {
+        Stmt::Attach {
+            expr: Box::new(expr),
+            db_name: Box::new(db_name),
+            key: key.map(Box::new),
+        }
+    }
+
+    pub fn vacuum(name: Option<Name>, into: Option<Expr>) -> Stmt {
+        Stmt::Vacuum {
+            name,
+            into: into.map(Box::new),
+        }
+    }
+}
+
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -353,7 +370,7 @@ pub enum Expr {
         /// operand
         base: Option<Box<Expr>>,
         /// `WHEN` condition `THEN` result
-        when_then_pairs: Vec<(Box<Expr>, Box<Expr>)>,
+        when_then_pairs: Vec<(Expr, Expr)>,
         /// `ELSE` result
         else_expr: Option<Box<Expr>>,
     },
@@ -377,7 +394,7 @@ pub enum Expr {
         /// `DISTINCT`
         distinctness: Option<Distinctness>,
         /// arguments
-        args: Vec<Box<Expr>>,
+        args: Vec<Expr>,
         /// `ORDER BY`
         order_by: Vec<SortedColumn>,
         /// `FILTER`
@@ -417,7 +434,7 @@ pub enum Expr {
         /// `NOT`
         not: bool,
         /// values
-        rhs: Vec<Box<Expr>>,
+        rhs: Vec<Expr>,
     },
     /// `IN` subselect
     InSelect {
@@ -437,7 +454,7 @@ pub enum Expr {
         /// table name
         rhs: QualifiedName,
         /// table function arguments
-        args: Vec<Box<Expr>>,
+        args: Vec<Expr>,
     },
     /// `IS NULL`
     IsNull(Box<Expr>),
@@ -461,7 +478,7 @@ pub enum Expr {
     /// `NOT NULL` or `NOTNULL`
     NotNull(Box<Expr>),
     /// Parenthesized subexpression
-    Parenthesized(Vec<Box<Expr>>),
+    Parenthesized(Vec<Expr>),
     /// Qualified name
     Qualified(Name, Name),
     /// `RAISE` function call
@@ -472,6 +489,105 @@ pub enum Expr {
     Unary(UnaryOperator, Box<Expr>),
     /// Parameters
     Variable(String),
+}
+
+impl Expr {
+    pub fn into_boxed(self) -> Box<Expr> {
+        Box::new(self)
+    }
+
+    pub fn unary(operator: UnaryOperator, expr: Expr) -> Expr {
+        Expr::Unary(operator, Box::new(expr))
+    }
+
+    pub fn binary(lhs: Expr, operator: Operator, rhs: Expr) -> Expr {
+        Expr::Binary(Box::new(lhs), operator, Box::new(rhs))
+    }
+
+    pub fn not_null(expr: Expr) -> Expr {
+        Expr::NotNull(Box::new(expr))
+    }
+
+    pub fn between(lhs: Expr, not: bool, start: Expr, end: Expr) -> Expr {
+        Expr::Between {
+            lhs: Box::new(lhs),
+            not,
+            start: Box::new(start),
+            end: Box::new(end),
+        }
+    }
+
+    pub fn in_select(lhs: Expr, not: bool, select: Select) -> Expr {
+        Expr::InSelect {
+            lhs: Box::new(lhs),
+            not,
+            rhs: select,
+        }
+    }
+
+    pub fn in_list(lhs: Expr, not: bool, rhs: Vec<Expr>) -> Expr {
+        Expr::InList {
+            lhs: Box::new(lhs),
+            not,
+            rhs,
+        }
+    }
+
+    pub fn in_table(lhs: Expr, not: bool, rhs: QualifiedName, args: Vec<Expr>) -> Expr {
+        Expr::InTable {
+            lhs: Box::new(lhs),
+            not,
+            rhs,
+            args,
+        }
+    }
+
+    pub fn like(
+        lhs: Expr,
+        not: bool,
+        operator: LikeOperator,
+        rhs: Expr,
+        escape: Option<Expr>,
+    ) -> Expr {
+        Expr::Like {
+            lhs: Box::new(lhs),
+            not,
+            op: operator,
+            rhs: Box::new(rhs),
+            escape: escape.map(Box::new),
+        }
+    }
+
+    pub fn is_null(expr: Expr) -> Expr {
+        Expr::IsNull(Box::new(expr))
+    }
+
+    pub fn collate(expr: Expr, name: Name) -> Expr {
+        Expr::Collate(Box::new(expr), name)
+    }
+
+    pub fn cast(expr: Expr, type_name: Option<Type>) -> Expr {
+        Expr::Cast {
+            expr: Box::new(expr),
+            type_name,
+        }
+    }
+
+    pub fn case(
+        base: Option<Expr>,
+        when_then_pairs: Vec<(Expr, Expr)>,
+        else_expr: Option<Expr>,
+    ) -> Expr {
+        Expr::Case {
+            base: base.map(Box::new),
+            when_then_pairs,
+            else_expr: else_expr.map(Box::new),
+        }
+    }
+
+    pub fn raise(resolve_type: ResolveType, expr: Option<Expr>) -> Expr {
+        Expr::Raise(resolve_type, expr.map(Box::new))
+    }
 }
 
 /// SQL literal
@@ -680,7 +796,7 @@ pub enum OneSelect {
         window_clause: Vec<WindowDef>,
     },
     /// `VALUES`
-    Values(Vec<Vec<Box<Expr>>>),
+    Values(Vec<Vec<Expr>>),
 }
 
 /// `SELECT` ... `FROM` clause
@@ -748,7 +864,7 @@ pub enum SelectTable {
     /// table
     Table(QualifiedName, Option<As>, Option<Indexed>),
     /// table function call
-    TableCall(QualifiedName, Vec<Box<Expr>>, Option<As>),
+    TableCall(QualifiedName, Vec<Expr>, Option<As>),
     /// `SELECT` subquery
     Select(Select, Option<As>),
     /// subquery
@@ -802,7 +918,7 @@ pub enum JoinConstraint {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct GroupBy {
     /// expressions
-    pub exprs: Vec<Box<Expr>>,
+    pub exprs: Vec<Expr>,
     /// `HAVING`
     pub having: Option<Box<Expr>>, // HAVING clause on a non-aggregate query
 }
@@ -1505,7 +1621,7 @@ pub struct Window {
     /// base window name
     pub base: Option<Name>,
     /// `PARTITION BY`
-    pub partition_by: Vec<Box<Expr>>,
+    pub partition_by: Vec<Expr>,
     /// `ORDER BY`
     pub order_by: Vec<SortedColumn>,
     /// frame spec
