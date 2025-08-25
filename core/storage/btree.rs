@@ -6,9 +6,10 @@ use crate::{
     storage::{
         pager::{BtreePageAllocMode, Pager},
         sqlite3_ondisk::{
-            read_u32, read_varint, BTreeCell, DatabaseHeader, PageContent, PageSize, PageType,
-            TableInteriorCell, TableLeafCell, CELL_PTR_SIZE_BYTES, INTERIOR_PAGE_HEADER_SIZE_BYTES,
-            LEAF_PAGE_HEADER_SIZE_BYTES, LEFT_CHILD_PTR_SIZE_BYTES,
+            payload_overflows, read_u32, read_varint, BTreeCell, DatabaseHeader, PageContent,
+            PageSize, PageType, TableInteriorCell, TableLeafCell, CELL_PTR_SIZE_BYTES,
+            INTERIOR_PAGE_HEADER_SIZE_BYTES, LEAF_PAGE_HEADER_SIZE_BYTES,
+            LEFT_CHILD_PTR_SIZE_BYTES,
         },
         state_machines::{
             AdvanceState, CountState, EmptyTableState, MoveToRightState, MoveToState, RewindState,
@@ -7040,48 +7041,27 @@ fn fill_cell_payload(
                     write_varint_to_vec(record_buf.len() as u64, cell_payload);
                 }
 
-                let payload_overflow_threshold_max =
-                    payload_overflow_threshold_max(page_type, usable_space);
-                tracing::debug!(
-                    "fill_cell_payload(record_size={}, payload_overflow_threshold_max={})",
-                    record_buf.len(),
-                    payload_overflow_threshold_max
-                );
-                if record_buf.len() <= payload_overflow_threshold_max {
+                let max_local = payload_overflow_threshold_max(page_type, usable_space);
+                let min_local = payload_overflow_threshold_min(page_type, usable_space);
+
+                let (overflows, local_size_if_overflow) =
+                    payload_overflows(record_buf.len(), max_local, min_local, usable_space);
+                if !overflows {
                     // enough allowed space to fit inside a btree page
                     cell_payload.extend_from_slice(record_buf.as_ref());
                     break;
                 }
 
-                let payload_overflow_threshold_min =
-                    payload_overflow_threshold_min(page_type, usable_space);
-                // see e.g. https://github.com/sqlite/sqlite/blob/9591d3fe93936533c8c3b0dc4d025ac999539e11/src/dbstat.c#L371
-                let mut space_left = payload_overflow_threshold_min
-                    + (record_buf.len() - payload_overflow_threshold_min) % overflow_page_data_size;
-
-                if space_left > payload_overflow_threshold_max {
-                    space_left = payload_overflow_threshold_min;
-                }
-
-                // cell_size must be equal to first value of space_left as this will be the bytes copied to non-overflow page.
-                let cell_size = space_left + cell_payload.len() + overflow_page_pointer_size;
-
-                let prev_size = cell_payload.len();
-                let new_data_size = prev_size + space_left;
-                cell_payload.resize(new_data_size + overflow_page_pointer_size, 0);
-                assert_eq!(
-                    cell_size,
-                    cell_payload.len(),
-                    "cell_size={} != cell_payload.len()={}",
-                    cell_size,
-                    cell_payload.len()
-                );
+                // so far we've written any of: left child page, rowid, payload size (depending on page type)
+                let cell_non_payload_elems_size = cell_payload.len();
+                let new_total_local_size = cell_non_payload_elems_size + local_size_if_overflow;
+                cell_payload.resize(new_total_local_size, 0);
 
                 *fill_cell_payload_state = FillCellPayloadState::CopyData {
                     state: CopyDataState::Copy,
-                    space_left_on_cur_page: space_left,
+                    space_left_on_cur_page: local_size_if_overflow - overflow_page_pointer_size, // local_size_if_overflow includes the overflow page pointer, but we don't want to write payload data there.
                     src_data_offset: 0,
-                    dst_data_offset: prev_size,
+                    dst_data_offset: cell_non_payload_elems_size,
                     current_overflow_page: None,
                 };
                 continue;
