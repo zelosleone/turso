@@ -50,6 +50,62 @@ fn test_per_page_encryption() -> anyhow::Result<()> {
             should_panic.is_err(),
             "should panic when accessing encrypted DB without key"
         );
+
+        // it should also panic if we specify either only key or cipher
+        let conn = tmp_db.connect_limbo();
+        let should_panic = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            run_query(&tmp_db, &conn, "PRAGMA cipher = 'aegis256';").unwrap();
+            run_query_on_row(&tmp_db, &conn, "SELECT * FROM test", |_: &Row| {}).unwrap();
+        }));
+        assert!(
+            should_panic.is_err(),
+            "should panic when accessing encrypted DB without key"
+        );
+
+        let conn = tmp_db.connect_limbo();
+        let should_panic = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            run_query(
+                &tmp_db,
+                &conn,
+                "PRAGMA hexkey = 'b1bbfda4f589dc9daaf004fe21111e00dc00c98237102f5c7002a5669fc76327';",
+            ).unwrap();
+            run_query_on_row(&tmp_db, &conn, "SELECT * FROM test", |_: &Row| {}).unwrap();
+        }));
+        assert!(
+            should_panic.is_err(),
+            "should panic when accessing encrypted DB without cipher name"
+        );
+
+        // it should panic if we specify wrong cipher or key
+        let conn = tmp_db.connect_limbo();
+        let should_panic = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            run_query(
+                &tmp_db,
+                &conn,
+                "PRAGMA hexkey = 'b1bbfda4f589dc9daaf004fe21111e00dc00c98237102f5c7002a5669fc76327';",
+            ).unwrap();
+            run_query(&tmp_db, &conn, "PRAGMA cipher = 'aes256gcm';").unwrap();
+            run_query_on_row(&tmp_db, &conn, "SELECT * FROM test", |_: &Row| {}).unwrap();
+        }));
+        assert!(
+            should_panic.is_err(),
+            "should panic when accessing encrypted DB with incorrect cipher"
+        );
+
+        let conn = tmp_db.connect_limbo();
+        let should_panic = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            run_query(&tmp_db, &conn, "PRAGMA cipher = 'aegis256';").unwrap();
+            run_query(
+                &tmp_db,
+                &conn,
+                "PRAGMA hexkey = 'b1bbfda4f589dc9daaf004fe21111e00dc00c98237102f5c7002a5669fc76377';",
+            ).unwrap();
+            run_query_on_row(&tmp_db, &conn, "SELECT * FROM test", |_: &Row| {}).unwrap();
+        }));
+        assert!(
+            should_panic.is_err(),
+            "should panic when accessing encrypted DB with incorrect key"
+        );
     }
 
     {
