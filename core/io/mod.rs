@@ -506,13 +506,7 @@ cfg_block! {
         pub use PlatformIO as SyscallIO;
     }
 
-    #[cfg(target_os = "windows")] {
-        mod windows;
-        pub use windows::WindowsIO as PlatformIO;
-         pub use PlatformIO as SyscallIO;
-    }
-
-    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows", target_os = "android", target_os = "ios")))] {
+    #[cfg(not(any(target_family = "unix", target_os = "android", target_os = "ios")))] {
         mod generic;
         pub use generic::GenericIO as PlatformIO;
         pub use PlatformIO as SyscallIO;
