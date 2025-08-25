@@ -85,7 +85,7 @@ pub fn init_group_by<'a>(
     group_by: &'a GroupBy,
     plan: &SelectPlan,
     result_columns: &'a [ResultSetColumn],
-    order_by: &'a [(Box<ast::Expr>, ast::SortOrder)],
+    order_by: &'a [(ast::Expr, ast::SortOrder)],
 ) -> Result<()> {
     collect_non_aggregate_expressions(
         &mut t_ctx.non_aggregate_expressions,
@@ -238,13 +238,13 @@ fn collect_non_aggregate_expressions<'a>(
     group_by: &'a GroupBy,
     plan: &SelectPlan,
     root_result_columns: &'a [ResultSetColumn],
-    order_by: &'a [(Box<ast::Expr>, ast::SortOrder)],
+    order_by: &'a [(ast::Expr, ast::SortOrder)],
 ) -> Result<()> {
     let mut result_columns = Vec::new();
     for expr in root_result_columns
         .iter()
         .map(|col| &col.expr)
-        .chain(order_by.iter().map(|(e, _)| e.as_ref()))
+        .chain(order_by.iter().map(|(e, _)| e))
         .chain(group_by.having.iter().flatten())
     {
         collect_result_columns(expr, plan, &mut result_columns)?;

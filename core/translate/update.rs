@@ -175,7 +175,7 @@ pub fn prepare_update_plan(
 
         let values = match set.expr.as_ref() {
             Expr::Parenthesized(vals) => vals.clone(),
-            expr => vec![expr.clone().into()],
+            expr => vec![expr.clone()],
         };
 
         if set.col_names.len() != values.len() {
@@ -213,7 +213,7 @@ pub fn prepare_update_plan(
     let order_by = body
         .order_by
         .iter()
-        .map(|o| (o.expr.clone(), o.order.unwrap_or(SortOrder::Asc)))
+        .map(|o| (*o.expr.clone(), o.order.unwrap_or(SortOrder::Asc)))
         .collect();
 
     // Sqlite determines we should create an ephemeral table if we do not have a FROM clause

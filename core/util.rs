@@ -1190,8 +1190,8 @@ pub fn parse_pragma_bool(expr: &Expr) -> Result<bool> {
 }
 
 /// Extract column name from an expression (e.g., for SELECT clauses)
-pub fn extract_column_name_from_expr(expr: impl AsRef<ast::Expr>) -> Option<String> {
-    match expr.as_ref() {
+pub fn extract_column_name_from_expr(expr: &ast::Expr) -> Option<String> {
+    match expr {
         ast::Expr::Id(name) => Some(name.as_str().to_string()),
         ast::Expr::Qualified(_, name) => Some(name.as_str().to_string()),
         _ => None,
@@ -1435,7 +1435,7 @@ pub mod tests {
         let func1 = Expr::FunctionCall {
             name: Name::Ident("SUM".to_string()),
             distinctness: None,
-            args: vec![Expr::Id(Name::Ident("x".to_string())).into()],
+            args: vec![Expr::Id(Name::Ident("x".to_string()))],
             order_by: vec![],
             filter_over: FunctionTail {
                 filter_clause: None,
@@ -1445,7 +1445,7 @@ pub mod tests {
         let func2 = Expr::FunctionCall {
             name: Name::Ident("sum".to_string()),
             distinctness: None,
-            args: vec![Expr::Id(Name::Ident("x".to_string())).into()],
+            args: vec![Expr::Id(Name::Ident("x".to_string()))],
             order_by: vec![],
             filter_over: FunctionTail {
                 filter_clause: None,
@@ -1457,7 +1457,7 @@ pub mod tests {
         let func3 = Expr::FunctionCall {
             name: Name::Ident("SUM".to_string()),
             distinctness: Some(ast::Distinctness::Distinct),
-            args: vec![Expr::Id(Name::Ident("x".to_string())).into()],
+            args: vec![Expr::Id(Name::Ident("x".to_string()))],
             order_by: vec![],
             filter_over: FunctionTail {
                 filter_clause: None,
@@ -1472,7 +1472,7 @@ pub mod tests {
         let sum = Expr::FunctionCall {
             name: Name::Ident("SUM".to_string()),
             distinctness: None,
-            args: vec![Expr::Id(Name::Ident("x".to_string())).into()],
+            args: vec![Expr::Id(Name::Ident("x".to_string()))],
             order_by: vec![],
             filter_over: FunctionTail {
                 filter_clause: None,
@@ -1482,7 +1482,7 @@ pub mod tests {
         let sum_distinct = Expr::FunctionCall {
             name: Name::Ident("SUM".to_string()),
             distinctness: Some(ast::Distinctness::Distinct),
-            args: vec![Expr::Id(Name::Ident("x".to_string())).into()],
+            args: vec![Expr::Id(Name::Ident("x".to_string()))],
             order_by: vec![],
             filter_over: FunctionTail {
                 filter_clause: None,
@@ -1513,8 +1513,7 @@ pub mod tests {
             Box::new(Expr::Literal(Literal::Numeric("683".to_string()))),
             Add,
             Box::new(Expr::Literal(Literal::Numeric("799.0".to_string()))),
-        )
-        .into()]);
+        )]);
         let expr2 = Expr::Binary(
             Box::new(Expr::Literal(Literal::Numeric("799".to_string()))),
             Add,
@@ -1528,8 +1527,7 @@ pub mod tests {
             Box::new(Expr::Literal(Literal::Numeric("6".to_string()))),
             Add,
             Box::new(Expr::Literal(Literal::Numeric("7".to_string()))),
-        )
-        .into()]);
+        )]);
         let expr8 = Expr::Binary(
             Box::new(Expr::Literal(Literal::Numeric("6".to_string()))),
             Add,

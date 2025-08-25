@@ -376,8 +376,7 @@ fn prepare_one_select_plan(
                                                 // COUNT() case
                                                 vec![ast::Expr::Literal(ast::Literal::Numeric(
                                                     "1".to_string(),
-                                                ))
-                                                .into()]
+                                                ))]
                                             }
                                             (true, _) => crate::bail_parse_error!(
                                                 "Aggregate function {} requires arguments",
@@ -388,7 +387,7 @@ fn prepare_one_select_plan(
 
                                         let agg = Aggregate {
                                             func: f,
-                                            args: agg_args.iter().map(|arg| *arg.clone()).collect(),
+                                            args: agg_args.to_vec(),
                                             original_expr: *expr.clone(),
                                             distinctness,
                                         };
@@ -448,10 +447,7 @@ fn prepare_one_select_plan(
                                             } else {
                                                 let agg = Aggregate {
                                                     func: AggFunc::External(f.func.clone().into()),
-                                                    args: args
-                                                        .iter()
-                                                        .map(|arg| *arg.clone())
-                                                        .collect(),
+                                                    args: args.to_vec(),
                                                     original_expr: *expr.clone(),
                                                     distinctness,
                                                 };
@@ -571,7 +567,7 @@ fn prepare_one_select_plan(
 
                 plan.group_by = Some(GroupBy {
                     sort_order: Some((0..group_by.exprs.len()).map(|_| SortOrder::Asc).collect()),
-                    exprs: group_by.exprs.iter().map(|expr| *expr.clone()).collect(),
+                    exprs: group_by.exprs.to_vec(),
                     having: if let Some(having) = group_by.having {
                         let mut predicates = vec![];
                         break_predicate_at_and_boundaries(&having, &mut predicates);
@@ -617,7 +613,7 @@ fn prepare_one_select_plan(
                 )?;
                 resolve_aggregates(schema, &o.expr, &mut plan.aggregates)?;
 
-                key.push((o.expr, o.order.unwrap_or(ast::SortOrder::Asc)));
+                key.push((*o.expr, o.order.unwrap_or(ast::SortOrder::Asc)));
             }
             plan.order_by = key;
 
@@ -651,10 +647,7 @@ fn prepare_one_select_plan(
                 contains_constant_false_condition: false,
                 query_destination,
                 distinctness: Distinctness::NonDistinct,
-                values: values
-                    .iter()
-                    .map(|values| values.iter().map(|value| *value.clone()).collect())
-                    .collect(),
+                values: values.iter().map(|values| values.to_vec()).collect(),
             };
 
             Ok(plan)
