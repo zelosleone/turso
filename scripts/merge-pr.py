@@ -9,6 +9,7 @@
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -112,8 +113,10 @@ def merge_remote(pr_number: int, commit_message: str, commit_title: str):
 
     try:
         print(f"\nMerging PR #{pr_number} with custom commit message...")
+
         # Use gh pr merge with the commit message file
-        cmd = f'gh pr merge {pr_number} --merge --subject "{commit_title}" --body-file "{temp_file_path}"'
+        safe_title = shlex.quote(commit_title)
+        cmd = f'gh pr merge {pr_number} --merge --subject {safe_title} --body-file "{temp_file_path}"'
         output, error, returncode = run_command(cmd, capture_output=False)
 
         if returncode == 0:
