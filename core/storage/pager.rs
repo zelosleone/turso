@@ -1555,8 +1555,18 @@ impl Pager {
             .expect("Failed to clear page cache");
     }
 
+    /// Checkpoint in Truncate mode and delete the WAL file. This method is _only_ to be called
+    /// for shutting down the last remaining connection to a database.
+    ///
+    /// sqlite3.h
+    /// Usually, when a database in [WAL mode] is closed or detached from a
+    /// database handle, SQLite checks if if there are other connections to the
+    /// same database, and if there are no other database connection (if the
+    /// connection being closed is the last open connection to the database),
+    /// then SQLite performs a [checkpoint] before closing the connection and
+    /// deletes the WAL file.
     pub fn checkpoint_shutdown(&self, wal_auto_checkpoint_disabled: bool) -> Result<()> {
-        let mut _attempts = 0;
+        let mut attempts = 0;
         {
             let Some(wal) = self.wal.as_ref() else {
                 return Err(LimboError::InternalError(
@@ -1565,16 +1575,25 @@ impl Pager {
             };
             let mut wal = wal.borrow_mut();
             // fsync the wal syncronously before beginning checkpoint
-            // TODO: for now forget about timeouts as they fail regularly in SIM
-            // need to think of a better way to do this
             let c = wal.sync()?;
             self.io.wait_for_completion(c)?;
         }
         if !wal_auto_checkpoint_disabled {
-            self.wal_checkpoint(CheckpointMode::Passive {
+            while let Err(LimboError::Busy) = self.wal_checkpoint(CheckpointMode::Truncate {
                 upper_bound_inclusive: None,
-            })?;
+            }) {
+                if attempts == 3 {
+                    // don't return error on `close` if we are unable to checkpoint, we can silently fail
+                    tracing::warn!(
+                        "Failed to checkpoint WAL on shutdown after 3 attempts, giving up"
+                    );
+                    return Ok(());
+                }
+                attempts += 1;
+            }
         }
+        // TODO: delete the WAL file here after truncate checkpoint, but *only* if we are sure that
+        // no other connections have opened since.
         Ok(())
     }
 

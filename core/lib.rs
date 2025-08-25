@@ -71,7 +71,7 @@ use std::{
     num::NonZero,
     ops::Deref,
     rc::Rc,
-    sync::{Arc, LazyLock, Mutex, Weak},
+    sync::{atomic::AtomicUsize, Arc, LazyLock, Mutex, Weak},
 };
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
@@ -137,6 +137,7 @@ pub struct Database {
     open_flags: OpenFlags,
     builtin_syms: RefCell<SymbolTable>,
     experimental_views: bool,
+    n_connections: AtomicUsize,
 }
 
 unsafe impl Send for Database {}
@@ -185,6 +186,12 @@ impl fmt::Debug for Database {
         };
         debug_struct.field("page_cache", &cache_info);
 
+        debug_struct.field(
+            "n_connections",
+            &self
+                .n_connections
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
         debug_struct.finish()
     }
 }
@@ -372,6 +379,7 @@ impl Database {
             init_lock: Arc::new(Mutex::new(())),
             experimental_views: enable_views,
             buffer_pool: BufferPool::begin_init(&io, arena_size),
+            n_connections: AtomicUsize::new(0),
         });
         db.register_global_builtin_extensions()
             .expect("unable to register global extensions");
@@ -456,6 +464,8 @@ impl Database {
             is_nested_stmt: Cell::new(false),
             encryption_key: RefCell::new(None),
         });
+        self.n_connections
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let builtin_syms = self.builtin_syms.borrow();
         // add built-in extensions symbols to the connection to prevent having to load each time
         conn.syms.borrow_mut().extend(&builtin_syms);
@@ -886,6 +896,17 @@ pub struct Connection {
     /// Generally this is only true for ParseSchema.
     is_nested_stmt: Cell<bool>,
     encryption_key: RefCell<Option<EncryptionKey>>,
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        if !self.closed.get() {
+            // if connection wasn't properly closed, decrement the connection counter
+            self._db
+                .n_connections
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
 }
 
 impl Connection {
@@ -1506,9 +1527,17 @@ impl Connection {
             }
         }
 
-        self.pager
-            .borrow()
-            .checkpoint_shutdown(self.wal_auto_checkpoint_disabled.get())
+        if self
+            ._db
+            .n_connections
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed)
+            .eq(&1)
+        {
+            self.pager
+                .borrow()
+                .checkpoint_shutdown(self.wal_auto_checkpoint_disabled.get())?;
+        };
+        Ok(())
     }
 
     pub fn wal_auto_checkpoint_disable(&self) {
