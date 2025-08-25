@@ -1,24 +1,20 @@
-use super::MemoryIO;
-use crate::{Clock, Completion, CompletionType, File, Instant, LimboError, OpenFlags, Result, IO};
-use std::cell::RefCell;
+use crate::{Clock, Completion, File, Instant, LimboError, OpenFlags, Result, IO};
+use parking_lot::RwLock;
 use std::io::{Read, Seek, Write};
 use std::sync::Arc;
-use tracing::{debug, trace};
-
+use tracing::{debug, instrument, trace, Level};
 pub struct GenericIO {}
 
 impl GenericIO {
     pub fn new() -> Result<Self> {
-        debug!("Using IO backend 'generic'");
+        debug!("Using IO backend 'syscall'");
         Ok(Self {})
     }
 }
 
-unsafe impl Send for GenericIO {}
-unsafe impl Sync for GenericIO {}
-
 impl IO for GenericIO {
-    fn open_file(&self, path: &str, flags: OpenFlags, _direct: bool) -> Result<Arc<dyn File>> {
+    #[instrument(err, skip_all, level = Level::TRACE)]
+    fn open_file(&self, path: &str, flags: OpenFlags, direct: bool) -> Result<Arc<dyn File>> {
         trace!("open_file(path = {})", path);
         let mut file = std::fs::File::options();
         file.read(true);
@@ -30,17 +26,17 @@ impl IO for GenericIO {
 
         let file = file.open(path)?;
         Ok(Arc::new(GenericFile {
-            file: RefCell::new(file),
-            memory_io: Arc::new(MemoryIO::new()),
+            file: RwLock::new(file),
         }))
     }
-    
+
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn remove_file(&self, path: &str) -> Result<()> {
         trace!("remove_file(path = {})", path);
-        std::fs::remove_file(path)?;
-        Ok(())
+        Ok(std::fs::remove_file(path)?)
     }
 
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn run_once(&self) -> Result<()> {
         Ok(())
     }
@@ -57,68 +53,63 @@ impl Clock for GenericIO {
 }
 
 pub struct GenericFile {
-    file: RefCell<std::fs::File>,
-    memory_io: Arc<MemoryIO>,
+    file: RwLock<std::fs::File>,
 }
 
-unsafe impl Send for GenericFile {}
-unsafe impl Sync for GenericFile {}
-
 impl File for GenericFile {
-    // Since we let the OS handle the locking, file locking is not supported on the generic IO implementation
-    // No-op implementation allows compilation but provides no actual file locking.
-    fn lock_file(&self, _exclusive: bool) -> Result<()> {
-        Ok(())
+    #[instrument(err, skip_all, level = Level::TRACE)]
+    fn lock_file(&self, exclusive: bool) -> Result<()> {
+        unimplemented!()
     }
 
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn unlock_file(&self) -> Result<()> {
-        Ok(())
+        unimplemented!()
     }
 
+    #[instrument(skip(self, c), level = Level::TRACE)]
     fn pread(&self, pos: usize, c: Completion) -> Result<Completion> {
-        let mut file = self.file.borrow_mut();
+        let mut file = self.file.write();
         file.seek(std::io::SeekFrom::Start(pos as u64))?;
-        {
+        let nr = {
             let r = c.as_read();
-            let mut buf = r.buf();
+            let buf = r.buf();
             let buf = buf.as_mut_slice();
             file.read_exact(buf)?;
-        }
-        c.complete(0);
+            buf.len() as i32
+        };
+        c.complete(nr);
         Ok(c)
     }
 
+    #[instrument(skip(self, c, buffer), level = Level::TRACE)]
     fn pwrite(&self, pos: usize, buffer: Arc<crate::Buffer>, c: Completion) -> Result<Completion> {
-        let mut file = self.file.borrow_mut();
+        let mut file = self.file.write();
         file.seek(std::io::SeekFrom::Start(pos as u64))?;
         let buf = buffer.as_slice();
         file.write_all(buf)?;
-        c.complete(buf.len() as i32);
+        c.complete(buffer.len() as i32);
         Ok(c)
     }
 
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn sync(&self, c: Completion) -> Result<Completion> {
-        let mut file = self.file.borrow_mut();
+        let file = self.file.write();
         file.sync_all()?;
         c.complete(0);
         Ok(c)
     }
 
+    #[instrument(err, skip_all, level = Level::TRACE)]
     fn truncate(&self, len: usize, c: Completion) -> Result<Completion> {
-        let mut file = self.file.borrow_mut();
+        let file = self.file.write();
         file.set_len(len as u64)?;
         c.complete(0);
         Ok(c)
     }
 
     fn size(&self) -> Result<u64> {
-        let file = self.file.borrow();
+        let file = self.file.read();
         Ok(file.metadata().unwrap().len())
-    }
-}
-
-impl Drop for GenericFile {
-    fn drop(&mut self) {
-        self.unlock_file().expect("Failed to unlock file");
     }
 }
