@@ -814,14 +814,14 @@ impl Wal for WalFile {
         // WAL and fetch pages directly from the DB file.  We do this
         // by taking read‑lock 0, and capturing the latest state.
         if shared_max == nbackfills {
-            let lock_idx = 0;
-            if !self.get_shared().read_locks[lock_idx].read() {
+            let lock_0_idx = 0;
+            if !self.get_shared().read_locks[lock_0_idx].read() {
                 return Ok((LimboResult::Busy, db_changed));
             }
             // we need to keep self.max_frame set to the appropriate
             // max frame in the wal at the time this transaction starts.
             self.max_frame = shared_max;
-            self.max_frame_read_lock_index.set(lock_idx);
+            self.max_frame_read_lock_index.set(lock_0_idx);
             self.min_frame = nbackfills + 1;
             self.last_checksum = last_checksum;
             return Ok((LimboResult::Ok, db_changed));
@@ -964,7 +964,7 @@ impl Wal for WalFile {
         }
 
         // Snapshot is stale, give up and let caller retry from scratch
-        tracing::debug!("unable to upgrade transaction from read to write: snapshot is stale, give up and let caller retry from scratch");
+        tracing::debug!("unable to upgrade transaction from read to write: snapshot is stale, give up and let caller retry from scratch, self.max_frame={}, shared_max={}", self.max_frame, shared_max);
         shared.write_lock.unlock();
         Ok(LimboResult::Busy)
     }
@@ -999,8 +999,18 @@ impl Wal for WalFile {
             "frame_watermark must be >= than current WAL backfill amount: frame_watermark={:?}, nBackfill={}", frame_watermark, self.get_shared().nbackfills.load(Ordering::Acquire)
         );
 
-        // if we are holding read_lock 0, skip and read right from db file.
-        if self.max_frame_read_lock_index.get() == 0 {
+        // if we are holding read_lock 0 and didn't write anything to the WAL, skip and read right from db file.
+        //
+        // note, that max_frame_read_lock_index is set to 0 only when shared_max_frame == nbackfill in which case
+        // min_frame is set to nbackfill + 1 and max_frame is set to shared_max_frame
+        //
+        // by default, SQLite tries to restart log file in this case - but for now let's keep it simple in the turso-db
+        if self.max_frame_read_lock_index.get() == 0 && self.max_frame < self.min_frame {
+            tracing::debug!(
+                "find_frame(page_id={}, frame_watermark={:?}): max_frame is 0 - read from DB file",
+                page_id,
+                frame_watermark,
+            );
             return Ok(None);
         }
         let shared = self.get_shared();
@@ -1008,8 +1018,21 @@ impl Wal for WalFile {
         let range = frame_watermark
             .map(|x| 0..=x)
             .unwrap_or(self.min_frame..=self.max_frame);
+        tracing::debug!(
+            "find_frame(page_id={}, frame_watermark={:?}): min_frame={}, max_frame={}",
+            page_id,
+            frame_watermark,
+            self.min_frame,
+            self.max_frame
+        );
         if let Some(list) = frames.get(&page_id) {
             if let Some(f) = list.iter().rfind(|&&f| range.contains(&f)) {
+                tracing::debug!(
+                    "find_frame(page_id={}, frame_watermark={:?}): found frame={}",
+                    page_id,
+                    frame_watermark,
+                    *f
+                );
                 return Ok(Some(*f));
             }
         }
