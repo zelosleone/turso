@@ -461,13 +461,24 @@ pub unsafe extern "C" fn sqlite3_limit(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_malloc64(_n: ffi::c_int) -> *mut ffi::c_void {
-    stub!();
+pub unsafe extern "C" fn sqlite3_malloc(n: ffi::c_int) -> *mut ffi::c_void {
+    sqlite3_malloc64(n)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_free(_ptr: *mut ffi::c_void) {
-    stub!();
+pub unsafe extern "C" fn sqlite3_malloc64(n: ffi::c_int) -> *mut ffi::c_void {
+    if n <= 0 {
+        return std::ptr::null_mut();
+    }
+    libc::malloc(n as usize)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sqlite3_free(ptr: *mut ffi::c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    libc::free(ptr);
 }
 
 /// Returns the error code for the most recent failed API call to connection.
