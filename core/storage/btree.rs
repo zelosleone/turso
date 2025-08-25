@@ -7099,10 +7099,9 @@ fn fill_cell_payload(
                         }
 
                         if record_offset_slice.len() - amount_to_copy == 0 {
-                            if let Some(cur_page) = current_overflow_page {
-                                cur_page.unpin(); // We can safely unpin the current overflow page now.
-                            }
-                            // Everything copied.
+                            let cur_page = current_overflow_page.as_ref().expect("we must have overflowed if the remaining payload fits on the current page");
+                            cur_page.unpin(); // We can safely unpin the current overflow page now.
+                                              // Everything copied.
                             break;
                         }
                         *state = CopyDataState::AllocateOverflowPage;
