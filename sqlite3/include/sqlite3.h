@@ -107,6 +107,8 @@ int sqlite3_stmt_readonly(sqlite3_stmt *_stmt);
 
 int sqlite3_stmt_busy(sqlite3_stmt *_stmt);
 
+sqlite3_stmt *sqlite3_next_stmt(sqlite3 *db, sqlite3_stmt *stmt);
+
 int sqlite3_serialize(sqlite3 *_db, const char *_schema, void **_out, int *_out_bytes, unsigned int _flags);
 
 int sqlite3_deserialize(sqlite3 *_db, const char *_schema, const void *_in_, int _in_bytes, unsigned int _flags);

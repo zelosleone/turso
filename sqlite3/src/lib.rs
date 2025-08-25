@@ -57,6 +57,7 @@ struct sqlite3Inner {
     pub(crate) e_open_state: u8,
     pub(crate) p_err: *mut ffi::c_void,
     pub(crate) filename: CString,
+    pub(crate) stmt_list: *mut sqlite3_stmt,
 }
 
 impl sqlite3 {
@@ -76,6 +77,7 @@ impl sqlite3 {
             e_open_state: SQLITE_STATE_OPEN,
             p_err: std::ptr::null_mut(),
             filename,
+            stmt_list: std::ptr::null_mut(),
         };
         #[allow(clippy::arc_with_non_send_sync)]
         let inner = Arc::new(Mutex::new(inner));
@@ -91,6 +93,7 @@ pub struct sqlite3_stmt {
         Option<unsafe extern "C" fn(*mut ffi::c_void)>,
         *mut ffi::c_void,
     )>,
+    pub(crate) next: *mut sqlite3_stmt,
 }
 
 impl sqlite3_stmt {
@@ -99,6 +102,7 @@ impl sqlite3_stmt {
             db,
             stmt,
             destructors: Vec::new(),
+            next: std::ptr::null_mut(),
         }
     }
 }
@@ -279,7 +283,12 @@ pub unsafe extern "C" fn sqlite3_prepare_v2(
             return SQLITE_ERROR;
         }
     };
-    *out_stmt = Box::leak(Box::new(sqlite3_stmt::new(raw_db, stmt)));
+    let new_stmt = Box::leak(Box::new(sqlite3_stmt::new(raw_db, stmt)));
+
+    new_stmt.next = db.stmt_list;
+    db.stmt_list = new_stmt;
+
+    *out_stmt = new_stmt;
     SQLITE_OK
 }
 
@@ -289,6 +298,25 @@ pub unsafe extern "C" fn sqlite3_finalize(stmt: *mut sqlite3_stmt) -> ffi::c_int
         return SQLITE_MISUSE;
     }
     let stmt_ref = &mut *stmt;
+
+    if !stmt_ref.db.is_null() {
+        let db = &mut *stmt_ref.db;
+        let mut db_inner = db.inner.lock().unwrap();
+
+        if db_inner.stmt_list == stmt {
+            db_inner.stmt_list = stmt_ref.next;
+        } else {
+            let mut current = db_inner.stmt_list;
+            while !current.is_null() {
+                let current_ref = &mut *current;
+                if current_ref.next == stmt {
+                    current_ref.next = stmt_ref.next;
+                    break;
+                }
+                current = current_ref.next;
+            }
+        }
+    }
 
     for (_idx, destructor_opt, ptr) in stmt_ref.destructors.drain(..) {
         if let Some(destructor_fn) = destructor_opt {
@@ -379,6 +407,25 @@ pub unsafe extern "C" fn sqlite3_stmt_readonly(_stmt: *mut sqlite3_stmt) -> ffi:
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_stmt_busy(_stmt: *mut sqlite3_stmt) -> ffi::c_int {
     stub!();
+}
+
+/// Iterate over all prepared statements in the database.
+#[no_mangle]
+pub unsafe extern "C" fn sqlite3_next_stmt(
+    db: *mut sqlite3,
+    stmt: *mut sqlite3_stmt,
+) -> *mut sqlite3_stmt {
+    if db.is_null() {
+        return std::ptr::null_mut();
+    }
+    if stmt.is_null() {
+        let db = &*db;
+        let db = db.inner.lock().unwrap();
+        db.stmt_list
+    } else {
+        let stmt = &mut *stmt;
+        stmt.next
+    }
 }
 
 #[no_mangle]

@@ -48,6 +48,7 @@ extern "C" {
     ) -> i32;
     fn libsql_wal_disable_checkpoint(db: *mut sqlite3) -> i32;
     fn sqlite3_column_int(stmt: *mut sqlite3_stmt, idx: i32) -> i64;
+    fn sqlite3_next_stmt(db: *mut sqlite3, stmt: *mut sqlite3_stmt) -> *mut sqlite3_stmt;
     fn sqlite3_bind_int(stmt: *mut sqlite3_stmt, idx: i32, val: i64) -> i32;
     fn sqlite3_bind_parameter_count(stmt: *mut sqlite3_stmt) -> i32;
     fn sqlite3_bind_parameter_name(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_char;
@@ -1315,6 +1316,83 @@ mod tests {
             // Test with non-existent database name
             let filename = sqlite3_db_filename(db, c"temp".as_ptr());
             assert!(filename.is_null());
+
+            assert_eq!(sqlite3_close(db), SQLITE_OK);
+        }
+    }
+
+    #[test]
+    fn test_sqlite3_next_stmt() {
+        const SQLITE_OK: i32 = 0;
+
+        unsafe {
+            let mut db: *mut sqlite3 = ptr::null_mut();
+            assert_eq!(sqlite3_open(c":memory:".as_ptr(), &mut db), SQLITE_OK);
+
+            // Initially, there should be no prepared statements
+            let iter = sqlite3_next_stmt(db, ptr::null_mut());
+            assert!(iter.is_null());
+
+            // Prepare first statement
+            let mut stmt1: *mut sqlite3_stmt = ptr::null_mut();
+            assert_eq!(
+                sqlite3_prepare_v2(db, c"SELECT 1;".as_ptr(), -1, &mut stmt1, ptr::null_mut()),
+                SQLITE_OK
+            );
+            assert!(!stmt1.is_null());
+
+            // Now there should be one statement
+            let iter = sqlite3_next_stmt(db, ptr::null_mut());
+            assert_eq!(iter, stmt1);
+
+            // And no more after that
+            let iter = sqlite3_next_stmt(db, stmt1);
+            assert!(iter.is_null());
+
+            // Prepare second statement
+            let mut stmt2: *mut sqlite3_stmt = ptr::null_mut();
+            assert_eq!(
+                sqlite3_prepare_v2(db, c"SELECT 2;".as_ptr(), -1, &mut stmt2, ptr::null_mut()),
+                SQLITE_OK
+            );
+            assert!(!stmt2.is_null());
+
+            // Prepare third statement
+            let mut stmt3: *mut sqlite3_stmt = ptr::null_mut();
+            assert_eq!(
+                sqlite3_prepare_v2(db, c"SELECT 3;".as_ptr(), -1, &mut stmt3, ptr::null_mut()),
+                SQLITE_OK
+            );
+            assert!(!stmt3.is_null());
+
+            // Count all statements
+            let mut count = 0;
+            let mut iter = sqlite3_next_stmt(db, ptr::null_mut());
+            while !iter.is_null() {
+                count += 1;
+                iter = sqlite3_next_stmt(db, iter);
+            }
+            assert_eq!(count, 3);
+
+            // Finalize the middle statement
+            assert_eq!(sqlite3_finalize(stmt2), SQLITE_OK);
+
+            // Count should now be 2
+            count = 0;
+            iter = sqlite3_next_stmt(db, ptr::null_mut());
+            while !iter.is_null() {
+                count += 1;
+                iter = sqlite3_next_stmt(db, iter);
+            }
+            assert_eq!(count, 2);
+
+            // Finalize remaining statements
+            assert_eq!(sqlite3_finalize(stmt1), SQLITE_OK);
+            assert_eq!(sqlite3_finalize(stmt3), SQLITE_OK);
+
+            // Should be no statements left
+            let iter = sqlite3_next_stmt(db, ptr::null_mut());
+            assert!(iter.is_null());
 
             assert_eq!(sqlite3_close(db), SQLITE_OK);
         }
