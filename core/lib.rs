@@ -1500,7 +1500,6 @@ impl Connection {
                     pager.end_tx(
                         true, // rollback = true for close
                         self,
-                        self.wal_auto_checkpoint_disabled.get(),
                     )
                 })?;
                 self.transaction_state.set(TransactionState::None);
@@ -2106,7 +2105,7 @@ impl Statement {
             }
             let state = self.program.connection.transaction_state.get();
             if let TransactionState::Write { .. } = state {
-                let end_tx_res = self.pager.end_tx(true, &self.program.connection, true)?;
+                let end_tx_res = self.pager.end_tx(true, &self.program.connection)?;
                 self.program
                     .connection
                     .transaction_state
