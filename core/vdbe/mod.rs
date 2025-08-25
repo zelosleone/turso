@@ -434,9 +434,7 @@ impl Program {
                 // Connection is closed for whatever reason, rollback the transaction.
                 let state = self.connection.transaction_state.get();
                 if let TransactionState::Write { .. } = state {
-                    pager
-                        .io
-                        .block(|| pager.end_tx(true, &self.connection, false))?;
+                    pager.io.block(|| pager.end_tx(true, &self.connection))?;
                 }
                 return Err(LimboError::InternalError("Connection closed".to_string()));
             }
@@ -608,11 +606,7 @@ impl Program {
         connection: &Connection,
         rollback: bool,
     ) -> Result<IOResult<()>> {
-        let cacheflush_status = pager.end_tx(
-            rollback,
-            connection,
-            connection.wal_auto_checkpoint_disabled.get(),
-        )?;
+        let cacheflush_status = pager.end_tx(rollback, connection)?;
         match cacheflush_status {
             IOResult::Done(_) => {
                 if self.change_cnt_on {
@@ -869,7 +863,7 @@ pub fn handle_program_error(
         _ => {
             pager
                 .io
-                .block(|| pager.end_tx(true, connection, false))
+                .block(|| pager.end_tx(true, connection))
                 .inspect_err(|e| {
                     tracing::error!("end_tx failed: {e}");
                 })?;

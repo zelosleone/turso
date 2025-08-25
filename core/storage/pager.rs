@@ -1026,7 +1026,6 @@ impl Pager {
         &self,
         rollback: bool,
         connection: &Connection,
-        wal_auto_checkpoint_disabled: bool,
     ) -> Result<IOResult<PagerCommitResult>> {
         if connection.is_nested_stmt.get() {
             // Parent statement will handle the transaction rollback.
@@ -1050,7 +1049,8 @@ impl Pager {
             self.rollback(schema_did_change, connection, is_write)?;
             return Ok(IOResult::Done(PagerCommitResult::Rollback));
         }
-        let commit_status = return_if_io!(self.commit_dirty_pages(wal_auto_checkpoint_disabled));
+        let commit_status =
+            return_if_io!(self.commit_dirty_pages(connection.wal_auto_checkpoint_disabled.get()));
         wal.borrow().end_write_tx();
         wal.borrow().end_read_tx();
 

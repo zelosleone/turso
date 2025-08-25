@@ -7915,10 +7915,7 @@ mod tests {
                     pager.deref(),
                 )
                 .unwrap();
-                pager
-                    .io
-                    .block(|| pager.end_tx(false, &conn, false))
-                    .unwrap();
+                pager.io.block(|| pager.end_tx(false, &conn)).unwrap();
                 pager.begin_read_tx().unwrap();
                 // FIXME: add sorted vector instead, should be okay for small amounts of keys for now :P, too lazy to fix right now
                 let _c = cursor.move_to_root().unwrap();
@@ -8063,10 +8060,7 @@ mod tests {
                 if let Some(c) = c {
                     pager.io.wait_for_completion(c).unwrap();
                 }
-                pager
-                    .io
-                    .block(|| pager.end_tx(false, &conn, false))
-                    .unwrap();
+                pager.io.block(|| pager.end_tx(false, &conn)).unwrap();
             }
 
             // Check that all keys can be found by seeking
@@ -8272,10 +8266,7 @@ mod tests {
                 if let Some(c) = c {
                     pager.io.wait_for_completion(c).unwrap();
                 }
-                pager
-                    .io
-                    .block(|| pager.end_tx(false, &conn, false))
-                    .unwrap();
+                pager.io.block(|| pager.end_tx(false, &conn)).unwrap();
             }
 
             // Final validation
