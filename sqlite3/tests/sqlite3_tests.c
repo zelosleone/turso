@@ -18,6 +18,7 @@ void test_sqlite3_bind_text2();
 void test_sqlite3_bind_blob();
 void test_sqlite3_column_type();
 void test_sqlite3_column_decltype();
+void test_sqlite3_next_stmt();
 
 int allocated = 0;
 
@@ -35,6 +36,7 @@ int main(void)
     test_sqlite3_bind_blob();
     test_sqlite3_column_type();
     test_sqlite3_column_decltype();
+    test_sqlite3_next_stmt();
     return 0;
 }
 
