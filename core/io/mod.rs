@@ -506,15 +506,7 @@ cfg_block! {
         pub use PlatformIO as SyscallIO;
     }
 
-    #[cfg(any(target_os = "android", target_os = "ios"))] {
-        mod unix;
-        #[cfg(feature = "fs")]
-        pub use unix::UnixIO;
-        pub use unix::UnixIO as SyscallIO;
-        pub use unix::UnixIO as PlatformIO;
-    }
-
-     #[cfg(target_os = "windows")] {
+    #[cfg(target_os = "windows")] {
         mod windows;
         pub use windows::WindowsIO as PlatformIO;
          pub use PlatformIO as SyscallIO;
