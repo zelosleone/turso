@@ -857,6 +857,10 @@ pub fn handle_program_error(
     connection: &Connection,
     err: &LimboError,
 ) -> Result<()> {
+    if connection.is_nested_stmt.get() {
+        // Errors from nested statements are handled by the parent statement.
+        return Ok(());
+    }
     match err {
         // Transaction errors, e.g. trying to start a nested transaction, do not cause a rollback.
         LimboError::TxError(_) => {}
