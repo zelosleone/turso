@@ -56,6 +56,7 @@ struct sqlite3Inner {
     pub(crate) malloc_failed: bool,
     pub(crate) e_open_state: u8,
     pub(crate) p_err: *mut ffi::c_void,
+    pub(crate) filename: CString,
 }
 
 impl sqlite3 {
@@ -63,6 +64,7 @@ impl sqlite3 {
         io: Arc<dyn turso_core::IO>,
         db: Arc<turso_core::Database>,
         conn: Arc<turso_core::Connection>,
+        filename: CString,
     ) -> Self {
         let inner = sqlite3Inner {
             _io: io,
@@ -73,6 +75,7 @@ impl sqlite3 {
             malloc_failed: false,
             e_open_state: SQLITE_STATE_OPEN,
             p_err: std::ptr::null_mut(),
+            filename,
         };
         #[allow(clippy::arc_with_non_send_sync)]
         let inner = Arc::new(Mutex::new(inner));
@@ -132,26 +135,30 @@ pub unsafe extern "C" fn sqlite3_open(
     if db_out.is_null() {
         return SQLITE_MISUSE;
     }
-    let filename = CStr::from_ptr(filename);
-    let filename = match filename.to_str() {
+    let filename_cstr = CStr::from_ptr(filename);
+    let filename_str = match filename_cstr.to_str() {
         Ok(s) => s,
         Err(_) => return SQLITE_MISUSE,
     };
-    let io: Arc<dyn turso_core::IO> = match filename {
+    let io: Arc<dyn turso_core::IO> = match filename_str {
         ":memory:" => Arc::new(turso_core::MemoryIO::new()),
         _ => match turso_core::PlatformIO::new() {
             Ok(io) => Arc::new(io),
             Err(_) => return SQLITE_CANTOPEN,
         },
     };
-    match turso_core::Database::open_file(io.clone(), filename, false, false) {
+    match turso_core::Database::open_file(io.clone(), filename_str, false, false) {
         Ok(db) => {
             let conn = db.connect().unwrap();
-            *db_out = Box::leak(Box::new(sqlite3::new(io, db, conn)));
+            let filename = match filename_str {
+                ":memory:" => CString::new("".to_string()).unwrap(),
+                _ => CString::from(filename_cstr),
+            };
+            *db_out = Box::leak(Box::new(sqlite3::new(io, db, conn, filename)));
             SQLITE_OK
         }
         Err(e) => {
-            trace!("error opening database {}: {:?}", filename, e);
+            trace!("error opening database {}: {:?}", filename_str, e);
             SQLITE_CANTOPEN
         }
     }
@@ -182,6 +189,25 @@ pub unsafe extern "C" fn sqlite3_close(db: *mut sqlite3) -> ffi::c_int {
 pub unsafe extern "C" fn sqlite3_close_v2(db: *mut sqlite3) -> ffi::c_int {
     trace!("sqlite3_close_v2");
     sqlite3_close(db)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sqlite3_db_filename(
+    db: *mut sqlite3,
+    db_name: *const ffi::c_char,
+) -> *const ffi::c_char {
+    if db.is_null() {
+        return std::ptr::null();
+    }
+    if !db_name.is_null() {
+        let name = CStr::from_ptr(db_name);
+        if name.to_bytes() != b"main" {
+            return std::ptr::null();
+        }
+    }
+    let db = &*db;
+    let inner = db.inner.lock().unwrap();
+    inner.filename.as_ptr()
 }
 
 #[no_mangle]

@@ -76,6 +76,8 @@ int sqlite3_close(sqlite3 *db);
 
 int sqlite3_close_v2(sqlite3 *db);
 
+const char *sqlite3_db_filename(sqlite3 *db, const char *db_name);
+
 int sqlite3_trace_v2(sqlite3 *_db,
                      unsigned int _mask,
                      void (*_callback)(unsigned int, void*, void*, void*),

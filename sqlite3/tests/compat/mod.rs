@@ -19,6 +19,7 @@ extern "C" {
     fn sqlite3_libversion_number() -> i32;
     fn sqlite3_close(db: *mut sqlite3) -> i32;
     fn sqlite3_open(filename: *const libc::c_char, db: *mut *mut sqlite3) -> i32;
+    fn sqlite3_db_filename(db: *mut sqlite3, db_name: *const libc::c_char) -> *const libc::c_char;
     fn sqlite3_prepare_v2(
         db: *mut sqlite3,
         sql: *const libc::c_char,
@@ -1277,6 +1278,45 @@ mod tests {
             assert_eq!(index4, 0);
 
             assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+        }
+    }
+
+    #[test]
+    fn test_sqlite3_db_filename() {
+        const SQLITE_OK: i32 = 0;
+
+        unsafe {
+            // Test with in-memory database
+            let mut db: *mut sqlite3 = ptr::null_mut();
+            assert_eq!(sqlite3_open(c":memory:".as_ptr(), &mut db), SQLITE_OK);
+            let filename = sqlite3_db_filename(db, c"main".as_ptr());
+            assert!(!filename.is_null());
+            let filename_str = std::ffi::CStr::from_ptr(filename).to_str().unwrap();
+            assert_eq!(filename_str, "");
+            assert_eq!(sqlite3_close(db), SQLITE_OK);
+
+            // Open a file-backed database
+            let temp_file = tempfile::NamedTempFile::with_suffix(".db").unwrap();
+            let path = std::ffi::CString::new(temp_file.path().to_str().unwrap()).unwrap();
+            let mut db = ptr::null_mut();
+            assert_eq!(sqlite3_open(path.as_ptr(), &mut db), SQLITE_OK);
+
+            // Test with "main" database name
+            let filename = sqlite3_db_filename(db, c"main".as_ptr());
+            assert!(!filename.is_null());
+            let filename_str = std::ffi::CStr::from_ptr(filename).to_str().unwrap();
+            assert_eq!(filename_str, temp_file.path().to_str().unwrap());
+
+            // Test with NULL database name (defaults to main)
+            let filename_default = sqlite3_db_filename(db, ptr::null());
+            assert!(!filename_default.is_null());
+            assert_eq!(filename, filename_default);
+
+            // Test with non-existent database name
+            let filename = sqlite3_db_filename(db, c"temp".as_ptr());
+            assert!(filename.is_null());
+
+            assert_eq!(sqlite3_close(db), SQLITE_OK);
         }
     }
 }
