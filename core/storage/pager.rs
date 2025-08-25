@@ -1291,7 +1291,12 @@ impl Pager {
         if !pages.is_empty() {
             let c = wal
                 .borrow_mut()
-                .append_frames_vectored(pages, page_sz, commit_frame)?;
+                .append_frames_vectored(pages, page_sz, commit_frame)
+                .inspect_err(|_| {
+                    for c in completions.iter() {
+                        c.abort();
+                    }
+                })?;
             completions.push(c);
         }
         Ok(completions)

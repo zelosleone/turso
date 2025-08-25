@@ -1442,9 +1442,9 @@ impl Wal for WalFile {
             let plain = page.get_contents().as_ptr();
 
             let data_to_write: std::borrow::Cow<[u8]> = {
-                let key = self.encryption_key.borrow();
-                if let Some(k) = key.as_ref() {
-                    Cow::Owned(encrypt_page(plain, page_id as usize, k)?)
+                let ectx = self.encryption_ctx.borrow();
+                if let Some(ctx) = ectx.as_ref() {
+                    Cow::Owned(ctx.encrypt_page(plain, page_id as usize)?)
                 } else {
                     Cow::Borrowed(plain)
                 }
