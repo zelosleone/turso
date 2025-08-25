@@ -10,3 +10,15 @@ repository.workspace = true
 path = "lib.rs"
 
 [dependencies]
+hex = "0.4.3"
+serde = { workspace = true, features = ["derive"] }
+turso_core = { workspace = true, features = ["simulator"] }
+turso_parser = { workspace = true, features = ["serde"] }
+rand = { workspace = true }
+anarchist-readable-name-generator-lib = "0.2.0"
+itertools = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+rand_chacha = "0.9.0"
