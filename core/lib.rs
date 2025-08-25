@@ -433,8 +433,6 @@ impl Database {
             .unwrap_or_default()
             .get();
 
-        self.n_connections
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let conn = Arc::new(Connection {
             _db: self.clone(),
             pager: RefCell::new(Rc::new(pager)),
@@ -466,6 +464,8 @@ impl Database {
             is_nested_stmt: Cell::new(false),
             encryption_key: RefCell::new(None),
         });
+        self.n_connections
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let builtin_syms = self.builtin_syms.borrow();
         // add built-in extensions symbols to the connection to prevent having to load each time
         conn.syms.borrow_mut().extend(&builtin_syms);

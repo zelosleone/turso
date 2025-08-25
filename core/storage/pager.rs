@@ -1583,14 +1583,17 @@ impl Pager {
                 upper_bound_inclusive: None,
             }) {
                 if attempts == 3 {
-                    // don't return error on `close` if we are unable to checkpoint, we can
-                    // silently fail
+                    // don't return error on `close` if we are unable to checkpoint, we can silently fail
+                    tracing::warn!(
+                        "Failed to checkpoint WAL on shutdown after 3 attempts, giving up"
+                    );
                     return Ok(());
                 }
                 attempts += 1;
             }
         }
-        // TODO: delete the WAL file here after truncate checkpoint
+        // TODO: delete the WAL file here after truncate checkpoint, but *only* if we are sure that
+        // no other connections have opened since.
         Ok(())
     }
 
