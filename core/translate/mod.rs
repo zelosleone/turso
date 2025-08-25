@@ -148,7 +148,7 @@ pub fn translate_inner(
         ast::Stmt::AlterTable(alter) => {
             translate_alter_table(alter, syms, schema, program, connection, input)?
         }
-        ast::Stmt::Analyze { name } => translate_analyze(name, schema, program)?,
+        ast::Stmt::Analyze { name } => translate_analyze(name, schema, syms, program)?,
         ast::Stmt::Attach { expr, db_name, key } => {
             attach::translate_attach(&expr, &db_name, &key, schema, syms, program)?
         }

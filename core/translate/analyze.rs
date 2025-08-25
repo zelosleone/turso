@@ -1,19 +1,27 @@
+use std::sync::Arc;
+
 use turso_parser::ast;
 
 use crate::{
     bail_parse_error,
-    schema::Schema,
+    schema::{BTreeTable, Schema},
+    storage::pager::CreateBTreeFlags,
+    translate::{
+        emitter::Resolver,
+        schema::{emit_schema_entry, SchemaEntryType, SQLITE_TABLEID},
+    },
     util::normalize_ident,
     vdbe::{
         builder::{CursorType, ProgramBuilder},
-        insn::{Insn, RegisterOrLiteral::*},
+        insn::{Insn, RegisterOrLiteral},
     },
-    Result,
+    Result, SymbolTable,
 };
 
 pub fn translate_analyze(
     target_opt: Option<ast::QualifiedName>,
     schema: &Schema,
+    syms: &SymbolTable,
     mut program: ProgramBuilder,
 ) -> Result<ProgramBuilder> {
     let Some(target) = target_opt else {
@@ -34,7 +42,15 @@ pub fn translate_analyze(
         dest_end: None,
     });
 
+    // After preparing/creating sqlite_stat1, we need to OpenWrite it, and how we acquire
+    // the necessary BTreeTable for cursor creation and root page for the instruction changes
+    // depending on which path we take.
+    let sqlite_stat1_btreetable: Arc<BTreeTable>;
+    let sqlite_stat1_source: RegisterOrLiteral<_>;
+
     if let Some(sqlite_stat1) = schema.get_btree_table("sqlite_stat1") {
+        sqlite_stat1_btreetable = sqlite_stat1.clone();
+        sqlite_stat1_source = RegisterOrLiteral::Literal(sqlite_stat1.root_page);
         // sqlite_stat1 already exists, so we need to remove the row
         // corresponding to the stats for the table which we're about to
         // ANALYZE. SQLite implements this as a full table scan over
@@ -43,7 +59,7 @@ pub fn translate_analyze(
         let cursor_id = program.alloc_cursor_id(CursorType::BTreeTable(sqlite_stat1.clone()));
         program.emit_insn(Insn::OpenWrite {
             cursor_id,
-            root_page: Literal(sqlite_stat1.root_page),
+            root_page: RegisterOrLiteral::Literal(sqlite_stat1.root_page),
             db: 0,
         });
         let after_loop = program.allocate_label();
@@ -89,7 +105,61 @@ pub fn translate_analyze(
         });
         program.preassign_label_to_next_insn(after_loop);
     } else {
-        bail_parse_error!("ANALYZE without an existing sqlite_stat1 is not supported");
+        // FIXME: Emit ReadCookie 0 3 2
+        // FIXME: Emit If 3 +2 0
+        // FIXME: Emit SetCookie 0 2 4
+        // FIXME: Emit SetCookie 0 5 1
+
+        // See the large comment in schema.rs:translate_create_table about
+        // deviating from SQLite codegen, as the same deviation is being done
+        // here.
+
+        // TODO: this code half-copies translate_create_table, because there's
+        // no way to get the table_root_reg back out, and it's needed for later
+        // codegen to open the table we just created.  It's worth a future
+        // refactoring to remove the duplication one the rest of ANALYZE is
+        // implemented.
+        let table_root_reg = program.alloc_register();
+        program.emit_insn(Insn::CreateBtree {
+            db: 0,
+            root: table_root_reg,
+            flags: CreateBTreeFlags::new_table(),
+        });
+        let sql = "CREATE TABLE sqlite_stat1(tbl,idx,stat)";
+        // The root_page==0 is false, but we don't rely on it, and there's no
+        // way to initialize it with a correct value.
+        sqlite_stat1_btreetable = Arc::new(BTreeTable::from_sql(sql, 0)?);
+        sqlite_stat1_source = RegisterOrLiteral::Register(table_root_reg);
+
+        let table = schema.get_btree_table(SQLITE_TABLEID).unwrap();
+        let sqlite_schema_cursor_id =
+            program.alloc_cursor_id(CursorType::BTreeTable(table.clone()));
+        program.emit_insn(Insn::OpenWrite {
+            cursor_id: sqlite_schema_cursor_id,
+            root_page: 1usize.into(),
+            db: 0,
+        });
+
+        let resolver = Resolver::new(schema, syms);
+        // Add the table entry to sqlite_schema
+        emit_schema_entry(
+            &mut program,
+            &resolver,
+            sqlite_schema_cursor_id,
+            None,
+            SchemaEntryType::Table,
+            "sqlite_stat1",
+            "sqlite_stat1",
+            table_root_reg,
+            Some(sql.to_string()),
+        )?;
+        //FIXME: Emit SetCookie?
+        let parse_schema_where_clause =
+            "tbl_name = 'sqlite_stat1' AND type != 'trigger'".to_string();
+        program.emit_insn(Insn::ParseSchema {
+            db: sqlite_schema_cursor_id,
+            where_clause: Some(parse_schema_where_clause),
+        });
     };
 
     if target_schema.columns().iter().any(|c| c.primary_key) {
@@ -100,13 +170,11 @@ pub fn translate_analyze(
     }
 
     // Count the number of rows in the target table, and insert it into sqlite_stat1.
-    let sqlite_stat1 = schema
-        .get_btree_table("sqlite_stat1")
-        .expect("sqlite_stat1 either pre-existed or was just created");
+    let sqlite_stat1 = sqlite_stat1_btreetable;
     let stat_cursor = program.alloc_cursor_id(CursorType::BTreeTable(sqlite_stat1.clone()));
     program.emit_insn(Insn::OpenWrite {
         cursor_id: stat_cursor,
-        root_page: Literal(sqlite_stat1.root_page),
+        root_page: sqlite_stat1_source,
         db: 0,
     });
     let target_cursor = program.alloc_cursor_id(CursorType::BTreeTable(target_btree.clone()));
