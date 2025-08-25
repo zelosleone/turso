@@ -1,12 +1,13 @@
 use std::{collections::HashSet, fmt::Display};
 
 pub use ast::Distinctness;
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use turso_parser::ast::{self, fmt::ToTokens, SortOrder};
 
 use crate::model::{
     query::EmptyContext,
-    table::{JoinType, JoinedTable},
+    table::{JoinTable, JoinType, JoinedTable, Table},
 };
 
 use super::predicate::Predicate;
@@ -14,6 +15,7 @@ use super::predicate::Predicate;
 /// `SELECT` or `RETURNING` result column
 // https://sqlite.org/syntax/result-column.html
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 pub enum ResultColumn {
     /// expression
     Expr(Predicate),
@@ -33,9 +35,9 @@ impl Display for ResultColumn {
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Select {
-    pub(crate) body: SelectBody,
-    pub(crate) limit: Option<usize>,
+pub struct Select {
+    pub body: SelectBody,
+    pub limit: Option<usize>,
 }
 
 impl Select {
@@ -102,7 +104,7 @@ impl Select {
         }
     }
 
-    pub(crate) fn dependencies(&self) -> HashSet<String> {
+    pub fn dependencies(&self) -> HashSet<String> {
         if self.body.select.from.is_none() {
             return HashSet::new();
         }
@@ -209,12 +211,63 @@ impl FromClause {
         }
     }
 
-    pub(crate) fn dependencies(&self) -> Vec<String> {
+    pub fn dependencies(&self) -> Vec<String> {
         let mut deps = vec![self.table.clone()];
         for join in &self.joins {
             deps.push(join.table.clone());
         }
         deps
+    }
+
+    pub fn into_join_table(&self, tables: &[Table]) -> JoinTable {
+        let first_table = tables
+            .iter()
+            .find(|t| t.name == self.table)
+            .expect("Table not found");
+
+        let mut join_table = JoinTable {
+            tables: vec![first_table.clone()],
+            rows: Vec::new(),
+        };
+
+        for join in &self.joins {
+            let joined_table = tables
+                .iter()
+                .find(|t| t.name == join.table)
+                .expect("Joined table not found");
+
+            join_table.tables.push(joined_table.clone());
+
+            match join.join_type {
+                JoinType::Inner => {
+                    // Implement inner join logic
+                    let join_rows = joined_table
+                        .rows
+                        .iter()
+                        .filter(|row| join.on.test(row, joined_table))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    // take a cartesian product of the rows
+                    let all_row_pairs = join_table
+                        .rows
+                        .clone()
+                        .into_iter()
+                        .cartesian_product(join_rows.iter());
+
+                    for (row1, row2) in all_row_pairs {
+                        let row = row1.iter().chain(row2.iter()).cloned().collect::<Vec<_>>();
+
+                        let is_in = join.on.test(&row, &join_table);
+
+                        if is_in {
+                            join_table.rows.push(row);
+                        }
+                    }
+                }
+                _ => todo!(),
+            }
+        }
+        join_table
     }
 }
 
@@ -302,7 +355,7 @@ impl Select {
                         })
                         .collect()
                 })
-                .unwrap_or(Vec::new()),
+                .unwrap_or_default(),
             limit: self.limit.map(|l| ast::Limit {
                 expr: ast::Expr::Literal(ast::Literal::Numeric(l.to_string())).into_boxed(),
                 offset: None,

@@ -3,15 +3,15 @@ use std::fmt::Display;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Begin {
-    pub(crate) immediate: bool,
+pub struct Begin {
+    pub immediate: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Commit;
+pub struct Commit;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Rollback;
+pub struct Rollback;
 
 impl Display for Begin {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

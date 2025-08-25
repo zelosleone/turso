@@ -1,11 +1,11 @@
 use std::{collections::HashSet, fmt::Display};
 
-pub(crate) use create::Create;
-pub(crate) use create_index::CreateIndex;
-pub(crate) use delete::Delete;
-pub(crate) use drop::Drop;
-pub(crate) use insert::Insert;
-pub(crate) use select::Select;
+pub use create::Create;
+pub use create_index::CreateIndex;
+pub use delete::Delete;
+pub use drop::Drop;
+pub use insert::Insert;
+pub use select::Select;
 use serde::{Deserialize, Serialize};
 use turso_parser::ast::fmt::ToSqlContext;
 use update::Update;
@@ -24,7 +24,7 @@ pub mod update;
 
 // This type represents the potential queries on the database.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum Query {
+pub enum Query {
     Create(Create),
     Select(Select),
     Insert(Insert),
@@ -38,7 +38,7 @@ pub(crate) enum Query {
 }
 
 impl Query {
-    pub(crate) fn dependencies(&self) -> HashSet<String> {
+    pub fn dependencies(&self) -> HashSet<String> {
         match self {
             Query::Select(select) => select.dependencies(),
             Query::Create(_) => HashSet::new(),
@@ -53,7 +53,7 @@ impl Query {
             Query::Begin(_) | Query::Commit(_) | Query::Rollback(_) => HashSet::new(),
         }
     }
-    pub(crate) fn uses(&self) -> Vec<String> {
+    pub fn uses(&self) -> Vec<String> {
         match self {
             Query::Create(Create { table }) => vec![table.name.clone()],
             Query::Select(select) => select.dependencies().into_iter().collect(),
@@ -86,7 +86,7 @@ impl Display for Query {
 }
 
 /// Used to print sql strings that already have all the context it needs
-pub(crate) struct EmptyContext;
+pub struct EmptyContext;
 
 impl ToSqlContext for EmptyContext {
     fn get_column_name(

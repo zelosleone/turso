@@ -64,6 +64,7 @@ impl ArbitraryFromMaybe<&Vec<&SimValue>> for FalseValue {
     }
 }
 
+#[allow(dead_code)]
 pub struct BitNotValue(pub SimValue);
 
 impl ArbitraryFromMaybe<(&SimValue, bool)> for BitNotValue {

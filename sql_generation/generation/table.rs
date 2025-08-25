@@ -99,7 +99,7 @@ impl ArbitraryFrom<&ColumnType> for SimValue {
     }
 }
 
-pub(crate) struct LTValue(pub(crate) SimValue);
+pub struct LTValue(pub SimValue);
 
 impl ArbitraryFrom<&Vec<&SimValue>> for LTValue {
     fn arbitrary_from<R: Rng>(rng: &mut R, values: &Vec<&SimValue>) -> Self {
@@ -161,7 +161,7 @@ impl ArbitraryFrom<&SimValue> for LTValue {
     }
 }
 
-pub(crate) struct GTValue(pub(crate) SimValue);
+pub struct GTValue(pub SimValue);
 
 impl ArbitraryFrom<&Vec<&SimValue>> for GTValue {
     fn arbitrary_from<R: Rng>(rng: &mut R, values: &Vec<&SimValue>) -> Self {
@@ -223,7 +223,7 @@ impl ArbitraryFrom<&SimValue> for GTValue {
     }
 }
 
-pub(crate) struct LikeValue(pub(crate) SimValue);
+pub struct LikeValue(pub SimValue);
 
 impl ArbitraryFromMaybe<&SimValue> for LikeValue {
     fn arbitrary_from_maybe<R: Rng>(rng: &mut R, value: &SimValue) -> Option<Self> {

@@ -7,7 +7,7 @@ use crate::model::table::SimValue;
 use super::select::Select;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) enum Insert {
+pub enum Insert {
     Values {
         table: String,
         values: Vec<Vec<SimValue>>,
@@ -19,7 +19,7 @@ pub(crate) enum Insert {
 }
 
 impl Insert {
-    pub(crate) fn table(&self) -> &str {
+    pub fn table(&self) -> &str {
         match self {
             Insert::Values { table, .. } | Insert::Select { table, .. } => table,
         }

@@ -5,7 +5,7 @@ use turso_parser::ast::{
 use crate::{
     generation::{
         frequency, gen_random_text, one_of, pick, pick_index, Arbitrary, ArbitraryFrom,
-        ArbitrarySizedFrom,
+        ArbitrarySizedFrom, GenerationContext,
     },
     model::table::SimValue,
 };
@@ -58,8 +58,8 @@ where
 }
 
 // Freestyling generation
-impl ArbitrarySizedFrom<&SimulatorEnv> for Expr {
-    fn arbitrary_sized_from<R: rand::Rng>(rng: &mut R, t: &SimulatorEnv, size: usize) -> Self {
+impl<C: GenerationContext> ArbitrarySizedFrom<&C> for Expr {
+    fn arbitrary_sized_from<R: rand::Rng>(rng: &mut R, t: &C, size: usize) -> Self {
         frequency(
             vec![
                 (
@@ -199,28 +199,11 @@ impl Arbitrary for Type {
     }
 }
 
-struct CollateName(String);
-
-impl Arbitrary for CollateName {
-    fn arbitrary<R: rand::Rng>(rng: &mut R) -> Self {
-        let choice = rng.random_range(0..3);
-        CollateName(
-            match choice {
-                0 => "BINARY",
-                1 => "RTRIM",
-                2 => "NOCASE",
-                _ => unreachable!(),
-            }
-            .to_string(),
-        )
-    }
-}
-
-impl ArbitraryFrom<&SimulatorEnv> for QualifiedName {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, t: &SimulatorEnv) -> Self {
+impl<C: GenerationContext> ArbitraryFrom<&C> for QualifiedName {
+    fn arbitrary_from<R: rand::Rng>(rng: &mut R, t: &C) -> Self {
         // TODO: for now just generate table name
-        let table_idx = pick_index(t.tables.len(), rng);
-        let table = &t.tables[table_idx];
+        let table_idx = pick_index(t.tables().len(), rng);
+        let table = &t.tables()[table_idx];
         // TODO: for now forego alias
         Self {
             db_name: None,
@@ -230,8 +213,8 @@ impl ArbitraryFrom<&SimulatorEnv> for QualifiedName {
     }
 }
 
-impl ArbitraryFrom<&SimulatorEnv> for LikeOperator {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &SimulatorEnv) -> Self {
+impl<C: GenerationContext> ArbitraryFrom<&C> for LikeOperator {
+    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &C) -> Self {
         let choice = rng.random_range(0..4);
         match choice {
             0 => LikeOperator::Glob,
@@ -244,8 +227,8 @@ impl ArbitraryFrom<&SimulatorEnv> for LikeOperator {
 }
 
 // Current implementation does not take into account the columns affinity nor if table is Strict
-impl ArbitraryFrom<&SimulatorEnv> for ast::Literal {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &SimulatorEnv) -> Self {
+impl<C: GenerationContext> ArbitraryFrom<&C> for ast::Literal {
+    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &C) -> Self {
         loop {
             let choice = rng.random_range(0..5);
             let lit = match choice {
@@ -282,8 +265,8 @@ impl ArbitraryFrom<&Vec<&SimValue>> for ast::Expr {
     }
 }
 
-impl ArbitraryFrom<&SimulatorEnv> for UnaryOperator {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &SimulatorEnv) -> Self {
+impl<C: GenerationContext> ArbitraryFrom<&C> for UnaryOperator {
+    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &C) -> Self {
         let choice = rng.random_range(0..4);
         match choice {
             0 => Self::BitwiseNot,

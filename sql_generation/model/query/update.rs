@@ -7,10 +7,10 @@ use crate::model::table::SimValue;
 use super::predicate::Predicate;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Update {
-    pub(crate) table: String,
-    pub(crate) set_values: Vec<(String, SimValue)>, // Pair of value for set expressions => SET name=value
-    pub(crate) predicate: Predicate,
+pub struct Update {
+    pub table: String,
+    pub set_values: Vec<(String, SimValue)>, // Pair of value for set expressions => SET name=value
+    pub predicate: Predicate,
 }
 
 impl Update {

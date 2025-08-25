@@ -9,27 +9,28 @@ use crate::model::table::{SimValue, Table, TableContext};
 pub struct Predicate(pub ast::Expr);
 
 impl Predicate {
-    pub(crate) fn true_() -> Self {
+    pub fn true_() -> Self {
         Self(ast::Expr::Literal(ast::Literal::Keyword(
             "TRUE".to_string(),
         )))
     }
 
-    pub(crate) fn false_() -> Self {
+    pub fn false_() -> Self {
         Self(ast::Expr::Literal(ast::Literal::Keyword(
             "FALSE".to_string(),
         )))
     }
-    pub(crate) fn null() -> Self {
+    pub fn null() -> Self {
         Self(ast::Expr::Literal(ast::Literal::Null))
     }
 
-    pub(crate) fn not(predicate: Predicate) -> Self {
+    #[allow(clippy::should_implement_trait)]
+    pub fn not(predicate: Predicate) -> Self {
         let expr = ast::Expr::Unary(ast::UnaryOperator::Not, Box::new(predicate.0));
         Self(expr).parens()
     }
 
-    pub(crate) fn and(predicates: Vec<Predicate>) -> Self {
+    pub fn and(predicates: Vec<Predicate>) -> Self {
         if predicates.is_empty() {
             Self::true_()
         } else if predicates.len() == 1 {
@@ -44,7 +45,7 @@ impl Predicate {
         }
     }
 
-    pub(crate) fn or(predicates: Vec<Predicate>) -> Self {
+    pub fn or(predicates: Vec<Predicate>) -> Self {
         if predicates.is_empty() {
             Self::false_()
         } else if predicates.len() == 1 {
@@ -59,26 +60,26 @@ impl Predicate {
         }
     }
 
-    pub(crate) fn eq(lhs: Predicate, rhs: Predicate) -> Self {
+    pub fn eq(lhs: Predicate, rhs: Predicate) -> Self {
         let expr = ast::Expr::Binary(Box::new(lhs.0), ast::Operator::Equals, Box::new(rhs.0));
         Self(expr).parens()
     }
 
-    pub(crate) fn is(lhs: Predicate, rhs: Predicate) -> Self {
+    pub fn is(lhs: Predicate, rhs: Predicate) -> Self {
         let expr = ast::Expr::Binary(Box::new(lhs.0), ast::Operator::Is, Box::new(rhs.0));
         Self(expr).parens()
     }
 
-    pub(crate) fn parens(self) -> Self {
+    pub fn parens(self) -> Self {
         let expr = ast::Expr::Parenthesized(vec![self.0]);
         Self(expr)
     }
 
-    pub(crate) fn eval(&self, row: &[SimValue], table: &Table) -> Option<SimValue> {
+    pub fn eval(&self, row: &[SimValue], table: &Table) -> Option<SimValue> {
         expr_to_value(&self.0, row, table)
     }
 
-    pub(crate) fn test<T: TableContext>(&self, row: &[SimValue], table: &T) -> bool {
+    pub fn test<T: TableContext>(&self, row: &[SimValue], table: &T) -> bool {
         let value = expr_to_value(&self.0, row, table);
         value.is_some_and(|value| value.as_bool())
     }

@@ -8,8 +8,8 @@ use crate::model::{
 
 use super::{one_of, ArbitraryFrom};
 
-mod binary;
-mod unary;
+pub mod binary;
+pub mod unary;
 
 #[derive(Debug)]
 struct CompoundPredicate(Predicate);

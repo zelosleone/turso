@@ -1,25 +1,11 @@
 use serde::{Deserialize, Serialize};
+use turso_parser::ast::SortOrder;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub enum SortOrder {
-    Asc,
-    Desc,
-}
-
-impl std::fmt::Display for SortOrder {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SortOrder::Asc => write!(f, "ASC"),
-            SortOrder::Desc => write!(f, "DESC"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub(crate) struct CreateIndex {
-    pub(crate) index_name: String,
-    pub(crate) table_name: String,
-    pub(crate) columns: Vec<(String, SortOrder)>,
+pub struct CreateIndex {
+    pub index_name: String,
+    pub table_name: String,
+    pub columns: Vec<(String, SortOrder)>,
 }
 
 impl std::fmt::Display for CreateIndex {

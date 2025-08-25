@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::model::table::Table;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Create {
-    pub(crate) table: Table,
+pub struct Create {
+    pub table: Table,
 }
 
 impl Display for Create {

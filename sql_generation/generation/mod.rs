@@ -3,12 +3,23 @@ use std::{iter::Sum, ops::SubAssign};
 use anarchist_readable_name_generator_lib::readable_name_custom;
 use rand::{distr::uniform::SampleUniform, Rng};
 
-mod expr;
-pub mod plan;
-mod predicate;
-pub mod property;
+use crate::model::table::Table;
+
+pub mod expr;
+pub mod predicate;
 pub mod query;
 pub mod table;
+
+pub struct Opts {
+    /// Indexes enabled
+    indexes: bool,
+}
+
+/// Trait used to provide context to generation functions
+pub trait GenerationContext {
+    fn tables(&self) -> &Vec<Table>;
+    fn opts(&self) -> &Opts;
+}
 
 type ArbitraryFromFunc<'a, R, T> = Box<dyn Fn(&mut R) -> T + 'a>;
 type Choice<'a, R, T> = (usize, Box<dyn Fn(&mut R) -> Option<T> + 'a>);
@@ -66,11 +77,7 @@ pub trait ArbitraryFromMaybe<T> {
 /// the operations we require for the implementation.
 // todo: switch to a simpler type signature that can accommodate all integer and float types, which
 //       should be enough for our purposes.
-pub(crate) fn frequency<
-    T,
-    R: Rng,
-    N: Sum + PartialOrd + Copy + Default + SampleUniform + SubAssign,
->(
+pub fn frequency<T, R: Rng, N: Sum + PartialOrd + Copy + Default + SampleUniform + SubAssign>(
     choices: Vec<(N, ArbitraryFromFunc<R, T>)>,
     rng: &mut R,
 ) -> T {
@@ -88,7 +95,7 @@ pub(crate) fn frequency<
 }
 
 /// one_of is a helper function for composing different generators with equal probability of occurrence.
-pub(crate) fn one_of<T, R: Rng>(choices: Vec<ArbitraryFromFunc<R, T>>, rng: &mut R) -> T {
+pub fn one_of<T, R: Rng>(choices: Vec<ArbitraryFromFunc<R, T>>, rng: &mut R) -> T {
     let index = rng.random_range(0..choices.len());
     choices[index](rng)
 }
@@ -96,7 +103,7 @@ pub(crate) fn one_of<T, R: Rng>(choices: Vec<ArbitraryFromFunc<R, T>>, rng: &mut
 /// backtrack is a helper function for composing different "failable" generators.
 /// The function takes a list of functions that return an Option<T>, along with number of retries
 /// to make before giving up.
-pub(crate) fn backtrack<T, R: Rng>(mut choices: Vec<Choice<R, T>>, rng: &mut R) -> Option<T> {
+pub fn backtrack<T, R: Rng>(mut choices: Vec<Choice<R, T>>, rng: &mut R) -> Option<T> {
     loop {
         // If there are no more choices left, we give up
         let choices_ = choices
@@ -122,24 +129,20 @@ pub(crate) fn backtrack<T, R: Rng>(mut choices: Vec<Choice<R, T>>, rng: &mut R) 
 }
 
 /// pick is a helper function for uniformly picking a random element from a slice
-pub(crate) fn pick<'a, T, R: Rng>(choices: &'a [T], rng: &mut R) -> &'a T {
+pub fn pick<'a, T, R: Rng>(choices: &'a [T], rng: &mut R) -> &'a T {
     let index = rng.random_range(0..choices.len());
     &choices[index]
 }
 
 /// pick_index is typically used for picking an index from a slice to later refer to the element
 /// at that index.
-pub(crate) fn pick_index<R: Rng>(choices: usize, rng: &mut R) -> usize {
+pub fn pick_index<R: Rng>(choices: usize, rng: &mut R) -> usize {
     rng.random_range(0..choices)
 }
 
 /// pick_n_unique is a helper function for uniformly picking N unique elements from a range.
 /// The elements themselves are usize, typically representing indices.
-pub(crate) fn pick_n_unique<R: Rng>(
-    range: std::ops::Range<usize>,
-    n: usize,
-    rng: &mut R,
-) -> Vec<usize> {
+pub fn pick_n_unique<R: Rng>(range: std::ops::Range<usize>, n: usize, rng: &mut R) -> Vec<usize> {
     use rand::seq::SliceRandom;
     let mut items: Vec<usize> = range.collect();
     items.shuffle(rng);
@@ -148,7 +151,7 @@ pub(crate) fn pick_n_unique<R: Rng>(
 
 /// gen_random_text uses `anarchist_readable_name_generator_lib` to generate random
 /// readable names for tables, columns, text values etc.
-pub(crate) fn gen_random_text<T: Rng>(rng: &mut T) -> String {
+pub fn gen_random_text<T: Rng>(rng: &mut T) -> String {
     let big_text = rng.random_ratio(1, 1000);
     if big_text {
         // let max_size: u64 = 2 * 1024 * 1024 * 1024;
@@ -163,4 +166,22 @@ pub(crate) fn gen_random_text<T: Rng>(rng: &mut T) -> String {
         let name = readable_name_custom("_", rng);
         name.replace("-", "_")
     }
+}
+
+pub fn pick_unique<T: ToOwned + PartialEq>(
+    items: &[T],
+    count: usize,
+    rng: &mut impl rand::Rng,
+) -> Vec<T::Owned>
+where
+    <T as ToOwned>::Owned: PartialEq,
+{
+    let mut picked: Vec<T::Owned> = Vec::new();
+    while picked.len() < count {
+        let item = pick(items, rng);
+        if !picked.contains(&item.to_owned()) {
+            picked.push(item.to_owned());
+        }
+    }
+    picked
 }

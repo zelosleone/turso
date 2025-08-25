@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use super::predicate::Predicate;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Delete {
-    pub(crate) table: String,
-    pub(crate) predicate: Predicate,
+pub struct Delete {
+    pub table: String,
+    pub predicate: Predicate,
 }
 
 impl Display for Delete {

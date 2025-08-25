@@ -3,8 +3,8 @@ use std::fmt::Display;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct Drop {
-    pub(crate) table: String,
+pub struct Drop {
+    pub table: String,
 }
 
 impl Display for Drop {
