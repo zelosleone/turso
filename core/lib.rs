@@ -1971,7 +1971,7 @@ impl Connection {
     }
 
     pub fn get_encryption_cipher_mode(&self) -> Option<CipherMode> {
-        self.encryption_cipher.borrow().clone()
+        *self.encryption_cipher.borrow()
     }
 
     // if both key and cipher are set, set encryption context on pager
@@ -1980,7 +1980,7 @@ impl Connection {
         let Some(key) = key_ref.as_ref() else {
             return;
         };
-        let Some(cipher) = self.encryption_cipher.borrow().clone() else {
+        let Some(cipher) = *self.encryption_cipher.borrow() else {
             return;
         };
         tracing::trace!("setting encryption ctx for connection");

@@ -21,7 +21,7 @@ impl EncryptionKey {
     pub fn from_hex_string(s: &str) -> Result<Self> {
         let hex_str = s.trim();
         let bytes = hex::decode(hex_str)
-            .map_err(|e| LimboError::InvalidArgument(format!("Invalid hex string: {}", e)))?;
+            .map_err(|e| LimboError::InvalidArgument(format!("Invalid hex string: {e}")))?;
         let key: [u8; 32] = bytes.try_into().map_err(|v: Vec<u8>| {
             LimboError::InvalidArgument(format!(
                 "Hex string must decode to exactly 32 bytes, got {}",
@@ -142,8 +142,7 @@ impl TryFrom<&str> for CipherMode {
             "aes256gcm" | "aes-256-gcm" | "aes_256_gcm" => Ok(CipherMode::Aes256Gcm),
             "aegis256" | "aegis-256" | "aegis_256" => Ok(CipherMode::Aegis256),
             _ => Err(LimboError::InvalidArgument(format!(
-                "Unknown cipher name: {}",
-                s
+                "Unknown cipher name: {s}"
             ))),
         }
     }
