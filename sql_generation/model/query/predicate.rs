@@ -71,7 +71,7 @@ impl Predicate {
     }
 
     pub fn parens(self) -> Self {
-        let expr = ast::Expr::Parenthesized(vec![self.0]);
+        let expr = ast::Expr::Parenthesized(vec![Box::new(self.0)]);
         Self(expr)
     }
 

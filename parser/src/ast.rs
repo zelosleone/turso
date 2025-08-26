@@ -476,6 +476,76 @@ pub enum Expr {
     Variable(String),
 }
 
+impl Expr {
+    pub fn into_boxed(self) -> Box<Expr> {
+        Box::new(self)
+    }
+
+    pub fn unary(operator: UnaryOperator, expr: Expr) -> Expr {
+        Expr::Unary(operator, Box::new(expr))
+    }
+
+    pub fn binary(lhs: Expr, operator: Operator, rhs: Expr) -> Expr {
+        Expr::Binary(Box::new(lhs), operator, Box::new(rhs))
+    }
+
+    pub fn not_null(expr: Expr) -> Expr {
+        Expr::NotNull(Box::new(expr))
+    }
+
+    pub fn between(lhs: Expr, not: bool, start: Expr, end: Expr) -> Expr {
+        Expr::Between {
+            lhs: Box::new(lhs),
+            not,
+            start: Box::new(start),
+            end: Box::new(end),
+        }
+    }
+
+    pub fn in_select(lhs: Expr, not: bool, select: Select) -> Expr {
+        Expr::InSelect {
+            lhs: Box::new(lhs),
+            not,
+            rhs: select,
+        }
+    }
+
+    pub fn like(
+        lhs: Expr,
+        not: bool,
+        operator: LikeOperator,
+        rhs: Expr,
+        escape: Option<Expr>,
+    ) -> Expr {
+        Expr::Like {
+            lhs: Box::new(lhs),
+            not,
+            op: operator,
+            rhs: Box::new(rhs),
+            escape: escape.map(Box::new),
+        }
+    }
+
+    pub fn is_null(expr: Expr) -> Expr {
+        Expr::IsNull(Box::new(expr))
+    }
+
+    pub fn collate(expr: Expr, name: Name) -> Expr {
+        Expr::Collate(Box::new(expr), name)
+    }
+
+    pub fn cast(expr: Expr, type_name: Option<Type>) -> Expr {
+        Expr::Cast {
+            expr: Box::new(expr),
+            type_name,
+        }
+    }
+
+    pub fn raise(resolve_type: ResolveType, expr: Option<Expr>) -> Expr {
+        Expr::Raise(resolve_type, expr.map(Box::new))
+    }
+}
+
 /// SQL literal
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
