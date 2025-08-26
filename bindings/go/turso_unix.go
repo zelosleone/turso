@@ -1,6 +1,6 @@
 //go:build linux || darwin
 
-package limbo
+package turso
 
 import (
 	"fmt"
