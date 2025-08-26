@@ -19,11 +19,11 @@ impl Arbitrary for Table {
     fn arbitrary<R: Rng>(rng: &mut R) -> Self {
         let name = Name::arbitrary(rng).0;
         let columns = loop {
-            let large_table = rng.gen_bool(0.1);
+            let large_table = rng.random_bool(0.1);
             let column_size = if large_table {
-                rng.gen_range(64..125) // todo: make this higher (128+)
+                rng.random_range(64..125) // todo: make this higher (128+)
             } else {
-                rng.gen_range(1..=10)
+                rng.random_range(1..=10)
             };
             let columns = (1..=column_size)
                 .map(|_| Column::arbitrary(rng))
@@ -90,8 +90,8 @@ impl ArbitraryFrom<&Vec<&SimValue>> for SimValue {
 impl ArbitraryFrom<&ColumnType> for SimValue {
     fn arbitrary_from<R: Rng>(rng: &mut R, column_type: &ColumnType) -> Self {
         let value = match column_type {
-            ColumnType::Integer => Value::Integer(rng.gen_range(i64::MIN..i64::MAX)),
-            ColumnType::Float => Value::Float(rng.gen_range(-1e10..1e10)),
+            ColumnType::Integer => Value::Integer(rng.random_range(i64::MIN..i64::MAX)),
+            ColumnType::Float => Value::Float(rng.random_range(-1e10..1e10)),
             ColumnType::Text => Value::build_text(gen_random_text(rng)),
             ColumnType::Blob => Value::Blob(gen_random_text(rng).as_bytes().to_vec()),
         };
@@ -99,7 +99,7 @@ impl ArbitraryFrom<&ColumnType> for SimValue {
     }
 }
 
-pub(crate) struct LTValue(pub(crate) SimValue);
+pub struct LTValue(pub SimValue);
 
 impl ArbitraryFrom<&Vec<&SimValue>> for LTValue {
     fn arbitrary_from<R: Rng>(rng: &mut R, values: &Vec<&SimValue>) -> Self {
@@ -116,21 +116,21 @@ impl ArbitraryFrom<&Vec<&SimValue>> for LTValue {
 impl ArbitraryFrom<&SimValue> for LTValue {
     fn arbitrary_from<R: Rng>(rng: &mut R, value: &SimValue) -> Self {
         let new_value = match &value.0 {
-            Value::Integer(i) => Value::Integer(rng.gen_range(i64::MIN..*i - 1)),
-            Value::Float(f) => Value::Float(f - rng.gen_range(0.0..1e10)),
+            Value::Integer(i) => Value::Integer(rng.random_range(i64::MIN..*i - 1)),
+            Value::Float(f) => Value::Float(f - rng.random_range(0.0..1e10)),
             value @ Value::Text(..) => {
                 // Either shorten the string, or make at least one character smaller and mutate the rest
                 let mut t = value.to_string();
-                if rng.gen_bool(0.01) {
+                if rng.random_bool(0.01) {
                     t.pop();
                     Value::build_text(t)
                 } else {
                     let mut t = t.chars().map(|c| c as u32).collect::<Vec<_>>();
-                    let index = rng.gen_range(0..t.len());
+                    let index = rng.random_range(0..t.len());
                     t[index] -= 1;
                     // Mutate the rest of the string
                     for val in t.iter_mut().skip(index + 1) {
-                        *val = rng.gen_range('a' as u32..='z' as u32);
+                        *val = rng.random_range('a' as u32..='z' as u32);
                     }
                     let t = t
                         .into_iter()
@@ -142,15 +142,15 @@ impl ArbitraryFrom<&SimValue> for LTValue {
             Value::Blob(b) => {
                 // Either shorten the blob, or make at least one byte smaller and mutate the rest
                 let mut b = b.clone();
-                if rng.gen_bool(0.01) {
+                if rng.random_bool(0.01) {
                     b.pop();
                     Value::Blob(b)
                 } else {
-                    let index = rng.gen_range(0..b.len());
+                    let index = rng.random_range(0..b.len());
                     b[index] -= 1;
                     // Mutate the rest of the blob
                     for val in b.iter_mut().skip(index + 1) {
-                        *val = rng.gen_range(0..=255);
+                        *val = rng.random_range(0..=255);
                     }
                     Value::Blob(b)
                 }
@@ -161,7 +161,7 @@ impl ArbitraryFrom<&SimValue> for LTValue {
     }
 }
 
-pub(crate) struct GTValue(pub(crate) SimValue);
+pub struct GTValue(pub SimValue);
 
 impl ArbitraryFrom<&Vec<&SimValue>> for GTValue {
     fn arbitrary_from<R: Rng>(rng: &mut R, values: &Vec<&SimValue>) -> Self {
@@ -178,21 +178,21 @@ impl ArbitraryFrom<&Vec<&SimValue>> for GTValue {
 impl ArbitraryFrom<&SimValue> for GTValue {
     fn arbitrary_from<R: Rng>(rng: &mut R, value: &SimValue) -> Self {
         let new_value = match &value.0 {
-            Value::Integer(i) => Value::Integer(rng.gen_range(*i..i64::MAX)),
-            Value::Float(f) => Value::Float(rng.gen_range(*f..1e10)),
+            Value::Integer(i) => Value::Integer(rng.random_range(*i..i64::MAX)),
+            Value::Float(f) => Value::Float(rng.random_range(*f..1e10)),
             value @ Value::Text(..) => {
                 // Either lengthen the string, or make at least one character smaller and mutate the rest
                 let mut t = value.to_string();
-                if rng.gen_bool(0.01) {
-                    t.push(rng.gen_range(0..=255) as u8 as char);
+                if rng.random_bool(0.01) {
+                    t.push(rng.random_range(0..=255) as u8 as char);
                     Value::build_text(t)
                 } else {
                     let mut t = t.chars().map(|c| c as u32).collect::<Vec<_>>();
-                    let index = rng.gen_range(0..t.len());
+                    let index = rng.random_range(0..t.len());
                     t[index] += 1;
                     // Mutate the rest of the string
                     for val in t.iter_mut().skip(index + 1) {
-                        *val = rng.gen_range('a' as u32..='z' as u32);
+                        *val = rng.random_range('a' as u32..='z' as u32);
                     }
                     let t = t
                         .into_iter()
@@ -204,15 +204,15 @@ impl ArbitraryFrom<&SimValue> for GTValue {
             Value::Blob(b) => {
                 // Either lengthen the blob, or make at least one byte smaller and mutate the rest
                 let mut b = b.clone();
-                if rng.gen_bool(0.01) {
-                    b.push(rng.gen_range(0..=255));
+                if rng.random_bool(0.01) {
+                    b.push(rng.random_range(0..=255));
                     Value::Blob(b)
                 } else {
-                    let index = rng.gen_range(0..b.len());
+                    let index = rng.random_range(0..b.len());
                     b[index] += 1;
                     // Mutate the rest of the blob
                     for val in b.iter_mut().skip(index + 1) {
-                        *val = rng.gen_range(0..=255);
+                        *val = rng.random_range(0..=255);
                     }
                     Value::Blob(b)
                 }
@@ -223,7 +223,7 @@ impl ArbitraryFrom<&SimValue> for GTValue {
     }
 }
 
-pub(crate) struct LikeValue(pub(crate) SimValue);
+pub struct LikeValue(pub SimValue);
 
 impl ArbitraryFromMaybe<&SimValue> for LikeValue {
     fn arbitrary_from_maybe<R: Rng>(rng: &mut R, value: &SimValue) -> Option<Self> {
@@ -235,18 +235,18 @@ impl ArbitraryFromMaybe<&SimValue> for LikeValue {
                 // insert one `%` for the whole substring
                 let mut i = 0;
                 while i < t.len() {
-                    if rng.gen_bool(0.1) {
+                    if rng.random_bool(0.1) {
                         t[i] = '_';
-                    } else if rng.gen_bool(0.05) {
+                    } else if rng.random_bool(0.05) {
                         t[i] = '%';
                         // skip a list of characters
-                        for _ in 0..rng.gen_range(0..=3.min(t.len() - i - 1)) {
+                        for _ in 0..rng.random_range(0..=3.min(t.len() - i - 1)) {
                             t.remove(i + 1);
                         }
                     }
                     i += 1;
                 }
-                let index = rng.gen_range(0..t.len());
+                let index = rng.random_range(0..t.len());
                 t.insert(index, '%');
                 Some(Self(SimValue(Value::build_text(
                     t.into_iter().collect::<String>(),

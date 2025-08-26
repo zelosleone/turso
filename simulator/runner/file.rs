@@ -9,7 +9,7 @@ use rand_chacha::ChaCha8Rng;
 use tracing::{instrument, Level};
 use turso_core::{File, Result};
 
-use crate::{model::FAULT_ERROR_MSG, runner::clock::SimulatorClock};
+use crate::runner::{clock::SimulatorClock, FAULT_ERROR_MSG};
 pub(crate) struct SimulatorFile {
     pub path: String,
     pub(crate) inner: Arc<dyn File>,
@@ -100,10 +100,10 @@ impl SimulatorFile {
     fn generate_latency_duration(&self) -> Option<turso_core::Instant> {
         let mut rng = self.rng.borrow_mut();
         // Chance to introduce some latency
-        rng.gen_bool(self.latency_probability as f64 / 100.0)
+        rng.random_bool(self.latency_probability as f64 / 100.0)
             .then(|| {
                 let now = self.clock.now();
-                let sum = now + std::time::Duration::from_millis(rng.gen_range(5..20));
+                let sum = now + std::time::Duration::from_millis(rng.random_range(5..20));
                 sum.into()
             })
     }

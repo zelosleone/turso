@@ -3,6 +3,8 @@ pub mod fmt;
 
 use strum_macros::{EnumIter, EnumString};
 
+use crate::ast::fmt::ToTokens;
+
 /// `?` or `$` Prepared statement arg placeholder(s)
 #[derive(Default)]
 pub struct ParameterInfo {
@@ -982,6 +984,41 @@ impl std::fmt::Display for QualifiedName {
     }
 }
 
+impl QualifiedName {
+    /// Constructor
+    pub fn single(name: Name) -> Self {
+        Self {
+            db_name: None,
+            name,
+            alias: None,
+        }
+    }
+    /// Constructor
+    pub fn fullname(db_name: Name, name: Name) -> Self {
+        Self {
+            db_name: Some(db_name),
+            name,
+            alias: None,
+        }
+    }
+    /// Constructor
+    pub fn xfullname(db_name: Name, name: Name, alias: Name) -> Self {
+        Self {
+            db_name: Some(db_name),
+            name,
+            alias: Some(alias),
+        }
+    }
+    /// Constructor
+    pub fn alias(name: Name, alias: Name) -> Self {
+        Self {
+            db_name: None,
+            name,
+            alias: Some(alias),
+        }
+    }
+}
+
 /// `ALTER TABLE` body
 // https://sqlite.org/lang_altertable.html
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1153,13 +1190,19 @@ bitflags::bitflags! {
 }
 
 /// Sort orders
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SortOrder {
     /// `ASC`
     Asc,
     /// `DESC`
     Desc,
+}
+
+impl core::fmt::Display for SortOrder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_fmt(f)
+    }
 }
 
 /// `NULLS FIRST` or `NULLS LAST`

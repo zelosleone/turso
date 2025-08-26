@@ -2,11 +2,11 @@ use std::{fmt::Display, hash::Hash, ops::Deref};
 
 use serde::{Deserialize, Serialize};
 use turso_core::{numeric::Numeric, types};
-use turso_sqlite3_parser::ast;
+use turso_parser::ast;
 
 use crate::model::query::predicate::Predicate;
 
-pub(crate) struct Name(pub(crate) String);
+pub struct Name(pub String);
 
 impl Deref for Name {
     type Target = str;
@@ -41,11 +41,11 @@ impl TableContext for Table {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Table {
-    pub(crate) name: String,
-    pub(crate) columns: Vec<Column>,
-    pub(crate) rows: Vec<Vec<SimValue>>,
-    pub(crate) indexes: Vec<String>,
+pub struct Table {
+    pub name: String,
+    pub columns: Vec<Column>,
+    pub rows: Vec<Vec<SimValue>>,
+    pub indexes: Vec<String>,
 }
 
 impl Table {
@@ -60,11 +60,11 @@ impl Table {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Column {
-    pub(crate) name: String,
-    pub(crate) column_type: ColumnType,
-    pub(crate) primary: bool,
-    pub(crate) unique: bool,
+pub struct Column {
+    pub name: String,
+    pub column_type: ColumnType,
+    pub primary: bool,
+    pub unique: bool,
 }
 
 // Uniquely defined by name in this case
@@ -83,7 +83,7 @@ impl PartialEq for Column {
 impl Eq for Column {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) enum ColumnType {
+pub enum ColumnType {
     Integer,
     Float,
     Text,
@@ -136,23 +136,8 @@ pub struct JoinTable {
     pub rows: Vec<Vec<SimValue>>,
 }
 
-fn float_to_string<S>(float: &f64, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    serializer.serialize_str(&format!("{float}"))
-}
-
-fn string_to_float<'de, D>(deserializer: D) -> Result<f64, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let s = String::deserialize(deserializer)?;
-    s.parse().map_err(serde::de::Error::custom)
-}
-
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord, Serialize, Deserialize)]
-pub(crate) struct SimValue(pub turso_core::Value);
+pub struct SimValue(pub turso_core::Value);
 
 fn to_sqlite_blob(bytes: &[u8]) -> String {
     format!(

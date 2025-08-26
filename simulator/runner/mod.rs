@@ -9,3 +9,5 @@ pub mod execution;
 pub mod file;
 pub mod io;
 pub mod watch;
+
+pub const FAULT_ERROR_MSG: &str = "Injected Fault";

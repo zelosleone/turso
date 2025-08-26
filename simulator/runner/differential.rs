@@ -1,14 +1,14 @@
 use std::sync::{Arc, Mutex};
 
+use sql_generation::{generation::pick_index, model::table::SimValue};
 use turso_core::Value;
 
 use crate::{
     generation::{
-        pick_index,
         plan::{Interaction, InteractionPlanState, ResultSet},
         Shadow as _,
     },
-    model::{query::Query, table::SimValue},
+    model::Query,
     runner::execution::ExecutionContinuation,
     InteractionPlan,
 };
