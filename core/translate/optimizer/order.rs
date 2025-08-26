@@ -71,7 +71,7 @@ impl OrderTarget {
 /// TODO: this does not currently handle the case where we definitely cannot eliminate
 /// the ORDER BY sorter, but we could still eliminate the GROUP BY sorter.
 pub fn compute_order_target(
-    order_by: &mut Vec<(ast::Expr, SortOrder)>,
+    order_by: &mut Vec<(Box<ast::Expr>, SortOrder)>,
     group_by_opt: Option<&mut GroupBy>,
 ) -> Option<OrderTarget> {
     match (order_by.is_empty(), group_by_opt) {
@@ -79,7 +79,7 @@ pub fn compute_order_target(
         (true, None) => None,
         // Only ORDER BY - we would like the joined result rows to be in the order specified by the ORDER BY
         (false, None) => OrderTarget::maybe_from_iterator(
-            order_by.iter().map(|(expr, order)| (expr, *order)),
+            order_by.iter().map(|(expr, order)| (expr.as_ref(), *order)),
             EliminatesSortBy::Order,
         ),
         // Only GROUP BY - we would like the joined result rows to be in the order specified by the GROUP BY

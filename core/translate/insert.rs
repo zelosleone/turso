@@ -100,7 +100,7 @@ pub fn translate_insert(
 
     let root_page = btree_table.root_page;
 
-    let mut values: Option<Vec<Expr>> = None;
+    let mut values: Option<Vec<Box<Expr>>> = None;
     let inserting_multiple_rows = match &mut body {
         InsertBody::Select(select, _) => match &mut select.body.select {
             // TODO see how to avoid clone
@@ -110,10 +110,11 @@ pub fn translate_insert(
                 }
                 let mut param_idx = 1;
                 for expr in values_expr.iter_mut().flat_map(|v| v.iter_mut()) {
-                    match expr {
+                    match expr.as_mut() {
                         Expr::Id(name) => {
                             if name.is_double_quoted() {
-                                *expr = Expr::Literal(ast::Literal::String(name.to_string()));
+                                *expr =
+                                    Expr::Literal(ast::Literal::String(format!("{name}"))).into();
                             } else {
                                 // an INSERT INTO ... VALUES (...) cannot reference columns
                                 crate::bail_parse_error!("no such column: {name}");
@@ -837,7 +838,7 @@ fn translate_rows_multiple<'short, 'long: 'short>(
 #[allow(clippy::too_many_arguments)]
 fn translate_rows_single(
     program: &mut ProgramBuilder,
-    value: &[Expr],
+    value: &[Box<Expr>],
     insertion: &Insertion,
     resolver: &Resolver,
 ) -> Result<()> {

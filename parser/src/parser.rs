@@ -953,11 +953,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_signed(&mut self) -> Result<Expr> {
+    fn parse_signed(&mut self) -> Result<Box<Expr>> {
         peek_expect!(self, TK_FLOAT, TK_INTEGER, TK_PLUS, TK_MINUS);
 
         let expr = self.parse_expr_operand()?;
-        match &expr {
+        match expr.as_ref() {
             Expr::Unary(_, inner) => match inner.as_ref() {
                 Expr::Literal(Literal::Numeric(_)) => Ok(expr),
                 _ => Err(Error::Custom(
@@ -998,14 +998,11 @@ impl<'a> Parser<'a> {
                 let first_size = self.parse_signed()?;
                 let tok = eat_expect!(self, TK_RP, TK_COMMA);
                 match tok.token_type.unwrap() {
-                    TK_RP => Some(TypeSize::MaxSize(Box::new(first_size))),
+                    TK_RP => Some(TypeSize::MaxSize(first_size)),
                     TK_COMMA => {
                         let second_size = self.parse_signed()?;
                         eat_expect!(self, TK_RP);
-                        Some(TypeSize::TypeSize(
-                            Box::new(first_size),
-                            Box::new(second_size),
-                        ))
+                        Some(TypeSize::TypeSize(first_size, second_size))
                     }
                     _ => unreachable!(),
                 }
@@ -1101,7 +1098,7 @@ impl<'a> Parser<'a> {
         eat_expect!(self, TK_WHERE);
         let expr = self.parse_expr(0)?;
         eat_expect!(self, TK_RP);
-        Ok(Some(Box::new(expr)))
+        Ok(Some(expr))
     }
 
     fn parse_frame_opt(&mut self) -> Result<Option<FrameClause>> {
@@ -1144,7 +1141,7 @@ impl<'a> Parser<'a> {
                 FrameBound::CurrentRow
             }
             _ => {
-                let expr = Box::new(self.parse_expr(0)?);
+                let expr = self.parse_expr(0)?;
                 let tok = eat_expect!(self, TK_PRECEDING, TK_FOLLOWING);
                 match tok.token_type.unwrap() {
                     TK_PRECEDING => FrameBound::Preceding(expr),
@@ -1169,7 +1166,7 @@ impl<'a> Parser<'a> {
                     FrameBound::CurrentRow
                 }
                 _ => {
-                    let expr = Box::new(self.parse_expr(0)?);
+                    let expr = self.parse_expr(0)?;
                     let tok = eat_expect!(self, TK_PRECEDING, TK_FOLLOWING);
                     match tok.token_type.unwrap() {
                         TK_PRECEDING => FrameBound::Preceding(expr),
@@ -1288,7 +1285,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_expr_operand(&mut self) -> Result<Expr> {
+    fn parse_expr_operand(&mut self) -> Result<Box<Expr>> {
         let tok = peek_expect!(
             self,
             TK_LP,
@@ -1319,34 +1316,40 @@ impl<'a> Parser<'a> {
                     TK_WITH | TK_SELECT | TK_VALUES => {
                         let select = self.parse_select()?;
                         eat_expect!(self, TK_RP);
-                        Ok(Expr::Subquery(select))
+                        Ok(Box::new(Expr::Subquery(select)))
                     }
                     _ => {
                         let exprs = self.parse_nexpr_list()?;
                         eat_expect!(self, TK_RP);
-                        Ok(Expr::Parenthesized(exprs))
+                        Ok(Box::new(Expr::Parenthesized(exprs)))
                     }
                 }
             }
             TK_NULL => {
                 eat_assert!(self, TK_NULL);
-                Ok(Expr::Literal(Literal::Null))
+                Ok(Box::new(Expr::Literal(Literal::Null)))
             }
             TK_BLOB => {
                 let tok = eat_assert!(self, TK_BLOB);
-                Ok(Expr::Literal(Literal::Blob(from_bytes(tok.value))))
+                Ok(Box::new(Expr::Literal(Literal::Blob(from_bytes(
+                    tok.value,
+                )))))
             }
             TK_FLOAT => {
                 let tok = eat_assert!(self, TK_FLOAT);
-                Ok(Expr::Literal(Literal::Numeric(from_bytes(tok.value))))
+                Ok(Box::new(Expr::Literal(Literal::Numeric(from_bytes(
+                    tok.value,
+                )))))
             }
             TK_INTEGER => {
                 let tok = eat_assert!(self, TK_INTEGER);
-                Ok(Expr::Literal(Literal::Numeric(from_bytes(tok.value))))
+                Ok(Box::new(Expr::Literal(Literal::Numeric(from_bytes(
+                    tok.value,
+                )))))
             }
             TK_VARIABLE => {
                 let tok = eat_assert!(self, TK_VARIABLE);
-                Ok(Expr::Variable(from_bytes(tok.value)))
+                Ok(Box::new(Expr::Variable(from_bytes(tok.value))))
             }
             TK_CAST => {
                 eat_assert!(self, TK_CAST);
@@ -1355,16 +1358,19 @@ impl<'a> Parser<'a> {
                 eat_expect!(self, TK_AS);
                 let typ = self.parse_type()?;
                 eat_expect!(self, TK_RP);
-                Ok(Expr::cast(expr, typ))
+                Ok(Box::new(Expr::Cast {
+                    expr,
+                    type_name: typ,
+                }))
             }
             TK_CTIME_KW => {
                 let tok = eat_assert!(self, TK_CTIME_KW);
                 if b"CURRENT_DATE".eq_ignore_ascii_case(tok.value) {
-                    Ok(Expr::Literal(Literal::CurrentDate))
+                    Ok(Box::new(Expr::Literal(Literal::CurrentDate)))
                 } else if b"CURRENT_TIME".eq_ignore_ascii_case(tok.value) {
-                    Ok(Expr::Literal(Literal::CurrentTime))
+                    Ok(Box::new(Expr::Literal(Literal::CurrentTime)))
                 } else if b"CURRENT_TIMESTAMP".eq_ignore_ascii_case(tok.value) {
-                    Ok(Expr::Literal(Literal::CurrentTimestamp))
+                    Ok(Box::new(Expr::Literal(Literal::CurrentTimestamp)))
                 } else {
                     unreachable!()
                 }
@@ -1372,29 +1378,29 @@ impl<'a> Parser<'a> {
             TK_NOT => {
                 eat_assert!(self, TK_NOT);
                 let expr = self.parse_expr(2)?; // NOT precedence is 2
-                Ok(Expr::unary(UnaryOperator::Not, expr))
+                Ok(Box::new(Expr::Unary(UnaryOperator::Not, expr)))
             }
             TK_BITNOT => {
                 eat_assert!(self, TK_BITNOT);
                 let expr = self.parse_expr(11)?; // BITNOT precedence is 11
-                Ok(Expr::unary(UnaryOperator::BitwiseNot, expr))
+                Ok(Box::new(Expr::Unary(UnaryOperator::BitwiseNot, expr)))
             }
             TK_PLUS => {
                 eat_assert!(self, TK_PLUS);
                 let expr = self.parse_expr(11)?; // PLUS precedence is 11
-                Ok(Expr::unary(UnaryOperator::Positive, expr))
+                Ok(Box::new(Expr::Unary(UnaryOperator::Positive, expr)))
             }
             TK_MINUS => {
                 eat_assert!(self, TK_MINUS);
                 let expr = self.parse_expr(11)?; // MINUS precedence is 11
-                Ok(Expr::unary(UnaryOperator::Negative, expr))
+                Ok(Box::new(Expr::Unary(UnaryOperator::Negative, expr)))
             }
             TK_EXISTS => {
                 eat_assert!(self, TK_EXISTS);
                 eat_expect!(self, TK_LP);
                 let select = self.parse_select()?;
                 eat_expect!(self, TK_RP);
-                Ok(Expr::Exists(select))
+                Ok(Box::new(Expr::Exists(select)))
             }
             TK_CASE => {
                 eat_assert!(self, TK_CASE);
@@ -1433,7 +1439,11 @@ impl<'a> Parser<'a> {
                 };
 
                 eat_expect!(self, TK_END);
-                Ok(Expr::case(base, when_then_pairs, else_expr))
+                Ok(Box::new(Expr::Case {
+                    base,
+                    when_then_pairs,
+                    else_expr,
+                }))
             }
             TK_RAISE => {
                 eat_assert!(self, TK_RAISE);
@@ -1455,7 +1465,7 @@ impl<'a> Parser<'a> {
                 };
 
                 eat_expect!(self, TK_RP);
-                Ok(Expr::raise(resolve, expr))
+                Ok(Box::new(Expr::Raise(resolve, expr)))
             }
             _ => {
                 let can_be_lit_str = tok.token_type == Some(TK_STRING);
@@ -1480,10 +1490,10 @@ impl<'a> Parser<'a> {
                             TK_STAR => {
                                 eat_assert!(self, TK_STAR);
                                 eat_expect!(self, TK_RP);
-                                return Ok(Expr::FunctionCallStar {
+                                return Ok(Box::new(Expr::FunctionCallStar {
                                     name,
                                     filter_over: self.parse_filter_over()?,
-                                });
+                                }));
                             }
                             _ => {
                                 let distinct = self.parse_distinct()?;
@@ -1491,13 +1501,13 @@ impl<'a> Parser<'a> {
                                 let order_by = self.parse_order_by()?;
                                 eat_expect!(self, TK_RP);
                                 let filter_over = self.parse_filter_over()?;
-                                return Ok(Expr::FunctionCall {
+                                return Ok(Box::new(Expr::FunctionCall {
                                     name,
                                     distinctness: distinct,
                                     args: exprs,
                                     order_by,
                                     filter_over,
-                                });
+                                }));
                             }
                         }
                     } else {
@@ -1521,24 +1531,28 @@ impl<'a> Parser<'a> {
 
                 if let Some(second_name) = second_name {
                     if let Some(third_name) = third_name {
-                        Ok(Expr::DoublyQualified(name, second_name, third_name))
+                        Ok(Box::new(Expr::DoublyQualified(
+                            name,
+                            second_name,
+                            third_name,
+                        )))
                     } else {
-                        Ok(Expr::Qualified(name, second_name))
+                        Ok(Box::new(Expr::Qualified(name, second_name)))
                     }
                 } else if can_be_lit_str {
-                    Ok(Expr::Literal(match name {
+                    Ok(Box::new(Expr::Literal(match name {
                         Name::Quoted(s) => Literal::String(s),
                         Name::Ident(s) => Literal::String(s),
-                    }))
+                    })))
                 } else {
-                    Ok(Expr::Id(name))
+                    Ok(Box::new(Expr::Id(name)))
                 }
             }
         }
     }
 
     #[allow(clippy::vec_box)]
-    fn parse_expr_list(&mut self) -> Result<Vec<Expr>> {
+    fn parse_expr_list(&mut self) -> Result<Vec<Box<Expr>>> {
         let mut exprs = vec![];
         while let Some(tok) = self.peek()? {
             match tok.token_type.unwrap().fallback_id_if_ok() {
@@ -1560,7 +1574,7 @@ impl<'a> Parser<'a> {
         Ok(exprs)
     }
 
-    fn parse_expr(&mut self, precedence: u8) -> Result<Expr> {
+    fn parse_expr(&mut self, precedence: u8) -> Result<Box<Expr>> {
         let mut result = self.parse_expr_operand()?;
 
         loop {
@@ -1580,28 +1594,44 @@ impl<'a> Parser<'a> {
                 not = true;
             }
 
-            let expr = match tok.token_type.unwrap() {
+            result = match tok.token_type.unwrap() {
                 TK_NULL => {
                     // special case `NOT NULL`
                     debug_assert!(not); // FIXME: not always true because of current_token_precedence
                     eat_assert!(self, TK_NULL);
-                    Expr::not_null(result)
+                    Box::new(Expr::NotNull(result))
                 }
                 TK_OR => {
                     eat_assert!(self, TK_OR);
-                    Expr::binary(result, Operator::Or, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Or,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_AND => {
                     eat_assert!(self, TK_AND);
-                    Expr::binary(result, Operator::And, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::And,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_EQ => {
                     eat_assert!(self, TK_EQ);
-                    Expr::binary(result, Operator::Equals, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Equals,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_NE => {
                     eat_assert!(self, TK_NE);
-                    Expr::binary(result, Operator::NotEquals, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::NotEquals,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_IS => {
                     eat_assert!(self, TK_IS);
@@ -1633,14 +1663,19 @@ impl<'a> Parser<'a> {
                         }
                     };
 
-                    Expr::binary(result, op, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(result, op, self.parse_expr(pre + 1)?))
                 }
                 TK_BETWEEN => {
                     eat_assert!(self, TK_BETWEEN);
                     let start = self.parse_expr(pre)?;
                     eat_expect!(self, TK_AND);
                     let end = self.parse_expr(pre)?;
-                    Expr::between(result, not, start, end)
+                    Box::new(Expr::Between {
+                        lhs: result,
+                        not,
+                        start,
+                        end,
+                    })
                 }
                 TK_IN => {
                     eat_assert!(self, TK_IN);
@@ -1653,12 +1688,20 @@ impl<'a> Parser<'a> {
                                 TK_SELECT | TK_WITH | TK_VALUES => {
                                     let select = self.parse_select()?;
                                     eat_expect!(self, TK_RP);
-                                    Expr::in_select(result, not, select)
+                                    Box::new(Expr::InSelect {
+                                        lhs: result,
+                                        not,
+                                        rhs: select,
+                                    })
                                 }
                                 _ => {
                                     let exprs = self.parse_expr_list()?;
                                     eat_expect!(self, TK_RP);
-                                    Expr::in_list(result, not, exprs)
+                                    Box::new(Expr::InList {
+                                        lhs: result,
+                                        not,
+                                        rhs: exprs,
+                                    })
                                 }
                             }
                         }
@@ -1672,7 +1715,13 @@ impl<'a> Parser<'a> {
                                     eat_expect!(self, TK_RP);
                                 }
                             }
-                            Expr::in_table(result, not, name, exprs)
+
+                            Box::new(Expr::InTable {
+                                lhs: result,
+                                not,
+                                rhs: name,
+                                args: exprs,
+                            })
                         }
                     }
                 }
@@ -1706,72 +1755,134 @@ impl<'a> Parser<'a> {
                         None
                     };
 
-                    Expr::like(result, not, op, expr, escape)
+                    Box::new(Expr::Like {
+                        lhs: result,
+                        not,
+                        op,
+                        rhs: expr,
+                        escape,
+                    })
                 }
                 TK_ISNULL => {
                     eat_assert!(self, TK_ISNULL);
-                    Expr::is_null(result)
+                    Box::new(Expr::IsNull(result))
                 }
                 TK_NOTNULL => {
                     eat_assert!(self, TK_NOTNULL);
-                    Expr::not_null(result)
+                    Box::new(Expr::NotNull(result))
                 }
                 TK_LT => {
                     eat_assert!(self, TK_LT);
-                    Expr::binary(result, Operator::Less, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Less,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_GT => {
                     eat_assert!(self, TK_GT);
-                    Expr::binary(result, Operator::Greater, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Greater,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_LE => {
                     eat_assert!(self, TK_LE);
-                    Expr::binary(result, Operator::LessEquals, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::LessEquals,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_GE => {
                     eat_assert!(self, TK_GE);
-                    Expr::binary(result, Operator::GreaterEquals, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::GreaterEquals,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_ESCAPE => unreachable!(),
                 TK_BITAND => {
                     eat_assert!(self, TK_BITAND);
-                    Expr::binary(result, Operator::BitwiseAnd, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::BitwiseAnd,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_BITOR => {
                     eat_assert!(self, TK_BITOR);
-                    Expr::binary(result, Operator::BitwiseOr, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::BitwiseOr,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_LSHIFT => {
                     eat_assert!(self, TK_LSHIFT);
-                    Expr::binary(result, Operator::LeftShift, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::LeftShift,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_RSHIFT => {
                     eat_assert!(self, TK_RSHIFT);
-                    Expr::binary(result, Operator::RightShift, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::RightShift,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_PLUS => {
                     eat_assert!(self, TK_PLUS);
-                    Expr::binary(result, Operator::Add, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Add,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_MINUS => {
                     eat_assert!(self, TK_MINUS);
-                    Expr::binary(result, Operator::Subtract, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Subtract,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_STAR => {
                     eat_assert!(self, TK_STAR);
-                    Expr::binary(result, Operator::Multiply, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Multiply,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_SLASH => {
                     eat_assert!(self, TK_SLASH);
-                    Expr::binary(result, Operator::Divide, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Divide,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_REM => {
                     eat_assert!(self, TK_REM);
-                    Expr::binary(result, Operator::Modulus, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Modulus,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_CONCAT => {
                     eat_assert!(self, TK_CONCAT);
-                    Expr::binary(result, Operator::Concat, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(
+                        result,
+                        Operator::Concat,
+                        self.parse_expr(pre + 1)?,
+                    ))
                 }
                 TK_PTR => {
                     let tok = eat_assert!(self, TK_PTR);
@@ -1781,13 +1892,11 @@ impl<'a> Parser<'a> {
                         Operator::ArrowRightShift
                     };
 
-                    Expr::binary(result, op, self.parse_expr(pre + 1)?)
+                    Box::new(Expr::Binary(result, op, self.parse_expr(pre + 1)?))
                 }
-                TK_COLLATE => Expr::collate(result, self.parse_collate()?.unwrap()),
+                TK_COLLATE => Box::new(Expr::Collate(result, self.parse_collate()?.unwrap())),
                 _ => unreachable!(),
-            };
-
-            result = expr;
+            }
         }
 
         Ok(result)
@@ -2005,10 +2114,7 @@ impl<'a> Parser<'a> {
             _ => None,
         };
 
-        Ok(Some(GroupBy {
-            exprs,
-            having: having.map(Box::new),
-        }))
+        Ok(Some(GroupBy { exprs, having }))
     }
 
     fn parse_where(&mut self) -> Result<Option<Box<Expr>>> {
@@ -2018,7 +2124,7 @@ impl<'a> Parser<'a> {
                 TK_WHERE => {
                     eat_assert!(self, TK_WHERE);
                     let expr = self.parse_expr(0)?;
-                    Ok(Some(expr.into_boxed()))
+                    Ok(Some(expr))
                 }
                 _ => Ok(None),
             },
@@ -2080,7 +2186,7 @@ impl<'a> Parser<'a> {
                 TK_ON => {
                     eat_assert!(self, TK_ON);
                     let expr = self.parse_expr(0)?;
-                    Ok(Some(JoinConstraint::On(expr.into_boxed())))
+                    Ok(Some(JoinConstraint::On(expr)))
                 }
                 TK_USING => {
                     eat_assert!(self, TK_USING);
@@ -2308,7 +2414,7 @@ impl<'a> Parser<'a> {
 
                 let expr = self.parse_expr(0)?;
                 let alias = self.parse_as()?;
-                Ok(ResultColumn::Expr(expr.into_boxed(), alias))
+                Ok(ResultColumn::Expr(expr, alias))
             }
         }
     }
@@ -2330,7 +2436,7 @@ impl<'a> Parser<'a> {
     }
 
     #[allow(clippy::vec_box)]
-    fn parse_nexpr_list(&mut self) -> Result<Vec<Expr>> {
+    fn parse_nexpr_list(&mut self) -> Result<Vec<Box<Expr>>> {
         let mut result = vec![self.parse_expr(0)?];
         while let Some(tok) = self.peek()? {
             if tok.token_type == Some(TK_COMMA) {
@@ -2428,7 +2534,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_sorted_column(&mut self) -> Result<SortedColumn> {
-        let expr = self.parse_expr(0)?.into_boxed();
+        let expr = self.parse_expr(0)?;
         let sort_order = self.parse_sort_order()?;
 
         let nulls = match self.peek()? {
@@ -2492,7 +2598,7 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
 
-        let limit = self.parse_expr(0)?.into_boxed();
+        let limit = self.parse_expr(0)?;
         let offset = match self.peek()? {
             Some(tok) => match tok.token_type.unwrap() {
                 TK_OFFSET | TK_COMMA => {
@@ -2502,8 +2608,7 @@ impl<'a> Parser<'a> {
                 _ => None,
             },
             _ => None,
-        }
-        .map(Box::new);
+        };
 
         Ok(Some(Limit {
             expr: limit,
@@ -2560,7 +2665,7 @@ impl<'a> Parser<'a> {
         eat_expect!(self, TK_LP);
         let expr = self.parse_expr(0)?;
         eat_expect!(self, TK_RP);
-        Ok(TableConstraint::Check(expr.into_boxed()))
+        Ok(TableConstraint::Check(expr))
     }
 
     fn parse_foreign_key_table_constraint(&mut self) -> Result<TableConstraint> {
@@ -2847,7 +2952,7 @@ impl<'a> Parser<'a> {
             _ => None,
         };
 
-        Ok(Stmt::attach(expr, db_name, key))
+        Ok(Stmt::Attach { expr, db_name, key })
     }
 
     fn parse_detach(&mut self) -> Result<Stmt> {
@@ -2857,20 +2962,23 @@ impl<'a> Parser<'a> {
         }
 
         Ok(Stmt::Detach {
-            name: self.parse_expr(0)?.into_boxed(),
+            name: self.parse_expr(0)?,
         })
     }
 
     fn parse_pragma_value(&mut self) -> Result<PragmaValue> {
-        let expr = match self.peek_no_eof()?.token_type.unwrap().fallback_id_if_ok() {
+        match self.peek_no_eof()?.token_type.unwrap().fallback_id_if_ok() {
             TK_ON | TK_DELETE | TK_DEFAULT => {
                 let tok = eat_assert!(self, TK_ON, TK_DELETE, TK_DEFAULT);
-                Expr::Literal(Literal::Keyword(from_bytes(tok.value)))
+                Ok(Box::new(Expr::Literal(Literal::Keyword(from_bytes(
+                    tok.value,
+                )))))
             }
-            TK_ID | TK_STRING | TK_INDEXED | TK_JOIN_KW => Expr::Name(self.parse_nm()?),
-            _ => self.parse_signed()?,
-        };
-        Ok(Box::new(expr))
+            TK_ID | TK_STRING | TK_INDEXED | TK_JOIN_KW => {
+                Ok(Box::new(Expr::Name(self.parse_nm()?)))
+            }
+            _ => self.parse_signed(),
+        }
     }
 
     fn parse_pragma(&mut self) -> Result<Stmt> {
@@ -2919,7 +3027,7 @@ impl<'a> Parser<'a> {
             _ => None,
         };
 
-        Ok(Stmt::vacuum(name, into))
+        Ok(Stmt::Vacuum { name, into })
     }
 
     fn parse_term(&mut self) -> Result<Box<Expr>> {
@@ -2933,7 +3041,7 @@ impl<'a> Parser<'a> {
             TK_CTIME_KW,
         );
 
-        self.parse_expr_operand().map(Box::new)
+        self.parse_expr_operand()
     }
 
     fn parse_default_column_constraint(&mut self) -> Result<ColumnConstraint> {
@@ -3064,7 +3172,7 @@ impl<'a> Parser<'a> {
         eat_expect!(self, TK_LP);
         let expr = self.parse_expr(0)?;
         eat_expect!(self, TK_RP);
-        Ok(ColumnConstraint::Check(expr.into_boxed()))
+        Ok(ColumnConstraint::Check(expr))
     }
 
     fn parse_ref_act(&mut self) -> Result<RefAct> {
@@ -3185,7 +3293,7 @@ impl<'a> Parser<'a> {
         }
 
         eat_expect!(self, TK_LP);
-        let expr = self.parse_expr(0)?.into_boxed();
+        let expr = self.parse_expr(0)?;
         eat_expect!(self, TK_RP);
 
         let typ = match self.peek()? {
@@ -3421,7 +3529,7 @@ impl<'a> Parser<'a> {
                 eat_expect!(self, TK_EQ);
                 Ok(Set {
                     col_names: names,
-                    expr: self.parse_expr(0)?.into_boxed(),
+                    expr: self.parse_expr(0)?,
                 })
             }
             _ => {
@@ -3429,7 +3537,7 @@ impl<'a> Parser<'a> {
                 eat_expect!(self, TK_EQ);
                 Ok(Set {
                     col_names: vec![name],
-                    expr: self.parse_expr(0)?.into_boxed(),
+                    expr: self.parse_expr(0)?,
                 })
             }
         }
@@ -3658,8 +3766,7 @@ impl<'a> Parser<'a> {
                 Some(self.parse_expr(0)?)
             }
             _ => None,
-        }
-        .map(Box::new);
+        };
 
         eat_expect!(self, TK_BEGIN);
 
@@ -4146,9 +4253,9 @@ mod tests {
                         select: OneSelect::Select {
                             distinctness: None,
                             columns: vec![ResultColumn::Expr(
-                                Expr::Parenthesized(vec![Expr::Literal(
+                                Box::new(Expr::Parenthesized(vec![Box::new(Expr::Literal(
                                     Literal::Numeric("1".to_owned()),
-                                )]).into_boxed(),
+                                ))])),
                                 None,
                             )],
                             from: None,
@@ -4625,8 +4732,8 @@ mod tests {
                                 Box::new(Expr::Case {
                                     base: None,
                                     when_then_pairs: vec![(
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     )],
                                     else_expr: Some(Box::new(Expr::Literal(Literal::Numeric(
                                         "3".to_owned(),
@@ -4658,8 +4765,8 @@ mod tests {
                                         "4".to_owned(),
                                     )))),
                                     when_then_pairs: vec![(
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     )],
                                     else_expr: Some(Box::new(Expr::Literal(Literal::Numeric(
                                         "3".to_owned(),
@@ -4691,8 +4798,8 @@ mod tests {
                                         "4".to_owned(),
                                     )))),
                                     when_then_pairs: vec![(
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     )],
                                     else_expr: None,
                                 }),
@@ -5019,8 +5126,8 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
@@ -5057,17 +5164,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: None,
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: None,
                                         })),
@@ -5098,17 +5205,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: None,
                                         })),
@@ -5139,17 +5246,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![
                                                 SortedColumn {
                                                     expr: Box::new(Expr::Id(Name::Ident("test".to_owned()))),
@@ -5186,17 +5293,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: Some(FrameClause{
                                                 mode: FrameMode::Rows,
@@ -5232,17 +5339,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: Some(FrameClause{
                                                 mode: FrameMode::Range,
@@ -5278,17 +5385,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: Some(FrameClause{
                                                 mode: FrameMode::Groups,
@@ -5324,17 +5431,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: Some(FrameClause{
                                                 mode: FrameMode::Groups,
@@ -5370,17 +5477,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: Some(FrameClause{
                                                 mode: FrameMode::Groups,
@@ -5416,17 +5523,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: Some(FrameClause{
                                                 mode: FrameMode::Groups,
@@ -5462,17 +5569,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: Some(FrameClause{
                                                 mode: FrameMode::Groups,
@@ -5508,17 +5615,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: Some(FrameClause{
                                                 mode: FrameMode::Groups,
@@ -5556,17 +5663,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: Some(FrameClause{
                                                 mode: FrameMode::Groups,
@@ -5604,17 +5711,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: Some(FrameClause{
                                                 mode: FrameMode::Groups,
@@ -5650,17 +5757,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: Some(FrameClause{
                                                 mode: FrameMode::Groups,
@@ -5696,17 +5803,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: Some(FrameClause{
                                                 mode: FrameMode::Groups,
@@ -5742,17 +5849,17 @@ mod tests {
                                     name: Name::Ident("func_name".to_owned()),
                                     distinctness: Some(Distinctness::Distinct),
                                     args: vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     order_by: vec![],
                                     filter_over: FunctionTail {
                                         filter_clause: None,
                                         over_clause: Some(Over::Window(Window {
                                             base: Some(Name::Ident("test".to_owned())),
-                                            partition_by: vec![Expr::Id(Name::Ident(
+                                            partition_by: vec![Box::new(Expr::Id(Name::Ident(
                                                 "product".to_owned(),
-                                            ))],
+                                            )))],
                                             order_by: vec![],
                                             frame_clause: Some(FrameClause{
                                                 mode: FrameMode::Groups,
@@ -6216,9 +6323,9 @@ mod tests {
                                         lhs: Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
                                         not: false,
                                         rhs: vec![
-                                            Expr::Literal(Literal::Numeric("1".to_owned())),
-                                            Expr::Literal(Literal::Numeric("2".to_owned())),
-                                            Expr::Literal(Literal::Numeric("3".to_owned())),
+                                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                            Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                            Box::new(Expr::Literal(Literal::Numeric("3".to_owned()))),
                                         ],
                                     }),
                                     Operator::And,
@@ -6255,9 +6362,9 @@ mod tests {
                                             alias: None,
                                         },
                                         args: vec![
-                                            Expr::Literal(Literal::Numeric("1".to_owned())),
-                                            Expr::Literal(Literal::Numeric("2".to_owned())),
-                                            Expr::Literal(Literal::Numeric("3".to_owned())),
+                                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                            Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
+                                            Box::new(Expr::Literal(Literal::Numeric("3".to_owned()))),
                                         ],
                                     }),
                                     Operator::And,
@@ -6951,16 +7058,16 @@ mod tests {
                     body: SelectBody {
                         select: OneSelect::Values(vec![
                             vec![
-                                Expr::Literal(Literal::Numeric("1".to_owned())),
-                                Expr::Literal(Literal::Numeric("2".to_owned())),
+                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                             ],
                             vec![
-                                Expr::Literal(Literal::Numeric("3".to_owned())),
-                                Expr::Literal(Literal::Numeric("4".to_owned())),
+                                Box::new(Expr::Literal(Literal::Numeric("3".to_owned()))),
+                                Box::new(Expr::Literal(Literal::Numeric("4".to_owned()))),
                             ],
                             vec![
-                                Expr::Literal(Literal::Numeric("5".to_owned())),
-                                Expr::Literal(Literal::Numeric("6".to_owned())),
+                                Box::new(Expr::Literal(Literal::Numeric("5".to_owned()))),
+                                Box::new(Expr::Literal(Literal::Numeric("6".to_owned()))),
                             ],
                         ]),
                         compounds: vec![],
@@ -7640,8 +7747,8 @@ mod tests {
                                 select: Box::new(SelectTable::TableCall(
                                     QualifiedName { db_name: None, name: Name::Ident("foo".to_owned()), alias: None },
                                     vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                        Expr::Literal(Literal::Numeric("2".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                     ],
                                     None,
                                 )),
@@ -8373,8 +8480,8 @@ mod tests {
                                         table: Box::new(SelectTable::TableCall(
                                             QualifiedName { db_name: None, name: Name::Ident("bar".to_owned()), alias: None },
                                             vec![
-                                                Expr::Literal(Literal::Numeric("1".to_owned())),
-                                                Expr::Literal(Literal::Numeric("2".to_owned())),
+                                                Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                             ],
                                             None,
                                         )),
@@ -8418,12 +8525,12 @@ mod tests {
                                                 body: SelectBody {
                                                     select: OneSelect::Values(vec![
                                                     vec![
-                                                        Expr::Literal(Literal::Numeric("1".to_owned())),
-                                                        Expr::Literal(Literal::Numeric("2".to_owned()))
+                                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                                        Box::new(Expr::Literal(Literal::Numeric("2".to_owned())))
                                                     ],
                                                     vec![
-                                                        Expr::Literal(Literal::Numeric("3".to_owned())),
-                                                        Expr::Literal(Literal::Numeric("4".to_owned()))
+                                                        Box::new(Expr::Literal(Literal::Numeric("3".to_owned()))),
+                                                        Box::new(Expr::Literal(Literal::Numeric("4".to_owned())))
                                                     ],
                                                     ]),
                                                     compounds: vec![],
@@ -8547,11 +8654,11 @@ mod tests {
                             where_clause: None,
                             group_by: Some(GroupBy {
                                 exprs: vec![
-                                    Expr::Binary(
+                                    Box::new(Expr::Binary(
                                         Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
                                         Operator::Equals,
                                         Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
-                                    ),
+                                    )),
                                 ],
                                 having: None,
                             }),
@@ -8585,11 +8692,11 @@ mod tests {
                             where_clause: None,
                             group_by: Some(GroupBy {
                                 exprs: vec![
-                                    Expr::Binary(
+                                    Box::new(Expr::Binary(
                                         Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
                                         Operator::Equals,
                                         Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
-                                    ),
+                                    )),
                                 ],
                                 having: Some(Box::new(Expr::Binary(
                                     Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
@@ -8627,11 +8734,11 @@ mod tests {
                             where_clause: None,
                             group_by: Some(GroupBy {
                                 exprs: vec![
-                                    Expr::Binary(
+                                    Box::new(Expr::Binary(
                                         Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
                                         Operator::Equals,
                                         Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
-                                    ),
+                                    )),
                                 ],
                                 having: Some(Box::new(Expr::Binary(
                                     Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
@@ -8707,7 +8814,7 @@ mod tests {
                                     window: Window {
                                         base: None,
                                         partition_by: vec![
-                                            Expr::Id(Name::Ident("product".to_owned())),
+                                            Box::new(Expr::Id(Name::Ident("product".to_owned()))),
                                         ],
                                         order_by: vec![],
                                         frame_clause: None,
@@ -8745,7 +8852,7 @@ mod tests {
                                     window: Window {
                                         base: None,
                                         partition_by: vec![
-                                            Expr::Id(Name::Ident("product".to_owned())),
+                                            Box::new(Expr::Id(Name::Ident("product".to_owned()))),
                                         ],
                                         order_by: vec![],
                                         frame_clause: None,
@@ -8756,7 +8863,7 @@ mod tests {
                                     window: Window {
                                         base: None,
                                         partition_by: vec![
-                                            Expr::Id(Name::Ident("product_2".to_owned())),
+                                            Box::new(Expr::Id(Name::Ident("product_2".to_owned()))),
                                         ],
                                         order_by: vec![],
                                         frame_clause: None,
@@ -9010,7 +9117,7 @@ mod tests {
                                 name: None,
                                 constraint: ColumnConstraint::Default(
                                     Box::new(Expr::Parenthesized(vec![
-                                        Expr::Literal(Literal::Numeric("1".to_owned())),
+                                        Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
                                     ]))
                                 ),
                             },
@@ -10242,8 +10349,8 @@ mod tests {
                                 body: SelectBody {
                                     select: OneSelect::Values(vec![
                                         vec![
-                                            Expr::Literal(Literal::Numeric("1".to_owned())),
-                                            Expr::Literal(Literal::Numeric("2".to_owned())),
+                                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                            Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                         ],
                                     ]),
                                     compounds: vec![],
@@ -10289,8 +10396,8 @@ mod tests {
                                 body: SelectBody {
                                     select: OneSelect::Values(vec![
                                         vec![
-                                            Expr::Literal(Literal::Numeric("1".to_owned())),
-                                            Expr::Literal(Literal::Numeric("2".to_owned())),
+                                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                            Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                         ],
                                     ]),
                                     compounds: vec![],
@@ -10333,8 +10440,8 @@ mod tests {
                                 body: SelectBody {
                                     select: OneSelect::Values(vec![
                                         vec![
-                                            Expr::Literal(Literal::Numeric("1".to_owned())),
-                                            Expr::Literal(Literal::Numeric("2".to_owned())),
+                                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                            Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                         ],
                                     ]),
                                     compounds: vec![],
@@ -10386,8 +10493,8 @@ mod tests {
                                 body: SelectBody {
                                     select: OneSelect::Values(vec![
                                         vec![
-                                            Expr::Literal(Literal::Numeric("1".to_owned())),
-                                            Expr::Literal(Literal::Numeric("2".to_owned())),
+                                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                            Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                         ],
                                     ]),
                                     compounds: vec![],
@@ -10457,8 +10564,8 @@ mod tests {
                                 body: SelectBody {
                                     select: OneSelect::Values(vec![
                                         vec![
-                                            Expr::Literal(Literal::Numeric("1".to_owned())),
-                                            Expr::Literal(Literal::Numeric("2".to_owned())),
+                                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                            Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                         ],
                                     ]),
                                     compounds: vec![],
@@ -10525,8 +10632,8 @@ mod tests {
                                 body: SelectBody {
                                     select: OneSelect::Values(vec![
                                         vec![
-                                            Expr::Literal(Literal::Numeric("1".to_owned())),
-                                            Expr::Literal(Literal::Numeric("2".to_owned())),
+                                            Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                            Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                         ],
                                     ]),
                                     compounds: vec![],
@@ -11033,8 +11140,8 @@ mod tests {
                         body: SelectBody {
                             select: OneSelect::Values(vec![
                                 vec![
-                                    Expr::Literal(Literal::Numeric("1".to_owned())),
-                                    Expr::Literal(Literal::Numeric("2".to_owned())),
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                 ],
                             ]),
                             compounds: vec![],
@@ -11061,8 +11168,8 @@ mod tests {
                         body: SelectBody {
                             select: OneSelect::Values(vec![
                                 vec![
-                                    Expr::Literal(Literal::Numeric("1".to_owned())),
-                                    Expr::Literal(Literal::Numeric("2".to_owned())),
+                                    Box::new(Expr::Literal(Literal::Numeric("1".to_owned()))),
+                                    Box::new(Expr::Literal(Literal::Numeric("2".to_owned()))),
                                 ],
                             ]),
                             compounds: vec![],

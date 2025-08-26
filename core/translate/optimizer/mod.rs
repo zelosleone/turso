@@ -186,7 +186,7 @@ fn optimize_table_access(
     table_references: &mut TableReferences,
     available_indexes: &HashMap<String, Vec<Arc<Index>>>,
     where_clause: &mut [WhereTerm],
-    order_by: &mut Vec<(ast::Expr, SortOrder)>,
+    order_by: &mut Vec<(Box<ast::Expr>, SortOrder)>,
     group_by: &mut Option<GroupBy>,
 ) -> Result<Option<Vec<JoinOrderMember>>> {
     let access_methods_arena = RefCell::new(Vec::new());

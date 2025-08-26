@@ -288,7 +288,7 @@ pub struct SelectPlan {
     /// group by clause
     pub group_by: Option<GroupBy>,
     /// order by clause
-    pub order_by: Vec<(ast::Expr, SortOrder)>,
+    pub order_by: Vec<(Box<ast::Expr>, SortOrder)>,
     /// all the aggregates collected from the result columns, order by, and (TODO) having clauses
     pub aggregates: Vec<Aggregate>,
     /// limit clause
@@ -376,7 +376,7 @@ pub struct DeletePlan {
     /// where clause split into a vec at 'AND' boundaries.
     pub where_clause: Vec<WhereTerm>,
     /// order by clause
-    pub order_by: Vec<(ast::Expr, SortOrder)>,
+    pub order_by: Vec<(Box<ast::Expr>, SortOrder)>,
     /// limit clause
     pub limit: Option<isize>,
     /// offset clause
@@ -391,9 +391,9 @@ pub struct DeletePlan {
 pub struct UpdatePlan {
     pub table_references: TableReferences,
     // (colum index, new value) pairs
-    pub set_clauses: Vec<(usize, ast::Expr)>,
+    pub set_clauses: Vec<(usize, Box<ast::Expr>)>,
     pub where_clause: Vec<WhereTerm>,
-    pub order_by: Vec<(ast::Expr, SortOrder)>,
+    pub order_by: Vec<(Box<ast::Expr>, SortOrder)>,
     pub limit: Option<isize>,
     pub offset: Option<isize>,
     // TODO: optional RETURNING clause

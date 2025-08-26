@@ -36,7 +36,7 @@ pub fn init_order_by(
     program: &mut ProgramBuilder,
     t_ctx: &mut TranslateCtx,
     result_columns: &[ResultSetColumn],
-    order_by: &[(ast::Expr, SortOrder)],
+    order_by: &[(Box<ast::Expr>, SortOrder)],
     referenced_tables: &TableReferences,
 ) -> Result<()> {
     let sort_cursor = program.alloc_cursor_id(CursorType::Sorter);
@@ -55,7 +55,7 @@ pub fn init_order_by(
      */
     let collations = order_by
         .iter()
-        .map(|(expr, _)| match expr {
+        .map(|(expr, _)| match expr.as_ref() {
             ast::Expr::Collate(_, collation_name) => {
                 CollationSeq::new(collation_name.as_str()).map(Some)
             }
@@ -324,7 +324,7 @@ pub struct OrderByRemapping {
 ///
 /// If any result columns can be skipped, this returns list of 2-tuples of (SkippedResultColumnIndex: usize, ResultColumnIndexInOrderBySorter: usize)
 pub fn order_by_deduplicate_result_columns(
-    order_by: &[(ast::Expr, SortOrder)],
+    order_by: &[(Box<ast::Expr>, SortOrder)],
     result_columns: &[ResultSetColumn],
 ) -> Vec<OrderByRemapping> {
     let mut result_column_remapping: Vec<OrderByRemapping> = Vec::new();
