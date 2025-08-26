@@ -1472,8 +1472,9 @@ impl AggregateOperator {
     pub fn process_delta(&mut self, delta: Delta) -> Delta {
         let mut output_delta = Delta::new();
 
-        // Track which groups were modified
+        // Track which groups were modified and their old values
         let mut modified_groups = HashSet::new();
+        let mut old_values: HashMap<String, Vec<Value>> = HashMap::new();
 
         // Process each change in the delta
         for (row, weight) in &delta.changes {
@@ -1484,6 +1485,17 @@ impl AggregateOperator {
             // Extract group key
             let group_key = self.extract_group_key(&row.values);
             let group_key_str = Self::group_key_to_string(&group_key);
+
+            // Store old aggregate values BEFORE applying the delta
+            // (only for the first time we see this group in this batch)
+            if !modified_groups.contains(&group_key_str) {
+                if let Some(state) = self.group_states.get(&group_key_str) {
+                    let mut old_row = group_key.clone();
+                    old_row.extend(state.to_values(&self.aggregates));
+                    old_values.insert(group_key_str.clone(), old_row);
+                }
+            }
+
             modified_groups.insert(group_key_str.clone());
 
             // Store the actual group key values
@@ -1514,16 +1526,24 @@ impl AggregateOperator {
                 .cloned()
                 .unwrap_or_default();
 
+            // Generate a unique key for this group
+            // We use a hash of the group key to ensure consistency
+            let result_key = group_key_str
+                .bytes()
+                .fold(0i64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as i64));
+
+            // Emit retraction for old value if it existed
+            if let Some(old_row_values) = old_values.get(&group_key_str) {
+                let old_row = HashableRow::new(result_key, old_row_values.clone());
+                output_delta.changes.push((old_row.clone(), -1));
+                // Also remove from current state
+                self.current_state.changes.push((old_row, -1));
+            }
+
             if let Some(state) = self.group_states.get(&group_key_str) {
                 // Build output row: group_by columns + aggregate values
                 let mut output_values = group_key.clone();
                 output_values.extend(state.to_values(&self.aggregates));
-
-                // Generate a unique key for this group
-                // We use a hash of the group key to ensure consistency
-                let result_key = group_key_str
-                    .bytes()
-                    .fold(0i64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as i64));
 
                 // Check if group should be removed (count is 0)
                 if state.count > 0 {
@@ -1534,12 +1554,8 @@ impl AggregateOperator {
                     // Update current state
                     self.current_state.changes.push((output_row, 1));
                 } else {
-                    // Add to output delta with negative weight (deletion)
-                    let output_row = HashableRow::new(result_key, output_values);
-                    output_delta.changes.push((output_row.clone(), -1));
-
-                    // Mark for removal in current state
-                    self.current_state.changes.push((output_row, -1));
+                    // Group has count=0, remove from state
+                    // (we already emitted the retraction above if needed)
                     self.group_states.remove(&group_key_str);
                     self.group_key_values.remove(&group_key_str);
                 }
@@ -1601,6 +1617,245 @@ mod tests {
             tracker.full_scans, 0,
             "Incremental computation should not perform full scans"
         );
+    }
+
+    // Aggregate tests
+    #[test]
+    fn test_aggregate_incremental_update_emits_retraction() {
+        // This test verifies that when an aggregate value changes,
+        // the operator emits both a retraction (-1) of the old value
+        // and an insertion (+1) of the new value.
+
+        // Create an aggregate operator for SUM(age) with no GROUP BY
+        let mut agg = AggregateOperator::new(
+            vec![], // No GROUP BY
+            vec![AggregateFunction::Sum("age".to_string())],
+            vec!["id".to_string(), "name".to_string(), "age".to_string()],
+        );
+
+        // Initial data: 3 users
+        let mut initial_delta = Delta::new();
+        initial_delta.insert(
+            1,
+            vec![
+                Value::Integer(1),
+                Value::Text("Alice".to_string().into()),
+                Value::Integer(25),
+            ],
+        );
+        initial_delta.insert(
+            2,
+            vec![
+                Value::Integer(2),
+                Value::Text("Bob".to_string().into()),
+                Value::Integer(30),
+            ],
+        );
+        initial_delta.insert(
+            3,
+            vec![
+                Value::Integer(3),
+                Value::Text("Charlie".to_string().into()),
+                Value::Integer(35),
+            ],
+        );
+
+        // Initialize with initial data
+        agg.initialize(initial_delta);
+
+        // Verify initial state: SUM(age) = 25 + 30 + 35 = 90
+        let state = agg.get_current_state();
+        assert_eq!(state.changes.len(), 1, "Should have one aggregate row");
+        let (row, weight) = &state.changes[0];
+        assert_eq!(*weight, 1, "Aggregate row should have weight 1");
+        assert_eq!(row.values[0], Value::Float(90.0), "SUM should be 90");
+
+        // Now add a new user (incremental update)
+        let mut update_delta = Delta::new();
+        update_delta.insert(
+            4,
+            vec![
+                Value::Integer(4),
+                Value::Text("David".to_string().into()),
+                Value::Integer(40),
+            ],
+        );
+
+        // Process the incremental update
+        let output_delta = agg.process_delta(update_delta);
+
+        // CRITICAL: The output delta should contain TWO changes:
+        // 1. Retraction of old aggregate value (90) with weight -1
+        // 2. Insertion of new aggregate value (130) with weight +1
+        assert_eq!(
+            output_delta.changes.len(),
+            2,
+            "Expected 2 changes (retraction + insertion), got {}: {:?}",
+            output_delta.changes.len(),
+            output_delta.changes
+        );
+
+        // Verify the retraction comes first
+        let (retraction_row, retraction_weight) = &output_delta.changes[0];
+        assert_eq!(
+            *retraction_weight, -1,
+            "First change should be a retraction"
+        );
+        assert_eq!(
+            retraction_row.values[0],
+            Value::Float(90.0),
+            "Retracted value should be the old sum (90)"
+        );
+
+        // Verify the insertion comes second
+        let (insertion_row, insertion_weight) = &output_delta.changes[1];
+        assert_eq!(*insertion_weight, 1, "Second change should be an insertion");
+        assert_eq!(
+            insertion_row.values[0],
+            Value::Float(130.0),
+            "Inserted value should be the new sum (130)"
+        );
+
+        // Both changes should have the same row ID (since it's the same aggregate group)
+        assert_eq!(
+            retraction_row.rowid, insertion_row.rowid,
+            "Retraction and insertion should have the same row ID"
+        );
+    }
+
+    #[test]
+    fn test_aggregate_with_group_by_emits_retractions() {
+        // This test verifies that when aggregate values change for grouped data,
+        // the operator emits both retractions and insertions correctly for each group.
+
+        // Create an aggregate operator for SUM(score) GROUP BY team
+        let mut agg = AggregateOperator::new(
+            vec!["team".to_string()], // GROUP BY team
+            vec![AggregateFunction::Sum("score".to_string())],
+            vec![
+                "id".to_string(),
+                "team".to_string(),
+                "player".to_string(),
+                "score".to_string(),
+            ],
+        );
+
+        // Initial data: players on different teams
+        let mut initial_delta = Delta::new();
+        initial_delta.insert(
+            1,
+            vec![
+                Value::Integer(1),
+                Value::Text("red".to_string().into()),
+                Value::Text("Alice".to_string().into()),
+                Value::Integer(10),
+            ],
+        );
+        initial_delta.insert(
+            2,
+            vec![
+                Value::Integer(2),
+                Value::Text("blue".to_string().into()),
+                Value::Text("Bob".to_string().into()),
+                Value::Integer(15),
+            ],
+        );
+        initial_delta.insert(
+            3,
+            vec![
+                Value::Integer(3),
+                Value::Text("red".to_string().into()),
+                Value::Text("Charlie".to_string().into()),
+                Value::Integer(20),
+            ],
+        );
+
+        // Initialize with initial data
+        agg.initialize(initial_delta);
+
+        // Verify initial state: red team = 30, blue team = 15
+        let state = agg.get_current_state();
+        assert_eq!(state.changes.len(), 2, "Should have two groups");
+
+        // Find the red and blue team aggregates
+        let mut red_sum = None;
+        let mut blue_sum = None;
+        for (row, weight) in &state.changes {
+            assert_eq!(*weight, 1);
+            if let Value::Text(team) = &row.values[0] {
+                if team.as_str() == "red" {
+                    red_sum = Some(&row.values[1]);
+                } else if team.as_str() == "blue" {
+                    blue_sum = Some(&row.values[1]);
+                }
+            }
+        }
+        assert_eq!(
+            red_sum,
+            Some(&Value::Float(30.0)),
+            "Red team sum should be 30"
+        );
+        assert_eq!(
+            blue_sum,
+            Some(&Value::Float(15.0)),
+            "Blue team sum should be 15"
+        );
+
+        // Now add a new player to the red team (incremental update)
+        let mut update_delta = Delta::new();
+        update_delta.insert(
+            4,
+            vec![
+                Value::Integer(4),
+                Value::Text("red".to_string().into()),
+                Value::Text("David".to_string().into()),
+                Value::Integer(25),
+            ],
+        );
+
+        // Process the incremental update
+        let output_delta = agg.process_delta(update_delta);
+
+        // Should have 2 changes: retraction of old red team sum, insertion of new red team sum
+        // Blue team should NOT be affected
+        assert_eq!(
+            output_delta.changes.len(),
+            2,
+            "Expected 2 changes for red team only, got {}: {:?}",
+            output_delta.changes.len(),
+            output_delta.changes
+        );
+
+        // Both changes should be for the red team
+        let mut found_retraction = false;
+        let mut found_insertion = false;
+
+        for (row, weight) in &output_delta.changes {
+            if let Value::Text(team) = &row.values[0] {
+                assert_eq!(team.as_str(), "red", "Only red team should have changes");
+
+                if *weight == -1 {
+                    // Retraction of old value
+                    assert_eq!(
+                        row.values[1],
+                        Value::Float(30.0),
+                        "Should retract old sum of 30"
+                    );
+                    found_retraction = true;
+                } else if *weight == 1 {
+                    // Insertion of new value
+                    assert_eq!(
+                        row.values[1],
+                        Value::Float(55.0),
+                        "Should insert new sum of 55"
+                    );
+                    found_insertion = true;
+                }
+            }
+        }
+
+        assert!(found_retraction, "Should have found retraction");
+        assert!(found_insertion, "Should have found insertion");
     }
 
     // Join tests
