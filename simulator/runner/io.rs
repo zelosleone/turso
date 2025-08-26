@@ -7,7 +7,7 @@ use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use turso_core::{Clock, IO, Instant, OpenFlags, PlatformIO, Result};
 
-use crate::runner::{clock::SimulatorClock, file::SimulatorFile, SimIO};
+use crate::runner::{SimIO, clock::SimulatorClock, file::SimulatorFile};
 
 pub(crate) struct SimulatorIO {
     pub(crate) inner: Box<dyn IO>,

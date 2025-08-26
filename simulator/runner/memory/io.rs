@@ -5,11 +5,11 @@ use indexmap::IndexMap;
 use parking_lot::Mutex;
 use rand::{RngCore, SeedableRng};
 use rand_chacha::ChaCha8Rng;
-use turso_core::{Clock, Completion, Instant, OpenFlags, Result, IO};
+use turso_core::{Clock, Completion, IO, Instant, OpenFlags, Result};
 
+use crate::runner::SimIO;
 use crate::runner::clock::SimulatorClock;
 use crate::runner::memory::file::MemorySimFile;
-use crate::runner::SimIO;
 
 /// File descriptor
 pub type Fd = String;
