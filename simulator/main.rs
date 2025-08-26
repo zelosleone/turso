@@ -27,6 +27,7 @@ use crate::runner::env::{Paths, SimulationPhase, SimulationType};
 
 mod generation;
 mod model;
+mod profiles;
 mod runner;
 mod shrink;
 
