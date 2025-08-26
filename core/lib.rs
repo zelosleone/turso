@@ -464,7 +464,7 @@ impl Database {
             metrics: RefCell::new(ConnectionMetrics::new()),
             is_nested_stmt: Cell::new(false),
             encryption_key: RefCell::new(None),
-            encryption_cipher_mode: RefCell::new(None),
+            encryption_cipher_mode: Cell::new(None),
         });
         self.n_connections
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -898,7 +898,7 @@ pub struct Connection {
     /// Generally this is only true for ParseSchema.
     is_nested_stmt: Cell<bool>,
     encryption_key: RefCell<Option<EncryptionKey>>,
-    encryption_cipher_mode: RefCell<Option<CipherMode>>,
+    encryption_cipher_mode: Cell<Option<CipherMode>>,
 }
 
 impl Drop for Connection {
@@ -1999,7 +1999,7 @@ impl Connection {
     }
 
     pub fn get_encryption_cipher_mode(&self) -> Option<CipherMode> {
-        *self.encryption_cipher_mode.borrow()
+        self.encryption_cipher_mode.get()
     }
 
     // if both key and cipher are set, set encryption context on pager
@@ -2008,7 +2008,7 @@ impl Connection {
         let Some(key) = key_ref.as_ref() else {
             return;
         };
-        let Some(cipher_mode) = *self.encryption_cipher_mode.borrow() else {
+        let Some(cipher_mode) = self.encryption_cipher_mode.get() else {
             return;
         };
         tracing::trace!("setting encryption ctx for connection");
