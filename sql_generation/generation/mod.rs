@@ -10,15 +10,16 @@ pub mod predicate;
 pub mod query;
 pub mod table;
 
+#[derive(Debug, Clone, Copy)]
 pub struct Opts {
     /// Indexes enabled
-    indexes: bool,
+    pub indexes: bool,
 }
 
 /// Trait used to provide context to generation functions
 pub trait GenerationContext {
     fn tables(&self) -> &Vec<Table>;
-    fn opts(&self) -> &Opts;
+    fn opts(&self) -> Opts;
 }
 
 type ArbitraryFromFunc<'a, R, T> = Box<dyn Fn(&mut R) -> T + 'a>;

@@ -1,16 +1,10 @@
-use std::{collections::HashSet, fmt::Display};
-
 pub use create::Create;
 pub use create_index::CreateIndex;
 pub use delete::Delete;
 pub use drop::Drop;
 pub use insert::Insert;
 pub use select::Select;
-use serde::{Deserialize, Serialize};
 use turso_parser::ast::fmt::ToSqlContext;
-use update::Update;
-
-use crate::model::query::transaction::{Begin, Commit, Rollback};
 
 pub mod create;
 pub mod create_index;
@@ -21,69 +15,6 @@ pub mod predicate;
 pub mod select;
 pub mod transaction;
 pub mod update;
-
-// This type represents the potential queries on the database.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Query {
-    Create(Create),
-    Select(Select),
-    Insert(Insert),
-    Delete(Delete),
-    Update(Update),
-    Drop(Drop),
-    CreateIndex(CreateIndex),
-    Begin(Begin),
-    Commit(Commit),
-    Rollback(Rollback),
-}
-
-impl Query {
-    pub fn dependencies(&self) -> HashSet<String> {
-        match self {
-            Query::Select(select) => select.dependencies(),
-            Query::Create(_) => HashSet::new(),
-            Query::Insert(Insert::Select { table, .. })
-            | Query::Insert(Insert::Values { table, .. })
-            | Query::Delete(Delete { table, .. })
-            | Query::Update(Update { table, .. })
-            | Query::Drop(Drop { table, .. }) => HashSet::from_iter([table.clone()]),
-            Query::CreateIndex(CreateIndex { table_name, .. }) => {
-                HashSet::from_iter([table_name.clone()])
-            }
-            Query::Begin(_) | Query::Commit(_) | Query::Rollback(_) => HashSet::new(),
-        }
-    }
-    pub fn uses(&self) -> Vec<String> {
-        match self {
-            Query::Create(Create { table }) => vec![table.name.clone()],
-            Query::Select(select) => select.dependencies().into_iter().collect(),
-            Query::Insert(Insert::Select { table, .. })
-            | Query::Insert(Insert::Values { table, .. })
-            | Query::Delete(Delete { table, .. })
-            | Query::Update(Update { table, .. })
-            | Query::Drop(Drop { table, .. }) => vec![table.clone()],
-            Query::CreateIndex(CreateIndex { table_name, .. }) => vec![table_name.clone()],
-            Query::Begin(..) | Query::Commit(..) | Query::Rollback(..) => vec![],
-        }
-    }
-}
-
-impl Display for Query {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Create(create) => write!(f, "{create}"),
-            Self::Select(select) => write!(f, "{select}"),
-            Self::Insert(insert) => write!(f, "{insert}"),
-            Self::Delete(delete) => write!(f, "{delete}"),
-            Self::Update(update) => write!(f, "{update}"),
-            Self::Drop(drop) => write!(f, "{drop}"),
-            Self::CreateIndex(create_index) => write!(f, "{create_index}"),
-            Self::Begin(begin) => write!(f, "{begin}"),
-            Self::Commit(commit) => write!(f, "{commit}"),
-            Self::Rollback(rollback) => write!(f, "{rollback}"),
-        }
-    }
-}
 
 /// Used to print sql strings that already have all the context it needs
 pub struct EmptyContext;

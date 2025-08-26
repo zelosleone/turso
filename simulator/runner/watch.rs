@@ -1,10 +1,9 @@
 use std::sync::{Arc, Mutex};
 
+use sql_generation::generation::pick_index;
+
 use crate::{
-    generation::{
-        pick_index,
-        plan::{Interaction, InteractionPlanState},
-    },
+    generation::plan::{Interaction, InteractionPlanState},
     runner::execution::ExecutionContinuation,
 };
 

@@ -57,6 +57,7 @@ limbo_regexp = { path = "extensions/regexp", version = "0.1.4" }
 turso_sqlite3_parser = { path = "vendored/sqlite3-parser", version = "0.1.4" }
 limbo_uuid = { path = "extensions/uuid", version = "0.1.4" }
 turso_parser = { path = "parser" }
+sql_generation = { path = "sql_generation" }
 strum = { version = "0.26", features = ["derive"] }
 strum_macros = "0.26"
 serde = "1.0"
