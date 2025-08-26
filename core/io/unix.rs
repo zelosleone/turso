@@ -15,8 +15,6 @@ use std::{io::ErrorKind, sync::Arc};
 use tracing::debug;
 use tracing::{instrument, trace, Level};
 
-/// UnixIO lives longer than any of the files it creates, so it is
-/// safe to store references to it's internals in the UnixFiles
 pub struct UnixIO {}
 
 unsafe impl Send for UnixIO {}
@@ -233,7 +231,7 @@ impl File for UnixFile {
         }
         let file = self.file.lock();
 
-        match try_pwritev_raw(file.as_raw_fd(), pos as u64, &buffers, 0, 0) {
+        match try_pwritev_raw(file.as_raw_fd(), pos, &buffers, 0, 0) {
             Ok(written) => {
                 trace!("pwritev wrote {written}");
                 c.complete(written as i32);
@@ -285,7 +283,7 @@ impl File for UnixFile {
     #[instrument(err, skip_all, level = Level::INFO)]
     fn truncate(&self, len: u64, c: Completion) -> Result<Completion> {
         let file = self.file.lock();
-        let result = file.set_len(len as u64);
+        let result = file.set_len(len);
         match result {
             Ok(()) => {
                 trace!("file truncated to len=({})", len);
