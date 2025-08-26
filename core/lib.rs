@@ -41,6 +41,7 @@ pub mod numeric;
 mod numeric;
 
 use crate::incremental::view::ViewTransactionState;
+use crate::storage::encryption::CipherMode;
 use crate::translate::optimizer::optimize_plan;
 use crate::translate::pragma::TURSO_CDC_DEFAULT_TABLE_NAME;
 #[cfg(all(feature = "fs", feature = "conn_raw_api"))]
@@ -463,6 +464,7 @@ impl Database {
             metrics: RefCell::new(ConnectionMetrics::new()),
             is_nested_stmt: Cell::new(false),
             encryption_key: RefCell::new(None),
+            encryption_cipher_mode: RefCell::new(None),
         });
         self.n_connections
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -896,6 +898,7 @@ pub struct Connection {
     /// Generally this is only true for ParseSchema.
     is_nested_stmt: Cell<bool>,
     encryption_key: RefCell<Option<EncryptionKey>>,
+    encryption_cipher_mode: RefCell<Option<CipherMode>>,
 }
 
 impl Drop for Connection {
@@ -1986,8 +1989,31 @@ impl Connection {
     pub fn set_encryption_key(&self, key: EncryptionKey) {
         tracing::trace!("setting encryption key for connection");
         *self.encryption_key.borrow_mut() = Some(key.clone());
+        self.set_encryption_context();
+    }
+
+    pub fn set_encryption_cipher(&self, cipher_mode: CipherMode) {
+        tracing::trace!("setting encryption cipher for connection");
+        self.encryption_cipher_mode.replace(Some(cipher_mode));
+        self.set_encryption_context();
+    }
+
+    pub fn get_encryption_cipher_mode(&self) -> Option<CipherMode> {
+        *self.encryption_cipher_mode.borrow()
+    }
+
+    // if both key and cipher are set, set encryption context on pager
+    fn set_encryption_context(&self) {
+        let key_ref = self.encryption_key.borrow();
+        let Some(key) = key_ref.as_ref() else {
+            return;
+        };
+        let Some(cipher_mode) = *self.encryption_cipher_mode.borrow() else {
+            return;
+        };
+        tracing::trace!("setting encryption ctx for connection");
         let pager = self.pager.borrow();
-        pager.set_encryption_context(&key);
+        pager.set_encryption_context(cipher_mode, key);
     }
 }
 

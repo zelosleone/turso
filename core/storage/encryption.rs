@@ -18,12 +18,17 @@ impl EncryptionKey {
         Self(key)
     }
 
-    pub fn from_string(s: &str) -> Self {
-        let mut key = [0u8; 32];
-        let bytes = s.as_bytes();
-        let len = bytes.len().min(32);
-        key[..len].copy_from_slice(&bytes[..len]);
-        Self(key)
+    pub fn from_hex_string(s: &str) -> Result<Self> {
+        let hex_str = s.trim();
+        let bytes = hex::decode(hex_str)
+            .map_err(|e| LimboError::InvalidArgument(format!("Invalid hex string: {e}")))?;
+        let key: [u8; 32] = bytes.try_into().map_err(|v: Vec<u8>| {
+            LimboError::InvalidArgument(format!(
+                "Hex string must decode to exactly 32 bytes, got {}",
+                v.len()
+            ))
+        })?;
+        Ok(Self(key))
     }
 
     pub fn as_bytes(&self) -> &[u8; 32] {
@@ -127,6 +132,29 @@ impl std::fmt::Debug for Aegis256Cipher {
 pub enum CipherMode {
     Aes256Gcm,
     Aegis256,
+}
+
+impl TryFrom<&str> for CipherMode {
+    type Error = LimboError;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s.to_lowercase().as_str() {
+            "aes256gcm" | "aes-256-gcm" | "aes_256_gcm" => Ok(CipherMode::Aes256Gcm),
+            "aegis256" | "aegis-256" | "aegis_256" => Ok(CipherMode::Aegis256),
+            _ => Err(LimboError::InvalidArgument(format!(
+                "Unknown cipher name: {s}"
+            ))),
+        }
+    }
+}
+
+impl std::fmt::Display for CipherMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CipherMode::Aes256Gcm => write!(f, "aes256gcm"),
+            CipherMode::Aegis256 => write!(f, "aegis256"),
+        }
+    }
 }
 
 impl CipherMode {
@@ -366,6 +394,13 @@ mod tests {
     use super::*;
     use rand::Rng;
 
+    fn generate_random_hex_key() -> String {
+        let mut rng = rand::thread_rng();
+        let mut bytes = [0u8; 32];
+        rng.fill(&mut bytes);
+        hex::encode(bytes)
+    }
+
     #[test]
     #[cfg(feature = "encryption")]
     fn test_aes_encrypt_decrypt_round_trip() {
@@ -382,7 +417,7 @@ mod tests {
             page
         };
 
-        let key = EncryptionKey::from_string("alice and bob use encryption on database");
+        let key = EncryptionKey::from_hex_string(&generate_random_hex_key()).unwrap();
         let ctx = EncryptionContext::new(CipherMode::Aes256Gcm, &key).unwrap();
 
         let page_id = 42;
@@ -399,7 +434,7 @@ mod tests {
     #[test]
     #[cfg(feature = "encryption")]
     fn test_aegis256_cipher_wrapper() {
-        let key = EncryptionKey::from_string("alice and bob use AEGIS-256 here!");
+        let key = EncryptionKey::from_hex_string(&generate_random_hex_key()).unwrap();
         let cipher = Aegis256Cipher::new(&key);
 
         let plaintext = b"Hello, AEGIS-256!";
@@ -416,7 +451,7 @@ mod tests {
     #[test]
     #[cfg(feature = "encryption")]
     fn test_aegis256_raw_encryption() {
-        let key = EncryptionKey::from_string("alice and bob use AEGIS-256 here!");
+        let key = EncryptionKey::from_hex_string(&generate_random_hex_key()).unwrap();
         let ctx = EncryptionContext::new(CipherMode::Aegis256, &key).unwrap();
 
         let plaintext = b"Hello, AEGIS-256!";
@@ -445,7 +480,7 @@ mod tests {
             page
         };
 
-        let key = EncryptionKey::from_string("alice and bob use AEGIS-256 for pages!");
+        let key = EncryptionKey::from_hex_string(&generate_random_hex_key()).unwrap();
         let ctx = EncryptionContext::new(CipherMode::Aegis256, &key).unwrap();
 
         let page_id = 42;

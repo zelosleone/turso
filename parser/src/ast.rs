@@ -1330,6 +1330,10 @@ pub enum PragmaName {
     AutoVacuum,
     /// `cache_size` pragma
     CacheSize,
+    /// encryption cipher algorithm name for encrypted databases
+    #[strum(serialize = "cipher")]
+    #[cfg_attr(feature = "serde", serde(rename = "cipher"))]
+    EncryptionCipher,
     /// List databases
     DatabaseList,
     /// Encoding - only support utf8
@@ -1340,10 +1344,9 @@ pub enum PragmaName {
     IntegrityCheck,
     /// `journal_mode` pragma
     JournalMode,
-    /// encryption key for encrypted databases. This is just called `key` because most
-    /// extensions use this name instead of `encryption_key`.
-    #[strum(serialize = "key")]
-    #[cfg_attr(feature = "serde", serde(rename = "key"))]
+    /// encryption key for encrypted databases, specified as hexadecimal string.
+    #[strum(serialize = "hexkey")]
+    #[cfg_attr(feature = "serde", serde(rename = "hexkey"))]
     EncryptionKey,
     /// Noop as per SQLite docs
     LegacyFileFormat,
