@@ -1,4 +1,4 @@
-package limbo_test
+package turso_test
 
 import (
 	"database/sql"
@@ -17,7 +17,7 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	conn, connErr = sql.Open("sqlite3", ":memory:")
+	conn, connErr = sql.Open("turso", ":memory:")
 	if connErr != nil {
 		panic(connErr)
 	}
@@ -146,7 +146,7 @@ func TestFunctions(t *testing.T) {
 }
 
 func TestDuplicateConnection(t *testing.T) {
-	newConn, err := sql.Open("sqlite3", ":memory:")
+	newConn, err := sql.Open("turso", ":memory:")
 	if err != nil {
 		t.Fatalf("Error opening new connection: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestDuplicateConnection(t *testing.T) {
 }
 
 func TestDuplicateConnection2(t *testing.T) {
-	newConn, err := sql.Open("sqlite3", ":memory:")
+	newConn, err := sql.Open("turso", ":memory:")
 	if err != nil {
 		t.Fatalf("Error opening new connection: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestDuplicateConnection2(t *testing.T) {
 }
 
 func TestConnectionError(t *testing.T) {
-	newConn, err := sql.Open("sqlite3", ":memory:")
+	newConn, err := sql.Open("turso", ":memory:")
 	if err != nil {
 		t.Fatalf("Error opening new connection: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestConnectionError(t *testing.T) {
 }
 
 func TestStatementError(t *testing.T) {
-	newConn, err := sql.Open("sqlite3", ":memory:")
+	newConn, err := sql.Open("turso", ":memory:")
 	if err != nil {
 		t.Fatalf("Error opening new connection: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestStatementError(t *testing.T) {
 }
 
 func TestDriverRowsErrorMessages(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("turso", ":memory:")
 	if err != nil {
 		t.Fatalf("failed to open database: %v", err)
 	}
@@ -285,7 +285,7 @@ func TestDriverRowsErrorMessages(t *testing.T) {
 
 func TestTransaction(t *testing.T) {
 	// Open database connection
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("turso", ":memory:")
 	if err != nil {
 		t.Fatalf("Error opening database: %v", err)
 	}
@@ -359,7 +359,7 @@ func TestTransaction(t *testing.T) {
 }
 
 func TestVectorOperations(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("turso", ":memory:")
 	if err != nil {
 		t.Fatalf("Error opening connection: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestVectorOperations(t *testing.T) {
 }
 
 func TestSQLFeatures(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("turso", ":memory:")
 	if err != nil {
 		t.Fatalf("Error opening connection: %v", err)
 	}
@@ -501,7 +501,7 @@ func TestSQLFeatures(t *testing.T) {
 }
 
 func TestDateTimeFunctions(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("turso", ":memory:")
 	if err != nil {
 		t.Fatalf("Error opening connection: %v", err)
 	}
@@ -536,7 +536,7 @@ func TestDateTimeFunctions(t *testing.T) {
 }
 
 func TestMathFunctions(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("turso", ":memory:")
 	if err != nil {
 		t.Fatalf("Error opening connection: %v", err)
 	}
@@ -572,7 +572,7 @@ func TestMathFunctions(t *testing.T) {
 }
 
 func TestJSONFunctions(t *testing.T) {
-	db, err := sql.Open("sqlite3", ":memory:")
+	db, err := sql.Open("turso", ":memory:")
 	if err != nil {
 		t.Fatalf("Error opening connection: %v", err)
 	}
@@ -610,7 +610,7 @@ func TestJSONFunctions(t *testing.T) {
 }
 
 func TestParameterOrdering(t *testing.T) {
-	newConn, err := sql.Open("sqlite3", ":memory:")
+	newConn, err := sql.Open("turso", ":memory:")
 	if err != nil {
 		t.Fatalf("Error opening new connection: %v", err)
 	}
@@ -685,7 +685,7 @@ func TestParameterOrdering(t *testing.T) {
 }
 
 func TestIndex(t *testing.T) {
-	newConn, err := sql.Open("sqlite3", ":memory:")
+	newConn, err := sql.Open("turso", ":memory:")
 	if err != nil {
 		t.Fatalf("Error opening new connection: %v", err)
 	}

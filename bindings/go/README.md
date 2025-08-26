@@ -1,4 +1,4 @@
-# Limbo driver for Go's `database/sql` library
+# Turso driver for Go's `database/sql` library
 
 **NOTE:** this is currently __heavily__ W.I.P and is not yet in a usable state.
 
@@ -17,7 +17,7 @@ To build with embedded library support, follow these steps:
 git clone https://github.com/tursodatabase/turso
 
 # Navigate to the Go bindings directory
-cd limbo/bindings/go
+cd turso/bindings/go
 
 # Build the library (defaults to release build)
 ./build_lib.sh
@@ -52,34 +52,34 @@ Build the driver with the embedded library as described above, then simply impor
 
 #### Linux | MacOS
 
-_All commands listed are relative to the bindings/go directory in the limbo repository_
+_All commands listed are relative to the bindings/go directory in the turso repository_
 
 ```
-cargo build --package limbo-go
+cargo build --package turso-go
 
-# Your LD_LIBRARY_PATH environment variable must include limbo's `target/debug` directory
+# Your LD_LIBRARY_PATH environment variable must include turso's `target/debug` directory
 
-export LD_LIBRARY_PATH="/path/to/limbo/target/debug:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="/path/to/turso/target/debug:$LD_LIBRARY_PATH"
 
 ```
 
 #### Windows
 
 ```
-cargo build --package limbo-go
+cargo build --package turso-go
 
-# You must add limbo's `target/debug` directory to your PATH
+# You must add turso's `target/debug` directory to your PATH
 # or you could built + copy the .dll to a location in your PATH
 # or just the CWD of your go module
 
-cp path\to\limbo\target\debug\lib_limbo_go.dll .
+cp path\to\turso\target\debug\lib_turso_go.dll .
 
 go test
 
 ```
-**Temporarily** you may have to clone the limbo repository and run:
+**Temporarily** you may have to clone the turso repository and run:
 
-`go mod edit -replace github.com/tursodatabase/turso=/path/to/limbo/bindings/go`
+`go mod edit -replace github.com/tursodatabase/turso=/path/to/turso/bindings/go`
 
 ```go
 import (
@@ -89,19 +89,19 @@ import (
 )
 
 func main() {
-	conn, err := sql.Open("sqlite3", ":memory:")
+	conn, err := sql.Open("turso", ":memory:")
 	if err != nil {
         fmt.Printf("Error: %v\n", err)
         os.Exit(1)
 	}
-    sql := "CREATE table go_limbo (foo INTEGER, bar TEXT)"
+    sql := "CREATE table go_turso (foo INTEGER, bar TEXT)"
     _ = conn.Exec(sql)
 
-    sql = "INSERT INTO go_limbo (foo, bar) values (?, ?)"
+    sql = "INSERT INTO go_turso (foo, bar) values (?, ?)"
     stmt, _ := conn.Prepare(sql)
     defer stmt.Close()
-    _  = stmt.Exec(42, "limbo")
-    rows, _ := conn.Query("SELECT * from go_limbo")
+    _  = stmt.Exec(42, "turso")
+    rows, _ := conn.Query("SELECT * from go_turso")
     defer rows.Close()
     for rows.Next() {
         var a int

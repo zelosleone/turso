@@ -1,19 +1,19 @@
 use crate::{
-    types::{LimboValue, ResultCode},
-    LimboConn,
+    types::{ResultCode, TursoValue},
+    TursoConn,
 };
 use std::ffi::{c_char, c_void};
 use turso_core::{LimboError, Statement, StepResult, Value};
 
-pub struct LimboRows<'conn> {
+pub struct TursoRows<'conn> {
     stmt: Box<Statement>,
-    _conn: &'conn mut LimboConn,
+    _conn: &'conn mut TursoConn,
     err: Option<LimboError>,
 }
 
-impl<'conn> LimboRows<'conn> {
-    pub fn new(stmt: Statement, conn: &'conn mut LimboConn) -> Self {
-        LimboRows {
+impl<'conn> TursoRows<'conn> {
+    pub fn new(stmt: Statement, conn: &'conn mut TursoConn) -> Self {
+        TursoRows {
             stmt: Box::new(stmt),
             _conn: conn,
             err: None,
@@ -25,11 +25,11 @@ impl<'conn> LimboRows<'conn> {
         Box::into_raw(Box::new(self)) as *mut c_void
     }
 
-    pub fn from_ptr(ptr: *mut c_void) -> &'conn mut LimboRows<'conn> {
+    pub fn from_ptr(ptr: *mut c_void) -> &'conn mut TursoRows<'conn> {
         if ptr.is_null() {
             panic!("Null pointer");
         }
-        unsafe { &mut *(ptr as *mut LimboRows) }
+        unsafe { &mut *(ptr as *mut TursoRows) }
     }
 
     fn get_error(&mut self) -> *const c_char {
@@ -49,7 +49,7 @@ pub extern "C" fn rows_next(ctx: *mut c_void) -> ResultCode {
     if ctx.is_null() {
         return ResultCode::Error;
     }
-    let ctx = LimboRows::from_ptr(ctx);
+    let ctx = TursoRows::from_ptr(ctx);
 
     match ctx.stmt.step() {
         Ok(StepResult::Row) => ResultCode::Row,
@@ -76,11 +76,11 @@ pub extern "C" fn rows_get_value(ctx: *mut c_void, col_idx: usize) -> *const c_v
     if ctx.is_null() {
         return std::ptr::null();
     }
-    let ctx = LimboRows::from_ptr(ctx);
+    let ctx = TursoRows::from_ptr(ctx);
 
     if let Some(row) = ctx.stmt.row() {
         if let Ok(value) = row.get::<&Value>(col_idx) {
-            return LimboValue::from_db_value(value).to_ptr();
+            return TursoValue::from_db_value(value).to_ptr();
         }
     }
     std::ptr::null()
@@ -101,7 +101,7 @@ pub extern "C" fn rows_get_columns(rows_ptr: *mut c_void) -> i32 {
     if rows_ptr.is_null() {
         return -1;
     }
-    let rows = LimboRows::from_ptr(rows_ptr);
+    let rows = TursoRows::from_ptr(rows_ptr);
     rows.stmt.num_columns() as i32
 }
 
@@ -113,7 +113,7 @@ pub extern "C" fn rows_get_column_name(rows_ptr: *mut c_void, idx: i32) -> *cons
     if rows_ptr.is_null() {
         return std::ptr::null_mut();
     }
-    let rows = LimboRows::from_ptr(rows_ptr);
+    let rows = TursoRows::from_ptr(rows_ptr);
     if idx < 0 || idx as usize >= rows.stmt.num_columns() {
         return std::ptr::null_mut();
     }
@@ -127,18 +127,18 @@ pub extern "C" fn rows_get_error(ctx: *mut c_void) -> *const c_char {
     if ctx.is_null() {
         return std::ptr::null();
     }
-    let ctx = LimboRows::from_ptr(ctx);
+    let ctx = TursoRows::from_ptr(ctx);
     ctx.get_error()
 }
 
 #[no_mangle]
 pub extern "C" fn rows_close(ctx: *mut c_void) {
     if !ctx.is_null() {
-        let rows = LimboRows::from_ptr(ctx);
+        let rows = TursoRows::from_ptr(ctx);
         rows.stmt.reset();
         rows.err = None;
     }
     unsafe {
-        let _ = Box::from_raw(ctx.cast::<LimboRows>());
+        let _ = Box::from_raw(ctx.cast::<TursoRows>());
     }
 }

@@ -1,5 +1,5 @@
 [package]
-name = "limbo-go"
+name = "turso-go"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -8,7 +8,7 @@ repository.workspace = true
 publish = false
 
 [lib]
-name = "_limbo_go"
+name = "_turso_go"
 crate-type = ["cdylib"]
 path = "rs_src/lib.rs"
 

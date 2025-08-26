@@ -1,4 +1,4 @@
-package limbo
+package turso
 
 import (
 	"context"
@@ -16,16 +16,16 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-	sql.Register(driverName, &limboDriver{})
+	sql.Register(driverName, &tursoDriver{})
 }
 
-type limboDriver struct {
+type tursoDriver struct {
 	sync.Mutex
 }
 
 var (
 	libOnce           sync.Once
-	limboLib          uintptr
+	tursoLib          uintptr
 	loadErr           error
 	dbOpen            func(string) uintptr
 	dbClose           func(uintptr) uintptr
@@ -49,32 +49,32 @@ var (
 // Register all the symbols on library load
 func ensureLibLoaded() error {
 	libOnce.Do(func() {
-		limboLib, loadErr = loadLibrary()
+		tursoLib, loadErr = loadLibrary()
 		if loadErr != nil {
 			return
 		}
-		purego.RegisterLibFunc(&dbOpen, limboLib, FfiDbOpen)
-		purego.RegisterLibFunc(&dbClose, limboLib, FfiDbClose)
-		purego.RegisterLibFunc(&connPrepare, limboLib, FfiDbPrepare)
-		purego.RegisterLibFunc(&connGetError, limboLib, FfiDbGetError)
-		purego.RegisterLibFunc(&freeBlobFunc, limboLib, FfiFreeBlob)
-		purego.RegisterLibFunc(&freeStringFunc, limboLib, FfiFreeCString)
-		purego.RegisterLibFunc(&rowsGetColumns, limboLib, FfiRowsGetColumns)
-		purego.RegisterLibFunc(&rowsGetColumnName, limboLib, FfiRowsGetColumnName)
-		purego.RegisterLibFunc(&rowsGetValue, limboLib, FfiRowsGetValue)
-		purego.RegisterLibFunc(&closeRows, limboLib, FfiRowsClose)
-		purego.RegisterLibFunc(&rowsNext, limboLib, FfiRowsNext)
-		purego.RegisterLibFunc(&rowsGetError, limboLib, FfiRowsGetError)
-		purego.RegisterLibFunc(&stmtQuery, limboLib, FfiStmtQuery)
-		purego.RegisterLibFunc(&stmtExec, limboLib, FfiStmtExec)
-		purego.RegisterLibFunc(&stmtParamCount, limboLib, FfiStmtParameterCount)
-		purego.RegisterLibFunc(&stmtGetError, limboLib, FfiStmtGetError)
-		purego.RegisterLibFunc(&stmtClose, limboLib, FfiStmtClose)
+		purego.RegisterLibFunc(&dbOpen, tursoLib, FfiDbOpen)
+		purego.RegisterLibFunc(&dbClose, tursoLib, FfiDbClose)
+		purego.RegisterLibFunc(&connPrepare, tursoLib, FfiDbPrepare)
+		purego.RegisterLibFunc(&connGetError, tursoLib, FfiDbGetError)
+		purego.RegisterLibFunc(&freeBlobFunc, tursoLib, FfiFreeBlob)
+		purego.RegisterLibFunc(&freeStringFunc, tursoLib, FfiFreeCString)
+		purego.RegisterLibFunc(&rowsGetColumns, tursoLib, FfiRowsGetColumns)
+		purego.RegisterLibFunc(&rowsGetColumnName, tursoLib, FfiRowsGetColumnName)
+		purego.RegisterLibFunc(&rowsGetValue, tursoLib, FfiRowsGetValue)
+		purego.RegisterLibFunc(&closeRows, tursoLib, FfiRowsClose)
+		purego.RegisterLibFunc(&rowsNext, tursoLib, FfiRowsNext)
+		purego.RegisterLibFunc(&rowsGetError, tursoLib, FfiRowsGetError)
+		purego.RegisterLibFunc(&stmtQuery, tursoLib, FfiStmtQuery)
+		purego.RegisterLibFunc(&stmtExec, tursoLib, FfiStmtExec)
+		purego.RegisterLibFunc(&stmtParamCount, tursoLib, FfiStmtParameterCount)
+		purego.RegisterLibFunc(&stmtGetError, tursoLib, FfiStmtGetError)
+		purego.RegisterLibFunc(&stmtClose, tursoLib, FfiStmtClose)
 	})
 	return loadErr
 }
 
-func (d *limboDriver) Open(name string) (driver.Conn, error) {
+func (d *tursoDriver) Open(name string) (driver.Conn, error) {
 	d.Lock()
 	conn, err := openConn(name)
 	d.Unlock()
@@ -84,23 +84,23 @@ func (d *limboDriver) Open(name string) (driver.Conn, error) {
 	return conn, nil
 }
 
-type limboConn struct {
+type tursoConn struct {
 	sync.Mutex
 	ctx uintptr
 }
 
-func openConn(dsn string) (*limboConn, error) {
+func openConn(dsn string) (*tursoConn, error) {
 	ctx := dbOpen(dsn)
 	if ctx == 0 {
 		return nil, fmt.Errorf("failed to open database for dsn=%q", dsn)
 	}
-	return &limboConn{
+	return &tursoConn{
 		sync.Mutex{},
 		ctx,
 	}, loadErr
 }
 
-func (c *limboConn) Close() error {
+func (c *tursoConn) Close() error {
 	if c.ctx == 0 {
 		return nil
 	}
@@ -111,7 +111,7 @@ func (c *limboConn) Close() error {
 	return nil
 }
 
-func (c *limboConn) getError() error {
+func (c *tursoConn) getError() error {
 	if c.ctx == 0 {
 		return errors.New("connection closed")
 	}
@@ -124,7 +124,7 @@ func (c *limboConn) getError() error {
 	return errors.New(cpy)
 }
 
-func (c *limboConn) Prepare(query string) (driver.Stmt, error) {
+func (c *tursoConn) Prepare(query string) (driver.Stmt, error) {
 	if c.ctx == 0 {
 		return nil, errors.New("connection closed")
 	}
@@ -137,13 +137,13 @@ func (c *limboConn) Prepare(query string) (driver.Stmt, error) {
 	return newStmt(stmtPtr, query), nil
 }
 
-// limboTx implements driver.Tx
-type limboTx struct {
-	conn *limboConn
+// tursoTx implements driver.Tx
+type tursoTx struct {
+	conn *tursoConn
 }
 
 // Begin starts a new transaction with default isolation level
-func (c *limboConn) Begin() (driver.Tx, error) {
+func (c *tursoConn) Begin() (driver.Tx, error) {
 	c.Lock()
 	defer c.Unlock()
 
@@ -165,12 +165,12 @@ func (c *limboConn) Begin() (driver.Tx, error) {
 		return nil, err
 	}
 
-	return &limboTx{conn: c}, nil
+	return &tursoTx{conn: c}, nil
 }
 
 // BeginTx starts a transaction with the specified options.
 // Currently only supports default isolation level and non-read-only transactions.
-func (c *limboConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+func (c *tursoConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	// Skip handling non-default isolation levels and read-only mode
 	// for now, letting database/sql package handle these cases
 	if opts.Isolation != driver.IsolationLevel(sql.LevelDefault) || opts.ReadOnly {
@@ -187,7 +187,7 @@ func (c *limboConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.
 }
 
 // Commit commits the transaction
-func (tx *limboTx) Commit() error {
+func (tx *tursoTx) Commit() error {
 	tx.conn.Lock()
 	defer tx.conn.Unlock()
 
@@ -208,8 +208,7 @@ func (tx *limboTx) Commit() error {
 }
 
 // Rollback aborts the transaction.
-// Note: This operation is not currently fully supported by Limbo and will return an error.
-func (tx *limboTx) Rollback() error {
+func (tx *tursoTx) Rollback() error {
 	tx.conn.Lock()
 	defer tx.conn.Unlock()
 

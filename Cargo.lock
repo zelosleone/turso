@@ -2067,13 +2067,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "limbo-go"
-version = "0.1.4"
-dependencies = [
- "turso_core",
-]
-
-[[package]]
 name = "limbo_completion"
 version = "0.1.4"
 dependencies = [
@@ -3981,6 +3974,13 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
+ "turso_core",
+]
+
+[[package]]
+name = "turso-go"
+version = "0.1.4"
+dependencies = [
  "turso_core",
 ]
 

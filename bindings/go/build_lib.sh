@@ -6,12 +6,12 @@ set -e
 # Accept build type as parameter, default to release
 BUILD_TYPE=${1:-release}
 
-echo "Building Limbo Go library for current platform (build type: $BUILD_TYPE)..."
+echo "Building turso Go library for current platform (build type: $BUILD_TYPE)..."
 
 # Determine platform-specific details
 case "$(uname -s)" in
     Darwin*)
-        OUTPUT_NAME="lib_limbo_go.dylib"
+        OUTPUT_NAME="lib_turso_go.dylib"
         # Map x86_64 to amd64 for Go compatibility
         ARCH=$(uname -m)
         if [ "$ARCH" == "x86_64" ]; then
@@ -20,7 +20,7 @@ case "$(uname -s)" in
         PLATFORM="darwin_${ARCH}"
         ;;
     Linux*)
-        OUTPUT_NAME="lib_limbo_go.so"
+        OUTPUT_NAME="lib_turso_go.so"
         # Map x86_64 to amd64 for Go compatibility
         ARCH=$(uname -m)
         if [ "$ARCH" == "x86_64" ]; then
@@ -29,7 +29,7 @@ case "$(uname -s)" in
         PLATFORM="linux_${ARCH}"
         ;;
     MINGW*|MSYS*|CYGWIN*)
-        OUTPUT_NAME="lib_limbo_go.dll"
+        OUTPUT_NAME="lib_turso_go.dll"
         if [ "$(uname -m)" == "x86_64" ]; then
             PLATFORM="windows_amd64"
         else
@@ -60,8 +60,8 @@ else
 fi
 
 # Build the library
-echo "Running cargo build ${CARGO_ARGS} --package limbo-go"
-cargo build ${CARGO_ARGS} --package limbo-go
+echo "Running cargo build ${CARGO_ARGS} --package turso-go"
+cargo build ${CARGO_ARGS} --package turso-go
 
 # Copy to the appropriate directory
 echo "Copying $OUTPUT_NAME to $OUTPUT_DIR/"

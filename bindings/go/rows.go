@@ -1,4 +1,4 @@
-package limbo
+package turso
 
 import (
 	"database/sql/driver"
@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-type limboRows struct {
+type tursoRows struct {
 	mu      sync.Mutex
 	ctx     uintptr
 	columns []string
@@ -16,8 +16,8 @@ type limboRows struct {
 	closed  bool
 }
 
-func newRows(ctx uintptr) *limboRows {
-	return &limboRows{
+func newRows(ctx uintptr) *tursoRows {
+	return &tursoRows{
 		mu:      sync.Mutex{},
 		ctx:     ctx,
 		columns: nil,
@@ -26,14 +26,14 @@ func newRows(ctx uintptr) *limboRows {
 	}
 }
 
-func (r *limboRows) isClosed() bool {
+func (r *tursoRows) isClosed() bool {
 	if r.ctx == 0 || r.closed {
 		return true
 	}
 	return false
 }
 
-func (r *limboRows) Columns() []string {
+func (r *tursoRows) Columns() []string {
 	if r.isClosed() {
 		return nil
 	}
@@ -54,7 +54,7 @@ func (r *limboRows) Columns() []string {
 	return r.columns
 }
 
-func (r *limboRows) Close() error {
+func (r *tursoRows) Close() error {
 	r.err = errors.New(RowsClosedErr)
 	if r.isClosed() {
 		return r.err
@@ -67,7 +67,7 @@ func (r *limboRows) Close() error {
 	return nil
 }
 
-func (r *limboRows) Err() error {
+func (r *tursoRows) Err() error {
 	if r.err == nil {
 		r.mu.Lock()
 		defer r.mu.Unlock()
@@ -76,7 +76,7 @@ func (r *limboRows) Err() error {
 	return r.err
 }
 
-func (r *limboRows) Next(dest []driver.Value) error {
+func (r *tursoRows) Next(dest []driver.Value) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.isClosed() {
@@ -106,7 +106,7 @@ func (r *limboRows) Next(dest []driver.Value) error {
 }
 
 // mutex will already be locked. this is always called after FFI
-func (r *limboRows) getError() error {
+func (r *tursoRows) getError() error {
 	if r.isClosed() {
 		return r.err
 	}
