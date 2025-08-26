@@ -75,7 +75,7 @@ pub fn resolve_aggregates(
                         }
                         aggs.push(Aggregate {
                             func: f,
-                            args: args.iter().map(|arg| *arg.clone()).collect(),
+                            args: args.to_vec(),
                             original_expr: expr.clone(),
                             distinctness,
                         });
@@ -411,7 +411,7 @@ fn parse_table(
     vtab_predicates: &mut Vec<Expr>,
     qualified_name: &QualifiedName,
     maybe_alias: Option<&As>,
-    args: &[Box<Expr>],
+    args: &[Expr],
     connection: &Arc<crate::Connection>,
 ) -> Result<()> {
     let normalized_qualified_name = normalize_ident(qualified_name.name.as_str());
@@ -547,7 +547,7 @@ fn parse_table(
 }
 
 fn transform_args_into_where_terms(
-    args: &[Box<Expr>],
+    args: &[Expr],
     internal_id: TableInternalId,
     predicates: &mut Vec<Expr>,
     table: &Table,
@@ -567,7 +567,7 @@ fn transform_args_into_where_terms(
                 column: i,
                 is_rowid_alias: col.is_rowid_alias,
             };
-            let expr = match arg_expr.as_ref() {
+            let expr = match arg_expr {
                 Expr::Literal(Null) => Expr::IsNull(Box::new(column_expr)),
                 other => Expr::Binary(
                     column_expr.into(),

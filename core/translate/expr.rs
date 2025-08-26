@@ -154,7 +154,7 @@ fn translate_in_list(
     program: &mut ProgramBuilder,
     referenced_tables: Option<&TableReferences>,
     lhs: &ast::Expr,
-    rhs: &[Box<ast::Expr>],
+    rhs: &[ast::Expr],
     not: bool,
     condition_metadata: ConditionMetadata,
     resolver: &Resolver,
@@ -1633,9 +1633,7 @@ pub fn translate_expr(
                                 );
                             }
 
-                            if let ast::Expr::Literal(ast::Literal::Numeric(ref value)) =
-                                args[1].as_ref()
-                            {
+                            if let ast::Expr::Literal(ast::Literal::Numeric(ref value)) = args[1] {
                                 if let Ok(probability) = value.parse::<f64>() {
                                     if !(0.0..=1.0).contains(&probability) {
                                         crate::bail_parse_error!(
@@ -2545,7 +2543,7 @@ fn translate_like_base(
 /// Returns the target register for the function.
 fn translate_function(
     program: &mut ProgramBuilder,
-    args: &[Box<ast::Expr>],
+    args: &[ast::Expr],
     referenced_tables: Option<&TableReferences>,
     resolver: &Resolver,
     target_register: usize,
@@ -2671,7 +2669,7 @@ pub fn unwrap_parens_owned(expr: ast::Expr) -> Result<(ast::Expr, usize)> {
         ast::Expr::Parenthesized(mut exprs) => match exprs.len() {
             1 => {
                 paren_count += 1;
-                let (expr, count) = unwrap_parens_owned(*exprs.pop().unwrap().clone())?;
+                let (expr, count) = unwrap_parens_owned(exprs.pop().unwrap().clone())?;
                 paren_count += count;
                 Ok((expr, paren_count))
             }

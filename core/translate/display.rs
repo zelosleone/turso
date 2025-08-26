@@ -368,13 +368,8 @@ impl ToTokens for SelectPlan {
         context: &C,
     ) -> Result<(), S::Error> {
         if !self.values.is_empty() {
-            ast::OneSelect::Values(
-                self.values
-                    .iter()
-                    .map(|values| values.iter().map(|v| Box::from(v.clone())).collect())
-                    .collect(),
-            )
-            .to_tokens_with_context(s, context)?;
+            ast::OneSelect::Values(self.values.iter().map(|values| values.to_vec()).collect())
+                .to_tokens_with_context(s, context)?;
         } else {
             s.append(TokenType::TK_SELECT, None)?;
             if self.distinctness.is_distinct() {
@@ -448,7 +443,7 @@ impl ToTokens for SelectPlan {
 
             s.comma(
                 self.order_by.iter().map(|(expr, order)| ast::SortedColumn {
-                    expr: expr.clone(),
+                    expr: expr.clone().into_boxed(),
                     order: Some(*order),
                     nulls: None,
                 }),
@@ -510,7 +505,7 @@ impl ToTokens for DeletePlan {
 
             s.comma(
                 self.order_by.iter().map(|(expr, order)| ast::SortedColumn {
-                    expr: expr.clone(),
+                    expr: expr.clone().into_boxed(),
                     order: Some(*order),
                     nulls: None,
                 }),
@@ -563,7 +558,7 @@ impl ToTokens for UpdatePlan {
 
                 ast::Set {
                     col_names: vec![ast::Name::new(col_name)],
-                    expr: set_expr.clone(),
+                    expr: set_expr.clone().into_boxed(),
                 }
             }),
             context,
@@ -591,7 +586,7 @@ impl ToTokens for UpdatePlan {
 
             s.comma(
                 self.order_by.iter().map(|(expr, order)| ast::SortedColumn {
-                    expr: expr.clone(),
+                    expr: expr.clone().into_boxed(),
                     order: Some(*order),
                     nulls: None,
                 }),
