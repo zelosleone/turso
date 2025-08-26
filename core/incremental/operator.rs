@@ -359,7 +359,7 @@ pub enum JoinType {
     Right,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum AggregateFunction {
     Count,
     Sum(String),
@@ -761,6 +761,46 @@ impl ProjectOperator {
                     }
                     _ => c.expr.to_string(),
                 })
+            })
+            .collect();
+
+        Ok(Self {
+            columns,
+            input_column_names,
+            output_column_names,
+            current_state: Delta::new(),
+            tracker: None,
+            internal_conn,
+        })
+    }
+
+    /// Create a ProjectOperator from pre-compiled expressions
+    pub fn from_compiled(
+        compiled_exprs: Vec<CompiledExpression>,
+        aliases: Vec<Option<String>>,
+        input_column_names: Vec<String>,
+        output_column_names: Vec<String>,
+    ) -> crate::Result<Self> {
+        // Set up internal connection for expression evaluation
+        let io = Arc::new(crate::MemoryIO::new());
+        let db = Database::open_file(
+            io, ":memory:", false, // no MVCC needed for expression evaluation
+            false, // no indexes needed
+        )?;
+        let internal_conn = db.connect()?;
+        // Set to read-only mode and disable auto-commit since we're only evaluating expressions
+        internal_conn.query_only.set(true);
+        internal_conn.auto_commit.set(false);
+
+        // Create ProjectColumn structs from compiled expressions
+        let columns: Vec<ProjectColumn> = compiled_exprs
+            .into_iter()
+            .zip(aliases)
+            .map(|(compiled, alias)| ProjectColumn {
+                // Create a placeholder AST expression since we already have the compiled version
+                expr: turso_parser::ast::Expr::Literal(turso_parser::ast::Literal::Null),
+                alias,
+                compiled,
             })
             .collect();
 
