@@ -364,8 +364,7 @@ pub enum AggregateFunction {
     Count,
     Sum(String),
     Avg(String),
-    Min(String),
-    Max(String),
+    // MIN and MAX are not supported - see comment in compiler.rs for explanation
 }
 
 impl Display for AggregateFunction {
@@ -374,8 +373,6 @@ impl Display for AggregateFunction {
             AggregateFunction::Count => write!(f, "COUNT(*)"),
             AggregateFunction::Sum(col) => write!(f, "SUM({col})"),
             AggregateFunction::Avg(col) => write!(f, "AVG({col})"),
-            AggregateFunction::Min(col) => write!(f, "MIN({col})"),
-            AggregateFunction::Max(col) => write!(f, "MAX({col})"),
         }
     }
 }
@@ -401,8 +398,8 @@ impl AggregateFunction {
                     AggFunc::Count | AggFunc::Count0 => Some(AggregateFunction::Count),
                     AggFunc::Sum => input_column.map(AggregateFunction::Sum),
                     AggFunc::Avg => input_column.map(AggregateFunction::Avg),
-                    AggFunc::Min => input_column.map(AggregateFunction::Min),
-                    AggFunc::Max => input_column.map(AggregateFunction::Max),
+                    // MIN and MAX are not supported in incremental views - see compiler.rs
+                    AggFunc::Min | AggFunc::Max => None,
                     _ => None, // Other aggregate functions not yet supported in DBSP
                 }
             }
@@ -1281,10 +1278,8 @@ struct AggregateState {
     sums: HashMap<String, f64>,
     // For AVG: column_name -> (sum, count) for computing average
     avgs: HashMap<String, (f64, i64)>,
-    // For MIN: column_name -> min value
-    mins: HashMap<String, Value>,
-    // For MAX: column_name -> max value
-    maxs: HashMap<String, Value>,
+    // MIN/MAX are not supported - they require O(n) storage overhead for handling deletions
+    // correctly. See comment in apply_delta() for details.
 }
 
 impl AggregateState {
@@ -1293,8 +1288,6 @@ impl AggregateState {
             count: 0,
             sums: HashMap::new(),
             avgs: HashMap::new(),
-            mins: HashMap::new(),
-            maxs: HashMap::new(),
         }
     }
 
@@ -1343,43 +1336,6 @@ impl AggregateState {
                         }
                     }
                 }
-                AggregateFunction::Min(col_name) => {
-                    // MIN/MAX are more complex for incremental updates
-                    // For now, we'll need to recompute from the full state
-                    // This is a limitation we can improve later
-                    if weight > 0 {
-                        // Only update on insert
-                        if let Some(idx) = column_names.iter().position(|c| c == col_name) {
-                            if let Some(val) = values.get(idx) {
-                                self.mins
-                                    .entry(col_name.clone())
-                                    .and_modify(|existing| {
-                                        if val < existing {
-                                            *existing = val.clone();
-                                        }
-                                    })
-                                    .or_insert_with(|| val.clone());
-                            }
-                        }
-                    }
-                }
-                AggregateFunction::Max(col_name) => {
-                    if weight > 0 {
-                        // Only update on insert
-                        if let Some(idx) = column_names.iter().position(|c| c == col_name) {
-                            if let Some(val) = values.get(idx) {
-                                self.maxs
-                                    .entry(col_name.clone())
-                                    .and_modify(|existing| {
-                                        if val > existing {
-                                            *existing = val.clone();
-                                        }
-                                    })
-                                    .or_insert_with(|| val.clone());
-                            }
-                        }
-                    }
-                }
             }
         }
     }
@@ -1412,12 +1368,6 @@ impl AggregateState {
                     } else {
                         result.push(Value::Null);
                     }
-                }
-                AggregateFunction::Min(col_name) => {
-                    result.push(self.mins.get(col_name).cloned().unwrap_or(Value::Null));
-                }
-                AggregateFunction::Max(col_name) => {
-                    result.push(self.maxs.get(col_name).cloned().unwrap_or(Value::Null));
                 }
             }
         }
@@ -2090,12 +2040,14 @@ mod tests {
         // Should only update one group (cat_0), not recount all groups
         assert_eq!(tracker.lock().unwrap().aggregation_updates, 1);
 
-        // Output should show cat_0 now has count 11
-        assert_eq!(output.len(), 1);
-        assert!(!output.changes.is_empty());
-        let (change_row, _weight) = &output.changes[0];
-        assert_eq!(change_row.values[0], Value::Text(Text::new("cat_0")));
-        assert_eq!(change_row.values[1], Value::Integer(11));
+        // Check the final state - cat_0 should now have count 11
+        let final_state = agg.get_current_state();
+        let cat_0 = final_state
+            .changes
+            .iter()
+            .find(|(row, _)| row.values[0] == Value::Text(Text::new("cat_0")))
+            .unwrap();
+        assert_eq!(cat_0.0.values[1], Value::Integer(11));
 
         // Verify incremental behavior
         let t = tracker.lock().unwrap();
@@ -2174,13 +2126,15 @@ mod tests {
 
         // Should only update Widget group
         assert_eq!(tracker.lock().unwrap().aggregation_updates, 1);
-        assert_eq!(output.len(), 1);
 
-        // Widget should now be 300 (250 + 50)
-        assert!(!output.changes.is_empty());
-        let (change, _weight) = &output.changes[0];
-        assert_eq!(change.values[0], Value::Text(Text::new("Widget")));
-        assert_eq!(change.values[1], Value::Integer(300));
+        // Check final state - Widget should now be 300 (250 + 50)
+        let final_state = agg.get_current_state();
+        let widget = final_state
+            .changes
+            .iter()
+            .find(|(row, _)| row.values[0] == Value::Text(Text::new("Widget")))
+            .unwrap();
+        assert_eq!(widget.0.values[1], Value::Integer(300));
     }
 
     #[test]
@@ -2247,13 +2201,15 @@ mod tests {
         );
         let output = agg.process_delta(delta);
 
-        // Should only update user 1
-        assert_eq!(output.len(), 1);
-        assert!(!output.changes.is_empty());
-        let (change, _weight) = &output.changes[0];
-        assert_eq!(change.values[0], Value::Integer(1)); // user_id
-        assert_eq!(change.values[1], Value::Integer(3)); // count: 2 + 1
-        assert_eq!(change.values[2], Value::Integer(350)); // sum: 300 + 50
+        // Check final state - user 1 should have updated count and sum
+        let final_state = agg.get_current_state();
+        let user1 = final_state
+            .changes
+            .iter()
+            .find(|(row, _)| row.values[0] == Value::Integer(1))
+            .unwrap();
+        assert_eq!(user1.0.values[1], Value::Integer(3)); // count: 2 + 1
+        assert_eq!(user1.0.values[2], Value::Integer(350)); // sum: 300 + 50
     }
 
     #[test]
@@ -2329,11 +2285,14 @@ mod tests {
         );
         let output = agg.process_delta(delta);
 
-        // Category A avg should now be (10 + 20 + 30) / 3 = 20
-        assert!(!output.changes.is_empty());
-        let (change, _weight) = &output.changes[0];
-        assert_eq!(change.values[0], Value::Text(Text::new("A")));
-        assert_eq!(change.values[1], Value::Float(20.0));
+        // Check final state - Category A avg should now be (10 + 20 + 30) / 3 = 20
+        let final_state = agg.get_current_state();
+        let cat_a = final_state
+            .changes
+            .iter()
+            .find(|(row, _)| row.values[0] == Value::Text(Text::new("A")))
+            .unwrap();
+        assert_eq!(cat_a.0.values[1], Value::Float(20.0));
     }
 
     #[test]
@@ -2392,12 +2351,249 @@ mod tests {
 
         let output = agg.process_delta(delta);
 
-        // Should update to count=1, sum=200
-        assert!(!output.changes.is_empty());
-        let (change_row, _weight) = &output.changes[0];
-        assert_eq!(change_row.values[0], Value::Text(Text::new("A")));
-        assert_eq!(change_row.values[1], Value::Integer(1)); // count: 2 - 1
-        assert_eq!(change_row.values[2], Value::Integer(200)); // sum: 300 - 100
+        // Check final state - should update to count=1, sum=200
+        let final_state = agg.get_current_state();
+        let cat_a = final_state
+            .changes
+            .iter()
+            .find(|(row, _)| row.values[0] == Value::Text(Text::new("A")))
+            .unwrap();
+        assert_eq!(cat_a.0.values[1], Value::Integer(1)); // count: 2 - 1
+        assert_eq!(cat_a.0.values[2], Value::Integer(200)); // sum: 300 - 100
+    }
+
+    #[test]
+    fn test_count_aggregation_with_deletions() {
+        let aggregates = vec![AggregateFunction::Count];
+        let group_by = vec!["category".to_string()];
+        let input_columns = vec!["category".to_string(), "value".to_string()];
+
+        let mut agg = AggregateOperator::new(group_by, aggregates.clone(), input_columns);
+
+        // Initialize with data
+        let mut init_data = Delta::new();
+        init_data.insert(1, vec![Value::Text("A".into()), Value::Integer(10)]);
+        init_data.insert(2, vec![Value::Text("A".into()), Value::Integer(20)]);
+        init_data.insert(3, vec![Value::Text("B".into()), Value::Integer(30)]);
+        agg.initialize(init_data);
+
+        // Check initial counts
+        let state = agg.get_current_state();
+        assert_eq!(state.changes.len(), 2);
+
+        // Find group A and B
+        let group_a = state
+            .changes
+            .iter()
+            .find(|(row, _)| row.values[0] == Value::Text("A".into()))
+            .unwrap();
+        let group_b = state
+            .changes
+            .iter()
+            .find(|(row, _)| row.values[0] == Value::Text("B".into()))
+            .unwrap();
+
+        assert_eq!(group_a.0.values[1], Value::Integer(2)); // COUNT = 2 for A
+        assert_eq!(group_b.0.values[1], Value::Integer(1)); // COUNT = 1 for B
+
+        // Delete one row from group A
+        let mut delete_delta = Delta::new();
+        delete_delta.delete(1, vec![Value::Text("A".into()), Value::Integer(10)]);
+
+        let output = agg.process_delta(delete_delta);
+
+        // Should emit retraction for old count and insertion for new count
+        assert_eq!(output.changes.len(), 2);
+
+        // Check final state
+        let final_state = agg.get_current_state();
+        let group_a_final = final_state
+            .changes
+            .iter()
+            .find(|(row, _)| row.values[0] == Value::Text("A".into()))
+            .unwrap();
+        assert_eq!(group_a_final.0.values[1], Value::Integer(1)); // COUNT = 1 for A after deletion
+
+        // Delete all rows from group B
+        let mut delete_all_b = Delta::new();
+        delete_all_b.delete(3, vec![Value::Text("B".into()), Value::Integer(30)]);
+
+        let output_b = agg.process_delta(delete_all_b);
+        assert_eq!(output_b.changes.len(), 1); // Only retraction, no new row
+        assert_eq!(output_b.changes[0].1, -1); // Retraction
+
+        // Final state should not have group B
+        let final_state2 = agg.get_current_state();
+        assert_eq!(final_state2.changes.len(), 1); // Only group A remains
+        assert_eq!(final_state2.changes[0].0.values[0], Value::Text("A".into()));
+    }
+
+    #[test]
+    fn test_sum_aggregation_with_deletions() {
+        let aggregates = vec![AggregateFunction::Sum("value".to_string())];
+        let group_by = vec!["category".to_string()];
+        let input_columns = vec!["category".to_string(), "value".to_string()];
+
+        let mut agg = AggregateOperator::new(group_by, aggregates.clone(), input_columns);
+
+        // Initialize with data
+        let mut init_data = Delta::new();
+        init_data.insert(1, vec![Value::Text("A".into()), Value::Integer(10)]);
+        init_data.insert(2, vec![Value::Text("A".into()), Value::Integer(20)]);
+        init_data.insert(3, vec![Value::Text("B".into()), Value::Integer(30)]);
+        init_data.insert(4, vec![Value::Text("B".into()), Value::Integer(15)]);
+        agg.initialize(init_data);
+
+        // Check initial sums
+        let state = agg.get_current_state();
+        let group_a = state
+            .changes
+            .iter()
+            .find(|(row, _)| row.values[0] == Value::Text("A".into()))
+            .unwrap();
+        let group_b = state
+            .changes
+            .iter()
+            .find(|(row, _)| row.values[0] == Value::Text("B".into()))
+            .unwrap();
+
+        assert_eq!(group_a.0.values[1], Value::Integer(30)); // SUM = 30 for A (10+20)
+        assert_eq!(group_b.0.values[1], Value::Integer(45)); // SUM = 45 for B (30+15)
+
+        // Delete one row from group A
+        let mut delete_delta = Delta::new();
+        delete_delta.delete(2, vec![Value::Text("A".into()), Value::Integer(20)]);
+
+        agg.process_delta(delete_delta);
+
+        // Check updated sum
+        let state = agg.get_current_state();
+        let group_a = state
+            .changes
+            .iter()
+            .find(|(row, _)| row.values[0] == Value::Text("A".into()))
+            .unwrap();
+        assert_eq!(group_a.0.values[1], Value::Integer(10)); // SUM = 10 for A after deletion
+
+        // Delete all from group B
+        let mut delete_all_b = Delta::new();
+        delete_all_b.delete(3, vec![Value::Text("B".into()), Value::Integer(30)]);
+        delete_all_b.delete(4, vec![Value::Text("B".into()), Value::Integer(15)]);
+
+        agg.process_delta(delete_all_b);
+
+        // Group B should be gone
+        let final_state = agg.get_current_state();
+        assert_eq!(final_state.changes.len(), 1); // Only group A remains
+        assert_eq!(final_state.changes[0].0.values[0], Value::Text("A".into()));
+    }
+
+    #[test]
+    fn test_avg_aggregation_with_deletions() {
+        let aggregates = vec![AggregateFunction::Avg("value".to_string())];
+        let group_by = vec!["category".to_string()];
+        let input_columns = vec!["category".to_string(), "value".to_string()];
+
+        let mut agg = AggregateOperator::new(group_by, aggregates.clone(), input_columns);
+
+        // Initialize with data
+        let mut init_data = Delta::new();
+        init_data.insert(1, vec![Value::Text("A".into()), Value::Integer(10)]);
+        init_data.insert(2, vec![Value::Text("A".into()), Value::Integer(20)]);
+        init_data.insert(3, vec![Value::Text("A".into()), Value::Integer(30)]);
+        agg.initialize(init_data);
+
+        // Check initial average
+        let state = agg.get_current_state();
+        assert_eq!(state.changes.len(), 1);
+        assert_eq!(state.changes[0].0.values[1], Value::Float(20.0)); // AVG = (10+20+30)/3 = 20
+
+        // Delete the middle value
+        let mut delete_delta = Delta::new();
+        delete_delta.delete(2, vec![Value::Text("A".into()), Value::Integer(20)]);
+
+        agg.process_delta(delete_delta);
+
+        // Check updated average
+        let state = agg.get_current_state();
+        assert_eq!(state.changes[0].0.values[1], Value::Float(20.0)); // AVG = (10+30)/2 = 20 (same!)
+
+        // Delete another to change the average
+        let mut delete_another = Delta::new();
+        delete_another.delete(3, vec![Value::Text("A".into()), Value::Integer(30)]);
+
+        agg.process_delta(delete_another);
+
+        let state = agg.get_current_state();
+        assert_eq!(state.changes[0].0.values[1], Value::Float(10.0)); // AVG = 10/1 = 10
+    }
+
+    #[test]
+    fn test_multiple_aggregations_with_deletions() {
+        // Test COUNT, SUM, and AVG together
+        let aggregates = vec![
+            AggregateFunction::Count,
+            AggregateFunction::Sum("value".to_string()),
+            AggregateFunction::Avg("value".to_string()),
+        ];
+        let group_by = vec!["category".to_string()];
+        let input_columns = vec!["category".to_string(), "value".to_string()];
+
+        let mut agg = AggregateOperator::new(group_by, aggregates.clone(), input_columns);
+
+        // Initialize with data
+        let mut init_data = Delta::new();
+        init_data.insert(1, vec![Value::Text("A".into()), Value::Integer(100)]);
+        init_data.insert(2, vec![Value::Text("A".into()), Value::Integer(200)]);
+        init_data.insert(3, vec![Value::Text("B".into()), Value::Integer(50)]);
+        agg.initialize(init_data);
+
+        // Check initial state
+        let state = agg.get_current_state();
+        let group_a = state
+            .changes
+            .iter()
+            .find(|(row, _)| row.values[0] == Value::Text("A".into()))
+            .unwrap();
+
+        assert_eq!(group_a.0.values[1], Value::Integer(2)); // COUNT = 2
+        assert_eq!(group_a.0.values[2], Value::Integer(300)); // SUM = 300
+        assert_eq!(group_a.0.values[3], Value::Float(150.0)); // AVG = 150
+
+        // Delete one row from group A
+        let mut delete_delta = Delta::new();
+        delete_delta.delete(1, vec![Value::Text("A".into()), Value::Integer(100)]);
+
+        agg.process_delta(delete_delta);
+
+        // Check all aggregates updated correctly
+        let state = agg.get_current_state();
+        let group_a = state
+            .changes
+            .iter()
+            .find(|(row, _)| row.values[0] == Value::Text("A".into()))
+            .unwrap();
+
+        assert_eq!(group_a.0.values[1], Value::Integer(1)); // COUNT = 1
+        assert_eq!(group_a.0.values[2], Value::Integer(200)); // SUM = 200
+        assert_eq!(group_a.0.values[3], Value::Float(200.0)); // AVG = 200
+
+        // Insert a new row with floating point value
+        let mut insert_delta = Delta::new();
+        insert_delta.insert(4, vec![Value::Text("A".into()), Value::Float(50.5)]);
+
+        agg.process_delta(insert_delta);
+
+        let state = agg.get_current_state();
+        let group_a = state
+            .changes
+            .iter()
+            .find(|(row, _)| row.values[0] == Value::Text("A".into()))
+            .unwrap();
+
+        assert_eq!(group_a.0.values[1], Value::Integer(2)); // COUNT = 2
+        assert_eq!(group_a.0.values[2], Value::Float(250.5)); // SUM = 250.5
+        assert_eq!(group_a.0.values[3], Value::Float(125.25)); // AVG = 125.25
     }
 
     #[test]
