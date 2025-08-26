@@ -1,7 +1,7 @@
 #[derive(Debug, Clone)]
 pub struct IOProfile {
-    enable: bool,
-    latency: LatencyProfile,
+    pub enable: bool,
+    pub latency: LatencyProfile,
 }
 
 impl Default for IOProfile {
@@ -15,13 +15,13 @@ impl Default for IOProfile {
 
 #[derive(Debug, Clone)]
 pub struct LatencyProfile {
-    enable: bool,
+    pub enable: bool,
     /// Added IO latency probability
-    latency_probability: usize,
+    pub latency_probability: usize,
     /// Minimum tick time in microseconds for simulated time
-    min_tick: u64,
+    pub min_tick: u64,
     /// Maximum tick time in microseconds for simulated time
-    max_tick: u64,
+    pub max_tick: u64,
 }
 
 impl Default for LatencyProfile {

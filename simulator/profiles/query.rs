@@ -1,6 +1,16 @@
+#[derive(Debug, Default, Clone)]
+pub struct QueryProfile {
+    pub create_table: CreateTableProfile,
+    pub create_index: CreateIndexProfile,
+    pub insert: InsertProfile,
+    pub update: UpdateProfile,
+    pub delete: DeleteProfile,
+    pub drop_table: DropTableProfile,
+}
+
 #[derive(Debug, Clone)]
 pub struct CreateTableProfile {
-    enable: bool,
+    pub enable: bool,
 }
 
 impl Default for CreateTableProfile {
@@ -11,7 +21,7 @@ impl Default for CreateTableProfile {
 
 #[derive(Debug, Clone)]
 pub struct CreateIndexProfile {
-    enable: bool,
+    pub enable: bool,
 }
 
 impl Default for CreateIndexProfile {
@@ -22,7 +32,7 @@ impl Default for CreateIndexProfile {
 
 #[derive(Debug, Clone)]
 pub struct InsertProfile {
-    enable: bool,
+    pub enable: bool,
 }
 
 impl Default for InsertProfile {
@@ -33,7 +43,7 @@ impl Default for InsertProfile {
 
 #[derive(Debug, Clone)]
 pub struct UpdateProfile {
-    enable: bool,
+    pub enable: bool,
 }
 
 impl Default for UpdateProfile {
@@ -44,7 +54,7 @@ impl Default for UpdateProfile {
 
 #[derive(Debug, Clone)]
 pub struct DeleteProfile {
-    enable: bool,
+    pub enable: bool,
 }
 
 impl Default for DeleteProfile {
@@ -55,7 +65,7 @@ impl Default for DeleteProfile {
 
 #[derive(Debug, Clone)]
 pub struct DropTableProfile {
-    enable: bool,
+    pub enable: bool,
 }
 
 impl Default for DropTableProfile {
