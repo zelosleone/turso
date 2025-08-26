@@ -1096,7 +1096,7 @@ impl Wal for WalFile {
         });
         begin_read_wal_frame(
             &self.get_shared().file,
-            offset + WAL_FRAME_HEADER_SIZE,
+            offset + WAL_FRAME_HEADER_SIZE as u64,
             buffer_pool,
             complete,
         )
@@ -1179,7 +1179,7 @@ impl Wal for WalFile {
             });
             let c = begin_read_wal_frame(
                 &self.get_shared().file,
-                offset + WAL_FRAME_HEADER_SIZE,
+                offset + WAL_FRAME_HEADER_SIZE as u64,
                 buffer_pool,
                 complete,
             )?;
@@ -1441,14 +1441,14 @@ impl Wal for WalFile {
         let mut next_frame_id = self.max_frame + 1;
         // Build every frame in order, updating the rolling checksum
         for (idx, page) in pages.iter().enumerate() {
-            let page_id = page.get().id as u64;
+            let page_id = page.get().id;
             let plain = page.get_contents().as_ptr();
 
             let data_to_write: std::borrow::Cow<[u8]> = {
                 let io_ctx = self.io_ctx.borrow();
                 let ectx = io_ctx.encryption_context();
                 if let Some(ctx) = ectx.as_ref() {
-                    Cow::Owned(ctx.encrypt_page(plain, page_id as usize)?)
+                    Cow::Owned(ctx.encrypt_page(plain, page_id)?)
                 } else {
                     Cow::Borrowed(plain)
                 }
@@ -1562,11 +1562,11 @@ impl WalFile {
         self.get_shared().wal_header.lock().page_size
     }
 
-    fn frame_offset(&self, frame_id: u64) -> usize {
+    fn frame_offset(&self, frame_id: u64) -> u64 {
         assert!(frame_id > 0, "Frame ID must be 1-based");
         let page_offset = (frame_id - 1) * (self.page_size() + WAL_FRAME_HEADER_SIZE as u32) as u64;
         let offset = WAL_HEADER_SIZE as u64 + page_offset;
-        offset as usize
+        offset
     }
 
     #[allow(clippy::mut_from_ref)]
@@ -2110,7 +2110,7 @@ impl WalFile {
         // schedule read of the page payload
         let c = begin_read_wal_frame(
             &self.get_shared().file,
-            offset + WAL_FRAME_HEADER_SIZE,
+            offset + WAL_FRAME_HEADER_SIZE as u64,
             self.buffer_pool.clone(),
             complete,
         )?;

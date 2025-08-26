@@ -81,7 +81,7 @@ pub async fn db_bootstrap<C: ProtocolIO, Ctx>(
             while !c.is_completed() {
                 coro.yield_(ProtocolCommand::IO).await?;
             }
-            pos += content_len;
+            pos += content_len as u64;
         }
         if content.is_done()? {
             break;
@@ -1074,7 +1074,7 @@ pub async fn reset_wal_file<Ctx>(
         // let's truncate WAL file completely in order for this operation to safely execute on empty WAL in case of initial bootstrap phase
         0
     } else {
-        WAL_HEADER + WAL_FRAME_SIZE * (frames_count as usize)
+        WAL_HEADER as u64 + WAL_FRAME_SIZE as u64 * frames_count
     };
     tracing::debug!("reset db wal to the size of {} frames", frames_count);
     let c = Completion::new_trunc(move |result| {
