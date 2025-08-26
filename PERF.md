@@ -29,6 +29,7 @@ strace -f -c ../../Mobibench/shell/mobibench-turso -f 1024 -r 4 -a 0 -y 0 -t 1 -
 ./mobibench -p <benchmark-directory> -n 1000 -d 0 -j 4
 ```
 
+
 ## Clickbench
 
 We have a modified version of the Clickbench benchmark script that can be run with:
@@ -39,7 +40,6 @@ make clickbench
 
 This will build Turso in release mode, create a database, and run the benchmarks with a small subset of the Clickbench dataset.
 It will run the queries for both Turso and SQLite, and print the results.
-
 
 
 ## Comparing VFS's/IO Back-ends (io_uring | syscall)
@@ -54,26 +54,9 @@ The naive script will build and run limbo in release mode and execute the given 
 
 ## TPC-H
 
-1. Clone the Taratool TPC-H benchmarking tool:
+Run the benchmark script:
 
 ```shell
-git clone git@github.com:tarantool/tpch.git
+./perf/tpc-h/benchmark.sh
 ```
-
-2. Patch the benchmark runner script:
-
-```patch
-diff --git a/bench_queries.sh b/bench_queries.sh
-index 6b894f9..c808e9a 100755
---- a/bench_queries.sh
-+++ b/bench_queries.sh
-@@ -4,7 +4,7 @@ function check_q {
-        local query=queries/$*.sql
-        (
-                echo $query
--               time ( sqlite3 TPC-H.db < $query  > /dev/null )
-+               time ( ../../limbo/target/release/limbo -m list TPC-H.db < $query  > /dev/null )
-        )
- }
-``` 
 
