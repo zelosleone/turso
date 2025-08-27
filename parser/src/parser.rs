@@ -327,7 +327,7 @@ impl<'a> Parser<'a> {
              */
             match tok.token_type.unwrap() {
                 TK_WINDOW => {
-                    let can_be_window = self.try_parse(|p| -> Result<bool> {
+                    let can_be_window = self.try_parse(|p| {
                         match p.consume_lexer_without_whitespaces_or_comments() {
                             None => return Ok(false),
                             Some(tok) => match get_token(tok?.token_type.unwrap()) {
@@ -353,7 +353,7 @@ impl<'a> Parser<'a> {
                     let prev_tt = self.current_token.token_type.unwrap_or(TK_EOF);
                     let can_be_over = {
                         if prev_tt == TK_RP {
-                            self.try_parse(|p| -> Result<bool> {
+                            self.try_parse(|p| {
                                 match p.consume_lexer_without_whitespaces_or_comments() {
                                     None => Ok(false),
                                     Some(tok) => match get_token(tok?.token_type.unwrap()) {
@@ -375,7 +375,7 @@ impl<'a> Parser<'a> {
                     let prev_tt = self.current_token.token_type.unwrap_or(TK_EOF);
                     let can_be_filter = {
                         if prev_tt == TK_RP {
-                            self.try_parse(|p| -> Result<bool> {
+                            self.try_parse(|p| {
                                 match p.consume_lexer_without_whitespaces_or_comments() {
                                     None => Ok(false),
                                     Some(tok) => match tok?.token_type.unwrap() {
@@ -394,7 +394,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 TK_UNION => {
-                    let can_be_union = self.try_parse(|p| -> Result<bool> {
+                    let can_be_union = self.try_parse(|p| {
                         match p.consume_lexer_without_whitespaces_or_comments() {
                             None => Ok(false),
                             Some(tok) => match tok?.token_type.unwrap() {
@@ -409,7 +409,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 TK_EXCEPT | TK_INTERSECT => {
-                    let can_be_except = self.try_parse(|p| -> Result<bool> {
+                    let can_be_except = self.try_parse(|p| {
                         match p.consume_lexer_without_whitespaces_or_comments() {
                             None => Ok(false),
                             Some(tok) => match tok?.token_type.unwrap() {
@@ -432,7 +432,7 @@ impl<'a> Parser<'a> {
                     }
                 }
                 TK_GENERATED => {
-                    let can_be_generated = self.try_parse(|p| -> Result<bool> {
+                    let can_be_generated = self.try_parse(|p| {
                         match p.consume_lexer_without_whitespaces_or_comments() {
                             None => return Ok(false),
                             Some(tok) => match tok?.token_type.unwrap() {
@@ -457,7 +457,7 @@ impl<'a> Parser<'a> {
                 TK_WITHOUT => {
                     let prev_tt = self.current_token.token_type.unwrap_or(TK_EOF);
                     let can_be_without = match prev_tt {
-                        TK_RP | TK_COMMA => self.try_parse(|p| -> Result<bool> {
+                        TK_RP | TK_COMMA => self.try_parse(|p| {
                             match p.consume_lexer_without_whitespaces_or_comments() {
                                 None => Ok(false),
                                 Some(tok) => match get_token(tok?.token_type.unwrap()) {
