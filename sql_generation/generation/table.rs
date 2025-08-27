@@ -3,7 +3,10 @@ use std::collections::HashSet;
 use rand::Rng;
 use turso_core::Value;
 
-use crate::generation::{gen_random_text, pick, readable_name_custom, Arbitrary, ArbitraryFrom};
+use crate::generation::{
+    gen_random_text, pick, readable_name_custom, Arbitrary, ArbitraryContext, ArbitraryFrom,
+    GenerationContext, Opts,
+};
 use crate::model::table::{Column, ColumnType, Name, SimValue, Table};
 
 use super::ArbitraryFromMaybe;
@@ -15,35 +18,43 @@ impl Arbitrary for Name {
     }
 }
 
-impl Arbitrary for Table {
-    fn arbitrary<R: Rng>(rng: &mut R) -> Self {
+impl Table {
+    fn gen_table<R: Rng>(rng: &mut R, opts: &Opts) -> Self {
+        let opts = opts.table.clone();
         let name = Name::arbitrary(rng).0;
-        let columns = loop {
-            let large_table = rng.random_bool(0.1);
-            let column_size = if large_table {
-                rng.random_range(64..125) // todo: make this higher (128+)
-            } else {
-                rng.random_range(1..=10)
-            };
-            let columns = (1..=column_size)
-                .map(|_| Column::arbitrary(rng))
-                .collect::<Vec<_>>();
-            // TODO: see if there is a better way to detect duplicates here
-            let mut set = HashSet::with_capacity(columns.len());
-            set.extend(columns.iter());
-            // Has repeated column name inside so generate again
-            if set.len() != columns.len() {
-                continue;
+        let large_table =
+            opts.large_table.enable && rng.random_bool(opts.large_table.large_table_prob);
+        let column_size = if large_table {
+            rng.random_range(opts.large_table.column_range)
+        } else {
+            rng.random_range(opts.column_range)
+        } as usize;
+        let mut column_set = HashSet::with_capacity(column_size);
+        for col in std::iter::repeat_with(|| Column::arbitrary(rng)) {
+            column_set.insert(col);
+            if column_set.len() == column_size {
+                break;
             }
-            break columns;
-        };
+        }
 
         Table {
             rows: Vec::new(),
             name,
-            columns,
+            columns: Vec::from_iter(column_set.into_iter()),
             indexes: vec![],
         }
+    }
+}
+
+impl Arbitrary for Table {
+    fn arbitrary<R: Rng>(rng: &mut R) -> Self {
+        Table::gen_table(rng, &Opts::default())
+    }
+}
+
+impl ArbitraryContext for Table {
+    fn arbitrary_with_context<R: Rng, C: GenerationContext>(rng: &mut R, context: &C) -> Self {
+        Table::gen_table(rng, context.opts())
     }
 }
 

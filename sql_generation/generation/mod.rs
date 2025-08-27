@@ -3,8 +3,8 @@ use std::{iter::Sum, ops::SubAssign};
 use anarchist_readable_name_generator_lib::readable_name_custom;
 use rand::{distr::uniform::SampleUniform, Rng};
 
-pub mod opts;
 pub mod expr;
+pub mod opts;
 pub mod predicate;
 pub mod query;
 pub mod table;
@@ -39,6 +39,18 @@ pub trait ArbitrarySized {
 /// or a predicate satisfying a given table row.
 pub trait ArbitraryFrom<T> {
     fn arbitrary_from<R: Rng>(rng: &mut R, t: T) -> Self;
+}
+
+pub trait ArbitraryContext {
+    fn arbitrary_with_context<R: Rng, C: GenerationContext>(rng: &mut R, context: &C) -> Self;
+}
+
+pub trait ArbitraryContextFrom<T> {
+    fn arbitrary_with_context_from<R: Rng, C: GenerationContext>(
+        rng: &mut R,
+        context: &C,
+        t: T,
+    ) -> Self;
 }
 
 /// ArbitrarySizedFrom trait for generating random values from a given value

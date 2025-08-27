@@ -1,5 +1,7 @@
 use std::ops::Range;
 
+use rand::distr::weighted::WeightedIndex;
+
 use crate::model::table::Table;
 
 #[derive(Debug, Clone)]
@@ -7,6 +9,7 @@ pub struct Opts {
     /// Indexes enabled
     pub indexes: bool,
     pub table: TableOpts,
+    pub query: QueryOpts,
 }
 
 impl Default for Opts {
@@ -14,6 +17,7 @@ impl Default for Opts {
         Self {
             indexes: true,
             table: Default::default(),
+            query: Default::default(),
         }
     }
 }
@@ -45,7 +49,7 @@ impl Default for TableOpts {
 #[derive(Debug, Clone)]
 pub struct LargeTableOpts {
     pub enable: bool,
-    pub large_table_prob: f32,
+    pub large_table_prob: f64,
     /// Range of numbers of columns to generate
     pub column_range: Range<u32>,
 }
@@ -59,4 +63,47 @@ impl Default for LargeTableOpts {
             column_range: 64..125,
         }
     }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct QueryOpts {
+    pub from_clause: FromClauseOpts,
+}
+
+#[derive(Debug, Clone)]
+pub struct FromClauseOpts {
+    pub joins: Vec<JoinWeight>,
+}
+
+impl Default for FromClauseOpts {
+    fn default() -> Self {
+        Self {
+            joins: vec![
+                JoinWeight {
+                    num_joins: 0,
+                    weight: 90,
+                },
+                JoinWeight {
+                    num_joins: 1,
+                    weight: 7,
+                },
+                JoinWeight {
+                    num_joins: 2,
+                    weight: 3,
+                },
+            ],
+        }
+    }
+}
+
+impl FromClauseOpts {
+    pub fn as_weighted_index(&self) -> WeightedIndex<u32> {
+        WeightedIndex::new(self.joins.iter().map(|weight| weight.weight)).unwrap()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct JoinWeight {
+    pub num_joins: u32,
+    pub weight: u32,
 }

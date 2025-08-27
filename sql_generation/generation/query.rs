@@ -1,6 +1,6 @@
 use crate::generation::{
-    gen_random_text, pick_n_unique, pick_unique, Arbitrary, ArbitraryFrom, ArbitrarySizedFrom,
-    GenerationContext,
+    gen_random_text, pick_n_unique, pick_unique, Arbitrary, ArbitraryContext, ArbitraryContextFrom,
+    ArbitraryFrom, ArbitrarySizedFrom, GenerationContext,
 };
 use crate::model::query::predicate::Predicate;
 use crate::model::query::select::{
@@ -21,6 +21,77 @@ impl Arbitrary for Create {
         Create {
             table: Table::arbitrary(rng),
         }
+    }
+}
+
+impl ArbitraryContext for Create {
+    fn arbitrary_with_context<R: Rng, C: GenerationContext>(rng: &mut R, context: &C) -> Self {
+        Create {
+            table: Table::arbitrary_with_context(rng, context),
+        }
+    }
+}
+
+impl ArbitraryContextFrom<&Vec<Table>> for FromClause {
+    fn arbitrary_with_context_from<R: Rng, C: GenerationContext>(
+        rng: &mut R,
+        context: &C,
+        tables: &Vec<Table>,
+    ) -> Self {
+        let opts = &context.opts().query.from_clause;
+        let weights = opts.as_weighted_index();
+        let num_joins = opts.joins[rng.sample(weights)].num_joins;
+
+        let mut tables = tables.clone();
+        let mut table = pick(&tables, rng).clone();
+
+        tables.retain(|t| t.name != table.name);
+
+        let name = table.name.clone();
+
+        let mut table_context = JoinTable {
+            tables: Vec::new(),
+            rows: Vec::new(),
+        };
+
+        let joins: Vec<_> = (0..num_joins)
+            .filter_map(|_| {
+                if tables.is_empty() {
+                    return None;
+                }
+                let join_table = pick(&tables, rng).clone();
+                let joined_table_name = join_table.name.clone();
+
+                tables.retain(|t| t.name != join_table.name);
+                table_context.rows = table_context
+                    .rows
+                    .iter()
+                    .cartesian_product(join_table.rows.iter())
+                    .map(|(t_row, j_row)| {
+                        let mut row = t_row.clone();
+                        row.extend(j_row.clone());
+                        row
+                    })
+                    .collect();
+                // TODO: inneficient. use a Deque to push_front?
+                table_context.tables.insert(0, join_table);
+                for row in &mut table.rows {
+                    assert_eq!(
+                        row.len(),
+                        table.columns.len(),
+                        "Row length does not match column length after join"
+                    );
+                }
+
+                let predicate = Predicate::arbitrary_from(rng, &table);
+                Some(JoinedTable {
+                    table: joined_table_name,
+                    join_type: JoinType::Inner,
+                    on: predicate,
+                })
+            })
+            .collect();
+        FromClause { table: name, joins }
     }
 }
 
