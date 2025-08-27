@@ -3,24 +3,13 @@ use std::{iter::Sum, ops::SubAssign};
 use anarchist_readable_name_generator_lib::readable_name_custom;
 use rand::{distr::uniform::SampleUniform, Rng};
 
-use crate::model::table::Table;
-
+pub mod opts;
 pub mod expr;
 pub mod predicate;
 pub mod query;
 pub mod table;
 
-#[derive(Debug, Clone, Copy)]
-pub struct Opts {
-    /// Indexes enabled
-    pub indexes: bool,
-}
-
-/// Trait used to provide context to generation functions
-pub trait GenerationContext {
-    fn tables(&self) -> &Vec<Table>;
-    fn opts(&self) -> Opts;
-}
+pub use opts::*;
 
 type ArbitraryFromFunc<'a, R, T> = Box<dyn Fn(&mut R) -> T + 'a>;
 type Choice<'a, R, T> = (usize, Box<dyn Fn(&mut R) -> Option<T> + 'a>);

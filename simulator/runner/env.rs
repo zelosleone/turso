@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use sql_generation::generation::Opts;
 use sql_generation::model::table::Table;
 use turso_core::Database;
 
@@ -59,6 +60,7 @@ impl Deref for SimulatorTables {
 
 pub(crate) struct SimulatorEnv {
     pub(crate) opts: SimulatorOpts,
+    pub gen_opts: Opts,
     pub(crate) connections: Vec<SimConnection>,
     pub(crate) io: Arc<SimulatorIO>,
     pub(crate) db: Option<Arc<Database>>,
@@ -85,6 +87,7 @@ impl SimulatorEnv {
             paths: self.paths.clone(),
             type_: self.type_,
             phase: self.phase,
+            gen_opts: self.gen_opts.clone(),
         }
     }
 
@@ -291,6 +294,11 @@ impl SimulatorEnv {
             .map(|_| SimConnection::Disconnected)
             .collect::<Vec<_>>();
 
+        let gen_opts = Opts {
+            indexes: opts.experimental_indexes,
+            ..Default::default()
+        };
+
         SimulatorEnv {
             opts,
             tables: SimulatorTables::new(),
@@ -301,6 +309,7 @@ impl SimulatorEnv {
             db: Some(db),
             type_: simulation_type,
             phase: SimulationPhase::Test,
+            gen_opts,
         }
     }
 
