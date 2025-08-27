@@ -7404,7 +7404,7 @@ mod tests {
         },
         types::Text,
         vdbe::Register,
-        BufferPool, Completion, Connection, StepResult, WalFile, WalFileShared,
+        BufferPool, Completion, Connection, IOContext, StepResult, WalFile, WalFileShared,
     };
     use std::{
         cell::RefCell,
@@ -8713,9 +8713,12 @@ mod tests {
             let c = Completion::new_write(move |_| {
                 let _ = _buf.clone();
             });
-            let _c = pager
-                .db_file
-                .write_page(current_page as usize, buf.clone(), None, c)?;
+            let _c = pager.db_file.write_page(
+                current_page as usize,
+                buf.clone(),
+                &IOContext::default(),
+                c,
+            )?;
             pager.io.run_once()?;
 
             let (page, _c) = cursor.read_page(current_page as usize)?;

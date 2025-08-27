@@ -4,12 +4,14 @@ use crate::{io::Completion, Buffer, CompletionError, Result};
 use std::sync::Arc;
 use tracing::{instrument, Level};
 
+#[derive(Clone)]
 pub enum EncryptionOrChecksum {
     Encryption(EncryptionContext),
     Checksum,
     None,
 }
 
+#[derive(Clone)]
 pub struct IOContext {
     encryption_or_checksum: EncryptionOrChecksum,
 }
@@ -19,6 +21,18 @@ impl IOContext {
         match &self.encryption_or_checksum {
             EncryptionOrChecksum::Encryption(ctx) => Some(ctx),
             _ => None,
+        }
+    }
+
+    pub fn set_encryption(&mut self, encryption_ctx: EncryptionContext) {
+        self.encryption_or_checksum = EncryptionOrChecksum::Encryption(encryption_ctx);
+    }
+}
+
+impl Default for IOContext {
+    fn default() -> Self {
+        Self {
+            encryption_or_checksum: EncryptionOrChecksum::None,
         }
     }
 }
