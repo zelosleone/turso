@@ -71,7 +71,6 @@ use super::{
 use parking_lot::RwLock;
 use rand::{thread_rng, Rng};
 use turso_parser::ast;
-use turso_parser::ast::fmt::ToTokens;
 use turso_parser::parser::Parser;
 
 use super::{
@@ -4869,8 +4868,7 @@ pub fn op_function(
                                         columns,
                                         where_clause,
                                     }
-                                    .format()
-                                    .unwrap(),
+                                    .to_string(),
                                 )
                             }
                             ast::Stmt::CreateTable {
@@ -4896,8 +4894,7 @@ pub fn op_function(
                                         },
                                         body,
                                     }
-                                    .format()
-                                    .unwrap(),
+                                    .to_string(),
                                 )
                             }
                             _ => todo!(),
@@ -4975,8 +4972,7 @@ pub fn op_function(
                                         columns,
                                         where_clause,
                                     }
-                                    .format()
-                                    .unwrap(),
+                                    .to_string(),
                                 )
                             }
                             ast::Stmt::CreateTable {
@@ -5016,8 +5012,7 @@ pub fn op_function(
                                             options,
                                         },
                                     }
-                                    .format()
-                                    .unwrap(),
+                                    .to_string(),
                                 )
                             }
                             _ => todo!(),

@@ -11411,11 +11411,9 @@ mod tests {
 
             assert_eq!(results, expected, "Input: {input_str:?}");
 
-            use crate::ast::fmt::{BlankContext, ToTokens};
             // to_string tests
             for (i, r) in results.iter().enumerate() {
-                let rstring = r.displayer(&BlankContext).to_string().unwrap();
-
+                let rstring = r.to_string();
                 // put new string into parser again
                 let result = Parser::new(rstring.as_bytes()).next().unwrap().unwrap();
                 let expected = &expected[i];

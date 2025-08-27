@@ -83,8 +83,7 @@ pub fn init_distinct(program: &mut ProgramBuilder, plan: &SelectPlan) -> Distinc
                     name: col
                         .expr
                         .displayer(&PlanContext(&[&plan.table_references]))
-                        .to_string()
-                        .unwrap(),
+                        .to_string(),
                     order: SortOrder::Asc,
                     pos_in_table: i,
                     collation: None, // FIXME: this should be determined based on the result column expression!
@@ -159,10 +158,7 @@ pub fn init_loop(
             ephemeral: true,
             root_page: 0,
             columns: vec![IndexColumn {
-                name: agg.args[0]
-                    .displayer(&PlanContext(&[tables]))
-                    .to_string()
-                    .unwrap(),
+                name: agg.args[0].displayer(&PlanContext(&[tables])).to_string(),
                 order: SortOrder::Asc,
                 pos_in_table: 0,
                 collation: None, // FIXME: this should be inferred from the expression

@@ -6,7 +6,7 @@ use crate::vdbe::builder::{CursorType, ProgramBuilder};
 use crate::vdbe::insn::{CmpInsFlags, Cookie, Insn};
 use crate::{Connection, Result, SymbolTable};
 use std::sync::Arc;
-use turso_parser::ast::{self, fmt::ToTokens};
+use turso_parser::ast;
 
 /// Common logic for creating views (both regular and materialized)
 fn emit_create_view_program(
@@ -112,7 +112,7 @@ fn create_materialized_view_to_str(view_name: &str, select_stmt: &ast::Select) -
     format!(
         "CREATE MATERIALIZED VIEW {} AS {}",
         view_name,
-        select_stmt.format().unwrap()
+        select_stmt,
     )
 }
 
@@ -148,11 +148,7 @@ pub fn translate_create_view(
 }
 
 fn create_view_to_str(view_name: &str, select_stmt: &ast::Select) -> String {
-    format!(
-        "CREATE VIEW {} AS {}",
-        view_name,
-        select_stmt.format().unwrap()
-    )
+    format!("CREATE VIEW {} AS {}", view_name, select_stmt)
 }
 
 pub fn translate_drop_view(

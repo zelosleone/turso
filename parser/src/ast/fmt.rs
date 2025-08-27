@@ -144,27 +144,18 @@ impl<'a, 'b, C: ToSqlContext, T: ToTokens> SqlDisplayer<'a, 'b, C, T> {
     pub fn new(ctx: &'a C, start_node: &'b T) -> Self {
         Self { ctx, start_node }
     }
-
-    // Return string representation with context
-    pub fn to_string(&self) -> Result<String, fmt::Error> {
-        let mut s = String::new();
-        let mut stream = WriteTokenStream::new(&mut s);
-        self.start_node.to_tokens(&mut stream, self.ctx)?;
-        Ok(s)
-    }
 }
 
 impl<'a, 'b, C: ToSqlContext, T: ToTokens> Display for SqlDisplayer<'a, 'b, C, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut stream = WriteTokenStream::new(f);
-        self.start_node
-            .to_tokens(&mut stream, self.ctx)
-            .map_err(|_| fmt::Error)
+        self.start_node.to_tokens(&mut stream, self.ctx)
     }
 }
 
 /// Generate token(s) from AST node
-pub trait ToTokens {
+/// Also implements Display to make sure devs won't forget Display
+pub trait ToTokens: Display {
     /// Send token(s) to the specified stream with context
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -179,14 +170,16 @@ pub trait ToTokens {
     {
         SqlDisplayer::new(ctx, self)
     }
+}
 
-    // Return string representation with blank context
-    fn format(&self) -> Result<String, fmt::Error>
-    where
-        Self: Sized,
-    {
-        self.displayer(&BlankContext).to_string()
-    }
+macro_rules! impl_display_for_to_tokens {
+    ($struct:ty) => {
+        impl Display for $struct {
+            fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+                self.displayer(&BlankContext).fmt(f)
+            }
+        }
+    };
 }
 
 impl<T: ?Sized + ToTokens> ToTokens for &T {
@@ -219,6 +212,7 @@ impl ToTokens for String {
     }
 }
 
+impl_display_for_to_tokens!(Cmd);
 impl ToTokens for Cmd {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -244,12 +238,7 @@ impl ToTokens for Cmd {
     }
 }
 
-impl Display for Cmd {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        self.displayer(&BlankContext).fmt(f)
-    }
-}
-
+impl_display_for_to_tokens!(Stmt);
 impl ToTokens for Stmt {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -689,6 +678,7 @@ impl ToTokens for Stmt {
     }
 }
 
+impl_display_for_to_tokens!(Expr);
 impl ToTokens for Expr {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -804,15 +794,10 @@ impl ToTokens for Expr {
             }
             Self::Id(id) => id.to_tokens(s, context),
             Self::Column { table, column, .. } => {
-                s.append(TK_ID, context.get_table_name(*table))?;
+                let (tbl_name, col_name) = context.get_table_and_column_names(*table, *column);
+                s.append(TK_ID, Some(tbl_name.as_ref()))?;
                 s.append(TK_DOT, None)?;
-                s.append(
-                    TK_ID,
-                    context
-                        .get_flat_column_name(*table, *column)
-                        .as_ref()
-                        .map(|s| s.as_ref()),
-                )
+                s.append(TK_ID, Some(col_name.as_ref()))
             }
             Self::InList { lhs, not, rhs } => {
                 lhs.to_tokens(s, context)?;
@@ -925,12 +910,7 @@ impl ToTokens for Expr {
     }
 }
 
-impl Display for Expr {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        self.displayer(&BlankContext).fmt(f)
-    }
-}
-
+impl_display_for_to_tokens!(Literal);
 impl ToTokens for Literal {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -950,6 +930,7 @@ impl ToTokens for Literal {
     }
 }
 
+impl_display_for_to_tokens!(LikeOperator);
 impl ToTokens for LikeOperator {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -968,6 +949,7 @@ impl ToTokens for LikeOperator {
     }
 }
 
+impl_display_for_to_tokens!(Operator);
 impl ToTokens for Operator {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1005,6 +987,7 @@ impl ToTokens for Operator {
     }
 }
 
+impl_display_for_to_tokens!(UnaryOperator);
 impl ToTokens for UnaryOperator {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1023,6 +1006,7 @@ impl ToTokens for UnaryOperator {
     }
 }
 
+impl_display_for_to_tokens!(Select);
 impl ToTokens for Select {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1045,6 +1029,7 @@ impl ToTokens for Select {
     }
 }
 
+impl_display_for_to_tokens!(SelectBody);
 impl ToTokens for SelectBody {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1059,6 +1044,7 @@ impl ToTokens for SelectBody {
     }
 }
 
+impl_display_for_to_tokens!(CompoundSelect);
 impl ToTokens for CompoundSelect {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1070,6 +1056,7 @@ impl ToTokens for CompoundSelect {
     }
 }
 
+impl_display_for_to_tokens!(CompoundOperator);
 impl ToTokens for CompoundOperator {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1088,12 +1075,7 @@ impl ToTokens for CompoundOperator {
     }
 }
 
-impl Display for CompoundOperator {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        self.displayer(&BlankContext).fmt(f)
-    }
-}
-
+impl_display_for_to_tokens!(OneSelect);
 impl ToTokens for OneSelect {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1148,6 +1130,7 @@ impl ToTokens for OneSelect {
     }
 }
 
+impl_display_for_to_tokens!(FromClause);
 impl ToTokens for FromClause {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1163,6 +1146,7 @@ impl ToTokens for FromClause {
     }
 }
 
+impl_display_for_to_tokens!(Distinctness);
 impl ToTokens for Distinctness {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1179,6 +1163,7 @@ impl ToTokens for Distinctness {
     }
 }
 
+impl_display_for_to_tokens!(ResultColumn);
 impl ToTokens for ResultColumn {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1203,6 +1188,7 @@ impl ToTokens for ResultColumn {
     }
 }
 
+impl_display_for_to_tokens!(As);
 impl ToTokens for As {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1219,6 +1205,7 @@ impl ToTokens for As {
     }
 }
 
+impl_display_for_to_tokens!(JoinedSelectTable);
 impl ToTokens for JoinedSelectTable {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1234,6 +1221,7 @@ impl ToTokens for JoinedSelectTable {
     }
 }
 
+impl_display_for_to_tokens!(SelectTable);
 impl ToTokens for SelectTable {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1283,6 +1271,7 @@ impl ToTokens for SelectTable {
     }
 }
 
+impl_display_for_to_tokens!(JoinOperator);
 impl ToTokens for JoinOperator {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1301,6 +1290,7 @@ impl ToTokens for JoinOperator {
     }
 }
 
+impl_display_for_to_tokens!(JoinType);
 impl ToTokens for JoinType {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1333,6 +1323,7 @@ impl ToTokens for JoinType {
     }
 }
 
+impl_display_for_to_tokens!(JoinConstraint);
 impl ToTokens for JoinConstraint {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1354,6 +1345,7 @@ impl ToTokens for JoinConstraint {
     }
 }
 
+impl_display_for_to_tokens!(GroupBy);
 impl ToTokens for GroupBy {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1371,6 +1363,7 @@ impl ToTokens for GroupBy {
     }
 }
 
+impl_display_for_to_tokens!(Name);
 impl ToTokens for Name {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1381,12 +1374,7 @@ impl ToTokens for Name {
     }
 }
 
-impl Display for Name {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        self.displayer(&BlankContext).fmt(f)
-    }
-}
-
+impl_display_for_to_tokens!(QualifiedName);
 impl ToTokens for QualifiedName {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1406,12 +1394,7 @@ impl ToTokens for QualifiedName {
     }
 }
 
-impl Display for QualifiedName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.displayer(&BlankContext).fmt(f)
-    }
-}
-
+impl_display_for_to_tokens!(AlterTableBody);
 impl ToTokens for AlterTableBody {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1445,6 +1428,7 @@ impl ToTokens for AlterTableBody {
     }
 }
 
+impl_display_for_to_tokens!(CreateTableBody);
 impl ToTokens for CreateTableBody {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1481,6 +1465,7 @@ impl ToTokens for CreateTableBody {
     }
 }
 
+impl_display_for_to_tokens!(ColumnDefinition);
 impl ToTokens for ColumnDefinition {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1498,6 +1483,7 @@ impl ToTokens for ColumnDefinition {
     }
 }
 
+impl_display_for_to_tokens!(NamedColumnConstraint);
 impl ToTokens for NamedColumnConstraint {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1512,6 +1498,7 @@ impl ToTokens for NamedColumnConstraint {
     }
 }
 
+impl_display_for_to_tokens!(ColumnConstraint);
 impl ToTokens for ColumnConstraint {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1602,6 +1589,7 @@ impl ToTokens for ColumnConstraint {
     }
 }
 
+impl_display_for_to_tokens!(NamedTableConstraint);
 impl ToTokens for NamedTableConstraint {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1616,6 +1604,7 @@ impl ToTokens for NamedTableConstraint {
     }
 }
 
+impl_display_for_to_tokens!(TableConstraint);
 impl ToTokens for TableConstraint {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1685,6 +1674,7 @@ impl ToTokens for TableConstraint {
     }
 }
 
+impl_display_for_to_tokens!(SortOrder);
 impl ToTokens for SortOrder {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1701,6 +1691,7 @@ impl ToTokens for SortOrder {
     }
 }
 
+impl_display_for_to_tokens!(NullsOrder);
 impl ToTokens for NullsOrder {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1718,6 +1709,7 @@ impl ToTokens for NullsOrder {
     }
 }
 
+impl_display_for_to_tokens!(ForeignKeyClause);
 impl ToTokens for ForeignKeyClause {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1737,6 +1729,7 @@ impl ToTokens for ForeignKeyClause {
     }
 }
 
+impl_display_for_to_tokens!(RefArg);
 impl ToTokens for RefArg {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1767,6 +1760,7 @@ impl ToTokens for RefArg {
     }
 }
 
+impl_display_for_to_tokens!(RefAct);
 impl ToTokens for RefAct {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1792,6 +1786,7 @@ impl ToTokens for RefAct {
     }
 }
 
+impl_display_for_to_tokens!(DeferSubclause);
 impl ToTokens for DeferSubclause {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1809,6 +1804,7 @@ impl ToTokens for DeferSubclause {
     }
 }
 
+impl_display_for_to_tokens!(InitDeferredPred);
 impl ToTokens for InitDeferredPred {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1826,6 +1822,7 @@ impl ToTokens for InitDeferredPred {
     }
 }
 
+impl_display_for_to_tokens!(IndexedColumn);
 impl ToTokens for IndexedColumn {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1844,6 +1841,7 @@ impl ToTokens for IndexedColumn {
     }
 }
 
+impl_display_for_to_tokens!(Indexed);
 impl ToTokens for Indexed {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1864,6 +1862,7 @@ impl ToTokens for Indexed {
     }
 }
 
+impl_display_for_to_tokens!(SortedColumn);
 impl ToTokens for SortedColumn {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1881,6 +1880,7 @@ impl ToTokens for SortedColumn {
     }
 }
 
+impl_display_for_to_tokens!(Limit);
 impl ToTokens for Limit {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1897,6 +1897,7 @@ impl ToTokens for Limit {
     }
 }
 
+impl_display_for_to_tokens!(InsertBody);
 impl ToTokens for InsertBody {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1919,6 +1920,7 @@ impl ToTokens for InsertBody {
     }
 }
 
+impl_display_for_to_tokens!(Set);
 impl ToTokens for Set {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1937,6 +1939,7 @@ impl ToTokens for Set {
     }
 }
 
+impl_display_for_to_tokens!(PragmaBody);
 impl ToTokens for PragmaBody {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1957,6 +1960,7 @@ impl ToTokens for PragmaBody {
     }
 }
 
+impl_display_for_to_tokens!(TriggerTime);
 impl ToTokens for TriggerTime {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1974,6 +1978,7 @@ impl ToTokens for TriggerTime {
     }
 }
 
+impl_display_for_to_tokens!(TriggerEvent);
 impl ToTokens for TriggerEvent {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -1993,6 +1998,7 @@ impl ToTokens for TriggerEvent {
     }
 }
 
+impl_display_for_to_tokens!(TriggerCmd);
 impl ToTokens for TriggerCmd {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2077,6 +2083,7 @@ impl ToTokens for TriggerCmd {
     }
 }
 
+impl_display_for_to_tokens!(ResolveType);
 impl ToTokens for ResolveType {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2096,6 +2103,7 @@ impl ToTokens for ResolveType {
     }
 }
 
+impl_display_for_to_tokens!(With);
 impl ToTokens for With {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2110,6 +2118,7 @@ impl ToTokens for With {
     }
 }
 
+impl_display_for_to_tokens!(CommonTableExpr);
 impl ToTokens for CommonTableExpr {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2139,6 +2148,7 @@ impl ToTokens for CommonTableExpr {
     }
 }
 
+impl_display_for_to_tokens!(Type);
 impl ToTokens for Type {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2157,6 +2167,7 @@ impl ToTokens for Type {
     }
 }
 
+impl_display_for_to_tokens!(TypeSize);
 impl ToTokens for TypeSize {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2174,6 +2185,7 @@ impl ToTokens for TypeSize {
     }
 }
 
+impl_display_for_to_tokens!(TransactionType);
 impl ToTokens for TransactionType {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2191,6 +2203,7 @@ impl ToTokens for TransactionType {
     }
 }
 
+impl_display_for_to_tokens!(Upsert);
 impl ToTokens for Upsert {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2210,6 +2223,7 @@ impl ToTokens for Upsert {
     }
 }
 
+impl_display_for_to_tokens!(UpsertIndex);
 impl ToTokens for UpsertIndex {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2227,6 +2241,7 @@ impl ToTokens for UpsertIndex {
     }
 }
 
+impl_display_for_to_tokens!(UpsertDo);
 impl ToTokens for UpsertDo {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2253,6 +2268,7 @@ impl ToTokens for UpsertDo {
     }
 }
 
+impl_display_for_to_tokens!(FunctionTail);
 impl ToTokens for FunctionTail {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2274,6 +2290,7 @@ impl ToTokens for FunctionTail {
     }
 }
 
+impl_display_for_to_tokens!(Over);
 impl ToTokens for Over {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2287,6 +2304,7 @@ impl ToTokens for Over {
     }
 }
 
+impl_display_for_to_tokens!(WindowDef);
 impl ToTokens for WindowDef {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2299,6 +2317,7 @@ impl ToTokens for WindowDef {
     }
 }
 
+impl_display_for_to_tokens!(Window);
 impl ToTokens for Window {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2326,6 +2345,7 @@ impl ToTokens for Window {
     }
 }
 
+impl_display_for_to_tokens!(FrameClause);
 impl ToTokens for FrameClause {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2349,6 +2369,7 @@ impl ToTokens for FrameClause {
     }
 }
 
+impl_display_for_to_tokens!(FrameMode);
 impl ToTokens for FrameMode {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2366,6 +2387,7 @@ impl ToTokens for FrameMode {
     }
 }
 
+impl_display_for_to_tokens!(FrameBound);
 impl ToTokens for FrameBound {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,
@@ -2397,6 +2419,7 @@ impl ToTokens for FrameBound {
     }
 }
 
+impl_display_for_to_tokens!(FrameExclude);
 impl ToTokens for FrameExclude {
     fn to_tokens<S: TokenStream + ?Sized, C: ToSqlContext>(
         &self,

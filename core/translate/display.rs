@@ -3,7 +3,7 @@ use std::fmt::{Display, Formatter};
 use turso_parser::{
     ast::{
         self,
-        fmt::{ToSqlContext, ToTokens, TokenStream},
+        fmt::{BlankContext, ToSqlContext, ToTokens, TokenStream},
         SortOrder, TableInternalId,
     },
     token::TokenType,
@@ -320,6 +320,12 @@ impl ToTokens for Plan {
         }
 
         Ok(())
+    }
+}
+
+impl Display for JoinedTable {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.displayer(&BlankContext).fmt(f)
     }
 }
 

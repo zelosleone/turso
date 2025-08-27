@@ -3,8 +3,6 @@ pub mod fmt;
 
 use strum_macros::{EnumIter, EnumString};
 
-use crate::ast::fmt::ToTokens;
-
 /// `?` or `$` Prepared statement arg placeholder(s)
 #[derive(Default)]
 pub struct ParameterInfo {
@@ -1144,12 +1142,6 @@ pub enum SortOrder {
     Asc,
     /// `DESC`
     Desc,
-}
-
-impl core::fmt::Display for SortOrder {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.to_fmt(f)
-    }
 }
 
 /// `NULLS FIRST` or `NULLS LAST`
