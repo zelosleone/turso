@@ -5528,7 +5528,6 @@ struct IntegrityCheckPageEntry {
     page_category: PageCategory,
 }
 pub struct IntegrityCheckState {
-    pub current_page: usize,
     page_stack: Vec<IntegrityCheckPageEntry>,
     first_leaf_level: Option<usize>,
     page_reference: HashMap<u64, u64>,
