@@ -1435,11 +1435,11 @@ impl Pager {
                 }
             }
         };
-
-        let now = self.io.now();
         tracing::debug!(
             "total time flushing cache: {} ms",
-            now.to_system_time()
+            self.io
+                .now()
+                .to_system_time()
                 .duration_since(self.commit_info.time.get().to_system_time())
                 .unwrap()
                 .as_millis()
