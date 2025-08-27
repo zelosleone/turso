@@ -2,7 +2,9 @@
 use crate::function::AlterTableFunc;
 use crate::numeric::{NullableInteger, Numeric};
 use crate::schema::Table;
-use crate::storage::btree::{integrity_check, IntegrityCheckError, IntegrityCheckState};
+use crate::storage::btree::{
+    integrity_check, IntegrityCheckError, IntegrityCheckState, PageCategory,
+};
 use crate::storage::database::DatabaseFile;
 use crate::storage::page_cache::DumbLruPageCache;
 use crate::storage::pager::{AtomicDbState, CreateBTreeFlags, DbState};
@@ -7108,10 +7110,26 @@ pub fn op_integrity_check(
     );
     match &mut state.op_integrity_check_state {
         OpIntegrityCheckState::Start => {
+            let freelist_trunk_page =
+                return_if_io!(pager.with_header(|header| header.freelist_trunk_page.get()));
+            let mut errors = Vec::new();
+            let mut integrity_check_state = IntegrityCheckState::new();
+            let mut current_root_idx = 0;
+            // check freelist pages first, if there are any for database
+            if freelist_trunk_page > 0 {
+                integrity_check_state.start(
+                    freelist_trunk_page as usize,
+                    PageCategory::FreeListTrunk,
+                    &mut errors,
+                );
+            } else {
+                integrity_check_state.start(roots[0], PageCategory::Normal, &mut errors);
+                current_root_idx += 1;
+            }
             state.op_integrity_check_state = OpIntegrityCheckState::Checking {
-                errors: Vec::new(),
-                current_root_idx: 0,
-                state: IntegrityCheckState::new(roots[0]),
+                errors,
+                state: integrity_check_state,
+                current_root_idx,
             };
         }
         OpIntegrityCheckState::Checking {
@@ -7120,9 +7138,9 @@ pub fn op_integrity_check(
             state: integrity_check_state,
         } => {
             return_if_io!(integrity_check(integrity_check_state, errors, pager));
-            *current_root_idx += 1;
             if *current_root_idx < roots.len() {
-                *integrity_check_state = IntegrityCheckState::new(roots[*current_root_idx]);
+                integrity_check_state.start(roots[*current_root_idx], PageCategory::Normal, errors);
+                *current_root_idx += 1;
                 return Ok(InsnFunctionStepResult::Step);
             } else {
                 let message = if errors.is_empty() {
