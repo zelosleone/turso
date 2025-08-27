@@ -19,7 +19,7 @@ type Choice<'a, R, T> = (usize, Box<dyn Fn(&mut R) -> Option<T> + 'a>);
 /// the possible values of the type, with a bias towards smaller values for
 /// practicality.
 pub trait Arbitrary {
-    fn arbitrary<R: Rng>(rng: &mut R) -> Self;
+    fn arbitrary<R: Rng, C: GenerationContext>(rng: &mut R, context: &C) -> Self;
 }
 
 /// ArbitrarySized trait for generating random values of a specific size
@@ -29,7 +29,8 @@ pub trait Arbitrary {
 /// must fit in the given size. This is useful for generating values that are
 /// constrained by a specific size, such as integers or strings.
 pub trait ArbitrarySized {
-    fn arbitrary_sized<R: Rng>(rng: &mut R, size: usize) -> Self;
+    fn arbitrary_sized<R: Rng, C: GenerationContext>(rng: &mut R, context: &C, size: usize)
+        -> Self;
 }
 
 /// ArbitraryFrom trait for generating random values from a given value
@@ -38,19 +39,7 @@ pub trait ArbitrarySized {
 /// such as generating an integer within an interval, or a value that fits in a table,
 /// or a predicate satisfying a given table row.
 pub trait ArbitraryFrom<T> {
-    fn arbitrary_from<R: Rng>(rng: &mut R, t: T) -> Self;
-}
-
-pub trait ArbitraryContext {
-    fn arbitrary_with_context<R: Rng, C: GenerationContext>(rng: &mut R, context: &C) -> Self;
-}
-
-pub trait ArbitraryContextFrom<T> {
-    fn arbitrary_with_context_from<R: Rng, C: GenerationContext>(
-        rng: &mut R,
-        context: &C,
-        t: T,
-    ) -> Self;
+    fn arbitrary_from<R: Rng, C: GenerationContext>(rng: &mut R, context: &C, t: T) -> Self;
 }
 
 /// ArbitrarySizedFrom trait for generating random values from a given value
@@ -62,12 +51,21 @@ pub trait ArbitraryContextFrom<T> {
 /// This is useful for generating values that are constrained by a specific size,
 /// such as integers or strings, while still being dependent on the given value.
 pub trait ArbitrarySizedFrom<T> {
-    fn arbitrary_sized_from<R: Rng>(rng: &mut R, t: T, size: usize) -> Self;
+    fn arbitrary_sized_from<R: Rng, C: GenerationContext>(
+        rng: &mut R,
+        context: &C,
+        t: T,
+        size: usize,
+    ) -> Self;
 }
 
 /// ArbitraryFromMaybe trait for fallibally generating random values from a given value
 pub trait ArbitraryFromMaybe<T> {
-    fn arbitrary_from_maybe<R: Rng>(rng: &mut R, t: T) -> Option<Self>
+    fn arbitrary_from_maybe<R: Rng, C: GenerationContext>(
+        rng: &mut R,
+        context: &C,
+        t: T,
+    ) -> Option<Self>
     where
         Self: Sized;
 }
@@ -186,4 +184,28 @@ where
         }
     }
     picked
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        generation::{GenerationContext, Opts},
+        model::table::Table,
+    };
+
+    #[derive(Debug, Default, Clone)]
+    pub struct TestContext {
+        pub opts: Opts,
+        pub tables: Vec<Table>,
+    }
+
+    impl GenerationContext for TestContext {
+        fn tables(&self) -> &Vec<Table> {
+            &self.tables
+        }
+
+        fn opts(&self) -> &Opts {
+            &self.opts
+        }
+    }
 }

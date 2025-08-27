@@ -4,6 +4,12 @@ use rand::distr::weighted::WeightedIndex;
 
 use crate::model::table::Table;
 
+/// Trait used to provide context to generation functions
+pub trait GenerationContext {
+    fn tables(&self) -> &Vec<Table>;
+    fn opts(&self) -> &Opts;
+}
+
 #[derive(Debug, Clone)]
 pub struct Opts {
     /// Indexes enabled
@@ -20,12 +26,6 @@ impl Default for Opts {
             query: Default::default(),
         }
     }
-}
-
-/// Trait used to provide context to generation functions
-pub trait GenerationContext {
-    fn tables(&self) -> &Vec<Table>;
-    fn opts(&self) -> &Opts;
 }
 
 #[derive(Debug, Clone)]

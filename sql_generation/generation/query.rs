@@ -1,6 +1,6 @@
 use crate::generation::{
-    gen_random_text, pick_n_unique, pick_unique, Arbitrary, ArbitraryContext, ArbitraryContextFrom,
-    ArbitraryFrom, ArbitrarySizedFrom, GenerationContext,
+    gen_random_text, pick_n_unique, pick_unique, Arbitrary, ArbitraryFrom, ArbitrarySized,
+    GenerationContext,
 };
 use crate::model::query::predicate::Predicate;
 use crate::model::query::select::{
@@ -17,32 +17,20 @@ use turso_parser::ast::{Expr, SortOrder};
 use super::{backtrack, pick};
 
 impl Arbitrary for Create {
-    fn arbitrary<R: Rng>(rng: &mut R) -> Self {
+    fn arbitrary<R: Rng, C: GenerationContext>(rng: &mut R, context: &C) -> Self {
         Create {
-            table: Table::arbitrary(rng),
+            table: Table::arbitrary(rng, context),
         }
     }
 }
 
-impl ArbitraryContext for Create {
-    fn arbitrary_with_context<R: Rng, C: GenerationContext>(rng: &mut R, context: &C) -> Self {
-        Create {
-            table: Table::arbitrary_with_context(rng, context),
-        }
-    }
-}
-
-impl ArbitraryContextFrom<&Vec<Table>> for FromClause {
-    fn arbitrary_with_context_from<R: Rng, C: GenerationContext>(
-        rng: &mut R,
-        context: &C,
-        tables: &Vec<Table>,
-    ) -> Self {
+impl Arbitrary for FromClause {
+    fn arbitrary<R: Rng, C: GenerationContext>(rng: &mut R, context: &C) -> Self {
         let opts = &context.opts().query.from_clause;
         let weights = opts.as_weighted_index();
         let num_joins = opts.joins[rng.sample(weights)].num_joins;
 
-        let mut tables = tables.clone();
+        let mut tables = context.tables().clone();
         let mut table = pick(&tables, rng).clone();
 
         tables.retain(|t| t.name != table.name);
@@ -83,7 +71,7 @@ impl ArbitraryContextFrom<&Vec<Table>> for FromClause {
                     );
                 }
 
-                let predicate = Predicate::arbitrary_from(rng, &table);
+                let predicate = Predicate::arbitrary_from(rng, context, &table);
                 Some(JoinedTable {
                     table: joined_table_name,
                     join_type: JoinType::Inner,
@@ -95,71 +83,9 @@ impl ArbitraryContextFrom<&Vec<Table>> for FromClause {
     }
 }
 
-impl ArbitraryFrom<&Vec<Table>> for FromClause {
-    fn arbitrary_from<R: Rng>(rng: &mut R, tables: &Vec<Table>) -> Self {
-        let num_joins = match rng.random_range(0..=100) {
-            0..=90 => 0,
-            91..=97 => 1,
-            98..=100 => 2,
-            _ => unreachable!(),
-        };
-
-        let mut tables = tables.clone();
-        let mut table = pick(&tables, rng).clone();
-
-        tables.retain(|t| t.name != table.name);
-
-        let name = table.name.clone();
-
-        let mut table_context = JoinTable {
-            tables: Vec::new(),
-            rows: Vec::new(),
-        };
-
-        let joins: Vec<_> = (0..num_joins)
-            .filter_map(|_| {
-                if tables.is_empty() {
-                    return None;
-                }
-                let join_table = pick(&tables, rng).clone();
-                let joined_table_name = join_table.name.clone();
-
-                tables.retain(|t| t.name != join_table.name);
-                table_context.rows = table_context
-                    .rows
-                    .iter()
-                    .cartesian_product(join_table.rows.iter())
-                    .map(|(t_row, j_row)| {
-                        let mut row = t_row.clone();
-                        row.extend(j_row.clone());
-                        row
-                    })
-                    .collect();
-                // TODO: inneficient. use a Deque to push_front?
-                table_context.tables.insert(0, join_table);
-                for row in &mut table.rows {
-                    assert_eq!(
-                        row.len(),
-                        table.columns.len(),
-                        "Row length does not match column length after join"
-                    );
-                }
-
-                let predicate = Predicate::arbitrary_from(rng, &table);
-                Some(JoinedTable {
-                    table: joined_table_name,
-                    join_type: JoinType::Inner,
-                    on: predicate,
-                })
-            })
-            .collect();
-        FromClause { table: name, joins }
-    }
-}
-
-impl<C: GenerationContext> ArbitraryFrom<&C> for SelectInner {
-    fn arbitrary_from<R: Rng>(rng: &mut R, env: &C) -> Self {
-        let from = FromClause::arbitrary_from(rng, env.tables());
+impl Arbitrary for SelectInner {
+    fn arbitrary<R: Rng, C: GenerationContext>(rng: &mut R, env: &C) -> Self {
+        let from = FromClause::arbitrary(rng, env);
         let tables = env.tables().clone();
         let join_table = from.into_join_table(&tables);
         let cuml_col_count = join_table.columns().count();
@@ -205,21 +131,25 @@ impl<C: GenerationContext> ArbitraryFrom<&C> for SelectInner {
 
         SelectInner {
             distinctness: if env.opts().indexes {
-                Distinctness::arbitrary(rng)
+                Distinctness::arbitrary(rng, env)
             } else {
                 Distinctness::All
             },
             columns: vec![ResultColumn::Star],
             from: Some(from),
-            where_clause: Predicate::arbitrary_from(rng, &join_table),
+            where_clause: Predicate::arbitrary_from(rng, env, &join_table),
             order_by,
         }
     }
 }
 
-impl<C: GenerationContext> ArbitrarySizedFrom<&C> for SelectInner {
-    fn arbitrary_sized_from<R: Rng>(rng: &mut R, env: &C, num_result_columns: usize) -> Self {
-        let mut select_inner = SelectInner::arbitrary_from(rng, env);
+impl ArbitrarySized for SelectInner {
+    fn arbitrary_sized<R: Rng, C: GenerationContext>(
+        rng: &mut R,
+        env: &C,
+        num_result_columns: usize,
+    ) -> Self {
+        let mut select_inner = SelectInner::arbitrary(rng, env);
         let select_from = &select_inner.from.as_ref().unwrap();
         let table_names = select_from
             .joins
@@ -251,7 +181,7 @@ impl<C: GenerationContext> ArbitrarySizedFrom<&C> for SelectInner {
 }
 
 impl Arbitrary for Distinctness {
-    fn arbitrary<R: Rng>(rng: &mut R) -> Self {
+    fn arbitrary<R: Rng, C: GenerationContext>(rng: &mut R, _context: &C) -> Self {
         match rng.random_range(0..=5) {
             0..4 => Distinctness::All,
             _ => Distinctness::Distinct,
@@ -259,7 +189,7 @@ impl Arbitrary for Distinctness {
     }
 }
 impl Arbitrary for CompoundOperator {
-    fn arbitrary<R: Rng>(rng: &mut R) -> Self {
+    fn arbitrary<R: Rng, C: GenerationContext>(rng: &mut R, _context: &C) -> Self {
         match rng.random_range(0..=1) {
             0 => CompoundOperator::Union,
             1 => CompoundOperator::UnionAll,
@@ -273,16 +203,16 @@ impl Arbitrary for CompoundOperator {
 /// arbitrary expressions without referring to the tables.
 pub struct SelectFree(pub Select);
 
-impl<C: GenerationContext> ArbitraryFrom<&C> for SelectFree {
-    fn arbitrary_from<R: Rng>(rng: &mut R, env: &C) -> Self {
-        let expr = Predicate(Expr::arbitrary_sized_from(rng, env, 8));
+impl Arbitrary for SelectFree {
+    fn arbitrary<R: Rng, C: GenerationContext>(rng: &mut R, env: &C) -> Self {
+        let expr = Predicate(Expr::arbitrary_sized(rng, env, 8));
         let select = Select::expr(expr);
         Self(select)
     }
 }
 
-impl<C: GenerationContext> ArbitraryFrom<&C> for Select {
-    fn arbitrary_from<R: Rng>(rng: &mut R, env: &C) -> Self {
+impl Arbitrary for Select {
+    fn arbitrary<R: Rng, C: GenerationContext>(rng: &mut R, env: &C) -> Self {
         // Generate a number of selects based on the query size
         // If experimental indexes are enabled, we can have selects with compounds
         // Otherwise, we just have a single select with no compounds
@@ -302,10 +232,10 @@ impl<C: GenerationContext> ArbitraryFrom<&C> for Select {
 
         let num_result_columns = rng.random_range(1..=min_column_count_across_tables);
 
-        let mut first = SelectInner::arbitrary_sized_from(rng, env, num_result_columns);
+        let mut first = SelectInner::arbitrary_sized(rng, env, num_result_columns);
 
         let mut rest: Vec<SelectInner> = (0..num_compound_selects)
-            .map(|_| SelectInner::arbitrary_sized_from(rng, env, num_result_columns))
+            .map(|_| SelectInner::arbitrary_sized(rng, env, num_result_columns))
             .collect();
 
         if !rest.is_empty() {
@@ -322,7 +252,7 @@ impl<C: GenerationContext> ArbitraryFrom<&C> for Select {
                 compounds: rest
                     .into_iter()
                     .map(|s| CompoundSelect {
-                        operator: CompoundOperator::arbitrary(rng),
+                        operator: CompoundOperator::arbitrary(rng, env),
                         select: Box::new(s),
                     })
                     .collect(),
@@ -332,8 +262,8 @@ impl<C: GenerationContext> ArbitraryFrom<&C> for Select {
     }
 }
 
-impl<C: GenerationContext> ArbitraryFrom<&C> for Insert {
-    fn arbitrary_from<R: Rng>(rng: &mut R, env: &C) -> Self {
+impl Arbitrary for Insert {
+    fn arbitrary<R: Rng, C: GenerationContext>(rng: &mut R, env: &C) -> Self {
         let gen_values = |rng: &mut R| {
             let table = pick(env.tables(), rng);
             let num_rows = rng.random_range(1..10);
@@ -342,7 +272,7 @@ impl<C: GenerationContext> ArbitraryFrom<&C> for Insert {
                     table
                         .columns
                         .iter()
-                        .map(|c| SimValue::arbitrary_from(rng, &c.column_type))
+                        .map(|c| SimValue::arbitrary_from(rng, env, &c.column_type))
                         .collect()
                 })
                 .collect();
@@ -356,7 +286,7 @@ impl<C: GenerationContext> ArbitraryFrom<&C> for Insert {
             // Find a non-empty table
             let select_table = env.tables().iter().find(|t| !t.rows.is_empty())?;
             let row = pick(&select_table.rows, rng);
-            let predicate = Predicate::arbitrary_from(rng, (select_table, row));
+            let predicate = Predicate::arbitrary_from(rng, env, (select_table, row));
             // Pick another table to insert into
             let select = Select::simple(select_table.name.clone(), predicate);
             let table = pick(env.tables(), rng);
@@ -372,18 +302,18 @@ impl<C: GenerationContext> ArbitraryFrom<&C> for Insert {
     }
 }
 
-impl<C: GenerationContext> ArbitraryFrom<&C> for Delete {
-    fn arbitrary_from<R: Rng>(rng: &mut R, env: &C) -> Self {
+impl Arbitrary for Delete {
+    fn arbitrary<R: Rng, C: GenerationContext>(rng: &mut R, env: &C) -> Self {
         let table = pick(env.tables(), rng);
         Self {
             table: table.name.clone(),
-            predicate: Predicate::arbitrary_from(rng, table),
+            predicate: Predicate::arbitrary_from(rng, env, table),
         }
     }
 }
 
-impl<C: GenerationContext> ArbitraryFrom<&C> for Drop {
-    fn arbitrary_from<R: Rng>(rng: &mut R, env: &C) -> Self {
+impl Arbitrary for Drop {
+    fn arbitrary<R: Rng, C: GenerationContext>(rng: &mut R, env: &C) -> Self {
         let table = pick(env.tables(), rng);
         Self {
             table: table.name.clone(),
@@ -391,8 +321,8 @@ impl<C: GenerationContext> ArbitraryFrom<&C> for Drop {
     }
 }
 
-impl<C: GenerationContext> ArbitraryFrom<&C> for CreateIndex {
-    fn arbitrary_from<R: Rng>(rng: &mut R, env: &C) -> Self {
+impl Arbitrary for CreateIndex {
+    fn arbitrary<R: Rng, C: GenerationContext>(rng: &mut R, env: &C) -> Self {
         assert!(
             !env.tables().is_empty(),
             "Cannot create an index when no tables exist in the environment."
@@ -439,8 +369,8 @@ impl<C: GenerationContext> ArbitraryFrom<&C> for CreateIndex {
     }
 }
 
-impl<C: GenerationContext> ArbitraryFrom<&C> for Update {
-    fn arbitrary_from<R: Rng>(rng: &mut R, env: &C) -> Self {
+impl Arbitrary for Update {
+    fn arbitrary<R: Rng, C: GenerationContext>(rng: &mut R, env: &C) -> Self {
         let table = pick(env.tables(), rng);
         let num_cols = rng.random_range(1..=table.columns.len());
         let columns = pick_unique(&table.columns, num_cols, rng);
@@ -449,14 +379,14 @@ impl<C: GenerationContext> ArbitraryFrom<&C> for Update {
             .map(|column| {
                 (
                     column.name.clone(),
-                    SimValue::arbitrary_from(rng, &column.column_type),
+                    SimValue::arbitrary_from(rng, env, &column.column_type),
                 )
             })
             .collect();
         Update {
             table: table.name.clone(),
             set_values,
-            predicate: Predicate::arbitrary_from(rng, table),
+            predicate: Predicate::arbitrary_from(rng, env, table),
         }
     }
 }
