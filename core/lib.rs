@@ -76,6 +76,7 @@ use std::{
 };
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
+pub use storage::database::IOContext;
 pub use storage::encryption::{EncryptionContext, EncryptionKey};
 use storage::page_cache::DumbLruPageCache;
 use storage::pager::{AtomicDbState, DbState};
