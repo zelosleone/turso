@@ -1639,9 +1639,9 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
         write_lock: TursoRwLock::new(),
         loaded: AtomicBool::new(false),
         checkpoint_lock: TursoRwLock::new(),
+        initialized: AtomicBool::new(false),
     }));
     let wal_file_shared_for_completion = wal_file_shared_ret.clone();
-
     let complete: Box<ReadComplete> = Box::new(move |res: Result<(Arc<Buffer>, i32), _>| {
         let Ok((buf, bytes_read)) = res else {
             return;
@@ -1832,6 +1832,9 @@ pub fn read_entire_wal_dumb(file: &Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFi
 
         wfs_data.nbackfills.store(0, Ordering::SeqCst);
         wfs_data.loaded.store(true, Ordering::SeqCst);
+        if size >= WAL_HEADER_SIZE as u64 {
+            wfs_data.initialized.store(true, Ordering::SeqCst);
+        }
     });
     let c = Completion::new_read(buf_for_pread, complete);
     let _c = file.pread(0, c)?;

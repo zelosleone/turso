@@ -682,6 +682,7 @@ pub struct WalFileShared {
     /// Serialises checkpointer threads, only one checkpoint can be in flight at any time. Blocking and exclusive only
     pub checkpoint_lock: TursoRwLock,
     pub loaded: AtomicBool,
+    pub initialized: AtomicBool,
 }
 
 impl fmt::Debug for WalFileShared {
@@ -1640,6 +1641,7 @@ impl WalFile {
             )?)?;
         self.io
             .wait_for_completion(shared.file.sync(Completion::new_sync(|_| {}))?)?;
+        shared.initialized.store(true, Ordering::Release);
         Ok(())
     }
 
@@ -2046,6 +2048,7 @@ impl WalFile {
                 .file
                 .truncate(0, c)
                 .inspect_err(|e| unlock(Some(e)))?;
+            shared.initialized.store(false, Ordering::Release);
             self.io
                 .wait_for_completion(c)
                 .inspect_err(|e| unlock(Some(e)))?;
@@ -2150,7 +2153,7 @@ impl WalFileShared {
     }
 
     pub fn is_initialized(&self) -> Result<bool> {
-        Ok(self.file.size()? >= WAL_HEADER_SIZE as u64)
+        Ok(self.initialized.load(Ordering::Acquire))
     }
 
     pub fn new_shared(file: Arc<dyn File>) -> Result<Arc<UnsafeCell<WalFileShared>>> {
@@ -2190,6 +2193,7 @@ impl WalFileShared {
             write_lock: TursoRwLock::new(),
             checkpoint_lock: TursoRwLock::new(),
             loaded: AtomicBool::new(true),
+            initialized: AtomicBool::new(false),
         };
         Ok(Arc::new(UnsafeCell::new(shared)))
     }
