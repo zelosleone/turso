@@ -411,5 +411,8 @@ pub fn translate_alter_table(
 
             program
         }
+        ast::AlterTableBody::AlterColumn { .. } => {
+            todo!("`ALTER COLUMN` not implemented")
+        }
     })
 }
