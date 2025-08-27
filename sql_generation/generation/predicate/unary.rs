@@ -2,7 +2,7 @@
 //! TODO: for now just generating [ast::Literal], but want to also generate Columns and any
 //! arbitrary [ast::Expr]
 
-use turso_sqlite3_parser::ast::{self, Expr};
+use turso_parser::ast::{self, Expr};
 
 use crate::{
     generation::{backtrack, pick, predicate::SimplePredicate, ArbitraryFromMaybe},
@@ -64,6 +64,7 @@ impl ArbitraryFromMaybe<&Vec<&SimValue>> for FalseValue {
     }
 }
 
+#[allow(dead_code)]
 pub struct BitNotValue(pub SimValue);
 
 impl ArbitraryFromMaybe<(&SimValue, bool)> for BitNotValue {
@@ -107,7 +108,7 @@ impl SimplePredicate {
     ) -> Self {
         let columns = table.columns().collect::<Vec<_>>();
         // Pick a random column
-        let column_index = rng.gen_range(0..columns.len());
+        let column_index = rng.random_range(0..columns.len());
         let column_value = &row[column_index];
         let num_retries = row.len();
         // Avoid creation of NULLs
@@ -173,7 +174,7 @@ impl SimplePredicate {
     ) -> Self {
         let columns = table.columns().collect::<Vec<_>>();
         // Pick a random column
-        let column_index = rng.gen_range(0..columns.len());
+        let column_index = rng.random_range(0..columns.len());
         let column_value = &row[column_index];
         let num_retries = row.len();
         // Avoid creation of NULLs
@@ -255,7 +256,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         for _ in 0..10000 {
             let mut table = Table::arbitrary(&mut rng);
-            let num_rows = rng.gen_range(1..10);
+            let num_rows = rng.random_range(1..10);
             let values: Vec<Vec<SimValue>> = (0..num_rows)
                 .map(|_| {
                     table
@@ -283,7 +284,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         for _ in 0..10000 {
             let mut table = Table::arbitrary(&mut rng);
-            let num_rows = rng.gen_range(1..10);
+            let num_rows = rng.random_range(1..10);
             let values: Vec<Vec<SimValue>> = (0..num_rows)
                 .map(|_| {
                     table

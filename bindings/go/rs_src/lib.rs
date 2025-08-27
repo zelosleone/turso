@@ -23,19 +23,19 @@ pub unsafe extern "C" fn db_open(path: *const c_char) -> *mut c_void {
     let Ok((io, conn)) = Connection::from_uri(path, true, false, false) else {
         panic!("Failed to open connection with path: {path}");
     };
-    LimboConn::new(conn, io).to_ptr()
+    TursoConn::new(conn, io).to_ptr()
 }
 
 #[allow(dead_code)]
-struct LimboConn {
+struct TursoConn {
     conn: Arc<Connection>,
     io: Arc<dyn turso_core::IO>,
     err: Option<LimboError>,
 }
 
-impl LimboConn {
+impl TursoConn {
     fn new(conn: Arc<Connection>, io: Arc<dyn turso_core::IO>) -> Self {
-        LimboConn {
+        TursoConn {
             conn,
             io,
             err: None,
@@ -47,11 +47,11 @@ impl LimboConn {
         Box::into_raw(Box::new(self)) as *mut c_void
     }
 
-    fn from_ptr(ptr: *mut c_void) -> &'static mut LimboConn {
+    fn from_ptr(ptr: *mut c_void) -> &'static mut TursoConn {
         if ptr.is_null() {
             panic!("Null pointer");
         }
-        unsafe { &mut *(ptr as *mut LimboConn) }
+        unsafe { &mut *(ptr as *mut TursoConn) }
     }
 
     fn get_error(&mut self) -> *const c_char {
@@ -73,7 +73,7 @@ pub extern "C" fn db_get_error(ctx: *mut c_void) -> *const c_char {
     if ctx.is_null() {
         return std::ptr::null();
     }
-    let conn = LimboConn::from_ptr(ctx);
+    let conn = TursoConn::from_ptr(ctx);
     conn.get_error()
 }
 
@@ -83,6 +83,6 @@ pub extern "C" fn db_get_error(ctx: *mut c_void) -> *const c_char {
 #[no_mangle]
 pub unsafe extern "C" fn db_close(db: *mut c_void) {
     if !db.is_null() {
-        let _ = unsafe { Box::from_raw(db as *mut LimboConn) };
+        let _ = unsafe { Box::from_raw(db as *mut TursoConn) };
     }
 }

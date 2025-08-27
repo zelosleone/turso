@@ -315,6 +315,14 @@ impl ProgramState {
         }
     }
 
+    pub fn set_register(&mut self, idx: usize, value: Register) {
+        self.registers[idx] = value;
+    }
+
+    pub fn get_register(&self, idx: usize) -> &Register {
+        &self.registers[idx]
+    }
+
     pub fn column_count(&self) -> usize {
         self.registers.len()
     }
@@ -333,6 +341,10 @@ impl ProgramState {
 
     pub fn bind_at(&mut self, index: NonZero<usize>, value: Value) {
         self.parameters.insert(index, value);
+    }
+
+    pub fn clear_bindings(&mut self) {
+        self.parameters.clear();
     }
 
     pub fn get_parameter(&self, index: NonZero<usize>) -> Value {
@@ -430,9 +442,7 @@ impl Program {
                 // Connection is closed for whatever reason, rollback the transaction.
                 let state = self.connection.transaction_state.get();
                 if let TransactionState::Write { .. } = state {
-                    pager
-                        .io
-                        .block(|| pager.end_tx(true, &self.connection, false))?;
+                    pager.io.block(|| pager.end_tx(true, &self.connection))?;
                 }
                 return Err(LimboError::InternalError("Connection closed".to_string()));
             }
@@ -604,11 +614,7 @@ impl Program {
         connection: &Connection,
         rollback: bool,
     ) -> Result<IOResult<()>> {
-        let cacheflush_status = pager.end_tx(
-            rollback,
-            connection,
-            connection.wal_auto_checkpoint_disabled.get(),
-        )?;
+        let cacheflush_status = pager.end_tx(rollback, connection)?;
         match cacheflush_status {
             IOResult::Done(_) => {
                 if self.change_cnt_on {
@@ -853,6 +859,10 @@ pub fn handle_program_error(
     connection: &Connection,
     err: &LimboError,
 ) -> Result<()> {
+    if connection.is_nested_stmt.get() {
+        // Errors from nested statements are handled by the parent statement.
+        return Ok(());
+    }
     match err {
         // Transaction errors, e.g. trying to start a nested transaction, do not cause a rollback.
         LimboError::TxError(_) => {}
@@ -861,7 +871,7 @@ pub fn handle_program_error(
         _ => {
             pager
                 .io
-                .block(|| pager.end_tx(true, connection, false))
+                .block(|| pager.end_tx(true, connection))
                 .inspect_err(|e| {
                     tracing::error!("end_tx failed: {e}");
                 })?;

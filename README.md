@@ -174,8 +174,8 @@ print(res.fetchone())
 1. Clone the repository
 2. Build the library and set your LD_LIBRARY_PATH to include turso's target directory
 ```console
-cargo build --package limbo-go
-export LD_LIBRARY_PATH=/path/to/limbo/target/debug:$LD_LIBRARY_PATH
+cargo build --package turso-go
+export LD_LIBRARY_PATH=/path/to/turso/target/debug:$LD_LIBRARY_PATH
 ```
 3. Use the driver
 
@@ -191,7 +191,7 @@ import (
     _ "github.com/tursodatabase/turso"
 )
 
-conn, _ = sql.Open("sqlite3", "sqlite.db")
+conn, _ = sql.Open("turso", "sqlite.db")
 defer conn.Close()
 
 stmt, _ := conn.Prepare("select * from users")

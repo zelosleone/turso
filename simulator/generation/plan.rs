@@ -8,22 +8,24 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use sql_generation::{
+    generation::{frequency, query::SelectFree, Arbitrary, ArbitraryFrom},
+    model::{
+        query::{update::Update, Create, CreateIndex, Delete, Drop, Insert, Select},
+        table::SimValue,
+    },
+};
 use turso_core::{Connection, Result, StepResult};
 
 use crate::{
-    generation::{query::SelectFree, Shadow},
-    model::{
-        query::{update::Update, Create, CreateIndex, Delete, Drop, Insert, Query, Select},
-        table::SimValue,
-    },
+    generation::Shadow,
+    model::Query,
     runner::{
         env::{SimConnection, SimulationType, SimulatorTables},
         io::SimulatorIO,
     },
     SimulatorEnv,
 };
-
-use crate::generation::{frequency, Arbitrary, ArbitraryFrom};
 
 use super::property::{remaining, Property};
 
@@ -661,7 +663,7 @@ impl Interaction {
                         .iter()
                         .any(|file| file.sync_completion.borrow().is_some())
                 };
-                let inject_fault = env.rng.gen_bool(current_prob);
+                let inject_fault = env.rng.random_bool(current_prob);
                 // TODO: avoid for now injecting faults when syncing
                 if inject_fault && !syncing {
                     env.io.inject_fault(true);
@@ -811,7 +813,7 @@ fn random_fault<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
     } else {
         vec![Fault::Disconnect, Fault::ReopenDatabase]
     };
-    let fault = faults[rng.gen_range(0..faults.len())].clone();
+    let fault = faults[rng.random_range(0..faults.len())].clone();
     Interactions::Fault(fault)
 }
 

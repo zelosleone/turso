@@ -19,6 +19,7 @@ extern "C" {
     fn sqlite3_libversion_number() -> i32;
     fn sqlite3_close(db: *mut sqlite3) -> i32;
     fn sqlite3_open(filename: *const libc::c_char, db: *mut *mut sqlite3) -> i32;
+    fn sqlite3_db_filename(db: *mut sqlite3, db_name: *const libc::c_char) -> *const libc::c_char;
     fn sqlite3_prepare_v2(
         db: *mut sqlite3,
         sql: *const libc::c_char,
@@ -27,6 +28,7 @@ extern "C" {
         tail: *mut *const libc::c_char,
     ) -> i32;
     fn sqlite3_step(stmt: *mut sqlite3_stmt) -> i32;
+    fn sqlite3_reset(stmt: *mut sqlite3_stmt) -> i32;
     fn sqlite3_finalize(stmt: *mut sqlite3_stmt) -> i32;
     fn sqlite3_wal_checkpoint(db: *mut sqlite3, db_name: *const libc::c_char) -> i32;
     fn sqlite3_wal_checkpoint_v2(
@@ -46,9 +48,12 @@ extern "C" {
     ) -> i32;
     fn libsql_wal_disable_checkpoint(db: *mut sqlite3) -> i32;
     fn sqlite3_column_int(stmt: *mut sqlite3_stmt, idx: i32) -> i64;
+    fn sqlite3_next_stmt(db: *mut sqlite3, stmt: *mut sqlite3_stmt) -> *mut sqlite3_stmt;
     fn sqlite3_bind_int(stmt: *mut sqlite3_stmt, idx: i32, val: i64) -> i32;
     fn sqlite3_bind_parameter_count(stmt: *mut sqlite3_stmt) -> i32;
     fn sqlite3_bind_parameter_name(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_char;
+    fn sqlite3_bind_parameter_index(stmt: *mut sqlite3_stmt, name: *const libc::c_char) -> i32;
+    fn sqlite3_clear_bindings(stmt: *mut sqlite3_stmt) -> i32;
     fn sqlite3_column_name(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_char;
     fn sqlite3_last_insert_rowid(db: *mut sqlite3) -> i32;
     fn sqlite3_column_count(stmt: *mut sqlite3_stmt) -> i32;
@@ -71,6 +76,7 @@ extern "C" {
     fn sqlite3_column_blob(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_void;
     fn sqlite3_column_type(stmt: *mut sqlite3_stmt, idx: i32) -> i32;
     fn sqlite3_column_decltype(stmt: *mut sqlite3_stmt, idx: i32) -> *const libc::c_char;
+    fn sqlite3_get_autocommit(db: *mut sqlite3) -> i32;
 }
 
 const SQLITE_OK: i32 = 0;
@@ -987,6 +993,85 @@ mod tests {
         }
 
         #[test]
+        fn test_get_autocommit() {
+            unsafe {
+                let temp_file = tempfile::NamedTempFile::with_suffix(".db").unwrap();
+                let path = std::ffi::CString::new(temp_file.path().to_str().unwrap()).unwrap();
+                let mut db = ptr::null_mut();
+                assert_eq!(sqlite3_open(path.as_ptr(), &mut db), SQLITE_OK);
+
+                // Should be in autocommit mode by default
+                assert_eq!(sqlite3_get_autocommit(db), 1);
+
+                // Begin a transaction
+                let mut stmt = ptr::null_mut();
+                assert_eq!(
+                    sqlite3_prepare_v2(db, c"BEGIN".as_ptr(), -1, &mut stmt, ptr::null_mut()),
+                    SQLITE_OK
+                );
+                assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+                assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+                // Should NOT be in autocommit mode during transaction
+                assert_eq!(sqlite3_get_autocommit(db), 0);
+
+                // Create a table within the transaction
+                let mut stmt = ptr::null_mut();
+                assert_eq!(
+                    sqlite3_prepare_v2(
+                        db,
+                        c"CREATE TABLE test (id INTEGER PRIMARY KEY)".as_ptr(),
+                        -1,
+                        &mut stmt,
+                        ptr::null_mut()
+                    ),
+                    SQLITE_OK
+                );
+                assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+                assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+                // Still not in autocommit mode
+                assert_eq!(sqlite3_get_autocommit(db), 0);
+
+                // Commit the transaction
+                let mut stmt = ptr::null_mut();
+                assert_eq!(
+                    sqlite3_prepare_v2(db, c"COMMIT".as_ptr(), -1, &mut stmt, ptr::null_mut()),
+                    SQLITE_OK
+                );
+                assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+                assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+                // Should be back in autocommit mode after commit
+                assert_eq!(sqlite3_get_autocommit(db), 1);
+
+                // Test with ROLLBACK
+                let mut stmt = ptr::null_mut();
+                assert_eq!(
+                    sqlite3_prepare_v2(db, c"BEGIN".as_ptr(), -1, &mut stmt, ptr::null_mut()),
+                    SQLITE_OK
+                );
+                assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+                assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+                assert_eq!(sqlite3_get_autocommit(db), 0);
+
+                let mut stmt = ptr::null_mut();
+                assert_eq!(
+                    sqlite3_prepare_v2(db, c"ROLLBACK".as_ptr(), -1, &mut stmt, ptr::null_mut()),
+                    SQLITE_OK
+                );
+                assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+                assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+                // Should be back in autocommit mode after rollback
+                assert_eq!(sqlite3_get_autocommit(db), 1);
+
+                assert_eq!(sqlite3_close(db), SQLITE_OK);
+            }
+        }
+
+        #[test]
         fn test_wal_checkpoint() {
             let temp_file = tempfile::NamedTempFile::with_suffix(".db").unwrap();
             unsafe {
@@ -1093,6 +1178,223 @@ mod tests {
                 assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
                 assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
             }
+        }
+    }
+
+    #[test]
+    fn test_sqlite3_clear_bindings() {
+        unsafe {
+            let mut db: *mut sqlite3 = ptr::null_mut();
+            let mut stmt: *mut sqlite3_stmt = ptr::null_mut();
+
+            assert_eq!(sqlite3_open(c":memory:".as_ptr(), &mut db), SQLITE_OK);
+
+            assert_eq!(
+                sqlite3_prepare_v2(
+                    db,
+                    c"CREATE TABLE person (id INTEGER, name TEXT, age INTEGER)".as_ptr(),
+                    -1,
+                    &mut stmt,
+                    ptr::null_mut()
+                ),
+                SQLITE_OK
+            );
+            assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+            assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+            assert_eq!(
+                sqlite3_prepare_v2(
+                    db,
+                    c"INSERT INTO person (id, name, age) VALUES (1, 'John', 25), (2, 'Jane', 30)"
+                        .as_ptr(),
+                    -1,
+                    &mut stmt,
+                    ptr::null_mut()
+                ),
+                SQLITE_OK
+            );
+            assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+            assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+
+            assert_eq!(
+                sqlite3_prepare_v2(
+                    db,
+                    c"SELECT * FROM person WHERE id = ? AND age > ?".as_ptr(),
+                    -1,
+                    &mut stmt,
+                    ptr::null_mut()
+                ),
+                SQLITE_OK
+            );
+
+            // Bind parameters - should find John (id=1, age=25 > 20)
+            assert_eq!(sqlite3_bind_int(stmt, 1, 1), SQLITE_OK);
+            assert_eq!(sqlite3_bind_int(stmt, 2, 20), SQLITE_OK);
+            assert_eq!(sqlite3_step(stmt), SQLITE_ROW);
+            assert_eq!(sqlite3_column_int(stmt, 0), 1);
+            assert_eq!(sqlite3_column_int(stmt, 2), 25);
+
+            // Reset and clear bindings, query should return no rows
+            assert_eq!(sqlite3_reset(stmt), SQLITE_OK);
+            assert_eq!(sqlite3_clear_bindings(stmt), SQLITE_OK);
+            assert_eq!(sqlite3_step(stmt), SQLITE_DONE);
+
+            assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+            assert_eq!(sqlite3_close(db), SQLITE_OK);
+        }
+    }
+
+    #[test]
+    fn test_sqlite3_bind_parameter_index() {
+        const SQLITE_OK: i32 = 0;
+
+        unsafe {
+            let mut db: *mut sqlite3 = ptr::null_mut();
+            let mut stmt: *mut sqlite3_stmt = ptr::null_mut();
+
+            assert_eq!(sqlite3_open(c":memory:".as_ptr(), &mut db), SQLITE_OK);
+
+            assert_eq!(
+                sqlite3_prepare_v2(
+                    db,
+                    c"SELECT * FROM sqlite_master WHERE name = :table_name AND type = :object_type"
+                        .as_ptr(),
+                    -1,
+                    &mut stmt,
+                    ptr::null_mut()
+                ),
+                SQLITE_OK
+            );
+
+            let index1 = sqlite3_bind_parameter_index(stmt, c":table_name".as_ptr());
+            assert_eq!(index1, 1);
+
+            let index2 = sqlite3_bind_parameter_index(stmt, c":object_type".as_ptr());
+            assert_eq!(index2, 2);
+
+            let index3 = sqlite3_bind_parameter_index(stmt, c":nonexistent".as_ptr());
+            assert_eq!(index3, 0);
+
+            let index4 = sqlite3_bind_parameter_index(stmt, ptr::null());
+            assert_eq!(index4, 0);
+
+            assert_eq!(sqlite3_finalize(stmt), SQLITE_OK);
+        }
+    }
+
+    #[test]
+    fn test_sqlite3_db_filename() {
+        const SQLITE_OK: i32 = 0;
+
+        unsafe {
+            // Test with in-memory database
+            let mut db: *mut sqlite3 = ptr::null_mut();
+            assert_eq!(sqlite3_open(c":memory:".as_ptr(), &mut db), SQLITE_OK);
+            let filename = sqlite3_db_filename(db, c"main".as_ptr());
+            assert!(!filename.is_null());
+            let filename_str = std::ffi::CStr::from_ptr(filename).to_str().unwrap();
+            assert_eq!(filename_str, "");
+            assert_eq!(sqlite3_close(db), SQLITE_OK);
+
+            // Open a file-backed database
+            let temp_file = tempfile::NamedTempFile::with_suffix(".db").unwrap();
+            let path = std::ffi::CString::new(temp_file.path().to_str().unwrap()).unwrap();
+            let mut db = ptr::null_mut();
+            assert_eq!(sqlite3_open(path.as_ptr(), &mut db), SQLITE_OK);
+
+            // Test with "main" database name
+            let filename = sqlite3_db_filename(db, c"main".as_ptr());
+            assert!(!filename.is_null());
+            let filename_str = std::ffi::CStr::from_ptr(filename).to_str().unwrap();
+            assert_eq!(filename_str, temp_file.path().to_str().unwrap());
+
+            // Test with NULL database name (defaults to main)
+            let filename_default = sqlite3_db_filename(db, ptr::null());
+            assert!(!filename_default.is_null());
+            assert_eq!(filename, filename_default);
+
+            // Test with non-existent database name
+            let filename = sqlite3_db_filename(db, c"temp".as_ptr());
+            assert!(filename.is_null());
+
+            assert_eq!(sqlite3_close(db), SQLITE_OK);
+        }
+    }
+
+    #[test]
+    fn test_sqlite3_next_stmt() {
+        const SQLITE_OK: i32 = 0;
+
+        unsafe {
+            let mut db: *mut sqlite3 = ptr::null_mut();
+            assert_eq!(sqlite3_open(c":memory:".as_ptr(), &mut db), SQLITE_OK);
+
+            // Initially, there should be no prepared statements
+            let iter = sqlite3_next_stmt(db, ptr::null_mut());
+            assert!(iter.is_null());
+
+            // Prepare first statement
+            let mut stmt1: *mut sqlite3_stmt = ptr::null_mut();
+            assert_eq!(
+                sqlite3_prepare_v2(db, c"SELECT 1;".as_ptr(), -1, &mut stmt1, ptr::null_mut()),
+                SQLITE_OK
+            );
+            assert!(!stmt1.is_null());
+
+            // Now there should be one statement
+            let iter = sqlite3_next_stmt(db, ptr::null_mut());
+            assert_eq!(iter, stmt1);
+
+            // And no more after that
+            let iter = sqlite3_next_stmt(db, stmt1);
+            assert!(iter.is_null());
+
+            // Prepare second statement
+            let mut stmt2: *mut sqlite3_stmt = ptr::null_mut();
+            assert_eq!(
+                sqlite3_prepare_v2(db, c"SELECT 2;".as_ptr(), -1, &mut stmt2, ptr::null_mut()),
+                SQLITE_OK
+            );
+            assert!(!stmt2.is_null());
+
+            // Prepare third statement
+            let mut stmt3: *mut sqlite3_stmt = ptr::null_mut();
+            assert_eq!(
+                sqlite3_prepare_v2(db, c"SELECT 3;".as_ptr(), -1, &mut stmt3, ptr::null_mut()),
+                SQLITE_OK
+            );
+            assert!(!stmt3.is_null());
+
+            // Count all statements
+            let mut count = 0;
+            let mut iter = sqlite3_next_stmt(db, ptr::null_mut());
+            while !iter.is_null() {
+                count += 1;
+                iter = sqlite3_next_stmt(db, iter);
+            }
+            assert_eq!(count, 3);
+
+            // Finalize the middle statement
+            assert_eq!(sqlite3_finalize(stmt2), SQLITE_OK);
+
+            // Count should now be 2
+            count = 0;
+            iter = sqlite3_next_stmt(db, ptr::null_mut());
+            while !iter.is_null() {
+                count += 1;
+                iter = sqlite3_next_stmt(db, iter);
+            }
+            assert_eq!(count, 2);
+
+            // Finalize remaining statements
+            assert_eq!(sqlite3_finalize(stmt1), SQLITE_OK);
+            assert_eq!(sqlite3_finalize(stmt3), SQLITE_OK);
+
+            // Should be no statements left
+            let iter = sqlite3_next_stmt(db, ptr::null_mut());
+            assert!(iter.is_null());
+
+            assert_eq!(sqlite3_close(db), SQLITE_OK);
         }
     }
 }

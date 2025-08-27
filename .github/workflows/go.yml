@@ -34,10 +34,9 @@ jobs:
           go-version: "1.23"
 
       - name: build Go bindings library
-        run: cargo build --package limbo-go
+        run: cargo build --package turso-go
 
       - name: run Go tests
         env:
           LD_LIBRARY_PATH: ${{ github.workspace }}/target/debug:$LD_LIBRARY_PATH
         run: go test
-

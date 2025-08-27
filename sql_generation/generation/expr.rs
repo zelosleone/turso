@@ -1,14 +1,13 @@
-use turso_sqlite3_parser::ast::{
+use turso_parser::ast::{
     self, Expr, LikeOperator, Name, Operator, QualifiedName, Type, UnaryOperator,
 };
 
 use crate::{
     generation::{
         frequency, gen_random_text, one_of, pick, pick_index, Arbitrary, ArbitraryFrom,
-        ArbitrarySizedFrom,
+        ArbitrarySizedFrom, GenerationContext,
     },
     model::table::SimValue,
-    SimulatorEnv,
 };
 
 impl<T> Arbitrary for Box<T>
@@ -34,7 +33,7 @@ where
     T: Arbitrary,
 {
     fn arbitrary<R: rand::Rng>(rng: &mut R) -> Self {
-        rng.gen_bool(0.5).then_some(T::arbitrary(rng))
+        rng.random_bool(0.5).then_some(T::arbitrary(rng))
     }
 }
 
@@ -43,7 +42,7 @@ where
     T: ArbitrarySizedFrom<A>,
 {
     fn arbitrary_sized_from<R: rand::Rng>(rng: &mut R, t: A, size: usize) -> Self {
-        rng.gen_bool(0.5)
+        rng.random_bool(0.5)
             .then_some(T::arbitrary_sized_from(rng, t, size))
     }
 }
@@ -53,14 +52,14 @@ where
     T: ArbitraryFrom<A>,
 {
     fn arbitrary_from<R: rand::Rng>(rng: &mut R, t: A) -> Self {
-        let size = rng.gen_range(0..5);
+        let size = rng.random_range(0..5);
         (0..size).map(|_| T::arbitrary_from(rng, t)).collect()
     }
 }
 
 // Freestyling generation
-impl ArbitrarySizedFrom<&SimulatorEnv> for Expr {
-    fn arbitrary_sized_from<R: rand::Rng>(rng: &mut R, t: &SimulatorEnv, size: usize) -> Self {
+impl<C: GenerationContext> ArbitrarySizedFrom<&C> for Expr {
+    fn arbitrary_sized_from<R: rand::Rng>(rng: &mut R, t: &C, size: usize) -> Self {
         frequency(
             vec![
                 (
@@ -200,36 +199,23 @@ impl Arbitrary for Type {
     }
 }
 
-struct CollateName(String);
-
-impl Arbitrary for CollateName {
-    fn arbitrary<R: rand::Rng>(rng: &mut R) -> Self {
-        let choice = rng.gen_range(0..3);
-        CollateName(
-            match choice {
-                0 => "BINARY",
-                1 => "RTRIM",
-                2 => "NOCASE",
-                _ => unreachable!(),
-            }
-            .to_string(),
-        )
-    }
-}
-
-impl ArbitraryFrom<&SimulatorEnv> for QualifiedName {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, t: &SimulatorEnv) -> Self {
+impl<C: GenerationContext> ArbitraryFrom<&C> for QualifiedName {
+    fn arbitrary_from<R: rand::Rng>(rng: &mut R, t: &C) -> Self {
         // TODO: for now just generate table name
-        let table_idx = pick_index(t.tables.len(), rng);
-        let table = &t.tables[table_idx];
+        let table_idx = pick_index(t.tables().len(), rng);
+        let table = &t.tables()[table_idx];
         // TODO: for now forego alias
-        Self::single(Name::from_str(&table.name))
+        Self {
+            db_name: None,
+            name: Name::new(&table.name),
+            alias: None,
+        }
     }
 }
 
-impl ArbitraryFrom<&SimulatorEnv> for LikeOperator {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &SimulatorEnv) -> Self {
-        let choice = rng.gen_range(0..4);
+impl<C: GenerationContext> ArbitraryFrom<&C> for LikeOperator {
+    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &C) -> Self {
+        let choice = rng.random_range(0..4);
         match choice {
             0 => LikeOperator::Glob,
             1 => LikeOperator::Like,
@@ -241,17 +227,17 @@ impl ArbitraryFrom<&SimulatorEnv> for LikeOperator {
 }
 
 // Current implementation does not take into account the columns affinity nor if table is Strict
-impl ArbitraryFrom<&SimulatorEnv> for ast::Literal {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &SimulatorEnv) -> Self {
+impl<C: GenerationContext> ArbitraryFrom<&C> for ast::Literal {
+    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &C) -> Self {
         loop {
-            let choice = rng.gen_range(0..5);
+            let choice = rng.random_range(0..5);
             let lit = match choice {
                 0 => ast::Literal::Numeric({
-                    let integer = rng.gen_bool(0.5);
+                    let integer = rng.random_bool(0.5);
                     if integer {
-                        rng.gen_range(i64::MIN..i64::MAX).to_string()
+                        rng.random_range(i64::MIN..i64::MAX).to_string()
                     } else {
-                        rng.gen_range(-1e10..1e10).to_string()
+                        rng.random_range(-1e10..1e10).to_string()
                     }
                 }),
                 1 => ast::Literal::String(format!("'{}'", gen_random_text(rng))),
@@ -279,9 +265,9 @@ impl ArbitraryFrom<&Vec<&SimValue>> for ast::Expr {
     }
 }
 
-impl ArbitraryFrom<&SimulatorEnv> for UnaryOperator {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &SimulatorEnv) -> Self {
-        let choice = rng.gen_range(0..4);
+impl<C: GenerationContext> ArbitraryFrom<&C> for UnaryOperator {
+    fn arbitrary_from<R: rand::Rng>(rng: &mut R, _t: &C) -> Self {
+        let choice = rng.random_range(0..4);
         match choice {
             0 => Self::BitwiseNot,
             1 => Self::Negative,

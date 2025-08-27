@@ -1,6 +1,6 @@
 //go:build windows
 
-package limbo
+package turso
 
 import (
 	"fmt"

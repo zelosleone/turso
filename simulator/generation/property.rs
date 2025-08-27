@@ -1,30 +1,23 @@
 use serde::{Deserialize, Serialize};
-use turso_core::{types, LimboError};
-use turso_sqlite3_parser::ast::{self};
-
-use crate::{
-    generation::Shadow as _,
+use sql_generation::{
+    generation::{frequency, pick, pick_index, ArbitraryFrom},
     model::{
         query::{
             predicate::Predicate,
-            select::{
-                CompoundOperator, CompoundSelect, Distinctness, ResultColumn, SelectBody,
-                SelectInner,
-            },
+            select::{CompoundOperator, CompoundSelect, ResultColumn, SelectBody, SelectInner},
             transaction::{Begin, Commit, Rollback},
             update::Update,
-            Create, Delete, Drop, Insert, Query, Select,
+            Create, Delete, Drop, Insert, Select,
         },
         table::SimValue,
     },
-    runner::env::SimulatorEnv,
 };
+use turso_core::{types, LimboError};
+use turso_parser::ast::{self, Distinctness};
 
-use super::{
-    frequency, pick, pick_index,
-    plan::{Assertion, Interaction, InteractionStats, ResultSet},
-    ArbitraryFrom,
-};
+use crate::{generation::Shadow as _, model::Query, runner::env::SimulatorEnv};
+
+use super::plan::{Assertion, Interaction, InteractionStats, ResultSet};
 
 /// Properties are representations of executable specifications
 /// about the database behavior.
@@ -1073,7 +1066,7 @@ fn property_insert_values_select<R: rand::Rng>(
     // Get a random table
     let table = pick(&env.tables, rng);
     // Generate rows to insert
-    let rows = (0..rng.gen_range(1..=5))
+    let rows = (0..rng.random_range(1..=5))
         .map(|_| Vec::<SimValue>::arbitrary_from(rng, table))
         .collect::<Vec<_>>();
 
@@ -1088,10 +1081,10 @@ fn property_insert_values_select<R: rand::Rng>(
     };
 
     // Choose if we want queries to be executed in an interactive transaction
-    let interactive = if rng.gen_bool(0.5) {
+    let interactive = if rng.random_bool(0.5) {
         Some(InteractiveQueryInfo {
-            start_with_immediate: rng.gen_bool(0.5),
-            end_with_commit: rng.gen_bool(0.5),
+            start_with_immediate: rng.random_bool(0.5),
+            end_with_commit: rng.random_bool(0.5),
         })
     } else {
         None
@@ -1107,7 +1100,7 @@ fn property_insert_values_select<R: rand::Rng>(
             immediate: interactive.start_with_immediate,
         }));
     }
-    for _ in 0..rng.gen_range(0..3) {
+    for _ in 0..rng.random_range(0..3) {
         let query = Query::arbitrary_from(rng, (env, remaining));
         match &query {
             Query::Delete(Delete {
@@ -1198,7 +1191,7 @@ fn property_select_limit<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Prope
         table.name.clone(),
         vec![ResultColumn::Star],
         Predicate::arbitrary_from(rng, table),
-        Some(rng.gen_range(1..=5)),
+        Some(rng.random_range(1..=5)),
         Distinctness::All,
     );
     Property::SelectLimit { select }
@@ -1221,7 +1214,7 @@ fn property_double_create_failure<R: rand::Rng>(
     // The interactions in the middle has the following constraints;
     // - [x] There will be no errors in the middle interactions.(best effort)
     // - [ ] Table `t` will not be renamed or dropped.(todo: add this constraint once ALTER or DROP is implemented)
-    for _ in 0..rng.gen_range(0..3) {
+    for _ in 0..rng.random_range(0..3) {
         let query = Query::arbitrary_from(rng, (env, remaining));
         if let Query::Create(Create { table: t }) = &query {
             // There will be no errors in the middle interactions.
@@ -1254,7 +1247,7 @@ fn property_delete_select<R: rand::Rng>(
     // - [x] There will be no errors in the middle interactions. (this constraint is impossible to check, so this is just best effort)
     // - [x] A row that holds for the predicate will not be inserted.
     // - [ ] The table `t` will not be renamed, dropped, or altered. (todo: add this constraint once ALTER or DROP is implemented)
-    for _ in 0..rng.gen_range(0..3) {
+    for _ in 0..rng.random_range(0..3) {
         let query = Query::arbitrary_from(rng, (env, remaining));
         match &query {
             Query::Insert(Insert::Values { table: t, values }) => {
@@ -1309,7 +1302,7 @@ fn property_drop_select<R: rand::Rng>(
     let mut queries = Vec::new();
     // - [x] There will be no errors in the middle interactions. (this constraint is impossible to check, so this is just best effort)
     // - [-] The table `t` will not be created, no table will be renamed to `t`. (todo: update this constraint once ALTER is implemented)
-    for _ in 0..rng.gen_range(0..3) {
+    for _ in 0..rng.random_range(0..3) {
         let query = Query::arbitrary_from(rng, (env, remaining));
         if let Query::Create(Create { table: t }) = &query {
             // - The table `t` will not be created

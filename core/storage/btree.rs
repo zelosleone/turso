@@ -6,9 +6,10 @@ use crate::{
     storage::{
         pager::{BtreePageAllocMode, Pager},
         sqlite3_ondisk::{
-            read_u32, read_varint, BTreeCell, DatabaseHeader, PageContent, PageSize, PageType,
-            TableInteriorCell, TableLeafCell, CELL_PTR_SIZE_BYTES, INTERIOR_PAGE_HEADER_SIZE_BYTES,
-            LEAF_PAGE_HEADER_SIZE_BYTES, LEFT_CHILD_PTR_SIZE_BYTES,
+            payload_overflows, read_u32, read_varint, BTreeCell, DatabaseHeader, PageContent,
+            PageSize, PageType, TableInteriorCell, TableLeafCell, CELL_PTR_SIZE_BYTES,
+            INTERIOR_PAGE_HEADER_SIZE_BYTES, LEAF_PAGE_HEADER_SIZE_BYTES,
+            LEFT_CHILD_PTR_SIZE_BYTES,
         },
         state_machines::{
             AdvanceState, CountState, EmptyTableState, MoveToRightState, MoveToState, RewindState,
@@ -37,7 +38,6 @@ use super::{
         write_varint_to_vec, IndexInteriorCell, IndexLeafCell, OverflowCell, MINIMUM_CELL_SIZE,
     },
 };
-#[cfg(debug_assertions)]
 use std::collections::HashSet;
 use std::{
     cell::{Cell, Ref, RefCell},
@@ -2274,7 +2274,7 @@ impl BTreeCursor {
                     ref mut fill_cell_payload_state,
                 } => {
                     return_if_io!(fill_cell_payload(
-                        page.get().get().contents.as_ref().unwrap(),
+                        page.get(),
                         bkey.maybe_rowid(),
                         new_payload,
                         *cell_idx,
@@ -4321,6 +4321,9 @@ impl BTreeCursor {
                 return Ok(IOResult::Done(None));
             }
         }
+        if self.get_null_flag() {
+            return Ok(IOResult::Done(None));
+        }
         if self.has_record.get() {
             let page = self.stack.top();
             let page = page.get();
@@ -5176,10 +5179,9 @@ impl BTreeCursor {
                     fill_cell_payload_state,
                 } => {
                     let page = page_ref.get();
-                    let page_contents = page.get().contents.as_ref().unwrap();
                     {
                         return_if_io!(fill_cell_payload(
-                            page_contents,
+                            page,
                             *rowid,
                             new_payload,
                             cell_idx,
@@ -5502,6 +5504,11 @@ pub enum IntegrityCheckError {
         got: usize,
         expected: usize,
     },
+    #[error("Page {page_id} referenced multiple times")]
+    PageReferencedMultipleTimes {
+        page_id: usize,
+        is_overflow_page: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -5514,6 +5521,7 @@ pub struct IntegrityCheckState {
     pub current_page: usize,
     page_stack: Vec<IntegrityCheckPageEntry>,
     first_leaf_level: Option<usize>,
+    pages_referenced: HashSet<usize>,
     page: Option<PageRef>,
 }
 
@@ -5526,6 +5534,7 @@ impl IntegrityCheckState {
                 level: 0,
                 max_intkey: i64::MAX,
             }],
+            pages_referenced: HashSet::new(),
             first_leaf_level: None,
             page: None,
         }
@@ -5555,165 +5564,214 @@ pub fn integrity_check(
     errors: &mut Vec<IntegrityCheckError>,
     pager: &Rc<Pager>,
 ) -> Result<IOResult<()>> {
-    let Some(IntegrityCheckPageEntry {
-        page_idx,
-        level,
-        max_intkey,
-    }) = state.page_stack.last().cloned()
-    else {
-        return Ok(IOResult::Done(()));
-    };
-    let page = match state.page.take() {
-        Some(page) => page,
-        None => {
-            let (page, c) = btree_read_page(pager, page_idx)?;
-            state.page = Some(page.get());
-            if let Some(c) = c {
-                io_yield_one!(c);
+    loop {
+        let Some(IntegrityCheckPageEntry {
+            page_idx,
+            level,
+            max_intkey,
+        }) = state.page_stack.last().cloned()
+        else {
+            return Ok(IOResult::Done(()));
+        };
+        let page = match state.page.take() {
+            Some(page) => page,
+            None => {
+                let (page, c) = btree_read_page(pager, page_idx)?;
+                state.page = Some(page.get());
+                if let Some(c) = c {
+                    io_yield_one!(c);
+                }
+                state.page.take().expect("page should be present")
             }
-            page.get()
-        }
-    };
-    turso_assert!(page.is_loaded(), "page should be loaded");
-    state.page_stack.pop();
+        };
+        turso_assert!(page.is_loaded(), "page should be loaded");
+        state.page_stack.pop();
 
-    let contents = page.get_contents();
-    let usable_space = pager.usable_space();
-    let mut coverage_checker = CoverageChecker::new(page.get().id);
+        let contents = page.get_contents();
+        let is_overflow_page = contents.maybe_page_type().is_none();
+        if !state.pages_referenced.insert(page.get().id) {
+            errors.push(IntegrityCheckError::PageReferencedMultipleTimes {
+                page_id: page.get().id,
+                is_overflow_page,
+            });
+            continue;
+        }
+        let usable_space = pager.usable_space();
+        let mut coverage_checker = CoverageChecker::new(page.get().id);
 
-    // Now we check every cell for few things:
-    // 1. Check cell is in correct range. Not exceeds page and not starts before we have marked
-    //    (cell content area).
-    // 2. We add the cell to coverage checker in order to check if cells do not overlap.
-    // 3. We check order of rowids in case of table pages. We iterate backwards in order to check
-    //    if current cell's rowid is less than the next cell. We also check rowid is less than the
-    //    parent's divider cell. In case of this page being root page max rowid will be i64::MAX.
-    // 4. We append pages to the stack to check later.
-    // 5. In case of leaf page, check if the current level(depth) is equal to other leaf pages we
-    //    have seen.
-    let mut next_rowid = max_intkey;
-    for cell_idx in (0..contents.cell_count()).rev() {
-        let (cell_start, cell_length) = contents.cell_get_raw_region(cell_idx, usable_space);
-        if cell_start < contents.cell_content_area() as usize || cell_start > usable_space - 4 {
-            errors.push(IntegrityCheckError::CellOutOfRange {
-                cell_idx,
-                page_id: page.get().id,
-                cell_start,
-                cell_end: cell_start + cell_length,
-                content_area: contents.cell_content_area() as usize,
-                usable_space,
-            });
-        }
-        if cell_start + cell_length > usable_space {
-            errors.push(IntegrityCheckError::CellOverflowsPage {
-                cell_idx,
-                page_id: page.get().id,
-                cell_start,
-                cell_end: cell_start + cell_length,
-                content_area: contents.cell_content_area() as usize,
-                usable_space,
-            });
-        }
-        coverage_checker.add_cell(cell_start, cell_start + cell_length);
-        let cell = contents.cell_get(cell_idx, usable_space)?;
-        match cell {
-            BTreeCell::TableInteriorCell(table_interior_cell) => {
+        if is_overflow_page {
+            let next_overflow_page = contents.read_u32_no_offset(0);
+            if next_overflow_page != 0 {
                 state.page_stack.push(IntegrityCheckPageEntry {
-                    page_idx: table_interior_cell.left_child_page as usize,
-                    level: level + 1,
-                    max_intkey: table_interior_cell.rowid,
-                });
-                let rowid = table_interior_cell.rowid;
-                if rowid > max_intkey || rowid > next_rowid {
-                    errors.push(IntegrityCheckError::CellRowidOutOfRange {
-                        page_id: page.get().id,
-                        cell_idx,
-                        rowid,
-                        max_intkey,
-                        next_rowid,
-                    });
-                }
-                next_rowid = rowid;
-            }
-            BTreeCell::TableLeafCell(table_leaf_cell) => {
-                // check depth of leaf pages are equal
-                if let Some(expected_leaf_level) = state.first_leaf_level {
-                    if expected_leaf_level != level {
-                        errors.push(IntegrityCheckError::LeafDepthMismatch {
-                            page_id: page.get().id,
-                            this_page_depth: level,
-                            other_page_depth: expected_leaf_level,
-                        });
-                    }
-                } else {
-                    state.first_leaf_level = Some(level);
-                }
-                let rowid = table_leaf_cell.rowid;
-                if rowid > max_intkey || rowid > next_rowid {
-                    errors.push(IntegrityCheckError::CellRowidOutOfRange {
-                        page_id: page.get().id,
-                        cell_idx,
-                        rowid,
-                        max_intkey,
-                        next_rowid,
-                    });
-                }
-                next_rowid = rowid;
-            }
-            BTreeCell::IndexInteriorCell(index_interior_cell) => {
-                state.page_stack.push(IntegrityCheckPageEntry {
-                    page_idx: index_interior_cell.left_child_page as usize,
-                    level: level + 1,
-                    max_intkey, // we don't care about intkey in non-table pages
+                    page_idx: next_overflow_page as usize,
+                    level,
+                    max_intkey,
                 });
             }
-            BTreeCell::IndexLeafCell(_) => {
-                // check depth of leaf pages are equal
-                if let Some(expected_leaf_level) = state.first_leaf_level {
-                    if expected_leaf_level != level {
-                        errors.push(IntegrityCheckError::LeafDepthMismatch {
-                            page_id: page.get().id,
-                            this_page_depth: level,
-                            other_page_depth: expected_leaf_level,
-                        });
-                    }
-                } else {
-                    state.first_leaf_level = Some(level);
-                }
-            }
+            continue;
         }
-    }
 
-    // Now we add free blocks to the coverage checker
-    let first_freeblock = contents.first_freeblock() as usize;
-    if first_freeblock > 0 {
-        let mut pc = first_freeblock;
-        while pc > 0 {
-            let next = contents.read_u16_no_offset(pc as usize) as usize;
-            let size = contents.read_u16_no_offset(pc as usize + 2) as usize;
-            // check it doesn't go out of range
-            if pc > usable_space - 4 {
-                errors.push(IntegrityCheckError::FreeBlockOutOfRange {
+        // Now we check every cell for few things:
+        // 1. Check cell is in correct range. Not exceeds page and not starts before we have marked
+        //    (cell content area).
+        // 2. We add the cell to coverage checker in order to check if cells do not overlap.
+        // 3. We check order of rowids in case of table pages. We iterate backwards in order to check
+        //    if current cell's rowid is less than the next cell. We also check rowid is less than the
+        //    parent's divider cell. In case of this page being root page max rowid will be i64::MAX.
+        // 4. We append pages to the stack to check later.
+        // 5. In case of leaf page, check if the current level(depth) is equal to other leaf pages we
+        //    have seen.
+        let mut next_rowid = max_intkey;
+        for cell_idx in (0..contents.cell_count()).rev() {
+            let (cell_start, cell_length) = contents.cell_get_raw_region(cell_idx, usable_space);
+            if cell_start < contents.cell_content_area() as usize || cell_start > usable_space - 4 {
+                errors.push(IntegrityCheckError::CellOutOfRange {
+                    cell_idx,
                     page_id: page.get().id,
-                    start: pc,
-                    end: pc + size,
+                    cell_start,
+                    cell_end: cell_start + cell_length,
+                    content_area: contents.cell_content_area() as usize,
+                    usable_space,
                 });
-                break;
             }
-            coverage_checker.add_free_block(pc, pc + size);
-            pc = next;
+            if cell_start + cell_length > usable_space {
+                errors.push(IntegrityCheckError::CellOverflowsPage {
+                    cell_idx,
+                    page_id: page.get().id,
+                    cell_start,
+                    cell_end: cell_start + cell_length,
+                    content_area: contents.cell_content_area() as usize,
+                    usable_space,
+                });
+            }
+            coverage_checker.add_cell(cell_start, cell_start + cell_length);
+            let cell = contents.cell_get(cell_idx, usable_space)?;
+            match cell {
+                BTreeCell::TableInteriorCell(table_interior_cell) => {
+                    state.page_stack.push(IntegrityCheckPageEntry {
+                        page_idx: table_interior_cell.left_child_page as usize,
+                        level: level + 1,
+                        max_intkey: table_interior_cell.rowid,
+                    });
+                    let rowid = table_interior_cell.rowid;
+                    if rowid > max_intkey || rowid > next_rowid {
+                        errors.push(IntegrityCheckError::CellRowidOutOfRange {
+                            page_id: page.get().id,
+                            cell_idx,
+                            rowid,
+                            max_intkey,
+                            next_rowid,
+                        });
+                    }
+                    next_rowid = rowid;
+                }
+                BTreeCell::TableLeafCell(table_leaf_cell) => {
+                    // check depth of leaf pages are equal
+                    if let Some(expected_leaf_level) = state.first_leaf_level {
+                        if expected_leaf_level != level {
+                            errors.push(IntegrityCheckError::LeafDepthMismatch {
+                                page_id: page.get().id,
+                                this_page_depth: level,
+                                other_page_depth: expected_leaf_level,
+                            });
+                        }
+                    } else {
+                        state.first_leaf_level = Some(level);
+                    }
+                    let rowid = table_leaf_cell.rowid;
+                    if rowid > max_intkey || rowid > next_rowid {
+                        errors.push(IntegrityCheckError::CellRowidOutOfRange {
+                            page_id: page.get().id,
+                            cell_idx,
+                            rowid,
+                            max_intkey,
+                            next_rowid,
+                        });
+                    }
+                    next_rowid = rowid;
+                    if let Some(first_overflow_page) = table_leaf_cell.first_overflow_page {
+                        state.page_stack.push(IntegrityCheckPageEntry {
+                            page_idx: first_overflow_page as usize,
+                            level,
+                            max_intkey,
+                        });
+                    }
+                }
+                BTreeCell::IndexInteriorCell(index_interior_cell) => {
+                    state.page_stack.push(IntegrityCheckPageEntry {
+                        page_idx: index_interior_cell.left_child_page as usize,
+                        level: level + 1,
+                        max_intkey, // we don't care about intkey in non-table pages
+                    });
+                    if let Some(first_overflow_page) = index_interior_cell.first_overflow_page {
+                        state.page_stack.push(IntegrityCheckPageEntry {
+                            page_idx: first_overflow_page as usize,
+                            level,
+                            max_intkey,
+                        });
+                    }
+                }
+                BTreeCell::IndexLeafCell(index_leaf_cell) => {
+                    // check depth of leaf pages are equal
+                    if let Some(expected_leaf_level) = state.first_leaf_level {
+                        if expected_leaf_level != level {
+                            errors.push(IntegrityCheckError::LeafDepthMismatch {
+                                page_id: page.get().id,
+                                this_page_depth: level,
+                                other_page_depth: expected_leaf_level,
+                            });
+                        }
+                    } else {
+                        state.first_leaf_level = Some(level);
+                    }
+                    if let Some(first_overflow_page) = index_leaf_cell.first_overflow_page {
+                        state.page_stack.push(IntegrityCheckPageEntry {
+                            page_idx: first_overflow_page as usize,
+                            level,
+                            max_intkey,
+                        });
+                    }
+                }
+            }
         }
+
+        if let Some(rightmost) = contents.rightmost_pointer() {
+            state.page_stack.push(IntegrityCheckPageEntry {
+                page_idx: rightmost as usize,
+                level: level + 1,
+                max_intkey,
+            });
+        }
+
+        // Now we add free blocks to the coverage checker
+        let first_freeblock = contents.first_freeblock() as usize;
+        if first_freeblock > 0 {
+            let mut pc = first_freeblock;
+            while pc > 0 {
+                let next = contents.read_u16_no_offset(pc as usize) as usize;
+                let size = contents.read_u16_no_offset(pc as usize + 2) as usize;
+                // check it doesn't go out of range
+                if pc > usable_space - 4 {
+                    errors.push(IntegrityCheckError::FreeBlockOutOfRange {
+                        page_id: page.get().id,
+                        start: pc,
+                        end: pc + size,
+                    });
+                    break;
+                }
+                coverage_checker.add_free_block(pc, pc + size);
+                pc = next;
+            }
+        }
+
+        // Let's check the overlap of freeblocks and cells now that we have collected them all.
+        coverage_checker.analyze(
+            usable_space,
+            contents.cell_content_area() as usize,
+            errors,
+            contents.num_frag_free_bytes() as usize,
+        );
     }
-
-    // Let's check the overlap of freeblocks and cells now that we have collected them all.
-    coverage_checker.analyze(
-        usable_space,
-        contents.cell_content_area() as usize,
-        errors,
-        contents.num_frag_free_bytes() as usize,
-    );
-
-    Ok(IOResult::Done(()))
 }
 
 pub fn btree_read_page(
@@ -6081,59 +6139,104 @@ impl BTreePageInner {
     }
 }
 
-/// Try to find a free block available and allocate it if found
-fn find_free_cell(page_ref: &PageContent, usable_space: usize, amount: usize) -> Result<usize> {
+/// Try to find a freeblock inside the cell content area that is large enough to fit the given amount of bytes.
+/// Used to check if a cell can be inserted into a freeblock to reduce fragmentation.
+/// Returns the absolute byte offset of the freeblock if found.
+fn find_free_slot(
+    page_ref: &PageContent,
+    usable_space: usize,
+    amount: usize,
+) -> Result<Option<usize>> {
+    const CELL_SIZE_MIN: usize = 4;
     // NOTE: freelist is in ascending order of keys and pc
     // unuse_space is reserved bytes at the end of page, therefore we must substract from maxpc
-    let mut prev_pc = page_ref.offset + offset::BTREE_FIRST_FREEBLOCK;
-    let mut pc = page_ref.first_freeblock() as usize;
-    let maxpc = usable_space - amount;
+    let mut prev_block = None;
+    let mut cur_block = match page_ref.first_freeblock() {
+        0 => None,
+        first_block => Some(first_block as usize),
+    };
 
-    while pc <= maxpc {
-        if pc + 4 > usable_space {
+    let max_start_offset = usable_space - amount;
+
+    while let Some(cur) = cur_block {
+        if cur + CELL_SIZE_MIN > usable_space {
             return_corrupt!("Free block header extends beyond page");
         }
 
-        let next = page_ref.read_u16_no_offset(pc);
-        let size = page_ref.read_u16_no_offset(pc + 2);
+        let (next, size) = {
+            let cur_u16: u16 = cur
+                .try_into()
+                .unwrap_or_else(|_| panic!("cur={cur} is too large to fit in a u16"));
+            let (next, size) = page_ref.read_freeblock(cur_u16);
+            (next as usize, size as usize)
+        };
 
-        if amount <= size as usize {
-            let new_size = size as usize - amount;
-            if new_size < 4 {
-                // The code is checking if using a free slot that would leave behind a very small fragment (x < 4 bytes)
-                // would cause the total fragmentation to exceed the limit of 60 bytes
-                // check sqlite docs https://www.sqlite.org/fileformat.html#:~:text=A%20freeblock%20requires,not%20exceed%2060
-                if page_ref.num_frag_free_bytes() > 57 {
-                    return Ok(0);
-                }
-                // Delete the slot from freelist and update the page's fragment count.
-                page_ref.write_u16_no_offset(prev_pc, next);
-                let frag = page_ref.num_frag_free_bytes() + new_size as u8;
-                page_ref.write_fragmented_bytes_count(frag);
-                return Ok(pc);
-            } else if new_size + pc > maxpc {
-                return_corrupt!("Free block extends beyond page end");
-            } else {
-                // Requested amount fits inside the current free slot so we reduce its size
-                // to account for newly allocated space.
-                page_ref.write_u16_no_offset(pc + 2, new_size as u16);
-                return Ok(pc + new_size);
+        // Doesn't fit in this freeblock, try the next one.
+        if amount > size {
+            if next == 0 {
+                // No next -> can't fit.
+                return Ok(None);
             }
-        }
 
-        prev_pc = pc;
-        pc = next as usize;
-        if pc <= prev_pc {
-            if pc != 0 {
+            prev_block = cur_block;
+            if next <= cur {
                 return_corrupt!("Free list not in ascending order");
             }
-            return Ok(0);
+            cur_block = Some(next);
+            continue;
+        }
+
+        let new_size = size - amount;
+        // If the freeblock's new size is < CELL_SIZE_MIN, the freeblock is deleted and the remaining bytes
+        // become fragmented free bytes.
+        if new_size < CELL_SIZE_MIN {
+            if page_ref.num_frag_free_bytes() > 57 {
+                // SQLite has a fragmentation limit of 60 bytes.
+                // check sqlite docs https://www.sqlite.org/fileformat.html#:~:text=A%20freeblock%20requires,not%20exceed%2060
+                return Ok(None);
+            }
+            // Delete the slot from freelist and update the page's fragment count.
+            match prev_block {
+                Some(prev) => {
+                    let prev_u16: u16 = prev
+                        .try_into()
+                        .unwrap_or_else(|_| panic!("prev={prev} is too large to fit in a u16"));
+                    let next_u16: u16 = next
+                        .try_into()
+                        .unwrap_or_else(|_| panic!("next={next} is too large to fit in a u16"));
+                    page_ref.write_freeblock_next_ptr(prev_u16, next_u16);
+                }
+                None => {
+                    let next_u16: u16 = next
+                        .try_into()
+                        .unwrap_or_else(|_| panic!("next={next} is too large to fit in a u16"));
+                    page_ref.write_first_freeblock(next_u16);
+                }
+            }
+            let new_size_u8: u8 = new_size
+                .try_into()
+                .unwrap_or_else(|_| panic!("new_size={new_size} is too large to fit in a u8"));
+            let frag = page_ref.num_frag_free_bytes() + new_size_u8;
+            page_ref.write_fragmented_bytes_count(frag);
+            return Ok(cur_block);
+        } else if new_size + cur > max_start_offset {
+            return_corrupt!("Free block extends beyond page end");
+        } else {
+            // Requested amount fits inside the current free slot so we reduce its size
+            // to account for newly allocated space.
+            let cur_u16: u16 = cur
+                .try_into()
+                .unwrap_or_else(|_| panic!("cur={cur} is too large to fit in a u16"));
+            let new_size_u16: u16 = new_size
+                .try_into()
+                .unwrap_or_else(|_| panic!("new_size={new_size} is too large to fit in a u16"));
+            page_ref.write_freeblock_size(cur_u16, new_size_u16);
+            // Return the offset immediately after the shrunk freeblock.
+            return Ok(Some(cur + new_size));
         }
     }
-    if pc > maxpc + amount - 4 {
-        return_corrupt!("Free block chain extends beyond page end");
-    }
-    Ok(0)
+
+    Ok(None)
 }
 
 pub fn btree_init_page(page: &BTreePage, page_type: PageType, offset: usize, usable_space: usize) {
@@ -6384,121 +6487,176 @@ fn page_insert_array(
 /// This function also updates the freeblock list in the page.
 /// Freeblocks are used to keep track of free space in the page,
 /// and are organized as a linked list.
+///
+/// This function may merge the freed cell range into either the next freeblock,
+/// previous freeblock, or both.
 fn free_cell_range(
     page: &mut PageContent,
     mut offset: usize,
     len: usize,
     usable_space: usize,
 ) -> Result<()> {
-    if len < 4 {
-        return_corrupt!("Minimum cell size is 4");
+    const CELL_SIZE_MIN: usize = 4;
+    if len < CELL_SIZE_MIN {
+        return_corrupt!("free_cell_range: minimum cell size is {CELL_SIZE_MIN}");
     }
-
-    if offset > usable_space.saturating_sub(4) {
-        return_corrupt!("Start offset beyond usable space");
+    if offset > usable_space.saturating_sub(CELL_SIZE_MIN) {
+        return_corrupt!("free_cell_range: start offset beyond usable space: offset={offset} usable_space={usable_space}");
     }
 
     let mut size = len;
     let mut end = offset + len;
-    let mut pointer_to_pc = page.offset + 1;
-    // if the freeblock list is empty, we set this block as the first freeblock in the page header.
-    let pc = if page.first_freeblock() == 0 {
-        0
-    } else {
-        // if the freeblock list is not empty, and the offset is greater than the first freeblock,
-        // then we need to do some more calculation to figure out where to insert the freeblock
-        // in the freeblock linked list.
-        let first_block = page.first_freeblock() as usize;
-
-        let mut pc = first_block;
-
-        while pc < offset {
-            if pc <= pointer_to_pc {
-                if pc == 0 {
-                    break;
-                }
-                return_corrupt!("free cell range free block not in ascending order");
-            }
-
-            let next = page.read_u16_no_offset(pc) as usize;
-            pointer_to_pc = pc;
-            pc = next;
+    let cur_content_area = page.cell_content_area() as usize;
+    let first_block = page.first_freeblock() as usize;
+    if first_block == 0 {
+        if offset < cur_content_area {
+            return_corrupt!("free_cell_range: free block before content area: offset={offset} cell_content_area={cur_content_area}");
         }
-
-        if pc > usable_space - 4 {
-            return_corrupt!("Free block beyond usable space");
+        if offset == cur_content_area {
+            // if the freeblock list is empty and the freed range is exactly at the beginning of the content area,
+            // we are not creating a freeblock; instead we are just extending the unallocated region.
+            page.write_cell_content_area(end);
+        } else {
+            // otherwise we set it as the first freeblock in the page header.
+            let offset_u16: u16 = offset
+                .try_into()
+                .unwrap_or_else(|_| panic!("offset={offset} is too large to fit in a u16"));
+            page.write_first_freeblock(offset_u16);
+            let size_u16: u16 = size
+                .try_into()
+                .unwrap_or_else(|_| panic!("size={size} is too large to fit in a u16"));
+            page.write_freeblock(offset_u16, size_u16, None);
         }
-        let mut removed_fragmentation = 0;
-        if pc > 0 && offset + len + 3 >= pc {
-            removed_fragmentation = (pc - end) as u8;
+        return Ok(());
+    }
 
-            if end > pc {
-                return_corrupt!("Invalid block overlap");
-            }
-            end = pc + page.read_u16_no_offset(pc + 2) as usize;
+    // if the freeblock list is not empty, we need to find the correct position to insert the new freeblock
+    // resulting from the freeing of this cell range; we may be also able to merge the freed range into existing freeblocks.
+    let mut prev_block = None;
+    let mut next_block = Some(first_block);
+
+    while let Some(next) = next_block {
+        if prev_block.is_some_and(|prev| next <= prev) {
+            return_corrupt!("free_cell_range: freeblocks not in ascending order: next_block={next} prev_block={prev_block:?}");
+        }
+        if next >= offset {
+            break;
+        }
+        prev_block = Some(next);
+        next_block = match page.read_u16_no_offset(next) {
+            // Freed range extends beyond the last freeblock, so we are creating a new freeblock.
+            0 => None,
+            next => Some(next as usize),
+        };
+    }
+
+    if let Some(next) = next_block {
+        if next + CELL_SIZE_MIN > usable_space {
+            return_corrupt!("free_cell_range: free block beyond usable space: next_block={next} usable_space={usable_space}");
+        }
+    }
+    let mut removed_fragmentation = 0;
+    const SINGLE_FRAGMENT_SIZE_MAX: usize = CELL_SIZE_MIN - 1;
+
+    if end > usable_space {
+        return_corrupt!("free_cell_range: freed range extends beyond usable space: offset={offset} len={len} end={end} usable_space={usable_space}");
+    }
+
+    // If the freed range extends into the next freeblock, we will merge the freed range into it.
+    // If there is a 1-3 byte gap between the freed range and the next freeblock, we are effectively
+    // clearing that amount of fragmented bytes, since a 1-3 byte range cannot be a valid cell.
+    if let Some(next) = next_block {
+        if end + SINGLE_FRAGMENT_SIZE_MAX >= next {
+            removed_fragmentation = (next - end) as u8;
+            let next_size = page.read_u16_no_offset(next + 2) as usize;
+            end = next + next_size;
             if end > usable_space {
-                return_corrupt!("Coalesced block extends beyond page");
+                return_corrupt!("free_cell_range: coalesced block extends beyond page: offset={offset} len={len} end={end} usable_space={usable_space}");
             }
             size = end - offset;
-            pc = page.read_u16_no_offset(pc) as usize;
+            // Since we merged the two freeblocks, we need to update the next_block to the next freeblock in the list.
+            next_block = match page.read_u16_no_offset(next) {
+                0 => None,
+                next => Some(next as usize),
+            };
         }
+    }
 
-        if pointer_to_pc > page.offset + 1 {
-            let prev_end = pointer_to_pc + page.read_u16_no_offset(pointer_to_pc + 2) as usize;
-            if prev_end + 3 >= offset {
-                if prev_end > offset {
-                    return_corrupt!("Invalid previous block overlap");
+    // If the freed range extends into the previous freeblock, we will merge them similarly as above.
+    if let Some(prev) = prev_block {
+        let prev_size = page.read_u16_no_offset(prev + 2) as usize;
+        let prev_end = prev + prev_size;
+        if prev_end > offset {
+            return_corrupt!(
+                "free_cell_range: previous block overlap: prev_end={prev_end} offset={offset}"
+            );
+        }
+        // If the previous freeblock extends into the freed range, we will merge the freed range into the
+        // previous freeblock and clear any 1-3 byte fragmentation in between, similarly as above
+        if prev_end + SINGLE_FRAGMENT_SIZE_MAX >= offset {
+            removed_fragmentation += (offset - prev_end) as u8;
+            size = end - prev;
+            offset = prev;
+        }
+    }
+
+    let cur_frag_free_bytes = page.num_frag_free_bytes();
+    if removed_fragmentation > cur_frag_free_bytes {
+        return_corrupt!("free_cell_range: invalid fragmentation count: removed_fragmentation={removed_fragmentation} num_frag_free_bytes={cur_frag_free_bytes}");
+    }
+    let frag = cur_frag_free_bytes - removed_fragmentation;
+    page.write_fragmented_bytes_count(frag);
+
+    if offset < cur_content_area {
+        return_corrupt!("free_cell_range: free block before content area: offset={offset} cell_content_area={cur_content_area}");
+    }
+
+    // As above, if the freed range is exactly at the beginning of the content area, we are not creating a freeblock;
+    // instead we are just extending the unallocated region.
+    if offset == cur_content_area {
+        if prev_block.is_some_and(|prev| prev != first_block) {
+            return_corrupt!("free_cell_range: invalid content area merge - freed range should have been merged with previous freeblock: prev={prev} first_block={first_block}");
+        }
+        // If we get here, we are freeing data from the left end of the content area,
+        // so we are extending the unallocated region instead of creating a freeblock.
+        // We update the first freeblock to be the next one, and shrink the content area to start from the end
+        // of the freed range.
+        match next_block {
+            Some(next) => {
+                if next <= end {
+                    return_corrupt!("free_cell_range: invalid content area merge - first freeblock should either be 0 or greater than the content area start: next_block={next} end={end}");
                 }
-                removed_fragmentation += (offset - prev_end) as u8;
-                size = end - pointer_to_pc;
-                offset = pointer_to_pc;
+                let next_u16: u16 = next
+                    .try_into()
+                    .unwrap_or_else(|_| panic!("next={next} is too large to fit in a u16"));
+                page.write_first_freeblock(next_u16);
+            }
+            None => {
+                page.write_first_freeblock(0);
             }
         }
-        if removed_fragmentation > page.num_frag_free_bytes() {
-            return_corrupt!(format!(
-                "Invalid fragmentation count. Had {} and removed {}",
-                page.num_frag_free_bytes(),
-                removed_fragmentation
-            ));
-        }
-        let frag = page.num_frag_free_bytes() - removed_fragmentation;
-        page.write_fragmented_bytes_count(frag);
-        pc
-    };
-
-    if (offset as u32) <= page.cell_content_area() {
-        if (offset as u32) < page.cell_content_area() {
-            return_corrupt!("Free block before content area");
-        }
-        if pointer_to_pc != page.offset + offset::BTREE_FIRST_FREEBLOCK {
-            return_corrupt!("Invalid content area merge");
-        }
-        turso_assert!(
-            pc < PageSize::MAX as usize,
-            "pc={pc} PageSize::MAX={}",
-            PageSize::MAX
-        );
-        page.write_first_freeblock(pc as u16);
         page.write_cell_content_area(end);
     } else {
-        turso_assert!(
-            pointer_to_pc < PageSize::MAX as usize,
-            "pointer_to_pc={pointer_to_pc} PageSize::MAX={}",
-            PageSize::MAX
-        );
-        turso_assert!(
-            offset < PageSize::MAX as usize,
-            "offset={offset} PageSize::MAX={}",
-            PageSize::MAX
-        );
-        turso_assert!(
-            size < PageSize::MAX as usize,
-            "size={size} PageSize::MAX={}",
-            PageSize::MAX
-        );
-        page.write_u16_no_offset(pointer_to_pc, offset as u16);
-        page.write_u16_no_offset(offset, pc as u16);
-        page.write_u16_no_offset(offset + 2, size as u16);
+        // If we are creating a new freeblock:
+        // a) if it's the first one, we update the header to indicate so,
+        // b) if it's not the first one, we update the previous freeblock to point to the new one,
+        //    and the new one to point to the next one.
+        let offset_u16: u16 = offset
+            .try_into()
+            .unwrap_or_else(|_| panic!("offset={offset} is too large to fit in a u16"));
+        if let Some(prev) = prev_block {
+            page.write_u16_no_offset(prev, offset_u16);
+        } else {
+            page.write_first_freeblock(offset_u16);
+        }
+        let size_u16: u16 = size
+            .try_into()
+            .unwrap_or_else(|_| panic!("size={size} is too large to fit in a u16"));
+        let next_block_u16 = next_block.map(|b| {
+            b.try_into()
+                .unwrap_or_else(|_| panic!("next_block={b} is too large to fit in a u16"))
+        });
+        page.write_freeblock(offset_u16, size_u16, next_block_u16);
     }
 
     Ok(())
@@ -6893,7 +7051,7 @@ fn compute_free_space(page: &PageContent, usable_space: usize) -> usize {
         // Next should always be 0 (NULL) at this point since we have reached the end of the freeblocks linked list
         assert_eq!(
             next, 0,
-            "corrupted page: freeblocks list not in ascending order"
+            "corrupted page: freeblocks list not in ascending order: cur_freeblock_ptr={cur_freeblock_ptr} size={size} next={next}"
         );
 
         assert!(
@@ -6929,8 +7087,7 @@ fn allocate_cell_space(
         && unallocated_region_start + CELL_PTR_SIZE_BYTES <= cell_content_area_start
     {
         // find slot
-        let pc = find_free_cell(page_ref, usable_space, amount)?;
-        if pc != 0 {
+        if let Some(pc) = find_free_slot(page_ref, usable_space, amount)? {
             // we can fit the cell in a freeblock.
             return Ok(pc as u16);
         }
@@ -6963,17 +7120,41 @@ fn allocate_cell_space(
 
 #[derive(Debug, Clone)]
 pub enum FillCellPayloadState {
+    /// Determine whether we can fit the record on the current page.
+    /// If yes, return immediately after copying the data.
+    /// Otherwise move to [CopyData] state.
     Start,
-    AllocateOverflowPages {
-        /// Arc because we clone [WriteState] for some reason and we use unsafe pointer dereferences in [FillCellPayloadState::AllocateOverflowPages]
-        /// so the underlying bytes must not be cloned in upper layers.
-        record_buf: Arc<[u8]>,
-        space_left: usize,
-        to_copy_buffer_ptr: *const u8,
-        to_copy_buffer_len: usize,
-        pointer: *mut u8,
-        pointer_to_next: *mut u8,
+    /// Copy the next chunk of data from the record buffer to the cell payload.
+    /// If we can't fit all of the remaining data on the current page,
+    /// move the internal state to [CopyDataState::AllocateOverflowPage]
+    CopyData {
+        /// Internal state of the copy data operation.
+        /// We can either be copying data or allocating an overflow page.
+        state: CopyDataState,
+        /// Track how much space we have left on the current page we are copying data into.
+        /// This is reset whenever a new overflow page is allocated.
+        space_left_on_cur_page: usize,
+        /// Offset into the record buffer to copy from.
+        src_data_offset: usize,
+        /// Offset into the destination buffer we are copying data into.
+        /// This is either:
+        /// - an offset in the btree page where the cell is, or
+        /// - an offset in an overflow page
+        dst_data_offset: usize,
+        /// If this is Some, we will copy data into this overflow page.
+        /// If this is None, we will copy data into the cell payload on the btree page.
+        /// Also: to safely form a chain of overflow pages, the current page must be pinned to the page cache
+        /// so that e.g. a spilling operation does not evict it to disk.
+        current_overflow_page: Option<PageRef>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub enum CopyDataState {
+    /// Copy the next chunk of data from the record buffer to the cell payload.
+    Copy,
+    /// Allocate a new overflow page if we couldn't fit all data to the current page.
+    AllocateOverflowPage,
 }
 
 /// Fill in the cell payload with the record.
@@ -6982,20 +7163,23 @@ pub enum FillCellPayloadState {
 /// may require I/O.
 #[allow(clippy::too_many_arguments)]
 fn fill_cell_payload(
-    page_contents: &PageContent,
+    page: PageRef,
     int_key: Option<i64>,
     cell_payload: &mut Vec<u8>,
     cell_idx: usize,
     record: &ImmutableRecord,
     usable_space: usize,
     pager: Rc<Pager>,
-    state: &mut FillCellPayloadState,
+    fill_cell_payload_state: &mut FillCellPayloadState,
 ) -> Result<IOResult<()>> {
-    loop {
-        match state {
+    let overflow_page_pointer_size = 4;
+    let overflow_page_data_size = usable_space - overflow_page_pointer_size;
+    let result = loop {
+        let record_buf = record.get_payload();
+        match fill_cell_payload_state {
             FillCellPayloadState::Start => {
-                // TODO: make record raw from start, having to serialize is not good
-                let record_buf: Arc<[u8]> = Arc::from(record.get_payload());
+                page.pin(); // We need to pin this page because we will be accessing its contents after fill_cell_payload is done.
+                let page_contents = page.get().contents.as_ref().unwrap();
 
                 let page_type = page_contents.page_type();
                 // fill in header
@@ -7014,124 +7198,124 @@ fn fill_cell_payload(
                     write_varint_to_vec(record_buf.len() as u64, cell_payload);
                 }
 
-                let payload_overflow_threshold_max =
-                    payload_overflow_threshold_max(page_type, usable_space);
-                tracing::debug!(
-                    "fill_cell_payload(record_size={}, payload_overflow_threshold_max={})",
-                    record_buf.len(),
-                    payload_overflow_threshold_max
-                );
-                if record_buf.len() <= payload_overflow_threshold_max {
+                let max_local = payload_overflow_threshold_max(page_type, usable_space);
+                let min_local = payload_overflow_threshold_min(page_type, usable_space);
+
+                let (overflows, local_size_if_overflow) =
+                    payload_overflows(record_buf.len(), max_local, min_local, usable_space);
+                if !overflows {
                     // enough allowed space to fit inside a btree page
                     cell_payload.extend_from_slice(record_buf.as_ref());
-                    return Ok(IOResult::Done(()));
+                    break Ok(IOResult::Done(()));
                 }
 
-                let payload_overflow_threshold_min =
-                    payload_overflow_threshold_min(page_type, usable_space);
-                // see e.g. https://github.com/sqlite/sqlite/blob/9591d3fe93936533c8c3b0dc4d025ac999539e11/src/dbstat.c#L371
-                let mut space_left = payload_overflow_threshold_min
-                    + (record_buf.len() - payload_overflow_threshold_min) % (usable_space - 4);
+                // so far we've written any of: left child page, rowid, payload size (depending on page type)
+                let cell_non_payload_elems_size = cell_payload.len();
+                let new_total_local_size = cell_non_payload_elems_size + local_size_if_overflow;
+                cell_payload.resize(new_total_local_size, 0);
 
-                if space_left > payload_overflow_threshold_max {
-                    space_left = payload_overflow_threshold_min;
-                }
-
-                // cell_size must be equal to first value of space_left as this will be the bytes copied to non-overflow page.
-                let cell_size = space_left + cell_payload.len() + 4; // 4 is the number of bytes of pointer to first overflow page
-                let to_copy_buffer = record_buf.as_ref();
-
-                let prev_size = cell_payload.len();
-                cell_payload.resize(prev_size + space_left + 4, 0);
-                assert_eq!(
-                    cell_size,
-                    cell_payload.len(),
-                    "cell_size={} != cell_payload.len()={}",
-                    cell_size,
-                    cell_payload.len()
-                );
-
-                // SAFETY: this pointer is valid because it points to a buffer in an Arc<Mutex<Vec<u8>>> that lives at least as long as this function,
-                // and the Vec will not be mutated in FillCellPayloadState::AllocateOverflowPages, which we will move to next.
-                let pointer = unsafe { cell_payload.as_mut_ptr().add(prev_size) };
-                let pointer_to_next =
-                    unsafe { cell_payload.as_mut_ptr().add(prev_size + space_left) };
-
-                let to_copy_buffer_ptr = to_copy_buffer.as_ptr();
-                let to_copy_buffer_len = to_copy_buffer.len();
-
-                *state = FillCellPayloadState::AllocateOverflowPages {
-                    record_buf,
-                    space_left,
-                    to_copy_buffer_ptr,
-                    to_copy_buffer_len,
-                    pointer,
-                    pointer_to_next,
+                *fill_cell_payload_state = FillCellPayloadState::CopyData {
+                    state: CopyDataState::Copy,
+                    space_left_on_cur_page: local_size_if_overflow - overflow_page_pointer_size, // local_size_if_overflow includes the overflow page pointer, but we don't want to write payload data there.
+                    src_data_offset: 0,
+                    dst_data_offset: cell_non_payload_elems_size,
+                    current_overflow_page: None,
                 };
                 continue;
             }
-            FillCellPayloadState::AllocateOverflowPages {
-                record_buf: _record_buf,
-                space_left,
-                to_copy_buffer_ptr,
-                to_copy_buffer_len,
-                pointer,
-                pointer_to_next,
+            FillCellPayloadState::CopyData {
+                state,
+                src_data_offset,
+                space_left_on_cur_page,
+                dst_data_offset,
+                current_overflow_page,
             } => {
-                let to_copy;
-                {
-                    let to_copy_buffer_ptr = *to_copy_buffer_ptr;
-                    let to_copy_buffer_len = *to_copy_buffer_len;
-                    let pointer = *pointer;
-                    let space_left = *space_left;
+                match state {
+                    CopyDataState::Copy => {
+                        turso_assert!(*src_data_offset < record_buf.len(), "trying to read past end of record buffer: record_offset={} < record_buf.len()={}", src_data_offset, record_buf.len());
+                        let record_offset_slice = &record_buf[*src_data_offset..];
+                        let amount_to_copy =
+                            (*space_left_on_cur_page).min(record_offset_slice.len());
+                        let record_offset_slice_to_copy = &record_offset_slice[..amount_to_copy];
+                        if let Some(cur_page) = current_overflow_page {
+                            // Copy data into the current overflow page.
+                            turso_assert!(
+                                cur_page.is_loaded(),
+                                "current overflow page is not loaded"
+                            );
+                            turso_assert!(*dst_data_offset == overflow_page_pointer_size, "data must be copied to offset {overflow_page_pointer_size} on overflow pages, instead tried to copy to offset {dst_data_offset}");
+                            let contents = cur_page.get_contents();
+                            let buf = &mut contents.as_ptr()
+                                [*dst_data_offset..*dst_data_offset + amount_to_copy];
+                            buf.copy_from_slice(record_offset_slice_to_copy);
+                        } else {
+                            // Copy data into the cell payload on the btree page.
+                            let buf = &mut cell_payload
+                                [*dst_data_offset..*dst_data_offset + amount_to_copy];
+                            buf.copy_from_slice(record_offset_slice_to_copy);
+                        }
 
-                    // SAFETY: we know to_copy_buffer_ptr is valid because it refers to record_buf which lives at least as long as this function,
-                    // and the underlying bytes are not mutated in FillCellPayloadState::AllocateOverflowPages.
-                    let to_copy_buffer = unsafe {
-                        std::slice::from_raw_parts(to_copy_buffer_ptr, to_copy_buffer_len)
-                    };
-                    to_copy = space_left.min(to_copy_buffer_len);
-                    // SAFETY: we know 'pointer' is valid because it refers to cell_payload which lives at least as long as this function,
-                    // and the underlying bytes are not mutated in FillCellPayloadState::AllocateOverflowPages.
-                    unsafe { std::ptr::copy(to_copy_buffer_ptr, pointer, to_copy) };
+                        if record_offset_slice.len() - amount_to_copy == 0 {
+                            let cur_page = current_overflow_page.as_ref().expect("we must have overflowed if the remaining payload fits on the current page");
+                            cur_page.unpin(); // We can safely unpin the current overflow page now.
+                                              // Everything copied.
+                            break Ok(IOResult::Done(()));
+                        }
+                        *state = CopyDataState::AllocateOverflowPage;
+                        *src_data_offset += amount_to_copy;
+                    }
+                    CopyDataState::AllocateOverflowPage => {
+                        let new_overflow_page = match pager.allocate_overflow_page() {
+                            Ok(IOResult::Done(new_overflow_page)) => new_overflow_page,
+                            Ok(IOResult::IO(io_result)) => return Ok(IOResult::IO(io_result)),
+                            Err(e) => {
+                                if let Some(cur_page) = current_overflow_page {
+                                    cur_page.unpin();
+                                }
+                                break Err(e);
+                            }
+                        };
+                        new_overflow_page.pin(); // Pin the current overflow page so the cache won't evict it because we need this page to be in memory for the next iteration of FillCellPayloadState::CopyData.
+                        if let Some(prev_page) = current_overflow_page {
+                            prev_page.unpin(); // We can safely unpin the previous overflow page now.
+                        }
 
-                    let left = to_copy_buffer.len() - to_copy;
-                    if left == 0 {
-                        break;
+                        turso_assert!(
+                            new_overflow_page.is_loaded(),
+                            "new overflow page is not loaded"
+                        );
+                        let new_overflow_page_id = new_overflow_page.get().id as u32;
+
+                        if let Some(prev_page) = current_overflow_page {
+                            // Update the previous overflow page's "next overflow page" pointer to point to the new overflow page.
+                            turso_assert!(
+                                prev_page.is_loaded(),
+                                "previous overflow page is not loaded"
+                            );
+                            let contents = prev_page.get_contents();
+                            let buf = &mut contents.as_ptr()[..overflow_page_pointer_size];
+                            buf.copy_from_slice(&new_overflow_page_id.to_be_bytes());
+                        } else {
+                            // Update the cell payload's "next overflow page" pointer to point to the new overflow page.
+                            let first_overflow_page_ptr_offset =
+                                cell_payload.len() - overflow_page_pointer_size;
+                            let buf = &mut cell_payload[first_overflow_page_ptr_offset
+                                ..first_overflow_page_ptr_offset + overflow_page_pointer_size];
+                            buf.copy_from_slice(&new_overflow_page_id.to_be_bytes());
+                        }
+
+                        *dst_data_offset = overflow_page_pointer_size;
+                        *space_left_on_cur_page = overflow_page_data_size;
+                        *current_overflow_page = Some(new_overflow_page.clone());
+                        *state = CopyDataState::Copy;
                     }
                 }
-
-                // we still have bytes to add, we will need to allocate new overflow page
-                // FIXME: handle page cache is full
-                let overflow_page = return_if_io!(pager.allocate_overflow_page());
-                turso_assert!(overflow_page.is_loaded(), "overflow page is not loaded");
-                {
-                    let id = overflow_page.get().id as u32;
-                    let contents = overflow_page.get_contents();
-
-                    // TODO: take into account offset here?
-                    let buf = contents.as_ptr();
-                    let as_bytes = id.to_be_bytes();
-                    // update pointer to new overflow page
-                    // SAFETY: we know 'pointer_to_next' is valid because it refers to an offset in cell_payload which is less than space_left + 4,
-                    // and the underlying bytes are not mutated in FillCellPayloadState::AllocateOverflowPages.
-                    unsafe { std::ptr::copy(as_bytes.as_ptr(), *pointer_to_next, 4) };
-
-                    *pointer = unsafe { buf.as_mut_ptr().add(4) };
-                    *pointer_to_next = buf.as_mut_ptr();
-                    *space_left = usable_space - 4;
-                }
-
-                *to_copy_buffer_len -= to_copy;
-                // SAFETY: we know 'to_copy_buffer_ptr' is valid because it refers to record_buf which lives at least as long as this function,
-                // and that the offset is less than its length, and the underlying bytes are not mutated in FillCellPayloadState::AllocateOverflowPages.
-                *to_copy_buffer_ptr = unsafe { to_copy_buffer_ptr.add(to_copy) };
             }
         }
-    }
-    Ok(IOResult::Done(()))
+    };
+    page.unpin();
+    result
 }
-
 /// Returns the maximum payload size (X) that can be stored directly on a b-tree page without spilling to overflow pages.
 ///
 /// For table leaf pages: X = usable_size - 35
@@ -7285,7 +7469,7 @@ mod tests {
     fn add_record(
         id: usize,
         pos: usize,
-        page: &mut PageContent,
+        page: PageRef,
         record: ImmutableRecord,
         conn: &Arc<Connection>,
     ) -> Vec<u8> {
@@ -7294,7 +7478,7 @@ mod tests {
         run_until_done(
             || {
                 fill_cell_payload(
-                    page,
+                    page.clone(),
                     Some(id as i64),
                     &mut payload,
                     pos,
@@ -7307,7 +7491,7 @@ mod tests {
             &conn.pager.borrow().clone(),
         )
         .unwrap();
-        insert_into_cell(page, &payload, pos, 4096).unwrap();
+        insert_into_cell(page.get_contents(), &payload, pos, 4096).unwrap();
         payload
     }
 
@@ -7317,17 +7501,17 @@ mod tests {
         let conn = db.connect().unwrap();
         let page = get_page(2);
         let page = page.get();
-        let page = page.get_contents();
         let header_size = 8;
         let regs = &[Register::Value(Value::Integer(1))];
         let record = ImmutableRecord::from_registers(regs, regs.len());
-        let payload = add_record(1, 0, page, record, &conn);
-        assert_eq!(page.cell_count(), 1);
-        let free = compute_free_space(page, 4096);
+        let payload = add_record(1, 0, page.clone(), record, &conn);
+        let page_contents = page.get_contents();
+        assert_eq!(page_contents.cell_count(), 1);
+        let free = compute_free_space(page_contents, 4096);
         assert_eq!(free, 4096 - payload.len() - 2 - header_size);
 
         let cell_idx = 0;
-        ensure_cell(page, cell_idx, &payload);
+        ensure_cell(page_contents, cell_idx, &payload);
     }
 
     struct Cell {
@@ -7342,7 +7526,7 @@ mod tests {
 
         let page = get_page(2);
         let page = page.get();
-        let page = page.get_contents();
+        let page_contents = page.get_contents();
         let header_size = 8;
 
         let mut total_size = 0;
@@ -7351,22 +7535,22 @@ mod tests {
         for i in 0..3 {
             let regs = &[Register::Value(Value::Integer(i as i64))];
             let record = ImmutableRecord::from_registers(regs, regs.len());
-            let payload = add_record(i, i, page, record, &conn);
-            assert_eq!(page.cell_count(), i + 1);
-            let free = compute_free_space(page, usable_space);
+            let payload = add_record(i, i, page.clone(), record, &conn);
+            assert_eq!(page_contents.cell_count(), i + 1);
+            let free = compute_free_space(page_contents, usable_space);
             total_size += payload.len() + 2;
             assert_eq!(free, 4096 - total_size - header_size);
             cells.push(Cell { pos: i, payload });
         }
 
         for (i, cell) in cells.iter().enumerate() {
-            ensure_cell(page, i, &cell.payload);
+            ensure_cell(page_contents, i, &cell.payload);
         }
         cells.remove(1);
-        drop_cell(page, 1, usable_space).unwrap();
+        drop_cell(page_contents, 1, usable_space).unwrap();
 
         for (i, cell) in cells.iter().enumerate() {
-            ensure_cell(page, i, &cell.payload);
+            ensure_cell(page_contents, i, &cell.payload);
         }
     }
 
@@ -7860,10 +8044,7 @@ mod tests {
                     pager.deref(),
                 )
                 .unwrap();
-                pager
-                    .io
-                    .block(|| pager.end_tx(false, &conn, false))
-                    .unwrap();
+                pager.io.block(|| pager.end_tx(false, &conn)).unwrap();
                 pager.begin_read_tx().unwrap();
                 // FIXME: add sorted vector instead, should be okay for small amounts of keys for now :P, too lazy to fix right now
                 let _c = cursor.move_to_root().unwrap();
@@ -8008,10 +8189,7 @@ mod tests {
                 if let Some(c) = c {
                     pager.io.wait_for_completion(c).unwrap();
                 }
-                pager
-                    .io
-                    .block(|| pager.end_tx(false, &conn, false))
-                    .unwrap();
+                pager.io.block(|| pager.end_tx(false, &conn)).unwrap();
             }
 
             // Check that all keys can be found by seeking
@@ -8217,10 +8395,7 @@ mod tests {
                 if let Some(c) = c {
                     pager.io.wait_for_completion(c).unwrap();
                 }
-                pager
-                    .io
-                    .block(|| pager.end_tx(false, &conn, false))
-                    .unwrap();
+                pager.io.block(|| pager.end_tx(false, &conn)).unwrap();
             }
 
             // Final validation
@@ -8321,7 +8496,7 @@ mod tests {
 
         let page = get_page(2);
         let page = page.get();
-        let page = page.get_contents();
+        let page_contents = page.get_contents();
         let header_size = 8;
 
         let mut total_size = 0;
@@ -8331,9 +8506,9 @@ mod tests {
         for i in 0..total_cells {
             let regs = &[Register::Value(Value::Integer(i as i64))];
             let record = ImmutableRecord::from_registers(regs, regs.len());
-            let payload = add_record(i, i, page, record, &conn);
-            assert_eq!(page.cell_count(), i + 1);
-            let free = compute_free_space(page, usable_space);
+            let payload = add_record(i, i, page.clone(), record, &conn);
+            assert_eq!(page_contents.cell_count(), i + 1);
+            let free = compute_free_space(page_contents, usable_space);
             total_size += payload.len() + 2;
             assert_eq!(free, 4096 - total_size - header_size);
             cells.push(Cell { pos: i, payload });
@@ -8343,7 +8518,7 @@ mod tests {
         let mut new_cells = Vec::new();
         for cell in cells {
             if cell.pos % 2 == 1 {
-                drop_cell(page, cell.pos - removed, usable_space).unwrap();
+                drop_cell(page_contents, cell.pos - removed, usable_space).unwrap();
                 removed += 1;
             } else {
                 new_cells.push(cell);
@@ -8351,11 +8526,11 @@ mod tests {
         }
         let cells = new_cells;
         for (i, cell) in cells.iter().enumerate() {
-            ensure_cell(page, i, &cell.payload);
+            ensure_cell(page_contents, i, &cell.payload);
         }
 
         for (i, cell) in cells.iter().enumerate() {
-            ensure_cell(page, i, &cell.payload);
+            ensure_cell(page_contents, i, &cell.payload);
         }
     }
 
@@ -8773,7 +8948,7 @@ mod tests {
 
         let page = get_page(2);
         let page = page.get();
-        let page = page.get_contents();
+        let page_contents = page.get_contents();
         let header_size = 8;
 
         let mut total_size = 0;
@@ -8782,28 +8957,28 @@ mod tests {
         for i in 0..3 {
             let regs = &[Register::Value(Value::Integer(i as i64))];
             let record = ImmutableRecord::from_registers(regs, regs.len());
-            let payload = add_record(i, i, page, record, &conn);
-            assert_eq!(page.cell_count(), i + 1);
-            let free = compute_free_space(page, usable_space);
+            let payload = add_record(i, i, page.clone(), record, &conn);
+            assert_eq!(page_contents.cell_count(), i + 1);
+            let free = compute_free_space(page_contents, usable_space);
             total_size += payload.len() + 2;
             assert_eq!(free, 4096 - total_size - header_size);
             cells.push(Cell { pos: i, payload });
         }
 
         for (i, cell) in cells.iter().enumerate() {
-            ensure_cell(page, i, &cell.payload);
+            ensure_cell(page_contents, i, &cell.payload);
         }
         cells.remove(1);
-        drop_cell(page, 1, usable_space).unwrap();
+        drop_cell(page_contents, 1, usable_space).unwrap();
 
         for (i, cell) in cells.iter().enumerate() {
-            ensure_cell(page, i, &cell.payload);
+            ensure_cell(page_contents, i, &cell.payload);
         }
 
-        defragment_page(page, usable_space, 4).unwrap();
+        defragment_page(page_contents, usable_space, 4).unwrap();
 
         for (i, cell) in cells.iter().enumerate() {
-            ensure_cell(page, i, &cell.payload);
+            ensure_cell(page_contents, i, &cell.payload);
         }
     }
 
@@ -8814,7 +8989,7 @@ mod tests {
 
         let page = get_page(2);
         let page = page.get();
-        let page = page.get_contents();
+        let page_contents = page.get_contents();
         let header_size = 8;
 
         let mut total_size = 0;
@@ -8824,9 +8999,9 @@ mod tests {
         for i in 0..total_cells {
             let regs = &[Register::Value(Value::Integer(i as i64))];
             let record = ImmutableRecord::from_registers(regs, regs.len());
-            let payload = add_record(i, i, page, record, &conn);
-            assert_eq!(page.cell_count(), i + 1);
-            let free = compute_free_space(page, usable_space);
+            let payload = add_record(i, i, page.clone(), record, &conn);
+            assert_eq!(page_contents.cell_count(), i + 1);
+            let free = compute_free_space(page_contents, usable_space);
             total_size += payload.len() + 2;
             assert_eq!(free, 4096 - total_size - header_size);
             cells.push(Cell { pos: i, payload });
@@ -8836,7 +9011,7 @@ mod tests {
         let mut new_cells = Vec::new();
         for cell in cells {
             if cell.pos % 2 == 1 {
-                drop_cell(page, cell.pos - removed, usable_space).unwrap();
+                drop_cell(page_contents, cell.pos - removed, usable_space).unwrap();
                 removed += 1;
             } else {
                 new_cells.push(cell);
@@ -8844,13 +9019,13 @@ mod tests {
         }
         let cells = new_cells;
         for (i, cell) in cells.iter().enumerate() {
-            ensure_cell(page, i, &cell.payload);
+            ensure_cell(page_contents, i, &cell.payload);
         }
 
-        defragment_page(page, usable_space, 4).unwrap();
+        defragment_page(page_contents, usable_space, 4).unwrap();
 
         for (i, cell) in cells.iter().enumerate() {
-            ensure_cell(page, i, &cell.payload);
+            ensure_cell(page_contents, i, &cell.payload);
         }
     }
 
@@ -8861,7 +9036,7 @@ mod tests {
 
         let page = get_page(2);
         let page = page.get();
-        let page = page.get_contents();
+        let page_contents = page.get_contents();
         let header_size = 8;
 
         let mut total_size = 0;
@@ -8876,8 +9051,8 @@ mod tests {
             match rng.next_u64() % 4 {
                 0 => {
                     // allow appends with extra place to insert
-                    let cell_idx = rng.next_u64() as usize % (page.cell_count() + 1);
-                    let free = compute_free_space(page, usable_space);
+                    let cell_idx = rng.next_u64() as usize % (page_contents.cell_count() + 1);
+                    let free = compute_free_space(page_contents, usable_space);
                     let regs = &[Register::Value(Value::Integer(i as i64))];
                     let record = ImmutableRecord::from_registers(regs, regs.len());
                     let mut payload: Vec<u8> = Vec::new();
@@ -8885,7 +9060,7 @@ mod tests {
                     run_until_done(
                         || {
                             fill_cell_payload(
-                                page,
+                                page.clone(),
                                 Some(i as i64),
                                 &mut payload,
                                 cell_idx,
@@ -8902,34 +9077,34 @@ mod tests {
                         // do not try to insert overflow pages because they require balancing
                         continue;
                     }
-                    insert_into_cell(page, &payload, cell_idx, 4096).unwrap();
-                    assert!(page.overflow_cells.is_empty());
+                    insert_into_cell(page_contents, &payload, cell_idx, 4096).unwrap();
+                    assert!(page_contents.overflow_cells.is_empty());
                     total_size += payload.len() + 2;
                     cells.insert(cell_idx, Cell { pos: i, payload });
                 }
                 1 => {
-                    if page.cell_count() == 0 {
+                    if page_contents.cell_count() == 0 {
                         continue;
                     }
-                    let cell_idx = rng.next_u64() as usize % page.cell_count();
-                    let (_, len) = page.cell_get_raw_region(cell_idx, usable_space);
-                    drop_cell(page, cell_idx, usable_space).unwrap();
+                    let cell_idx = rng.next_u64() as usize % page_contents.cell_count();
+                    let (_, len) = page_contents.cell_get_raw_region(cell_idx, usable_space);
+                    drop_cell(page_contents, cell_idx, usable_space).unwrap();
                     total_size -= len + 2;
                     cells.remove(cell_idx);
                 }
                 2 => {
-                    defragment_page(page, usable_space, 4).unwrap();
+                    defragment_page(page_contents, usable_space, 4).unwrap();
                 }
                 3 => {
                     // check cells
                     for (i, cell) in cells.iter().enumerate() {
-                        ensure_cell(page, i, &cell.payload);
+                        ensure_cell(page_contents, i, &cell.payload);
                     }
-                    assert_eq!(page.cell_count(), cells.len());
+                    assert_eq!(page_contents.cell_count(), cells.len());
                 }
                 _ => unreachable!(),
             }
-            let free = compute_free_space(page, usable_space);
+            let free = compute_free_space(page_contents, usable_space);
             assert_eq!(free, 4096 - total_size - header_size);
         }
     }
@@ -8943,7 +9118,7 @@ mod tests {
 
         let page = get_page(2);
         let page = page.get();
-        let page = page.get_contents();
+        let page_contents = page.get_contents();
         let header_size = 8;
 
         let mut total_size = 0;
@@ -8958,8 +9133,8 @@ mod tests {
                 match rng.next_u64() % 3 {
                     0 => {
                         // allow appends with extra place to insert
-                        let cell_idx = rng.next_u64() as usize % (page.cell_count() + 1);
-                        let free = compute_free_space(page, usable_space);
+                        let cell_idx = rng.next_u64() as usize % (page_contents.cell_count() + 1);
+                        let free = compute_free_space(page_contents, usable_space);
                         let regs = &[Register::Value(Value::Integer(i))];
                         let record = ImmutableRecord::from_registers(regs, regs.len());
                         let mut payload: Vec<u8> = Vec::new();
@@ -8967,7 +9142,7 @@ mod tests {
                         run_until_done(
                             || {
                                 fill_cell_payload(
-                                    page,
+                                    page.clone(),
                                     Some(i),
                                     &mut payload,
                                     cell_idx,
@@ -8984,8 +9159,8 @@ mod tests {
                             // do not try to insert overflow pages because they require balancing
                             continue;
                         }
-                        insert_into_cell(page, &payload, cell_idx, 4096).unwrap();
-                        assert!(page.overflow_cells.is_empty());
+                        insert_into_cell(page_contents, &payload, cell_idx, 4096).unwrap();
+                        assert!(page_contents.overflow_cells.is_empty());
                         total_size += payload.len() + 2;
                         cells.push(Cell {
                             pos: i as usize,
@@ -8993,21 +9168,21 @@ mod tests {
                         });
                     }
                     1 => {
-                        if page.cell_count() == 0 {
+                        if page_contents.cell_count() == 0 {
                             continue;
                         }
-                        let cell_idx = rng.next_u64() as usize % page.cell_count();
-                        let (_, len) = page.cell_get_raw_region(cell_idx, usable_space);
-                        drop_cell(page, cell_idx, usable_space).unwrap();
+                        let cell_idx = rng.next_u64() as usize % page_contents.cell_count();
+                        let (_, len) = page_contents.cell_get_raw_region(cell_idx, usable_space);
+                        drop_cell(page_contents, cell_idx, usable_space).unwrap();
                         total_size -= len + 2;
                         cells.remove(cell_idx);
                     }
                     2 => {
-                        defragment_page(page, usable_space, 4).unwrap();
+                        defragment_page(page_contents, usable_space, 4).unwrap();
                     }
                     _ => unreachable!(),
                 }
-                let free = compute_free_space(page, usable_space);
+                let free = compute_free_space(page_contents, usable_space);
                 assert_eq!(free, 4096 - total_size - header_size);
             }
         }
@@ -9119,14 +9294,14 @@ mod tests {
         let conn = db.connect().unwrap();
         let page = get_page(2);
         let page = page.get();
-        let page = page.get_contents();
+        let page_contents = page.get_contents();
         let header_size = 8;
         let usable_space = 4096;
 
         let regs = &[Register::Value(Value::Integer(0))];
         let record = ImmutableRecord::from_registers(regs, regs.len());
-        let payload = add_record(0, 0, page, record, &conn);
-        let free = compute_free_space(page, usable_space);
+        let payload = add_record(0, 0, page.clone(), record, &conn);
+        let free = compute_free_space(page_contents, usable_space);
         assert_eq!(free, 4096 - payload.len() - 2 - header_size);
     }
 
@@ -9137,18 +9312,18 @@ mod tests {
 
         let page = get_page(2);
         let page = page.get();
-        let page = page.get_contents();
+        let page_contents = page.get_contents();
         let usable_space = 4096;
 
         let regs = &[Register::Value(Value::Integer(0))];
         let record = ImmutableRecord::from_registers(regs, regs.len());
-        let payload = add_record(0, 0, page, record, &conn);
+        let payload = add_record(0, 0, page.clone(), record, &conn);
 
-        assert_eq!(page.cell_count(), 1);
-        defragment_page(page, usable_space, 4).unwrap();
-        assert_eq!(page.cell_count(), 1);
-        let (start, len) = page.cell_get_raw_region(0, usable_space);
-        let buf = page.as_ptr();
+        assert_eq!(page_contents.cell_count(), 1);
+        defragment_page(page_contents, usable_space, 4).unwrap();
+        assert_eq!(page_contents.cell_count(), 1);
+        let (start, len) = page_contents.cell_get_raw_region(0, usable_space);
+        let buf = page_contents.as_ptr();
         assert_eq!(&payload, &buf[start..start + len]);
     }
 
@@ -9159,7 +9334,7 @@ mod tests {
 
         let page = get_page(2);
         let page = page.get();
-        let page = page.get_contents();
+        let page_contents = page.get_contents();
         let usable_space = 4096;
 
         let regs = &[
@@ -9167,19 +9342,19 @@ mod tests {
             Register::Value(Value::Text(Text::new("aaaaaaaa"))),
         ];
         let record = ImmutableRecord::from_registers(regs, regs.len());
-        let _ = add_record(0, 0, page, record, &conn);
+        let _ = add_record(0, 0, page.clone(), record, &conn);
 
-        assert_eq!(page.cell_count(), 1);
-        drop_cell(page, 0, usable_space).unwrap();
-        assert_eq!(page.cell_count(), 0);
+        assert_eq!(page_contents.cell_count(), 1);
+        drop_cell(page_contents, 0, usable_space).unwrap();
+        assert_eq!(page_contents.cell_count(), 0);
 
         let regs = &[Register::Value(Value::Integer(0))];
         let record = ImmutableRecord::from_registers(regs, regs.len());
-        let payload = add_record(0, 0, page, record, &conn);
-        assert_eq!(page.cell_count(), 1);
+        let payload = add_record(0, 0, page.clone(), record, &conn);
+        assert_eq!(page_contents.cell_count(), 1);
 
-        let (start, len) = page.cell_get_raw_region(0, usable_space);
-        let buf = page.as_ptr();
+        let (start, len) = page_contents.cell_get_raw_region(0, usable_space);
+        let buf = page_contents.as_ptr();
         assert_eq!(&payload, &buf[start..start + len]);
     }
 
@@ -9190,7 +9365,7 @@ mod tests {
 
         let page = get_page(2);
         let page = page.get();
-        let page = page.get_contents();
+        let page_contents = page.get_contents();
         let usable_space = 4096;
 
         let regs = &[
@@ -9198,20 +9373,20 @@ mod tests {
             Register::Value(Value::Text(Text::new("aaaaaaaa"))),
         ];
         let record = ImmutableRecord::from_registers(regs, regs.len());
-        let _ = add_record(0, 0, page, record, &conn);
+        let _ = add_record(0, 0, page.clone(), record, &conn);
 
         for _ in 0..100 {
-            assert_eq!(page.cell_count(), 1);
-            drop_cell(page, 0, usable_space).unwrap();
-            assert_eq!(page.cell_count(), 0);
+            assert_eq!(page_contents.cell_count(), 1);
+            drop_cell(page_contents, 0, usable_space).unwrap();
+            assert_eq!(page_contents.cell_count(), 0);
 
             let regs = &[Register::Value(Value::Integer(0))];
             let record = ImmutableRecord::from_registers(regs, regs.len());
-            let payload = add_record(0, 0, page, record, &conn);
-            assert_eq!(page.cell_count(), 1);
+            let payload = add_record(0, 0, page.clone(), record, &conn);
+            assert_eq!(page_contents.cell_count(), 1);
 
-            let (start, len) = page.cell_get_raw_region(0, usable_space);
-            let buf = page.as_ptr();
+            let (start, len) = page_contents.cell_get_raw_region(0, usable_space);
+            let buf = page_contents.as_ptr();
             assert_eq!(&payload, &buf[start..start + len]);
         }
     }
@@ -9223,23 +9398,23 @@ mod tests {
 
         let page = get_page(2);
         let page = page.get();
-        let page = page.get_contents();
+        let page_contents = page.get_contents();
         let usable_space = 4096;
 
         let regs = &[Register::Value(Value::Integer(0))];
         let record = ImmutableRecord::from_registers(regs, regs.len());
-        let payload = add_record(0, 0, page, record, &conn);
+        let payload = add_record(0, 0, page.clone(), record, &conn);
         let regs = &[Register::Value(Value::Integer(1))];
         let record = ImmutableRecord::from_registers(regs, regs.len());
-        let _ = add_record(1, 1, page, record, &conn);
+        let _ = add_record(1, 1, page.clone(), record, &conn);
         let regs = &[Register::Value(Value::Integer(2))];
         let record = ImmutableRecord::from_registers(regs, regs.len());
-        let _ = add_record(2, 2, page, record, &conn);
+        let _ = add_record(2, 2, page.clone(), record, &conn);
 
-        drop_cell(page, 1, usable_space).unwrap();
-        drop_cell(page, 1, usable_space).unwrap();
+        drop_cell(page_contents, 1, usable_space).unwrap();
+        drop_cell(page_contents, 1, usable_space).unwrap();
 
-        ensure_cell(page, 0, &payload);
+        ensure_cell(page_contents, 0, &payload);
     }
 
     #[test]
@@ -9249,29 +9424,29 @@ mod tests {
 
         let page = get_page(2);
         let page = page.get();
-        let page = page.get_contents();
+        let page_contents = page.get_contents();
         let usable_space = 4096;
 
         let regs = &[Register::Value(Value::Integer(0))];
         let record = ImmutableRecord::from_registers(regs, regs.len());
-        let _ = add_record(0, 0, page, record, &conn);
+        let _ = add_record(0, 0, page.clone(), record, &conn);
 
         let regs = &[Register::Value(Value::Integer(0))];
         let record = ImmutableRecord::from_registers(regs, regs.len());
-        let _ = add_record(0, 0, page, record, &conn);
-        drop_cell(page, 0, usable_space).unwrap();
+        let _ = add_record(0, 0, page.clone(), record, &conn);
+        drop_cell(page_contents, 0, usable_space).unwrap();
 
-        defragment_page(page, usable_space, 4).unwrap();
-
-        let regs = &[Register::Value(Value::Integer(0))];
-        let record = ImmutableRecord::from_registers(regs, regs.len());
-        let _ = add_record(0, 1, page, record, &conn);
-
-        drop_cell(page, 0, usable_space).unwrap();
+        defragment_page(page_contents, usable_space, 4).unwrap();
 
         let regs = &[Register::Value(Value::Integer(0))];
         let record = ImmutableRecord::from_registers(regs, regs.len());
-        let _ = add_record(0, 1, page, record, &conn);
+        let _ = add_record(0, 1, page.clone(), record, &conn);
+
+        drop_cell(page_contents, 0, usable_space).unwrap();
+
+        let regs = &[Register::Value(Value::Integer(0))];
+        let record = ImmutableRecord::from_registers(regs, regs.len());
+        let _ = add_record(0, 1, page.clone(), record, &conn);
     }
 
     #[test]
@@ -9295,21 +9470,21 @@ mod tests {
         let page = page.get();
         defragment(page.get_contents());
         defragment(page.get_contents());
-        insert(0, page.get_contents());
+        insert(0, page.clone());
         drop(0, page.get_contents());
-        insert(0, page.get_contents());
+        insert(0, page.clone());
         drop(0, page.get_contents());
-        insert(0, page.get_contents());
+        insert(0, page.clone());
         defragment(page.get_contents());
         defragment(page.get_contents());
         drop(0, page.get_contents());
         defragment(page.get_contents());
-        insert(0, page.get_contents());
+        insert(0, page.clone());
         drop(0, page.get_contents());
-        insert(0, page.get_contents());
-        insert(1, page.get_contents());
-        insert(1, page.get_contents());
-        insert(0, page.get_contents());
+        insert(0, page.clone());
+        insert(1, page.clone());
+        insert(1, page.clone());
+        insert(0, page.clone());
         drop(3, page.get_contents());
         drop(2, page.get_contents());
         compute_free_space(page.get_contents(), usable_space);
@@ -9340,7 +9515,7 @@ mod tests {
         run_until_done(
             || {
                 fill_cell_payload(
-                    page.get().get_contents(),
+                    page.get(),
                     Some(0),
                     &mut payload,
                     0,
@@ -9354,11 +9529,11 @@ mod tests {
         )
         .unwrap();
         let page = page.get();
-        insert(0, page.get_contents());
+        insert(0, page.clone());
         defragment(page.get_contents());
-        insert(0, page.get_contents());
+        insert(0, page.clone());
         defragment(page.get_contents());
-        insert(0, page.get_contents());
+        insert(0, page.clone());
         drop(2, page.get_contents());
         drop(0, page.get_contents());
         let free = compute_free_space(page.get_contents(), usable_space);
@@ -9426,7 +9601,7 @@ mod tests {
         run_until_done(
             || {
                 fill_cell_payload(
-                    page.get().get_contents(),
+                    page.get(),
                     Some(0),
                     &mut payload,
                     0,
@@ -9778,7 +9953,7 @@ mod tests {
             while compute_free_space(page.get_contents(), pager.usable_space())
                 >= size as usize + 10
             {
-                insert_cell(i, size, page.get_contents(), pager.clone());
+                insert_cell(i, size, page.clone(), pager.clone());
                 i += 1;
                 size = (rng.next_u64() % 1024) as u16;
             }
@@ -9829,15 +10004,16 @@ mod tests {
         }
     }
 
-    fn insert_cell(cell_idx: u64, size: u16, contents: &mut PageContent, pager: Rc<Pager>) {
+    fn insert_cell(cell_idx: u64, size: u16, page: PageRef, pager: Rc<Pager>) {
         let mut payload = Vec::new();
         let regs = &[Register::Value(Value::Blob(vec![0; size as usize]))];
         let record = ImmutableRecord::from_registers(regs, regs.len());
         let mut fill_cell_payload_state = FillCellPayloadState::Start;
+        let contents = page.get_contents();
         run_until_done(
             || {
                 fill_cell_payload(
-                    contents,
+                    page.clone(),
                     Some(cell_idx as i64),
                     &mut payload,
                     cell_idx as usize,

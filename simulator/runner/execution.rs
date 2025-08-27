@@ -1,10 +1,10 @@
 use std::sync::{Arc, Mutex};
 
+use sql_generation::generation::pick_index;
 use tracing::instrument;
 use turso_core::{Connection, LimboError, Result, StepResult};
 
 use crate::generation::{
-    pick_index,
     plan::{Interaction, InteractionPlan, InteractionPlanState, ResultSet},
     Shadow as _,
 };

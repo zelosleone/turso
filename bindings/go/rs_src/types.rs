@@ -34,33 +34,33 @@ pub enum ValueType {
 }
 
 #[repr(C)]
-pub struct LimboValue {
+pub struct TursoValue {
     value_type: ValueType,
     value: ValueUnion,
 }
-impl Debug for LimboValue {
+impl Debug for TursoValue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.value_type {
             ValueType::Integer => {
                 let i = self.value.to_int();
-                f.debug_struct("LimboValue").field("value", &i).finish()
+                f.debug_struct("TursoValue").field("value", &i).finish()
             }
             ValueType::Real => {
                 let r = self.value.to_real();
-                f.debug_struct("LimboValue").field("value", &r).finish()
+                f.debug_struct("TursoValue").field("value", &r).finish()
             }
             ValueType::Text => {
                 let t = self.value.to_str();
-                f.debug_struct("LimboValue").field("value", &t).finish()
+                f.debug_struct("TursoValue").field("value", &t).finish()
             }
             ValueType::Blob => {
                 let blob = self.value.to_bytes();
-                f.debug_struct("LimboValue")
+                f.debug_struct("TursoValue")
                     .field("value", &blob.to_vec())
                     .finish()
             }
             ValueType::Null => f
-                .debug_struct("LimboValue")
+                .debug_struct("TursoValue")
                 .field("value", &"NULL")
                 .finish(),
         }
@@ -164,9 +164,9 @@ impl ValueUnion {
     }
 }
 
-impl LimboValue {
+impl TursoValue {
     fn new(value_type: ValueType, value: ValueUnion) -> Self {
-        LimboValue { value_type, value }
+        TursoValue { value_type, value }
     }
 
     #[allow(clippy::wrong_self_convention)]
@@ -177,18 +177,18 @@ impl LimboValue {
     pub fn from_db_value(value: &turso_core::Value) -> Self {
         match value {
             turso_core::Value::Integer(i) => {
-                LimboValue::new(ValueType::Integer, ValueUnion::from_int(*i))
+                TursoValue::new(ValueType::Integer, ValueUnion::from_int(*i))
             }
             turso_core::Value::Float(r) => {
-                LimboValue::new(ValueType::Real, ValueUnion::from_real(*r))
+                TursoValue::new(ValueType::Real, ValueUnion::from_real(*r))
             }
             turso_core::Value::Text(s) => {
-                LimboValue::new(ValueType::Text, ValueUnion::from_str(s.as_str()))
+                TursoValue::new(ValueType::Text, ValueUnion::from_str(s.as_str()))
             }
             turso_core::Value::Blob(b) => {
-                LimboValue::new(ValueType::Blob, ValueUnion::from_bytes(b.as_slice()))
+                TursoValue::new(ValueType::Blob, ValueUnion::from_bytes(b.as_slice()))
             }
-            turso_core::Value::Null => LimboValue::new(ValueType::Null, ValueUnion::from_null()),
+            turso_core::Value::Null => TursoValue::new(ValueType::Null, ValueUnion::from_null()),
         }
     }
 

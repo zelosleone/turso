@@ -76,6 +76,8 @@ int sqlite3_close(sqlite3 *db);
 
 int sqlite3_close_v2(sqlite3 *db);
 
+const char *sqlite3_db_filename(sqlite3 *db, const char *db_name);
+
 int sqlite3_trace_v2(sqlite3 *_db,
                      unsigned int _mask,
                      void (*_callback)(unsigned int, void*, void*, void*),
@@ -104,6 +106,8 @@ int sqlite3_changes(sqlite3 *_db);
 int sqlite3_stmt_readonly(sqlite3_stmt *_stmt);
 
 int sqlite3_stmt_busy(sqlite3_stmt *_stmt);
+
+sqlite3_stmt *sqlite3_next_stmt(sqlite3 *db, sqlite3_stmt *stmt);
 
 int sqlite3_serialize(sqlite3 *_db, const char *_schema, void **_out, int *_out_bytes, unsigned int _flags);
 
@@ -152,6 +156,8 @@ int sqlite3_data_count(sqlite3_stmt *stmt);
 int sqlite3_bind_parameter_count(sqlite3_stmt *_stmt);
 
 const char *sqlite3_bind_parameter_name(sqlite3_stmt *_stmt, int _idx);
+
+int sqlite3_bind_parameter_index(sqlite3_stmt *_stmt, const char *_name);
 
 int sqlite3_bind_null(sqlite3_stmt *_stmt, int _idx);
 

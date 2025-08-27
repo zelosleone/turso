@@ -39,7 +39,9 @@ jobs:
       - name: Build
         run: cargo build --verbose
       - name: Test Encryption
-        run: cargo test --features encryption --color=always --test integration_tests query_processing::encryption
+        run: |
+          cargo test --features encryption --color=always --test integration_tests query_processing::encryption
+          cargo test --features encryption --color=always --lib storage::encryption
       - name: Test
         env:
           RUST_LOG: ${{ runner.debug && 'turso_core::storage=trace' || '' }}

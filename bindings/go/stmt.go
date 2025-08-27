@@ -1,4 +1,4 @@
-package limbo
+package turso
 
 import (
 	"context"
@@ -9,22 +9,22 @@ import (
 	"unsafe"
 )
 
-type limboStmt struct {
+type tursoStmt struct {
 	mu  sync.Mutex
 	ctx uintptr
 	sql string
 	err error
 }
 
-func newStmt(ctx uintptr, sql string) *limboStmt {
-	return &limboStmt{
+func newStmt(ctx uintptr, sql string) *tursoStmt {
+	return &tursoStmt{
 		ctx: uintptr(ctx),
 		sql: sql,
 		err: nil,
 	}
 }
 
-func (ls *limboStmt) NumInput() int {
+func (ls *tursoStmt) NumInput() int {
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
 	res := int(stmtParamCount(ls.ctx))
@@ -35,7 +35,7 @@ func (ls *limboStmt) NumInput() int {
 	return res
 }
 
-func (ls *limboStmt) Close() error {
+func (ls *tursoStmt) Close() error {
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
 	if ls.ctx == 0 {
@@ -49,7 +49,7 @@ func (ls *limboStmt) Close() error {
 	return nil
 }
 
-func (ls *limboStmt) Exec(args []driver.Value) (driver.Result, error) {
+func (ls *tursoStmt) Exec(args []driver.Value) (driver.Result, error) {
 	argArray, cleanup, err := buildArgs(args)
 	defer cleanup()
 	if err != nil {
@@ -80,7 +80,7 @@ func (ls *limboStmt) Exec(args []driver.Value) (driver.Result, error) {
 	}
 }
 
-func (ls *limboStmt) Query(args []driver.Value) (driver.Rows, error) {
+func (ls *tursoStmt) Query(args []driver.Value) (driver.Rows, error) {
 	queryArgs, cleanup, err := buildArgs(args)
 	defer cleanup()
 	if err != nil {
@@ -99,7 +99,7 @@ func (ls *limboStmt) Query(args []driver.Value) (driver.Rows, error) {
 	return newRows(rowsPtr), nil
 }
 
-func (ls *limboStmt) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+func (ls *tursoStmt) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	stripped := namedValueToValue(args)
 	argArray, cleanup, err := getArgsPtr(stripped)
 	defer cleanup()
@@ -129,7 +129,7 @@ func (ls *limboStmt) ExecContext(ctx context.Context, query string, args []drive
 	}
 }
 
-func (ls *limboStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+func (ls *tursoStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
 	queryArgs, allocs, err := buildNamedArgs(args)
 	defer allocs()
 	if err != nil {
@@ -154,7 +154,7 @@ func (ls *limboStmt) QueryContext(ctx context.Context, args []driver.NamedValue)
 	}
 }
 
-func (ls *limboStmt) Err() error {
+func (ls *tursoStmt) Err() error {
 	if ls.err == nil {
 		ls.mu.Lock()
 		defer ls.mu.Unlock()
@@ -164,7 +164,7 @@ func (ls *limboStmt) Err() error {
 }
 
 // mutex should always be locked when calling - always called after FFI
-func (ls *limboStmt) getError() error {
+func (ls *tursoStmt) getError() error {
 	err := stmtGetError(ls.ctx)
 	if err == 0 {
 		return nil

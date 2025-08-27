@@ -1,4 +1,4 @@
-// Go bindings for the Limbo database.
+// Go bindings for the turso database.
 //
 // This file implements library embedding and extraction at runtime, a pattern
 // also used in several other Go projects that need to distribute native binaries:
@@ -21,7 +21,7 @@
 // The embedded library is extracted to a user-specific temporary directory and
 // loaded dynamically. If extraction fails, the code falls back to the traditional
 // method of searching system paths.
-package limbo
+package turso
 
 import (
 	"embed"
@@ -52,11 +52,11 @@ func extractEmbeddedLibrary() (string, error) {
 
 		switch runtime.GOOS {
 		case "darwin":
-			libName = "lib_limbo_go.dylib"
+			libName = "lib_turso_go.dylib"
 		case "linux":
-			libName = "lib_limbo_go.so"
+			libName = "lib_turso_go.so"
 		case "windows":
-			libName = "lib_limbo_go.dll"
+			libName = "lib_turso_go.dll"
 		default:
 			extractErr = fmt.Errorf("unsupported operating system: %s", runtime.GOOS)
 			return
@@ -80,7 +80,7 @@ func extractEmbeddedLibrary() (string, error) {
 		platformDir = fmt.Sprintf("%s_%s", runtime.GOOS, archSuffix)
 
 		// Create a unique temporary directory for the current user
-		tempDir := filepath.Join(os.TempDir(), fmt.Sprintf("limbo-go-%d", os.Getuid()))
+		tempDir := filepath.Join(os.TempDir(), fmt.Sprintf("turso-go-%d", os.Getuid()))
 		if err := os.MkdirAll(tempDir, 0755); err != nil {
 			extractErr = fmt.Errorf("failed to create temp directory: %w", err)
 			return

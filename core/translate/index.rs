@@ -44,6 +44,10 @@ pub fn translate_create_index(
     // Check if the index is being created on a valid btree table and
     // the name is globally unique in the schema.
     if !schema.is_unique_idx_name(&idx_name) {
+        // If IF NOT EXISTS is specified, silently return without error
+        if unique_if_not_exists.1 {
+            return Ok(program);
+        }
         crate::bail_parse_error!("Error: index with name '{idx_name}' already exists.");
     }
     let Some(tbl) = schema.tables.get(&tbl_name) else {

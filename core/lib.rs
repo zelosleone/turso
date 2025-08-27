@@ -41,6 +41,7 @@ pub mod numeric;
 mod numeric;
 
 use crate::incremental::view::ViewTransactionState;
+use crate::storage::encryption::CipherMode;
 use crate::translate::optimizer::optimize_plan;
 use crate::translate::pragma::TURSO_CDC_DEFAULT_TABLE_NAME;
 #[cfg(all(feature = "fs", feature = "conn_raw_api"))]
@@ -71,11 +72,11 @@ use std::{
     num::NonZero,
     ops::Deref,
     rc::Rc,
-    sync::{Arc, LazyLock, Mutex, Weak},
+    sync::{atomic::AtomicUsize, Arc, LazyLock, Mutex, Weak},
 };
 #[cfg(feature = "fs")]
 use storage::database::DatabaseFile;
-pub use storage::encryption::{EncryptionKey, EncryptionContext};
+pub use storage::encryption::{EncryptionContext, EncryptionKey};
 use storage::page_cache::DumbLruPageCache;
 use storage::pager::{AtomicDbState, DbState};
 use storage::sqlite3_ondisk::PageSize;
@@ -137,6 +138,7 @@ pub struct Database {
     open_flags: OpenFlags,
     builtin_syms: RefCell<SymbolTable>,
     experimental_views: bool,
+    n_connections: AtomicUsize,
 }
 
 unsafe impl Send for Database {}
@@ -185,6 +187,12 @@ impl fmt::Debug for Database {
         };
         debug_struct.field("page_cache", &cache_info);
 
+        debug_struct.field(
+            "n_connections",
+            &self
+                .n_connections
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
         debug_struct.finish()
     }
 }
@@ -372,6 +380,7 @@ impl Database {
             init_lock: Arc::new(Mutex::new(())),
             experimental_views: enable_views,
             buffer_pool: BufferPool::begin_init(&io, arena_size),
+            n_connections: AtomicUsize::new(0),
         });
         db.register_global_builtin_extensions()
             .expect("unable to register global extensions");
@@ -455,7 +464,10 @@ impl Database {
             metrics: RefCell::new(ConnectionMetrics::new()),
             is_nested_stmt: Cell::new(false),
             encryption_key: RefCell::new(None),
+            encryption_cipher_mode: Cell::new(None),
         });
+        self.n_connections
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let builtin_syms = self.builtin_syms.borrow();
         // add built-in extensions symbols to the connection to prevent having to load each time
         conn.syms.borrow_mut().extend(&builtin_syms);
@@ -886,6 +898,18 @@ pub struct Connection {
     /// Generally this is only true for ParseSchema.
     is_nested_stmt: Cell<bool>,
     encryption_key: RefCell<Option<EncryptionKey>>,
+    encryption_cipher_mode: Cell<Option<CipherMode>>,
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        if !self.closed.get() {
+            // if connection wasn't properly closed, decrement the connection counter
+            self._db
+                .n_connections
+                .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
 }
 
 impl Connection {
@@ -1500,16 +1524,23 @@ impl Connection {
                     pager.end_tx(
                         true, // rollback = true for close
                         self,
-                        self.wal_auto_checkpoint_disabled.get(),
                     )
                 })?;
                 self.transaction_state.set(TransactionState::None);
             }
         }
 
-        self.pager
-            .borrow()
-            .checkpoint_shutdown(self.wal_auto_checkpoint_disabled.get())
+        if self
+            ._db
+            .n_connections
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed)
+            .eq(&1)
+        {
+            self.pager
+                .borrow()
+                .checkpoint_shutdown(self.wal_auto_checkpoint_disabled.get())?;
+        };
+        Ok(())
     }
 
     pub fn wal_auto_checkpoint_disable(&self) {
@@ -1958,8 +1989,31 @@ impl Connection {
     pub fn set_encryption_key(&self, key: EncryptionKey) {
         tracing::trace!("setting encryption key for connection");
         *self.encryption_key.borrow_mut() = Some(key.clone());
+        self.set_encryption_context();
+    }
+
+    pub fn set_encryption_cipher(&self, cipher_mode: CipherMode) {
+        tracing::trace!("setting encryption cipher for connection");
+        self.encryption_cipher_mode.replace(Some(cipher_mode));
+        self.set_encryption_context();
+    }
+
+    pub fn get_encryption_cipher_mode(&self) -> Option<CipherMode> {
+        self.encryption_cipher_mode.get()
+    }
+
+    // if both key and cipher are set, set encryption context on pager
+    fn set_encryption_context(&self) {
+        let key_ref = self.encryption_key.borrow();
+        let Some(key) = key_ref.as_ref() else {
+            return;
+        };
+        let Some(cipher_mode) = self.encryption_cipher_mode.get() else {
+            return;
+        };
+        tracing::trace!("setting encryption ctx for connection");
         let pager = self.pager.borrow();
-        pager.set_encryption_context(&key);
+        pager.set_encryption_context(cipher_mode, key);
     }
 }
 
@@ -2106,7 +2160,7 @@ impl Statement {
             }
             let state = self.program.connection.transaction_state.get();
             if let TransactionState::Write { .. } = state {
-                let end_tx_res = self.pager.end_tx(true, &self.program.connection, true)?;
+                let end_tx_res = self.pager.end_tx(true, &self.program.connection)?;
                 self.program
                     .connection
                     .transaction_state
@@ -2166,8 +2220,16 @@ impl Statement {
         self.program.parameters.count()
     }
 
+    pub fn parameter_index(&self, name: &str) -> Option<NonZero<usize>> {
+        self.program.parameters.index(name)
+    }
+
     pub fn bind_at(&mut self, index: NonZero<usize>, value: Value) {
         self.state.bind_at(index, value);
+    }
+
+    pub fn clear_bindings(&mut self) {
+        self.state.clear_bindings();
     }
 
     pub fn reset(&mut self) {

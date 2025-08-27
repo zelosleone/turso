@@ -1,5 +1,5 @@
 use rand::{seq::SliceRandom as _, Rng};
-use turso_sqlite3_parser::ast::{self, Expr};
+use turso_parser::ast::{self, Expr};
 
 use crate::model::{
     query::predicate::Predicate,
@@ -8,8 +8,8 @@ use crate::model::{
 
 use super::{one_of, ArbitraryFrom};
 
-mod binary;
-mod unary;
+pub mod binary;
+pub mod unary;
 
 #[derive(Debug)]
 struct CompoundPredicate(Predicate);
@@ -21,7 +21,7 @@ impl<A: AsRef<[SimValue]>, T: TableContext> ArbitraryFrom<(&T, A, bool)> for Sim
     fn arbitrary_from<R: Rng>(rng: &mut R, (table, row, predicate_value): (&T, A, bool)) -> Self {
         let row = row.as_ref();
         // Pick an operator
-        let choice = rng.gen_range(0..2);
+        let choice = rng.random_range(0..2);
         // Pick an operator
         match predicate_value {
             true => match choice {
@@ -46,7 +46,7 @@ impl<T: TableContext> ArbitraryFrom<(&T, bool)> for CompoundPredicate {
 
 impl<T: TableContext> ArbitraryFrom<&T> for Predicate {
     fn arbitrary_from<R: Rng>(rng: &mut R, table: &T) -> Self {
-        let predicate_value = rng.gen_bool(0.5);
+        let predicate_value = rng.random_bool(0.5);
         Predicate::arbitrary_from(rng, (table, predicate_value)).parens()
     }
 }
@@ -70,11 +70,11 @@ impl ArbitraryFrom<(&Table, &Vec<SimValue>)> for Predicate {
         // are true, some that are false, combiend them in ways that correspond to the creation of a true predicate
 
         // Produce some true and false predicates
-        let mut true_predicates = (1..=rng.gen_range(1..=4))
+        let mut true_predicates = (1..=rng.random_range(1..=4))
             .map(|_| Predicate::true_binary(rng, t, row))
             .collect::<Vec<_>>();
 
-        let false_predicates = (0..=rng.gen_range(0..=3))
+        let false_predicates = (0..=rng.random_range(0..=3))
             .map(|_| Predicate::false_binary(rng, t, row))
             .collect::<Vec<_>>();
 
@@ -92,7 +92,7 @@ impl ArbitraryFrom<(&Table, &Vec<SimValue>)> for Predicate {
         while !predicates.is_empty() {
             // Create a new predicate from at least 1 and at most 3 predicates
             let context =
-                predicates[0..rng.gen_range(0..=usize::min(3, predicates.len()))].to_vec();
+                predicates[0..rng.random_range(0..=usize::min(3, predicates.len()))].to_vec();
             // Shift `predicates` to remove the predicates in the context
             predicates = predicates[context.len()..].to_vec();
 
@@ -251,7 +251,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         for _ in 0..10000 {
             let table = Table::arbitrary(&mut rng);
-            let num_rows = rng.gen_range(1..10);
+            let num_rows = rng.random_range(1..10);
             let values: Vec<Vec<SimValue>> = (0..num_rows)
                 .map(|_| {
                     table
@@ -277,7 +277,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         for _ in 0..10000 {
             let table = Table::arbitrary(&mut rng);
-            let num_rows = rng.gen_range(1..10);
+            let num_rows = rng.random_range(1..10);
             let values: Vec<Vec<SimValue>> = (0..num_rows)
                 .map(|_| {
                     table
@@ -303,7 +303,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         for _ in 0..10000 {
             let table = Table::arbitrary(&mut rng);
-            let num_rows = rng.gen_range(1..10);
+            let num_rows = rng.random_range(1..10);
             let values: Vec<Vec<SimValue>> = (0..num_rows)
                 .map(|_| {
                     table
@@ -329,7 +329,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         for _ in 0..10000 {
             let mut table = Table::arbitrary(&mut rng);
-            let num_rows = rng.gen_range(1..10);
+            let num_rows = rng.random_range(1..10);
             let values: Vec<Vec<SimValue>> = (0..num_rows)
                 .map(|_| {
                     table
@@ -356,7 +356,7 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(seed);
         for _ in 0..10000 {
             let mut table = Table::arbitrary(&mut rng);
-            let num_rows = rng.gen_range(1..10);
+            let num_rows = rng.random_range(1..10);
             let values: Vec<Vec<SimValue>> = (0..num_rows)
                 .map(|_| {
                     table

@@ -2,7 +2,6 @@
 use anyhow::anyhow;
 use clap::Parser;
 use generation::plan::{Interaction, InteractionPlan, InteractionPlanState};
-use generation::ArbitraryFrom;
 use notify::event::{DataChange, ModifyKind};
 use notify::{EventKind, RecursiveMode, Watcher};
 use rand::prelude::*;
@@ -11,6 +10,7 @@ use runner::cli::{SimulatorCLI, SimulatorCommand};
 use runner::env::SimulatorEnv;
 use runner::execution::{execute_plans, Execution, ExecutionHistory, ExecutionResult};
 use runner::{differential, watch};
+use sql_generation::generation::ArbitraryFrom;
 use std::any::Any;
 use std::backtrace::Backtrace;
 use std::fs::OpenOptions;
@@ -507,7 +507,7 @@ fn setup_simulation(
         (seed, env, plans)
     } else {
         let seed = cli_opts.seed.unwrap_or_else(|| {
-            let mut rng = rand::thread_rng();
+            let mut rng = rand::rng();
             rng.next_u64()
         });
         tracing::info!("seed={}", seed);

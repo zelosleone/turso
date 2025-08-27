@@ -3,6 +3,8 @@ pub mod fmt;
 
 use strum_macros::{EnumIter, EnumString};
 
+use crate::ast::fmt::ToTokens;
+
 /// `?` or `$` Prepared statement arg placeholder(s)
 #[derive(Default)]
 pub struct ParameterInfo {
@@ -345,6 +347,9 @@ pub enum Expr {
     },
     /// binary expression
     Binary(Box<Expr>, Operator, Box<Expr>),
+    /// Register reference for DBSP expression compilation
+    /// This is not part of SQL syntax but used internally for incremental computation
+    Register(usize),
     /// `CASE` expression
     Case {
         /// operand
@@ -469,6 +474,76 @@ pub enum Expr {
     Unary(UnaryOperator, Box<Expr>),
     /// Parameters
     Variable(String),
+}
+
+impl Expr {
+    pub fn into_boxed(self) -> Box<Expr> {
+        Box::new(self)
+    }
+
+    pub fn unary(operator: UnaryOperator, expr: Expr) -> Expr {
+        Expr::Unary(operator, Box::new(expr))
+    }
+
+    pub fn binary(lhs: Expr, operator: Operator, rhs: Expr) -> Expr {
+        Expr::Binary(Box::new(lhs), operator, Box::new(rhs))
+    }
+
+    pub fn not_null(expr: Expr) -> Expr {
+        Expr::NotNull(Box::new(expr))
+    }
+
+    pub fn between(lhs: Expr, not: bool, start: Expr, end: Expr) -> Expr {
+        Expr::Between {
+            lhs: Box::new(lhs),
+            not,
+            start: Box::new(start),
+            end: Box::new(end),
+        }
+    }
+
+    pub fn in_select(lhs: Expr, not: bool, select: Select) -> Expr {
+        Expr::InSelect {
+            lhs: Box::new(lhs),
+            not,
+            rhs: select,
+        }
+    }
+
+    pub fn like(
+        lhs: Expr,
+        not: bool,
+        operator: LikeOperator,
+        rhs: Expr,
+        escape: Option<Expr>,
+    ) -> Expr {
+        Expr::Like {
+            lhs: Box::new(lhs),
+            not,
+            op: operator,
+            rhs: Box::new(rhs),
+            escape: escape.map(Box::new),
+        }
+    }
+
+    pub fn is_null(expr: Expr) -> Expr {
+        Expr::IsNull(Box::new(expr))
+    }
+
+    pub fn collate(expr: Expr, name: Name) -> Expr {
+        Expr::Collate(Box::new(expr), name)
+    }
+
+    pub fn cast(expr: Expr, type_name: Option<Type>) -> Expr {
+        Expr::Cast {
+            expr: Box::new(expr),
+            type_name,
+        }
+    }
+
+    pub fn raise(resolve_type: ResolveType, expr: Option<Expr>) -> Expr {
+        Expr::Raise(resolve_type, expr.map(Box::new))
+    }
 }
 
 /// SQL literal
@@ -856,6 +931,41 @@ pub struct QualifiedName {
     pub alias: Option<Name>, // FIXME restrict alias usage (fullname vs xfullname)
 }
 
+impl QualifiedName {
+    /// Constructor
+    pub fn single(name: Name) -> Self {
+        Self {
+            db_name: None,
+            name,
+            alias: None,
+        }
+    }
+    /// Constructor
+    pub fn fullname(db_name: Name, name: Name) -> Self {
+        Self {
+            db_name: Some(db_name),
+            name,
+            alias: None,
+        }
+    }
+    /// Constructor
+    pub fn xfullname(db_name: Name, name: Name, alias: Name) -> Self {
+        Self {
+            db_name: Some(db_name),
+            name,
+            alias: Some(alias),
+        }
+    }
+    /// Constructor
+    pub fn alias(name: Name, alias: Name) -> Self {
+        Self {
+            db_name: None,
+            name,
+            alias: Some(alias),
+        }
+    }
+}
+
 /// `ALTER TABLE` body
 // https://sqlite.org/lang_altertable.html
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1027,13 +1137,19 @@ bitflags::bitflags! {
 }
 
 /// Sort orders
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum SortOrder {
     /// `ASC`
     Asc,
     /// `DESC`
     Desc,
+}
+
+impl core::fmt::Display for SortOrder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_fmt(f)
+    }
 }
 
 /// `NULLS FIRST` or `NULLS LAST`
@@ -1204,6 +1320,10 @@ pub enum PragmaName {
     AutoVacuum,
     /// `cache_size` pragma
     CacheSize,
+    /// encryption cipher algorithm name for encrypted databases
+    #[strum(serialize = "cipher")]
+    #[cfg_attr(feature = "serde", serde(rename = "cipher"))]
+    EncryptionCipher,
     /// List databases
     DatabaseList,
     /// Encoding - only support utf8
@@ -1214,10 +1334,9 @@ pub enum PragmaName {
     IntegrityCheck,
     /// `journal_mode` pragma
     JournalMode,
-    /// encryption key for encrypted databases. This is just called `key` because most
-    /// extensions use this name instead of `encryption_key`.
-    #[strum(serialize = "key")]
-    #[cfg_attr(feature = "serde", serde(rename = "key"))]
+    /// encryption key for encrypted databases, specified as hexadecimal string.
+    #[strum(serialize = "hexkey")]
+    #[cfg_attr(feature = "serde", serde(rename = "hexkey"))]
     EncryptionKey,
     /// Noop as per SQLite docs
     LegacyFileFormat,

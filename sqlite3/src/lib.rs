@@ -56,6 +56,8 @@ struct sqlite3Inner {
     pub(crate) malloc_failed: bool,
     pub(crate) e_open_state: u8,
     pub(crate) p_err: *mut ffi::c_void,
+    pub(crate) filename: CString,
+    pub(crate) stmt_list: *mut sqlite3_stmt,
 }
 
 impl sqlite3 {
@@ -63,6 +65,7 @@ impl sqlite3 {
         io: Arc<dyn turso_core::IO>,
         db: Arc<turso_core::Database>,
         conn: Arc<turso_core::Connection>,
+        filename: CString,
     ) -> Self {
         let inner = sqlite3Inner {
             _io: io,
@@ -73,6 +76,8 @@ impl sqlite3 {
             malloc_failed: false,
             e_open_state: SQLITE_STATE_OPEN,
             p_err: std::ptr::null_mut(),
+            filename,
+            stmt_list: std::ptr::null_mut(),
         };
         #[allow(clippy::arc_with_non_send_sync)]
         let inner = Arc::new(Mutex::new(inner));
@@ -88,6 +93,7 @@ pub struct sqlite3_stmt {
         Option<unsafe extern "C" fn(*mut ffi::c_void)>,
         *mut ffi::c_void,
     )>,
+    pub(crate) next: *mut sqlite3_stmt,
 }
 
 impl sqlite3_stmt {
@@ -96,6 +102,7 @@ impl sqlite3_stmt {
             db,
             stmt,
             destructors: Vec::new(),
+            next: std::ptr::null_mut(),
         }
     }
 }
@@ -132,26 +139,30 @@ pub unsafe extern "C" fn sqlite3_open(
     if db_out.is_null() {
         return SQLITE_MISUSE;
     }
-    let filename = CStr::from_ptr(filename);
-    let filename = match filename.to_str() {
+    let filename_cstr = CStr::from_ptr(filename);
+    let filename_str = match filename_cstr.to_str() {
         Ok(s) => s,
         Err(_) => return SQLITE_MISUSE,
     };
-    let io: Arc<dyn turso_core::IO> = match filename {
+    let io: Arc<dyn turso_core::IO> = match filename_str {
         ":memory:" => Arc::new(turso_core::MemoryIO::new()),
         _ => match turso_core::PlatformIO::new() {
             Ok(io) => Arc::new(io),
             Err(_) => return SQLITE_CANTOPEN,
         },
     };
-    match turso_core::Database::open_file(io.clone(), filename, false, false) {
+    match turso_core::Database::open_file(io.clone(), filename_str, false, false) {
         Ok(db) => {
             let conn = db.connect().unwrap();
-            *db_out = Box::leak(Box::new(sqlite3::new(io, db, conn)));
+            let filename = match filename_str {
+                ":memory:" => CString::new("".to_string()).unwrap(),
+                _ => CString::from(filename_cstr),
+            };
+            *db_out = Box::leak(Box::new(sqlite3::new(io, db, conn, filename)));
             SQLITE_OK
         }
         Err(e) => {
-            trace!("error opening database {}: {:?}", filename, e);
+            trace!("error opening database {}: {:?}", filename_str, e);
             SQLITE_CANTOPEN
         }
     }
@@ -182,6 +193,25 @@ pub unsafe extern "C" fn sqlite3_close(db: *mut sqlite3) -> ffi::c_int {
 pub unsafe extern "C" fn sqlite3_close_v2(db: *mut sqlite3) -> ffi::c_int {
     trace!("sqlite3_close_v2");
     sqlite3_close(db)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sqlite3_db_filename(
+    db: *mut sqlite3,
+    db_name: *const ffi::c_char,
+) -> *const ffi::c_char {
+    if db.is_null() {
+        return std::ptr::null();
+    }
+    if !db_name.is_null() {
+        let name = CStr::from_ptr(db_name);
+        if name.to_bytes() != b"main" {
+            return std::ptr::null();
+        }
+    }
+    let db = &*db;
+    let inner = db.inner.lock().unwrap();
+    inner.filename.as_ptr()
 }
 
 #[no_mangle]
@@ -253,7 +283,12 @@ pub unsafe extern "C" fn sqlite3_prepare_v2(
             return SQLITE_ERROR;
         }
     };
-    *out_stmt = Box::leak(Box::new(sqlite3_stmt::new(raw_db, stmt)));
+    let new_stmt = Box::leak(Box::new(sqlite3_stmt::new(raw_db, stmt)));
+
+    new_stmt.next = db.stmt_list;
+    db.stmt_list = new_stmt;
+
+    *out_stmt = new_stmt;
     SQLITE_OK
 }
 
@@ -263,6 +298,25 @@ pub unsafe extern "C" fn sqlite3_finalize(stmt: *mut sqlite3_stmt) -> ffi::c_int
         return SQLITE_MISUSE;
     }
     let stmt_ref = &mut *stmt;
+
+    if !stmt_ref.db.is_null() {
+        let db = &mut *stmt_ref.db;
+        let mut db_inner = db.inner.lock().unwrap();
+
+        if db_inner.stmt_list == stmt {
+            db_inner.stmt_list = stmt_ref.next;
+        } else {
+            let mut current = db_inner.stmt_list;
+            while !current.is_null() {
+                let current_ref = &mut *current;
+                if current_ref.next == stmt {
+                    current_ref.next = stmt_ref.next;
+                    break;
+                }
+                current = current_ref.next;
+            }
+        }
+    }
 
     for (_idx, destructor_opt, ptr) in stmt_ref.destructors.drain(..) {
         if let Some(destructor_fn) = destructor_opt {
@@ -355,6 +409,25 @@ pub unsafe extern "C" fn sqlite3_stmt_busy(_stmt: *mut sqlite3_stmt) -> ffi::c_i
     stub!();
 }
 
+/// Iterate over all prepared statements in the database.
+#[no_mangle]
+pub unsafe extern "C" fn sqlite3_next_stmt(
+    db: *mut sqlite3,
+    stmt: *mut sqlite3_stmt,
+) -> *mut sqlite3_stmt {
+    if db.is_null() {
+        return std::ptr::null_mut();
+    }
+    if stmt.is_null() {
+        let db = &*db;
+        let db = db.inner.lock().unwrap();
+        db.stmt_list
+    } else {
+        let stmt = &mut *stmt;
+        stmt.next
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_serialize(
     _db: *mut sqlite3,
@@ -378,8 +451,17 @@ pub unsafe extern "C" fn sqlite3_deserialize(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_get_autocommit(_db: *mut sqlite3) -> ffi::c_int {
-    stub!();
+pub unsafe extern "C" fn sqlite3_get_autocommit(db: *mut sqlite3) -> ffi::c_int {
+    if db.is_null() {
+        return 1;
+    }
+    let db: &mut sqlite3 = &mut *db;
+    let inner = db.inner.lock().unwrap();
+    if inner.conn.get_auto_commit() {
+        1
+    } else {
+        0
+    }
 }
 
 #[no_mangle]
@@ -426,13 +508,24 @@ pub unsafe extern "C" fn sqlite3_limit(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_malloc64(_n: ffi::c_int) -> *mut ffi::c_void {
-    stub!();
+pub unsafe extern "C" fn sqlite3_malloc(n: ffi::c_int) -> *mut ffi::c_void {
+    sqlite3_malloc64(n)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn sqlite3_free(_ptr: *mut ffi::c_void) {
-    stub!();
+pub unsafe extern "C" fn sqlite3_malloc64(n: ffi::c_int) -> *mut ffi::c_void {
+    if n <= 0 {
+        return std::ptr::null_mut();
+    }
+    libc::malloc(n as usize)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sqlite3_free(ptr: *mut ffi::c_void) {
+    if ptr.is_null() {
+        return;
+    }
+    libc::free(ptr);
 }
 
 /// Returns the error code for the most recent failed API call to connection.
@@ -526,6 +619,28 @@ pub unsafe extern "C" fn sqlite3_bind_parameter_name(
         c_string.into_raw()
     } else {
         std::ptr::null()
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sqlite3_bind_parameter_index(
+    stmt: *mut sqlite3_stmt,
+    name: *const ffi::c_char,
+) -> ffi::c_int {
+    if stmt.is_null() || name.is_null() {
+        return 0;
+    }
+
+    let stmt = &*stmt;
+    let name_str = match CStr::from_ptr(name).to_str() {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+
+    if let Some(index) = stmt.stmt.parameter_index(name_str) {
+        index.get() as ffi::c_int
+    } else {
+        0
     }
 }
 
@@ -698,6 +813,18 @@ pub unsafe extern "C" fn sqlite3_bind_blob(
             destructor_fn(blob as *mut _);
         }
     }
+
+    SQLITE_OK
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sqlite3_clear_bindings(stmt: *mut sqlite3_stmt) -> ffi::c_int {
+    if stmt.is_null() {
+        return SQLITE_MISUSE;
+    }
+
+    let stmt_ref = &mut *stmt;
+    stmt_ref.stmt.clear_bindings();
 
     SQLITE_OK
 }

@@ -1,7 +1,7 @@
-#![allow(clippy::arc_with_non_send_sync)]
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::array;
+use std::borrow::Cow;
 use std::cell::{RefCell, UnsafeCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use strum::EnumString;
@@ -276,6 +276,13 @@ pub trait Wal: Debug {
         db_size: u32,
     ) -> Result<Completion>;
 
+    fn append_frames_vectored(
+        &mut self,
+        pages: Vec<PageRef>,
+        page_sz: PageSize,
+        db_size_on_commit: Option<u32>,
+    ) -> Result<Completion>;
+
     /// Complete append of frames by updating shared wal state. Before this
     /// all changes were stored locally.
     fn finish_append_frames_commit(&mut self) -> Result<()>;
@@ -318,7 +325,8 @@ pub const CKPT_BATCH_PAGES: usize = 512;
 const MIN_AVG_RUN_FOR_FLUSH: f32 = 32.0;
 const MIN_BATCH_LEN_FOR_FLUSH: usize = 512;
 const MAX_INFLIGHT_WRITES: usize = 64;
-const MAX_INFLIGHT_READS: usize = 512;
+pub const MAX_INFLIGHT_READS: usize = 512;
+pub const IOV_MAX: usize = 1024;
 
 type PageId = usize;
 struct InflightRead {
@@ -815,14 +823,14 @@ impl Wal for WalFile {
         // WAL and fetch pages directly from the DB file.  We do this
         // by taking read‑lock 0, and capturing the latest state.
         if shared_max == nbackfills {
-            let lock_idx = 0;
-            if !self.get_shared().read_locks[lock_idx].read() {
+            let lock_0_idx = 0;
+            if !self.get_shared().read_locks[lock_0_idx].read() {
                 return Ok((LimboResult::Busy, db_changed));
             }
             // we need to keep self.max_frame set to the appropriate
             // max frame in the wal at the time this transaction starts.
             self.max_frame = shared_max;
-            self.max_frame_read_lock_index.set(lock_idx);
+            self.max_frame_read_lock_index.set(lock_0_idx);
             self.min_frame = nbackfills + 1;
             self.last_checksum = last_checksum;
             return Ok((LimboResult::Ok, db_changed));
@@ -965,7 +973,7 @@ impl Wal for WalFile {
         }
 
         // Snapshot is stale, give up and let caller retry from scratch
-        tracing::debug!("unable to upgrade transaction from read to write: snapshot is stale, give up and let caller retry from scratch");
+        tracing::debug!("unable to upgrade transaction from read to write: snapshot is stale, give up and let caller retry from scratch, self.max_frame={}, shared_max={}", self.max_frame, shared_max);
         shared.write_lock.unlock();
         Ok(LimboResult::Busy)
     }
@@ -1000,8 +1008,18 @@ impl Wal for WalFile {
             "frame_watermark must be >= than current WAL backfill amount: frame_watermark={:?}, nBackfill={}", frame_watermark, self.get_shared().nbackfills.load(Ordering::Acquire)
         );
 
-        // if we are holding read_lock 0, skip and read right from db file.
-        if self.max_frame_read_lock_index.get() == 0 {
+        // if we are holding read_lock 0 and didn't write anything to the WAL, skip and read right from db file.
+        //
+        // note, that max_frame_read_lock_index is set to 0 only when shared_max_frame == nbackfill in which case
+        // min_frame is set to nbackfill + 1 and max_frame is set to shared_max_frame
+        //
+        // by default, SQLite tries to restart log file in this case - but for now let's keep it simple in the turso-db
+        if self.max_frame_read_lock_index.get() == 0 && self.max_frame < self.min_frame {
+            tracing::debug!(
+                "find_frame(page_id={}, frame_watermark={:?}): max_frame is 0 - read from DB file",
+                page_id,
+                frame_watermark,
+            );
             return Ok(None);
         }
         let shared = self.get_shared();
@@ -1009,8 +1027,21 @@ impl Wal for WalFile {
         let range = frame_watermark
             .map(|x| 0..=x)
             .unwrap_or(self.min_frame..=self.max_frame);
+        tracing::debug!(
+            "find_frame(page_id={}, frame_watermark={:?}): min_frame={}, max_frame={}",
+            page_id,
+            frame_watermark,
+            self.min_frame,
+            self.max_frame
+        );
         if let Some(list) = frames.get(&page_id) {
             if let Some(f) = list.iter().rfind(|&&f| range.contains(&f)) {
+                tracing::debug!(
+                    "find_frame(page_id={}, frame_watermark={:?}): found frame={}",
+                    page_id,
+                    frame_watermark,
+                    *f
+                );
                 return Ok(Some(*f));
             }
         }
@@ -1367,6 +1398,112 @@ impl Wal for WalFile {
             }
         }
         Ok(pages)
+    }
+
+    /// Use pwritev to append many frames to the log at once
+    fn append_frames_vectored(
+        &mut self,
+        pages: Vec<PageRef>,
+        page_sz: PageSize,
+        db_size_on_commit: Option<u32>,
+    ) -> Result<Completion> {
+        turso_assert!(
+            pages.len() <= IOV_MAX,
+            "we limit number of iovecs to IOV_MAX"
+        );
+        self.ensure_header_if_needed(page_sz)?;
+
+        let (header, shared_page_size, seq) = {
+            let shared = self.get_shared();
+            let hdr_guard = shared.wal_header.lock();
+            let header: WalHeader = *hdr_guard;
+            let shared_page_size = header.page_size;
+            let seq = header.checkpoint_seq;
+            (header, shared_page_size, seq)
+        };
+        turso_assert!(
+            shared_page_size == page_sz.get(),
+            "page size mismatch, tried to change page size after WAL header was already initialized: shared.page_size={shared_page_size}, page_size={}",
+            page_sz.get()
+        );
+
+        // Prepare write buffers and bookkeeping
+        let mut iovecs: Vec<Arc<Buffer>> = Vec::with_capacity(pages.len());
+        let mut page_frame_and_checksum: Vec<(PageRef, u64, (u32, u32))> =
+            Vec::with_capacity(pages.len());
+
+        // Rolling checksum input to each frame build
+        let mut rolling_checksum: (u32, u32) = self.last_checksum;
+
+        let mut next_frame_id = self.max_frame + 1;
+        // Build every frame in order, updating the rolling checksum
+        for (idx, page) in pages.iter().enumerate() {
+            let page_id = page.get().id as u64;
+            let plain = page.get_contents().as_ptr();
+
+            let data_to_write: std::borrow::Cow<[u8]> = {
+                let ectx = self.encryption_ctx.borrow();
+                if let Some(ctx) = ectx.as_ref() {
+                    Cow::Owned(ctx.encrypt_page(plain, page_id as usize)?)
+                } else {
+                    Cow::Borrowed(plain)
+                }
+            };
+
+            let frame_db_size = if idx + 1 == pages.len() {
+                // if it's the final frame we are appending, and the caller included a db_size for the
+                // commit frame, then we ensure to set it in the header.
+                db_size_on_commit.unwrap_or(0)
+            } else {
+                0
+            };
+            let (new_checksum, frame_bytes) = prepare_wal_frame(
+                &self.buffer_pool,
+                &header,
+                rolling_checksum,
+                shared_page_size,
+                page_id as u32,
+                frame_db_size,
+                &data_to_write,
+            );
+            iovecs.push(frame_bytes);
+
+            // (page, assigned_frame_id, cumulative_checksum_at_this_frame)
+            page_frame_and_checksum.push((page.clone(), next_frame_id, new_checksum));
+
+            // Advance for the next frame
+            rolling_checksum = new_checksum;
+            next_frame_id += 1;
+        }
+
+        let first_frame_id = self.max_frame + 1;
+        let start_off = self.frame_offset(first_frame_id);
+
+        // pre-advance in-memory WAL state
+        for (page, fid, csum) in &page_frame_and_checksum {
+            self.complete_append_frame(page.get().id as u64, *fid, *csum);
+        }
+
+        // single completion for the whole batch
+        let total_len: i32 = iovecs.iter().map(|b| b.len() as i32).sum();
+        let page_frame_for_cb = page_frame_and_checksum.clone();
+        let c = Completion::new_write(move |res: Result<i32, CompletionError>| {
+            let Ok(bytes_written) = res else {
+                return;
+            };
+            turso_assert!(
+                bytes_written == total_len,
+                "pwritev wrote {bytes_written} bytes, expected {total_len}"
+            );
+
+            for (page, fid, _csum) in &page_frame_for_cb {
+                page.clear_dirty();
+                page.set_wal_tag(*fid, seq);
+            }
+        });
+
+        let c = self.get_shared().file.pwritev(start_off, iovecs, c)?;
+        Ok(c)
     }
 
     #[cfg(debug_assertions)]

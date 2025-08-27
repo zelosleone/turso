@@ -1,9 +1,9 @@
-use crate::model::query::Query;
 use crate::{
     generation::{
         plan::{Interaction, InteractionPlan, Interactions},
         property::Property,
     },
+    model::Query,
     run_simulation,
     runner::execution::Execution,
     SandboxedResult, SimulatorEnv,

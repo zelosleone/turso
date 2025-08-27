@@ -3,9 +3,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use sql_generation::generation::pick_index;
+
 use crate::{
-    generation::{pick_index, plan::InteractionPlanState},
-    runner::execution::ExecutionContinuation,
+    generation::plan::InteractionPlanState, runner::execution::ExecutionContinuation,
     InteractionPlan,
 };
 

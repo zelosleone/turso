@@ -7,9 +7,8 @@ use std::sync::Arc;
 
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+use sql_generation::model::table::Table;
 use turso_core::Database;
-
-use crate::model::table::Table;
 
 use crate::runner::io::SimulatorIO;
 
@@ -173,29 +172,29 @@ impl SimulatorEnv {
         let mut delete_percent = 0.0;
         let mut update_percent = 0.0;
 
-        let read_percent = rng.gen_range(0.0..=total);
+        let read_percent = rng.random_range(0.0..=total);
         let write_percent = total - read_percent;
 
         if !cli_opts.disable_create {
             // Create percent should be 5-15% of the write percent
-            create_percent = rng.gen_range(0.05..=0.15) * write_percent;
+            create_percent = rng.random_range(0.05..=0.15) * write_percent;
         }
         if !cli_opts.disable_create_index {
             // Create indexpercent should be 2-5% of the write percent
-            create_index_percent = rng.gen_range(0.02..=0.05) * write_percent;
+            create_index_percent = rng.random_range(0.02..=0.05) * write_percent;
         }
         if !cli_opts.disable_drop {
             // Drop percent should be 2-5% of the write percent
-            drop_percent = rng.gen_range(0.02..=0.05) * write_percent;
+            drop_percent = rng.random_range(0.02..=0.05) * write_percent;
         }
         if !cli_opts.disable_delete {
             // Delete percent should be 10-20% of the write percent
-            delete_percent = rng.gen_range(0.1..=0.2) * write_percent;
+            delete_percent = rng.random_range(0.1..=0.2) * write_percent;
         }
         if !cli_opts.disable_update {
             // Update percent should be 10-20% of the write percent
             // TODO: freestyling the percentage
-            update_percent = rng.gen_range(0.1..=0.2) * write_percent;
+            update_percent = rng.random_range(0.1..=0.2) * write_percent;
         }
 
         let write_percent = write_percent
@@ -220,10 +219,10 @@ impl SimulatorEnv {
 
         let opts = SimulatorOpts {
             seed,
-            ticks: rng.gen_range(cli_opts.minimum_tests..=cli_opts.maximum_tests),
+            ticks: rng.random_range(cli_opts.minimum_tests..=cli_opts.maximum_tests),
             max_connections: 1, // TODO: for now let's use one connection as we didn't implement
             // correct transactions processing
-            max_tables: rng.gen_range(0..128),
+            max_tables: rng.random_range(0..128),
             create_percent,
             create_index_percent,
             read_percent,
@@ -243,7 +242,7 @@ impl SimulatorEnv {
             disable_fsync_no_wait: cli_opts.disable_fsync_no_wait,
             disable_faulty_query: cli_opts.disable_faulty_query,
             page_size: 4096, // TODO: randomize this too
-            max_interactions: rng.gen_range(cli_opts.minimum_tests..=cli_opts.maximum_tests),
+            max_interactions: rng.random_range(cli_opts.minimum_tests..=cli_opts.maximum_tests),
             max_time_simulation: cli_opts.maximum_time,
             disable_reopen_database: cli_opts.disable_reopen_database,
             latency_probability: cli_opts.latency_probability,

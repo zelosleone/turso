@@ -1,4 +1,4 @@
-package limbo
+package turso
 
 import (
 	"database/sql/driver"
@@ -66,8 +66,8 @@ func (rc ResultCode) String() string {
 }
 
 const (
-	driverName            = "sqlite3"
-	libName               = "lib_limbo_go"
+	driverName            = "turso"
+	libName               = "lib_turso_go"
 	RowsClosedErr         = "sql: Rows closed"
 	FfiDbOpen             = "db_open"
 	FfiDbClose            = "db_close"
@@ -98,7 +98,7 @@ func namedValueToValue(named []driver.NamedValue) []driver.Value {
 	return out
 }
 
-func buildNamedArgs(named []driver.NamedValue) ([]limboValue, func(), error) {
+func buildNamedArgs(named []driver.NamedValue) ([]tursoValue, func(), error) {
 	args := namedValueToValue(named)
 	return buildArgs(args)
 }
@@ -131,7 +131,7 @@ func (vt valueType) String() string {
 }
 
 // struct to pass Go values over FFI
-type limboValue struct {
+type tursoValue struct {
 	Type  valueType
 	_     [4]byte
 	Value [8]byte
@@ -143,12 +143,12 @@ type Blob struct {
 	Len  int64
 }
 
-// convert a limboValue to a native Go value
+// convert a tursoValue to a native Go value
 func toGoValue(valPtr uintptr) interface{} {
 	if valPtr == 0 {
 		return nil
 	}
-	val := (*limboValue)(unsafe.Pointer(valPtr))
+	val := (*tursoValue)(unsafe.Pointer(valPtr))
 	switch val.Type {
 	case intVal:
 		return *(*int64)(unsafe.Pointer(&val.Value))
@@ -228,50 +228,50 @@ func freeCString(cstrPtr uintptr) {
 	freeStringFunc(cstrPtr)
 }
 
-// convert a Go slice of driver.Value to a slice of limboValue that can be sent over FFI
+// convert a Go slice of driver.Value to a slice of tursoValue that can be sent over FFI
 // for Blob types, we have to pin them so they are not garbage collected before they can be copied
 // into a buffer on the Rust side, so we return a function to unpin them that can be deferred after this call
-func buildArgs(args []driver.Value) ([]limboValue, func(), error) {
+func buildArgs(args []driver.Value) ([]tursoValue, func(), error) {
 	pinner := new(runtime.Pinner)
-	argSlice := make([]limboValue, len(args))
+	argSlice := make([]tursoValue, len(args))
 	for i, v := range args {
-		limboVal := limboValue{}
+		tursoVal := tursoValue{}
 		switch val := v.(type) {
 		case nil:
-			limboVal.Type = nullVal
+			tursoVal.Type = nullVal
 		case int64:
-			limboVal.Type = intVal
-			limboVal.Value = *(*[8]byte)(unsafe.Pointer(&val))
+			tursoVal.Type = intVal
+			tursoVal.Value = *(*[8]byte)(unsafe.Pointer(&val))
 		case float64:
-			limboVal.Type = realVal
-			limboVal.Value = *(*[8]byte)(unsafe.Pointer(&val))
+			tursoVal.Type = realVal
+			tursoVal.Value = *(*[8]byte)(unsafe.Pointer(&val))
 		case bool:
-			limboVal.Type = intVal
+			tursoVal.Type = intVal
 			boolAsInt := int64(0)
 			if val {
 				boolAsInt = 1
 			}
-			limboVal.Value = *(*[8]byte)(unsafe.Pointer(&boolAsInt))
+			tursoVal.Value = *(*[8]byte)(unsafe.Pointer(&boolAsInt))
 		case string:
-			limboVal.Type = textVal
+			tursoVal.Type = textVal
 			cstr := CString(val)
 			pinner.Pin(cstr)
-			*(*uintptr)(unsafe.Pointer(&limboVal.Value)) = uintptr(unsafe.Pointer(cstr))
+			*(*uintptr)(unsafe.Pointer(&tursoVal.Value)) = uintptr(unsafe.Pointer(cstr))
 		case []byte:
-			limboVal.Type = blobVal
+			tursoVal.Type = blobVal
 			blob := makeBlob(val)
 			pinner.Pin(blob)
-			*(*uintptr)(unsafe.Pointer(&limboVal.Value)) = uintptr(unsafe.Pointer(blob))
+			*(*uintptr)(unsafe.Pointer(&tursoVal.Value)) = uintptr(unsafe.Pointer(blob))
 		case time.Time:
-			limboVal.Type = textVal
+			tursoVal.Type = textVal
 			timeStr := val.Format(time.RFC3339)
 			cstr := CString(timeStr)
 			pinner.Pin(cstr)
-			*(*uintptr)(unsafe.Pointer(&limboVal.Value)) = uintptr(unsafe.Pointer(cstr))
+			*(*uintptr)(unsafe.Pointer(&tursoVal.Value)) = uintptr(unsafe.Pointer(cstr))
 		default:
 			return nil, pinner.Unpin, fmt.Errorf("unsupported type: %T", v)
 		}
-		argSlice[i] = limboVal
+		argSlice[i] = tursoVal
 	}
 	return argSlice, pinner.Unpin, nil
 }
