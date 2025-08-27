@@ -767,19 +767,21 @@ impl IncrementalView {
         }
     }
 
-    /// Apply filter operator to a delta if present
+    /// Apply filter operator to a delta if present and commit the changes
     fn apply_filter_to_delta(&mut self, delta: Delta) -> Delta {
         if let Some(ref mut filter_op) = self.filter_operator {
-            filter_op.process_delta(delta)
+            // Commit updates state and returns output
+            filter_op.commit(delta)
         } else {
             delta
         }
     }
 
-    /// Apply aggregation operator to a delta if this is an aggregated view
+    /// Apply aggregation operator to a delta if this is an aggregated view and commit the changes
     fn apply_aggregation_to_delta(&mut self, delta: Delta) -> Delta {
         if let Some(ref mut agg_op) = self.aggregate_operator {
-            agg_op.process_delta(delta)
+            // Commit updates state and returns output
+            agg_op.commit(delta)
         } else {
             delta
         }
@@ -798,7 +800,7 @@ impl IncrementalView {
 
         // Apply projection operator if present (for non-aggregated views)
         if let Some(ref mut project_op) = self.project_operator {
-            current_delta = project_op.process_delta(current_delta);
+            current_delta = project_op.commit(current_delta);
         }
 
         current_delta = self.apply_aggregation_to_delta(current_delta);
