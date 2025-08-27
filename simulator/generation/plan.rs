@@ -9,7 +9,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use sql_generation::{
-    generation::{frequency, query::SelectFree, Arbitrary, ArbitraryFrom},
+    generation::{frequency, query::SelectFree, Arbitrary, ArbitraryFrom, GenerationContext},
     model::{
         query::{update::Update, Create, CreateIndex, Delete, Drop, Insert, Select},
         table::SimValue,
@@ -395,16 +395,14 @@ impl InteractionPlan {
 
         stats
     }
-}
 
-impl ArbitraryFrom<&mut SimulatorEnv> for InteractionPlan {
-    fn arbitrary_from<R: rand::Rng>(rng: &mut R, env: &mut SimulatorEnv) -> Self {
+    pub fn generate_plan<R: rand::Rng>(rng: &mut R, env: &mut SimulatorEnv) -> Self {
         let mut plan = InteractionPlan::new();
 
         let num_interactions = env.opts.max_interactions;
 
         // First create at least one table
-        let create_query = Create::arbitrary(rng);
+        let create_query = Create::arbitrary(rng, env);
         env.tables.push(create_query.table.clone());
 
         plan.plan
@@ -416,7 +414,7 @@ impl ArbitraryFrom<&mut SimulatorEnv> for InteractionPlan {
                 plan.plan.len(),
                 num_interactions
             );
-            let interactions = Interactions::arbitrary_from(rng, (env, plan.stats()));
+            let interactions = Interactions::arbitrary_from(rng, env, (env, plan.stats()));
             interactions.shadow(&mut env.tables);
             plan.plan.push(interactions);
         }
@@ -756,42 +754,42 @@ fn reopen_database(env: &mut SimulatorEnv) {
 }
 
 fn random_create<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
-    let mut create = Create::arbitrary(rng);
+    let mut create = Create::arbitrary(rng, env);
     while env.tables.iter().any(|t| t.name == create.table.name) {
-        create = Create::arbitrary(rng);
+        create = Create::arbitrary(rng, env);
     }
     Interactions::Query(Query::Create(create))
 }
 
 fn random_read<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
-    Interactions::Query(Query::Select(Select::arbitrary_from(rng, env)))
+    Interactions::Query(Query::Select(Select::arbitrary(rng, env)))
 }
 
 fn random_expr<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
-    Interactions::Query(Query::Select(SelectFree::arbitrary_from(rng, env).0))
+    Interactions::Query(Query::Select(SelectFree::arbitrary(rng, env).0))
 }
 
 fn random_write<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
-    Interactions::Query(Query::Insert(Insert::arbitrary_from(rng, env)))
+    Interactions::Query(Query::Insert(Insert::arbitrary(rng, env)))
 }
 
 fn random_delete<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
-    Interactions::Query(Query::Delete(Delete::arbitrary_from(rng, env)))
+    Interactions::Query(Query::Delete(Delete::arbitrary(rng, env)))
 }
 
 fn random_update<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
-    Interactions::Query(Query::Update(Update::arbitrary_from(rng, env)))
+    Interactions::Query(Query::Update(Update::arbitrary(rng, env)))
 }
 
 fn random_drop<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
-    Interactions::Query(Query::Drop(Drop::arbitrary_from(rng, env)))
+    Interactions::Query(Query::Drop(Drop::arbitrary(rng, env)))
 }
 
 fn random_create_index<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Option<Interactions> {
     if env.tables.is_empty() {
         return None;
     }
-    let mut create_index = CreateIndex::arbitrary_from(rng, env);
+    let mut create_index = CreateIndex::arbitrary(rng, env);
     while env
         .tables
         .iter()
@@ -801,7 +799,7 @@ fn random_create_index<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Option<
         .iter()
         .any(|i| i == &create_index.index_name)
     {
-        create_index = CreateIndex::arbitrary_from(rng, env);
+        create_index = CreateIndex::arbitrary(rng, env);
     }
 
     Some(Interactions::Query(Query::CreateIndex(create_index)))
@@ -818,17 +816,18 @@ fn random_fault<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Interactions {
 }
 
 impl ArbitraryFrom<(&SimulatorEnv, InteractionStats)> for Interactions {
-    fn arbitrary_from<R: rand::Rng>(
+    fn arbitrary_from<R: rand::Rng, C: GenerationContext>(
         rng: &mut R,
+        _context: &C,
         (env, stats): (&SimulatorEnv, InteractionStats),
     ) -> Self {
-        let remaining_ = remaining(env, &stats);
+        let remaining_ = remaining(&env.opts, &stats);
         frequency(
             vec![
                 (
                     f64::min(remaining_.read, remaining_.write) + remaining_.create,
                     Box::new(|rng: &mut R| {
-                        Interactions::Property(Property::arbitrary_from(rng, (env, &stats)))
+                        Interactions::Property(Property::arbitrary_from(rng, env, (env, &stats)))
                     }),
                 ),
                 (

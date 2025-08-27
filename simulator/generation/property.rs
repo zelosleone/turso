@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use sql_generation::{
-    generation::{frequency, pick, pick_index, ArbitraryFrom},
+    generation::{frequency, pick, pick_index, Arbitrary, ArbitraryFrom, GenerationContext},
     model::{
         query::{
             predicate::Predicate,
@@ -15,7 +15,11 @@ use sql_generation::{
 use turso_core::{types, LimboError};
 use turso_parser::ast::{self, Distinctness};
 
-use crate::{generation::Shadow as _, model::Query, runner::env::SimulatorEnv};
+use crate::{
+    generation::Shadow as _,
+    model::Query,
+    runner::env::{SimulatorEnv, SimulatorOpts},
+};
 
 use super::plan::{Assertion, Interaction, InteractionStats, ResultSet};
 
@@ -1021,29 +1025,29 @@ pub(crate) struct Remaining {
     pub(crate) drop: f64,
 }
 
-pub(crate) fn remaining(env: &SimulatorEnv, stats: &InteractionStats) -> Remaining {
-    let remaining_read = ((env.opts.max_interactions as f64 * env.opts.read_percent / 100.0)
+pub(crate) fn remaining(opts: &SimulatorOpts, stats: &InteractionStats) -> Remaining {
+    let remaining_read = ((opts.max_interactions as f64 * opts.read_percent / 100.0)
         - (stats.read_count as f64))
         .max(0.0);
-    let remaining_write = ((env.opts.max_interactions as f64 * env.opts.write_percent / 100.0)
+    let remaining_write = ((opts.max_interactions as f64 * opts.write_percent / 100.0)
         - (stats.write_count as f64))
         .max(0.0);
-    let remaining_create = ((env.opts.max_interactions as f64 * env.opts.create_percent / 100.0)
+    let remaining_create = ((opts.max_interactions as f64 * opts.create_percent / 100.0)
         - (stats.create_count as f64))
         .max(0.0);
 
-    let remaining_create_index =
-        ((env.opts.max_interactions as f64 * env.opts.create_index_percent / 100.0)
-            - (stats.create_index_count as f64))
-            .max(0.0);
+    let remaining_create_index = ((opts.max_interactions as f64 * opts.create_index_percent
+        / 100.0)
+        - (stats.create_index_count as f64))
+        .max(0.0);
 
-    let remaining_delete = ((env.opts.max_interactions as f64 * env.opts.delete_percent / 100.0)
+    let remaining_delete = ((opts.max_interactions as f64 * opts.delete_percent / 100.0)
         - (stats.delete_count as f64))
         .max(0.0);
-    let remaining_update = ((env.opts.max_interactions as f64 * env.opts.update_percent / 100.0)
+    let remaining_update = ((opts.max_interactions as f64 * opts.update_percent / 100.0)
         - (stats.update_count as f64))
         .max(0.0);
-    let remaining_drop = ((env.opts.max_interactions as f64 * env.opts.drop_percent / 100.0)
+    let remaining_drop = ((opts.max_interactions as f64 * opts.drop_percent / 100.0)
         - (stats.drop_count as f64))
         .max(0.0);
 
@@ -1067,7 +1071,7 @@ fn property_insert_values_select<R: rand::Rng>(
     let table = pick(&env.tables, rng);
     // Generate rows to insert
     let rows = (0..rng.random_range(1..=5))
-        .map(|_| Vec::<SimValue>::arbitrary_from(rng, table))
+        .map(|_| Vec::<SimValue>::arbitrary_from(rng, env, table))
         .collect::<Vec<_>>();
 
     // Pick a random row to select
@@ -1101,7 +1105,7 @@ fn property_insert_values_select<R: rand::Rng>(
         }));
     }
     for _ in 0..rng.random_range(0..3) {
-        let query = Query::arbitrary_from(rng, (env, remaining));
+        let query = Query::arbitrary_from(rng, env, remaining);
         match &query {
             Query::Delete(Delete {
                 table: t,
@@ -1144,7 +1148,7 @@ fn property_insert_values_select<R: rand::Rng>(
     // Select the row
     let select_query = Select::simple(
         table.name.clone(),
-        Predicate::arbitrary_from(rng, (table, &row)),
+        Predicate::arbitrary_from(rng, env, (table, &row)),
     );
 
     Property::InsertValuesSelect {
@@ -1158,7 +1162,7 @@ fn property_insert_values_select<R: rand::Rng>(
 
 fn property_read_your_updates_back<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Property {
     // e.g. UPDATE t SET a=1, b=2 WHERE c=1;
-    let update = Update::arbitrary_from(rng, env);
+    let update = Update::arbitrary(rng, env);
     // e.g. SELECT a, b FROM t WHERE c=1;
     let select = Select::single(
         update.table().to_string(),
@@ -1190,7 +1194,7 @@ fn property_select_limit<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv) -> Prope
     let select = Select::single(
         table.name.clone(),
         vec![ResultColumn::Star],
-        Predicate::arbitrary_from(rng, table),
+        Predicate::arbitrary_from(rng, env, table),
         Some(rng.random_range(1..=5)),
         Distinctness::All,
     );
@@ -1215,7 +1219,7 @@ fn property_double_create_failure<R: rand::Rng>(
     // - [x] There will be no errors in the middle interactions.(best effort)
     // - [ ] Table `t` will not be renamed or dropped.(todo: add this constraint once ALTER or DROP is implemented)
     for _ in 0..rng.random_range(0..3) {
-        let query = Query::arbitrary_from(rng, (env, remaining));
+        let query = Query::arbitrary_from(rng, env, remaining);
         if let Query::Create(Create { table: t }) = &query {
             // There will be no errors in the middle interactions.
             // - Creating the same table is an error
@@ -1240,7 +1244,7 @@ fn property_delete_select<R: rand::Rng>(
     // Get a random table
     let table = pick(&env.tables, rng);
     // Generate a random predicate
-    let predicate = Predicate::arbitrary_from(rng, table);
+    let predicate = Predicate::arbitrary_from(rng, env, table);
 
     // Create random queries respecting the constraints
     let mut queries = Vec::new();
@@ -1248,7 +1252,7 @@ fn property_delete_select<R: rand::Rng>(
     // - [x] A row that holds for the predicate will not be inserted.
     // - [ ] The table `t` will not be renamed, dropped, or altered. (todo: add this constraint once ALTER or DROP is implemented)
     for _ in 0..rng.random_range(0..3) {
-        let query = Query::arbitrary_from(rng, (env, remaining));
+        let query = Query::arbitrary_from(rng, env, remaining);
         match &query {
             Query::Insert(Insert::Values { table: t, values }) => {
                 // A row that holds for the predicate will not be inserted.
@@ -1303,7 +1307,7 @@ fn property_drop_select<R: rand::Rng>(
     // - [x] There will be no errors in the middle interactions. (this constraint is impossible to check, so this is just best effort)
     // - [-] The table `t` will not be created, no table will be renamed to `t`. (todo: update this constraint once ALTER is implemented)
     for _ in 0..rng.random_range(0..3) {
-        let query = Query::arbitrary_from(rng, (env, remaining));
+        let query = Query::arbitrary_from(rng, env, remaining);
         if let Query::Create(Create { table: t }) = &query {
             // - The table `t` will not be created
             if t.name == table.name {
@@ -1313,7 +1317,10 @@ fn property_drop_select<R: rand::Rng>(
         queries.push(query);
     }
 
-    let select = Select::simple(table.name.clone(), Predicate::arbitrary_from(rng, table));
+    let select = Select::simple(
+        table.name.clone(),
+        Predicate::arbitrary_from(rng, env, table),
+    );
 
     Property::DropSelect {
         table: table.name.clone(),
@@ -1326,7 +1333,7 @@ fn property_select_select_optimizer<R: rand::Rng>(rng: &mut R, env: &SimulatorEn
     // Get a random table
     let table = pick(&env.tables, rng);
     // Generate a random predicate
-    let predicate = Predicate::arbitrary_from(rng, table);
+    let predicate = Predicate::arbitrary_from(rng, env, table);
     // Transform into a Binary predicate to force values to be casted to a bool
     let expr = ast::Expr::Binary(
         Box::new(predicate.0),
@@ -1344,8 +1351,8 @@ fn property_where_true_false_null<R: rand::Rng>(rng: &mut R, env: &SimulatorEnv)
     // Get a random table
     let table = pick(&env.tables, rng);
     // Generate a random predicate
-    let p1 = Predicate::arbitrary_from(rng, table);
-    let p2 = Predicate::arbitrary_from(rng, table);
+    let p1 = Predicate::arbitrary_from(rng, env, table);
+    let p2 = Predicate::arbitrary_from(rng, env, table);
 
     // Create the select query
     let select = Select::simple(table.name.clone(), p1);
@@ -1363,8 +1370,8 @@ fn property_union_all_preserves_cardinality<R: rand::Rng>(
     // Get a random table
     let table = pick(&env.tables, rng);
     // Generate a random predicate
-    let p1 = Predicate::arbitrary_from(rng, table);
-    let p2 = Predicate::arbitrary_from(rng, table);
+    let p1 = Predicate::arbitrary_from(rng, env, table);
+    let p2 = Predicate::arbitrary_from(rng, env, table);
 
     // Create the select query
     let select = Select::single(
@@ -1387,7 +1394,7 @@ fn property_fsync_no_wait<R: rand::Rng>(
     remaining: &Remaining,
 ) -> Property {
     Property::FsyncNoWait {
-        query: Query::arbitrary_from(rng, (env, remaining)),
+        query: Query::arbitrary_from(rng, env, remaining),
         tables: env.tables.iter().map(|t| t.name.clone()).collect(),
     }
 }
@@ -1398,17 +1405,18 @@ fn property_faulty_query<R: rand::Rng>(
     remaining: &Remaining,
 ) -> Property {
     Property::FaultyQuery {
-        query: Query::arbitrary_from(rng, (env, remaining)),
+        query: Query::arbitrary_from(rng, env, remaining),
         tables: env.tables.iter().map(|t| t.name.clone()).collect(),
     }
 }
 
 impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
-    fn arbitrary_from<R: rand::Rng>(
+    fn arbitrary_from<R: rand::Rng, C: GenerationContext>(
         rng: &mut R,
+        _context: &C,
         (env, stats): (&SimulatorEnv, &InteractionStats),
     ) -> Self {
-        let remaining_ = remaining(env, stats);
+        let remaining_ = remaining(&env.opts, stats);
 
         frequency(
             vec![

@@ -29,3 +29,13 @@ impl GenerationContext for SimulatorEnv {
         &self.gen_opts
     }
 }
+
+impl GenerationContext for &mut SimulatorEnv {
+    fn tables(&self) -> &Vec<sql_generation::model::table::Table> {
+        &self.tables.tables
+    }
+
+    fn opts(&self) -> &sql_generation::generation::Opts {
+        &self.gen_opts
+    }
+}

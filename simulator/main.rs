@@ -10,7 +10,6 @@ use runner::cli::{SimulatorCLI, SimulatorCommand};
 use runner::env::SimulatorEnv;
 use runner::execution::{execute_plans, Execution, ExecutionHistory, ExecutionResult};
 use runner::{differential, watch};
-use sql_generation::generation::ArbitraryFrom;
 use std::any::Any;
 use std::backtrace::Backtrace;
 use std::fs::OpenOptions;
@@ -534,7 +533,7 @@ fn setup_simulation(
         tracing::info!("Generating database interaction plan...");
 
         let plans = (1..=env.opts.max_connections)
-            .map(|_| InteractionPlan::arbitrary_from(&mut env.rng.clone(), &mut env))
+            .map(|_| InteractionPlan::generate_plan(&mut env.rng.clone(), &mut env))
             .collect::<Vec<_>>();
 
         // todo: for now, we only use 1 connection, so it's safe to use the first plan.
