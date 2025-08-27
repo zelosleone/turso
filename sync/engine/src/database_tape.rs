@@ -10,8 +10,8 @@ use crate::{
     database_sync_operations::WAL_FRAME_HEADER,
     errors::Error,
     types::{
-        Coro, DatabaseChange, DatabaseRowMutation, DatabaseRowStatement, DatabaseTapeOperation,
-        DatabaseTapeRowChange, DatabaseTapeRowChangeType, ProtocolCommand, Transform,
+        Coro, DatabaseChange, DatabaseTapeOperation, DatabaseTapeRowChange,
+        DatabaseTapeRowChangeType, ProtocolCommand, Transform,
     },
     wal_session::WalSession,
     Result,
