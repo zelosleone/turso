@@ -1,8 +1,40 @@
+use core::f64;
+
 use crate::types::Value;
 use crate::vdbe::Register;
 use crate::LimboError;
 
-// TODO: Support %!.3s %i, %x, %X, %o, %e, %E, %c. flags: - + 0 ! ,
+fn get_exponential_formatted_str(number: &f64, uppercase: bool) -> crate::Result<String> {
+    let pre_formatted = format!("{number:.6e}");
+    let mut parts = pre_formatted.split("e");
+
+    let maybe_base = parts.next();
+    let maybe_exponent = parts.next();
+
+    let mut result = String::new();
+    match (maybe_base, maybe_exponent) {
+        (Some(base), Some(exponent)) => {
+            result.push_str(base);
+            result.push_str(if uppercase { "E" } else { "e" });
+
+            match exponent.parse::<i32>() {
+                Ok(exponent_number) => {
+                    let exponent_fmt = format!("{exponent_number:+03}");
+                    result.push_str(&exponent_fmt);
+                    Ok(result)
+                }
+                Err(_) => Err(LimboError::InternalError(
+                    "unable to parse exponential expression's exponent".into(),
+                )),
+            }
+        }
+        (_, _) => Err(LimboError::InternalError(
+            "unable to parse exponential expression".into(),
+        )),
+    }
+}
+
+// TODO: Support %!.3s %x, %X, %o, %c. flags: - + 0 ! ,
 #[inline(always)]
 pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
     if values.is_empty() {
@@ -74,6 +106,72 @@ pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
                     Value::Float(f) => result.push_str(&format!("{f:.6}")),
                     Value::Integer(i) => result.push_str(&format!("{:.6}", *i as f64)),
                     _ => result.push_str("0.0"),
+                }
+                args_index += 1;
+            }
+            Some('e') => {
+                if args_index >= values.len() {
+                    return Err(LimboError::InvalidArgument("not enough arguments".into()));
+                }
+                let value = &values[args_index].get_value();
+                match value {
+                    Value::Float(f) => match get_exponential_formatted_str(f, false) {
+                        Ok(str) => result.push_str(&str),
+                        Err(e) => return Err(e),
+                    },
+                    Value::Integer(i) => {
+                        let f = *i as f64;
+                        match get_exponential_formatted_str(&f, false) {
+                            Ok(str) => result.push_str(&str),
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    Value::Text(s) => {
+                        let number: f64 = s
+                            .as_str()
+                            .trim_start()
+                            .trim_end_matches(|c: char| !c.is_numeric())
+                            .parse()
+                            .unwrap_or(0.0);
+                        match get_exponential_formatted_str(&number, false) {
+                            Ok(str) => result.push_str(&str),
+                            Err(e) => return Err(e),
+                        };
+                    }
+                    _ => result.push_str("0.000000e+00"),
+                }
+                args_index += 1;
+            }
+            Some('E') => {
+                if args_index >= values.len() {
+                    return Err(LimboError::InvalidArgument("not enough arguments".into()));
+                }
+                let value = &values[args_index].get_value();
+                match value {
+                    Value::Float(f) => match get_exponential_formatted_str(f, false) {
+                        Ok(str) => result.push_str(&str),
+                        Err(e) => return Err(e),
+                    },
+                    Value::Integer(i) => {
+                        let f = *i as f64;
+                        match get_exponential_formatted_str(&f, false) {
+                            Ok(str) => result.push_str(&str),
+                            Err(e) => return Err(e),
+                        }
+                    }
+                    Value::Text(s) => {
+                        let number: f64 = s
+                            .as_str()
+                            .trim_start()
+                            .trim_end_matches(|c: char| !c.is_numeric())
+                            .parse()
+                            .unwrap_or(0.0);
+                        match get_exponential_formatted_str(&number, false) {
+                            Ok(str) => result.push_str(&str),
+                            Err(e) => return Err(e),
+                        };
+                    }
+                    _ => result.push_str("0.000000e+00"),
                 }
                 args_index += 1;
             }
@@ -223,6 +321,78 @@ mod tests {
             (
                 vec![text("Number: %f"), text("not a number")],
                 text("Number: 0.0"),
+            ),
+        ];
+
+        for (input, expected) in test_cases {
+            assert_eq!(exec_printf(&input).unwrap(), *expected.get_value());
+        }
+    }
+
+    #[test]
+    fn test_printf_exponential_formatting() {
+        let test_cases = vec![
+            // Simple number
+            (
+                vec![text("Exp: %e"), float(23000000.0)],
+                text("Exp: 2.300000e+07"),
+            ),
+            // Negative number
+            (
+                vec![text("Exp: %e"), float(-23000000.0)],
+                text("Exp: -2.300000e+07"),
+            ),
+            // Non integer float
+            (
+                vec![text("Exp: %e"), float(250.375)],
+                text("Exp: 2.503750e+02"),
+            ),
+            // Positive, but smaller than zero
+            (
+                vec![text("Exp: %e"), float(0.0003235)],
+                text("Exp: 3.235000e-04"),
+            ),
+            // Zero
+            (vec![text("Exp: %e"), float(0.0)], text("Exp: 0.000000e+00")),
+            // Uppercase "e"
+            (
+                vec![text("Exp: %e"), float(0.0003235)],
+                text("Exp: 3.235000e-04"),
+            ),
+            // String with integer number
+            (
+                vec![text("Exp: %e"), text("123")],
+                text("Exp: 1.230000e+02"),
+            ),
+            // String with floating point number
+            (
+                vec![text("Exp: %e"), text("123.45")],
+                text("Exp: 1.234500e+02"),
+            ),
+            // String with number with leftmost zeroes
+            (
+                vec![text("Exp: %e"), text("00123")],
+                text("Exp: 1.230000e+02"),
+            ),
+            // String with text
+            (
+                vec![text("Exp: %e"), text("test")],
+                text("Exp: 0.000000e+00"),
+            ),
+            // String starting with number, but with text on the end
+            (
+                vec![text("Exp: %e"), text("123ab")],
+                text("Exp: 1.230000e+02"),
+            ),
+            // String starting with text, but with number on the end
+            (
+                vec![text("Exp: %e"), text("ab123")],
+                text("Exp: 0.000000e+00"),
+            ),
+            // String with exponential representation
+            (
+                vec![text("Exp: %e"), text("1.230000e+02")],
+                text("Exp: 1.230000e+02"),
             ),
         ];
 
