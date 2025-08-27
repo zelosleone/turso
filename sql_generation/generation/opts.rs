@@ -1,4 +1,7 @@
-use std::ops::Range;
+use std::{
+    num::{NonZero, NonZeroU32},
+    ops::Range,
+};
 
 use rand::distr::weighted::WeightedIndex;
 
@@ -67,7 +70,49 @@ impl Default for LargeTableOpts {
 
 #[derive(Debug, Default, Clone)]
 pub struct QueryOpts {
+    pub select: SelectOpts,
     pub from_clause: FromClauseOpts,
+    pub insert: InsertOpts,
+}
+
+#[derive(Debug, Clone)]
+pub struct SelectOpts {
+    pub order_by_prob: f64,
+    pub compound_selects: Vec<CompoundSelectWeight>,
+}
+
+impl Default for SelectOpts {
+    fn default() -> Self {
+        Self {
+            order_by_prob: 0.3,
+            compound_selects: vec![
+                CompoundSelectWeight {
+                    num_compound_selects: 0,
+                    weight: 95,
+                },
+                CompoundSelectWeight {
+                    num_compound_selects: 1,
+                    weight: 4,
+                },
+                CompoundSelectWeight {
+                    num_compound_selects: 2,
+                    weight: 1,
+                },
+            ],
+        }
+    }
+}
+
+impl SelectOpts {
+    pub fn compound_select_weighted_index(&self) -> WeightedIndex<u32> {
+        WeightedIndex::new(self.compound_selects.iter().map(|weight| weight.weight)).unwrap()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
+pub struct CompoundSelectWeight {
+    pub num_compound_selects: u32,
+    pub weight: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -106,4 +151,19 @@ impl FromClauseOpts {
 pub struct JoinWeight {
     pub num_joins: u32,
     pub weight: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct InsertOpts {
+    pub min_rows: NonZeroU32,
+    pub max_rows: NonZeroU32,
+}
+
+impl Default for InsertOpts {
+    fn default() -> Self {
+        Self {
+            min_rows: NonZero::new(1).unwrap(),
+            max_rows: NonZero::new(10).unwrap(),
+        }
+    }
 }
