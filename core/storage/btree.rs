@@ -5551,7 +5551,7 @@ impl IntegrityCheckState {
         errors: &mut Vec<IntegrityCheckError>,
     ) {
         assert!(
-            self.page_stack.len() == 0,
+            self.page_stack.is_empty(),
             "stack should be empty before integrity check for new root"
         );
         self.first_leaf_level = None;
