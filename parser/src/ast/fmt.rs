@@ -2,7 +2,6 @@
 use std::fmt::{self, Display, Formatter, Write};
 
 use crate::ast::*;
-use crate::error::Error;
 use crate::token::TokenType;
 use crate::token::TokenType::*;
 use crate::Result;
@@ -26,15 +25,26 @@ pub trait ToSqlContext {
         None
     }
 
-    /// Helper to get a flat column name
-    /// If the column exists and has a name, return the name
-    /// If the column exists but has no name, return the index as string
-    fn get_flat_column_name(&self, table_id: TableInternalId, col_idx: usize) -> Option<String> {
-        match self.get_column_name(table_id, col_idx) {
-            Some(Some(name)) => Some(name.to_string()),
-            Some(None) => Some(format!("{col_idx}")),
-            None => None,
-        }
+    // help function to handle missing table/column names
+    fn get_table_and_column_names(
+        &self,
+        table_id: TableInternalId,
+        col_idx: usize,
+    ) -> (String, String) {
+        let table_name = self
+            .get_table_name(table_id)
+            .map(|s| s.to_owned())
+            .unwrap_or_else(|| format!("t{}", table_id.0));
+
+        let column_name = self
+            .get_column_name(table_id, col_idx)
+            .map(|opt| {
+                opt.map(|s| s.to_owned())
+                    .unwrap_or_else(|| format!("c{}", col_idx))
+            })
+            .unwrap_or_else(|| format!("c{}", col_idx));
+
+        (table_name, column_name)
     }
 }
 
@@ -54,9 +64,9 @@ impl<'a, T: Write> WriteTokenStream<'a, T> {
 }
 
 impl<T: Write> TokenStream for WriteTokenStream<'_, T> {
-    type Error = Error;
+    type Error = fmt::Error;
 
-    fn append(&mut self, ty: TokenType, value: Option<&str>) -> Result<()> {
+    fn append(&mut self, ty: TokenType, value: Option<&str>) -> fmt::Result {
         if !self.spaced {
             match ty {
                 TK_COMMA | TK_SEMI | TK_RP | TK_DOT => {}
@@ -77,9 +87,6 @@ impl<T: Write> TokenStream for WriteTokenStream<'_, T> {
                 self.write.write_char('\'')?;
                 Ok(())
             }
-            (_, None, None) => Err(Error::Custom(
-                "can not format both none ty and none value".to_string(),
-            )),
             (_, ty_str, value) => {
                 if let Some(str) = ty_str {
                     self.write.write_str(str)?;
@@ -139,7 +146,7 @@ impl<'a, 'b, C: ToSqlContext, T: ToTokens> SqlDisplayer<'a, 'b, C, T> {
     }
 
     // Return string representation with context
-    pub fn to_string(&self) -> Result<String> {
+    pub fn to_string(&self) -> Result<String, fmt::Error> {
         let mut s = String::new();
         let mut stream = WriteTokenStream::new(&mut s);
         self.start_node.to_tokens(&mut stream, self.ctx)?;
@@ -174,7 +181,7 @@ pub trait ToTokens {
     }
 
     // Return string representation with blank context
-    fn format(&self) -> Result<String>
+    fn format(&self) -> Result<String, fmt::Error>
     where
         Self: Sized,
     {
