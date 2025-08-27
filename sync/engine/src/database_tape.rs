@@ -11,7 +11,7 @@ use crate::{
     errors::Error,
     types::{
         Coro, DatabaseChange, DatabaseRowMutation, DatabaseRowStatement, DatabaseTapeOperation,
-        DatabaseTapeRowChange, DatabaseTapeRowChangeType, ProtocolCommand,
+        DatabaseTapeRowChange, DatabaseTapeRowChangeType, ProtocolCommand, Transform,
     },
     wal_session::WalSession,
     Result,
@@ -433,9 +433,7 @@ impl DatabaseChangesIterator {
 #[derive(Clone)]
 pub struct DatabaseReplaySessionOpts<Ctx = ()> {
     pub use_implicit_rowid: bool,
-    pub transform: Option<
-        Arc<dyn Fn(&Ctx, DatabaseRowMutation) -> Result<Option<DatabaseRowStatement>> + 'static>,
-    >,
+    pub transform: Option<Transform<Ctx>>,
 }
 
 impl<Ctx> std::fmt::Debug for DatabaseReplaySessionOpts<Ctx> {

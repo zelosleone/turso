@@ -1,8 +1,11 @@
-use std::{cell::RefCell, collections::HashMap};
+use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
 use crate::{errors::Error, Result};
+
+pub type Transform<Ctx> =
+    Arc<dyn Fn(&Ctx, DatabaseRowMutation) -> Result<Option<DatabaseRowStatement>> + 'static>;
 
 pub struct Coro<Ctx> {
     pub ctx: RefCell<Ctx>,

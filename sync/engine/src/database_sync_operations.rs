@@ -111,6 +111,7 @@ pub async fn wal_apply_from_file<Ctx>(
 ) -> Result<u32> {
     let size = frames_file.size()?;
     assert!(size % WAL_FRAME_SIZE as u64 == 0);
+    #[allow(clippy::arc_with_non_send_sync)]
     let buffer = Arc::new(Buffer::new_temporary(WAL_FRAME_SIZE));
     tracing::debug!("wal_apply_from_file: size={}", size);
     let mut db_size = 0;
@@ -195,13 +196,14 @@ pub async fn wal_pull_to_file_v1<C: ProtocolIO, Ctx>(
     let Some(header) =
         wait_proto_message::<Ctx, PullUpdatesRespProtoBody>(coro, &completion, &mut bytes).await?
     else {
-        return Err(Error::DatabaseSyncEngineError(format!(
-            "no header returned in the pull-updates protobuf call"
-        )));
+        return Err(Error::DatabaseSyncEngineError(
+            "no header returned in the pull-updates protobuf call".to_string(),
+        ));
     };
     tracing::info!("wal_pull_to_file: got header={:?}", header);
 
     let mut offset = 0;
+    #[allow(clippy::arc_with_non_send_sync)]
     let buffer = Arc::new(Buffer::new_temporary(WAL_FRAME_SIZE));
 
     let mut page_data_opt =
@@ -271,6 +273,7 @@ pub async fn wal_pull_to_file_legacy<C: ProtocolIO, Ctx>(
     );
 
     // todo(sivukhin): optimize allocation by using buffer pool in the DatabaseSyncOperations
+    #[allow(clippy::arc_with_non_send_sync)]
     let buffer = Arc::new(Buffer::new_temporary(WAL_FRAME_SIZE));
     let mut buffer_len = 0;
     let mut last_offset = 0;
@@ -338,14 +341,13 @@ pub async fn wal_pull_to_file_legacy<C: ProtocolIO, Ctx>(
         if start_frame < end_frame {
             // chunk which was sent from the server has ended early - so there is nothing left on server-side for pull
             break DatabasePullRevision::Legacy {
-                generation: generation,
+                generation,
                 synced_frame_no: Some(start_frame - 1),
             };
         }
         if buffer_len != 0 {
             return Err(Error::DatabaseSyncEngineError(format!(
-                "wal_pull: response has unexpected trailing data: buffer_len={}",
-                buffer_len
+                "wal_pull: response has unexpected trailing data: buffer_len={buffer_len}"
             )));
         }
     };
@@ -521,7 +523,7 @@ pub async fn update_last_change_id<Ctx>(
     let row = run_stmt_expect_one_row(coro, &mut select_stmt).await?;
     tracing::info!("update_last_change_id(client_id={client_id}): selected client row if any");
 
-    if let Some(_) = row {
+    if row.is_some() {
         let mut update_stmt = conn.prepare(TURSO_SYNC_UPDATE_LAST_CHANGE_ID)?;
         update_stmt.bind_at(1.try_into().unwrap(), turso_core::Value::Integer(pull_gen));
         update_stmt.bind_at(2.try_into().unwrap(), turso_core::Value::Integer(change_id));
@@ -878,6 +880,7 @@ pub async fn read_wal_salt<Ctx>(
     coro: &Coro<Ctx>,
     wal: &Arc<dyn turso_core::File>,
 ) -> Result<Option<Vec<u32>>> {
+    #[allow(clippy::arc_with_non_send_sync)]
     let buffer = Arc::new(Buffer::new_temporary(WAL_HEADER));
     let c = Completion::new_read(buffer.clone(), |result| {
         let Ok((buffer, len)) = result else {
@@ -891,7 +894,7 @@ pub async fn read_wal_salt<Ctx>(
     while !c.is_completed() {
         coro.yield_(ProtocolCommand::IO).await?;
     }
-    if buffer.as_mut_slice() == &[0u8; WAL_HEADER] {
+    if buffer.as_mut_slice() == [0u8; WAL_HEADER] {
         return Ok(None);
     }
     let salt1 = u32::from_be_bytes(buffer.as_slice()[16..20].try_into().unwrap());
@@ -955,9 +958,9 @@ pub async fn bootstrap_db_file_v1<C: ProtocolIO, Ctx>(
     let Some(header) =
         wait_proto_message::<Ctx, PullUpdatesRespProtoBody>(coro, &completion, &mut bytes).await?
     else {
-        return Err(Error::DatabaseSyncEngineError(format!(
-            "no header returned in the pull-updates protobuf call"
-        )));
+        return Err(Error::DatabaseSyncEngineError(
+            "no header returned in the pull-updates protobuf call".to_string(),
+        ));
     };
     tracing::info!(
         "bootstrap_db_file(path={}): got header={:?}",
@@ -976,6 +979,7 @@ pub async fn bootstrap_db_file_v1<C: ProtocolIO, Ctx>(
         coro.yield_(ProtocolCommand::IO).await?;
     }
 
+    #[allow(clippy::arc_with_non_send_sync)]
     let buffer = Arc::new(Buffer::new_temporary(PAGE_SIZE));
     while let Some(page_data) =
         wait_proto_message::<Ctx, PageData>(coro, &completion, &mut bytes).await?
@@ -1019,7 +1023,7 @@ fn decode_page(header: &PullUpdatesRespProtoBody, page_data: PageData) -> Result
         ));
     }
 
-    if let Some(_) = header.raw_encoding {
+    if header.raw_encoding.is_some() {
         return Ok(page_data.encoded_page.to_vec());
     }
     Err(Error::DatabaseSyncEngineError(
@@ -1038,14 +1042,14 @@ pub async fn bootstrap_db_file_legacy<C: ProtocolIO, Ctx>(
     let start_time = std::time::Instant::now();
     // cleanup all files left from previous attempt to bootstrap
     // we shouldn't write any WAL files - but let's truncate them too for safety
-    if let Some(file) = io.try_open(&main_db_path)? {
+    if let Some(file) = io.try_open(main_db_path)? {
         io.truncate(coro, file, 0).await?;
     }
-    if let Some(file) = io.try_open(&format!("{}-wal", main_db_path))? {
+    if let Some(file) = io.try_open(&format!("{main_db_path}-wal"))? {
         io.truncate(coro, file, 0).await?;
     }
 
-    let file = io.create(&main_db_path)?;
+    let file = io.create(main_db_path)?;
     let db_info = db_bootstrap(coro, client, file).await?;
 
     let elapsed = std::time::Instant::now().duration_since(start_time);
@@ -1224,7 +1228,7 @@ pub fn read_varint(buf: &[u8]) -> Result<Option<(usize, usize)>> {
     for i in 0..9 {
         match buf.get(i) {
             Some(c) => {
-                v = (((c & 0x7f) as u64) << (i * 7)) | v;
+                v |= ((c & 0x7f) as u64) << (i * 7);
                 if (c & 0x80) == 0 {
                     return Ok(Some((v as usize, i + 1)));
                 }
@@ -1232,10 +1236,10 @@ pub fn read_varint(buf: &[u8]) -> Result<Option<(usize, usize)>> {
             None => return Ok(None),
         }
     }
-    return Err(Error::DatabaseSyncEngineError(format!(
+    Err(Error::DatabaseSyncEngineError(format!(
         "invalid variant byte: {:?}",
         &buf[0..=8]
-    )));
+    )))
 }
 
 pub async fn wait_proto_message<Ctx, T: prost::Message + Default>(
@@ -1245,7 +1249,7 @@ pub async fn wait_proto_message<Ctx, T: prost::Message + Default>(
 ) -> Result<Option<T>> {
     let start_time = std::time::Instant::now();
     loop {
-        let length = read_varint(&bytes)?;
+        let length = read_varint(bytes)?;
         let not_enough_bytes = match length {
             None => true,
             Some((message_length, prefix_length)) => message_length + prefix_length > bytes.len(),
@@ -1255,7 +1259,7 @@ pub async fn wait_proto_message<Ctx, T: prost::Message + Default>(
                 bytes.extend_from_slice(poll.data());
             } else if !completion.is_done()? {
                 coro.yield_(ProtocolCommand::IO).await?;
-            } else if bytes.len() == 0 {
+            } else if bytes.is_empty() {
                 return Ok(None);
             } else {
                 return Err(Error::DatabaseSyncEngineError(
@@ -1341,7 +1345,7 @@ mod tests {
         }
 
         fn is_done(&self) -> crate::Result<bool> {
-            Ok(self.data.borrow().len() == 0)
+            Ok(self.data.borrow().is_empty())
         }
     }
 
@@ -1364,8 +1368,9 @@ mod tests {
                 let coro: Coro<()> = coro.into();
                 let mut bytes = BytesMut::new();
                 let mut count = 0;
-                while let Some(_) =
-                    wait_proto_message::<(), PageData>(&coro, &completion, &mut bytes).await?
+                while wait_proto_message::<(), PageData>(&coro, &completion, &mut bytes)
+                    .await?
+                    .is_some()
                 {
                     assert!(bytes.capacity() <= 16 * 1024 + 1024);
                     count += 1;

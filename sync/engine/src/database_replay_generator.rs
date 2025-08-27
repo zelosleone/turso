@@ -65,14 +65,14 @@ impl<Ctx> DatabaseReplayGenerator<Ctx> {
                 after: Some(self.create_row_full(info, after)),
                 updates: updates
                     .as_ref()
-                    .map(|updates| self.create_row_update(info, &updates)),
+                    .map(|updates| self.create_row_update(info, updates)),
             }),
         }
     }
     fn create_row_full(
         &self,
         info: &ReplayInfo,
-        values: &Vec<turso_core::Value>,
+        values: &[turso_core::Value],
     ) -> HashMap<String, turso_core::Value> {
         let mut row = HashMap::with_capacity(info.column_names.len());
         for (i, value) in values.iter().enumerate() {
@@ -83,7 +83,7 @@ impl<Ctx> DatabaseReplayGenerator<Ctx> {
     fn create_row_update(
         &self,
         info: &ReplayInfo,
-        updates: &Vec<turso_core::Value>,
+        updates: &[turso_core::Value],
     ) -> HashMap<String, turso_core::Value> {
         let mut row = HashMap::with_capacity(info.column_names.len());
         assert!(updates.len() % 2 == 0);
@@ -289,7 +289,7 @@ impl<Ctx> DatabaseReplayGenerator<Ctx> {
             pk_predicates.push(format!("{} = ?", column_names[idx]));
         }
         for (idx, name) in column_names.iter().enumerate() {
-            if columns[idx as usize] {
+            if columns[idx] {
                 column_updates.push(format!("{name} = ?"));
             }
         }
@@ -326,7 +326,8 @@ impl<Ctx> DatabaseReplayGenerator<Ctx> {
         table_name: &str,
         columns: usize,
     ) -> Result<ReplayInfo> {
-        let (mut column_names, pk_column_indices) = self.table_columns_info(coro, table_name).await?;
+        let (mut column_names, pk_column_indices) =
+            self.table_columns_info(coro, table_name).await?;
         let conflict_clause = if !pk_column_indices.is_empty() {
             let mut pk_column_names = Vec::new();
             for &idx in &pk_column_indices {

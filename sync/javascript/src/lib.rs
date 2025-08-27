@@ -1,4 +1,5 @@
-#![deny(clippy::all)]
+#![allow(clippy::await_holding_lock)]
+#![allow(clippy::type_complexity)]
 
 pub mod generator;
 pub mod js_protocol_io;
@@ -70,7 +71,7 @@ fn core_change_type_to_js(value: DatabaseChangeType) -> DatabaseChangeTypeJs {
 fn js_value_to_core(value: Either5<Null, i64, f64, String, Vec<u8>>) -> turso_core::Value {
     match value {
         Either5::A(_) => turso_core::Value::Null,
-        Either5::B(value) => turso_core::Value::Integer(value as i64),
+        Either5::B(value) => turso_core::Value::Integer(value),
         Either5::C(value) => turso_core::Value::Float(value),
         Either5::D(value) => turso_core::Value::Text(turso_core::types::Text::new(&value)),
         Either5::E(value) => turso_core::Value::Blob(value),
@@ -164,8 +165,9 @@ impl SyncEngine {
             path: opts.path,
             client_name: opts.client_name.unwrap_or("turso-sync-js".to_string()),
             wal_pull_batch_size: opts.wal_pull_batch_size.unwrap_or(100),
-            tables_ignore: opts.tables_ignore.unwrap_or(Vec::new()),
+            tables_ignore: opts.tables_ignore.unwrap_or_default(),
             transform: opts.transform.map(|x| x.create_ref().unwrap()),
+            #[allow(clippy::arc_with_non_send_sync)]
             sync_engine: Arc::new(RwLock::new(None)),
             io,
             protocol: Arc::new(JsProtocolIo::default()),
@@ -182,6 +184,7 @@ impl SyncEngine {
 
     #[napi]
     pub fn init(&mut self, env: Env) -> GeneratorHolder {
+        #[allow(clippy::type_complexity)]
         let transform: Option<
             Arc<
                 dyn Fn(
@@ -194,7 +197,7 @@ impl SyncEngine {
         > = match self.transform.take() {
             Some(f) => Some(Arc::new(move |env, mutation| {
                 let result = f
-                    .borrow_back(&env)
+                    .borrow_back(env)
                     .unwrap()
                     .call(DatabaseRowMutationJs {
                         change_time: mutation.change_time as i64,
