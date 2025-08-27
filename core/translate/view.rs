@@ -109,11 +109,7 @@ pub fn translate_create_materialized_view(
 }
 
 fn create_materialized_view_to_str(view_name: &str, select_stmt: &ast::Select) -> String {
-    format!(
-        "CREATE MATERIALIZED VIEW {} AS {}",
-        view_name,
-        select_stmt,
-    )
+    format!("CREATE MATERIALIZED VIEW {view_name} AS {select_stmt}")
 }
 
 pub fn translate_create_view(
@@ -148,7 +144,7 @@ pub fn translate_create_view(
 }
 
 fn create_view_to_str(view_name: &str, select_stmt: &ast::Select) -> String {
-    format!("CREATE VIEW {} AS {}", view_name, select_stmt)
+    format!("CREATE VIEW {view_name} AS {select_stmt}")
 }
 
 pub fn translate_drop_view(

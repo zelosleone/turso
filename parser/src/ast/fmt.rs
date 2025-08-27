@@ -40,9 +40,9 @@ pub trait ToSqlContext {
             .get_column_name(table_id, col_idx)
             .map(|opt| {
                 opt.map(|s| s.to_owned())
-                    .unwrap_or_else(|| format!("c{}", col_idx))
+                    .unwrap_or_else(|| format!("c{col_idx}"))
             })
-            .unwrap_or_else(|| format!("c{}", col_idx));
+            .unwrap_or_else(|| format!("c{col_idx}"));
 
         (table_name, column_name)
     }
