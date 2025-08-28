@@ -5177,11 +5177,12 @@ pub fn op_insert(
         match &state.op_insert_state.sub_state {
             OpInsertSubState::MaybeCaptureRecord => {
                 let schema = program.connection.schema.borrow();
-                let dependent_views = schema.get_dependent_materialized_views(table_name);
+                let dependent_views =
+                    schema.get_dependent_materialized_views_unnormalized(table_name);
                 // If there are no dependent views, we don't need to capture the old record.
                 // We also don't need to do it if the rowid of the UPDATEd row was changed, because that means
                 // we deleted it earlier and `op_delete` already captured the change.
-                if dependent_views.is_empty() || flag.has(InsertFlags::UPDATE_ROWID_CHANGE) {
+                if dependent_views.is_none() || flag.has(InsertFlags::UPDATE_ROWID_CHANGE) {
                     if flag.has(InsertFlags::REQUIRE_SEEK) {
                         state.op_insert_state.sub_state = OpInsertSubState::Seek;
                     } else {
@@ -5287,8 +5288,9 @@ pub fn op_insert(
                     state.op_insert_state.sub_state = OpInsertSubState::UpdateLastRowid;
                 } else {
                     let schema = program.connection.schema.borrow();
-                    let dependent_views = schema.get_dependent_materialized_views(table_name);
-                    if !dependent_views.is_empty() {
+                    let dependent_views =
+                        schema.get_dependent_materialized_views_unnormalized(table_name);
+                    if dependent_views.is_some() {
                         state.op_insert_state.sub_state = OpInsertSubState::ApplyViewChange;
                     } else {
                         break;
@@ -5308,8 +5310,9 @@ pub fn op_insert(
                     program.n_change.set(prev_changes + 1);
                 }
                 let schema = program.connection.schema.borrow();
-                let dependent_views = schema.get_dependent_materialized_views(table_name);
-                if !dependent_views.is_empty() {
+                let dependent_views =
+                    schema.get_dependent_materialized_views_unnormalized(table_name);
+                if dependent_views.is_some() {
                     state.op_insert_state.sub_state = OpInsertSubState::ApplyViewChange;
                     continue;
                 }
@@ -5317,8 +5320,10 @@ pub fn op_insert(
             }
             OpInsertSubState::ApplyViewChange => {
                 let schema = program.connection.schema.borrow();
-                let dependent_views = schema.get_dependent_materialized_views(table_name);
-                assert!(!dependent_views.is_empty());
+                let dependent_views =
+                    schema.get_dependent_materialized_views_unnormalized(table_name);
+                assert!(dependent_views.is_some());
+                let dependent_views = dependent_views.unwrap();
 
                 let (key, values) = {
                     let mut cursor = state.get_cursor(*cursor_id);
