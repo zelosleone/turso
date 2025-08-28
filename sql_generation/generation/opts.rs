@@ -1,9 +1,13 @@
 use std::{
+    fmt::Display,
     num::{NonZero, NonZeroU32},
     ops::Range,
 };
 
+use garde::Validate;
 use rand::distr::weighted::WeightedIndex;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::model::table::Table;
 
@@ -13,11 +17,15 @@ pub trait GenerationContext {
     fn opts(&self) -> &Opts;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields, default)]
 pub struct Opts {
+    #[garde(skip)]
     /// Indexes enabled
     pub indexes: bool,
+    #[garde(dive)]
     pub table: TableOpts,
+    #[garde(dive)]
     pub query: QueryOpts,
 }
 
@@ -31,10 +39,13 @@ impl Default for Opts {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields, default)]
 pub struct TableOpts {
+    #[garde(dive)]
     pub large_table: LargeTableOpts,
     /// Range of numbers of columns to generate
+    #[garde(custom(range_struct_min(1)))]
     pub column_range: Range<u32>,
 }
 
@@ -49,11 +60,16 @@ impl Default for TableOpts {
 }
 
 /// Options for generating large tables
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields, default)]
 pub struct LargeTableOpts {
+    #[garde(skip)]
     pub enable: bool,
+    #[garde(range(min = 0.0, max = 1.0))]
     pub large_table_prob: f64,
+
     /// Range of numbers of columns to generate
+    #[garde(custom(range_struct_min(1)))]
     pub column_range: Range<u32>,
 }
 
@@ -68,16 +84,23 @@ impl Default for LargeTableOpts {
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields, default)]
 pub struct QueryOpts {
+    #[garde(dive)]
     pub select: SelectOpts,
+    #[garde(dive)]
     pub from_clause: FromClauseOpts,
+    #[garde(dive)]
     pub insert: InsertOpts,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields, default)]
 pub struct SelectOpts {
+    #[garde(range(min = 0.0, max = 1.0))]
     pub order_by_prob: f64,
+    #[garde(length(min = 1))]
     pub compound_selects: Vec<CompoundSelectWeight>,
 }
 
@@ -109,14 +132,17 @@ impl SelectOpts {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct CompoundSelectWeight {
     pub num_compound_selects: u32,
     pub weight: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct FromClauseOpts {
+    #[garde(length(min = 1))]
     pub joins: Vec<JoinWeight>,
 }
 
@@ -147,15 +173,19 @@ impl FromClauseOpts {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct JoinWeight {
     pub num_joins: u32,
     pub weight: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields)]
 pub struct InsertOpts {
+    #[garde(skip)]
     pub min_rows: NonZeroU32,
+    #[garde(skip)]
     pub max_rows: NonZeroU32,
 }
 
@@ -165,5 +195,44 @@ impl Default for InsertOpts {
             min_rows: NonZero::new(1).unwrap(),
             max_rows: NonZero::new(10).unwrap(),
         }
+    }
+}
+
+fn range_struct_min<T: PartialOrd + Display>(
+    min: T,
+) -> impl FnOnce(&Range<T>, &()) -> garde::Result {
+    move |value, _| {
+        if value.start < min {
+            return Err(garde::Error::new(format!(
+                "range start `{}` is smaller than {min}",
+                value.start
+            )));
+        } else if value.end < min {
+            return Err(garde::Error::new(format!(
+                "range end `{}` is smaller than {min}",
+                value.end
+            )));
+        }
+        Ok(())
+    }
+}
+
+#[allow(dead_code)]
+fn range_struct_max<T: PartialOrd + Display>(
+    max: T,
+) -> impl FnOnce(&Range<T>, &()) -> garde::Result {
+    move |value, _| {
+        if value.start > max {
+            return Err(garde::Error::new(format!(
+                "range start `{}` is smaller than {max}",
+                value.start
+            )));
+        } else if value.end > max {
+            return Err(garde::Error::new(format!(
+                "range end `{}` is smaller than {max}",
+                value.end
+            )));
+        }
+        Ok(())
     }
 }

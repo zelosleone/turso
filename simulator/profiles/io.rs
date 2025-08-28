@@ -1,7 +1,17 @@
-#[derive(Debug, Clone)]
+use garde::Validate;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use super::{max_dependent, min_dependent};
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields, default)]
 pub struct IOProfile {
+    #[garde(skip)]
     pub enable: bool,
+    #[garde(dive)]
     pub latency: LatencyProfile,
+    // TODO: expand here with header corruption options and faults on specific IO operations
 }
 
 impl Default for IOProfile {
@@ -13,13 +23,18 @@ impl Default for IOProfile {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields, default)]
 pub struct LatencyProfile {
+    #[garde(skip)]
     pub enable: bool,
+    #[garde(range(min = 0, max = 100))]
     /// Added IO latency probability
     pub latency_probability: usize,
+    #[garde(custom(max_dependent(&self.max_tick)))]
     /// Minimum tick time in microseconds for simulated time
     pub min_tick: u64,
+    #[garde(custom(min_dependent(&self.min_tick)))]
     /// Maximum tick time in microseconds for simulated time
     pub max_tick: u64,
 }
