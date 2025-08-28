@@ -227,13 +227,6 @@ impl SimulatorEnv {
             max_connections: 1, // TODO: for now let's use one connection as we didn't implement
             // correct transactions processing
             max_tables: rng.random_range(0..128),
-            create_percent,
-            create_index_percent,
-            read_percent,
-            write_percent,
-            delete_percent,
-            drop_percent,
-            update_percent,
             disable_select_optimizer: cli_opts.disable_select_optimizer,
             disable_insert_values_select: cli_opts.disable_insert_values_select,
             disable_double_create_failure: cli_opts.disable_double_create_failure,
@@ -246,7 +239,8 @@ impl SimulatorEnv {
             disable_fsync_no_wait: cli_opts.disable_fsync_no_wait,
             disable_faulty_query: cli_opts.disable_faulty_query,
             page_size: 4096, // TODO: randomize this too
-            max_interactions: rng.random_range(cli_opts.minimum_tests..=cli_opts.maximum_tests),
+            max_interactions: rng.random_range(cli_opts.minimum_tests..=cli_opts.maximum_tests)
+                as u32,
             max_time_simulation: cli_opts.maximum_time,
             disable_reopen_database: cli_opts.disable_reopen_database,
             latency_probability: cli_opts.latency_probability,
@@ -399,15 +393,6 @@ pub(crate) struct SimulatorOpts {
     pub(crate) ticks: usize,
     pub(crate) max_connections: usize,
     pub(crate) max_tables: usize,
-    // this next options are the distribution of workload where read_percent + write_percent +
-    // delete_percent == 100%
-    pub(crate) create_percent: f64,
-    pub(crate) create_index_percent: f64,
-    pub(crate) read_percent: f64,
-    pub(crate) write_percent: f64,
-    pub(crate) delete_percent: f64,
-    pub(crate) update_percent: f64,
-    pub(crate) drop_percent: f64,
 
     pub(crate) disable_select_optimizer: bool,
     pub(crate) disable_insert_values_select: bool,
@@ -421,7 +406,7 @@ pub(crate) struct SimulatorOpts {
     pub(crate) disable_faulty_query: bool,
     pub(crate) disable_reopen_database: bool,
 
-    pub(crate) max_interactions: usize,
+    pub(crate) max_interactions: u32,
     pub(crate) page_size: usize,
     pub(crate) max_time_simulation: usize,
     pub(crate) latency_probability: usize,

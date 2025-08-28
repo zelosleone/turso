@@ -20,11 +20,11 @@ impl ArbitraryFrom<&Remaining> for Query {
                     Box::new(|rng| Self::Create(Create::arbitrary(rng, context))),
                 ),
                 (
-                    remaining.read,
+                    remaining.select,
                     Box::new(|rng| Self::Select(Select::arbitrary(rng, context))),
                 ),
                 (
-                    remaining.write,
+                    remaining.insert,
                     Box::new(|rng| Self::Insert(Insert::arbitrary(rng, context))),
                 ),
                 (
@@ -32,7 +32,7 @@ impl ArbitraryFrom<&Remaining> for Query {
                     Box::new(|rng| Self::Update(Update::arbitrary(rng, context))),
                 ),
                 (
-                    f64::min(remaining.write, remaining.delete),
+                    remaining.insert.min(remaining.delete),
                     Box::new(|rng| Self::Delete(Delete::arbitrary(rng, context))),
                 ),
             ],

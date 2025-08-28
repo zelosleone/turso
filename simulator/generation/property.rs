@@ -16,9 +16,7 @@ use turso_core::{LimboError, types};
 use turso_parser::ast::{self, Distinctness};
 
 use crate::{
-    generation::Shadow as _,
-    model::Query,
-    runner::env::{SimulatorEnv, SimulatorOpts},
+    generation::Shadow as _, model::Query, profiles::query::QueryProfile, runner::env::SimulatorEnv,
 };
 
 use super::plan::{Assertion, Interaction, InteractionStats, ResultSet};
@@ -1034,44 +1032,66 @@ fn assert_all_table_values(tables: &[String]) -> impl Iterator<Item = Interactio
 
 #[derive(Debug)]
 pub(crate) struct Remaining {
-    pub(crate) read: f64,
-    pub(crate) write: f64,
-    pub(crate) create: f64,
-    pub(crate) create_index: f64,
-    pub(crate) delete: f64,
-    pub(crate) update: f64,
-    pub(crate) drop: f64,
+    pub(crate) select: u32,
+    pub(crate) insert: u32,
+    pub(crate) create: u32,
+    pub(crate) create_index: u32,
+    pub(crate) delete: u32,
+    pub(crate) update: u32,
+    pub(crate) drop: u32,
 }
 
-pub(crate) fn remaining(opts: &SimulatorOpts, stats: &InteractionStats) -> Remaining {
-    let remaining_read = ((opts.max_interactions as f64 * opts.read_percent / 100.0)
-        - (stats.read_count as f64))
-        .max(0.0);
-    let remaining_write = ((opts.max_interactions as f64 * opts.write_percent / 100.0)
-        - (stats.write_count as f64))
-        .max(0.0);
-    let remaining_create = ((opts.max_interactions as f64 * opts.create_percent / 100.0)
-        - (stats.create_count as f64))
-        .max(0.0);
+pub(crate) fn remaining(
+    max_interactions: u32,
+    opts: &QueryProfile,
+    stats: &InteractionStats,
+) -> Remaining {
+    let total_weight = opts.read_weight + opts.write_weight;
 
-    let remaining_create_index = ((opts.max_interactions as f64 * opts.create_index_percent
-        / 100.0)
-        - (stats.create_index_count as f64))
-        .max(0.0);
+    // Total amount of reads. Only considers select operations
+    let total_reads = (max_interactions * opts.read_weight) / total_weight;
+    // Total amount of writes.
+    let total_writes = (max_interactions * opts.write_weight) / total_weight;
 
-    let remaining_delete = ((opts.max_interactions as f64 * opts.delete_percent / 100.0)
-        - (stats.delete_count as f64))
-        .max(0.0);
-    let remaining_update = ((opts.max_interactions as f64 * opts.update_percent / 100.0)
-        - (stats.update_count as f64))
-        .max(0.0);
-    let remaining_drop = ((opts.max_interactions as f64 * opts.drop_percent / 100.0)
-        - (stats.drop_count as f64))
-        .max(0.0);
+    let remaining_select = total_reads
+        .checked_sub(stats.select_count)
+        .unwrap_or_default();
+
+    // This total is the sum of all the query weights that are write operations
+    let sum_write_weight = opts.create_table_weight
+        + opts.create_index_weight
+        + opts.insert_weight
+        + opts.update_weight
+        + opts.delete_weight
+        + opts.drop_table_weight;
+
+    let total_insert = (total_writes * opts.insert_weight) / sum_write_weight;
+    let total_create = (total_writes * opts.create_table_weight) / sum_write_weight;
+    let total_create_index = (total_writes * opts.create_index_weight) / sum_write_weight;
+    let total_delete = (total_writes * opts.delete_weight) / sum_write_weight;
+    let total_update = (total_writes * opts.update_weight) / sum_write_weight;
+    let total_drop = (total_writes * opts.drop_table_weight) / sum_write_weight;
+
+    let remaining_insert = total_insert
+        .checked_sub(stats.insert_count)
+        .unwrap_or_default();
+    let remaining_create = total_create
+        .checked_sub(stats.create_count)
+        .unwrap_or_default();
+    let remaining_create_index = total_create_index
+        .checked_sub(stats.create_index_count)
+        .unwrap_or_default();
+    let remaining_delete = total_delete
+        .checked_sub(stats.delete_count)
+        .unwrap_or_default();
+    let remaining_update = total_update
+        .checked_sub(stats.update_count)
+        .unwrap_or_default();
+    let remaining_drop = total_drop.checked_sub(stats.drop_count).unwrap_or_default();
 
     Remaining {
-        read: remaining_read,
-        write: remaining_write,
+        select: remaining_select,
+        insert: remaining_insert,
         create: remaining_create,
         create_index: remaining_create_index,
         delete: remaining_delete,
@@ -1434,72 +1454,72 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
         _context: &C,
         (env, stats): (&SimulatorEnv, &InteractionStats),
     ) -> Self {
-        let remaining_ = remaining(&env.opts, stats);
+        let remaining_ = remaining(env.opts.max_interactions, &env.profile.query, stats);
 
         frequency(
             vec![
                 (
                     if !env.opts.disable_insert_values_select {
-                        f64::min(remaining_.read, remaining_.write)
+                        u32::min(remaining_.select, remaining_.insert)
                     } else {
-                        0.0
+                        0
                     },
                     Box::new(|rng: &mut R| property_insert_values_select(rng, env, &remaining_)),
                 ),
                 (
-                    remaining_.read,
+                    remaining_.select,
                     Box::new(|rng: &mut R| property_table_has_expected_content(rng, env)),
                 ),
                 (
-                    f64::min(remaining_.read, remaining_.write),
+                    u32::min(remaining_.select, remaining_.insert),
                     Box::new(|rng: &mut R| property_read_your_updates_back(rng, env)),
                 ),
                 (
                     if !env.opts.disable_double_create_failure {
-                        remaining_.create / 2.0
+                        remaining_.create / 2
                     } else {
-                        0.0
+                        0
                     },
                     Box::new(|rng: &mut R| property_double_create_failure(rng, env, &remaining_)),
                 ),
                 (
                     if !env.opts.disable_select_limit {
-                        remaining_.read
+                        remaining_.select
                     } else {
-                        0.0
+                        0
                     },
                     Box::new(|rng: &mut R| property_select_limit(rng, env)),
                 ),
                 (
                     if !env.opts.disable_delete_select {
-                        f64::min(remaining_.read, remaining_.write).min(remaining_.delete)
+                        u32::min(remaining_.select, remaining_.insert).min(remaining_.delete)
                     } else {
-                        0.0
+                        0
                     },
                     Box::new(|rng: &mut R| property_delete_select(rng, env, &remaining_)),
                 ),
                 (
                     if !env.opts.disable_drop_select {
                         // remaining_.drop
-                        0.0
+                        0
                     } else {
-                        0.0
+                        0
                     },
                     Box::new(|rng: &mut R| property_drop_select(rng, env, &remaining_)),
                 ),
                 (
                     if !env.opts.disable_select_optimizer {
-                        remaining_.read / 2.0
+                        remaining_.select / 2
                     } else {
-                        0.0
+                        0
                     },
                     Box::new(|rng: &mut R| property_select_select_optimizer(rng, env)),
                 ),
                 (
                     if env.opts.experimental_indexes && !env.opts.disable_where_true_false_null {
-                        remaining_.read / 2.0
+                        remaining_.select / 2
                     } else {
-                        0.0
+                        0
                     },
                     Box::new(|rng: &mut R| property_where_true_false_null(rng, env)),
                 ),
@@ -1507,25 +1527,25 @@ impl ArbitraryFrom<(&SimulatorEnv, &InteractionStats)> for Property {
                     if env.opts.experimental_indexes
                         && !env.opts.disable_union_all_preserves_cardinality
                     {
-                        remaining_.read / 3.0
+                        remaining_.select / 3
                     } else {
-                        0.0
+                        0
                     },
                     Box::new(|rng: &mut R| property_union_all_preserves_cardinality(rng, env)),
                 ),
                 (
                     if !env.opts.disable_fsync_no_wait {
-                        50.0 // Freestyle number
+                        50 // Freestyle number
                     } else {
-                        0.0
+                        0
                     },
                     Box::new(|rng: &mut R| property_fsync_no_wait(rng, env, &remaining_)),
                 ),
                 (
                     if !env.opts.disable_faulty_query {
-                        20.0
+                        20
                     } else {
-                        0.0
+                        0
                     },
                     Box::new(|rng: &mut R| property_faulty_query(rng, env, &remaining_)),
                 ),

@@ -14,8 +14,8 @@ use strum::EnumString;
 
 use crate::profiles::{io::IOProfile, query::QueryProfile};
 
-mod io;
-mod query;
+pub mod io;
+pub mod query;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
 #[serde(deny_unknown_fields, default)]
@@ -45,11 +45,13 @@ impl Profile {
             query: QueryProfile {
                 gen_opts: Opts {
                     // TODO: in the future tweak blob size for bigger inserts
-                    // TODO: increase number of rows increased as well
+                    // TODO: increase number of rows as well
                     ..Default::default()
                 },
-                delete: false,
-                update: false,
+                read_weight: 30,
+                write_weight: 70,
+                delete_weight: 0,
+                update_weight: 0,
                 ..Default::default()
             },
             ..Default::default()
