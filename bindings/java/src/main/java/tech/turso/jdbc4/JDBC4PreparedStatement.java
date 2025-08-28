@@ -121,7 +121,13 @@ public final class JDBC4PreparedStatement extends JDBC4Statement implements Prep
 
   @Override
   public void setDate(int parameterIndex, Date x) throws SQLException {
-    // TODO
+    requireNonNull(this.statement);
+    if (x == null) {
+      this.statement.bindNull(parameterIndex);
+    } else {
+      String dateStr = x.toString();
+      this.statement.bindBlob(parameterIndex, dateStr.getBytes());
+    }
   }
 
   @Override
@@ -212,7 +218,7 @@ public final class JDBC4PreparedStatement extends JDBC4Statement implements Prep
 
   @Override
   public void setDate(int parameterIndex, Date x, Calendar cal) throws SQLException {
-    // TODO
+    setDate(parameterIndex, x);
   }
 
   @Override

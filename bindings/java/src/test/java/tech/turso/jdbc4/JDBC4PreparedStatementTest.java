@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
+import java.sql.Date;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -223,6 +224,32 @@ class JDBC4PreparedStatementTest {
     assertArrayEquals(new byte[] {4, 5, 6}, rs.getBytes(1));
     assertTrue(rs.next());
     assertArrayEquals(new byte[] {7, 8, 9}, rs.getBytes(1));
+  }
+
+  @Test
+  void testSetDate() throws SQLException {
+    connection.prepareStatement("CREATE TABLE test (col BLOB)").execute();
+    PreparedStatement stmt =
+        connection.prepareStatement("INSERT INTO test (col) VALUES (?), (?), (?)");
+    
+    Date date1 = new Date(1000000000000L); 
+    Date date2 = new Date(1500000000000L);
+    Date date3 = new Date(2000000000000L); 
+    
+    stmt.setDate(1, date1);
+    stmt.setDate(2, date2);
+    stmt.setDate(3, date3);
+    stmt.execute();
+
+    PreparedStatement stmt2 = connection.prepareStatement("SELECT * FROM test;");
+    ResultSet rs = stmt2.executeQuery();
+    
+    assertTrue(rs.next());
+    assertArrayEquals(date1.toString().getBytes(), rs.getBytes(1));
+    assertTrue(rs.next());
+    assertArrayEquals(date2.toString().getBytes(), rs.getBytes(1));
+    assertTrue(rs.next());
+    assertArrayEquals(date3.toString().getBytes(), rs.getBytes(1));
   }
 
   @Test
