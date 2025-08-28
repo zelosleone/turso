@@ -142,11 +142,15 @@ pub fn pick_index<R: Rng>(choices: usize, rng: &mut R) -> usize {
 
 /// pick_n_unique is a helper function for uniformly picking N unique elements from a range.
 /// The elements themselves are usize, typically representing indices.
-pub fn pick_n_unique<R: Rng>(range: std::ops::Range<usize>, n: usize, rng: &mut R) -> Vec<usize> {
+pub fn pick_n_unique<R: Rng>(
+    range: std::ops::Range<usize>,
+    n: usize,
+    rng: &mut R,
+) -> impl Iterator<Item = usize> {
     use rand::seq::SliceRandom;
     let mut items: Vec<usize> = range.collect();
     items.shuffle(rng);
-    items.into_iter().take(n).collect()
+    items.into_iter().take(n)
 }
 
 /// gen_random_text uses `anarchist_readable_name_generator_lib` to generate random
@@ -168,22 +172,19 @@ pub fn gen_random_text<T: Rng>(rng: &mut T) -> String {
     }
 }
 
-pub fn pick_unique<T: ToOwned + PartialEq>(
-    items: &[T],
+pub fn pick_unique<'a, T: PartialEq>(
+    items: &'a [T],
     count: usize,
     rng: &mut impl rand::Rng,
-) -> Vec<T::Owned>
-where
-    <T as ToOwned>::Owned: PartialEq,
-{
-    let mut picked: Vec<T::Owned> = Vec::new();
+) -> impl Iterator<Item = &'a T> {
+    let mut picked: Vec<&T> = Vec::new();
     while picked.len() < count {
         let item = pick(items, rng);
-        if !picked.contains(&item.to_owned()) {
-            picked.push(item.to_owned());
+        if !picked.contains(&item) {
+            picked.push(item);
         }
     }
-    picked
+    picked.into_iter()
 }
 
 #[cfg(test)]

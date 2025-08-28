@@ -169,8 +169,7 @@ impl ArbitrarySized for SelectInner {
             .collect::<Vec<_>>();
         let selected_columns = pick_unique(&flat_columns_names, num_result_columns, rng);
         let columns = selected_columns
-            .into_iter()
-            .map(|col_name| ResultColumn::Column(col_name))
+            .map(|col_name| ResultColumn::Column(col_name.clone()))
             .collect();
 
         select_inner.columns = columns;
@@ -338,7 +337,6 @@ impl Arbitrary for CreateIndex {
         let picked_column_indices = pick_n_unique(0..table.columns.len(), num_columns_to_pick, rng);
 
         let columns = picked_column_indices
-            .into_iter()
             .map(|i| {
                 let column = &table.columns[i];
                 (
@@ -372,7 +370,6 @@ impl Arbitrary for Update {
         let num_cols = rng.random_range(1..=table.columns.len());
         let columns = pick_unique(&table.columns, num_cols, rng);
         let set_values: Vec<(String, SimValue)> = columns
-            .iter()
             .map(|column| {
                 (
                     column.name.clone(),
