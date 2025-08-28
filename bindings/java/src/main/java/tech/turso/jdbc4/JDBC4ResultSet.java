@@ -5,6 +5,7 @@ import java.io.Reader;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URL;
+import java.nio.ByteBuffer;
 import java.sql.Array;
 import java.sql.Blob;
 import java.sql.Clob;
@@ -146,15 +147,47 @@ public final class JDBC4ResultSet implements ResultSet, ResultSetMetaData {
   }
 
   @Override
-  @SkipNullableCheck
+  @Nullable
   public Date getDate(int columnIndex) throws SQLException {
-    throw new UnsupportedOperationException("not implemented");
+    final Object result = resultSet.get(columnIndex);
+    if (result == null) {
+      return null;
+    }
+    return wrapTypeConversion(() -> {
+      if (result instanceof byte[]) {
+        byte[] bytes = (byte[]) result;
+        if (bytes.length == Long.BYTES) {
+          long time = ByteBuffer.wrap(bytes).getLong();
+          return new Date(time);
+        }
+      }
+      if (result instanceof String) {
+        return Date.valueOf((String) result);
+      }
+      throw new SQLException("Cannot convert value to Date: " + result.getClass());
+    });
   }
 
   @Override
   @SkipNullableCheck
   public Time getTime(int columnIndex) throws SQLException {
-    throw new UnsupportedOperationException("not implemented");
+    final Object result = resultSet.get(columnIndex);
+    if (result == null) {
+      return null;
+    }
+    return wrapTypeConversion(() -> {
+      if (result instanceof byte[]) {
+        byte[] bytes = (byte[]) result;
+        if (bytes.length == Long.BYTES) {
+          long time = ByteBuffer.wrap(bytes).getLong();
+          return new Time(time);
+        }
+      }
+      if (result instanceof String) {
+        return Time.valueOf((String) result);
+      }
+      throw new SQLException("Cannot convert value to Date: " + result.getClass());
+    });
   }
 
   @Override
@@ -238,9 +271,26 @@ public final class JDBC4ResultSet implements ResultSet, ResultSetMetaData {
   }
 
   @Override
-  @SkipNullableCheck
+  @Nullable
   public Date getDate(String columnLabel) throws SQLException {
-    throw new UnsupportedOperationException("not implemented");
+    final Object result = resultSet.get(columnLabel);
+    if (result == null) {
+      return null;
+    }
+    return wrapTypeConversion(() -> {
+      if (result instanceof byte[]) {
+        byte[] bytes = (byte[]) result;
+        if (bytes.length == Long.BYTES) {
+          long time = ByteBuffer.wrap(bytes).getLong();
+          return new Date(time);
+        }
+      }
+      // Try to parse as string if it's stored as TEXT
+      if (result instanceof String) {
+        return Date.valueOf((String) result);
+      }
+      throw new SQLException("Cannot convert value to Date: " + result.getClass());
+    });
   }
 
   @Override
