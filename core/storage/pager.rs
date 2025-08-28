@@ -1,7 +1,6 @@
 use crate::result::LimboResult;
 use crate::storage::wal::IOV_MAX;
 use crate::storage::{
-    btree::BTreePageInner,
     buffer_pool::BufferPool,
     database::DatabaseStorage,
     sqlite3_ondisk::{
@@ -25,7 +24,7 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tracing::{instrument, trace, Level};
 
-use super::btree::{btree_init_page, BTreePage};
+use super::btree::btree_init_page;
 use super::page_cache::{CacheError, CacheResizeResult, DumbLruPageCache, PageCacheKey};
 use super::sqlite3_ondisk::begin_write_btree_page;
 use super::wal::CheckpointMode;
@@ -544,7 +543,7 @@ enum AllocatePageState {
 #[derive(Clone)]
 enum AllocatePage1State {
     Start,
-    Writing { page: BTreePage },
+    Writing { page: PageRef },
     Done,
 }
 
@@ -848,7 +847,7 @@ impl Pager {
         #[cfg(feature = "omit_autovacuum")]
         {
             let page = return_if_io!(self.do_allocate_page(page_type, 0, BtreePageAllocMode::Any));
-            Ok(IOResult::Done(page.get().get().id as u32))
+            Ok(IOResult::Done(page.get().id as u32))
         }
 
         //  If autovacuum is enabled, we need to allocate a new page number that is greater than the largest root page number
@@ -859,7 +858,7 @@ impl Pager {
                 AutoVacuumMode::None => {
                     let page =
                         return_if_io!(self.do_allocate_page(page_type, 0, BtreePageAllocMode::Any));
-                    Ok(IOResult::Done(page.get().get().id as u32))
+                    Ok(IOResult::Done(page.get().id as u32))
                 }
                 AutoVacuumMode::Full => {
                     loop {
@@ -892,7 +891,7 @@ impl Pager {
                                     0,
                                     BtreePageAllocMode::Exact(root_page_num),
                                 ));
-                                let allocated_page_id = page.get().get().id as u32;
+                                let allocated_page_id = page.get().id as u32;
                                 if allocated_page_id != root_page_num {
                                     //  TODO(Zaid): Handle swapping the allocated page with the desired root page
                                 }
@@ -946,16 +945,13 @@ impl Pager {
         page_type: PageType,
         offset: usize,
         _alloc_mode: BtreePageAllocMode,
-    ) -> Result<IOResult<BTreePage>> {
+    ) -> Result<IOResult<PageRef>> {
         let page = return_if_io!(self.allocate_page());
-        let page = Arc::new(BTreePageInner {
-            page: RefCell::new(page),
-        });
         btree_init_page(&page, page_type, offset, self.usable_space());
         tracing::debug!(
             "do_allocate_page(id={}, page_type={:?})",
-            page.get().get().id,
-            page.get().get_contents().page_type()
+            page.get().id,
+            page.get_contents().page_type()
         );
         Ok(IOResult::Done(page))
     }
@@ -1264,7 +1260,7 @@ impl Pager {
                 let mut cache = self.page_cache.write();
                 let page_key = PageCacheKey::new(*page_id);
                 let page = cache.get(&page_key).expect("we somehow added a page to dirty list but we didn't mark it as dirty, causing cache to drop it.");
-                let page_type = page.get().contents.as_ref().unwrap().maybe_page_type();
+                let page_type = page.get_contents().maybe_page_type();
                 trace!("cacheflush(page={}, page_type={:?}", page_id, page_type);
                 page
             };
@@ -1351,7 +1347,7 @@ impl Pager {
                             trace!(
                                 "commit_dirty_pages(page={}, page_type={:?})",
                                 page_id,
-                                page.get().contents.as_ref().unwrap().maybe_page_type()
+                                page.get_contents().maybe_page_type()
                             );
                             page
                         };
@@ -1727,7 +1723,7 @@ impl Pager {
                     let trunk_page = trunk_page.as_ref().unwrap();
                     turso_assert!(trunk_page.is_loaded(), "trunk_page should be loaded");
 
-                    let trunk_page_contents = trunk_page.get().contents.as_ref().unwrap();
+                    let trunk_page_contents = trunk_page.get_contents();
                     let number_of_leaf_pages =
                         trunk_page_contents.read_u32_no_offset(TRUNK_PAGE_LEAF_COUNT_OFFSET);
 
@@ -1807,9 +1803,7 @@ impl Pager {
                 let contents = page.get_contents();
                 contents.write_database_header(&default_header);
 
-                let page1 = Arc::new(BTreePageInner {
-                    page: RefCell::new(page),
-                });
+                let page1 = page;
                 // Create the sqlite_schema table, for this we just need to create the btree page
                 // for the first page of the database which is basically like any other btree page
                 // but with a 100 byte offset, so we just init the page so that sqlite understands
@@ -1821,24 +1815,23 @@ impl Pager {
                     (default_header.page_size.get() - default_header.reserved_space as u32)
                         as usize,
                 );
-                let c = begin_write_btree_page(self, &page1.get())?;
+                let c = begin_write_btree_page(self, &page1)?;
 
                 self.allocate_page1_state
                     .replace(AllocatePage1State::Writing { page: page1 });
                 io_yield_one!(c);
             }
             AllocatePage1State::Writing { page } => {
-                let page1_ref = page.get();
-                turso_assert!(page1_ref.is_loaded(), "page should be loaded");
+                turso_assert!(page.is_loaded(), "page should be loaded");
                 tracing::trace!("allocate_page1(Writing done)");
-                let page_key = PageCacheKey::new(page1_ref.get().id);
+                let page_key = PageCacheKey::new(page.get().id);
                 let mut cache = self.page_cache.write();
-                cache.insert(page_key, page1_ref.clone()).map_err(|e| {
+                cache.insert(page_key, page.clone()).map_err(|e| {
                     LimboError::InternalError(format!("Failed to insert page 1 into cache: {e:?}"))
                 })?;
                 self.db_state.set(DbState::Initialized);
                 self.allocate_page1_state.replace(AllocatePage1State::Done);
-                Ok(IOResult::Done(page1_ref.clone()))
+                Ok(IOResult::Done(page.clone()))
             }
             AllocatePage1State::Done => unreachable!("cannot try to allocate page 1 again"),
         }
@@ -1933,7 +1926,7 @@ impl Pager {
                         "Freelist trunk page {} is not loaded",
                         trunk_page.get().id
                     );
-                    let page_contents = trunk_page.get().contents.as_ref().unwrap();
+                    let page_contents = trunk_page.get_contents();
                     let next_trunk_page_id =
                         page_contents.read_u32_no_offset(FREELIST_TRUNK_OFFSET_NEXT_TRUNK);
                     let number_of_freelist_leaves =
@@ -1942,7 +1935,7 @@ impl Pager {
                     // There are leaf pointers on this trunk page, so we can reuse one of the pages
                     // for the allocation.
                     if number_of_freelist_leaves != 0 {
-                        let page_contents = trunk_page.get().contents.as_ref().unwrap();
+                        let page_contents = trunk_page.get_contents();
                         let next_leaf_page_id =
                             page_contents.read_u32_no_offset(FREELIST_TRUNK_OFFSET_FIRST_LEAF);
                         let (leaf_page, c) = self.read_page(next_leaf_page_id as usize)?;
@@ -1984,7 +1977,7 @@ impl Pager {
                         "Freelist leaf page {} has overflow cells",
                         trunk_page.get().id
                     );
-                    trunk_page.get().contents.as_ref().unwrap().as_ptr().fill(0);
+                    trunk_page.get_contents().as_ptr().fill(0);
                     let page_key = PageCacheKey::new(trunk_page.get().id);
                     {
                         let mut page_cache = self.page_cache.write();
@@ -2008,7 +2001,7 @@ impl Pager {
                         "Leaf page {} is not loaded",
                         leaf_page.get().id
                     );
-                    let page_contents = trunk_page.get().contents.as_ref().unwrap();
+                    let page_contents = trunk_page.get_contents();
                     self.add_dirty(leaf_page);
                     // zero out the page
                     turso_assert!(
@@ -2016,7 +2009,7 @@ impl Pager {
                         "Freelist leaf page {} has overflow cells",
                         leaf_page.get().id
                     );
-                    leaf_page.get().contents.as_ref().unwrap().as_ptr().fill(0);
+                    leaf_page.get_contents().as_ptr().fill(0);
                     let page_key = PageCacheKey::new(leaf_page.get().id);
                     {
                         let mut page_cache = self.page_cache.write();
