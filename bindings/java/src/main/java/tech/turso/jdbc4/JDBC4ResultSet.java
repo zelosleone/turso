@@ -788,27 +788,31 @@ public final class JDBC4ResultSet implements ResultSet, ResultSetMetaData {
   }
 
   @Override
-  @SkipNullableCheck
+  @Nullable
   public Date getDate(int columnIndex, Calendar cal) throws SQLException {
-    throw new UnsupportedOperationException("not implemented");
+    // TODO: Properly handle timezone conversion with Calendar
+    return getDate(columnIndex);
   }
 
   @Override
-  @SkipNullableCheck
+  @Nullable
   public Date getDate(String columnLabel, Calendar cal) throws SQLException {
-    throw new UnsupportedOperationException("not implemented");
+    // TODO: Properly handle timezone conversion with Calendar
+    return getDate(columnLabel);
   }
 
   @Override
   @SkipNullableCheck
   public Time getTime(int columnIndex, Calendar cal) throws SQLException {
-    throw new UnsupportedOperationException("not implemented");
+    // TODO: Properly handle timezone conversion with Calendar
+    return getTime(columnIndex);
   }
 
   @Override
   @SkipNullableCheck
   public Time getTime(String columnLabel, Calendar cal) throws SQLException {
-    throw new UnsupportedOperationException("not implemented");
+    // TODO: Properly handle timezone conversion with Calendar
+    return getTime(columnLabel);
   }
 
   @Override
