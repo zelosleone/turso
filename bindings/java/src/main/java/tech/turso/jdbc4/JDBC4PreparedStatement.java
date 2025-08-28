@@ -144,7 +144,13 @@ public final class JDBC4PreparedStatement extends JDBC4Statement implements Prep
 
   @Override
   public void setTimestamp(int parameterIndex, Timestamp x) throws SQLException {
-    // TODO
+    requireNonNull(this.statement);
+    if (x == null) {
+      this.statement.bindNull(parameterIndex);
+    } else {
+      long time = x.getTime();
+      this.statement.bindBlob(parameterIndex, ByteBuffer.allocate(Long.BYTES).putLong(time).array());
+    }
   }
 
   @Override
@@ -235,7 +241,8 @@ public final class JDBC4PreparedStatement extends JDBC4Statement implements Prep
 
   @Override
   public void setTimestamp(int parameterIndex, Timestamp x, Calendar cal) throws SQLException {
-    // TODO
+    // TODO: Apply calendar timezone conversion
+    setTimestamp(parameterIndex, x);
   }
 
   @Override
