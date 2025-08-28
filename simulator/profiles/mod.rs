@@ -1,8 +1,16 @@
-use std::fmt::Display;
+use std::{
+    fmt::Display,
+    fs,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
+use anyhow::Context;
 use garde::Validate;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use sql_generation::generation::Opts;
+use strum::EnumString;
 
 use crate::profiles::{io::IOProfile, query::QueryProfile};
 
@@ -10,6 +18,7 @@ mod io;
 mod query;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields, default)]
 pub struct Profile {
     #[garde(skip)]
     /// Experimental MVCC feature
@@ -26,6 +35,83 @@ impl Default for Profile {
             experimental_mvcc: false,
             io: Default::default(),
             query: Default::default(),
+        }
+    }
+}
+
+impl Profile {
+    pub fn write_heavy() -> Self {
+        Profile {
+            query: QueryProfile {
+                gen_opts: Opts {
+                    // TODO: in the future tweak blob size for bigger inserts
+                    // TODO: increase number of rows increased as well
+                    ..Default::default()
+                },
+                delete: false,
+                update: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    pub fn parse_from_type(profile_type: ProfileType) -> anyhow::Result<Self> {
+        let profile = match profile_type {
+            ProfileType::Default => Profile::default(),
+            ProfileType::WriteHeavy => Self::write_heavy(),
+            ProfileType::Custom(path) => {
+                Self::parse(path).with_context(|| "failed to parse JSON profile")?
+            }
+        };
+        Ok(profile)
+    }
+
+    // TODO: in the future handle extension and composability of profiles here
+    pub fn parse(path: impl AsRef<Path>) -> anyhow::Result<Self> {
+        let contents = fs::read_to_string(path)?;
+        // use json5 so we can support comments and trailing commas
+        let profile = json5::from_str(&contents)?;
+        Ok(profile)
+    }
+}
+
+#[derive(
+    Debug,
+    Default,
+    Clone,
+    Serialize,
+    Deserialize,
+    EnumString,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    strum::Display,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(ascii_case_insensitive, serialize_all = "snake_case")]
+pub enum ProfileType {
+    #[default]
+    Default,
+    WriteHeavy,
+    #[strum(disabled)]
+    Custom(PathBuf),
+}
+
+impl ProfileType {
+    pub fn parse(s: &str) -> anyhow::Result<Self> {
+        if let Ok(prof) = ProfileType::from_str(s) {
+            Ok(prof)
+        } else if let path = PathBuf::from(s)
+            && path.exists()
+        {
+            Ok(ProfileType::Custom(path))
+        } else {
+            Err(anyhow::anyhow!(
+                "failed identifying predifined profile or custom profile path"
+            ))
         }
     }
 }

@@ -8,19 +8,20 @@ use rand::prelude::*;
 use runner::bugbase::{Bug, BugBase, LoadedBug};
 use runner::cli::{SimulatorCLI, SimulatorCommand};
 use runner::env::SimulatorEnv;
-use runner::execution::{execute_plans, Execution, ExecutionHistory, ExecutionResult};
+use runner::execution::{Execution, ExecutionHistory, ExecutionResult, execute_plans};
 use runner::{differential, watch};
 use std::any::Any;
 use std::backtrace::Backtrace;
 use std::fs::OpenOptions;
 use std::io::{IsTerminal, Write};
 use std::path::Path;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
+use tracing_subscriber::EnvFilter;
 use tracing_subscriber::field::MakeExt;
 use tracing_subscriber::fmt::format;
-use tracing_subscriber::EnvFilter;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::profiles::Profile;
 use crate::runner::doublecheck;
 use crate::runner::env::{Paths, SimulationPhase, SimulationType};
 
@@ -35,6 +36,10 @@ fn main() -> anyhow::Result<()> {
     let mut cli_opts = SimulatorCLI::parse();
     cli_opts.validate()?;
 
+    let profile = Profile::parse_from_type(cli_opts.profile.clone())?;
+    tracing::debug!(sim_profile = ?profile);
+    dbg!(&profile);
+
     match cli_opts.subcommand {
         Some(SimulatorCommand::List) => {
             let mut bugbase = BugBase::load()?;
@@ -44,7 +49,7 @@ fn main() -> anyhow::Result<()> {
             banner();
             for i in 0..n {
                 println!("iteration {i}");
-                let result = testing_main(&cli_opts);
+                let result = testing_main(&cli_opts, &profile);
                 if result.is_err() && short_circuit {
                     println!("short circuiting after {i} iterations");
                     return result;
@@ -91,7 +96,7 @@ fn main() -> anyhow::Result<()> {
 
             let results = bugs
                 .into_iter()
-                .map(|cli_opts| testing_main(&cli_opts))
+                .map(|cli_opts| testing_main(&cli_opts, &profile))
                 .collect::<Vec<_>>();
 
             let (successes, failures): (Vec<_>, Vec<_>) =
@@ -103,12 +108,12 @@ fn main() -> anyhow::Result<()> {
         }
         None => {
             banner();
-            testing_main(&cli_opts)
+            testing_main(&cli_opts, &profile)
         }
     }
 }
 
-fn testing_main(cli_opts: &SimulatorCLI) -> anyhow::Result<()> {
+fn testing_main(cli_opts: &SimulatorCLI, profile: &Profile) -> anyhow::Result<()> {
     let mut bugbase = if cli_opts.disable_bugbase {
         None
     } else {
@@ -116,7 +121,7 @@ fn testing_main(cli_opts: &SimulatorCLI) -> anyhow::Result<()> {
         Some(BugBase::load()?)
     };
 
-    let (seed, mut env, plans) = setup_simulation(bugbase.as_mut(), cli_opts);
+    let (seed, mut env, plans) = setup_simulation(bugbase.as_mut(), cli_opts, profile);
 
     if cli_opts.watch {
         watch_mode(env).unwrap();
@@ -471,6 +476,7 @@ impl SandboxedResult {
 fn setup_simulation(
     bugbase: Option<&mut BugBase>,
     cli_opts: &SimulatorCLI,
+    profile: &Profile,
 ) -> (u64, SimulatorEnv, Vec<InteractionPlan>) {
     if let Some(seed) = &cli_opts.load {
         let seed = seed.parse::<u64>().expect("seed should be a number");
@@ -484,7 +490,13 @@ fn setup_simulation(
         if !paths.base.exists() {
             std::fs::create_dir_all(&paths.base).unwrap();
         }
-        let env = SimulatorEnv::new(bug.seed(), cli_opts, paths, SimulationType::Default);
+        let env = SimulatorEnv::new(
+            bug.seed(),
+            cli_opts,
+            paths,
+            SimulationType::Default,
+            profile,
+        );
 
         let plan = match bug {
             Bug::Loaded(LoadedBug { plan, .. }) => plan.clone(),
@@ -528,7 +540,7 @@ fn setup_simulation(
             Paths::new(&dir)
         };
 
-        let mut env = SimulatorEnv::new(seed, cli_opts, paths, SimulationType::Default);
+        let mut env = SimulatorEnv::new(seed, cli_opts, paths, SimulationType::Default, profile);
 
         tracing::info!("Generating database interaction plan...");
 

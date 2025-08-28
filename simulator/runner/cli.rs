@@ -1,5 +1,12 @@
-use clap::{command, Parser};
+use clap::{
+    Arg, Command, Error, Parser,
+    builder::{PossibleValue, TypedValueParser, ValueParserFactory},
+    command,
+    error::{ContextKind, ContextValue, ErrorKind},
+};
 use serde::{Deserialize, Serialize};
+
+use crate::profiles::ProfileType;
 
 #[derive(Parser, Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord)]
 #[command(name = "limbo-simulator")]
@@ -135,6 +142,9 @@ pub struct SimulatorCLI {
         default_value_t = false
     )]
     pub keep_files: bool,
+    #[clap(long, default_value_t = ProfileType::Default)]
+    /// Profile selector for Simulation run
+    pub profile: ProfileType,
 }
 
 #[derive(Parser, Debug, Clone, Serialize, Deserialize, PartialEq, PartialOrd, Eq, Ord)]
@@ -204,5 +214,72 @@ impl SimulatorCLI {
         }
 
         Ok(())
+    }
+}
+
+#[derive(Clone)]
+pub struct ProfileTypeParser;
+
+impl TypedValueParser for ProfileTypeParser {
+    type Value = ProfileType;
+
+    fn parse_ref(
+        &self,
+        cmd: &Command,
+        arg: Option<&Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, Error> {
+        let s = value
+            .to_str()
+            .ok_or_else(|| Error::new(ErrorKind::InvalidUtf8).with_cmd(cmd))?;
+
+        ProfileType::parse(s).map_err(|_| {
+            let mut err = Error::new(ErrorKind::InvalidValue).with_cmd(cmd);
+            if let Some(arg) = arg {
+                err.insert(
+                    ContextKind::InvalidArg,
+                    ContextValue::String(arg.to_string()),
+                );
+            }
+            err.insert(
+                ContextKind::InvalidValue,
+                ContextValue::String(s.to_string()),
+            );
+            err.insert(
+                ContextKind::ValidValue,
+                ContextValue::Strings(
+                    self.possible_values()
+                        .unwrap()
+                        .map(|s| s.get_name().to_string())
+                        .collect(),
+                ),
+            );
+            err
+        })
+    }
+
+    fn possible_values(&self) -> Option<Box<dyn Iterator<Item = PossibleValue> + '_>> {
+        use strum::VariantNames;
+        Some(Box::new(
+            Self::Value::VARIANTS
+                .into_iter()
+                .map(|variant| {
+                    // Custom variant should be listed as a Custom path
+                    if variant.eq_ignore_ascii_case("custom") {
+                        "CUSTOM_PATH"
+                    } else {
+                        variant
+                    }
+                })
+                .map(|s| PossibleValue::new(s)),
+        ))
+    }
+}
+
+impl ValueParserFactory for ProfileType {
+    type Parser = ProfileTypeParser;
+
+    fn value_parser() -> Self::Parser {
+        ProfileTypeParser
     }
 }

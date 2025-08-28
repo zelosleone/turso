@@ -1,8 +1,8 @@
 use crate::model::Query;
 use rand::Rng;
 use sql_generation::{
-    generation::{frequency, Arbitrary, ArbitraryFrom, GenerationContext},
-    model::query::{update::Update, Create, Delete, Insert, Select},
+    generation::{Arbitrary, ArbitraryFrom, GenerationContext, frequency},
+    model::query::{Create, Delete, Insert, Select, update::Update},
 };
 
 use super::property::Remaining;

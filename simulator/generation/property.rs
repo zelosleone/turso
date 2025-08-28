@@ -1,18 +1,18 @@
 use serde::{Deserialize, Serialize};
 use sql_generation::{
-    generation::{frequency, pick, pick_index, Arbitrary, ArbitraryFrom, GenerationContext},
+    generation::{Arbitrary, ArbitraryFrom, GenerationContext, frequency, pick, pick_index},
     model::{
         query::{
+            Create, Delete, Drop, Insert, Select,
             predicate::Predicate,
             select::{CompoundOperator, CompoundSelect, ResultColumn, SelectBody, SelectInner},
             transaction::{Begin, Commit, Rollback},
             update::Update,
-            Create, Delete, Drop, Insert, Select,
         },
         table::SimValue,
     },
 };
-use turso_core::{types, LimboError};
+use turso_core::{LimboError, types};
 use turso_parser::ast::{self, Distinctness};
 
 use crate::{
@@ -305,7 +305,10 @@ impl Property {
                                 for row in rows {
                                     for (i, (col, val)) in update.set_values.iter().enumerate() {
                                         if &row[i] != val {
-                                            return Ok(Err(format!("updated row {} has incorrect value for column {col}: expected {val}, got {}", i, row[i])));
+                                            return Ok(Err(format!(
+                                                "updated row {} has incorrect value for column {col}: expected {val}, got {}",
+                                                i, row[i]
+                                            )));
                                         }
                                     }
                                 }
@@ -384,7 +387,10 @@ impl Property {
                                 if found {
                                     Ok(Ok(()))
                                 } else {
-                                    Ok(Err(format!("row [{:?}] not found in table", row.iter().map(|v| v.to_string()).collect::<Vec<String>>())))
+                                    Ok(Err(format!(
+                                        "row [{:?}] not found in table",
+                                        row.iter().map(|v| v.to_string()).collect::<Vec<String>>()
+                                    )))
                                 }
                             }
                             Err(err) => Err(LimboError::InternalError(err.to_string())),
@@ -858,15 +864,22 @@ impl Property {
                         match (select_result_set, select_tlp_result_set) {
                             (Ok(select_rows), Ok(select_tlp_rows)) => {
                                 if select_rows.len() != select_tlp_rows.len() {
-                                    return Ok(Err(format!("row count mismatch: select returned {} rows, select_tlp returned {} rows", select_rows.len(), select_tlp_rows.len())));
+                                    return Ok(Err(format!(
+                                        "row count mismatch: select returned {} rows, select_tlp returned {} rows",
+                                        select_rows.len(),
+                                        select_tlp_rows.len()
+                                    )));
                                 }
                                 // Check if any row in select_rows is not in select_tlp_rows
                                 for row in select_rows.iter() {
                                     if !select_tlp_rows.iter().any(|r| r == row) {
                                         tracing::debug!(
-                                                    "select and select_tlp returned different rows, ({}) is in select but not in select_tlp",
-                                                    row.iter().map(|v| v.to_string()).collect::<Vec<String>>().join(", ")
-                                                );
+                                            "select and select_tlp returned different rows, ({}) is in select but not in select_tlp",
+                                            row.iter()
+                                                .map(|v| v.to_string())
+                                                .collect::<Vec<String>>()
+                                                .join(", ")
+                                        );
                                         return Ok(Err(format!(
                                             "row mismatch: row [{}] exists in select results but not in select_tlp results",
                                             print_row(row)
@@ -877,9 +890,12 @@ impl Property {
                                 for row in select_tlp_rows.iter() {
                                     if !select_rows.iter().any(|r| r == row) {
                                         tracing::debug!(
-                                                    "select and select_tlp returned different rows, ({}) is in select_tlp but not in select",
-                                                    row.iter().map(|v| v.to_string()).collect::<Vec<String>>().join(", ")
-                                                );
+                                            "select and select_tlp returned different rows, ({}) is in select_tlp but not in select",
+                                            row.iter()
+                                                .map(|v| v.to_string())
+                                                .collect::<Vec<String>>()
+                                                .join(", ")
+                                        );
 
                                         return Ok(Err(format!(
                                             "row mismatch: row [{}] exists in select_tlp but not in select",
@@ -939,7 +955,9 @@ impl Property {
                                     if union_count == count1 + count2 {
                                         Ok(Ok(()))
                                     } else {
-                                        Ok(Err(format!("UNION ALL should preserve cardinality but it didn't: {count1} + {count2} != {union_count}")))
+                                        Ok(Err(format!(
+                                            "UNION ALL should preserve cardinality but it didn't: {count1} + {count2} != {union_count}"
+                                        )))
                                     }
                                 }
                                 (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {

@@ -26,7 +26,7 @@ impl GenerationContext for SimulatorEnv {
     }
 
     fn opts(&self) -> &sql_generation::generation::Opts {
-        &self.gen_opts
+        &self.profile.query.gen_opts
     }
 }
 
@@ -36,6 +36,6 @@ impl GenerationContext for &mut SimulatorEnv {
     }
 
     fn opts(&self) -> &sql_generation::generation::Opts {
-        &self.gen_opts
+        &self.profile.query.gen_opts
     }
 }

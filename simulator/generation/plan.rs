@@ -9,25 +9,25 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use sql_generation::{
-    generation::{frequency, query::SelectFree, Arbitrary, ArbitraryFrom, GenerationContext},
+    generation::{Arbitrary, ArbitraryFrom, GenerationContext, frequency, query::SelectFree},
     model::{
-        query::{update::Update, Create, CreateIndex, Delete, Drop, Insert, Select},
+        query::{Create, CreateIndex, Delete, Drop, Insert, Select, update::Update},
         table::SimValue,
     },
 };
 use turso_core::{Connection, Result, StepResult};
 
 use crate::{
+    SimulatorEnv,
     generation::Shadow,
     model::Query,
     runner::{
         env::{SimConnection, SimulationType, SimulatorTables},
         io::SimulatorIO,
     },
-    SimulatorEnv,
 };
 
-use super::property::{remaining, Property};
+use super::property::{Property, remaining};
 
 pub(crate) type ResultSet = Result<Vec<Vec<SimValue>>>;
 
