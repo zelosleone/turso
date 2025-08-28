@@ -59,11 +59,12 @@ use crate::storage::btree::offset::{
 use crate::storage::btree::{payload_overflow_threshold_max, payload_overflow_threshold_min};
 use crate::storage::buffer_pool::BufferPool;
 use crate::storage::database::DatabaseStorage;
-use crate::storage::encryption::EncryptionContext;
 use crate::storage::pager::Pager;
 use crate::storage::wal::READMARK_NOT_USED;
 use crate::types::{RawSlice, RefValue, SerialType, SerialTypeKind, TextRef, TextSubtype};
-use crate::{bail_corrupt_error, turso_assert, CompletionError, File, Result, WalFileShared};
+use crate::{
+    bail_corrupt_error, turso_assert, CompletionError, File, IOContext, Result, WalFileShared,
+};
 use std::cell::{Cell, UnsafeCell};
 use std::collections::{BTreeMap, HashMap};
 use std::mem::MaybeUninit;
@@ -905,7 +906,7 @@ pub fn begin_read_page(
     page: PageRef,
     page_idx: usize,
     allow_empty_read: bool,
-    encryption_key: Option<&EncryptionContext>,
+    io_ctx: &IOContext,
 ) -> Result<Completion> {
     tracing::trace!("begin_read_btree_page(page_idx = {})", page_idx);
     let buf = buffer_pool.get_page();
@@ -928,7 +929,7 @@ pub fn begin_read_page(
         finish_read_page(page_idx, buf, page.clone());
     });
     let c = Completion::new_read(buf, complete);
-    db_file.read_page(page_idx, encryption_key, c)
+    db_file.read_page(page_idx, io_ctx, c)
 }
 
 #[instrument(skip_all, level = Level::INFO)]
@@ -982,7 +983,8 @@ pub fn begin_write_btree_page(pager: &Pager, page: &PageRef) -> Result<Completio
         })
     };
     let c = Completion::new_write(write_complete);
-    page_source.write_page(page_id, buffer.clone(), None, c)
+    let io_ctx = &pager.io_ctx.borrow();
+    page_source.write_page(page_id, buffer.clone(), io_ctx, c)
 }
 
 #[instrument(skip_all, level = Level::DEBUG)]
@@ -1000,7 +1002,6 @@ pub fn write_pages_vectored(
     pager: &Pager,
     batch: BTreeMap<usize, Arc<Buffer>>,
     done_flag: Arc<AtomicBool>,
-    encryption_key: Option<&EncryptionContext>,
 ) -> Result<Vec<Completion>> {
     if batch.is_empty() {
         done_flag.store(true, Ordering::Relaxed);
@@ -1076,11 +1077,12 @@ pub fn write_pages_vectored(
             });
 
             // Submit write operation for this run, decrementing the counter if we error
+            let io_ctx = &pager.io_ctx.borrow();
             match pager.db_file.write_pages(
                 start_id,
                 page_sz,
                 std::mem::replace(&mut run_bufs, Vec::with_capacity(EST_BUFF_CAPACITY)),
-                encryption_key,
+                io_ctx,
                 c,
             ) {
                 Ok(c) => {

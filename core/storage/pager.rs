@@ -11,7 +11,7 @@ use crate::storage::{
 };
 use crate::types::{IOCompletions, WalState};
 use crate::util::IOExt as _;
-use crate::{io_yield_many, io_yield_one};
+use crate::{io_yield_many, io_yield_one, IOContext};
 use crate::{
     return_if_io, turso_assert, types::WalFrameInfo, Completion, Connection, IOResult, LimboError,
     Result, TransactionState,
@@ -503,7 +503,7 @@ pub struct Pager {
     header_ref_state: RefCell<HeaderRefState>,
     #[cfg(not(feature = "omit_autovacuum"))]
     btree_create_vacuum_full_state: Cell<BtreeCreateVacuumFullState>,
-    pub(crate) encryption_ctx: RefCell<Option<EncryptionContext>>,
+    pub(crate) io_ctx: RefCell<IOContext>,
 }
 
 #[derive(Debug, Clone)]
@@ -607,7 +607,7 @@ impl Pager {
             header_ref_state: RefCell::new(HeaderRefState::Start),
             #[cfg(not(feature = "omit_autovacuum"))]
             btree_create_vacuum_full_state: Cell::new(BtreeCreateVacuumFullState::Start),
-            encryption_ctx: RefCell::new(None),
+            io_ctx: RefCell::new(IOContext::default()),
         })
     }
 
@@ -1094,7 +1094,7 @@ impl Pager {
     ) -> Result<(PageRef, Completion)> {
         tracing::trace!("read_page_no_cache(page_idx = {})", page_idx);
         let page = Arc::new(Page::new(page_idx));
-
+        let io_ctx = &self.io_ctx.borrow();
         let Some(wal) = self.wal.as_ref() else {
             turso_assert!(
                 matches!(frame_watermark, Some(0) | None),
@@ -1102,12 +1102,7 @@ impl Pager {
             );
 
             page.set_locked();
-            let c = self.begin_read_disk_page(
-                page_idx,
-                page.clone(),
-                allow_empty_read,
-                self.encryption_ctx.borrow().as_ref(),
-            )?;
+            let c = self.begin_read_disk_page(page_idx, page.clone(), allow_empty_read, io_ctx)?;
             return Ok((page, c));
         };
 
@@ -1120,12 +1115,7 @@ impl Pager {
             return Ok((page, c));
         }
 
-        let c = self.begin_read_disk_page(
-            page_idx,
-            page.clone(),
-            allow_empty_read,
-            self.encryption_ctx.borrow().as_ref(),
-        )?;
+        let c = self.begin_read_disk_page(page_idx, page.clone(), allow_empty_read, io_ctx)?;
         Ok((page, c))
     }
 
@@ -1149,7 +1139,7 @@ impl Pager {
         page_idx: usize,
         page: PageRef,
         allow_empty_read: bool,
-        encryption_key: Option<&EncryptionContext>,
+        io_ctx: &IOContext,
     ) -> Result<Completion> {
         sqlite3_ondisk::begin_read_page(
             self.db_file.clone(),
@@ -1157,7 +1147,7 @@ impl Pager {
             page,
             page_idx,
             allow_empty_read,
-            encryption_key,
+            io_ctx,
         )
     }
 
@@ -1802,7 +1792,8 @@ impl Pager {
                 default_header.database_size = 1.into();
 
                 // if a key is set, then we will reserve space for encryption metadata
-                if let Some(ref ctx) = *self.encryption_ctx.borrow() {
+                let io_ctx = self.io_ctx.borrow();
+                if let Some(ctx) = io_ctx.encryption_context() {
                     default_header.reserved_space = ctx.required_reserved_bytes()
                 }
 
@@ -2190,9 +2181,13 @@ impl Pager {
 
     pub fn set_encryption_context(&self, cipher_mode: CipherMode, key: &EncryptionKey) {
         let encryption_ctx = EncryptionContext::new(cipher_mode, key).unwrap();
-        self.encryption_ctx.replace(Some(encryption_ctx.clone()));
+        {
+            let mut io_ctx = self.io_ctx.borrow_mut();
+            io_ctx.set_encryption(encryption_ctx);
+        }
         let Some(wal) = self.wal.as_ref() else { return };
-        wal.borrow_mut().set_encryption_context(encryption_ctx)
+        wal.borrow_mut()
+            .set_io_context(self.io_ctx.borrow().clone())
     }
 }
 
