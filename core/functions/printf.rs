@@ -34,7 +34,7 @@ fn get_exponential_formatted_str(number: &f64, uppercase: bool) -> crate::Result
     }
 }
 
-// TODO: Support %!.3s %x, %X, %o, %c. flags: - + 0 ! ,
+// TODO: Support %!.3s %x, %X, %o. flags: - + 0 ! ,
 #[inline(always)]
 pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
     if values.is_empty() {
@@ -172,6 +172,17 @@ pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
                         };
                     }
                     _ => result.push_str("0.000000e+00"),
+                }
+                args_index += 1;
+            }
+            Some('c') => {
+                if args_index >= values.len() {
+                    return Err(LimboError::InvalidArgument("not enough arguments".into()));
+                }
+                let value = &values[args_index].get_value();
+                let value_str: String = format!("{value}");
+                if !value_str.is_empty() {
+                    result.push_str(&value_str[0..1]);
                 }
                 args_index += 1;
             }
@@ -321,6 +332,35 @@ mod tests {
             (
                 vec![text("Number: %f"), text("not a number")],
                 text("Number: 0.0"),
+            ),
+        ];
+
+        for (input, expected) in test_cases {
+            assert_eq!(exec_printf(&input).unwrap(), *expected.get_value());
+        }
+    }
+
+    #[test]
+    fn test_printf_character_formatting() {
+        let test_cases = vec![
+            // Simple character
+            (vec![text("character: %c"), text("a")], text("character: a")),
+            // Character with string
+            (
+                vec![text("character: %c"), text("this is a test")],
+                text("character: t"),
+            ),
+            // Character with empty
+            (vec![text("character: %c"), text("")], text("character: ")),
+            // Character with integer
+            (
+                vec![text("character: %c"), integer(123)],
+                text("character: 1"),
+            ),
+            // Character with float
+            (
+                vec![text("character: %c"), float(42.5)],
+                text("character: 4"),
             ),
         ];
 
