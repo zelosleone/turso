@@ -661,10 +661,9 @@ impl PageContent {
     /// The size of the page header in bytes.
     /// 8 bytes for leaf pages, 12 bytes for interior pages (due to storing rightmost child pointer)
     pub fn header_size(&self) -> usize {
-        match self.page_type() {
-            PageType::IndexInterior | PageType::TableInterior => INTERIOR_PAGE_HEADER_SIZE_BYTES,
-            PageType::IndexLeaf | PageType::TableLeaf => LEAF_PAGE_HEADER_SIZE_BYTES,
-        }
+        let is_interior = self.read_u8(BTREE_PAGE_TYPE) <= PageType::TableInterior as u8;
+        (!is_interior as usize) * LEAF_PAGE_HEADER_SIZE_BYTES
+            + (is_interior as usize) * INTERIOR_PAGE_HEADER_SIZE_BYTES
     }
 
     /// The total number of bytes in all fragments
@@ -864,12 +863,7 @@ impl PageContent {
     }
 
     pub fn is_leaf(&self) -> bool {
-        match self.page_type() {
-            PageType::IndexInterior => false,
-            PageType::TableInterior => false,
-            PageType::IndexLeaf => true,
-            PageType::TableLeaf => true,
-        }
+        self.read_u8(BTREE_PAGE_TYPE) > PageType::TableInterior as u8
     }
 
     pub fn write_database_header(&self, header: &DatabaseHeader) {
