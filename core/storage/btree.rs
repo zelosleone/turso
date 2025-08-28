@@ -3325,7 +3325,7 @@ impl BTreeCursor {
                             parent_contents,
                             divider_cell_insert_idx_in_parent,
                             divider_cell_is_overflow_cell,
-                            &page,
+                            page,
                             usable_space,
                         );
                     }
