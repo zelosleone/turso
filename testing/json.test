@@ -279,6 +279,34 @@ do_execsql_test json_arrow_object {
     SELECT '{"a": [1,2,3]}' -> '$.a'
 } {{[1,2,3]}}
 
+do_execsql_test json_arrow_blob_object {
+    SELECT cast('{"age":30,"name":"John"}' as blob) -> '$.age'
+} {{30}}
+
+# Tests against valid jsonb [b'{',.., b'}'] vs json text '{..}'
+# b'{' = ElementType::Array, PayloadSize of 7.
+# b'}' = last element in array ends in '}'
+# x'7B0707070707177D' = jsonb(["", "", "", "", "", "}"])
+do_execsql_test json_arrow_blob_array {
+    SELECT x'7B0707070707177D' -> '$[5]'
+} {\"\}\"}
+
+do_execsql_test json_arrow_blob_number {
+    SELECT cast('4' as blob) -> '$'
+} {{4}}
+
+do_execsql_test json_arrow_blob_number_2 {
+    SELECT cast(33 as blob) -> '$'
+} {{33}}
+
+# jsonb(333)
+do_execsql_test json_arrow_blob_number_3 {
+    SELECT x'33333333' -> '$'
+} {{333}}
+
+do_execsql_test json_arrow_blob_negative_number {
+    SELECT cast('-4' as blob) -> '$'
+} {{-4}}
 do_execsql_test json_arrow_shift_object {
     SELECT '{"a": [1,2,3]}' ->> '$.a'
 } {{[1,2,3]}}
@@ -290,7 +318,6 @@ do_execsql_test json_extract_object_2 {
 do_execsql_test json_extract_object_3 {
     SELECT json_extract('{"a": [1,2,3]}', '$.a', '$.a[0]', '$.a[1]', null, '$.a[3]')
 } {{}}
-
 
 #       \x61 is the ASCII code for 'a'
 do_execsql_test json_extract_with_escaping {
