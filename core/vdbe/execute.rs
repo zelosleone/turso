@@ -1762,10 +1762,10 @@ pub fn op_type_check(
                 return Ok(());
             }
             let col_affinity = col.affinity();
-            let ty_str = col.ty_str.as_str();
+            let ty_str = col.ty_str.to_ascii_uppercase();
             let applied = apply_affinity_char(reg, col_affinity);
             let value_type = reg.get_value().value_type();
-            match (ty_str, value_type) {
+            match (ty_str.as_str(), value_type) {
                 ("INTEGER" | "INT", ValueType::Integer) => {}
                 ("REAL", ValueType::Float) => {}
                 ("BLOB", ValueType::Blob) => {}
