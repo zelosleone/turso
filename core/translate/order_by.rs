@@ -321,8 +321,6 @@ pub struct OrderByRemapping {
 /// In case any of the ORDER BY sort keys are exactly equal to a result column, we can skip emitting that result column.
 /// If we skip a result column, we need to keep track what index in the ORDER BY sorter the result columns have,
 /// because the result columns should be emitted in the SELECT clause order, not the ORDER BY clause order.
-///
-/// If any result columns can be skipped, this returns list of 2-tuples of (SkippedResultColumnIndex: usize, ResultColumnIndexInOrderBySorter: usize)
 pub fn order_by_deduplicate_result_columns(
     order_by: &[(Box<ast::Expr>, SortOrder)],
     result_columns: &[ResultSetColumn],
