@@ -928,7 +928,7 @@ pub fn begin_read_page(
 
 #[instrument(skip_all, level = Level::INFO)]
 pub fn finish_read_page(page_idx: usize, buffer_ref: Arc<Buffer>, page: PageRef) {
-    tracing::trace!(page_idx);
+    tracing::trace!("finish_read_page(page_idx = {page_idx})");
     let pos = if page_idx == DatabaseHeader::PAGE_ID {
         DatabaseHeader::SIZE
     } else {
@@ -1851,14 +1851,52 @@ pub fn begin_read_wal_frame(
     offset: usize,
     buffer_pool: Arc<BufferPool>,
     complete: Box<ReadComplete>,
+    page_idx: usize,
+    io_ctx: &IOContext,
 ) -> Result<Completion> {
-    tracing::trace!("begin_read_wal_frame(offset={})", offset);
+    tracing::trace!(
+        "begin_read_wal_frame(offset={}, page_idx={})",
+        offset,
+        page_idx
+    );
     let buf = buffer_pool.get_page();
     let buf = Arc::new(buf);
-    #[allow(clippy::arc_with_non_send_sync)]
-    let c = Completion::new_read(buf, complete);
-    let c = io.pread(offset, c)?;
-    Ok(c)
+
+    if let Some(ctx) = io_ctx.encryption_context() {
+        let encryption_ctx = ctx.clone();
+        let original_complete = complete;
+
+        let decrypt_complete = Box::new(move |res: Result<(Arc<Buffer>, i32), CompletionError>| {
+            let Ok((encrypted_buf, bytes_read)) = res else {
+                original_complete(res);
+                return;
+            };
+            assert!(
+                bytes_read > 0,
+                "Expected to read some data on success for page_idx={page_idx}"
+            );
+            match encryption_ctx.decrypt_page(encrypted_buf.as_slice(), page_idx) {
+                Ok(decrypted_data) => {
+                    encrypted_buf
+                        .as_mut_slice()
+                        .copy_from_slice(&decrypted_data);
+                    original_complete(Ok((encrypted_buf, bytes_read)));
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to decrypt WAL frame data for page_idx={page_idx}: {e}"
+                    );
+                    original_complete(Err(CompletionError::DecryptionError { page_idx }));
+                }
+            }
+        });
+
+        let new_completion = Completion::new_read(buf, decrypt_complete);
+        io.pread(offset, new_completion)
+    } else {
+        let c = Completion::new_read(buf, complete);
+        io.pread(offset, c)
+    }
 }
 
 pub fn parse_wal_frame_header(frame: &[u8]) -> (WalFrameHeader, &[u8]) {

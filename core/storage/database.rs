@@ -117,9 +117,8 @@ impl DatabaseStorage for DatabaseFile {
                             tracing::error!(
                                 "Failed to decrypt page data for page_id={page_idx}: {e}"
                             );
-                            assert_eq!(
-                                original_c.has_error(),
-                                false,
+                            assert!(
+                                !original_c.has_error(),
                                 "Original completion already has an error"
                             );
                             original_c.error(CompletionError::DecryptionError { page_idx });
