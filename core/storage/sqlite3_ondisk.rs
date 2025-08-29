@@ -960,8 +960,7 @@ pub fn begin_write_btree_page(pager: &Pager, page: &PageRef) -> Result<Completio
     let page_id = page.get().id;
     tracing::trace!("begin_write_btree_page(page_id={})", page_id);
     let buffer = {
-        let page = page.get();
-        let contents = page.contents.as_ref().unwrap();
+        let contents = page.get_contents();
         contents.buffer.clone()
     };
 
