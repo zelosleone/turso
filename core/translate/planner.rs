@@ -417,7 +417,7 @@ fn parse_table(
 ) -> Result<()> {
     let normalized_qualified_name = normalize_ident(qualified_name.name.as_str());
     let database_id = connection.resolve_database_id(qualified_name)?;
-    let table_name = qualified_name.name.clone();
+    let table_name = &qualified_name.name;
 
     // Check if the FROM clause table is referring to a CTE in the current scope.
     if let Some(cte_idx) = ctes
