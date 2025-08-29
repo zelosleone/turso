@@ -950,7 +950,7 @@ impl Limbo {
         let pragma_sql = format!("PRAGMA table_info({view_name})");
 
         let mut columns = Vec::new();
-        let handler = |row: &turso_core::Row, _writer: &mut dyn Write| -> anyhow::Result<()> {
+        let handler = |row: &turso_core::Row| -> anyhow::Result<()> {
             // Column name is in the second column (index 1) of PRAGMA table_info
             if let Ok(Value::Text(col_name)) = row.get::<&Value>(1) {
                 columns.push(col_name.as_str().to_string());
@@ -1105,7 +1105,7 @@ impl Limbo {
         };
 
         let mut indexes = String::new();
-        let handler = |row: &turso_core::Row, _writer: &mut dyn Write| -> anyhow::Result<()> {
+        let handler = |row: &turso_core::Row| -> anyhow::Result<()> {
             if let Ok(Value::Text(idx)) = row.get::<&Value>(0) {
                 indexes.push_str(idx.as_str());
                 indexes.push(' ');
@@ -1136,7 +1136,7 @@ impl Limbo {
         };
 
         let mut tables = String::new();
-        let handler = |row: &turso_core::Row, _writer: &mut dyn Write| -> anyhow::Result<()> {
+        let handler = |row: &turso_core::Row| -> anyhow::Result<()> {
             if let Ok(Value::Text(table)) = row.get::<&Value>(0) {
                 tables.push_str(table.as_str());
                 tables.push(' ');
@@ -1164,14 +1164,14 @@ impl Limbo {
 
     fn handle_row<F>(&mut self, sql: &str, mut handler: F) -> anyhow::Result<()>
     where
-        F: FnMut(&turso_core::Row, &mut dyn Write) -> anyhow::Result<()>,
+        F: FnMut(&turso_core::Row) -> anyhow::Result<()>,
     {
         match self.conn.query(sql) {
             Ok(Some(ref mut rows)) => loop {
                 match rows.step()? {
                     StepResult::Row => {
                         let row = rows.row().unwrap();
-                        handler(row, self.writer.as_mut().unwrap())?;
+                        handler(row)?;
                     }
                     StepResult::IO => {
                         rows.run_once()?;
