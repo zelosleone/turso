@@ -34,7 +34,7 @@ fn get_exponential_formatted_str(number: &f64, uppercase: bool) -> crate::Result
     }
 }
 
-// TODO: Support %!.3s %x, %X, %o. flags: - + 0 ! ,
+// TODO: Support %!.3s, %o. flags: - + 0 ! ,
 #[inline(always)]
 pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
     if values.is_empty() {
@@ -183,6 +183,30 @@ pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
                 let value_str: String = format!("{value}");
                 if !value_str.is_empty() {
                     result.push_str(&value_str[0..1]);
+                }
+                args_index += 1;
+            }
+            Some('x') => {
+                if args_index >= values.len() {
+                    return Err(LimboError::InvalidArgument("not enough arguments".into()));
+                }
+                let value = &values[args_index].get_value();
+                match value {
+                    Value::Float(f) => result.push_str(&format!("{:x}", *f as i64)),
+                    Value::Integer(i) => result.push_str(&format!("{i:x}")),
+                    _ => result.push('0'),
+                }
+                args_index += 1;
+            }
+            Some('X') => {
+                if args_index >= values.len() {
+                    return Err(LimboError::InvalidArgument("not enough arguments".into()));
+                }
+                let value = &values[args_index].get_value();
+                match value {
+                    Value::Float(f) => result.push_str(&format!("{:X}", *f as i64)),
+                    Value::Integer(i) => result.push_str(&format!("{i:X}")),
+                    _ => result.push('0'),
                 }
                 args_index += 1;
             }
@@ -434,6 +458,44 @@ mod tests {
                 vec![text("Exp: %e"), text("1.230000e+02")],
                 text("Exp: 1.230000e+02"),
             ),
+        ];
+
+        for (input, expected) in test_cases {
+            assert_eq!(exec_printf(&input).unwrap(), *expected.get_value());
+        }
+    }
+
+    #[test]
+    fn test_printf_hexadecimal_formatting() {
+        let test_cases = vec![
+            // Simple number
+            (vec![text("hex: %x"), integer(4)], text("hex: 4")),
+            // Bigger Number
+            (
+                vec![text("hex: %x"), integer(15565303546)],
+                text("hex: 39fc3aefa"),
+            ),
+            // Uppercase letters
+            (
+                vec![text("hex: %X"), integer(15565303546)],
+                text("hex: 39FC3AEFA"),
+            ),
+            // Negative
+            (
+                vec![text("hex: %x"), integer(-15565303546)],
+                text("hex: fffffffc603c5106"),
+            ),
+            // Float
+            (vec![text("hex: %x"), float(42.5)], text("hex: 2a")),
+            // Negative Float
+            (
+                vec![text("hex: %x"), float(-42.5)],
+                text("hex: ffffffffffffffd6"),
+            ),
+            // Text
+            (vec![text("hex: %x"), text("42")], text("hex: 0")),
+            // Empty Text
+            (vec![text("hex: %x"), text("")], text("hex: 0")),
         ];
 
         for (input, expected) in test_cases {
