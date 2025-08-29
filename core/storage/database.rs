@@ -103,25 +103,29 @@ impl DatabaseStorage for DatabaseFile {
                     let Ok((buf, bytes_read)) = res else {
                         return;
                     };
-                    if bytes_read > 0 {
-                        match encryption_ctx.decrypt_page(buf.as_slice(), page_idx) {
-                            Ok(decrypted_data) => {
-                                let original_buf = original_c.as_read().buf();
-                                original_buf.as_mut_slice().copy_from_slice(&decrypted_data);
-                                original_c.complete(bytes_read);
-                            }
-                            Err(_) => {
-                                tracing::error!(
-                                    "Failed to decrypt page data for page_id={page_idx}"
-                                );
-                                original_c.complete(-1);
-                            }
+                    assert!(
+                        bytes_read > 0,
+                        "Expected to read some data on success for page_id={page_idx}"
+                    );
+                    match encryption_ctx.decrypt_page(buf.as_slice(), page_idx) {
+                        Ok(decrypted_data) => {
+                            let original_buf = original_c.as_read().buf();
+                            original_buf.as_mut_slice().copy_from_slice(&decrypted_data);
+                            original_c.complete(bytes_read);
                         }
-                    } else {
-                        original_c.complete(bytes_read);
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to decrypt page data for page_id={page_idx}: {e}"
+                            );
+                            assert_eq!(
+                                original_c.has_error(),
+                                false,
+                                "Original completion already has an error"
+                            );
+                            original_c.error(CompletionError::DecryptionError { page_idx });
+                        }
                     }
                 });
-
             let new_completion = Completion::new_read(read_buffer, decrypt_complete);
             self.file.pread(pos, new_completion)
         } else {
