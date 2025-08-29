@@ -1,6 +1,7 @@
 use std::{
     fmt::Display,
     fs,
+    num::NonZeroU32,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -9,7 +10,7 @@ use anyhow::Context;
 use garde::Validate;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use sql_generation::generation::Opts;
+use sql_generation::generation::{InsertOpts, LargeTableOpts, Opts, QueryOpts, TableOpts};
 use strum::EnumString;
 
 use crate::profiles::{io::IOProfile, query::QueryProfile};
@@ -41,11 +42,25 @@ impl Default for Profile {
 
 impl Profile {
     pub fn write_heavy() -> Self {
-        Profile {
+        let profile = Profile {
             query: QueryProfile {
                 gen_opts: Opts {
                     // TODO: in the future tweak blob size for bigger inserts
                     // TODO: increase number of rows as well
+                    table: TableOpts {
+                        large_table: LargeTableOpts {
+                            large_table_prob: 0.4,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    query: QueryOpts {
+                        insert: InsertOpts {
+                            min_rows: NonZeroU32::new(5).unwrap(),
+                            max_rows: NonZeroU32::new(11).unwrap(),
+                        },
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 select_weight: 30,
@@ -55,12 +70,16 @@ impl Profile {
                 ..Default::default()
             },
             ..Default::default()
-        }
+        };
+
+        // Validate that we as the developer are not creating an incorrect default profile
+        profile.validate().unwrap();
+        profile
     }
 
     pub fn parse_from_type(profile_type: ProfileType) -> anyhow::Result<Self> {
         let profile = match profile_type {
-            ProfileType::Default => Profile::default(),
+            ProfileType::Default => Self::default(),
             ProfileType::WriteHeavy => Self::write_heavy(),
             ProfileType::Custom(path) => {
                 Self::parse(path).with_context(|| "failed to parse JSON profile")?
@@ -73,7 +92,8 @@ impl Profile {
     pub fn parse(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let contents = fs::read_to_string(path)?;
         // use json5 so we can support comments and trailing commas
-        let profile = json5::from_str(&contents)?;
+        let profile: Profile = json5::from_str(&contents)?;
+        profile.validate()?;
         Ok(profile)
     }
 }
