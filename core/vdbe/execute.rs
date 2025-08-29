@@ -4910,7 +4910,7 @@ pub fn op_function(
 
                     (new_name, new_tbl_name, new_sql)
                 }
-                AlterTableFunc::RenameColumn => {
+                AlterTableFunc::AlterColumn => {
                     let table = {
                         match &state.registers[*start_reg + 5].get_value() {
                             Value::Text(rename_to) => normalize_ident(rename_to.as_str()),
@@ -4925,12 +4925,16 @@ pub fn op_function(
                         }
                     };
 
-                    let rename_to = {
+                    let column_def = {
                         match &state.registers[*start_reg + 7].get_value() {
-                            Value::Text(rename_to) => normalize_ident(rename_to.as_str()),
+                            Value::Text(column_def) => normalize_ident(column_def.as_str()),
                             _ => panic!("rename_to parameter should be TEXT"),
                         }
                     };
+
+                    let column_def = Parser::new(column_def.as_bytes())
+                        .parse_column_definition(true)
+                        .unwrap();
 
                     let new_sql = 'sql: {
                         if table != tbl_name {
@@ -4964,7 +4968,7 @@ pub fn op_function(
                                         ast::Expr::Id(ast::Name::Ident(id))
                                             if normalize_ident(id) == rename_from =>
                                         {
-                                            *id = rename_to.clone();
+                                            *id = column_def.col_name.as_str().to_owned();
                                         }
                                         _ => {}
                                     }
@@ -5007,7 +5011,7 @@ pub fn op_function(
                                     .find(|column| column.col_name == ast::Name::new(&rename_from))
                                     .expect("column being renamed should be present");
 
-                                column.col_name = ast::Name::new(&rename_to);
+                                *column = column_def;
 
                                 Some(
                                     ast::Stmt::CreateTable {
@@ -7302,7 +7306,7 @@ pub fn op_add_column(
     Ok(InsnFunctionStepResult::Step)
 }
 
-pub fn op_rename_column(
+pub fn op_alter_column(
     program: &Program,
     state: &mut ProgramState,
     insn: &Insn,
@@ -7310,15 +7314,17 @@ pub fn op_rename_column(
     mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     load_insn!(
-        RenameColumn {
+        AlterColumn {
             table: table_name,
             column_index,
-            name
+            definition,
         },
         insn
     );
 
     let conn = program.connection.clone();
+
+    let new_column = crate::schema::Column::from(definition);
 
     conn.with_schema_mut(|schema| {
         let table = schema
@@ -7346,13 +7352,13 @@ pub fn op_rename_column(
                     if index_column.name
                         == *column.name.as_ref().expect("btree column should be named")
                     {
-                        index_column.name = name.to_owned();
+                        index_column.name = definition.col_name.as_str().to_owned();
                     }
                 }
             }
         }
 
-        column.name = Some(name.to_owned());
+        *column = new_column;
     });
 
     state.pc += 1;

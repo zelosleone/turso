@@ -583,14 +583,14 @@ impl Display for MathFunc {
 #[derive(Debug)]
 pub enum AlterTableFunc {
     RenameTable,
-    RenameColumn,
+    AlterColumn,
 }
 
 impl Display for AlterTableFunc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AlterTableFunc::RenameTable => write!(f, "limbo_rename_table"),
-            AlterTableFunc::RenameColumn => write!(f, "limbo_rename_column"),
+            AlterTableFunc::AlterColumn => write!(f, "limbo_rename_column"),
         }
     }
 }

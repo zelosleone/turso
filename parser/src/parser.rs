@@ -3419,7 +3419,7 @@ impl<'a> Parser<'a> {
         Ok(result)
     }
 
-    fn parse_column_definition(&mut self, in_alter: bool) -> Result<ColumnDefinition> {
+    pub fn parse_column_definition(&mut self, in_alter: bool) -> Result<ColumnDefinition> {
         let col_name = self.parse_nm()?;
         if !in_alter && col_name.as_str().eq_ignore_ascii_case("rowid") {
             return Err(Error::Custom("cannot use reserved word: ROWID".to_owned()));
