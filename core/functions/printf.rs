@@ -34,7 +34,7 @@ fn get_exponential_formatted_str(number: &f64, uppercase: bool) -> crate::Result
     }
 }
 
-// TODO: Support %!.3s, %o. flags: - + 0 ! ,
+// TODO: Support %!.3s. flags: - + 0 ! ,
 #[inline(always)]
 pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
     if values.is_empty() {
@@ -206,6 +206,18 @@ pub fn exec_printf(values: &[Register]) -> crate::Result<Value> {
                 match value {
                     Value::Float(f) => result.push_str(&format!("{:X}", *f as i64)),
                     Value::Integer(i) => result.push_str(&format!("{i:X}")),
+                    _ => result.push('0'),
+                }
+                args_index += 1;
+            }
+            Some('o') => {
+                if args_index >= values.len() {
+                    return Err(LimboError::InvalidArgument("not enough arguments".into()));
+                }
+                let value = &values[args_index].get_value();
+                match value {
+                    Value::Float(f) => result.push_str(&format!("{:o}", *f as i64)),
+                    Value::Integer(i) => result.push_str(&format!("{i:o}")),
                     _ => result.push('0'),
                 }
                 args_index += 1;
@@ -496,6 +508,39 @@ mod tests {
             (vec![text("hex: %x"), text("42")], text("hex: 0")),
             // Empty Text
             (vec![text("hex: %x"), text("")], text("hex: 0")),
+        ];
+
+        for (input, expected) in test_cases {
+            assert_eq!(exec_printf(&input).unwrap(), *expected.get_value());
+        }
+    }
+
+    #[test]
+    fn test_printf_octal_formatting() {
+        let test_cases = vec![
+            // Simple number
+            (vec![text("octal: %o"), integer(4)], text("octal: 4")),
+            // Bigger Number
+            (
+                vec![text("octal: %o"), integer(15565303546)],
+                text("octal: 163760727372"),
+            ),
+            // Negative
+            (
+                vec![text("octal: %o"), integer(-15565303546)],
+                text("octal: 1777777777614017050406"),
+            ),
+            // Float
+            (vec![text("octal: %o"), float(42.5)], text("octal: 52")),
+            // Negative Float
+            (
+                vec![text("octal: %o"), float(-42.5)],
+                text("octal: 1777777777777777777726"),
+            ),
+            // Text
+            (vec![text("octal: %o"), text("42")], text("octal: 0")),
+            // Empty Text
+            (vec![text("octal: %o"), text("")], text("octal: 0")),
         ];
 
         for (input, expected) in test_cases {
