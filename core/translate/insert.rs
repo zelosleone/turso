@@ -399,7 +399,8 @@ pub fn translate_insert(
         });
         let rowid_column_name = insertion.key.column_name();
 
-        // emit halt for every case *except* when upsert handles the conflict
+        // Conflict on rowid: attempt to route through UPSERT if it targets the PK, otherwise raise constraint.
+        // emit Halt for every case *except* when upsert handles the conflict
         'emit_halt: {
             if let Some(ref mut upsert) = upsert_opt.as_mut() {
                 if upsert_matches_pk(upsert, &table) {
@@ -515,6 +516,7 @@ pub fn translate_insert(
                 },
             );
 
+            // again, emit halt for every case *except* when upsert handles the conflict
             'emit_halt: {
                 if let Some(ref mut upsert) = upsert_opt.as_mut() {
                     if upsert_matches_index(upsert, index, &table) {
@@ -558,6 +560,7 @@ pub fn translate_insert(
                         break 'emit_halt;
                     }
                 }
+                // No matching UPSERT rule: unique constraint violation.
                 program.emit_insn(Insn::Halt {
                     err_code: SQLITE_CONSTRAINT_PRIMARYKEY,
                     description: column_names,
