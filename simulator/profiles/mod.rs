@@ -48,8 +48,8 @@ impl Profile {
                     // TODO: increase number of rows as well
                     ..Default::default()
                 },
-                read_weight: 30,
-                write_weight: 70,
+                select_weight: 30,
+                insert_weight: 70,
                 delete_weight: 0,
                 update_weight: 0,
                 ..Default::default()

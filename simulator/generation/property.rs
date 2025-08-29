@@ -1046,32 +1046,25 @@ pub(crate) fn remaining(
     opts: &QueryProfile,
     stats: &InteractionStats,
 ) -> Remaining {
-    let total_weight = opts.read_weight + opts.write_weight;
-
-    // Total amount of reads. Only considers select operations
-    let total_reads = (max_interactions * opts.read_weight) / total_weight;
-    // Total amount of writes.
-    let total_writes = (max_interactions * opts.write_weight) / total_weight;
-
-    let remaining_select = total_reads
-        .checked_sub(stats.select_count)
-        .unwrap_or_default();
-
-    // This total is the sum of all the query weights that are write operations
-    let sum_write_weight = opts.create_table_weight
+    let total_weight = opts.select_weight
+        + opts.create_table_weight
         + opts.create_index_weight
         + opts.insert_weight
         + opts.update_weight
         + opts.delete_weight
         + opts.drop_table_weight;
 
-    let total_insert = (total_writes * opts.insert_weight) / sum_write_weight;
-    let total_create = (total_writes * opts.create_table_weight) / sum_write_weight;
-    let total_create_index = (total_writes * opts.create_index_weight) / sum_write_weight;
-    let total_delete = (total_writes * opts.delete_weight) / sum_write_weight;
-    let total_update = (total_writes * opts.update_weight) / sum_write_weight;
-    let total_drop = (total_writes * opts.drop_table_weight) / sum_write_weight;
+    let total_select = (max_interactions * opts.select_weight) / total_weight;
+    let total_insert = (max_interactions * opts.insert_weight) / total_weight;
+    let total_create = (max_interactions * opts.create_table_weight) / total_weight;
+    let total_create_index = (max_interactions * opts.create_index_weight) / total_weight;
+    let total_delete = (max_interactions * opts.delete_weight) / total_weight;
+    let total_update = (max_interactions * opts.update_weight) / total_weight;
+    let total_drop = (max_interactions * opts.drop_table_weight) / total_weight;
 
+    let remaining_select = total_select
+        .checked_sub(stats.select_count)
+        .unwrap_or_default();
     let remaining_insert = total_insert
         .checked_sub(stats.insert_count)
         .unwrap_or_default();
