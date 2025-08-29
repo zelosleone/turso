@@ -25,10 +25,13 @@ use crate::{
     },
 };
 
-// What we extract from each ON CONFLICT target term
+/// A ConflictTarget is extracted from each ON CONFLICT target,
+// e.g. INSERT INTO x(a) ON CONFLICT  *(a COLLATE nocase)*
 #[derive(Debug, Clone)]
 pub struct ConflictTarget {
+    /// The normalized column name in question
     col_name: String,
+    /// Possible collation name, normalized to lowercase
     collate: Option<String>,
 }
 
@@ -71,7 +74,7 @@ fn extract_target_key(e: &ast::Expr) -> Option<ConflictTarget> {
 // If `idx_col.collation` is None, fall back to the column default or "BINARY".
 fn effective_collation_for_index_col(idx_col: &IndexColumn, table: &Table) -> String {
     if let Some(c) = idx_col.collation.as_ref() {
-        return c.to_string();
+        return c.to_string().to_ascii_lowercase();
     }
     // Otherwise use the table default, or default to BINARY
     table
@@ -175,9 +178,11 @@ pub fn rewrite_excluded_in_expr(expr: &mut Expr, insertion: &Insertion) {
     }
 }
 
+/// Match ON CONFLICT target to the PRIMARY KEY, if any.
+/// If no target is specified, it is an automatic match for PRIMARY KEY
 pub fn upsert_matches_pk(upsert: &Upsert, table: &Table) -> bool {
-    // Omitted target is automatic match for primary key
     let Some(t) = upsert.index.as_ref() else {
+        // Omitted target is automatic
         return true;
     };
     if !t.targets.len().eq(&1) {
@@ -204,7 +209,7 @@ pub struct KeySig {
 /// coverage, and honoring collations. `table` is used to derive effective collation.
 pub fn upsert_matches_index(upsert: &Upsert, index: &Index, table: &Table) -> bool {
     let Some(target) = upsert.index.as_ref() else {
-        // catch-all ON CONFLICT DO
+        // catch-all
         return true;
     };
     // if not unique or column count differs, no match
@@ -267,9 +272,28 @@ pub fn upsert_matches_index(upsert: &Upsert, index: &Index, table: &Table) -> bo
 }
 
 #[allow(clippy::too_many_arguments)]
-/// https://sqlite.org/lang_upsert.html
-/// Column names in the expressions of a DO UPDATE refer to the original unchanged value of the column, before the attempted INSERT.
-/// To use the value that would have been inserted had the constraint not failed, add the special "excluded." table qualifier to the column name.
+/// Emit the bytecode to implement the `DO UPDATE` arm of an UPSERT.
+///
+/// This routine is entered after the caller has determined that an INSERT
+/// would violate a UNIQUE/PRIMARY KEY constraint and that the user requested
+/// `ON CONFLICT ... DO UPDATE`.
+///
+/// High-level flow:
+/// 1. Seek to the conflicting row by rowid and load the current row snapshot
+///    into a contiguous set of registers.
+/// 2. Optionally duplicate CURRENT into BEFORE* (for index rebuild and CDC).
+/// 3. Copy CURRENT into NEW, then evaluate SET expressions into NEW,
+///    with all references to the target table columns rewritten to read from
+///    the CURRENT registers (per SQLite semantics).
+/// 4. Enforce NOT NULL constraints and (if STRICT) type checks on NEW.
+/// 5. Rebuild indexes (delete keys using BEFORE, insert keys using NEW).
+/// 6. Rewrite the table row payload at the same rowid with NEW.
+/// 7. Emit CDC rows and RETURNING output if requested.
+/// 8. Jump to `row_done_label`.
+///
+/// Semantics reference: https://sqlite.org/lang_upsert.html
+/// Column references in the DO UPDATE expressions refer to the original
+/// (unchanged) row. To refer to would-be inserted values, use `excluded.x`.
 pub fn emit_upsert(
     program: &mut ProgramBuilder,
     schema: &Schema,
@@ -321,7 +345,8 @@ pub fn emit_upsert(
         None
     };
 
-    // Build NEW image = copy of CURRENT
+    // NEW snapshot starts as a copy of CURRENT, then SET expressions overwrite
+    // the assigned columns. matching SQLite semantics of UPDATE reading the old row.
     let new_start = program.alloc_registers(num_cols);
     program.emit_insn(Insn::Copy {
         src_reg: current_start,
@@ -334,7 +359,7 @@ pub fn emit_upsert(
         rewrite_target_cols_to_current_row(e, table, current_start, conflict_rowid_reg);
     };
 
-    // WHERE predicate
+    // WHERE predicate on the target row. If false or NULL, skip the UPDATE.
     if let Some(pred) = where_clause.as_mut() {
         rewrite_target(pred);
         let pr = program.alloc_register();
@@ -346,7 +371,7 @@ pub fn emit_upsert(
         });
     }
 
-    // Apply SET into new_start, read from current_start via rewrites
+    // Evaluate each SET expression into the NEW row img
     for (col_idx, expr) in set_pairs.iter_mut() {
         rewrite_target(expr);
         translate_expr_no_constant_opt(
@@ -357,7 +382,6 @@ pub fn emit_upsert(
             resolver,
             NoConstantOptReason::RegisterReuse,
         )?;
-
         let col = &table.columns()[*col_idx];
         if col.notnull && !col.is_rowid_alias {
             program.emit_insn(Insn::HaltIfNull {
@@ -368,7 +392,7 @@ pub fn emit_upsert(
         }
     }
 
-    // STRICT type-check on NEW snapshot if applicable
+    // If STRICT, perform type checks on the NEW image
     if let Some(bt) = table.btree() {
         if bt.is_strict {
             program.emit_insn(Insn::TypeCheck {
@@ -380,7 +404,7 @@ pub fn emit_upsert(
         }
     }
 
-    // Rebuild indexes (delete old keys using BEFORE, insert new keys using NEW)
+    // Rebuild indexes: remove keys corresponding to BEFORE and insert keys for NEW.
     if let Some(before) = before_start {
         for (idx_name, _root, idx_cid) in idx_cursors {
             let idx_meta = schema
@@ -388,7 +412,6 @@ pub fn emit_upsert(
                 .expect("index exists");
             let k = idx_meta.columns.len();
 
-            // delete old
             let del = program.alloc_registers(k + 1);
             for (i, ic) in idx_meta.columns.iter().enumerate() {
                 let (ci, _) = table.get_column_by_name(&ic.name).unwrap();
@@ -410,7 +433,6 @@ pub fn emit_upsert(
                 raise_error_if_no_matching_entry: false,
             });
 
-            // insert new
             let ins = program.alloc_registers(k + 1);
             for (i, ic) in idx_meta.columns.iter().enumerate() {
                 let (ci, _) = table.get_column_by_name(&ic.name).unwrap();
@@ -510,10 +532,12 @@ pub fn emit_upsert(
     Ok(())
 }
 
-/// Normalizes a list of SET items into (pos_in_table, Expr) pairs using the same
-/// rules as UPDATE. `set_items`
+/// Normalize the `SET` clause into `(column_index, Expr)` pairs using table layout.
 ///
-/// `rewrite_excluded_in_expr` must be run on each RHS first.
+/// Supports multi-target row-value SETs: `SET (a, b) = (expr1, expr2)`.
+/// Enforces same number of column names and RHS values.
+/// Rewrites `EXCLUDED.*` references to direct `Register` reads from the insertion registers
+/// If the same column is assigned multiple times, the last assignment wins.
 pub fn collect_set_clauses_for_upsert(
     table: &Table,
     set_items: &mut [ast::Set],
@@ -545,7 +569,6 @@ pub fn collect_set_clauses_for_upsert(
             let Some(idx) = lookup.get(&normalize_ident(cn.as_str())) else {
                 bail_parse_error!("no such column: {}", cn);
             };
-            // last one wins
             if let Some(existing) = out.iter_mut().find(|(i, _)| *i == *idx) {
                 existing.1 = e;
             } else {
@@ -556,15 +579,12 @@ pub fn collect_set_clauses_for_upsert(
     Ok(out)
 }
 
-/// In Upsert, we load the target row into a set of registers.
-/// table: testing(a,b,c);
-/// 1. Of the Row in question that has conflicted: load a, b, c into registers R1, R2, R3.
-/// 2. instead of rewriting all the Expr::Id("a") to Expr::Column{..}, we can just rewrite
-///    it to Expr::Register(R1), and any columns referenced in the UPDATE DO set clause
-///    can then have the expression translated into that register.
+/// Rewrite references to the target table's columns in an expression tree so that
+/// they read from registers containing the CURRENT (pre-update) row snapshot.
 ///
-/// Rewrite references to the *target table* columns to the registers that hold
-/// the original row image already loaded in `emit_upsert`.
+/// This matches SQLite's rule that unqualified column refs in the DO UPDATE arm
+/// refer to the original row, not the would-be inserted values, which must use
+/// `EXCLUDED.x` and are handled earlier by `rewrite_excluded_in_expr`.
 fn rewrite_target_cols_to_current_row(
     expr: &mut ast::Expr,
     table: &Table,
