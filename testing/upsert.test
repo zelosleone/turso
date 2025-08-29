@@ -1,0 +1,186 @@
+#!/usr/bin/env tclsh
+set testdir [file dirname $argv0]
+source $testdir/tester.tcl
+
+do_execsql_test_on_specific_db {:memory:} upsert-pk-update {
+    CREATE TABLE t (id INTEGER PRIMARY KEY, name);
+    INSERT INTO t VALUES (1,'old');
+    INSERT INTO t VALUES (1,'new') ON CONFLICT DO UPDATE SET name = excluded.name;
+    SELECT * FROM t;
+} {1|new}
+
+do_execsql_test_on_specific_db {:memory:} upsert-pk-do-nothing {
+    CREATE TABLE t (id INTEGER PRIMARY KEY, name);
+    INSERT INTO t VALUES (1,'new');
+    INSERT INTO t VALUES (1,'ignored') ON CONFLICT DO NOTHING;
+    SELECT * FROM t;
+} {1|new}
+
+
+do_execsql_test_on_specific_db {:memory:} upsert-unique-update {
+    CREATE TABLE u (a, b, c);
+    CREATE UNIQUE INDEX u_a ON u(a);
+    INSERT INTO u VALUES (1,10,100);
+    INSERT INTO u VALUES (1,20,200) ON CONFLICT(a) DO UPDATE SET b = excluded.b, c = excluded.c;
+    SELECT * FROM u;
+} {1|20|200}
+
+do_execsql_test_on_specific_db {:memory:} upsert-unique-do-nothing {
+    CREATE TABLE u (a, b, c);
+    CREATE UNIQUE INDEX u_a ON u(a);
+    INSERT INTO u VALUES (1,10,100);
+    INSERT INTO u VALUES (2,30,300) ON CONFLICT(a) DO NOTHING;
+    SELECT * FROM u ORDER BY a;
+} {1|10|100
+2|30|300}
+
+do_execsql_test_on_specific_db {:memory:} upsert-where-guard-no-change {
+    CREATE TABLE g (a UNIQUE, b);
+    INSERT INTO g VALUES (1,'x');
+    INSERT INTO g VALUES (1,'y') ON CONFLICT(a) DO UPDATE SET b = excluded.b WHERE b IS NULL;
+    SELECT * FROM g;
+} {1|x}
+
+do_execsql_test_on_specific_db {:memory:} upsert-where-guard-apply {
+    CREATE TABLE g (a UNIQUE, b);
+    INSERT INTO g VALUES (1,NULL);
+    INSERT INTO g VALUES (1,'y') ON CONFLICT(a) DO UPDATE SET b = excluded.b WHERE b IS NULL;
+    SELECT * FROM g;
+} {1|y}
+
+do_execsql_test_on_specific_db {:memory:} upsert-selfref-and-excluded {
+    CREATE TABLE s (a UNIQUE, b, c);
+    INSERT INTO s VALUES (1,10,'old');
+    INSERT INTO s VALUES (1,99,'new')
+      ON CONFLICT(a) DO UPDATE SET b = b + 1, c = excluded.c;
+    SELECT * FROM s;
+} {1|11|new}
+
+do_execsql_test_on_specific_db {:memory:} upsert-values-mixed-insert-update {
+    CREATE TABLE m (a UNIQUE, b);
+    INSERT INTO m VALUES (1,'one');
+    INSERT INTO m VALUES (1,'uno'), (2,'dos')
+      ON CONFLICT(a) DO UPDATE SET b = excluded.b;
+    SELECT * FROM m ORDER BY a;
+} {1|uno
+2|dos}
+
+do_execsql_test_on_specific_db {:memory:} upsert-select-mixed {
+    CREATE TABLE ms (a UNIQUE, b);
+    INSERT INTO ms VALUES (1,'one');
+    INSERT INTO ms
+      SELECT 1,'ONE' UNION ALL SELECT 2,'TWO'
+      ON CONFLICT(a) DO UPDATE SET b = excluded.b;
+    SELECT * FROM ms ORDER BY a;
+} {1|ONE
+2|TWO}
+
+do_execsql_test_on_specific_db {:memory:} upsert-composite-target-orderless {
+    CREATE TABLE c (a, b, val);
+    CREATE UNIQUE INDEX c_ab ON c(a,b);
+    INSERT INTO c VALUES (1,1,'x');
+    INSERT INTO c VALUES (1,1,'y') ON CONFLICT(b,a) DO UPDATE SET val = excluded.val;
+    SELECT val FROM c WHERE a=1 AND b=1;
+} {y}
+
+do_execsql_test_on_specific_db {:memory:} upsert-collate-nocase {
+    CREATE TABLE nc (name TEXT COLLATE NOCASE UNIQUE, v);
+    INSERT INTO nc VALUES ('Alice', 1);
+    INSERT INTO nc VALUES ('aLiCe', 2)
+      ON CONFLICT(name COLLATE NOCASE) DO UPDATE SET v = excluded.v;
+    SELECT * FROM nc;
+} {Alice|2}
+
+do_execsql_test_on_specific_db {:memory:} upsert-returning-update {
+    CREATE TABLE r (id INTEGER PRIMARY KEY, name);
+    INSERT INTO r VALUES (1,'a');
+    INSERT INTO r VALUES (1,'b')
+      ON CONFLICT DO UPDATE SET name = excluded.name
+      RETURNING id, name;
+} {1|b}
+
+do_execsql_test_on_specific_db {:memory:} upsert-returning-insert {
+    CREATE TABLE r2 (id INTEGER PRIMARY KEY, name);
+    INSERT INTO r2 VALUES (2,'c')
+      ON CONFLICT DO UPDATE SET name = excluded.name
+      RETURNING id, name;
+} {2|c}
+
+do_execsql_test_on_specific_db {:memory:} upsert-returning-do-nothing-empty {
+    CREATE TABLE r3 (id INTEGER PRIMARY KEY, name);
+    INSERT INTO r3 VALUES (2,'orig');
+    INSERT INTO r3 VALUES (2,'ignored')
+      ON CONFLICT DO NOTHING
+      RETURNING id, name;
+} {}
+
+do_execsql_test_on_specific_db {:memory:} upsert-rowid-in-set {
+    CREATE TABLE rid (id INTEGER PRIMARY KEY, name);
+    INSERT INTO rid VALUES (5,'foo');
+    INSERT INTO rid VALUES (5,'bar')
+      ON CONFLICT DO UPDATE SET name = printf('id=%d', rowid);
+    SELECT * FROM rid;
+} {5|id=5}
+
+do_execsql_test_in_memory_any_error upsert-notnull-violation {
+    CREATE TABLE nn (a UNIQUE, b NOT NULL);
+    INSERT INTO nn VALUES (1,'x');
+    INSERT INTO nn VALUES (1,'y') ON CONFLICT(a) DO UPDATE SET b = NULL;
+}
+
+do_execsql_test_on_specific_db {:memory:} upsert-updates-other-unique-key {
+    CREATE TABLE idx (a UNIQUE, b UNIQUE);
+    INSERT INTO idx VALUES (1,1);
+    INSERT INTO idx VALUES (1,2) ON CONFLICT(a) DO UPDATE SET b = excluded.b;
+    SELECT * FROM idx;
+} {1|2}
+
+
+do_execsql_test_in_memory_any_error upsert-target-mismatch-errors {
+    CREATE TABLE tm (a, b UNIQUE);
+    INSERT INTO tm VALUES (1,1);
+    INSERT INTO tm VALUES (2,1)
+      ON CONFLICT(a) DO UPDATE SET a = excluded.a;  -- conflict is on b, target is a → error
+}
+
+do_execsql_test_on_specific_db {:memory:} upsert-omitted-target-matches-pk {
+    CREATE TABLE pkalias (a INTEGER PRIMARY KEY, b);
+    INSERT INTO pkalias VALUES (42,'old');
+    INSERT INTO pkalias (a,b) VALUES (42,'new') ON CONFLICT DO UPDATE SET b = excluded.b;
+    SELECT * FROM pkalias;
+} {42|new}
+
+do_execsql_test_on_specific_db {:memory:} upsert-rowvalue-set {
+    CREATE TABLE rv (a INTEGER PRIMARY KEY, b, c);
+    INSERT INTO rv VALUES (1,'x','y');
+    INSERT INTO rv VALUES (1,'B','C')
+      ON CONFLICT DO UPDATE SET (b,c) = (excluded.b, excluded.c);
+    SELECT * FROM rv;
+} {1|B|C}
+
+do_execsql_test_on_specific_db {:memory:} upsert-where-excluded-vs-target {
+    CREATE TABLE wh (a UNIQUE, b);
+    INSERT INTO wh VALUES (1,5);
+    INSERT INTO wh VALUES (1,3)
+      ON CONFLICT(a) DO UPDATE SET b = excluded.b WHERE excluded.b > b;  -- 3 > 5 → no
+    INSERT INTO wh VALUES (1,10)
+      ON CONFLICT(a) DO UPDATE SET b = excluded.b WHERE excluded.b > b; -- 10 > 5 → yes
+    SELECT * FROM wh;
+} {1|10}
+
+do_execsql_test_in_memory_any_error upsert-invalid-qualified-lhs {
+    CREATE TABLE bad (a UNIQUE, b);
+    INSERT INTO bad VALUES (1,'x');
+    INSERT INTO bad VALUES (1,'y')
+      ON CONFLICT(a) DO UPDATE SET excluded.b = 'z';
+}
+
+do_execsql_test_on_specific_db {:memory:} upsert-values-returning-mixed {
+    CREATE TABLE mix (k UNIQUE, v);
+    INSERT INTO mix VALUES (1,'one');
+    INSERT INTO mix VALUES (1,'uno'), (2,'dos')
+      ON CONFLICT(k) DO UPDATE SET v = excluded.v
+      RETURNING k, v
+      ;
+} {1|uno
+2|dos}

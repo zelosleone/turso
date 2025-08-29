@@ -541,7 +541,7 @@ pub fn collect_set_clauses_for_upsert(
             );
         }
         for (cn, mut e) in set.col_names.iter().zip(values.into_iter()) {
-            rewrite_excluded_in_expr(&mut e, insertion); // EXCLUDED.* → Register(..)
+            rewrite_excluded_in_expr(&mut e, insertion);
             let Some(idx) = lookup.get(&normalize_ident(cn.as_str())) else {
                 bail_parse_error!("no such column: {}", cn);
             };
