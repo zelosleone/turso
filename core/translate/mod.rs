@@ -34,6 +34,7 @@ pub(crate) mod select;
 pub(crate) mod subquery;
 pub(crate) mod transaction;
 pub(crate) mod update;
+pub(crate) mod upsert;
 mod values;
 pub(crate) mod view;
 
