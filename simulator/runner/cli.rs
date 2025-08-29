@@ -114,28 +114,16 @@ pub struct SimulatorCLI {
     pub disable_faulty_query: bool,
     #[clap(long, help = "disable Reopen-Database fault", default_value_t = false)]
     pub disable_reopen_database: bool,
-    #[clap(
-        long = "latency-prob",
-        help = "added IO latency probability",
-        default_value_t = 1
-    )]
-    pub latency_probability: usize,
-    #[clap(
-        long,
-        help = "Minimum tick time in microseconds for simulated time",
-        default_value_t = 1
-    )]
-    pub min_tick: u64,
-    #[clap(
-        long,
-        help = "Maximum tick time in microseconds for simulated time",
-        default_value_t = 30
-    )]
-    pub max_tick: u64,
+    #[clap(long = "latency-prob", help = "added IO latency probability")]
+    pub latency_probability: Option<usize>,
+    #[clap(long, help = "Minimum tick time in microseconds for simulated time")]
+    pub min_tick: Option<u64>,
+    #[clap(long, help = "Maximum tick time in microseconds for simulated time")]
+    pub max_tick: Option<u64>,
     #[clap(long, help = "Enable experimental MVCC feature")]
-    pub experimental_mvcc: bool,
+    pub experimental_mvcc: Option<bool>,
     #[clap(long, help = "Disable experimental indexing feature")]
-    pub disable_experimental_indexes: bool,
+    pub disable_experimental_indexes: Option<bool>,
     #[clap(
         long,
         help = "Keep all database and plan files",
@@ -202,10 +190,10 @@ impl SimulatorCLI {
             anyhow::bail!("Cannot set seed and load plan at the same time");
         }
 
-        if self.latency_probability > 100 {
+        if self.latency_probability.is_some_and(|prob| prob > 100) {
             anyhow::bail!(
                 "latency probability must be a number between 0 and 100. Got `{}`",
-                self.latency_probability
+                self.latency_probability.unwrap()
             );
         }
 

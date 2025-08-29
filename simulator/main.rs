@@ -38,7 +38,6 @@ fn main() -> anyhow::Result<()> {
 
     let profile = Profile::parse_from_type(cli_opts.profile.clone())?;
     tracing::debug!(sim_profile = ?profile);
-    dbg!(&profile);
 
     match cli_opts.subcommand {
         Some(SimulatorCommand::List) => {

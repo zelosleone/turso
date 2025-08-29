@@ -5,6 +5,7 @@ use std::panic::UnwindSafe;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use garde::Validate;
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use sql_generation::model::table::Table;
@@ -96,13 +97,15 @@ impl SimulatorEnv {
         self.connections.iter_mut().for_each(|c| c.disconnect());
         self.rng = ChaCha8Rng::seed_from_u64(self.opts.seed);
 
+        let latency_prof = &self.profile.io.latency;
+
         let io = Arc::new(
             SimulatorIO::new(
                 self.opts.seed,
                 self.opts.page_size,
-                self.opts.latency_probability,
-                self.opts.min_tick,
-                self.opts.max_tick,
+                latency_prof.latency_probability,
+                latency_prof.min_tick,
+                latency_prof.max_tick,
             )
             .unwrap(),
         );
@@ -122,8 +125,8 @@ impl SimulatorEnv {
         let db = match Database::open_file(
             io.clone(),
             db_path.to_str().unwrap(),
-            self.opts.experimental_mvcc,
-            self.opts.experimental_indexes,
+            self.profile.experimental_mvcc,
+            self.profile.query.gen_opts.indexes,
         ) {
             Ok(db) => db,
             Err(e) => {
@@ -243,23 +246,7 @@ impl SimulatorEnv {
                 as u32,
             max_time_simulation: cli_opts.maximum_time,
             disable_reopen_database: cli_opts.disable_reopen_database,
-            latency_probability: cli_opts.latency_probability,
-            experimental_mvcc: cli_opts.experimental_mvcc,
-            experimental_indexes: !cli_opts.disable_experimental_indexes,
-            min_tick: cli_opts.min_tick,
-            max_tick: cli_opts.max_tick,
         };
-
-        let io = Arc::new(
-            SimulatorIO::new(
-                seed,
-                opts.page_size,
-                cli_opts.latency_probability,
-                cli_opts.min_tick,
-                cli_opts.max_tick,
-            )
-            .unwrap(),
-        );
 
         // Remove existing database file if it exists
         let db_path = paths.db(&simulation_type, &SimulationPhase::Test);
@@ -273,11 +260,44 @@ impl SimulatorEnv {
             std::fs::remove_file(&wal_path).unwrap();
         }
 
+        let mut profile = profile.clone();
+        // Conditionals here so that we can override some profile options from the CLI
+        if let Some(mvcc) = cli_opts.experimental_mvcc {
+            profile.experimental_mvcc = mvcc;
+        }
+        if let Some(indexes) = cli_opts.disable_experimental_indexes {
+            profile.query.gen_opts.indexes = indexes;
+        }
+        if let Some(latency_prob) = cli_opts.latency_probability {
+            profile.io.latency.latency_probability = latency_prob;
+        }
+        if let Some(max_tick) = cli_opts.max_tick {
+            profile.io.latency.max_tick = max_tick;
+        }
+        if let Some(min_tick) = cli_opts.min_tick {
+            profile.io.latency.min_tick = min_tick;
+        }
+
+        profile.validate().unwrap();
+
+        let latency_prof = &profile.io.latency;
+
+        let io = Arc::new(
+            SimulatorIO::new(
+                seed,
+                opts.page_size,
+                latency_prof.latency_probability,
+                latency_prof.min_tick,
+                latency_prof.max_tick,
+            )
+            .unwrap(),
+        );
+
         let db = match Database::open_file(
             io.clone(),
             db_path.to_str().unwrap(),
-            opts.experimental_mvcc,
-            opts.experimental_indexes,
+            profile.experimental_mvcc,
+            profile.query.gen_opts.indexes,
         ) {
             Ok(db) => db,
             Err(e) => {
@@ -409,11 +429,6 @@ pub(crate) struct SimulatorOpts {
     pub(crate) max_interactions: u32,
     pub(crate) page_size: usize,
     pub(crate) max_time_simulation: usize,
-    pub(crate) latency_probability: usize,
-    pub(crate) experimental_mvcc: bool,
-    pub(crate) experimental_indexes: bool,
-    pub min_tick: u64,
-    pub max_tick: u64,
 }
 
 #[derive(Debug, Clone)]
