@@ -106,6 +106,11 @@ it should generate the necessary queries and assertions for the property.
 
 You can use the `--differential` flag to run the simulator in differential testing mode. This mode will run the same interaction plan on both Limbo and SQLite, and compare the results. It will also check for any panics or errors in either database.
 
+## Simulator Profiles
+A Simulator Profile allows you to influence query generation and I/O fault injection. You can run predefined profiles or you can create your own custom profile in a separate JSON file. You can select the profile you want by passing the `--profile` flag to he CLI. It will accept a predefined Profile name or a file path. 
+
+For development purposes, you can create profiles to test locally in a `configs/custom` folder that is gigignored
+
 ## Resources
 
 - [(reading) TigerBeetle Deterministic Simulation Testing](https://docs.tigerbeetle.com/about/vopr/)
