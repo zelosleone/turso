@@ -365,6 +365,26 @@ pub fn translate_alter_table(
                 )));
             };
 
+            if definition
+                .constraints
+                .iter()
+                .any(|c| matches!(c.constraint, ast::ColumnConstraint::PrimaryKey { .. }))
+            {
+                return Err(LimboError::ParseError(
+                    "PRIMARY KEY constraint cannot be altered".to_string(),
+                ));
+            }
+
+            if definition
+                .constraints
+                .iter()
+                .any(|c| matches!(c.constraint, ast::ColumnConstraint::Unique { .. }))
+            {
+                return Err(LimboError::ParseError(
+                    "UNIQUE constraint cannot be altered".to_string(),
+                ));
+            }
+
             let sqlite_schema = schema
                 .get_btree_table(SQLITE_TABLEID)
                 .expect("sqlite_schema should be on schema");

@@ -4851,10 +4851,10 @@ pub fn op_function(
 
                         match stmt {
                             ast::Stmt::CreateIndex {
+                                tbl_name,
                                 unique,
                                 if_not_exists,
                                 idx_name,
-                                tbl_name,
                                 columns,
                                 where_clause,
                             } => {
@@ -4866,10 +4866,10 @@ pub fn op_function(
 
                                 Some(
                                     ast::Stmt::CreateIndex {
+                                        tbl_name: ast::Name::new(&rename_to),
                                         unique,
                                         if_not_exists,
                                         idx_name,
-                                        tbl_name: ast::Name::new(&rename_to),
                                         columns,
                                         where_clause,
                                     }
@@ -4878,9 +4878,9 @@ pub fn op_function(
                                 )
                             }
                             ast::Stmt::CreateTable {
+                                tbl_name,
                                 temporary,
                                 if_not_exists,
-                                tbl_name,
                                 body,
                             } => {
                                 let table_name = normalize_ident(tbl_name.name.as_str());
@@ -4891,13 +4891,13 @@ pub fn op_function(
 
                                 Some(
                                     ast::Stmt::CreateTable {
-                                        temporary,
-                                        if_not_exists,
                                         tbl_name: ast::QualifiedName {
                                             db_name: None,
                                             name: ast::Name::new(&rename_to),
                                             alias: None,
                                         },
+                                        temporary,
+                                        if_not_exists,
                                         body,
                                     }
                                     .format()
@@ -4927,7 +4927,7 @@ pub fn op_function(
 
                     let column_def = {
                         match &state.registers[*start_reg + 7].get_value() {
-                            Value::Text(column_def) => normalize_ident(column_def.as_str()),
+                            Value::Text(column_def) => column_def.as_str(),
                             _ => panic!("rename_to parameter should be TEXT"),
                         }
                     };
@@ -4952,11 +4952,11 @@ pub fn op_function(
 
                         match stmt {
                             ast::Stmt::CreateIndex {
+                                tbl_name,
+                                mut columns,
                                 unique,
                                 if_not_exists,
                                 idx_name,
-                                tbl_name,
-                                mut columns,
                                 where_clause,
                             } => {
                                 if table != normalize_ident(tbl_name.as_str()) {
@@ -4976,11 +4976,11 @@ pub fn op_function(
 
                                 Some(
                                     ast::Stmt::CreateIndex {
+                                        tbl_name,
+                                        columns,
                                         unique,
                                         if_not_exists,
                                         idx_name,
-                                        tbl_name,
-                                        columns,
                                         where_clause,
                                     }
                                     .format()
@@ -4988,10 +4988,10 @@ pub fn op_function(
                                 )
                             }
                             ast::Stmt::CreateTable {
-                                temporary,
-                                if_not_exists,
                                 tbl_name,
                                 body,
+                                temporary,
+                                if_not_exists,
                             } => {
                                 if table != normalize_ident(tbl_name.name.as_str()) {
                                     break 'sql None;
@@ -5011,18 +5011,24 @@ pub fn op_function(
                                     .find(|column| column.col_name == ast::Name::new(&rename_from))
                                     .expect("column being renamed should be present");
 
-                                *column = column_def;
+                                match alter_func {
+                                    AlterTableFunc::AlterColumn => *column = column_def,
+                                    AlterTableFunc::RenameColumn => {
+                                        column.col_name = column_def.col_name
+                                    }
+                                    _ => unreachable!(),
+                                }
 
                                 Some(
                                     ast::Stmt::CreateTable {
-                                        temporary,
-                                        if_not_exists,
                                         tbl_name,
                                         body: ast::CreateTableBody::ColumnsAndConstraints {
                                             columns,
                                             constraints,
                                             options,
                                         },
+                                        temporary,
+                                        if_not_exists,
                                     }
                                     .format()
                                     .unwrap(),
