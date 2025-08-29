@@ -1059,8 +1059,10 @@ impl Pager {
             self.rollback(schema_did_change, connection, is_write)?;
             return Ok(IOResult::Done(PagerCommitResult::Rollback));
         }
-        let commit_status =
-            return_if_io!(self.commit_dirty_pages(connection.wal_auto_checkpoint_disabled.get()));
+        let commit_status = return_if_io!(self.commit_dirty_pages(
+            connection.wal_auto_checkpoint_disabled.get(),
+            connection.get_sync_mode()
+        ));
         wal.borrow().end_write_tx();
         wal.borrow().end_read_tx();
 
@@ -1306,6 +1308,7 @@ impl Pager {
     pub fn commit_dirty_pages(
         &self,
         wal_auto_checkpoint_disabled: bool,
+        sync_mode: crate::SyncMode,
     ) -> Result<IOResult<PagerCommitResult>> {
         let Some(wal) = self.wal.as_ref() else {
             return Err(LimboError::InternalError(
@@ -1382,7 +1385,12 @@ impl Pager {
                     if completions.is_empty() {
                         return Ok(IOResult::Done(PagerCommitResult::WalWritten));
                     } else {
-                        self.commit_info.state.set(CommitState::SyncWal);
+                        // Skip sync if synchronous mode is OFF
+                        if sync_mode == crate::SyncMode::Off {
+                            self.commit_info.state.set(CommitState::AfterSyncWal);
+                        } else {
+                            self.commit_info.state.set(CommitState::SyncWal);
+                        }
                     }
                     if !completions.iter().all(|c| c.is_completed()) {
                         io_yield_many!(completions);
@@ -1405,7 +1413,12 @@ impl Pager {
                 }
                 CommitState::Checkpoint => {
                     checkpoint_result = return_if_io!(self.checkpoint());
-                    self.commit_info.state.set(CommitState::SyncDbFile);
+                    // Skip sync if synchronous mode is OFF
+                    if sync_mode == crate::SyncMode::Off {
+                        self.commit_info.state.set(CommitState::AfterSyncDbFile);
+                    } else {
+                        self.commit_info.state.set(CommitState::SyncDbFile);
+                    }
                 }
                 CommitState::SyncDbFile => {
                     let c = sqlite3_ondisk::begin_sync(self.db_file.clone(), self.syncing.clone())?;
