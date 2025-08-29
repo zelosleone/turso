@@ -328,12 +328,14 @@ pub fn translate_alter_table(
             let from;
             let definition;
             let col_name;
+            let rename;
 
             match body {
                 ast::AlterTableBody::AlterColumn { old, new } => {
                     from = old;
                     definition = new;
                     col_name = definition.col_name.clone();
+                    rename = false;
                 }
                 ast::AlterTableBody::RenameColumn { old, new } => {
                     from = old;
@@ -343,6 +345,7 @@ pub fn translate_alter_table(
                         constraints: vec![],
                     };
                     col_name = new;
+                    rename = true;
                 }
                 _ => unreachable!(),
             }
@@ -400,7 +403,11 @@ pub fn translate_alter_table(
                     start_reg: first_column,
                     dest: out,
                     func: crate::function::FuncCtx {
-                        func: Func::AlterTable(AlterTableFunc::AlterColumn),
+                        func: Func::AlterTable(if rename {
+                            AlterTableFunc::RenameColumn
+                        } else {
+                            AlterTableFunc::AlterColumn
+                        }),
                         arg_count: 8,
                     },
                 });
@@ -433,6 +440,7 @@ pub fn translate_alter_table(
                 table: table_name.to_owned(),
                 column_index,
                 definition,
+                rename,
             });
 
             program

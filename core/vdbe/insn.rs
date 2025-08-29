@@ -1057,6 +1057,7 @@ pub enum Insn {
         table: String,
         column_index: usize,
         definition: turso_parser::ast::ColumnDefinition,
+        rename: bool,
     },
     /// Try to set the maximum page count for database P1 to the value in P3.
     /// Do not let the maximum page count fall below the current page count and

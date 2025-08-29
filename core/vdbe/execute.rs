@@ -4910,7 +4910,7 @@ pub fn op_function(
 
                     (new_name, new_tbl_name, new_sql)
                 }
-                AlterTableFunc::AlterColumn => {
+                AlterTableFunc::AlterColumn | AlterTableFunc::RenameColumn => {
                     let table = {
                         match &state.registers[*start_reg + 5].get_value() {
                             Value::Text(rename_to) => normalize_ident(rename_to.as_str()),
@@ -7318,6 +7318,7 @@ pub fn op_alter_column(
             table: table_name,
             column_index,
             definition,
+            rename,
         },
         insn
     );
@@ -7358,7 +7359,11 @@ pub fn op_alter_column(
             }
         }
 
-        *column = new_column;
+        if *rename {
+            column.name = new_column.name;
+        } else {
+            *column = new_column;
+        }
     });
 
     state.pc += 1;
