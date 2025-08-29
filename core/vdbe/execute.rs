@@ -6667,9 +6667,7 @@ pub fn op_zero_or_null(
     mv_store: Option<&Arc<MvStore>>,
 ) -> Result<InsnFunctionStepResult> {
     load_insn!(ZeroOrNull { rg1, rg2, dest }, insn);
-    if *state.registers[*rg1].get_value() == Value::Null
-        || *state.registers[*rg2].get_value() == Value::Null
-    {
+    if state.registers[*rg1].is_null() || state.registers[*rg2].is_null() {
         state.registers[*dest] = Register::Value(Value::Null)
     } else {
         state.registers[*dest] = Register::Value(Value::Integer(0));
