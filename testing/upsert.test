@@ -184,3 +184,164 @@ do_execsql_test_on_specific_db {:memory:} upsert-values-returning-mixed {
       ;
 } {1|uno
 2|dos}
+
+do_execsql_test_on_specific_db {:memory:} upsert-collate-implicit-match {
+    CREATE TABLE ci (name TEXT COLLATE NOCASE, v);
+    -- no explicit collate on index
+    CREATE UNIQUE INDEX ci_name ON ci(name);
+    INSERT INTO ci VALUES ('Alice', 1);
+    INSERT INTO ci VALUES ('aLiCe', 2)
+      ON CONFLICT(name COLLATE NOCASE) DO UPDATE SET v = excluded.v;
+    SELECT * FROM ci;
+} {Alice|2}
+
+# Target specifies BINARY but the unique index is NOCASE: target should NOT match, so expect error
+do_execsql_test_in_memory_any_error upsert-collate-target-mismatch {
+    CREATE TABLE cm (name TEXT, v);
+    CREATE UNIQUE INDEX cm_name_nocase ON cm(name COLLATE NOCASE);
+    INSERT INTO cm VALUES ('Alice', 1);
+    INSERT INTO cm VALUES ('aLiCe', 2)
+      ON CONFLICT(name COLLATE BINARY) DO UPDATE SET v = excluded.v;
+}
+
+# Omitted target must apply to conflicts on any UNIQUE/PK, should update on NOCASE index.
+do_execsql_test_on_specific_db {:memory:} upsert-collate-omitted-target-matches {
+    CREATE TABLE co (name TEXT, v);
+    CREATE UNIQUE INDEX co_name_nocase ON co(name COLLATE NOCASE);
+    INSERT INTO co VALUES ('Alice', 1);
+    INSERT INTO co VALUES ('aLiCe', 9)
+      ON CONFLICT DO UPDATE SET v = excluded.v;
+    SELECT * FROM co;
+} {Alice|9}
+
+# Composite unique with mixed collations, orderless target with explicit NOCASE on the first key.
+do_execsql_test_on_specific_db {:memory:} upsert-composite-collate-orderless {
+    CREATE TABLE cc (name TEXT, city TEXT, val);
+    CREATE UNIQUE INDEX cc_nc ON cc(name COLLATE NOCASE, city);  -- name NOCASE, city default/BINARY
+    INSERT INTO cc VALUES ('Alice','SF','old');
+    INSERT INTO cc VALUES ('aLiCe','SF','new')
+      ON CONFLICT(city, name COLLATE NOCASE) DO UPDATE SET val = excluded.val;
+    SELECT * FROM cc;
+} {Alice|SF|new}
+
+# Composite index requires exact coverage, targeting too few columns must not match.
+do_execsql_test_in_memory_any_error upsert-composite-target-too-few {
+    CREATE TABLE ct (a, b, val);
+    CREATE UNIQUE INDEX ct_ab ON ct(a,b);
+    INSERT INTO ct VALUES (1,1,'x');
+    INSERT INTO ct VALUES (1,1,'y')
+      ON CONFLICT(a) DO UPDATE SET val = excluded.val;   -- only "a" given → no match → error
+}
+
+# Qualified target (t.a) should match unique index on a.
+do_execsql_test_on_specific_db {:memory:} upsert-qualified-target {
+    CREATE TABLE qt (a UNIQUE, b);
+    INSERT INTO qt VALUES (1,'old');
+    INSERT INTO qt VALUES (1,'new')
+      ON CONFLICT(qt.a) DO UPDATE SET b = excluded.b;
+    SELECT * FROM qt;
+} {1|new}
+
+# Non-simple target expression is not allowed (e.g., lower(name)) → no match → error.
+do_execsql_test_in_memory_any_error upsert-invalid-target-expression {
+    CREATE TABLE it (name, v);
+    CREATE UNIQUE INDEX it_name ON it(name);
+    INSERT INTO it VALUES ('x',1);
+    INSERT INTO it VALUES ('x',2)
+      ON CONFLICT(lower(name)) DO UPDATE SET v = excluded.v;
+}
+
+
+# WHERE with three-valued logic: b < excluded.b is NULL if b IS NULL, should NOT update.
+do_execsql_test_on_specific_db {:memory:} upsert-where-null-3vl-no-update {
+    CREATE TABLE w3 (a UNIQUE, b);
+    INSERT INTO w3 VALUES (1, NULL);
+    INSERT INTO w3 VALUES (1, 5)
+      ON CONFLICT(a) DO UPDATE SET b = excluded.b WHERE b < excluded.b;
+    SELECT * FROM w3;
+} {1|}
+
+# WHERE false on PK conflict → behaves like DO NOTHING.
+do_execsql_test_on_specific_db {:memory:} upsert-pk-where-false {
+    CREATE TABLE pw (id INTEGER PRIMARY KEY, name);
+    INSERT INTO pw VALUES (7,'keep');
+    INSERT INTO pw VALUES (7,'drop')
+      ON CONFLICT DO UPDATE SET name = excluded.name WHERE 0;
+    SELECT * FROM pw;
+} {7|keep}
+
+# WHERE referencing both target and EXCLUDED with arithmetic.
+do_execsql_test_on_specific_db {:memory:} upsert-where-combo {
+    CREATE TABLE wc (a UNIQUE, b);
+    INSERT INTO wc VALUES (1, 10);
+    INSERT INTO wc VALUES (1, 12)
+      ON CONFLICT(a) DO UPDATE SET b = excluded.b
+      WHERE excluded.b >= b + 2;   -- 12 >= 10 + 2 → yes
+    SELECT * FROM wc;
+} {1|12}
+
+# Invalid EXCLUDED reference should error.
+do_execsql_test_in_memory_error_content upsert-invalid-excluded-column {
+    CREATE TABLE xe (a UNIQUE, v);
+    INSERT INTO xe VALUES (1, 'ok');
+    INSERT INTO xe VALUES (1, 'nope')
+      ON CONFLICT(a) DO UPDATE SET v = excluded.not_a_column;
+} {".*no such column.*"}
+
+
+# DO UPDATE changes the *conflicting key column* to a different unique value.
+do_execsql_test_on_specific_db {:memory:} upsert-update-conflicting-key {
+    CREATE TABLE uk (a UNIQUE, b);
+    INSERT INTO uk VALUES (1,'old');
+    INSERT INTO uk VALUES (1,'new')
+      ON CONFLICT(a) DO UPDATE SET a = 2, b = excluded.b;
+    SELECT * FROM uk;
+} {2|new}
+
+# DO UPDATE that writes the same values (no-op) should still succeed.
+do_execsql_test_on_specific_db {:memory:} upsert-noop-update-ok {
+    CREATE TABLE nu (a UNIQUE, b);
+    INSERT INTO nu VALUES (5,'same');
+    INSERT INTO nu VALUES (5,'irrelevant')
+      ON CONFLICT(a) DO UPDATE SET b = b;  -- no change
+    SELECT * FROM nu;
+} {5|same}
+
+# DO UPDATE that would violate a different UNIQUE constraint should error.
+do_execsql_test_in_memory_any_error upsert-update-causes-second-unique-violation {
+    CREATE TABLE uv (a UNIQUE, b UNIQUE);
+    INSERT INTO uv VALUES (1, 10);
+    INSERT INTO uv VALUES (2, 20);
+    INSERT INTO uv VALUES (1, 20)
+      ON CONFLICT(a) DO UPDATE SET b = excluded.b; # would duplicate b=20 from row a=2
+}
+
+# Multi-row VALUES with mixed conflict/non-conflict and WHERE filter in the DO UPDATE.
+do_execsql_test_on_specific_db {:memory:} upsert-multirow-mixed-where {
+    CREATE TABLE mm (k UNIQUE, v);
+    INSERT INTO mm VALUES (1,'one');
+    INSERT INTO mm VALUES (1,'two'), (2,'dos'), (1,'zzz')
+      ON CONFLICT(k) DO UPDATE SET v = excluded.v
+      WHERE excluded.v != 'zzz';  -- skip the 'zzz' update
+    SELECT * FROM mm ORDER BY k;
+} {1|two
+2|dos}
+
+# Omitted target with UNIQUE index: confirm it updates.
+do_execsql_test_on_specific_db {:memory:} upsert-omitted-target-updates-unique {
+    CREATE TABLE ou (a, b);
+    CREATE UNIQUE INDEX ou_a ON ou(a);
+    INSERT INTO ou VALUES (3,'x');
+    INSERT INTO ou VALUES (3,'y')
+      ON CONFLICT DO UPDATE SET b = excluded.b;
+    SELECT * FROM ou;
+} {3|y}
+
+# Target qualified with database.table.column should match too (assuming single db).
+do_execsql_test_on_specific_db {:memory:} upsert-doubly-qualified-target {
+    CREATE TABLE dq (a UNIQUE, b);
+    INSERT INTO dq VALUES (1,'old');
+    INSERT INTO dq VALUES (1,'new')
+      ON CONFLICT(main.dq.a) DO UPDATE SET b = excluded.b;
+    SELECT * FROM dq;
+} {1|new}
