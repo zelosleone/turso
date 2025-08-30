@@ -252,7 +252,7 @@ impl TypedValueParser for ProfileTypeParser {
         use strum::VariantNames;
         Some(Box::new(
             Self::Value::VARIANTS
-                .into_iter()
+                .iter()
                 .map(|variant| {
                     // Custom variant should be listed as a Custom path
                     if variant.eq_ignore_ascii_case("custom") {
@@ -261,7 +261,7 @@ impl TypedValueParser for ProfileTypeParser {
                         variant
                     }
                 })
-                .map(|s| PossibleValue::new(s)),
+                .map(PossibleValue::new),
         ))
     }
 }

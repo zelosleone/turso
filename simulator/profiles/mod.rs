@@ -31,6 +31,7 @@ pub struct Profile {
     pub query: QueryProfile,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for Profile {
     fn default() -> Self {
         Self {

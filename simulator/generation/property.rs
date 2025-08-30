@@ -972,7 +972,7 @@ impl Property {
 }
 
 fn assert_all_table_values(tables: &[String]) -> impl Iterator<Item = Interaction> + use<'_> {
-    let checks = tables.iter().flat_map(|table| {
+    tables.iter().flat_map(|table| {
         let select = Interaction::Query(Query::Select(Select::simple(
             table.clone(),
             Predicate::true_(),
@@ -1026,8 +1026,7 @@ fn assert_all_table_values(tables: &[String]) -> impl Iterator<Item = Interactio
             }),
         });
         [select, assertion].into_iter()
-    });
-    checks
+    })
 }
 
 #[derive(Debug)]
