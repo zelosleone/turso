@@ -726,7 +726,12 @@ impl Limbo {
                                     stats.io_time_elapsed_samples.push(start.elapsed());
                                 }
                             }
-                            Ok(StepResult::Interrupt) => break,
+                            Ok(StepResult::Interrupt) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                break;
+                            }
                             Ok(StepResult::Done) => {
                                 if let Some(ref mut stats) = statistics {
                                     stats.execute_time_elapsed_samples.push(start.elapsed());
@@ -848,6 +853,90 @@ impl Limbo {
 
                     if !table.is_empty() {
                         let _ = self.write_fmt(format_args!("{table}"));
+                    }
+                }
+                OutputMode::Line => {
+                    let mut first_row_printed = false;
+                    loop {
+                        if self.interrupt_count.load(Ordering::Acquire) > 0 {
+                            println!("Query interrupted.");
+                            return Ok(());
+                        }
+
+                        let start = Instant::now();
+
+                        let max_width = (0..rows.num_columns())
+                            .map(|i| rows.get_column_name(i).len())
+                            .max()
+                            .unwrap_or(0);
+
+                        let formatted_columns: Vec<String> = (0..rows.num_columns())
+                            .map(|i| {
+                                format!("{:>width$}", rows.get_column_name(i), width = max_width)
+                            })
+                            .collect();
+
+                        match rows.step() {
+                            Ok(StepResult::Row) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                let record = rows.row().unwrap();
+
+                                if !first_row_printed {
+                                    first_row_printed = true;
+                                } else {
+                                    self.writeln("")?;
+                                }
+
+                                for (i, value) in record.get_values().enumerate() {
+                                    self.write(&formatted_columns[i])?;
+                                    self.write(b" = ")?;
+                                    if matches!(value, Value::Null) {
+                                        let bytes = self.opts.null_value.clone();
+                                        self.write(bytes.as_bytes())?;
+                                    } else {
+                                        self.write(format!("{value}").as_bytes())?;
+                                    }
+                                    self.writeln("")?;
+                                }
+                            }
+                            Ok(StepResult::IO) => {
+                                let start = Instant::now();
+                                rows.run_once()?;
+                                if let Some(ref mut stats) = statistics {
+                                    stats.io_time_elapsed_samples.push(start.elapsed());
+                                }
+                            }
+                            Ok(StepResult::Interrupt) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                break;
+                            }
+                            Ok(StepResult::Done) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                break;
+                            }
+                            Ok(StepResult::Busy) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                let _ = self.writeln("database is busy");
+                                break;
+                            }
+                            Err(err) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                let report =
+                                    miette::Error::from(err).with_source_code(sql.to_owned());
+                                let _ = self.write_fmt(format_args!("{report:?}"));
+                                break;
+                            }
+                        }
                     }
                 }
             },
