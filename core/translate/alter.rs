@@ -28,6 +28,12 @@ pub fn translate_alter_table(
         body: alter_table,
     } = alter;
     let table_name = table_name.name.as_str();
+
+    // Check if someone is trying to ALTER a system table
+    if crate::schema::is_system_table(table_name) {
+        crate::bail_parse_error!("table {} may not be modified", table_name);
+    }
+
     if schema.table_has_indexes(table_name) && !schema.indexes_enabled() {
         // Let's disable altering a table with indices altogether instead of checking column by
         // column to be extra safe.
