@@ -202,8 +202,14 @@ pub fn upsert_matches_pk(upsert: &Upsert, table: &Table) -> bool {
 }
 
 #[derive(Hash, Debug, Eq, PartialEq, Clone)]
+/// A hashable descriptor of a single index key term used when
+/// matching an `ON CONFLICT` target against a UNIQUE index.
+/// captures only the attributes (name and effective collation) that
+/// determine whether two key terms are equivalent for conflict detection.
 pub struct KeySig {
+    /// column name, normalized to lowercase
     name: String,
+    /// defaults to "binary" if not specified on the target or col
     coll: String,
 }
 
