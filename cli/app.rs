@@ -726,7 +726,12 @@ impl Limbo {
                                     stats.io_time_elapsed_samples.push(start.elapsed());
                                 }
                             }
-                            Ok(StepResult::Interrupt) => break,
+                            Ok(StepResult::Interrupt) => {
+                                if let Some(ref mut stats) = statistics {
+                                    stats.execute_time_elapsed_samples.push(start.elapsed());
+                                }
+                                break;
+                            }
                             Ok(StepResult::Done) => {
                                 if let Some(ref mut stats) = statistics {
                                     stats.execute_time_elapsed_samples.push(start.elapsed());
