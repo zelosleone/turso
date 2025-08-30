@@ -71,8 +71,8 @@ Turso aims to be fully compatible with SQLite, with opt-in features not supporte
 | END TRANSACTION           | Partial | Alias for `COMMIT TRANSACTION`                                                    |
 | EXPLAIN                   | Yes     |                                                                                   |
 | INDEXED BY                | No      |                                                                                   |
-| INSERT                    | Partial |                                                                                   |
-| ON CONFLICT clause        | No      |                                                                                   |
+| INSERT                    | Yes     |                                                                                   |
+| ON CONFLICT clause        | Yes     |                                                                                   |
 | REINDEX                   | No      |                                                                                   |
 | RELEASE SAVEPOINT         | No      |                                                                                   |
 | REPLACE                   | No      |                                                                                   |
