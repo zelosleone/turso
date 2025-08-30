@@ -19,9 +19,9 @@ do_execsql_test_on_specific_db {:memory:} must-be-int-insert {
 4}
 
 do_execsql_test_on_specific_db {:memory:} strict-basic-creation {
-    CREATE TABLE test1 (id INTEGER, name TEXT, price REAL) STRICT;
-    INSERT INTO test1 VALUES(1, 'item1', 10.5);
-    SELECT * FROM test1;
+    create table test1 (id integer, name text, price real) strict;
+    insert into test1 values(1, 'item1', 10.5);
+    select * from test1;
 } {1|item1|10.5}
 
 do_execsql_test_in_memory_any_error  strict-require-datatype {
