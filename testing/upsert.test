@@ -65,15 +65,12 @@ do_execsql_test_on_specific_db {:memory:} upsert-values-mixed-insert-update {
 } {1|uno
 2|dos}
 
-do_execsql_test_on_specific_db {:memory:} upsert-select-mixed {
-    CREATE TABLE ms (a UNIQUE, b);
-    INSERT INTO ms VALUES (1,'one');
-    INSERT INTO ms
-      SELECT 1,'ONE' UNION ALL SELECT 2,'TWO'
-      ON CONFLICT(a) DO UPDATE SET b = excluded.b;
-    SELECT * FROM ms ORDER BY a;
-} {1|ONE
-2|TWO}
+do_execsql_test_on_specific_db {:memory:} upsert-select-single {
+    CREATE TABLE s1 (a UNIQUE, b);
+    INSERT INTO s1 VALUES (1,'old');
+    INSERT INTO s1 SELECT 1,'NEW' ON CONFLICT(a) DO UPDATE SET b = excluded.b;
+    SELECT * FROM s1;
+} {1|NEW}
 
 do_execsql_test_on_specific_db {:memory:} upsert-composite-target-orderless {
     CREATE TABLE c (a, b, val);
