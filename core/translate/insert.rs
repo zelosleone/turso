@@ -417,7 +417,7 @@ pub fn translate_insert(
                             let mut rewritten_sets =
                                 collect_set_clauses_for_upsert(&table, sets, &insertion)?;
                             if let Some(expr) = where_clause.as_mut() {
-                                rewrite_excluded_in_expr(expr, &insertion);
+                                rewrite_excluded_in_expr(expr, &insertion)?;
                             }
                             emit_upsert(
                                 &mut program,
@@ -474,8 +474,13 @@ pub fn translate_insert(
         // copy each index column from the table's column registers into these scratch regs
         for (i, column_mapping) in column_mappings.clone().enumerate() {
             // copy from the table's column register over to the index's scratch register
+            let Some(col_mapping) = column_mapping else {
+                return Err(crate::LimboError::PlanningError(
+                    "Column not found in INSERT".to_string(),
+                ));
+            };
             program.emit_insn(Insn::Copy {
-                src_reg: column_mapping.register,
+                src_reg: col_mapping.register,
                 dst_reg: idx_start_reg + i,
                 extra_amount: 0,
             });
@@ -533,7 +538,7 @@ pub fn translate_insert(
                                 let mut rewritten_sets =
                                     collect_set_clauses_for_upsert(&table, sets, &insertion)?;
                                 if let Some(expr) = where_clause.as_mut() {
-                                    rewrite_excluded_in_expr(expr, &insertion);
+                                    rewrite_excluded_in_expr(expr, &insertion)?;
                                 }
 
                                 let conflict_rowid_reg = program.alloc_register();
@@ -744,7 +749,7 @@ impl<'a> Insertion<'a> {
     }
 
     /// Returns the column mapping for a given column name.
-    pub fn get_col_mapping_by_name(&self, name: &str) -> &ColMapping<'a> {
+    pub fn get_col_mapping_by_name(&self, name: &str) -> Option<&ColMapping<'a>> {
         if let InsertionKey::RowidAlias(mapping) = &self.key {
             // If the key is a rowid alias, a NULL is emitted as the column value,
             // so we need to return the key mapping instead so that the non-NULL rowid is used
@@ -755,18 +760,15 @@ impl<'a> Insertion<'a> {
                 .as_ref()
                 .is_some_and(|n| n.eq_ignore_ascii_case(name))
             {
-                return mapping;
+                return Some(mapping);
             }
         }
-        self.col_mappings
-            .iter()
-            .find(|col| {
-                col.column
-                    .name
-                    .as_ref()
-                    .is_some_and(|n| n.eq_ignore_ascii_case(name))
-            })
-            .unwrap_or_else(|| panic!("column {name} not found in insertion"))
+        self.col_mappings.iter().find(|col| {
+            col.column
+                .name
+                .as_ref()
+                .is_some_and(|n| n.eq_ignore_ascii_case(name))
+        })
     }
 }
 

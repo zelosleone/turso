@@ -92,34 +92,35 @@ fn effective_collation_for_index_col(idx_col: &IndexColumn, table: &Table) -> St
 /// https://sqlite.org/lang_upsert.html
 ///
 /// Rewrite EXCLUDED.x to Expr::Register(<reg of x from insertion>)
-pub fn rewrite_excluded_in_expr(expr: &mut Expr, insertion: &Insertion) {
+pub fn rewrite_excluded_in_expr(expr: &mut Expr, insertion: &Insertion) -> crate::Result<()> {
     match expr {
-        // EXCLUDED.x accept Qualified with left=excluded
         Expr::Qualified(ns, col) if ns.as_str().eq_ignore_ascii_case("excluded") => {
             let cname = match col {
                 ast::Name::Ident(s) => s.as_str(),
-                _ => return,
+                _ => return Ok(()),
             };
-            let src = insertion.get_col_mapping_by_name(cname).register;
-            *expr = Expr::Register(src);
+            let Some(src) = insertion.get_col_mapping_by_name(cname) else {
+                bail_parse_error!("no such column in EXCLUDED: {}", cname);
+            };
+            *expr = Expr::Register(src.register)
         }
 
-        Expr::Collate(inner, _) => rewrite_excluded_in_expr(inner, insertion),
+        Expr::Collate(inner, _) => rewrite_excluded_in_expr(inner, insertion)?,
         Expr::Parenthesized(v) => {
             for e in v {
-                rewrite_excluded_in_expr(e, insertion)
+                rewrite_excluded_in_expr(e, insertion)?
             }
         }
         Expr::Between {
             lhs, start, end, ..
         } => {
-            rewrite_excluded_in_expr(lhs, insertion);
-            rewrite_excluded_in_expr(start, insertion);
-            rewrite_excluded_in_expr(end, insertion);
+            rewrite_excluded_in_expr(lhs, insertion)?;
+            rewrite_excluded_in_expr(start, insertion)?;
+            rewrite_excluded_in_expr(end, insertion)?;
         }
         Expr::Binary(l, _, r) => {
-            rewrite_excluded_in_expr(l, insertion);
-            rewrite_excluded_in_expr(r, insertion);
+            rewrite_excluded_in_expr(l, insertion)?;
+            rewrite_excluded_in_expr(r, insertion)?;
         }
         Expr::Case {
             base,
@@ -127,17 +128,17 @@ pub fn rewrite_excluded_in_expr(expr: &mut Expr, insertion: &Insertion) {
             else_expr,
         } => {
             if let Some(b) = base {
-                rewrite_excluded_in_expr(b, insertion)
-            }
+                rewrite_excluded_in_expr(b, insertion)?
+            };
             for (w, t) in when_then_pairs.iter_mut() {
-                rewrite_excluded_in_expr(w, insertion);
-                rewrite_excluded_in_expr(t, insertion);
+                rewrite_excluded_in_expr(w, insertion)?;
+                rewrite_excluded_in_expr(t, insertion)?;
             }
             if let Some(e) = else_expr {
-                rewrite_excluded_in_expr(e, insertion)
+                rewrite_excluded_in_expr(e, insertion)?
             }
         }
-        Expr::Cast { expr: inner, .. } => rewrite_excluded_in_expr(inner, insertion),
+        Expr::Cast { expr: inner, .. } => rewrite_excluded_in_expr(inner, insertion)?,
         Expr::FunctionCall {
             args,
             order_by,
@@ -145,37 +146,38 @@ pub fn rewrite_excluded_in_expr(expr: &mut Expr, insertion: &Insertion) {
             ..
         } => {
             for a in args {
-                rewrite_excluded_in_expr(a, insertion)
+                rewrite_excluded_in_expr(a, insertion)?
             }
             for sc in order_by {
-                rewrite_excluded_in_expr(&mut sc.expr, insertion)
+                rewrite_excluded_in_expr(&mut sc.expr, insertion)?
             }
             if let Some(ex) = &mut filter_over.filter_clause {
-                rewrite_excluded_in_expr(ex, insertion)
+                rewrite_excluded_in_expr(ex, insertion)?
             }
         }
         Expr::InList { lhs, rhs, .. } => {
-            rewrite_excluded_in_expr(lhs, insertion);
+            rewrite_excluded_in_expr(lhs, insertion)?;
             for e in rhs {
-                rewrite_excluded_in_expr(e, insertion)
+                rewrite_excluded_in_expr(e, insertion)?
             }
         }
-        Expr::InSelect { lhs, .. } => rewrite_excluded_in_expr(lhs, insertion),
-        Expr::InTable { lhs, .. } => rewrite_excluded_in_expr(lhs, insertion),
-        Expr::IsNull(inner) => rewrite_excluded_in_expr(inner, insertion),
+        Expr::InSelect { lhs, .. } => rewrite_excluded_in_expr(lhs, insertion)?,
+        Expr::InTable { lhs, .. } => rewrite_excluded_in_expr(lhs, insertion)?,
+        Expr::IsNull(inner) => rewrite_excluded_in_expr(inner, insertion)?,
         Expr::Like {
             lhs, rhs, escape, ..
         } => {
-            rewrite_excluded_in_expr(lhs, insertion);
-            rewrite_excluded_in_expr(rhs, insertion);
+            rewrite_excluded_in_expr(lhs, insertion)?;
+            rewrite_excluded_in_expr(rhs, insertion)?;
             if let Some(e) = escape {
-                rewrite_excluded_in_expr(e, insertion)
+                rewrite_excluded_in_expr(e, insertion)?
             }
         }
-        Expr::NotNull(inner) => rewrite_excluded_in_expr(inner, insertion),
-        Expr::Unary(_, inner) => rewrite_excluded_in_expr(inner, insertion),
+        Expr::NotNull(inner) => rewrite_excluded_in_expr(inner, insertion)?,
+        Expr::Unary(_, inner) => rewrite_excluded_in_expr(inner, insertion)?,
         _ => {}
     }
+    Ok(())
 }
 
 /// Match ON CONFLICT target to the PRIMARY KEY, if any.
@@ -565,7 +567,7 @@ pub fn collect_set_clauses_for_upsert(
             );
         }
         for (cn, mut e) in set.col_names.iter().zip(values.into_iter()) {
-            rewrite_excluded_in_expr(&mut e, insertion);
+            rewrite_excluded_in_expr(&mut e, insertion)?;
             let Some(idx) = lookup.get(&normalize_ident(cn.as_str())) else {
                 bail_parse_error!("no such column: {}", cn);
             };
