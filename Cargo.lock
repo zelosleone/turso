@@ -643,7 +643,7 @@ checksum = "773648b94d0e5d620f64f280777445740e61fe701025087ec8b57f45c791888b"
 
 [[package]]
 name = "core_tester"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2068,7 +2068,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_completion"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "mimalloc",
  "turso_ext",
@@ -2076,7 +2076,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_crypto"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "blake3",
  "data-encoding",
@@ -2089,7 +2089,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_csv"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "csv",
  "mimalloc",
@@ -2099,7 +2099,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_ipaddr"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "ipnetwork",
  "mimalloc",
@@ -2108,7 +2108,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_percentile"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "mimalloc",
  "turso_ext",
@@ -2116,7 +2116,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_regexp"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "mimalloc",
  "regex",
@@ -2125,7 +2125,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_sim"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2152,7 +2152,7 @@ dependencies = [
 
 [[package]]
 name = "limbo_sqlite_test_ext"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "cc",
 ]
@@ -2863,7 +2863,7 @@ dependencies = [
 
 [[package]]
 name = "py-turso"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "anyhow",
  "pyo3",
@@ -3499,7 +3499,7 @@ checksum = "d372029cb5195f9ab4e4b9aef550787dce78b124fcaee8d82519925defcd6f0d"
 
 [[package]]
 name = "sql_generation"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "anarchist-readable-name-generator-lib 0.2.0",
  "anyhow",
@@ -4000,7 +4000,7 @@ dependencies = [
 
 [[package]]
 name = "turso"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -4012,7 +4012,7 @@ dependencies = [
 
 [[package]]
 name = "turso-java"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "jni",
  "thiserror 2.0.12",
@@ -4021,7 +4021,7 @@ dependencies = [
 
 [[package]]
 name = "turso_cli"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "anyhow",
  "cfg-if",
@@ -4054,7 +4054,7 @@ dependencies = [
 
 [[package]]
 name = "turso_core"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "aegis",
  "aes",
@@ -4113,7 +4113,7 @@ dependencies = [
 
 [[package]]
 name = "turso_dart"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "flutter_rust_bridge",
  "turso_core",
@@ -4121,7 +4121,7 @@ dependencies = [
 
 [[package]]
 name = "turso_ext"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "chrono",
  "getrandom 0.3.2",
@@ -4130,7 +4130,7 @@ dependencies = [
 
 [[package]]
 name = "turso_ext_tests"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "env_logger 0.11.7",
  "lazy_static",
@@ -4141,7 +4141,7 @@ dependencies = [
 
 [[package]]
 name = "turso_macros"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4150,7 +4150,7 @@ dependencies = [
 
 [[package]]
 name = "turso_node"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "napi",
  "napi-build",
@@ -4161,7 +4161,7 @@ dependencies = [
 
 [[package]]
 name = "turso_parser"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "bitflags 2.9.0",
  "criterion",
@@ -4177,7 +4177,7 @@ dependencies = [
 
 [[package]]
 name = "turso_sqlite3"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "env_logger 0.11.7",
  "libc",
@@ -4190,7 +4190,7 @@ dependencies = [
 
 [[package]]
 name = "turso_sqlite3_parser"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "bitflags 2.9.0",
  "cc",
@@ -4208,7 +4208,7 @@ dependencies = [
 
 [[package]]
 name = "turso_stress"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "anarchist-readable-name-generator-lib 0.1.2",
  "antithesis_sdk",
@@ -4224,7 +4224,7 @@ dependencies = [
 
 [[package]]
 name = "turso_sync_engine"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "base64",
  "bytes",
@@ -4250,7 +4250,7 @@ dependencies = [
 
 [[package]]
 name = "turso_sync_js"
-version = "0.1.4"
+version = "0.1.5-pre.1"
 dependencies = [
  "genawaiter",
  "http",
