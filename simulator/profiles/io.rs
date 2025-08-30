@@ -11,6 +11,8 @@ pub struct IOProfile {
     pub enable: bool,
     #[garde(dive)]
     pub latency: LatencyProfile,
+    #[garde(dive)]
+    pub fault: FaultProfile,
     // TODO: expand here with header corruption options and faults on specific IO operations
 }
 
@@ -19,6 +21,7 @@ impl Default for IOProfile {
         Self {
             enable: true,
             latency: Default::default(),
+            fault: Default::default(),
         }
     }
 }
@@ -46,6 +49,31 @@ impl Default for LatencyProfile {
             latency_probability: 1,
             min_tick: 1,
             max_tick: 30,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(deny_unknown_fields, default)]
+pub struct FaultProfile {
+    #[garde(skip)]
+    pub enable: bool,
+    // TODO: modify SimIo impls to have a FaultProfile inside so they can skip faults depending on the profile
+    #[garde(skip)]
+    pub read: bool,
+    #[garde(skip)]
+    pub write: bool,
+    #[garde(skip)]
+    pub sync: bool,
+}
+
+impl Default for FaultProfile {
+    fn default() -> Self {
+        Self {
+            enable: true,
+            read: true,
+            write: true,
+            sync: true,
         }
     }
 }

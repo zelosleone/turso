@@ -13,7 +13,10 @@ use serde::{Deserialize, Serialize};
 use sql_generation::generation::{InsertOpts, LargeTableOpts, Opts, QueryOpts, TableOpts};
 use strum::EnumString;
 
-use crate::profiles::{io::IOProfile, query::QueryProfile};
+use crate::profiles::{
+    io::{FaultProfile, IOProfile},
+    query::QueryProfile,
+};
 
 pub mod io;
 pub mod query;
@@ -79,10 +82,33 @@ impl Profile {
         profile
     }
 
+    pub fn faultless() -> Self {
+        let profile = Profile {
+            io: IOProfile {
+                fault: FaultProfile {
+                    enable: false,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            query: QueryProfile {
+                create_table_weight: 0,
+                create_index_weight: 0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // Validate that we as the developer are not creating an incorrect default profile
+        profile.validate().unwrap();
+        profile
+    }
+
     pub fn parse_from_type(profile_type: ProfileType) -> anyhow::Result<Self> {
         let profile = match profile_type {
             ProfileType::Default => Self::default(),
             ProfileType::WriteHeavy => Self::write_heavy(),
+            ProfileType::Faultless => Self::faultless(),
             ProfileType::Custom(path) => {
                 Self::parse(path).with_context(|| "failed to parse JSON profile")?
             }
@@ -120,6 +146,7 @@ pub enum ProfileType {
     #[default]
     Default,
     WriteHeavy,
+    Faultless,
     #[strum(disabled)]
     Custom(PathBuf),
 }
