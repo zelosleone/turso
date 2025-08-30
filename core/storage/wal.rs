@@ -1064,10 +1064,6 @@ impl Wal for WalFile {
         page.set_locked();
         let frame = page.clone();
         let page_idx = page.get().id;
-        let encryption_ctx = {
-            let io_ctx = self.io_ctx.borrow();
-            io_ctx.encryption_context().cloned()
-        };
         let seq = self.header.checkpoint_seq;
         let complete = Box::new(move |res: Result<(Arc<Buffer>, i32), CompletionError>| {
             let Ok((buf, bytes_read)) = res else {
@@ -1080,17 +1076,6 @@ impl Wal for WalFile {
                 "read({bytes_read}) less than expected({buf_len}): frame_id={frame_id}"
             );
             let cloned = frame.clone();
-            if let Some(ctx) = encryption_ctx.clone() {
-                match ctx.decrypt_page(buf.as_slice(), page_idx) {
-                    Ok(decrypted_data) => {
-                        buf.as_mut_slice().copy_from_slice(&decrypted_data);
-                    }
-                    Err(_) => {
-                        tracing::error!("Failed to decrypt page data for frame_id={frame_id}");
-                        return;
-                    }
-                }
-            }
             finish_read_page(page.get().id, buf, cloned);
             frame.set_wal_tag(frame_id, seq);
         });
@@ -1099,6 +1084,8 @@ impl Wal for WalFile {
             offset + WAL_FRAME_HEADER_SIZE,
             buffer_pool,
             complete,
+            page_idx,
+            &self.io_ctx.borrow(),
         )
     }
 
@@ -1182,6 +1169,8 @@ impl Wal for WalFile {
                 offset + WAL_FRAME_HEADER_SIZE,
                 buffer_pool,
                 complete,
+                page_id as usize,
+                &self.io_ctx.borrow(),
             )?;
             self.io.wait_for_completion(c)?;
             return if conflict.get() {
@@ -2113,6 +2102,8 @@ impl WalFile {
             offset + WAL_FRAME_HEADER_SIZE,
             self.buffer_pool.clone(),
             complete,
+            page_id,
+            &self.io_ctx.borrow(),
         )?;
 
         Ok(InflightRead {
