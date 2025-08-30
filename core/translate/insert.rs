@@ -14,8 +14,7 @@ use crate::translate::expr::{
 };
 use crate::translate::planner::ROWID;
 use crate::translate::upsert::{
-    collect_set_clauses_for_upsert, emit_upsert, rewrite_excluded_in_expr, upsert_matches_index,
-    upsert_matches_pk,
+    collect_set_clauses_for_upsert, emit_upsert, upsert_matches_index, upsert_matches_pk,
 };
 use crate::util::normalize_ident;
 use crate::vdbe::builder::ProgramBuilderOpts;
@@ -414,15 +413,13 @@ pub fn translate_insert(
                             ref mut sets,
                             ref mut where_clause,
                         } => {
-                            let mut rewritten_sets =
-                                collect_set_clauses_for_upsert(&table, sets, &insertion)?;
-                            if let Some(expr) = where_clause.as_mut() {
-                                rewrite_excluded_in_expr(expr, &insertion)?;
-                            }
+                            let mut rewritten_sets = collect_set_clauses_for_upsert(&table, sets)?;
+
                             emit_upsert(
                                 &mut program,
                                 schema,
                                 &table,
+                                &insertion,
                                 cursor_id,
                                 insertion.key_register(),
                                 &mut rewritten_sets,
@@ -536,11 +533,7 @@ pub fn translate_insert(
                                 ref mut where_clause,
                             } => {
                                 let mut rewritten_sets =
-                                    collect_set_clauses_for_upsert(&table, sets, &insertion)?;
-                                if let Some(expr) = where_clause.as_mut() {
-                                    rewrite_excluded_in_expr(expr, &insertion)?;
-                                }
-
+                                    collect_set_clauses_for_upsert(&table, sets)?;
                                 let conflict_rowid_reg = program.alloc_register();
                                 program.emit_insn(Insn::IdxRowId {
                                     cursor_id: idx_cursor_id,
@@ -550,6 +543,7 @@ pub fn translate_insert(
                                     &mut program,
                                     schema,
                                     &table,
+                                    &insertion,
                                     cursor_id,
                                     conflict_rowid_reg,
                                     &mut rewritten_sets,
