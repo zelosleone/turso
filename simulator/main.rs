@@ -39,76 +39,82 @@ fn main() -> anyhow::Result<()> {
     let profile = Profile::parse_from_type(cli_opts.profile.clone())?;
     tracing::debug!(sim_profile = ?profile);
 
-    match cli_opts.subcommand {
-        Some(SimulatorCommand::List) => {
-            let mut bugbase = BugBase::load()?;
-            bugbase.list_bugs()
-        }
-        Some(SimulatorCommand::Loop { n, short_circuit }) => {
-            banner();
-            for i in 0..n {
-                println!("iteration {i}");
-                let result = testing_main(&cli_opts, &profile);
-                if result.is_err() && short_circuit {
-                    println!("short circuiting after {i} iterations");
-                    return result;
-                } else if result.is_err() {
-                    println!("iteration {i} failed");
-                } else {
-                    println!("iteration {i} succeeded");
-                }
+    if let Some(ref command) = cli_opts.subcommand {
+        match command {
+            SimulatorCommand::List => {
+                let mut bugbase = BugBase::load()?;
+                bugbase.list_bugs()
             }
-            Ok(())
+            SimulatorCommand::Loop { n, short_circuit } => {
+                banner();
+                for i in 0..*n {
+                    println!("iteration {i}");
+                    let result = testing_main(&cli_opts, &profile);
+                    if result.is_err() && *short_circuit {
+                        println!("short circuiting after {i} iterations");
+                        return result;
+                    } else if result.is_err() {
+                        println!("iteration {i} failed");
+                    } else {
+                        println!("iteration {i} succeeded");
+                    }
+                }
+                Ok(())
+            }
+            SimulatorCommand::Test { filter } => {
+                let mut bugbase = BugBase::load()?;
+                let bugs = bugbase.load_bugs()?;
+                let mut bugs = bugs
+                    .into_iter()
+                    .flat_map(|bug| {
+                        let runs = bug
+                            .runs
+                            .into_iter()
+                            .filter_map(|run| run.error.clone().map(|_| run))
+                            .filter(|run| run.error.as_ref().unwrap().contains(filter))
+                            .map(|run| run.cli_options)
+                            .collect::<Vec<_>>();
+
+                        runs.into_iter()
+                            .map(|mut cli_opts| {
+                                cli_opts.seed = Some(bug.seed);
+                                cli_opts.load = None;
+                                cli_opts
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>();
+
+                bugs.sort();
+                bugs.dedup_by(|a, b| a == b);
+
+                println!(
+                    "found {} previously triggered configurations with {}",
+                    bugs.len(),
+                    filter
+                );
+
+                let results = bugs
+                    .into_iter()
+                    .map(|cli_opts| testing_main(&cli_opts, &profile))
+                    .collect::<Vec<_>>();
+
+                let (successes, failures): (Vec<_>, Vec<_>) =
+                    results.into_iter().partition(|result| result.is_ok());
+                println!("the results of the change are:");
+                println!("\t{} successful runs", successes.len());
+                println!("\t{} failed runs", failures.len());
+                Ok(())
+            }
+            SimulatorCommand::PrintSchema => {
+                let schema = schemars::schema_for!(crate::Profile);
+                println!("{}", serde_json::to_string_pretty(&schema).unwrap());
+                Ok(())
+            }
         }
-        Some(SimulatorCommand::Test { filter }) => {
-            let mut bugbase = BugBase::load()?;
-            let bugs = bugbase.load_bugs()?;
-            let mut bugs = bugs
-                .into_iter()
-                .flat_map(|bug| {
-                    let runs = bug
-                        .runs
-                        .into_iter()
-                        .filter_map(|run| run.error.clone().map(|_| run))
-                        .filter(|run| run.error.as_ref().unwrap().contains(&filter))
-                        .map(|run| run.cli_options)
-                        .collect::<Vec<_>>();
-
-                    runs.into_iter()
-                        .map(|mut cli_opts| {
-                            cli_opts.seed = Some(bug.seed);
-                            cli_opts.load = None;
-                            cli_opts
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect::<Vec<_>>();
-
-            bugs.sort();
-            bugs.dedup_by(|a, b| a == b);
-
-            println!(
-                "found {} previously triggered configurations with {}",
-                bugs.len(),
-                filter
-            );
-
-            let results = bugs
-                .into_iter()
-                .map(|cli_opts| testing_main(&cli_opts, &profile))
-                .collect::<Vec<_>>();
-
-            let (successes, failures): (Vec<_>, Vec<_>) =
-                results.into_iter().partition(|result| result.is_ok());
-            println!("the results of the change are:");
-            println!("\t{} successful runs", successes.len());
-            println!("\t{} failed runs", failures.len());
-            Ok(())
-        }
-        None => {
-            banner();
-            testing_main(&cli_opts, &profile)
-        }
+    } else {
+        banner();
+        testing_main(&cli_opts, &profile)
     }
 }
 

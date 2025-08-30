@@ -165,6 +165,8 @@ pub enum SimulatorCommand {
         )]
         filter: String,
     },
+    /// Print profile Json Schema
+    PrintSchema,
 }
 
 impl SimulatorCLI {

@@ -19,7 +19,8 @@ pub mod io;
 pub mod query;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, Validate)]
-#[serde(deny_unknown_fields, default)]
+#[serde(default)]
+#[schemars(deny_unknown_fields)]
 pub struct Profile {
     #[garde(skip)]
     /// Experimental MVCC feature

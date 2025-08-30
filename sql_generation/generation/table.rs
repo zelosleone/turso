@@ -39,7 +39,7 @@ impl Arbitrary for Table {
         Table {
             rows: Vec::new(),
             name,
-            columns: Vec::from_iter(column_set.into_iter()),
+            columns: Vec::from_iter(column_set),
             indexes: vec![],
         }
     }

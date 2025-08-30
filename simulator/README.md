@@ -109,7 +109,14 @@ You can use the `--differential` flag to run the simulator in differential testi
 ## Simulator Profiles
 A Simulator Profile allows you to influence query generation and I/O fault injection. You can run predefined profiles or you can create your own custom profile in a separate JSON file. You can select the profile you want by passing the `--profile` flag to he CLI. It will accept a predefined Profile name or a file path. 
 
-For development purposes, you can create profiles to test locally in a `configs/custom` folder that is gigignored
+For development purposes, you can run `make sim-schema` to generate a JsonSchema of the `Profile` struct. Then you can create profiles to test locally in a `configs/custom` folder that is gitignored and have editor integration by adding `$schema` tag to reference the generated JsonSchema:
+
+```json
+{
+	"$schema": "./profile-schema.json",
+  ...
+}
+```
 
 ## Resources
 
