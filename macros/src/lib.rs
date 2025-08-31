@@ -439,3 +439,8 @@ pub fn derive_vtab_module(input: TokenStream) -> TokenStream {
 pub fn derive_vfs_module(input: TokenStream) -> TokenStream {
     ext::derive_vfs_module(input)
 }
+
+#[proc_macro]
+pub fn match_ignore_ascii_case(input: TokenStream) -> TokenStream {
+    ext::match_ignore_ascci_case(input)
+}
