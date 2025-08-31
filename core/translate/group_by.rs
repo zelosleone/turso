@@ -479,7 +479,11 @@ impl<'a> GroupByAggArgumentSource<'a> {
                 dest_reg_start,
                 ..
             } => {
-                program.emit_column_or_rowid(*cursor_id, *col_start, dest_reg_start + arg_idx);
+                program.emit_column_or_rowid(
+                    *cursor_id,
+                    *col_start + arg_idx,
+                    dest_reg_start + arg_idx,
+                );
                 Ok(dest_reg_start + arg_idx)
             }
             GroupByAggArgumentSource::Register {
