@@ -1,5 +1,14 @@
 use turso_parser::ast;
 
+use super::{
+    aggregation::handle_distinct,
+    emitter::{Resolver, TranslateCtx},
+    expr::{translate_condition_expr, translate_expr, ConditionMetadata},
+    order_by::order_by_sorter_insert,
+    plan::{Distinctness, GroupBy, SelectPlan, TableReferences},
+    result_row::emit_select_result,
+};
+use crate::translate::aggregation::{emit_collseq_if_needed, AggArgumentSource};
 use crate::translate::expr::{walk_expr, WalkControl};
 use crate::translate::plan::ResultSetColumn;
 use crate::{
@@ -13,15 +22,6 @@ use crate::{
         BranchOffset,
     },
     LimboError, Result,
-};
-use crate::translate::aggregation::emit_collseq_if_needed;
-use super::{
-    aggregation::handle_distinct,
-    emitter::{Resolver, TranslateCtx},
-    expr::{translate_condition_expr, translate_expr, ConditionMetadata},
-    order_by::order_by_sorter_insert,
-    plan::{Aggregate, Distinctness, GroupBy, SelectPlan, TableReferences},
-    result_row::emit_select_result,
 };
 
 /// Labels needed for various jumps in GROUP BY handling.
@@ -394,106 +394,6 @@ pub enum GroupByRowSource {
     },
 }
 
-/// Enum representing the source of the aggregate function arguments
-/// emitted for a group by aggregation.
-/// In the common case, the aggregate function arguments are first inserted
-/// into a sorter in the main loop, and in the group by aggregation phase
-/// we read the data from the sorter.
-///
-/// In the alternative case, no sorting is required for group by,
-/// and the aggregate function arguments are retrieved directly from
-/// registers allocated in the main loop.
-pub enum GroupByAggArgumentSource<'a> {
-    /// The aggregate function arguments are retrieved from a pseudo cursor
-    /// which reads from the GROUP BY sorter.
-    PseudoCursor {
-        cursor_id: usize,
-        col_start: usize,
-        dest_reg_start: usize,
-        aggregate: &'a Aggregate,
-    },
-    /// The aggregate function arguments are retrieved from a contiguous block of registers
-    /// allocated in the main loop for that given aggregate function.
-    Register {
-        src_reg_start: usize,
-        aggregate: &'a Aggregate,
-    },
-}
-
-impl<'a> GroupByAggArgumentSource<'a> {
-    /// Create a new [GroupByAggArgumentSource] that retrieves the values from a GROUP BY sorter.
-    pub fn new_from_cursor(
-        program: &mut ProgramBuilder,
-        cursor_id: usize,
-        col_start: usize,
-        aggregate: &'a Aggregate,
-    ) -> Self {
-        let dest_reg_start = program.alloc_registers(aggregate.args.len());
-        Self::PseudoCursor {
-            cursor_id,
-            col_start,
-            dest_reg_start,
-            aggregate,
-        }
-    }
-    /// Create a new [GroupByAggArgumentSource] that retrieves the values directly from an already
-    /// populated register or registers.
-    pub fn new_from_registers(src_reg_start: usize, aggregate: &'a Aggregate) -> Self {
-        Self::Register {
-            src_reg_start,
-            aggregate,
-        }
-    }
-
-    pub fn aggregate(&self) -> &Aggregate {
-        match self {
-            GroupByAggArgumentSource::PseudoCursor { aggregate, .. } => aggregate,
-            GroupByAggArgumentSource::Register { aggregate, .. } => aggregate,
-        }
-    }
-
-    pub fn agg_func(&self) -> &AggFunc {
-        match self {
-            GroupByAggArgumentSource::PseudoCursor { aggregate, .. } => &aggregate.func,
-            GroupByAggArgumentSource::Register { aggregate, .. } => &aggregate.func,
-        }
-    }
-    pub fn args(&self) -> &[ast::Expr] {
-        match self {
-            GroupByAggArgumentSource::PseudoCursor { aggregate, .. } => &aggregate.args,
-            GroupByAggArgumentSource::Register { aggregate, .. } => &aggregate.args,
-        }
-    }
-    pub fn num_args(&self) -> usize {
-        match self {
-            GroupByAggArgumentSource::PseudoCursor { aggregate, .. } => aggregate.args.len(),
-            GroupByAggArgumentSource::Register { aggregate, .. } => aggregate.args.len(),
-        }
-    }
-    /// Read the value of an aggregate function argument either from sorter data or directly from a register.
-    pub fn translate(&self, program: &mut ProgramBuilder, arg_idx: usize) -> Result<usize> {
-        match self {
-            GroupByAggArgumentSource::PseudoCursor {
-                cursor_id,
-                col_start,
-                dest_reg_start,
-                ..
-            } => {
-                program.emit_column_or_rowid(
-                    *cursor_id,
-                    *col_start + arg_idx,
-                    dest_reg_start + arg_idx,
-                );
-                Ok(dest_reg_start + arg_idx)
-            }
-            GroupByAggArgumentSource::Register {
-                src_reg_start: start_reg,
-                ..
-            } => Ok(*start_reg + arg_idx),
-        }
-    }
-}
-
 /// Emits bytecode for processing a single GROUP BY group.
 pub fn group_by_process_single_group(
     program: &mut ProgramBuilder,
@@ -597,18 +497,16 @@ pub fn group_by_process_single_group(
             .expect("aggregate registers must be initialized");
         let agg_result_reg = start_reg + i;
         let agg_arg_source = match &row_source {
-            GroupByRowSource::Sorter { pseudo_cursor, .. } => {
-                GroupByAggArgumentSource::new_from_cursor(
-                    program,
-                    *pseudo_cursor,
-                    cursor_index + offset,
-                    agg,
-                )
-            }
+            GroupByRowSource::Sorter { pseudo_cursor, .. } => AggArgumentSource::new_from_cursor(
+                program,
+                *pseudo_cursor,
+                cursor_index + offset,
+                agg,
+            ),
             GroupByRowSource::MainLoop { start_reg_src, .. } => {
                 // Aggregation arguments are always placed in the registers that follow any scalars.
                 let start_reg_aggs = start_reg_src + t_ctx.non_aggregate_expressions.len();
-                GroupByAggArgumentSource::new_from_registers(start_reg_aggs + offset, agg)
+                AggArgumentSource::new_from_registers(start_reg_aggs + offset, agg)
             }
         };
         translate_aggregation_step_groupby(
@@ -911,7 +809,7 @@ pub fn group_by_emit_row_phase<'a>(
 pub fn translate_aggregation_step_groupby(
     program: &mut ProgramBuilder,
     referenced_tables: &TableReferences,
-    agg_arg_source: GroupByAggArgumentSource,
+    agg_arg_source: AggArgumentSource,
     target_register: usize,
     resolver: &Resolver,
 ) -> Result<usize> {

@@ -125,6 +125,106 @@ pub fn handle_distinct(program: &mut ProgramBuilder, agg: &Aggregate, agg_arg_re
     });
 }
 
+/// Enum representing the source of the aggregate function arguments
+///
+/// Aggregate arguments can come from different sources, depending on how the aggregation
+/// is evaluated:
+/// * In the common grouped case, the aggregate function arguments are  first inserted
+///   into a sorter in the main loop, and in the group by aggregation phase we read
+///   the data from the sorter.
+/// * In grouped cases where no sorting is required, arguments are retrieved  directly
+///   from registers allocated in the main loop.
+pub enum AggArgumentSource<'a> {
+    /// The aggregate function arguments are retrieved from a pseudo cursor
+    /// which reads from the GROUP BY sorter.
+    PseudoCursor {
+        cursor_id: usize,
+        col_start: usize,
+        dest_reg_start: usize,
+        aggregate: &'a Aggregate,
+    },
+    /// The aggregate function arguments are retrieved from a contiguous block of registers
+    /// allocated in the main loop for that given aggregate function.
+    Register {
+        src_reg_start: usize,
+        aggregate: &'a Aggregate,
+    },
+}
+
+impl<'a> AggArgumentSource<'a> {
+    /// Create a new [AggArgumentSource] that retrieves the values from a GROUP BY sorter.
+    pub fn new_from_cursor(
+        program: &mut ProgramBuilder,
+        cursor_id: usize,
+        col_start: usize,
+        aggregate: &'a Aggregate,
+    ) -> Self {
+        let dest_reg_start = program.alloc_registers(aggregate.args.len());
+        Self::PseudoCursor {
+            cursor_id,
+            col_start,
+            dest_reg_start,
+            aggregate,
+        }
+    }
+    /// Create a new [AggArgumentSource] that retrieves the values directly from an already
+    /// populated register or registers.
+    pub fn new_from_registers(src_reg_start: usize, aggregate: &'a Aggregate) -> Self {
+        Self::Register {
+            src_reg_start,
+            aggregate,
+        }
+    }
+
+    pub fn aggregate(&self) -> &Aggregate {
+        match self {
+            AggArgumentSource::PseudoCursor { aggregate, .. } => aggregate,
+            AggArgumentSource::Register { aggregate, .. } => aggregate,
+        }
+    }
+
+    pub fn agg_func(&self) -> &AggFunc {
+        match self {
+            AggArgumentSource::PseudoCursor { aggregate, .. } => &aggregate.func,
+            AggArgumentSource::Register { aggregate, .. } => &aggregate.func,
+        }
+    }
+    pub fn args(&self) -> &[ast::Expr] {
+        match self {
+            AggArgumentSource::PseudoCursor { aggregate, .. } => &aggregate.args,
+            AggArgumentSource::Register { aggregate, .. } => &aggregate.args,
+        }
+    }
+    pub fn num_args(&self) -> usize {
+        match self {
+            AggArgumentSource::PseudoCursor { aggregate, .. } => aggregate.args.len(),
+            AggArgumentSource::Register { aggregate, .. } => aggregate.args.len(),
+        }
+    }
+    /// Read the value of an aggregate function argument
+    pub fn translate(&self, program: &mut ProgramBuilder, arg_idx: usize) -> Result<usize> {
+        match self {
+            AggArgumentSource::PseudoCursor {
+                cursor_id,
+                col_start,
+                dest_reg_start,
+                ..
+            } => {
+                program.emit_column_or_rowid(
+                    *cursor_id,
+                    *col_start + arg_idx,
+                    dest_reg_start + arg_idx,
+                );
+                Ok(dest_reg_start + arg_idx)
+            }
+            AggArgumentSource::Register {
+                src_reg_start: start_reg,
+                ..
+            } => Ok(*start_reg + arg_idx),
+        }
+    }
+}
+
 /// Emits the bytecode for processing an aggregate step.
 /// E.g. in `SELECT SUM(price) FROM t`, 'price' is evaluated for every row, and the result is added to the accumulator.
 ///
