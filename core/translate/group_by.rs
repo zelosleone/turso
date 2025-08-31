@@ -14,7 +14,7 @@ use crate::{
     },
     Result,
 };
-
+use crate::translate::aggregation::emit_collseq_if_needed;
 use super::{
     aggregation::handle_distinct,
     emitter::{Resolver, TranslateCtx},
@@ -991,6 +991,8 @@ pub fn translate_aggregation_step_groupby(
             }
             let expr_reg = agg_arg_source.translate(program, 0)?;
             handle_distinct(program, agg_arg_source.aggregate(), expr_reg);
+            let expr = &agg_arg_source.args()[0];
+            emit_collseq_if_needed(program, referenced_tables, expr);
             program.emit_insn(Insn::AggStep {
                 acc_reg: target_register,
                 col: expr_reg,
@@ -1005,6 +1007,8 @@ pub fn translate_aggregation_step_groupby(
             }
             let expr_reg = agg_arg_source.translate(program, 0)?;
             handle_distinct(program, agg_arg_source.aggregate(), expr_reg);
+            let expr = &agg_arg_source.args()[0];
+            emit_collseq_if_needed(program, referenced_tables, expr);
             program.emit_insn(Insn::AggStep {
                 acc_reg: target_register,
                 col: expr_reg,
