@@ -112,8 +112,14 @@ pub fn match_ignore_ascci_case(input: TokenStream) -> TokenStream {
         entry: &PathEntry,
     ) -> proc_macro2::TokenStream {
         let eof_handle = if let Some(ref result) = entry.result {
+            let guard = if let Some(ref b) = result.guard {
+                let expr = &b.1;
+                quote! { if #expr }
+            } else {
+                quote! {}
+            };
             let body = &result.body;
-            quote! { None => { #body } }
+            quote! { None #guard => { #body } }
         } else {
             quote! {}
         };

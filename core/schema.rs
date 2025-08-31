@@ -20,7 +20,9 @@ use crate::result::LimboResult;
 use crate::storage::btree::BTreeCursor;
 use crate::translate::collate::CollationSeq;
 use crate::translate::plan::SelectPlan;
-use crate::util::{module_args_from_sql, module_name_from_sql, IOExt, UnparsedFromSqlIndex};
+use crate::util::{
+    module_args_from_sql, module_name_from_sql, type_from_name, IOExt, UnparsedFromSqlIndex,
+};
 use crate::{return_if_io, LimboError, MvCursor, Pager, RefValue, SymbolTable, VirtualTable};
 use crate::{util::normalize_ident, Result};
 use core::fmt;
@@ -1103,25 +1105,7 @@ impl From<ColumnDefinition> for Column {
         let ty = match value.col_type {
             Some(ref data_type) => {
                 // https://www.sqlite.org/datatype3.html
-                let type_name = data_type.name.clone().to_uppercase();
-
-                if type_name.contains("INT") {
-                    Type::Integer
-                } else if type_name.contains("CHAR")
-                    || type_name.contains("CLOB")
-                    || type_name.contains("TEXT")
-                {
-                    Type::Text
-                } else if type_name.contains("BLOB") || type_name.is_empty() {
-                    Type::Blob
-                } else if type_name.contains("REAL")
-                    || type_name.contains("FLOA")
-                    || type_name.contains("DOUB")
-                {
-                    Type::Real
-                } else {
-                    Type::Numeric
-                }
+                type_from_name(&data_type.name)
             }
             None => Type::Null,
         };

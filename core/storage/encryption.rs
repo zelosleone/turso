@@ -6,6 +6,7 @@ use aes_gcm::{
     Aes256Gcm, Key, Nonce,
 };
 use std::ops::Deref;
+use turso_macros::match_ignore_ascii_case;
 
 pub const ENCRYPTED_PAGE_SIZE: usize = 4096;
 
@@ -138,13 +139,14 @@ impl TryFrom<&str> for CipherMode {
     type Error = LimboError;
 
     fn try_from(s: &str) -> Result<Self, Self::Error> {
-        match s.to_lowercase().as_str() {
-            "aes256gcm" | "aes-256-gcm" | "aes_256_gcm" => Ok(CipherMode::Aes256Gcm),
-            "aegis256" | "aegis-256" | "aegis_256" => Ok(CipherMode::Aegis256),
+        let s_bytes = s.as_bytes();
+        match_ignore_ascii_case!(match s_bytes {
+            b"aes256gcm" | b"aes-256-gcm" | b"aes_256_gcm" => Ok(CipherMode::Aes256Gcm),
+            b"aegis256" | b"aegis-256" | b"aegis_256" => Ok(CipherMode::Aegis256),
             _ => Err(LimboError::InvalidArgument(format!(
                 "Unknown cipher name: {s}"
             ))),
-        }
+        })
     }
 }
 

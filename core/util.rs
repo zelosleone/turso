@@ -13,6 +13,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tracing::{instrument, Level};
+use turso_macros::match_ignore_ascii_case;
 use turso_parser::ast::{
     self, fmt::ToTokens, Cmd, CreateTableBody, Expr, FunctionTail, Literal, Stmt, UnaryOperator,
 };
@@ -29,6 +30,58 @@ macro_rules! io_yield_many {
     ($v:expr) => {
         return Ok(IOResult::IO(IOCompletions::Many($v)));
     };
+}
+
+#[macro_export]
+macro_rules! eq_ignore_ascii_case {
+    ( $var:expr, $value:literal ) => {{
+        match_ignore_ascii_case!(match $var {
+            $value => true,
+            _ => false,
+        })
+    }};
+}
+
+#[macro_export]
+macro_rules! contains_ignore_ascii_case {
+    ( $var:expr, $value:literal ) => {{
+        let compare_to_idx = $var.len().saturating_sub($value.len());
+        if $var.len() < $value.len() {
+            false
+        } else {
+            let mut result = false;
+            for i in 0..=compare_to_idx {
+                if eq_ignore_ascii_case!(&$var[i..i + $value.len()], $value) {
+                    result = true;
+                    break;
+                }
+            }
+
+            result
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! starts_with_ignore_ascii_case {
+    ( $var:expr, $value:literal ) => {{
+        if $var.len() < $value.len() {
+            false
+        } else {
+            eq_ignore_ascii_case!(&$var[..$value.len()], $value)
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! ends_with_ignore_ascii_case {
+    ( $var:expr, $value:literal ) => {{
+        if $var.len() < $value.len() {
+            false
+        } else {
+            eq_ignore_ascii_case!(&$var[$var.len() - $value.len()..], $value)
+        }
+    }};
 }
 
 pub trait IOExt {
@@ -112,7 +165,10 @@ pub fn parse_schema_rows(
                     "table" => {
                         let root_page: i64 = row.get::<i64>(3)?;
                         let sql: &str = row.get::<&str>(4)?;
-                        if root_page == 0 && sql.to_lowercase().contains("create virtual") {
+                        let sql_bytes = sql.as_bytes();
+                        if root_page == 0
+                            && contains_ignore_ascii_case!(sql_bytes, b"create virtual")
+                        {
                             let name: &str = row.get::<&str>(1)?;
                             // a virtual table is found in the sqlite_schema, but it's no
                             // longer in the in-memory schema. We need to recreate it if
@@ -609,6 +665,27 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
     }
 }
 
+pub(crate) fn type_from_name(type_name: &str) -> Type {
+    let type_name = type_name.as_bytes();
+    if contains_ignore_ascii_case!(type_name, b"INT") {
+        Type::Integer
+    } else if contains_ignore_ascii_case!(type_name, b"CHAR")
+        || contains_ignore_ascii_case!(type_name, b"CLOB")
+        || contains_ignore_ascii_case!(type_name, b"TEXT")
+    {
+        Type::Text
+    } else if contains_ignore_ascii_case!(type_name, b"BLOB") || type_name.is_empty() {
+        Type::Blob
+    } else if contains_ignore_ascii_case!(type_name, b"REAL")
+        || contains_ignore_ascii_case!(type_name, b"FLOA")
+        || contains_ignore_ascii_case!(type_name, b"DOUB")
+    {
+        Type::Real
+    } else {
+        Type::Numeric
+    }
+}
+
 pub fn columns_from_create_table_body(
     body: &turso_parser::ast::CreateTableBody,
 ) -> crate::Result<Vec<Column>> {
@@ -633,24 +710,7 @@ pub fn columns_from_create_table_body(
                     ty: match col_type {
                         Some(ref data_type) => {
                             // https://www.sqlite.org/datatype3.html
-                            let type_name = data_type.name.as_str().to_uppercase();
-                            if type_name.contains("INT") {
-                                Type::Integer
-                            } else if type_name.contains("CHAR")
-                                || type_name.contains("CLOB")
-                                || type_name.contains("TEXT")
-                            {
-                                Type::Text
-                            } else if type_name.contains("BLOB") || type_name.is_empty() {
-                                Type::Blob
-                            } else if type_name.contains("REAL")
-                                || type_name.contains("FLOA")
-                                || type_name.contains("DOUB")
-                            {
-                                Type::Real
-                            } else {
-                                Type::Numeric
-                            }
+                            type_from_name(data_type.name.as_str())
                         }
                         None => Type::Null,
                     },
@@ -772,15 +832,16 @@ impl From<&str> for CacheMode {
 
 impl OpenMode {
     pub fn from_str(s: &str) -> Result<Self> {
-        match s.trim().to_lowercase().as_str() {
-            "ro" => Ok(OpenMode::ReadOnly),
-            "rw" => Ok(OpenMode::ReadWrite),
-            "memory" => Ok(OpenMode::Memory),
-            "rwc" => Ok(OpenMode::ReadWriteCreate),
+        let s_bytes = s.trim().as_bytes();
+        match_ignore_ascii_case!(match s_bytes {
+            b"ro" => Ok(OpenMode::ReadOnly),
+            b"rw" => Ok(OpenMode::ReadWrite),
+            b"memory" => Ok(OpenMode::Memory),
+            b"rwc" => Ok(OpenMode::ReadWriteCreate),
             _ => Err(LimboError::InvalidArgument(format!(
                 "Invalid mode: '{s}'. Expected one of 'ro', 'rw', 'memory', 'rwc'"
             ))),
-        }
+        })
     }
 }
 
