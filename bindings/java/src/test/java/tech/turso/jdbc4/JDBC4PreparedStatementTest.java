@@ -233,11 +233,11 @@ class JDBC4PreparedStatementTest {
     connection.prepareStatement("CREATE TABLE test (col BLOB)").execute();
     PreparedStatement stmt =
         connection.prepareStatement("INSERT INTO test (col) VALUES (?), (?), (?)");
-    
-    Date date1 = new Date(1000000000000L); 
+
+    Date date1 = new Date(1000000000000L);
     Date date2 = new Date(1500000000000L);
-    Date date3 = new Date(2000000000000L); 
-    
+    Date date3 = new Date(2000000000000L);
+
     stmt.setDate(1, date1);
     stmt.setDate(2, date2);
     stmt.setDate(3, date3);
@@ -259,11 +259,11 @@ class JDBC4PreparedStatementTest {
     connection.prepareStatement("CREATE TABLE test (col BLOB)").execute();
     PreparedStatement stmt =
         connection.prepareStatement("INSERT INTO test (col) VALUES (?), (?), (?)");
-    
-    Time time1 = new Time(1000000000000L); 
+
+    Time time1 = new Time(1000000000000L);
     Time time2 = new Time(1500000000000L);
-    Time time3 = new Time(2000000000000L); 
-    
+    Time time3 = new Time(2000000000000L);
+
     stmt.setTime(1, time1);
     stmt.setTime(2, time2);
     stmt.setTime(3, time3);
@@ -271,7 +271,7 @@ class JDBC4PreparedStatementTest {
 
     PreparedStatement stmt2 = connection.prepareStatement("SELECT * FROM test;");
     JDBC4ResultSet rs = (JDBC4ResultSet) stmt2.executeQuery();
-    
+
     assertTrue(rs.next());
     assertEquals(time1, rs.getTime(1));
     assertTrue(rs.next());
@@ -285,11 +285,11 @@ class JDBC4PreparedStatementTest {
     connection.prepareStatement("CREATE TABLE test (col BLOB)").execute();
     PreparedStatement stmt =
         connection.prepareStatement("INSERT INTO test (col) VALUES (?), (?), (?)");
-    
-    Timestamp timestamp1 = new Timestamp(1000000000000L); 
+
+    Timestamp timestamp1 = new Timestamp(1000000000000L);
     Timestamp timestamp2 = new Timestamp(1500000000000L);
-    Timestamp timestamp3 = new Timestamp(2000000000000L); 
-    
+    Timestamp timestamp3 = new Timestamp(2000000000000L);
+
     stmt.setTimestamp(1, timestamp1);
     stmt.setTimestamp(2, timestamp2);
     stmt.setTimestamp(3, timestamp3);
@@ -297,7 +297,7 @@ class JDBC4PreparedStatementTest {
 
     PreparedStatement stmt2 = connection.prepareStatement("SELECT * FROM test;");
     JDBC4ResultSet rs = (JDBC4ResultSet) stmt2.executeQuery();
-    
+
     assertTrue(rs.next());
     assertEquals(timestamp1, rs.getTimestamp(1));
     assertTrue(rs.next());

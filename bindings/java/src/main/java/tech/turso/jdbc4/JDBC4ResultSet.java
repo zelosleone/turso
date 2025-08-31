@@ -153,16 +153,17 @@ public final class JDBC4ResultSet implements ResultSet, ResultSetMetaData {
     if (result == null) {
       return null;
     }
-    return wrapTypeConversion(() -> {
-      if (result instanceof byte[]) {
-        byte[] bytes = (byte[]) result;
-        if (bytes.length == Long.BYTES) {
-          long time = ByteBuffer.wrap(bytes).getLong();
-          return new Date(time);
-        }
-      }
-      throw new SQLException("Cannot convert value to Date: " + result.getClass());
-    });
+    return wrapTypeConversion(
+        () -> {
+          if (result instanceof byte[]) {
+            byte[] bytes = (byte[]) result;
+            if (bytes.length == Long.BYTES) {
+              long time = ByteBuffer.wrap(bytes).getLong();
+              return new Date(time);
+            }
+          }
+          throw new SQLException("Cannot convert value to Date: " + result.getClass());
+        });
   }
 
   @Override
@@ -172,16 +173,17 @@ public final class JDBC4ResultSet implements ResultSet, ResultSetMetaData {
     if (result == null) {
       return null;
     }
-    return wrapTypeConversion(() -> {
-      if (result instanceof byte[]) {
-        byte[] bytes = (byte[]) result;
-        if (bytes.length == Long.BYTES) {
-          long time = ByteBuffer.wrap(bytes).getLong();
-          return new Time(time);
-        }
-      }
-      throw new SQLException("Cannot convert value to Date: " + result.getClass());
-    });
+    return wrapTypeConversion(
+        () -> {
+          if (result instanceof byte[]) {
+            byte[] bytes = (byte[]) result;
+            if (bytes.length == Long.BYTES) {
+              long time = ByteBuffer.wrap(bytes).getLong();
+              return new Time(time);
+            }
+          }
+          throw new SQLException("Cannot convert value to Date: " + result.getClass());
+        });
   }
 
   @Override
@@ -191,16 +193,17 @@ public final class JDBC4ResultSet implements ResultSet, ResultSetMetaData {
     if (result == null) {
       return null;
     }
-    return wrapTypeConversion(() -> {
-      if (result instanceof byte[]) {
-        byte[] bytes = (byte[]) result;
-        if (bytes.length == Long.BYTES) {
-          long time = ByteBuffer.wrap(bytes).getLong();
-          return new Timestamp(time);
-        }
-      }
-      throw new SQLException("Cannot convert value to Timestamp: " + result.getClass());
-    });
+    return wrapTypeConversion(
+        () -> {
+          if (result instanceof byte[]) {
+            byte[] bytes = (byte[]) result;
+            if (bytes.length == Long.BYTES) {
+              long time = ByteBuffer.wrap(bytes).getLong();
+              return new Timestamp(time);
+            }
+          }
+          throw new SQLException("Cannot convert value to Timestamp: " + result.getClass());
+        });
   }
 
   @Override
@@ -284,20 +287,21 @@ public final class JDBC4ResultSet implements ResultSet, ResultSetMetaData {
     if (result == null) {
       return null;
     }
-    return wrapTypeConversion(() -> {
-      if (result instanceof byte[]) {
-        byte[] bytes = (byte[]) result;
-        if (bytes.length == Long.BYTES) {
-          long time = ByteBuffer.wrap(bytes).getLong();
-          return new Date(time);
-        }
-      }
-      // Try to parse as string if it's stored as TEXT
-      if (result instanceof String) {
-        return Date.valueOf((String) result);
-      }
-      throw new SQLException("Cannot convert value to Date: " + result.getClass());
-    });
+    return wrapTypeConversion(
+        () -> {
+          if (result instanceof byte[]) {
+            byte[] bytes = (byte[]) result;
+            if (bytes.length == Long.BYTES) {
+              long time = ByteBuffer.wrap(bytes).getLong();
+              return new Date(time);
+            }
+          }
+          // Try to parse as string if it's stored as TEXT
+          if (result instanceof String) {
+            return Date.valueOf((String) result);
+          }
+          throw new SQLException("Cannot convert value to Date: " + result.getClass());
+        });
   }
 
   @Override

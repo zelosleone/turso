@@ -127,7 +127,8 @@ public final class JDBC4PreparedStatement extends JDBC4Statement implements Prep
       this.statement.bindNull(parameterIndex);
     } else {
       long time = x.getTime();
-      this.statement.bindBlob(parameterIndex, ByteBuffer.allocate(Long.BYTES).putLong(time).array());
+      this.statement.bindBlob(
+          parameterIndex, ByteBuffer.allocate(Long.BYTES).putLong(time).array());
     }
   }
 
@@ -138,7 +139,8 @@ public final class JDBC4PreparedStatement extends JDBC4Statement implements Prep
       this.statement.bindNull(parameterIndex);
     } else {
       long time = x.getTime();
-      this.statement.bindBlob(parameterIndex, ByteBuffer.allocate(Long.BYTES).putLong(time).array());
+      this.statement.bindBlob(
+          parameterIndex, ByteBuffer.allocate(Long.BYTES).putLong(time).array());
     }
   }
 
@@ -149,7 +151,8 @@ public final class JDBC4PreparedStatement extends JDBC4Statement implements Prep
       this.statement.bindNull(parameterIndex);
     } else {
       long time = x.getTime();
-      this.statement.bindBlob(parameterIndex, ByteBuffer.allocate(Long.BYTES).putLong(time).array());
+      this.statement.bindBlob(
+          parameterIndex, ByteBuffer.allocate(Long.BYTES).putLong(time).array());
     }
   }
 
