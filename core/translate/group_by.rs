@@ -12,7 +12,7 @@ use crate::{
         insn::Insn,
         BranchOffset,
     },
-    Result,
+    LimboError, Result,
 };
 use crate::translate::aggregation::emit_collseq_if_needed;
 use super::{
@@ -1119,8 +1119,34 @@ pub fn translate_aggregation_step_groupby(
             });
             target_register
         }
-        AggFunc::External(_) => {
-            todo!("External aggregate functions are not yet supported in GROUP BY");
+        AggFunc::External(ref func) => {
+            let argc = func.agg_args().map_err(|_| {
+                LimboError::ExtensionError(
+                    "External aggregate function called with wrong number of arguments".to_string(),
+                )
+            })?;
+            if argc != num_args {
+                crate::bail_parse_error!(
+                    "External aggregate function called with wrong number of arguments"
+                );
+            }
+            let expr_reg = agg_arg_source.translate(program, 0)?;
+            for i in 0..argc {
+                if i != 0 {
+                    let _ = agg_arg_source.translate(program, i)?;
+                }
+                // invariant: distinct aggregates are only supported for single-argument functions
+                if argc == 1 {
+                    handle_distinct(program, agg_arg_source.aggregate(), expr_reg + i);
+                }
+            }
+            program.emit_insn(Insn::AggStep {
+                acc_reg: target_register,
+                col: expr_reg,
+                delimiter: 0,
+                func: AggFunc::External(func.clone()),
+            });
+            target_register
         }
     };
     Ok(dest)
