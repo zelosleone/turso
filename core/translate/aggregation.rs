@@ -155,14 +155,12 @@ pub fn translate_aggregation_step(
             target_register
         }
         AggFunc::Count | AggFunc::Count0 => {
-            let expr_reg = if agg.args.is_empty() {
-                program.alloc_register()
-            } else {
-                let expr = &agg.args[0];
-                let expr_reg = program.alloc_register();
-                let _ = translate_expr(program, Some(referenced_tables), expr, expr_reg, resolver)?;
-                expr_reg
-            };
+            if agg.args.len() != 1 {
+                crate::bail_parse_error!("count bad number of arguments");
+            }
+            let expr = &agg.args[0];
+            let expr_reg = program.alloc_register();
+            let _ = translate_expr(program, Some(referenced_tables), expr, expr_reg, resolver)?;
             handle_distinct(program, agg, expr_reg);
             program.emit_insn(Insn::AggStep {
                 acc_reg: target_register,

@@ -928,6 +928,9 @@ pub fn translate_aggregation_step_groupby(
             target_register
         }
         AggFunc::Count | AggFunc::Count0 => {
+            if num_args != 1 {
+                crate::bail_parse_error!("count bad number of arguments");
+            }
             let expr_reg = agg_arg_source.translate(program, 0)?;
             handle_distinct(program, agg_arg_source.aggregate(), expr_reg);
             program.emit_insn(Insn::AggStep {
