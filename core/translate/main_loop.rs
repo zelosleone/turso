@@ -19,7 +19,7 @@ use crate::{
 };
 
 use super::{
-    aggregation::translate_aggregation_step,
+    aggregation::{translate_aggregation_step, AggArgumentSource},
     emitter::{OperationMode, TranslateCtx},
     expr::{
         translate_condition_expr, translate_expr, translate_expr_no_constant_opt,
@@ -868,7 +868,7 @@ fn emit_loop_source(
                 translate_aggregation_step(
                     program,
                     &plan.table_references,
-                    agg,
+                    AggArgumentSource::new_from_expression(agg),
                     reg,
                     &t_ctx.resolver,
                 )?;
