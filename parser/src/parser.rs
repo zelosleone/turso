@@ -1549,22 +1549,15 @@ impl<'a> Parser<'a> {
                     })))
                 } else {
                     match name {
-                        Name::Ident(s) => {
-                            let ident = s.to_ascii_uppercase();
-                            match ident.as_str() {
-                                TRUE_LIT => {
-                                    return Ok(Box::new(Expr::Literal(Literal::Numeric(
-                                        "1".into(),
-                                    ))))
-                                }
-                                FALSE_LIT => {
-                                    return Ok(Box::new(Expr::Literal(Literal::Numeric(
-                                        "0".into(),
-                                    ))))
-                                }
-                                _ => return Ok(Box::new(Expr::Id(Name::Ident(s)))),
+                        Name::Ident(s) => match s.as_str() {
+                            s if s.eq_ignore_ascii_case(TRUE_LIT) => {
+                                return Ok(Box::new(Expr::Literal(Literal::Numeric("1".into()))))
                             }
-                        }
+                            s if s.eq_ignore_ascii_case(FALSE_LIT) => {
+                                return Ok(Box::new(Expr::Literal(Literal::Numeric("0".into()))))
+                            }
+                            _ => return Ok(Box::new(Expr::Id(Name::Ident(s)))),
+                        },
                         _ => Ok(Box::new(Expr::Id(name))),
                     }
                 }
