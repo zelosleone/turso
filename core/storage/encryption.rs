@@ -129,10 +129,123 @@ impl AeadCipher for Aegis256Cipher {
 
         Aegis256::<AEGIS_TAG_SIZE>::new(self.key.as_bytes(), &nonce_array)
             .decrypt(ct, &tag_array, ad)
-            .map_err(|_| {
-                LimboError::InternalError("AEGIS-256 decryption failed: invalid tag".into())
-            })?;
-        Ok(plaintext)
+            .map_err(|_| LimboError::InternalError("AEGIS-256 decryption failed".into()))
+    }
+
+    fn encrypt_detached(&self, plaintext: &[u8], ad: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        let nonce = generate_secure_nonce();
+        let (ciphertext, tag) =
+            Aegis256::<AEGIS_TAG_SIZE>::new(self.key.as_bytes(), &nonce).encrypt(plaintext, ad);
+
+        Ok((ciphertext, tag.to_vec(), nonce.to_vec()))
+    }
+
+    fn decrypt_detached(
+        &self,
+        ciphertext: &[u8],
+        nonce: &[u8],
+        tag: &[u8],
+        ad: &[u8],
+    ) -> Result<Vec<u8>> {
+        let tag_array: [u8; AEGIS_TAG_SIZE] = tag.try_into().map_err(|_| {
+            LimboError::InternalError(format!("Invalid tag size for AEGIS-256 {AEGIS_TAG_SIZE}"))
+        })?;
+        let nonce_array: [u8; 32] = nonce
+            .try_into()
+            .map_err(|_| LimboError::InternalError("Invalid nonce size for AEGIS-256".into()))?;
+
+        Aegis256::<AEGIS_TAG_SIZE>::new(self.key.as_bytes(), &nonce_array)
+            .decrypt(ciphertext, &tag_array, ad)
+            .map_err(|_| LimboError::InternalError("AEGIS-256 decrypt_detached failed".into()))
+    }
+}
+
+#[derive(Clone)]
+pub struct Aes256GcmCipher {
+    key: EncryptionKey,
+}
+
+impl Aes256GcmCipher {
+    fn new(key: &EncryptionKey) -> Self {
+        Self { key: key.clone() }
+    }
+}
+
+impl AeadCipher for Aes256GcmCipher {
+    fn encrypt(&self, plaintext: &[u8], _ad: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
+        use aes_gcm::aead::{AeadInPlace, KeyInit};
+        use aes_gcm::Aes256Gcm;
+
+        let cipher = Aes256Gcm::new_from_slice(self.key.as_bytes())
+            .map_err(|_| LimboError::InternalError("Bad AES key".into()))?;
+        let nonce = Aes256Gcm::generate_nonce(&mut rand::thread_rng());
+        let mut buffer = plaintext.to_vec();
+
+        let tag = cipher
+            .encrypt_in_place_detached(&nonce, b"", &mut buffer)
+            .map_err(|_| LimboError::InternalError("AES-GCM encrypt failed".into()))?;
+
+        buffer.extend_from_slice(&tag[..AES256GCM_TAG_SIZE]);
+        Ok((buffer, nonce.to_vec()))
+    }
+
+    fn decrypt(&self, ciphertext: &[u8], nonce: &[u8], ad: &[u8]) -> Result<Vec<u8>> {
+        use aes_gcm::aead::{AeadInPlace, KeyInit};
+        use aes_gcm::{Aes256Gcm, Nonce};
+
+        if ciphertext.len() < AES256GCM_TAG_SIZE {
+            return Err(LimboError::InternalError("Ciphertext too short".into()));
+        }
+        let (ct, tag) = ciphertext.split_at(ciphertext.len() - AES256GCM_TAG_SIZE);
+
+        let cipher = Aes256Gcm::new_from_slice(self.key.as_bytes())
+            .map_err(|_| LimboError::InternalError("Bad AES key".into()))?;
+        let nonce = Nonce::from_slice(nonce);
+
+        let mut buffer = ct.to_vec();
+        cipher
+            .decrypt_in_place_detached(nonce, ad, &mut buffer, tag.into())
+            .map_err(|_| LimboError::InternalError("AES-GCM decrypt failed".into()))?;
+
+        Ok(buffer)
+    }
+
+    fn encrypt_detached(&self, plaintext: &[u8], ad: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        use aes_gcm::aead::{AeadInPlace, KeyInit};
+        use aes_gcm::Aes256Gcm;
+
+        let cipher = Aes256Gcm::new_from_slice(self.key.as_bytes())
+            .map_err(|_| LimboError::InternalError("Bad AES key".into()))?;
+        let nonce = Aes256Gcm::generate_nonce(&mut rand::thread_rng());
+
+        let mut buffer = plaintext.to_vec();
+        let tag = cipher
+            .encrypt_in_place_detached(&nonce, ad, &mut buffer)
+            .map_err(|_| LimboError::InternalError("AES-GCM encrypt_detached failed".into()))?;
+
+        Ok((buffer, nonce.to_vec(), tag.to_vec()))
+    }
+
+    fn decrypt_detached(
+        &self,
+        ciphertext: &[u8],
+        nonce: &[u8],
+        tag: &[u8],
+        ad: &[u8],
+    ) -> Result<Vec<u8>> {
+        use aes_gcm::aead::{AeadInPlace, KeyInit};
+        use aes_gcm::{Aes256Gcm, Nonce};
+
+        let cipher = Aes256Gcm::new_from_slice(self.key.as_bytes())
+            .map_err(|_| LimboError::InternalError("Bad AES key".into()))?;
+        let nonce = Nonce::from_slice(nonce);
+
+        let mut buffer = ciphertext.to_vec();
+        cipher
+            .decrypt_in_place_detached(nonce, ad, &mut buffer, tag.into())
+            .map_err(|_| LimboError::InternalError("AES-GCM decrypt_detached failed".into()))?;
+
+        Ok(buffer)
     }
 }
 
