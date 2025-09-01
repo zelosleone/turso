@@ -76,11 +76,7 @@ pub fn resolve_aggregates(
                         aggs.push(Aggregate::new(f, args, expr, distinctness));
                         contains_aggregates = true;
                     }
-                    _ => {
-                        for arg in args.iter() {
-                            contains_aggregates |= resolve_aggregates(schema, arg, aggs)?;
-                        }
-                    }
+                    _ => {}
                 }
             }
             Expr::FunctionCallStar { name, filter_over } => {
