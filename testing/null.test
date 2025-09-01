@@ -21,8 +21,8 @@ do_execsql_test not-null {
 
 do_execsql_test sel-true {
 	select true;
-}{1}
+} {1}
 
 do_execsql_test sel-false {
 	select false;
-}{0}
+} {0}
