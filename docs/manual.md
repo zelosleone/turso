@@ -529,7 +529,7 @@ PRAGMA unstable_capture_data_changes_conn('<mode>[,custom_cdc]');
     - `after`: Captures row state after inserts and updates
     - `full`: Captures both before and after states (recommended for complete audit trail)
 
-`custom_cdc` is optional, It lets you specify a custom table to capture changes.
+- `custom_cdc` is optional, It lets you specify a custom table to capture changes.
 If no table is provided, Turso uses a default `turso_cdc` table.
 
 change type (1,0,-1) -> (insert,update,delete) respectively
