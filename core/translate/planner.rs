@@ -10,6 +10,7 @@ use super::{
     select::prepare_select_plan,
     SymbolTable,
 };
+use crate::function::{AggFunc, ExtFunc};
 use crate::translate::expr::WalkControl;
 use crate::{
     function::Func,
@@ -29,6 +30,7 @@ pub const ROWID: &str = "rowid";
 
 pub fn resolve_aggregates(
     schema: &Schema,
+    syms: &SymbolTable,
     top_level_expr: &Expr,
     aggs: &mut Vec<Aggregate>,
 ) -> Result<bool> {
@@ -60,21 +62,38 @@ pub fn resolve_aggregates(
                     );
                 }
                 let args_count = args.len();
+                let distinctness = Distinctness::from_ast(distinctness.as_ref());
+
+                if !schema.indexes_enabled() && distinctness.is_distinct() {
+                    crate::bail_parse_error!(
+                        "SELECT with DISTINCT is not allowed without indexes enabled"
+                    );
+                }
+                if distinctness.is_distinct() && args_count != 1 {
+                    crate::bail_parse_error!(
+                        "DISTINCT aggregate functions must have exactly one argument"
+                    );
+                }
                 match Func::resolve_function(name.as_str(), args_count) {
                     Ok(Func::Agg(f)) => {
-                        let distinctness = Distinctness::from_ast(distinctness.as_ref());
-                        if !schema.indexes_enabled() && distinctness.is_distinct() {
-                            crate::bail_parse_error!(
-                                "SELECT with DISTINCT is not allowed without indexes enabled"
-                            );
-                        }
-                        if distinctness.is_distinct() && args.len() != 1 {
-                            crate::bail_parse_error!(
-                                "DISTINCT aggregate functions must have exactly one argument"
-                            );
-                        }
                         aggs.push(Aggregate::new(f, args, expr, distinctness));
                         contains_aggregates = true;
+                    }
+                    Err(e) => {
+                        if let Some(f) = syms.resolve_function(name.as_str(), args_count) {
+                            if let ExtFunc::Aggregate { .. } = f.as_ref().func {
+                                let agg = Aggregate::new(
+                                    AggFunc::External(f.func.clone().into()),
+                                    args,
+                                    expr,
+                                    distinctness,
+                                );
+                                aggs.push(agg);
+                                contains_aggregates = true;
+                            }
+                        } else {
+                            return Err(e);
+                        }
                     }
                     _ => {}
                 }
