@@ -191,3 +191,11 @@ do_execsql_test_error select-scalar-func-star {
 do_execsql_test_error select-scalar-func-star-in-expression {
   SELECT CASE WHEN abs(*) > 0 THEN 1 ELSE 0 END FROM users;
 } {.*(Invalid aggregate function|wrong number of arguments to function).*}
+
+do_execsql_test_error_content select-nested-agg-func {
+  SELECT max(abs(sum(age))), sum(age) FROM users;
+} {"misuse of aggregate function"}
+
+do_execsql_test_error_content select-nested-agg-func-in-expression {
+  SELECT CASE WHEN max(abs(sum(age))) > 0 THEN 1 ELSE 0 END, sum(age) FROM users;
+} {"misuse of aggregate function"}

@@ -41,7 +41,7 @@ pub fn resolve_aggregates(
             .any(|a| exprs_are_equivalent(&a.original_expr, expr))
         {
             contains_aggregates = true;
-            return Ok(WalkControl::Continue);
+            return Ok(WalkControl::SkipChildren);
         }
         match expr {
             Expr::FunctionCall {
@@ -78,6 +78,7 @@ pub fn resolve_aggregates(
                     Ok(Func::Agg(f)) => {
                         aggs.push(Aggregate::new(f, args, expr, distinctness));
                         contains_aggregates = true;
+                        return Ok(WalkControl::SkipChildren);
                     }
                     Err(e) => {
                         if let Some(f) = syms.resolve_function(name.as_str(), args_count) {
@@ -90,6 +91,7 @@ pub fn resolve_aggregates(
                                 );
                                 aggs.push(agg);
                                 contains_aggregates = true;
+                                return Ok(WalkControl::SkipChildren);
                             }
                         } else {
                             return Err(e);
@@ -108,6 +110,7 @@ pub fn resolve_aggregates(
                     Ok(Func::Agg(f)) => {
                         aggs.push(Aggregate::new(f, &[], expr, Distinctness::NonDistinct));
                         contains_aggregates = true;
+                        return Ok(WalkControl::SkipChildren);
                     }
                     Ok(_) => {
                         crate::bail_parse_error!("Invalid aggregate function: {}", name.as_str());
