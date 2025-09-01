@@ -522,6 +522,7 @@ Turso supports [Capturing Data Capture](https://en.wikipedia.org/wiki/Change_dat
 PRAGMA unstable_capture_data_changes_conn('<mode>[,custom_cdc]');
 ```
 
+### Parameters
 `<mode>` can be id, before, after, or full
 
 `custom_cdc` is optional, It lets you specify a custom table to capture changes.
