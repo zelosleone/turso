@@ -524,6 +524,7 @@ PRAGMA unstable_capture_data_changes_conn('<mode>[,custom_cdc]');
 
 ### Parameters
 - `<mode>` can be:
+    - `off`: Turn off CDC for the connection
     - `id`: Logs only the `rowid` (most compact)
     - `before`: Captures row state before updates and deletes
     - `after`: Captures row state after inserts and updates
