@@ -72,6 +72,21 @@ impl Drop for EncryptionKey {
     }
 }
 
+pub trait AeadCipher {
+    fn encrypt(&self, plaintext: &[u8], ad: &[u8]) -> Result<(Vec<u8>, Vec<u8>)>;
+    fn decrypt(&self, ciphertext: &[u8], nonce: &[u8], ad: &[u8]) -> Result<Vec<u8>>;
+
+    fn encrypt_detached(&self, plaintext: &[u8], ad: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)>;
+
+    fn decrypt_detached(
+        &self,
+        ciphertext: &[u8],
+        nonce: &[u8],
+        tag: &[u8],
+        ad: &[u8],
+    ) -> Result<Vec<u8>>;
+}
+
 // wrapper struct for AEGIS-256 cipher, because the crate we use is a bit low-level and we add
 // some nice abstractions here
 // note, the AEGIS has many variants and support for hardware acceleration. Here we just use the
