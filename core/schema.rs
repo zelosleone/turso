@@ -906,37 +906,10 @@ fn create_table(
 
                 let mut typename_exactly_integer = false;
                 let ty = match col_type {
-                    Some(data_type) => 'ty: {
-                        // https://www.sqlite.org/datatype3.html
-                        let mut type_name = data_type.name.clone();
-                        type_name.make_ascii_uppercase();
-
-                        if type_name.is_empty() {
-                            break 'ty Type::Blob;
-                        }
-
-                        if type_name == "INTEGER" {
-                            typename_exactly_integer = true;
-                            break 'ty Type::Integer;
-                        }
-
-                        if let Some(ty) = type_name.as_bytes().windows(3).find_map(|s| match s {
-                            b"INT" => Some(Type::Integer),
-                            _ => None,
-                        }) {
-                            break 'ty ty;
-                        }
-
-                        if let Some(ty) = type_name.as_bytes().windows(4).find_map(|s| match s {
-                            b"CHAR" | b"CLOB" | b"TEXT" => Some(Type::Text),
-                            b"BLOB" => Some(Type::Blob),
-                            b"REAL" | b"FLOA" | b"DOUB" => Some(Type::Real),
-                            _ => None,
-                        }) {
-                            break 'ty ty;
-                        }
-
-                        Type::Numeric
+                    Some(data_type) => {
+                        let (ty, ei) = type_from_name(&data_type.name);
+                        typename_exactly_integer = ei;
+                        ty
                     }
                     None => Type::Null,
                 };
@@ -1103,10 +1076,7 @@ impl From<ColumnDefinition> for Column {
         }
 
         let ty = match value.col_type {
-            Some(ref data_type) => {
-                // https://www.sqlite.org/datatype3.html
-                type_from_name(&data_type.name)
-            }
+            Some(ref data_type) => type_from_name(&data_type.name).0,
             None => Type::Null,
         };
 

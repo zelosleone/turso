@@ -662,25 +662,34 @@ pub fn exprs_are_equivalent(expr1: &Expr, expr2: &Expr) -> bool {
     }
 }
 
-pub(crate) fn type_from_name(type_name: &str) -> Type {
+// this function returns the affinity type and whether the type name was exactly "INTEGER"
+// https://www.sqlite.org/datatype3.html
+pub(crate) fn type_from_name(type_name: &str) -> (Type, bool) {
     let type_name = type_name.as_bytes();
-    if contains_ignore_ascii_case!(type_name, b"INT") {
-        Type::Integer
-    } else if contains_ignore_ascii_case!(type_name, b"CHAR")
-        || contains_ignore_ascii_case!(type_name, b"CLOB")
-        || contains_ignore_ascii_case!(type_name, b"TEXT")
-    {
-        Type::Text
-    } else if contains_ignore_ascii_case!(type_name, b"BLOB") || type_name.is_empty() {
-        Type::Blob
-    } else if contains_ignore_ascii_case!(type_name, b"REAL")
-        || contains_ignore_ascii_case!(type_name, b"FLOA")
-        || contains_ignore_ascii_case!(type_name, b"DOUB")
-    {
-        Type::Real
-    } else {
-        Type::Numeric
+    if type_name.is_empty() {
+        return (Type::Blob, false);
     }
+
+    if eq_ignore_ascii_case!(type_name, b"INTEGER") {
+        return (Type::Integer, true);
+    }
+
+    if let Some(ty) = type_name.windows(4).find_map(|s| {
+        if contains_ignore_ascii_case!(s, b"INT") {
+            return Some(Type::Integer);
+        }
+
+        match_ignore_ascii_case!(match s {
+            b"CHAR" | b"CLOB" | b"TEXT" => Some(Type::Text),
+            b"BLOB" => Some(Type::Blob),
+            b"REAL" | b"FLOA" | b"DOUB" => Some(Type::Real),
+            _ => None,
+        })
+    }) {
+        return (ty, false);
+    }
+
+    (Type::Numeric, false)
 }
 
 pub fn columns_from_create_table_body(
@@ -705,10 +714,7 @@ pub fn columns_from_create_table_body(
                 Column {
                     name: Some(normalize_ident(name.as_str())),
                     ty: match col_type {
-                        Some(ref data_type) => {
-                            // https://www.sqlite.org/datatype3.html
-                            type_from_name(data_type.name.as_str())
-                        }
+                        Some(ref data_type) => type_from_name(data_type.name.as_str()).0,
                         None => Type::Null,
                     },
                     default: constraints.iter().find_map(|c| match &c.constraint {
