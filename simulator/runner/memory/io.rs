@@ -16,44 +16,29 @@ pub type Fd = String;
 
 pub enum OperationType {
     Read {
-        fd: Arc<Fd>,
         completion: Completion,
         offset: usize,
     },
     Write {
-        fd: Arc<Fd>,
         buffer: Arc<turso_core::Buffer>,
         completion: Completion,
         offset: usize,
     },
     WriteV {
-        fd: Arc<Fd>,
         buffers: Vec<Arc<turso_core::Buffer>>,
         completion: Completion,
         offset: usize,
     },
     Sync {
-        fd: Arc<Fd>,
         completion: Completion,
     },
     Truncate {
-        fd: Arc<Fd>,
         completion: Completion,
         len: usize,
     },
 }
 
 impl OperationType {
-    fn get_fd(&self) -> &Fd {
-        match self {
-            OperationType::Read { fd, .. }
-            | OperationType::Write { fd, .. }
-            | OperationType::WriteV { fd, .. }
-            | OperationType::Sync { fd, .. }
-            | OperationType::Truncate { fd, .. } => fd,
-        }
-    }
-
     fn get_completion(&self) -> &Completion {
         match self {
             OperationType::Read { completion, .. }
@@ -69,16 +54,14 @@ pub struct Operation {
     pub time: Option<turso_core::Instant>,
     pub op: OperationType,
     pub fault: bool,
+    pub fd: Arc<Fd>,
 }
 
 impl Operation {
     fn do_operation(self, files: &IndexMap<Fd, Arc<MemorySimFile>>) {
+        let fd = self.fd;
         match self.op {
-            OperationType::Read {
-                fd,
-                completion,
-                offset,
-            } => {
+            OperationType::Read { completion, offset } => {
                 let file = files.get(fd.as_str()).unwrap();
                 let file_buf = file.buffer.borrow_mut();
                 let buffer = completion.as_read().buf.clone();
@@ -92,7 +75,6 @@ impl Operation {
                 completion.complete(buf_size);
             }
             OperationType::Write {
-                fd,
                 buffer,
                 completion,
                 offset,
@@ -102,7 +84,6 @@ impl Operation {
                 completion.complete(buf_size as i32);
             }
             OperationType::WriteV {
-                fd,
                 buffers,
                 completion,
                 offset,
@@ -123,11 +104,7 @@ impl Operation {
                 // There is no Sync for in memory
                 completion.complete(0);
             }
-            OperationType::Truncate {
-                fd,
-                completion,
-                len,
-            } => {
+            OperationType::Truncate { completion, len } => {
                 let file = files.get(fd.as_str()).unwrap();
                 let mut file_buf = file.buffer.borrow_mut();
                 file_buf.truncate(len);

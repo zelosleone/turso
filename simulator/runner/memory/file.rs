@@ -148,6 +148,7 @@ impl MemorySimFile {
             time: self.generate_latency(),
             op,
             fault,
+            fd: self.fd.clone(),
         });
     }
 
@@ -183,7 +184,6 @@ impl File for MemorySimFile {
         self.io_tracker.borrow_mut().pread_calls += 1;
 
         let op = OperationType::Read {
-            fd: self.fd.clone(),
             completion: c.clone(),
             offset: pos,
         };
@@ -199,7 +199,6 @@ impl File for MemorySimFile {
     ) -> Result<Completion> {
         self.io_tracker.borrow_mut().pwrite_calls += 1;
         let op = OperationType::Write {
-            fd: self.fd.clone(),
             buffer,
             completion: c.clone(),
             offset: pos,
@@ -219,7 +218,6 @@ impl File for MemorySimFile {
         }
         self.io_tracker.borrow_mut().pwritev_calls += 1;
         let op = OperationType::WriteV {
-            fd: self.fd.clone(),
             buffers,
             completion: c.clone(),
             offset: pos,
@@ -231,7 +229,6 @@ impl File for MemorySimFile {
     fn sync(&self, c: Completion) -> Result<Completion> {
         self.io_tracker.borrow_mut().sync_calls += 1;
         let op = OperationType::Sync {
-            fd: self.fd.clone(),
             completion: c.clone(),
         };
         self.insert_op(op);
@@ -247,7 +244,6 @@ impl File for MemorySimFile {
     fn truncate(&self, len: usize, c: Completion) -> Result<Completion> {
         self.io_tracker.borrow_mut().truncate_calls += 1;
         let op = OperationType::Truncate {
-            fd: self.fd.clone(),
             completion: c.clone(),
             len,
         };
