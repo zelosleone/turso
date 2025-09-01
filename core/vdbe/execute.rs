@@ -4460,10 +4460,16 @@ pub fn op_function(
                 }
             }
             ScalarFunc::SqliteVersion => {
-                let version_integer =
-                    return_if_io!(pager.with_header(|header| header.version_number)).get() as i64;
-                let version = execute_sqlite_version(version_integer);
-                state.registers[*dest] = Register::Value(Value::build_text(version));
+                if !program.connection.is_db_initialized() {
+                    state.registers[*dest] =
+                        Register::Value(Value::build_text(info::build::PKG_VERSION));
+                } else {
+                    let version_integer =
+                        return_if_io!(pager.with_header(|header| header.version_number)).get()
+                            as i64;
+                    let version = execute_sqlite_version(version_integer);
+                    state.registers[*dest] = Register::Value(Value::build_text(version));
+                }
             }
             ScalarFunc::SqliteSourceId => {
                 let src_id = format!(
