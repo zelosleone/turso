@@ -523,7 +523,11 @@ PRAGMA unstable_capture_data_changes_conn('<mode>[,custom_cdc]');
 ```
 
 ### Parameters
-`<mode>` can be id, before, after, or full
+- `<mode>` can be:
+    - `id`: Logs only the `rowid` (most compact)
+    - `before`: Captures row state before updates and deletes
+    - `after`: Captures row state after inserts and updates
+    - `full`: Captures both before and after states (recommended for complete audit trail)
 
 `custom_cdc` is optional, It lets you specify a custom table to capture changes.
 If no table is provided, Turso uses a default `turso_cdc` table.
