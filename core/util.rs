@@ -158,9 +158,6 @@ pub fn parse_schema_rows(
             StepResult::Row => {
                 let row = rows.row().unwrap();
                 let ty = row.get::<&str>(0)?;
-                if !["table", "index", "view"].contains(&ty) {
-                    continue;
-                }
                 match ty {
                     "table" => {
                         let root_page: i64 = row.get::<i64>(3)?;
