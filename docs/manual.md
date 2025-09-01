@@ -519,7 +519,7 @@ Turso supports [Change Data Capture](https://en.wikipedia.org/wiki/Change_data_c
 ### Enabling CDC
 
 ```sql
-PRAGMA unstable_capture_data_changes_conn('<mode>[,custom_cdc]');
+PRAGMA unstable_capture_data_changes_conn('<mode>[,custom_cdc_table]');
 ```
 
 ### Parameters
