@@ -36,13 +36,6 @@ pub fn resolve_aggregates(
 ) -> Result<bool> {
     let mut contains_aggregates = false;
     walk_expr(top_level_expr, &mut |expr: &Expr| -> Result<WalkControl> {
-        if aggs
-            .iter()
-            .any(|a| exprs_are_equivalent(&a.original_expr, expr))
-        {
-            contains_aggregates = true;
-            return Ok(WalkControl::SkipChildren);
-        }
         match expr {
             Expr::FunctionCall {
                 name,
@@ -76,20 +69,20 @@ pub fn resolve_aggregates(
                 }
                 match Func::resolve_function(name.as_str(), args_count) {
                     Ok(Func::Agg(f)) => {
-                        aggs.push(Aggregate::new(f, args, expr, distinctness));
+                        add_aggregate_if_not_exists(aggs, expr, args, distinctness, f);
                         contains_aggregates = true;
                         return Ok(WalkControl::SkipChildren);
                     }
                     Err(e) => {
                         if let Some(f) = syms.resolve_function(name.as_str(), args_count) {
                             if let ExtFunc::Aggregate { .. } = f.as_ref().func {
-                                let agg = Aggregate::new(
-                                    AggFunc::External(f.func.clone().into()),
-                                    args,
+                                add_aggregate_if_not_exists(
+                                    aggs,
                                     expr,
+                                    args,
                                     distinctness,
+                                    AggFunc::External(f.func.clone().into()),
                                 );
-                                aggs.push(agg);
                                 contains_aggregates = true;
                                 return Ok(WalkControl::SkipChildren);
                             }
@@ -108,7 +101,7 @@ pub fn resolve_aggregates(
                 }
                 match Func::resolve_function(name.as_str(), 0) {
                     Ok(Func::Agg(f)) => {
-                        aggs.push(Aggregate::new(f, &[], expr, Distinctness::NonDistinct));
+                        add_aggregate_if_not_exists(aggs, expr, &[], Distinctness::NonDistinct, f);
                         contains_aggregates = true;
                         return Ok(WalkControl::SkipChildren);
                     }
@@ -135,6 +128,21 @@ pub fn resolve_aggregates(
     })?;
 
     Ok(contains_aggregates)
+}
+
+fn add_aggregate_if_not_exists(
+    aggs: &mut Vec<Aggregate>,
+    expr: &Expr,
+    args: &[Box<Expr>],
+    distinctness: Distinctness,
+    func: AggFunc,
+) {
+    if aggs
+        .iter()
+        .all(|a| !exprs_are_equivalent(&a.original_expr, expr))
+    {
+        aggs.push(Aggregate::new(func, args, expr, distinctness));
+    }
 }
 
 pub fn bind_column_references(
