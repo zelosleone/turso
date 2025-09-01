@@ -104,9 +104,25 @@ pub fn resolve_aggregates(
                         "FILTER clause is not supported yet in aggregate functions"
                     );
                 }
-                if let Ok(Func::Agg(f)) = Func::resolve_function(name.as_str(), 0) {
-                    aggs.push(Aggregate::new(f, &[], expr, Distinctness::NonDistinct));
-                    contains_aggregates = true;
+                match Func::resolve_function(name.as_str(), 0) {
+                    Ok(Func::Agg(f)) => {
+                        aggs.push(Aggregate::new(f, &[], expr, Distinctness::NonDistinct));
+                        contains_aggregates = true;
+                    }
+                    Ok(_) => {
+                        crate::bail_parse_error!("Invalid aggregate function: {}", name.as_str());
+                    }
+                    Err(e) => match e {
+                        crate::LimboError::ParseError(e) => {
+                            crate::bail_parse_error!("{}", e);
+                        }
+                        _ => {
+                            crate::bail_parse_error!(
+                                "Invalid aggregate function: {}",
+                                name.as_str()
+                            );
+                        }
+                    },
                 }
             }
             _ => {}
