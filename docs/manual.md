@@ -38,6 +38,7 @@ Welcome to Turso database manual!
     - [WAL manipulation](#wal-manipulation)
       - [`libsql_wal_frame_count`](#libsql_wal_frame_count)
   - [Encryption](#encryption)
+  - [CDC](#cdc)
   - [Appendix A: Turso Internals](#appendix-a-turso-internals)
     - [Frontend](#frontend)
       - [Parser](#parser)
@@ -508,6 +509,57 @@ $ cargo run --features encryption -- database.db
 
 PRAGMA cipher = 'aegis256'; -- or 'aes256gcm'
 PRAGMA hexkey = '2d7a30108d3eb3e45c90a732041fe54778bdcf707c76749fab7da335d1b39c1d';
+```
+
+
+## CDC
+
+Turso supports [capturing data changes](https://en.wikipedia.org/wiki/Change_data_capture).
+
+To enable CDC
+
+```sql
+PRAGMA unstable_capture_data_changes_conn('<mode>[,custom_cdc]');
+```
+
+`<mode>` can be id, before, after, or full
+
+`custom_cdc` is optional, It lets you specify a custom table to capture changes.
+If no table is provided, Turso uses a default `turso_cdc` table.
+
+change type (1,0,-1) -> (insert,update,delete) respectively
+
+```zsh
+Example:
+turso> PRAGMA unstable_capture_data_changes_conn('full');
+turso> .tables
+turso_cdc
+turso> CREATE TABLE users (
+    id INTEGER PRIMARY KEY,
+    name TEXT
+);
+turso> INSERT INTO users VALUES (1, 'John'), (2, 'Jane');
+
+UPDATE users SET name='John Doe' WHERE id=1;
+
+DELETE FROM users WHERE id=2;
+
+SELECT * FROM turso_cdc;
+┌───────────┬─────────────┬─────────────┬───────────────┬────┬──────────┬──────────────────────────────────────────────────────────────────────────────┬───────────────┐
+│ change_id │ change_time │ change_type │ table_name    │ id │ before   │ after                                                                        │ updates       │
+├───────────┼─────────────┼─────────────┼───────────────┼────┼──────────┼──────────────────────────────────────────────────────────────────────────────┼───────────────┤
+│         1 │  1756713161 │           1 │ sqlite_schema │  2 │          │ ytableusersusersCREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT) │               │
+├───────────┼─────────────┼─────────────┼───────────────┼────┼──────────┼──────────────────────────────────────────────────────────────────────────────┼───────────────┤
+│         2 │  1756713176 │           1 │ users         │  1 │          │       John                                                                      │               │
+├───────────┼─────────────┼─────────────┼───────────────┼────┼──────────┼──────────────────────────────────────────────────────────────────────────────┼───────────────┤
+│         3 │  1756713176 │           1 │ users         │  2 │          │ Jane                                                                     │               │
+├───────────┼─────────────┼─────────────┼───────────────┼────┼──────────┼──────────────────────────────────────────────────────────────────────────────┼───────────────┤
+│         4 │  1756713176 │           0 │ users         │  1 │  John  │         John Doe                                                                  │     John Doe │
+├───────────┼─────────────┼─────────────┼───────────────┼────┼──────────┼──────────────────────────────────────────────────────────────────────────────┼───────────────┤
+│         5 │  1756713176 │          -1 │ users         │  2 │ Jane │                                                                              │               │
+└───────────┴─────────────┴─────────────┴───────────────┴────┴──────────┴──────────────────────────────────────────────────────────────────────────────┴───────────────┘
+turso>
+
 ```
 
 ## Appendix A: Turso Internals
