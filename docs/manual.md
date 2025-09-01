@@ -567,6 +567,7 @@ turso>
 
 ```
 
+If you modify your table schema (adding/dropping columns), the `table_columns_json_array()` function returns the current schema, not the historical one. This can lead to incorrect results when decoding older CDC records. Manually track schema versions by storing the output of `table_columns_json_array()` before making schema changes.
 ## Appendix A: Turso Internals
 
 Turso's architecture resembles SQLite's but differs primarily in its
