@@ -509,6 +509,7 @@ fn generate_secure_nonce() -> [u8; 32] {
     nonce
 }
 
+#[cfg(feature = "encryption")]
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -523,7 +524,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "encryption")]
     fn test_aes_encrypt_decrypt_round_trip() {
         let mut rng = rand::thread_rng();
         let cipher_mode = CipherMode::Aes256Gcm;
@@ -554,7 +554,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "encryption")]
     fn test_aegis256_cipher_wrapper() {
         let key = EncryptionKey::from_hex_string(&generate_random_hex_key()).unwrap();
         let cipher = Aegis256Cipher::new(&key);
@@ -571,7 +570,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "encryption")]
     fn test_aegis256_raw_encryption() {
         let key = EncryptionKey::from_hex_string(&generate_random_hex_key()).unwrap();
         let ctx = EncryptionContext::new(CipherMode::Aegis256, &key, DEFAULT_ENCRYPTED_PAGE_SIZE)
@@ -588,7 +586,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "encryption")]
     fn test_aegis256_encrypt_decrypt_round_trip() {
         let mut rng = rand::thread_rng();
         let cipher_mode = CipherMode::Aegis256;
