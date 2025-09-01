@@ -27,6 +27,7 @@ COPY ./parser ./parser/
 COPY ./simulator ./simulator/
 COPY ./sqlite3 ./sqlite3/
 COPY ./tests ./tests/
+COPY ./sql_generation ./sql_generation
 COPY ./stress ./stress/
 COPY ./sync ./sync/
 COPY ./vendored ./vendored/
@@ -58,6 +59,7 @@ COPY --from=planner /app/macros ./macros/
 COPY --from=planner /app/simulator ./simulator/
 COPY --from=planner /app/sqlite3 ./sqlite3/
 COPY --from=planner /app/tests ./tests/
+COPY --from=planner /app/sql_generation ./sql_generation
 COPY --from=planner /app/stress ./stress/
 COPY --from=planner /app/bindings/rust ./bindings/rust/
 COPY --from=planner /app/bindings/dart ./bindings/dart/
