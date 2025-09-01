@@ -15,6 +15,9 @@ use crate::lexer::{Lexer, Token};
 use crate::token::TokenType::{self, *};
 use crate::Result;
 
+const TRUE_LIT: &str = "TRUE";
+const FALSE_LIT: &str = "FALSE";
+
 macro_rules! peek_expect {
     ( $parser:expr, $( $x:ident ),* $(,)?) => {
         {
@@ -1545,7 +1548,25 @@ impl<'a> Parser<'a> {
                         Name::Ident(s) => Literal::String(s),
                     })))
                 } else {
-                    Ok(Box::new(Expr::Id(name)))
+                    match name {
+                        Name::Ident(s) => {
+                            let ident = s.to_ascii_uppercase();
+                            match ident.as_str() {
+                                TRUE_LIT => {
+                                    return Ok(Box::new(Expr::Literal(Literal::Numeric(
+                                        "1".into(),
+                                    ))))
+                                }
+                                FALSE_LIT => {
+                                    return Ok(Box::new(Expr::Literal(Literal::Numeric(
+                                        "0".into(),
+                                    ))))
+                                }
+                                _ => return Ok(Box::new(Expr::Id(Name::Ident(s)))),
+                            }
+                        }
+                        _ => Ok(Box::new(Expr::Id(name))),
+                    }
                 }
             }
         }
