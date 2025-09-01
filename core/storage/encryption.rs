@@ -307,8 +307,8 @@ impl CipherMode {
     /// Returns the authentication tag size for this cipher mode.
     pub fn tag_size(&self) -> usize {
         match self {
-            CipherMode::Aes256Gcm => 16,
-            CipherMode::Aegis256 => 16,
+            CipherMode::Aes256Gcm => AES256GCM_TAG_SIZE,
+            CipherMode::Aegis256 => AEGIS_TAG_SIZE,
         }
     }
 
@@ -320,8 +320,17 @@ impl CipherMode {
 
 #[derive(Clone)]
 pub enum Cipher {
-    Aes256Gcm(Box<Aes256Gcm>),
-    Aegis256(Box<Aegis256Cipher>),
+    Aes256Gcm(Aes256GcmCipher),
+    Aegis256(Aegis256Cipher),
+}
+
+impl Cipher {
+    fn as_aead(&self) -> &dyn AeadCipher {
+        match self {
+            Cipher::Aes256Gcm(c) => c,
+            Cipher::Aegis256(c) => c,
+        }
+    }
 }
 
 impl std::fmt::Debug for Cipher {
@@ -353,11 +362,8 @@ impl EncryptionContext {
         }
 
         let cipher = match cipher_mode {
-            CipherMode::Aes256Gcm => {
-                let cipher_key: &Key<Aes256Gcm> = key.as_ref().into();
-                Cipher::Aes256Gcm(Box::new(Aes256Gcm::new(cipher_key)))
-            }
-            CipherMode::Aegis256 => Cipher::Aegis256(Box::new(Aegis256Cipher::new(key))),
+            CipherMode::Aes256Gcm => Cipher::Aes256Gcm(Aes256GcmCipher::new(key)),
+            CipherMode::Aegis256 => Cipher::Aegis256(Aegis256Cipher::new(key)),
         };
         Ok(Self {
             cipher_mode,
@@ -463,42 +469,21 @@ impl EncryptionContext {
 
     /// encrypts raw data using the configured cipher, returns ciphertext and nonce
     fn encrypt_raw(&self, plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>)> {
-        match &self.cipher {
-            Cipher::Aes256Gcm(cipher) => {
-                let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
-                let ciphertext = cipher
-                    .encrypt(&nonce, plaintext)
-                    .map_err(|e| LimboError::InternalError(format!("Encryption failed: {e:?}")))?;
-                Ok((ciphertext, nonce.to_vec()))
-            }
-            Cipher::Aegis256(cipher) => {
-                let ad = b"";
-                let (ciphertext, nonce) = cipher.encrypt(plaintext, ad)?;
-                Ok((ciphertext, nonce.to_vec()))
-            }
-        }
+        self.cipher.as_aead().encrypt(plaintext, b"")
     }
 
     fn decrypt_raw(&self, ciphertext: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
-        match &self.cipher {
-            Cipher::Aes256Gcm(cipher) => {
-                let nonce = Nonce::from_slice(nonce);
-                let plaintext = cipher.decrypt(nonce, ciphertext).map_err(|e| {
-                    crate::LimboError::InternalError(format!("Decryption failed: {e:?}"))
-                })?;
-                Ok(plaintext)
-            }
-            Cipher::Aegis256(cipher) => {
-                let nonce_array: [u8; 32] = nonce.try_into().map_err(|_| {
-                    LimboError::InternalError(format!(
-                        "Invalid nonce size for AEGIS-256: expected 32, got {}",
-                        nonce.len()
-                    ))
-                })?;
-                let ad = b"";
-                cipher.decrypt(ciphertext, &nonce_array, ad)
-            }
-        }
+        self.cipher.as_aead().decrypt(ciphertext, nonce, b"")
+    }
+
+    fn encrypt_raw_detached(&self, plaintext: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+        self.cipher.as_aead().encrypt_detached(plaintext, b"")
+    }
+
+    fn decrypt_raw_detached(&self, ciphertext: &[u8], nonce: &[u8], tag: &[u8]) -> Result<Vec<u8>> {
+        self.cipher
+            .as_aead()
+            .decrypt_detached(ciphertext, nonce, tag, b"")
     }
 
     #[cfg(not(feature = "encryption"))]
