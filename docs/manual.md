@@ -533,7 +533,57 @@ PRAGMA unstable_capture_data_changes_conn('<mode>[,custom_cdc_table]');
 - `custom_cdc` is optional, It lets you specify a custom table to capture changes.
 If no table is provided, Turso uses a default `turso_cdc` table.
 
-change type (1,0,-1) -> (insert,update,delete) respectively
+
+When **Change Data Capture (CDC)** is enabled for a connection, Turso automatically logs all modifications from that connection into a dedicated table (default: `turso_cdc`). This table records each change with details about the operation, the affected row or schema object, and its state **before** and **after** the modification.
+
+> **Note:** Currently, the CDC table is a regular table stored explicitly on disk. If you use full CDC mode and update rows frequently, each update of size N bytes will be written three times to disk (once for the before state, once for the after state, and once for the actual value in the WAL). Frequent updates in full mode can therefore significantly increase disk I/O.
+
+
+
+- **`change_id` (INTEGER)**  
+  A monotonically increasing integer uniquely identifying each change record.(guaranteed by turso-db) 
+  - Always strictly increasing.  
+  - Serves as the primary key.  
+
+- **`change_time` (INTEGER)**  
+> turso-db guarantee nothing about properties of the change_time sequence 
+  Local timestamp (Unix epoch, seconds) when the change was recorded.  
+  - Not guaranteed to be strictly increasing (can drift or repeat).  
+
+- **`change_type` (INTEGER)**  
+  Indicates the type of operation:  
+  - `1` → INSERT  
+  - `0` → UPDATE (also used for ALTER TABLE)  
+  - `-1` → DELETE (also covers DROP TABLE, DROP INDEX)  
+
+- **`table_name` (TEXT)**  
+  Name of the affected table.  
+  - For schema changes (DDL), this is always `"sqlite_schema"`.  
+
+- **`id` (INTEGER)**  
+  Rowid of the affected row in the source table.  
+  - For DDL operations: rowid of the `sqlite_schema` entry.  
+  - **Note:** `WITHOUT ROWID` tables are not supported in the tursodb and CDC
+
+- **`before` (BLOB)**  
+  Full state of the row/schema **before** an UPDATE or DELETE
+  - NULL for INSERT.  
+  - For DDL changes, may contain the definition of the object before modification.  
+
+- **`after` (BLOB)**  
+  Full state of the row/schema **after** an INSERT or UPDATE
+  - NULL for DELETE.  
+  - For DDL changes, may contain the definition of the object after modification.  
+
+- **`updates` (BLOB)**  
+  Granular details about the change.  
+  - For UPDATE: shows specific column modifications.  
+
+
+> CDC records are visible even before a transaction commits. 
+> Operations that fail (e.g., constraint violations) are not recorded in CDC.
+
+> Changes to the CDC table itself are also logged to CDC table. if CDC is enabled for that connection.
 
 ```zsh
 Example:
