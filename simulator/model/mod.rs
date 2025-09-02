@@ -5,14 +5,14 @@ use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use sql_generation::model::{
     query::{
-        Create, CreateIndex, Delete, Drop, EmptyContext, Insert, Select,
+        Create, CreateIndex, Delete, Drop, Insert, Select,
         select::{CompoundOperator, FromClause, ResultColumn, SelectInner},
         transaction::{Begin, Commit, Rollback},
         update::Update,
     },
     table::{JoinTable, JoinType, SimValue, Table, TableContext},
 };
-use turso_parser::ast::{Distinctness, fmt::ToTokens};
+use turso_parser::ast::Distinctness;
 
 use crate::{generation::Shadow, runner::env::SimulatorTables};
 
@@ -307,7 +307,7 @@ impl Shadow for SelectInner {
                         } else {
                             return Err(anyhow::anyhow!(
                                 "Failed to evaluate expression in free select ({})",
-                                expr.0.format_with_context(&EmptyContext {}).unwrap()
+                                expr.0
                             ));
                         }
                     }

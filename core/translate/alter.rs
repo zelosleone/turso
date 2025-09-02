@@ -1,8 +1,5 @@
 use std::sync::Arc;
-use turso_parser::{
-    ast::{self, fmt::ToTokens as _},
-    parser::Parser,
-};
+use turso_parser::{ast, parser::Parser};
 
 use crate::{
     function::{AlterTableFunc, Func},
@@ -413,7 +410,7 @@ pub fn translate_alter_table(
                 program.emit_string8_new_reg(from.to_string());
                 program.mark_last_insn_constant();
 
-                program.emit_string8_new_reg(definition.format().unwrap());
+                program.emit_string8_new_reg(definition.to_string());
                 program.mark_last_insn_constant();
 
                 let out = program.alloc_registers(sqlite_schema_column_len);

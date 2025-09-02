@@ -28,7 +28,6 @@ use crate::SymbolTable;
 use crate::{bail_parse_error, Result};
 
 use turso_ext::VTabKind;
-use turso_parser::ast::fmt::ToTokens;
 
 #[allow(clippy::too_many_arguments)]
 pub fn translate_create_table(
@@ -509,14 +508,7 @@ enum PrimaryKeyDefinitionType<'a> {
 
 fn create_table_body_to_str(tbl_name: &ast::QualifiedName, body: &ast::CreateTableBody) -> String {
     let mut sql = String::new();
-    sql.push_str(
-        format!(
-            "CREATE TABLE {} {}",
-            tbl_name.name.as_str(),
-            body.format().unwrap()
-        )
-        .as_str(),
-    );
+    sql.push_str(format!("CREATE TABLE {} {}", tbl_name.name.as_str(), body).as_str());
     match body {
         ast::CreateTableBody::ColumnsAndConstraints {
             columns: _,
