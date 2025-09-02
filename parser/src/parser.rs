@@ -3061,7 +3061,22 @@ impl<'a> Parser<'a> {
 
     fn parse_default_column_constraint(&mut self) -> Result<ColumnConstraint> {
         eat_assert!(self, TK_DEFAULT);
-        match self.peek_no_eof()?.token_type.unwrap().fallback_id_if_ok() {
+        let tok = peek_expect!(
+            self,
+            TK_NULL,
+            TK_BLOB,
+            TK_STRING,
+            TK_FLOAT,
+            TK_INTEGER,
+            TK_CTIME_KW,
+            TK_LP,
+            TK_PLUS,
+            TK_MINUS,
+            TK_ID,
+            TK_INDEXED,
+        );
+
+        match tok.token_type.unwrap() {
             TK_LP => {
                 eat_assert!(self, TK_LP);
                 let expr = self.parse_expr(0)?;
@@ -3084,10 +3099,12 @@ impl<'a> Parser<'a> {
                     self.parse_term()?,
                 ))))
             }
-            TK_ID | TK_INDEXED => Ok(ColumnConstraint::Default(Box::new(Expr::Id(
+            TK_NULL | TK_BLOB | TK_STRING | TK_FLOAT | TK_INTEGER | TK_CTIME_KW => {
+                Ok(ColumnConstraint::Default(self.parse_term()?))
+            }
+            _ => Ok(ColumnConstraint::Default(Box::new(Expr::Id(
                 self.parse_nm()?,
             )))),
-            _ => Ok(ColumnConstraint::Default(self.parse_term()?)),
         }
     }
 
@@ -11445,6 +11462,42 @@ mod tests {
                     }),
                 })],
             ),
+            // issue 2875
+            (
+                b"CREATE TABLE \"settings\" (\"enabled\" INTEGER DEFAULT CURRENT_TIMESTAMP NOT NULL)".as_slice(),
+                vec![Cmd::Stmt(Stmt::CreateTable {
+                    temporary: false,
+                    if_not_exists: false,
+                    tbl_name: QualifiedName {
+                        db_name: None,
+                        name: Name::Quoted("\"settings\"".to_owned()),
+                        alias: None,
+                    },
+                    body: CreateTableBody::ColumnsAndConstraints{
+                        columns: vec![
+                            ColumnDefinition {
+                                col_name: Name::Quoted("\"enabled\"".to_owned()),
+                                col_type: Some(Type {
+                                    name: "INTEGER".to_owned(),
+                                    size: None,
+                                }),
+                                constraints: vec![
+                                    NamedColumnConstraint {
+                                        name: None,
+                                        constraint: ColumnConstraint::Default(Box::new(Expr::Literal(Literal::CurrentTimestamp))),
+                                    },
+                                    NamedColumnConstraint {
+                                        name: None,
+                                        constraint: ColumnConstraint::NotNull { nullable: false, conflict_clause: None }
+                                    },
+                                ],
+                            }
+                        ],
+                        constraints: vec![],
+                        options: TableOptions::NONE,
+                    },
+                })],
+            )
         ];
 
         for (input, expected) in test_cases {
