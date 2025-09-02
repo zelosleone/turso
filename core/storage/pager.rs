@@ -2165,16 +2165,23 @@ impl Pager {
         Ok(IOResult::Done(f(header)))
     }
 
-    pub fn set_encryption_context(&self, cipher_mode: CipherMode, key: &EncryptionKey) {
+    pub fn set_encryption_context(
+        &self,
+        cipher_mode: CipherMode,
+        key: &EncryptionKey,
+    ) -> Result<()> {
         let page_size = self.page_size.get().unwrap().get() as usize;
-        let encryption_ctx = EncryptionContext::new(cipher_mode, key, page_size).unwrap();
+        let encryption_ctx = EncryptionContext::new(cipher_mode, key, page_size)?;
         {
             let mut io_ctx = self.io_ctx.borrow_mut();
             io_ctx.set_encryption(encryption_ctx);
         }
-        let Some(wal) = self.wal.as_ref() else { return };
+        let Some(wal) = self.wal.as_ref() else {
+            return Ok(());
+        };
         wal.borrow_mut()
-            .set_io_context(self.io_ctx.borrow().clone())
+            .set_io_context(self.io_ctx.borrow().clone());
+        Ok(())
     }
 }
 
